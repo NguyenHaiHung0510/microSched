@@ -42,3 +42,12 @@
 - **Partial unique index cho soft-delete:** UNIQUE `lower(name)` `WHERE deleted_at IS NULL` — chống trùng tên nhưng không chặn tái tạo tên đã xóa mềm; unique thường sẽ chặn nhầm.
 - **Pattern nhắc-rồi-xác-nhận:** hệ thống chỉ push nhắc, dữ liệu chỉ sinh khi người xác nhận; mức "tiện" của bước xác nhận tùy bản chất việc (thuốc = ✓ 1 chạm ngay trên noti; gia hạn sub = phải xem xét/trả tiền ngoài rồi mới ghi). Auto-write không confirm để dành AI Bước 2 (có confirm + audit).
 - **Bề mặt notification là bề mặt công khai:** text noti đọc được từ lock-screen → cho user tự kiểm soát độ kín đáo (`reminder_text` — "taken micardis?"). Privacy không chỉ nằm trong DB.
+
+## 2026-07-19 — DevOps nền (git/PR/secret)
+
+- **Threat model phải nêu tên cụ thể mới dùng được:** "lo bảo mật" là vô nghĩa; "ngại **social engineering**, không ngại người đọc repo" mới ra được quyết định (giữ public + vẫn cần private mode trong app). Bài học: hỏi *ngại AI nào* trước khi thiết kế biện pháp.
+- **Phòng thủ nhiều lớp, chặn càng sớm càng rẻ:** push protection (server, lúc push) + pre-commit gitleaks (local, lúc commit). Lớp local bắt được cả secret tự chế mà pattern provider không biết.
+- **Rule phải hợp quy mô đội:** branch protection đòi 1 approval sẽ **tự khóa** dự án một người (không tự duyệt PR của mình được) → đặt `required_approving_review_count: 0` nhưng vẫn bắt buộc PR. Copy best-practice của team lớn mà không chỉnh = tự bắn vào chân.
+- **Dựng hàng rào TRƯỚC khi có thứ để rò rỉ:** làm secret-guard lúc repo còn chưa có code/`.env` — rẻ hơn nhiều so với lúc đã lỡ commit.
+- **Đọc kỹ ranh giới gói dịch vụ:** "Copilot free có code review" là **sai** — free chỉ review vùng chọn trong IDE, review PR trên github.com cần bản trả phí. Cùng một cái tên tính năng, hai phạm vi khác hẳn (lặp lại đúng bài học "xác nhận đúng category" của phiên hạ tầng).
+- **Giao việc cho agent = viết spec, không phải ra lệnh:** spec tự-chứa cần *bối cảnh + lý do*, **phần KHÔNG được làm**, acceptance kiểm chứng được, và đề xuất tier/effort — vì agent chạy ở session 0-context.
