@@ -1,0 +1,201 @@
+# Schema vật lý (physical schema) — microSched
+
+> **Trạng thái:** ✅ **CHỐT 2026-07-19** cho toàn bộ Nhóm 2, **trừ 2 mục DEFER** về tracking (C2, D1-tracker → §7).
+> Decision record **tự-chứa** (đọc được ở phiên 0-context). Nối tiếp `schema-v1-brief.md` (mức **khái niệm**) → file này là tầng **vật lý**: kiểu cột chính xác, cách sinh khoá, index, ràng buộc, công cụ đúc (ORM/migration), role DB.
+> ⚠️ **Cửa một-chiều:** sau khi có data thật trong Neon, đổi các quyết định này (kiểu khoá chính, mã hoá enum, thêm cột NOT NULL) đều cần migration + backfill → chốt đúng ngay bây giờ rẻ hơn nhiều.
+
+---
+
+## 0. "Schema vật lý" là gì (đọc trước nếu 0-context)
+
+Postgres + Neon (đã chốt ở `db-and-data-model-brief.md`) mới trả lời **"chạy engine gì, ở đâu"**. Nó **chưa** nói các bảng *thực sự được đúc ra sao* bên trong engine đó. Ba tầng:
+
+| Tầng | Trả lời | File |
+|---|---|---|
+| **Khái niệm** | Có thực thể nào, nghĩa gì, quan hệ ra sao (tiếng người) | `schema-v1-brief.md` ✅ |
+| **Logic** | Bảng/cột/khoá, chuẩn hoá tới đâu | gộp trong file này |
+| **Vật lý** | *Chính xác* kiểu mỗi cột, cách sinh khoá chính, index nào, ràng buộc nào, DDL thật + công cụ | **file này** ✅ |
+
+**Ẩn dụ:** Neon = đã chọn mảnh đất + vật liệu. Schema vật lý = bản vẽ thi công (tường chịu lực đặt đâu, đường điện đi lối nào). Cùng "danh sách phòng", hai bản vẽ khác nhau cho ra hai căn nhà **ở khác nhau, sửa khác nhau**.
+
+---
+
+## 1. Bảng trạng thái tổng hợp
+
+| Mã | Quyết định | Kết quả | Cửa 1 chiều? |
+|---|---|---|---|
+| A1 | ORM | ✅ **SQLModel** | không (tụt xuống SQLAlchemy được) |
+| A2 | Migration | ✅ **Alembic + hàng rào QA** (§2) | không |
+| A3 | Cô lập DB | ✅ **role riêng `microsched_app` + schema `microsched`** | không |
+| B1 | Khoá chính | ✅ **UUIDv7** | **có** |
+| B2 | Thời gian | ✅ **`timestamptz` + trigger `updated_at`, áp ĐỒNG ĐỀU mọi bảng** | không (thêm cột dễ) |
+| C1 | Enum | ✅ **`TEXT` + `CHECK`** | **có** (đổi cách mã hoá sau = migration) |
+| C2 | Kiểu số `entry.value` | ✅ **ĐÃ GIẢI 2026-07-19** — tách `quantity NUMERIC(10,2)` + cột tiền VND `NUMERIC(14,0)` (`tracking-brief.md` §3/§7; VND-only v1) | **có** |
+| C3 | Thứ tự item | ✅ **`int position`** (cả `task_item` + `note_item`) | không |
+| C4 | Cột `vector` | ✅ **nullable ngay, dimension + index HNSW để Bước 1** | không |
+| D1 | FK cascade | ✅ **calendar = CASCADE; `tracker→entry` = RESTRICT + soft-delete (chốt 2026-07-19, `tracking-brief.md` §7)** | **có** |
+| D2 | Index | ✅ **bộ tối thiểu** (FK + cột thời gian) (§5) | không |
+| D3 | Log AI + xoá | ✅ **log 3 tầng + soft-delete** (§5) | không |
+| D4 | Full-text search | ⏸ **DEFER → Bước 1** | không |
+
+---
+
+## 2. Cụm A — Công cụ đúc schema
+
+### A1. ORM = SQLModel ✅
+Chốt món `architecture-brief.md` §11 để lại. **SQLModel** (Pydantic + SQLAlchemy hợp nhất, cùng tác giả FastAPI): ít boilerplate, type-hint đẹp, **khớp thẳng tool-schema Pydantic của Bước 2**.
+- **Lý do:** quy mô single-user không có query đủ phức tạp để chạm trần SQLModel; nó tiết kiệm đúng loại "plumbing phi-AI" cần tránh.
+- **Chốt an toàn (vì sao rủi ro "kém chín" ≈ 0):** SQLModel *chạy trên* SQLAlchemy 2.0 → khi cần query khó, **tụt xuống SQLAlchemy thuần** cho riêng chỗ đó. Không phải cửa một chiều.
+- **Driver:** async — `postgresql+asyncpg://`. ASGI = Uvicorn.
+
+### A2. Migration = Alembic + hàng rào QA ✅
+Alembic sinh migration bằng `--autogenerate` (so model với DB rồi đoán diff), nhưng nó **mù** với vài thứ → **bắt buộc hàng rào QA** (đây chính là một mẩu CI/CD đáng học — Track B):
+
+**Cái autogenerate hay bỏ sót:** đổi **kiểu cột**; đổi **`CHECK` constraint** (= enum của C1!); đổi **server default**; **rename** cột/bảng → nó dịch thành DROP+ADD = **mất data** (nguy hiểm nhất).
+
+**Hàng rào (đưa vào quy trình + GitHub Actions):**
+1. **Không apply thẳng** — mỗi PR đổi schema phải kèm file migration được **đọc lại bằng mắt**.
+2. **Round-trip test trong CI:** Postgres tạm (Docker) → `upgrade head` → `downgrade` → `upgrade` lại.
+3. **Drift check:** sau `upgrade head`, chạy autogenerate lần nữa → còn sinh diff = model/migration lệch → **fail CI**.
+4. **Chặn DROP ngầm:** grep migration cho `drop_column`/`drop_table` → phải có nhãn `# reviewed: intentional drop` mới cho qua (chặn rename-thành-drop).
+5. **Thử migration trên bản restore từ backup thật** trước khi lên prod — **ghép vào khâu verify-restore của 3-2-1** (`db-and-data-model-brief.md` §6).
+
+### A3. Cô lập DB = role riêng + schema namespace ✅
+Superuser `postgres` local host nhiều project khác của chủ (vd `micareer_lite_db`, `Fang`) → microSched **không dùng chung**.
+- **Role riêng** `microsched_app` — chỉ quyền CRUD trên bảng app, **không superuser**.
+- **Schema riêng** `microsched` (không đặt vào `public`) → cô lập sạch. GRANT hẹp: `USAGE` trên schema + `SELECT/INSERT/UPDATE/DELETE` trên bảng app, không hơn.
+- Credentials chỉ trong `.env` (đã chốt CLAUDE.md); `.gitignore` chặn `.env` từ commit đầu.
+
+---
+
+## 3. Cụm B — Danh tính & thời gian (chạm *mọi* bảng)
+
+### B1. Khoá chính = UUIDv7 ✅ (cửa một chiều)
+Sơ đồ đã dùng `uuid` khắp nơi; đây là chốt **version + lý do**.
+- **Vì sao UUID chứ không `bigint`:** đã chốt **offline-first capture** (`architecture-brief.md` §4) — ghi note land vào IndexedDB *tức thì, kể cả offline*. Muốn vậy **client phải tự sinh ID khi chưa có mạng** → `bigint serial` (server cấp) không dùng được; UUID sinh ở client được. Đây là ràng buộc kiến trúc, không phải sở thích.
+- **Vì sao v7 chứ không v4:** UUIDv7 gắn tiền tố thời gian (Unix ms) → insert liên tiếp rơi cùng trang index → index **nhỏ hơn ~26%**, truy vấn theo thứ tự nhanh ~3× so với v4 (v4 ngẫu nhiên hoàn toàn → phân mảnh index). Cây quyết định 2026: *"v7 nếu runtime hỗ trợ, v4 nếu không."*
+- **Vì sao không ULID/NanoID:** ULID = "UUIDv7 bản chuỗi" nhưng UUIDv7 nay đã chuẩn hoá **RFC 9562** + là **kiểu `uuid` native của Postgres** (ULID phải lưu text/bytea, kém hơn) → UUIDv7 nuốt trọn lý do dùng ULID. NanoID không time-ordered → phân mảnh như v4.
+- **Sinh ở đâu:** Neon chạy PG 18.4 → row tạo ở **server** dùng default `uuidv7()` native; row tạo **offline ở client** dùng lib JS uuidv7 — **cả hai đều v7, nhất quán**.
+
+### B2. `timestamptz` + trigger `updated_at`, áp ĐỒNG ĐỀU mọi bảng ✅
+- **Kiểu:** mọi mốc thời gian = `timestamptz` (có timezone thật — sửa bug naive-time của app cũ, `v1-reference.md`).
+- **`updated_at` do trigger DB** (`BEFORE UPDATE`) tự set — đúng dù ai ghi (app, tool AI Bước 2, sửa tay lúc migrate), không lệ thuộc code nhớ set.
+- **Áp đồng đều `created_at` + `updated_at` cho TẤT CẢ bảng** (kể cả bảng con `task_item`/`note_item`/`calendar_event` và `entry`/`audit_log`) — vá chỗ ERD khái niệm vẽ thiếu, đúng nguyên tắc "mọi entity có tính thời gian" (`db-and-data-model-brief.md` §4; note gốc #13 của chủ).
+- **Chi phí đã đo thật ≈ 0:** 16 byte/dòng. Data hiện tại ~887 dòng → **~14 KB**. Kể cả tăng 100× (~89k dòng) → **~1.4 MB = 0.28%** của gói Neon 0.5 GB. Trigger = vài micro-giây/UPDATE, 0 ảnh hưởng compute. Value cao (mọi thực thể có "tính thời gian") → chốt.
+
+---
+
+## 4. Cụm C — Mã hoá kiểu
+
+### C1. Enum = `TEXT` + `CHECK` constraint ✅ (cửa một chiều)
+Áp cho `task.status`, `task.priority`, `tracker.kind`, `calendar_source.kind`.
+- **Không dùng native `ENUM`:** `ALTER TYPE` để thêm/xoá/đổi giá trị rất phiền.
+- **`TEXT` + `CHECK`:** thêm status mới = đổi 1 constraint (migration nhẹ); AI-tool (Bước 2) đọc/ghi text dễ hơn OID của enum. Best-practice cho schema còn tiến hoá.
+
+### C2. Kiểu số `entry.value` — ⏸ DEFER → phiên tracking (§7)
+Cần thiết kế chi tiết tính năng tracking trước (VND không phần lẻ vs đơn vị sức khoẻ có thể lẻ). Nghiêng `NUMERIC` (không `float` — tránh sai số tiền); precision/scale chốt ở phiên tracking.
+
+### C3. Thứ tự item = `int position` ✅
+Subtask một người dùng số lượng nhỏ → `int` + đánh số lại khi cần là đủ, **không cần fractional indexing** (LexoRank). Áp cho cả `task_item` **và** `note_item` (checklist có thứ tự — nhất quán).
+
+### C4. Cột `vector` — nullable ngay, chi tiết để Bước 1 ✅ (chiến lược)
+Dimension coupling với embedding model → chốt **chiến lược vật lý**, không chốt con số:
+- Để cột `vector` **nullable, CHƯA tạo index**. Thêm dimension + index **HNSW** ở migration Bước 1 (khi đã chốt embedding model).
+- Ghi chú Bước 1: cân nhắc `halfvec` (nửa storage). Ở quy mô 49 note hiện tại, index vector còn *chưa cần thiết* cho tốc độ.
+
+---
+
+## 5. Cụm D — Toàn vẹn & truy cập
+
+### D1. FK cascade ✅ (calendar) / ⏸ DEFER (tracker)
+- **`calendar_source → calendar_event` = `ON DELETE CASCADE`** ✅. Khớp quyết định "re-import = thay sạch không nhân đôi, bỏ version-history" (`schema-v1-brief.md` §3-A): xoá nguồn → xoá buổi; re-import = xoá buổi cũ của nguồn đó + chèn mới.
+- **`task → task_item`, `note → note_item` = `ON DELETE CASCADE`** ✅ (đã chốt — sửa bug mồ côi v1).
+- **`tracker → entry` = ⏸ DEFER** → phiên tracking (§7). Nghiêng **RESTRICT / soft-delete** (xoá nhầm 1 tracker mất sạch lịch sử log sức khoẻ/tiền = đau).
+
+### D2. Index — bộ tối thiểu ✅
+*Index = cấu trúc phụ (B-tree) sắp sẵn giá trị 1 cột → trỏ vị trí dòng, như mục lục cuối sách. Đổi lại: tốn storage + làm ghi chậm hơn (mỗi INSERT/UPDATE phải cập nhật mọi index).*
+- **Sự thật quy mô này:** vài trăm–nghìn dòng → Postgres full-scan trong micro-giây → index **gần như chưa cần cho tốc độ đọc** → **không over-index**.
+- **Vẫn tạo sẵn (lý do thật):** khoá chính **tự có index** (miễn phí); **cột FK** nên có index (giúp join + kiểm ràng buộc); **vector** *bắt buộc* index nhưng để Bước 1.
+- **Bộ đề xuất:** mọi cột FK + `task.due_at` + `entry.occurred_at` + `calendar_event.starts_at`. Rẻ, đủ, không thừa.
+
+### D3. Log AI 3 tầng + soft-delete ✅
+Tách 2 nhu cầu hay bị gộp:
+
+**(a) An toàn dữ liệu quý** (task/note/tracker) → **soft-delete** (cột `deleted_at`), *không* phải audit từng CRUD. Soft-delete = lỡ xoá khôi phục được, rẻ (1 cột). Query thường thêm `WHERE deleted_at IS NULL`. **KHÔNG audit mỗi lần user sửa note** (vừa thừa vừa phình DB).
+
+**(b) Sức khoẻ hệ thống + eval/observability AI** → *đây* mới là chỗ log căng. Chia **3 tầng, không trùng lặp:**
+
+| Tầng | Chứa gì | Ở đâu | Cỡ |
+|---|---|---|---|
+| 1. Messages | nội dung hội thoại (là tính năng sản phẩm; **chính là log "cái đã nói"**) | **DB** | nhỏ |
+| 2. Trace metadata | tool gọi + tham số, retrieval hits, **model cascade nào**, token, **cost**, latency, **user accept/reject gợi ý AI** — keyed `trace_id` trỏ về message | **DB, `audit_log` gọn** | nhỏ, tăng chậm → **eval gold** |
+| 3. Raw replay blob | *prompt đã ráp* (system + context RAG nhồi + history) + completion thô | **OFF-DB** (Google Drive / local, hàng TB free) hoặc bảng riêng rotation drop-partition | **to** (gấp 10–50× message) |
+
+- **Không double-store:** message text ở tầng 1 là nguồn thật; tầng 2 chỉ giữ "phong bì" tham chiếu. Tầng 3 (cái phình) đẩy ra ngoài DB → phần trong Neon tăng rất chậm.
+- **`audit_log` cần thêm:** `trace_id`/`turn_id` (nối tầng 1↔2) + tham chiếu entity bị đụng. Đây là nền cho note gốc #16 ("log all to fine-tune", "acceptance from AI's suggesting").
+
+### D4. Full-text search — ⏸ DEFER → Bước 1
+`tsvector`/`pg_trgm` phục vụ hybrid retrieval (structured + semantic + keyword) = Bước 1. Không provision bây giờ.
+
+---
+
+## 6. Cỡ DB thực đo & đối chiếu Neon (grounding — đo thật, không ước tính)
+
+Đo trực tiếp local Postgres `microschedule_v2` (nguồn migration thật, ~1 năm dùng) ngày 2026-07-19 bằng `COUNT(*)` chính xác (KHÔNG dùng `n_live_tup` — đó là ước tính, từng cho số sai lệch):
+
+- **Tổng DB:** 10 MB. **Nội dung thật (schema `public`):** 163 task, 97 task_item, **49 note**, 81 note_item, 479 calendar_event, 4 source, 8 setting, 6 priority = **~887 dòng**; `agent_action_log` rỗng. Byte dòng thật < 1 MB — 10 MB gần như toàn overhead/index/schema test rỗng.
+- **Đối chiếu:** dự án khác nặng hơn (`micareer_lite_db`) = 79 MB — vẫn ~6× dưới trần.
+
+**Kết luận vs Neon free (0.5 GB = 500 MB/project, trần cứng):**
+- **Nội dung người dùng là chuyện vặt nhiều năm.** Kể cả embedding (49 note → gần 0; 5000 note × 6KB = 30 MB) vẫn dư ~10×+.
+- **Biến số DUY NHẤT** có thể đụng 0.5 GB = **log AI verbose không giới hạn** → chính vì vậy chiến lược 3 tầng D3 (giữ tầng 1–2 gọn, đẩy tầng 3 off-DB) không chỉ là kiến trúc sạch mà là **điều kiện ở lại free tier**.
+- **Chi phí dôi dư có kiểm soát:** trên free, 0.5 GB là **trần cứng (chặn ghi khi đầy), KHÔNG phải hoá đơn bất ngờ**; vượt = **chủ động** nâng Launch (~$5). Blob nặng đã off-DB → không có kịch bản "cháy túi ngầm".
+- **Trục compute:** Neon free cũng giới hạn **100 CU-h/tháng**. App always-on trên Fly nhưng single-user → Neon **autosuspend khi DB rảnh** → CU-h thấp; chỉ cần **cron đừng ping DB quá dày**.
+
+---
+
+## 7. ⏸ DEFER — Phiên thiết kế tính năng TRACKING (mục tiêu chiến lược, session sau)
+
+**Chưa quyết ở Nhóm 2 vì cần thiết kế tính năng trước, KHÔNG phải quên.** Đây là một **phiên chiến lược + chi tiết riêng**, gom 3 thứ cùng một cụm:
+1. **C2** — kiểu số `entry.value` (precision/scale: VND vs đơn vị sức khoẻ lẻ).
+2. **D1-tracker** — cascade `tracker → entry` (nghiêng RESTRICT/soft-delete).
+3. **Feature design** — theo dõi "hoạt động xấu" (thuốc/bia/bi-a) + chi tiêu, mô hình `tracker`/`entry` hợp nhất (note gốc #18; `forward-spec.md` §E).
+
+Ràng buộc mang sang: xây **phần ghi-log trước**, AI phân tích thói quen/chi tiêu **giữ đúng thứ tự sau** (đừng để UI tracker nuốt thời gian 2 tính năng AI). Health/finance nhạy cảm → cân nhắc privacy khi AI đọc qua LLM bên thứ ba (bookmark Bước 1).
+
+> **📌 2026-07-19 — phiên tracking ĐANG CHẠY** (`tracking-brief.md`): hướng giải đã ghi — **C2**: tách `entry.value` → `quantity` + bộ cột tiền VND (`amount`/`list_amount`/`orig_amount`+`orig_currency`), precision đề xuất `NUMERIC(14,0)` cho VND (⚠️ chờ gật cuối phiên); **D1-tracker**: giữ nghiêng RESTRICT + soft-delete (chưa chốt riêng). Phát sinh mới: **subscription = entity riêng** (✅ chốt, ngoài ERD v1) + **phiên encryption-review toàn DB** (ràng buộc: AI phải đọc được; điểm nóng: embedding rò nghĩa — chạm C4/D4). Khi phiên tracking kết thúc → cập nhật bảng §1 + mục này.
+
+> **✅ 2026-07-19 (muộn) — PHIÊN TRACKING ĐÃ ĐÓNG, §7 GIẢI TRỌN.** C2 + D1 như bảng §1 (lưu ý VND-only v1: `orig_amount`/`orig_currency` bị cắt). Phát sinh chốt thêm: **+2 bảng** `tracker_group` (nhóm 2 tầng; không soft-delete, hard-delete + FK `SET NULL`) và `subscription` (DATE cho `started_on`/`expires_on` — ngoại lệ có lý với B2; không cột `status` — suy ra từ `expires_on`+`canceled_at`); **cột mới `tracker`**: `direction` in/out, `input_mode` event/money/quantity, `group_id`, `reminder_time TIME`/`reminder_text` (nhắc thuốc), `unit` thu hẹp nghĩa; **cột mới `entry`**: `quantity`/`amount`/`list_amount`/`subscription_id`; **enum C1 mở rộng**: `direction`, `input_mode`; **index D2 cập nhật**: `entry(tracker_id, occurred_at DESC)` composite thay cặp rời + `entry(occurred_at)` + `subscription(expires_on)`; **seed danh mục** = Alembic data-migration lúc cutover (khớp kỷ luật A2). Toàn bộ chi tiết + lý do + rà soát chuẩn hóa (3NF, K1–K17): **`tracking-brief.md`** (đặc biệt §10). **Schema toàn dự án khép từ đây.**
+
+---
+
+## 8. Ngoài phạm vi Nhóm 2 (vẫn OPEN ở nơi khác — không phải việc file này)
+- **Auth implementation** (thư viện, cookie/session store) — ⚠️ leaning Google OAuth + allowlist (`architecture-brief.md` §7).
+- **Frontend UI stack cụ thể** + thư viện sync offline-first + web-push — phiên frontend-scaffold.
+- **Embedding model + dimension cột `vector`** + LLM mặc định — Bước 1 (coupling C4).
+
+---
+
+## 9. Giải nghĩa nhanh (glossary — cho chỗ dày thuật ngữ)
+
+- **ORM** (Object-Relational Mapping): thư viện cho viết class Python thay vì SQL thô; nó dịch class ↔ bảng. SQLModel/SQLAlchemy là ORM.
+- **DDL** (Data Definition Language): các câu SQL *định nghĩa cấu trúc* (`CREATE TABLE`, `ALTER TABLE`), khác DML (`INSERT/UPDATE` dữ liệu).
+- **Migration / Alembic**: file phiên bản hoá thay đổi schema (như "git cho cấu trúc DB"); Alembic = công cụ migration của SQLAlchemy. **Autogenerate** = Alembic tự đoán diff giữa model và DB (tiện nhưng hay sót → cần QA §2).
+- **UUID / UUIDv7**: mã định danh 128-bit *toàn cục duy nhất*, sinh được không cần server điều phối. **v7** = biến thể có tiền tố thời gian → sắp thứ tự được, index tốt. **RFC 9562** = chuẩn IETF (2024) định nghĩa các version UUID.
+- **`bigint serial`**: khoá chính số tăng dần **do server cấp** → không sinh offline được (lý do loại cho app này).
+- **`timestamptz`**: kiểu thời gian *có* timezone (khác `timestamp` naive không timezone).
+- **Trigger**: đoạn logic DB tự chạy khi có sự kiện (vd `BEFORE UPDATE` để set `updated_at`).
+- **`CHECK` constraint**: ràng buộc "giá trị cột phải thoả điều kiện" (vd `status IN ('open','completed')`) — cách làm enum bằng `TEXT`.
+- **Index / B-tree**: cấu trúc phụ tăng tốc tìm kiếm (như mục lục sách); B-tree = loại index mặc định. **HNSW** = loại index cho tìm kiếm vector (semantic), dựng ở Bước 1.
+- **`pgvector` / `vector` / `halfvec`**: extension Postgres cho lưu + tìm vector embedding; `halfvec` = vector nửa độ chính xác (2 byte/chiều thay 4) → nửa storage.
+- **`ON DELETE CASCADE` / RESTRICT**: khi xoá dòng cha → CASCADE xoá luôn dòng con; RESTRICT chặn xoá nếu còn con.
+- **Soft-delete**: không xoá thật, chỉ đánh dấu `deleted_at` → khôi phục được.
+- **`JSONB`**: kiểu cột lưu JSON nhị phân, query được (dùng cho `app_setting.value`, `audit_log.payload`).
+- **Trace / audit_log**: nhật ký hành động (đặc biệt của AI) để eval/observability + fine-tune.
+- **`trace_id`**: mã nối các bản ghi cùng một lượt tương tác AI (message ↔ metadata ↔ blob).
+- **CU-h** (Compute Unit-hour): đơn vị tính compute của Neon; free = 100 CU-h/tháng.
+- **Autosuspend / scale-to-zero**: DB tự ngủ khi rảnh (tiết kiệm CU-h), dậy khi có query.
+- **Fractional indexing / LexoRank**: kỹ thuật đánh thứ tự bằng số thực để chèn giữa không phải đánh lại — *không dùng* ở đây (đã chọn `int` đơn giản).
+
+---
+*Cập nhật khi: đổi ORM/DB/khoá chính, hoặc sau phiên tracking (§7). Thêm ghi chú có ngày — không xoá trắng kết luận cũ.*
