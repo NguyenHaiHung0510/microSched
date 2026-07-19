@@ -40,7 +40,7 @@ Ngân sách mục tiêu <$1/tháng cho managed Postgres ≈ **free tier** (flat 
 **Thiết kế đã chốt (3 copy):** live trên Neon + dump-laptop + Google Drive auto-sync folder (3 copy / 2 domain kiểm soát). Điều kiện:
 - Dump ghi **file có timestamp** (không ghi đè — vì Drive là *sync*, ghi đè/hỏng sẽ đồng bộ cái hỏng lên).
 - **Mã hóa** file dump (chứa note riêng tư); không đẩy note thô lên bất kỳ repo nào.
-- **Verify** định kỳ: restore dump vào Postgres tạm (Docker) → đếm dòng → drop. Backup chưa từng restore = "Schrödinger".
+- **Verify** định kỳ: restore dump vào Postgres tạm (Docker) → đếm dòng → drop. Backup chưa từng restore = "Schrödinger". → ghép luôn **thử migration Alembic trên bản restore** (hàng rào QA A2, `schema-physical-brief.md` §2).
 - **Bỏ** immutable/air-gap (lo doanh nghiệp). Tái dùng pattern `backup_service.py` của app cũ (`pg_dump -Fc` + atomic rename + retention + log).
 
 **Không đầu tư availability tier** (five-nines vô nghĩa với 1 user; vài phút downtime hay 1s cold-start Neon không mất gì) — dồn hết vào backup + verify. Tự động hoá backup+verify = một mẩu CI/CD/observability đáng học (Track B). Xem `learnings-applied.md` (quy tắc 3-2-1).

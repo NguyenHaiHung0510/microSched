@@ -1,6 +1,7 @@
 # Schema v1 (mức sơ đồ) — microSched
 
 > **Trạng thái:** A/B/C ✅ **CHỐT 18/07/2026**; chi tiết cột/kiểu làm ở bước sau. Mức **khái niệm**, không phải SQL.
+> **→ Tầng vật lý (cột/kiểu/index/DDL/ORM) đã CHỐT 2026-07-19: xem `schema-physical-brief.md`.** Lưu ý: ERD dưới chỉ vẽ `created_at/updated_at` ở vài entity — tầng vật lý áp **đồng đều mọi bảng** (kể cả bảng con).
 > **Nguồn:** dữ liệu thật v1 + học từ v2 (tham chiếu) + `forward-spec.md` (viewability, AI-first) + retrieval Bước 1.
 
 ## 1. Sơ đồ quan hệ
@@ -108,3 +109,11 @@ erDiagram
 
 ## 5. ✅ note_item — đã chốt
 - **Gốc lưu dạng bảng/cột** (tick/query được). Markdown chỉ là **lớp trung gian lưu/tương tác**, không phải nơi lưu gốc. Nhất quán với `task_item`.
+
+## 6. 📝 2026-07-19 — Delta khái niệm sau phiên tracking (chi tiết: `tracking-brief.md`)
+ERD §1 giữ nguyên làm bản gốc; phiên tracking chốt các thay đổi mức khái niệm sau:
+- **+`tracker_group`** — tầng nhóm (đúng 1 tầng) cho tracker, nullable ("Giải trí", "Thu nhập"…).
+- **+`subscription`** — hợp đồng có vòng đời (sub AI, gói trả trước), sinh entry gia hạn — cùng pattern `calendar_source → calendar_event`.
+- **`entry.value` tách** thành `quantity` + cột tiền VND (`amount` thực trả / `list_amount` niêm yết).
+- **`tracker.unit` thu hẹp nghĩa** — chỉ còn nhãn cho tracker đếm số lượng; mô tả `"VND / count / minutes"` trong ERD **hết hiệu lực** (VND đã thành cột tiền riêng).
+- **`tracker` thêm**: `direction` (in/out — log cả **thu nhập**), `input_mode`, `group_id`, `reminder_time`/`reminder_text` (nhắc thuốc — noti kín đáo).
