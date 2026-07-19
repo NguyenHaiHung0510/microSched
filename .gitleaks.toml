@@ -1,0 +1,30 @@
+title = "microSched — extend gitleaks default config"
+
+# Lý do: rule mặc định của gitleaks không có pattern cho connection string DB
+# (postgresql://user:pass@host...). Với dự án này, connection string Neon
+# CHÍNH LÀ secret số một (xem docs/devops-brief.md §3). useDefault = true
+# giữ nguyên toàn bộ rule mặc định, hai rule dưới đây chỉ BỔ SUNG.
+[extend]
+useDefault = true
+
+# Bắt URI có nhúng credential thật cho các DB driver dự án có thể dùng.
+# Điều kiện "password trông thật" = độ dài tối thiểu + có chứa chữ số,
+# để KHÔNG báo nhầm với placeholder kiểu "user:password@host" hay
+# "postgres://localhost/db" (không có password) hay driver string trơn
+# như "postgresql+asyncpg://" (schema-physical-brief.md §2).
+[[rules]]
+id = "microsched-db-connection-string"
+description = "Database connection URI (postgres/mysql/mongodb/redis) kèm user:password trông thật"
+regex = '''(?i)(?:postgres(?:ql)?(?:\+[a-z0-9]+)?|mysql(?:\+[a-z0-9]+)?|mongodb(?:\+srv)?|rediss?):\/\/[A-Za-z0-9_.\-]{1,64}:[A-Za-z0-9_\-]{4,}[0-9][A-Za-z0-9_\-]{2,}@[A-Za-z0-9.\-]{1,255}'''
+keywords = ["postgres", "postgresql", "mysql", "mongodb", "redis"]
+tags = ["database", "connection-string"]
+
+# Biến môi trường dễ bị dán nhầm giá trị thật lúc debug/copy log.
+# Cùng điều kiện "trông thật": có chữ số + đủ dài, để không báo nhầm
+# với placeholder kiểu PGPASSWORD=your_password_here.
+[[rules]]
+id = "microsched-db-env-var-value"
+description = "DATABASE_URL / PGPASSWORD được gán giá trị trông thật (không phải placeholder)"
+regex = '''(?i)(DATABASE_URL|PGPASSWORD)\s*=\s*['"]?[A-Za-z0-9_\-:/.@]{4,}[0-9][A-Za-z0-9_\-:/.@]{2,}['"]?'''
+keywords = ["DATABASE_URL", "PGPASSWORD"]
+tags = ["database", "env-var"]

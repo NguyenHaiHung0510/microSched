@@ -19,4 +19,4 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 | # | Việc | Trạng thái |
 |---|---|---|
 | 001 | pre-commit + gitleaks (chặn secret trước khi commit) | ✅ DONE (2026-07-19) — đã kiểm chứng thật |
-| 002 | gitleaks: rule riêng cho connection string DB (lỗ phát hiện khi kiểm chứng 001) | ⏳ TODO |
+| 002 | gitleaks: rule riêng cho connection string DB (lỗ phát hiện khi kiểm chứng 001) | ✅ DONE (2026-07-19) — đã kiểm chứng thật |
