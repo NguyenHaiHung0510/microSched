@@ -1,6 +1,6 @@
 # 001 — pre-commit + gitleaks
 
-> **Trạng thái:** ⏳ TODO
+> **Trạng thái:** ✅ DONE (2026-07-19)
 > **Model tier đề xuất:** Sonnet (tầng giữa) · **Effort:** medium
 > *Lý do: việc có khuôn mẫu rõ, ít mơ hồ thiết kế — không cần Opus. Nhưng có bước cài đặt + verify thật (không chỉ viết file), nên đừng để effort thấp nhất.*
 
