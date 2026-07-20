@@ -1,7 +1,7 @@
 # 006 — Neon + role riêng + đúc DDL thật (SQLModel + Alembic 0001 + QA gates)
 
 > **Trạng thái:** 📋 TODO (chạy sau 005)
-> **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high
+> **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high · **Skill gợi ý:** (không) · **MCP cần:** (không — Postgres MCP đọc-ghi DB thật KHÔNG được dùng ở task này; ranh giới dữ liệu `devops-brief` §7)
 > *Lý do bậc: schema vật lý là CỬA MỘT CHIỀU sau khi có data — đây là task giá trị nhất và rủi ro nhất của cả chuỗi scaffold. Đọc kỹ, làm chậm, escalate sớm.*
 
 ## Bối cảnh (đọc trước — bắt buộc, nhiều file)

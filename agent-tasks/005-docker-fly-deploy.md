@@ -1,7 +1,7 @@
 # 005 — Docker multi-stage + deploy Fly.io đầu tiên
 
 > **Trạng thái:** 📋 TODO (chạy sau 004)
-> **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high
+> **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high · **Skill gợi ý:** (không) · **MCP cần:** (không)
 > *Lý do bậc: Docker/Fly là chỗ "sai âm thầm thành nợ" (bẫy chi phí, cấu hình sống lâu); debug deploy cần model mạnh.*
 
 ## Bối cảnh (đọc trước, đừng bỏ qua)
