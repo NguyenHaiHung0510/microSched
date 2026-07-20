@@ -40,6 +40,7 @@ Ngoài ra, **không** xử lý `StarletteDeprecationWarning` (httpx → httpx2) 
 - **Không** đổi backend ngoài phần mount static (bước 8) **và việc gộp `Settings` ở "Ghi chú T1"** — ngoài hai chỗ đó thì backend không đụng.
 - **Không** sửa `docs/*.md` ngoài mục được giao ở bước 10. Muốn làm khác brief → DỪNG, escalate T1.
 - **Không** commit secret / `.env`. **Không** rewrite history.
+- ⛔ **Không đổi tên 2 job CI đang có** — `Backend checks` và `Repository hooks` (trường `name:` trong `.github/workflows/ci.yml`). Hai tên này đã được đăng ký làm **required status check** của ruleset `protect-main` (đăng ký ngoài git, sửa bằng API). Đổi tên ⇒ check bắt buộc không bao giờ report ⇒ **mọi PR vào `main` kẹt vĩnh viễn ở trạng thái "Expected"**, phải sửa bằng tay ngoài repo. Job mới thì đặt tên tự do, nhưng **ghi rõ tên chính xác trong mô tả PR** để chủ đăng ký thêm vào ruleset.
 
 ## Acceptance (kiểm chứng được)
 
