@@ -79,5 +79,7 @@
 
 **Giá đối chiếu đã tra cùng ngày** (để lần re-check sau đo drift): GLM Coding Lite $12.6 (promo 30%) / $18 chuẩn — kèm quota multiplier 3× giờ cao điểm trùng giờ VN; MiniMax Plus $20; Kimi Code ~$7/tuần (~$28/mo); Qwen $50; Cursor Pro $20; Copilot Pro $10 (chỉ ~$15 credits/mo).
 
+**Lane PAYG "tháng nhẹ" (bổ sung cùng ngày — chi tiết `devops-brief.md` §7):** tháng thuần-học có thể skip sub Codex → OpenRouter (ví duy nhất; **nạp $10 một lần, không hết hạn → 1.000 req/ngày free-models vĩnh viễn**; phí topup 5.5%, nạp cục đừng nạp lắt nhắt) + model rẻ (DeepSeek V4) qua OpenCode hoặc Claude Code endpoint-compatible ≈ **$2–5/tháng**. **Credit đang om (kiểm expiry NGAY):** OpenAI $5 + daily-free data-sharing (~1M/ngày model lớn, 2.5M/ngày mini — reset hằng ngày, om là phí; chỉ việc public-context) · 2× Gemini free tier (Flash ~1.500 req/ngày/project; ⚠️ bật billing = mất free tier project đó → acc có 300K VND credit tách project riêng) · 300K VND Google credit. Earmark toàn bộ cho Bước-1 (eval, embedding, cascade-dev).
+
 ---
 *Cập nhật khi: đổi host/DB/LLM provider, hết credit, đổi công cụ dev-stack (§6), hoặc tới mốc soi-lại 3 tháng (~10/2026). Thêm ghi chú có ngày — không xoá trắng con số cũ.*
