@@ -183,6 +183,17 @@ Cập nhật ngược cùng ngày: `schema-physical-brief.md` (bảng §1 + mụ
 | K12 | Ngoài cụm tracking: bảng cũ khớp luật chung; điểm nhỏ duy nhất `calendar_source.name` nên unique — chốt lúc đúc DDL |
 | K13 | **Chuẩn đặt trước cho subscription:** phải mang `tracker_id` (entry gia hạn sinh ra có chỗ rơi vào sổ chi — không entry mồ côi); nối `entry.subscription_id` nullable, cascade bàn ở bước thiết kế subscription |
 
+### 📝 2026-07-20 — Rà-soát TIỀN-DDL (K18–K21, cùng mandate K; chủ veto được từng mục)
+
+*Lý do có lượt này: encryption-review (§6, đóng 2026-07-20 — SAU lượt K1–K17) lật vài cột sang mã hóa nhưng chưa quay lại vá các K-item viết trước đó. Quét chéo trước khi đúc DDL (`agent-tasks/006`) phát hiện 2 mâu thuẫn thật + 2 điểm vênh — hòa giải sẵn ở đây để executor không phải tự quyết.*
+
+| # | Chốt |
+|---|---|
+| K18 | **Kiểu vật lý của mọi cột 🔐 = `TEXT` mang prefix `enc:v1:`** (một kiểu duy nhất, kể cả cột tiền — NUMERIC không chứa được ciphertext). Hệ quả: precision C2 (`NUMERIC(14,0)`…) + CHECK ≥0 (K5) trên cột tiền mã hóa **chuyển thành validate app-layer trước khi mã hóa** (mở rộng K8 — "PG không nhìn được thì app lo"); `quantity` (trần) giữ nguyên CHECK trong DB |
+| K19 | **K2 sửa cho cột tên đã mã hóa:** AES-GCM nonce ngẫu nhiên → ciphertext không deterministic → unique index `lower(name)` trên `tracker.name`/`subscription.name` **chết im lặng** (không bao giờ bắt trùng). Bỏ index DB ở 2 cột đó → **chống-trùng-tên chuyển lên app-layer** lúc tạo/đổi tên (decrypt-scan danh sách — vài chục dòng, single-writer, đủ). Cửa nâng cấp 2 chiều nếu cần DB-enforced: thêm cột `name_hmac` (HMAC keyed, deterministic) + partial unique. `tracker_group.name` + `calendar_source.name` (trần) giữ unique DB như K2/K12 |
+| K20 | **`subscription.amount`/`list_amount` mã hóa cùng bộ với tiền entry** — verdict §6 chỉ nêu cột tiền của `entry`; để tiền sub trần thì nửa kín nửa hở vô nghĩa (F6 burn-rate vốn đã app-computed). Nhất quán với quyết định "lật sang mã hóa tiền" của chủ. *(Mục dễ veto nhất — nếu chủ muốn tiền sub trần để đơn giản, chỉ đổi 1 dòng, không cửa một chiều trước cutover)* |
+| K21 | **Bảng `session` theo đúng B2** (`created_at`+`updated_at` trigger như mọi bảng; `last_seen_at`/`expires_at`/`private_until` là cột domain thêm vào, không phải ngoại lệ B2). **Bảng message tầng-1** (D3) cột tối thiểu: `id` UUIDv7 · `role` · `content` 🔐 · `is_private` (luật R4) · `trace_id` · timestamps B2 — chi tiết còn lại executor đề xuất trong PR 006 cho T1 duyệt, không cần escalate riêng |
+
 ## 9. Ràng buộc mang sang (không đổi)
 
 - **Xây phần ghi-log TRƯỚC, AI phân tích thói quen/chi tiêu SAU** — đừng để UI tracker nuốt thời gian 2 tính năng AI (`forward-spec.md` §E).

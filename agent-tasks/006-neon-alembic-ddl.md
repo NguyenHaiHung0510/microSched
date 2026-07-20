@@ -10,7 +10,7 @@
 
 - `docs/schema-physical-brief.md` — house-rules: A1 SQLModel · A2 Alembic + hàng rào QA · A3 role riêng `microsched_app` + schema namespace `microsched` · B1 PK UUIDv7 · B2 `timestamptz` + trigger `updated_at` đồng đều · C1 enum TEXT+CHECK · C3 `position` int · **C4 cột `vector` (đọc kỹ — dimension thuộc phiên AI Bước 1, KHÔNG tự quyết)** · D1 cascade · D2 index tối thiểu · D3 log AI 3 tầng + soft-delete · §7.1 kết luận encryption (cột nào là ciphertext).
 - `docs/schema-v1-brief.md` — danh sách entity + quan hệ.
-- `docs/tracking-brief.md` — `tracker`/`entry`/`tracker_group`/`subscription` + §10 (K1–K17, gồm composite-FK tracker↔group) + §11/§12.
+- `docs/tracking-brief.md` — `tracker`/`entry`/`tracker_group`/`subscription` + §10 (**K1–K21**, gồm composite-FK tracker↔group) + §11/§12. **Đặc biệt K18–K21 (rà-soát tiền-DDL 2026-07-20):** các mâu thuẫn encryption↔schema đã được hòa giải sẵn ở đó (kiểu cột 🔐 = TEXT `enc:v1:`, CHECK tiền → app-layer, bỏ unique DB trên tên mã hóa, tiền subscription cũng 🔐, session theo B2, cột tối thiểu bảng message) — làm theo, **đừng tự hòa giải lại**.
 - `docs/auth-brief.md` §2/§6 — bảng `session` (cột dự kiến), cờ `is_private` trên message tầng-1, key `app_setting` cho TTL private-unlock.
 - `docs/db-and-data-model-brief.md` — Neon; `docs/migration-mapping-brief.md` — chỉ để biết data sẽ đổ vào sau (task này KHÔNG cutover).
 
