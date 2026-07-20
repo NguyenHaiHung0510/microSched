@@ -14,6 +14,12 @@ Stack **đã khép 2026-07-20, không relitigate**: React 19 + TypeScript + **Vi
 
 `frontend/` build được; dev-mode hot-reload gọi được API backend; production-mode FastAPI serve SPA tại `/`.
 
+## Ghi chú T1 (bổ sung 2026-07-20, sau review diff 003 — PR #5)
+
+**Nợ kỹ thuật phải trả trong task này** (bước 8 vốn đã đụng backend, gộp vào cho rẻ): `backend/app/web/routers/health.py` đang gọi `Settings()` **bên trong handler**, tức mỗi request khởi tạo lại object và đọc lại `.env` từ đĩa. Ở 003 thì vô hại, nhưng đây là **pattern sẽ bị copy**: đến 007 thì `Settings` chứa OAuth client secret + cấu hình session. Sửa thành một instance dùng chung (`@lru_cache` trên hàm `get_settings()`, hoặc FastAPI dependency) và cập nhật `health.py` + `main.py` dùng nó. Test hiện có phải vẫn xanh.
+
+Ngoài ra, **không** xử lý `StarletteDeprecationWarning` (httpx → httpx2) trong task này — đã ghi sổ riêng, đụng vào lúc này là mở rộng phạm vi.
+
 ## Phải làm
 
 1. **Init `frontend/`**: Vite 8 + React 19 + TypeScript (template react-ts). Pin version trong `package.json`, **commit `package-lock.json`** (frontend-brief §6.4 — npm supply-chain: mọi install sau này qua `npm ci`).
@@ -31,7 +37,7 @@ Stack **đã khép 2026-07-20, không relitigate**: React 19 + TypeScript + **Vi
 
 - **Không** outbox/sync/IndexedDB logic, **không** web-push, **không** router, **không** chart lib.
 - **Không** add nhiều component shadcn "cho sẵn" — chỉ cái dùng thật ở trang chào.
-- **Không** đổi backend ngoài phần mount static (bước 8).
+- **Không** đổi backend ngoài phần mount static (bước 8) **và việc gộp `Settings` ở "Ghi chú T1"** — ngoài hai chỗ đó thì backend không đụng.
 - **Không** sửa `docs/*.md` ngoài mục được giao ở bước 10. Muốn làm khác brief → DỪNG, escalate T1.
 - **Không** commit secret / `.env`. **Không** rewrite history.
 
@@ -42,6 +48,8 @@ Stack **đã khép 2026-07-20, không relitigate**: React 19 + TypeScript + **Vi
 - [ ] `npm ci && npm run build` sạch từ lockfile (xóa `node_modules` thử lại vẫn build được).
 - [ ] `components.json` + `package-lock.json` đã commit; CI 3 job đều xanh; `pre-commit run --all-files` sạch.
 - [ ] PR có dòng xác nhận "đã đọc diff shadcn lúc add".
+- [ ] `Settings` đã thành instance dùng chung (không còn khởi tạo trong handler); `uv run pytest` vẫn xanh.
+- [ ] Mô tả PR viết qua `--body-file` UTF-8 (AGENTS.md) — tiếng Việt hiển thị đúng dấu trên GitHub.
 
 ## Bàn giao
 

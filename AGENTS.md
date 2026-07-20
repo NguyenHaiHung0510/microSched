@@ -10,3 +10,4 @@ Thêm cho agent thi công (vai T2 theo `docs/devops-brief.md` §7):
 - Không bao giờ hỏi hay echo secret thật; code bằng `.env.example` (giá trị thật do chính chủ đặt tay). pre-commit + gitleaks đang hoạt động — đừng tìm cách vòng qua.
 - Bí quá ~2 vòng thử → dừng + báo cáo kèm log, đừng đoán tiếp.
 - Commit message tiếng Việt, giải thích *tại sao*, kèm `Co-Authored-By:` của agent thực thi (xem `git log`).
+- **Text tiếng Việt phải đi qua file UTF-8, không qua tham số inline.** Mô tả PR: ghi ra file `.md` rồi `gh pr create --body-file <file>` — **không bao giờ** `--body "..."`. Commit message dài: `git commit -F <file>`. *Lý do (sự cố thật, PR #5 ngày 2026-07-20): truyền inline qua PowerShell làm mất toàn bộ dấu tiếng Việt (→ `?`) và nuốt ký tự `"` trong output JSON dán kèm. Mất dấu là **mất hẳn**, không decode ngược được — phải viết lại tay.*
