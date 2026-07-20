@@ -76,6 +76,38 @@
 - **Sơ bộ (chưa phải kết luận):** cần cân nhắc = tiền thực trả, entry tracker sức khỏe, note gắn private; gần chắc không = `calendar_event`, `app_setting`, mốc thời gian.
 - **Yêu cầu nghiên cứu cho phiên đó:** tra live chính sách (Neon encryption-at-rest, data-retention của LLM provider khi AI đọc dữ liệu nhạy cảm — nối bookmark "privacy bar Bước 1") — theo checklist infra-research (tra tại chỗ, date-stamp).
 
+### 📝 2026-07-20 — ĐÓNG "ENCRYPTION REVIEW" ✅ CHỐT
+
+**Nghiên cứu live (tra tại chỗ, date-stamp 2026-07-20):**
+- **Neon encryption-at-rest:** AES-256 (XTS-AES-256 trên NVMe) + TLS 1.2/1.3 in transit, SOC 2 Type II. **Khóa do Neon/AWS KMS giữ, không có BYOK** ([Neon Security overview](https://neon.com/docs/security/security-overview), [neon.com/security](https://neon.com/security)). → chỉ chống mất cắp phần cứng ở data center; **không** chống connection-string lộ, account bị chiếm, hay khớp threat-model "social engineering" của chủ — không được tính là "đã mã hóa rồi".
+- **LLM provider data-retention:** Claude API mặc định **không lưu prompt/output**, không train trên data API ([API and data retention — Claude Platform Docs](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention)). Ngoại lệ cần nhớ khi chọn model Bước 1: model lớp "Covered" (vd Fable 5/Mythos 5) **bắt buộc lưu 30 ngày** — loại các model này khỏi ứng viên nếu muốn giữ mặc định no-retention; nội dung bị hệ thống an toàn gắn cờ có thể lưu tới 2 năm (áp dụng mọi model). Embedding provider (bên thứ ba, chưa chọn) → điều kiện chọn thầu Bước 1: phải đạt bar "no retention/no training", không tra trước danh sách cụ thể bây giờ.
+
+**Quyết định phạm vi mã hóa (posture B-hẹp — mã hóa đúng nhóm "lộ = nguyên liệu pretext", KHÔNG mã hóa rộng vì đánh chết AI-first):**
+
+| Cột / nhóm | Phán quyết | Lý do |
+|---|---|---|
+| `tracker.name` (toàn bộ, không chỉ tracker nhạy cảm) | 🔐 mã hóa | Điểm mù đã ghi ở trên — `"Hút thuốc"` rò gần hết dù entry mã hóa. Mã hóa *tất cả* (không rẽ nhánh theo độ nhạy) = một kiểu cột duy nhất, sort/hiển thị ở app-side. |
+| `subscription.name` | 🔐 mã hóa | Danh sách dịch vụ đang trả tiền = nguyên liệu pretext kinh điển ("gọi từ X về thanh toán…"). |
+| `entry.note` (text tự do trên entry) | 🔐 mã hóa | Ngữ cảnh sức khỏe/hành vi tự do gõ. Không cần FTS/embed ở v1. |
+| `note.body_md`, `task.*` khi `is_private=true` | 🔐 mã hóa **theo cờ** | Private = che hiển thị (§5) **+ che at-rest** — nhất quán một nghĩa "private". Nội dung private vốn đã không vào FTS/embedding nên không mất gì thêm. |
+| `note`/`task` không private | 📖 trần | Lõi retrieval của AI Bước 1 — phải FTS/embed được. Escape hatch = bật private. |
+| **Cột tiền** `amount`/`list_amount`/`orig_amount` | 🔐 **mã hóa** *(chủ chọn lật từ đề xuất "trần" ban đầu — an toàn hơn dashboard-aggregate)* | Chấp nhận đánh đổi: mất `SUM`/`ORDER BY`/CHECK trực tiếp trong SQL, mọi tổng dashboard (§8.2) phải kéo entry về app rồi cộng bằng Python (khối lượng vài nghìn dòng — không đau, đã nói ở §6 gốc). |
+| `tracker_group.name` | 📖 trần | Nhãn nhóm chung chung ("Giải trí/Ăn uống") — giá trị pretext ~0; giữ trần cho seed-migration + sort đơn giản. |
+| `tracker.reminder_text` | 📖 trần **có chủ đích** | Được thiết kế là bề mặt công khai (§12 — hiện trên lock-screen qua web-push); mức kín do chủ tự gõ, mã hóa in-DB không đổi bản chất đó. |
+| `calendar_event.*`, `app_setting`, timestamps/enums/ids | 📖 trần | Không đổi so với sơ bộ §6 gốc; calendar vốn nằm ở Google. Luật kèm: `app_setting` **cấm** chứa secret thật (secret → Fly secrets/`.env`, không qua DB). |
+
+**Cơ chế:** mã hóa **app-level** (thư viện `cryptography`, AES-GCM), **không dùng `pgcrypto`** — pgcrypto bắt khóa đi trong câu SQL tới server Neon, tự phá mục đích giữ khóa ở app. Ciphertext có version-prefix (`enc:v1:…`) để xoay khóa sau không phải touch mọi hàng cùng lúc. Master key: Fly secrets (runtime) + `.env` (local dev).
+
+**Luật pgvector/FTS (chốt cứng — đây là chỗ mã hóa "đánh nhau" với AI-first §6 gốc đã nêu):** ***đã mã hóa ⇒ không embed, không tsvector, hết.*** Không cân đo "rò nghĩa bao nhiêu % chấp nhận được" — né hẳn. AI vẫn đọc đủ theo ràng buộc cứng của chủ (app giải mã trước khi nhồi context) — chỉ mất khả năng *tìm bằng ngữ nghĩa/từ khóa trực tiếp trong Postgres* trên các cột mã hóa; tìm theo entity liên kết (vd "entry của tracker X") vẫn qua structured query bình thường, không qua vector.
+
+**Phát hiện phụ (rà toàn-DB phát lộ, chưa ai ghi trước đây):**
+1. **Log AI 3 tầng (schema-physical-brief.md §5 D3) tự phá mã hóa nếu không có luật riêng** — tầng 3 (raw replay blob = prompt đã ráp, **nội dung đã giải mã**) đẩy ra Google Drive = dựng lại đúng đường rò vừa bịt, ở chỗ khác. Luật: tầng 1 (message text) mã hóa cùng cơ chế cột; tầng 2 (metadata) trần; **tầng 3 bắt buộc mã hóa file-level trước khi rời máy**, dùng chung công cụ với backup dump (xem `db-and-data-model-brief.md` §6, cập nhật cùng ngày).
+2. **`audit_log.payload`** (JSONB, Bước 2 write-tool) — khi diff đụng field đã mã hóa: ghi marker + entity id, **không bao giờ ghi plaintext của field mã hóa vào payload**.
+
+**Cửa một chiều thật sự chỉ có MỘT:** bật mã hóa cột (đổ dữ liệu vào rồi đổi ý = migration + backfill giải mã). Chọn *cơ chế* (age vs khác cho file-level), *vị trí lưu khóa*, hay thêm/bớt cột **không** phải cửa một chiều — sửa được bất cứ lúc nào.
+
+Cập nhật ngược cùng ngày: `schema-physical-brief.md` (bảng §1 + mục mã hóa mới), `db-and-data-model-brief.md` §6 (mã hóa dump + vị trí khóa), `CLAUDE.md`.
+
 ## 7. Giải các mục parked của Nhóm 2
 
 ### C2 — kiểu số `entry.value` ✅ CHỐT (2026-07-19)
