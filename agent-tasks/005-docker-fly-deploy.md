@@ -12,8 +12,8 @@ Quyết định đã khép: **Fly.io, 1× Machine `shared-cpu-1x` always-on, reg
 
 **Việc của CHỦ trước khi chạy task** (agent không tự làm được và không được hỏi credential):
 - [ ] Tạo tài khoản Fly + `fly auth login` sẵn trên máy (agent gọi `flyctl` qua session đã login — không bao giờ hỏi/token ra chat).
-- [ ] Đặt **spending limit / budget alert** trong Fly dashboard (cost-brief §2 — pay-as-you-go không có free allowance).
-- [ ] Chọn tên app (vd `microsched`) — báo cho agent trong prompt lúc giao task.
+- [ ] ⚠️ **Chặn chi phí — tra lại 2026-07-20: Fly KHÔNG có spending limit và KHÔNG có billing alert.** Yêu cầu cũ ở dòng này là bất khả thi, đừng đi tìm nữa. Cách chặn thật duy nhất = **prepaid credits** (nạp ≥$25, hết credit thì account bị treo → trần cứng, đổi lại app sập khi hết). Không nạp thì phải **tự xem mục "current month to date" trong dashboard** định kỳ. → Chủ chọn một trong hai và ghi lại; đây là lý do mục 4 ("ép `fly scale count 1`") là hàng rào chi phí *duy nhất* tự động của task này, phải verify thật chứ không tin mặc định.
+- [ ] Chọn tên app — **ràng buộc của Fly: chỉ chữ thường, số và dấu `-`; không hoa, không `_`**. Nên `microsched`; nếu trùng thì `microsched-hung`. (`microSched` và `microsched_hung` đều **không hợp lệ**.) Báo tên đã chọn cho agent trong prompt lúc giao task.
 
 ## Mục tiêu
 
