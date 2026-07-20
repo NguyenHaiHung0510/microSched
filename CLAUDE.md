@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Current state: design-complete, pre-code.** There is **no application code, package manifest, test suite, or git repo yet** — only decision records under `docs/` and one utility script. Do not fabricate build/lint/test commands; they don't exist until phase B scaffolds the app. Language, framework, architecture, and hosting are all decided (see `architecture-brief.md`); the **physical schema** (DDL, PK=UUIDv7, ORM=SQLModel, migrations, indexes, enum encoding, 3-tier AI logging) is decided too (see `schema-physical-brief.md`, 2026-07-19). The tracking-design session **closed 2026-07-19** (`tracking-brief.md`, all items final): A/B/C data split, VND-only money model, `tracker_group`, `subscription` entity, capture flow (one-tap + undo), dashboard behavior spec, medication reminder (discreet noti), and a full normalization review (§10, K1–K17) — **the schema is now fully locked across the project**. Remaining open decisions are the concrete frontend UI stack, auth implementation (now also owns the private-mode unlock mechanism), the Bước-1 AI choices, and a dedicated **encryption-review session** (whole-DB, scope in `tracking-brief.md` §6). A git repo now exists (docs committed); still no application code, package manifest, or test suite.
 
+**Repo & workflow (see `devops-brief.md`):** GitHub repo is **public by deliberate choice**; work happens on `develop` → PR into `main` (ruleset `protect-main` blocks force-push/deletion and requires a PR; approvals are set to 0 on purpose — solo project). Convention: **one commit per decision session**, Vietnamese message explaining *why*. Delegated work goes in `agent-tasks/NNN-<slug>.md` as self-contained specs.
+
 ## Read the decision records before proposing anything
 
 `docs/` holds **self-contained decision briefs** (written to be read with zero conversation context). They encode locked decisions *and their reasons* — read them rather than re-deriving:
@@ -20,6 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `docs/upgrade-notes-inbox.md` — verbatim raw capture of the owner's upgrade notes (provenance for `forward-spec.md`).
 - `docs/architecture-brief.md` — language/framework (Python + FastAPI), modular-monolith architecture, hosting (Fly.io), auth approach (Google OAuth + allowlist, leaning), AI tool-layer/MCP sequencing, repo layout. **Read this before proposing any stack/infra change.**
 - `docs/cost-brief.md` — running operating-cost tally across all chosen services; carries its own re-check date (~3 months), separate from architecture-brief so pricing drift doesn't invalidate decisions.
+- `docs/devops-brief.md` — repo visibility + **the owner's threat model** (social engineering, not casual readers), git/PR workflow, secret-scanning layers, auto-PR-review options (deferred until there's code), agent-task convention. Read before touching repo settings or CI.
 - `docs/migration-mapping-brief.md` — old data → new schema; where the real data lives.
 - `docs/v1-reference.md` — old-app domain logic worth porting (code-level; not strategy).
 - `docs/learnings-applied.md` — running log of concepts learned and applied.
@@ -47,3 +50,4 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Docs are **decision records**: self-contained, Vietnamese prose with English technical terms kept inline, status-flagged (`✅ CHỐT` / `⚠️ OPEN` / `DEFER`). When a decision changes, add a dated note — don't silently rewrite prior conclusions.
 - **Role split:** the owner decides architecture/product and reviews; Claude executes. Present options at the **strategy/product level**, not as low-level backend claims — the owner does not retain backend detail of the old app.
 - Where a decision in `docs/` conflicts with the parent strategy docs in `../../hoc_he_2026`, the newer decision here wins (those docs predate this project's design phase).
+- **pre-commit + gitleaks are active** (`.pre-commit-config.yaml`, gốc repo): mọi `git commit` chạy qua hook vệ sinh cơ bản + gitleaks (chặn secret lọt vào commit trước cả khi push). Hook **không tự theo `git clone`** — sau khi clone máy mới, chạy `pip install pre-commit` rồi `pre-commit install` trong repo để kích hoạt lại.
