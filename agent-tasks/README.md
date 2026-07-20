@@ -27,7 +27,7 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 | 002 | gitleaks: rule riêng cho connection string DB (lỗ phát hiện khi kiểm chứng 001) | ✅ DONE (2026-07-19) — đã kiểm chứng thật |
 | 003 | Scaffold backend — FastAPI skeleton + tooling + CI nền | ✅ DONE (2026-07-20) |
 | 004 | Scaffold frontend — Vite/React/shadcn, serve cùng origin | ✅ DONE (2026-07-20) |
-| 005 | Docker multi-stage + deploy Fly.io đầu tiên | 📋 TODO (sau 004) |
+| 005 | Docker multi-stage + deploy Fly.io đầu tiên | ✅ DONE (2026-07-20) |
 | 006 | Neon + role riêng + đúc DDL thật (Alembic 0001 + QA gates) | 📋 TODO (sau 005) — **PR đáng review kỹ nhất chuỗi** |
 | 007 | Auth: Google OIDC + allowlist + session server-side | 📋 TODO (sau 006) — security-critical, executor T1 hoặc T2-Sol |
 
