@@ -14,6 +14,7 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 - **Acceptance kiểm chứng được** (chạy lệnh nào, thấy output gì), không phải "làm cho tốt".
 - **Nói rõ cái KHÔNG được làm** — phần này quan trọng ngang phần phải làm.
 - Mỗi spec ghi sẵn **model tier + effort đề xuất** để chính chủ chọn đúng mức, không đốt token thừa.
+- **Liệt kê mọi "công tắc môi trường" chủ phải bật tay** vào mục *Việc của CHỦ trước khi chạy task* (bổ sung 2026-07-20). Máy chủ **cố ý không để dịch vụ nặng tự khởi động** (Docker Desktop là ví dụ — tốn RAM, chậm boot, nên tắt mặc định). Executor gặp daemon chưa chạy sẽ tưởng môi trường hỏng và đốt một vòng escalate cho thứ chỉ cần bấm một nút. → Task nào cần Docker/DB local/VPN/dịch vụ nền nào khác thì **ghi rõ thành checkbox**, kèm đúng thông báo lỗi sẽ gặp nếu quên bật, để nhận ra ngay thay vì đi debug.
 - **Ghi kèm Skill + MCP ở header** (bổ sung 2026-07-20), dạng:
   `> Executor: … · Bậc: … · Effort: … · **Skill gợi ý:** … · **MCP cần:** …`
   **Luật cứng: skill/MCP là trợ lực, KHÔNG phải điều kiện.** Mọi thứ liệt kê ở đó phải thay thế được bằng tiêu chí viết rõ trong thân spec — spec vẫn phải chạy trọn vẹn bởi executor *không có* skill đó. Lý do: specs ở đây tự-chứa và **executor-agnostic** by design (xem `AGENTS.md`); buộc spec vào một skill là buộc nó vào một harness, mất đúng tính chất khiến 003/004 giao cho ai cũng chạy được. Skill làm việc *nhanh hơn*, không làm việc *khác đi*.
