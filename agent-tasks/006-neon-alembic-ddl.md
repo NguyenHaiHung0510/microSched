@@ -20,8 +20,19 @@
 
 **Việc của CHỦ trước khi chạy task:**
 - [x] ~~Tạo Neon project~~ — **XONG 2026-07-20** (region Singapore đã xác nhận).
-- [ ] Đặt connection string (owner) vào `.env` local để bootstrap; **không bao giờ** dán vào chat/PR/file commit.
-- [ ] Sau khi task tạo role app: đặt `DATABASE_URL` (role `microsched_app`) vào `.env` + `fly secrets set DATABASE_URL=...` (chủ tự chạy lệnh secrets).
+- [x] ~~Đặt connection string owner vào `.env` local~~ — **XONG 2026-07-20** (chuỗi `neondb_owner`).
+- [ ] Sau khi task tạo role app: đặt `DATABASE_URL` (role `microsched_app`) vào `.env` + `fly secrets set DATABASE_URL=...` — **chủ tự chạy, sau khi merge**.
+
+**⚠️ Hai chuỗi kết nối, hai vai — KHÔNG được trộn (làm rõ 2026-07-20):**
+
+| Biến env | Vai | Ai dùng | Lên Fly secrets? |
+|---|---|---|---|
+| `NEON_OWNER_URL` | `neondb_owner` — quyền cao | **chỉ** script bootstrap ở mục 1, chạy **từ máy chủ** | ❌ **KHÔNG BAO GIỜ** |
+| `DATABASE_URL` | `microsched_app` — least-privilege (A3) | app runtime + Alembic | ✅ (chủ tự set sau) |
+
+*Lý do (chốt A3): app cầm quyền owner thì nếu bị khai thác, kẻ tấn công `DROP SCHEMA` / tạo-xoá role tuỳ ý — toàn bộ ý nghĩa của role least-privilege mất sạch. Owner chỉ tồn tại trong bootstrap một lần, từ máy chủ, không bao giờ rời máy đó.*
+
+→ **Việc của agent:** đổi script bootstrap đọc `NEON_OWNER_URL` (không phải `DATABASE_URL`); cập nhật `backend/.env.example` có **cả hai** biến kèm placeholder an toàn + comment một dòng nói rõ biến nào lên Fly, biến nào không. Nếu code chạy được mà nhầm hai biến này thì đó vẫn là **lỗi nghiêm trọng**, không phải chi tiết nhỏ.
 
 ## Giao thức quyết định — HITL (bổ sung 2026-07-20, áp riêng cho task này)
 
