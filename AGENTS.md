@@ -1,0 +1,12 @@
+# AGENTS.md — hướng dẫn cho executor ngoài hệ Claude (Codex, OpenCode, …)
+
+Đọc **`CLAUDE.md`** trước tiên — đó là luật của repo này (trạng thái dự án, quyết định đã khóa, hard boundaries, working conventions). Mọi điều trong đó áp dụng cho bạn y như cho Claude Code.
+
+Thêm cho agent thi công (vai T2 theo `docs/devops-brief.md` §7):
+
+- Việc được giao nằm ở `agent-tasks/NNN-<slug>.md` — spec tự-chứa. Làm **đúng spec, không hơn**; mục "KHÔNG được làm" quan trọng ngang mục "Phải làm".
+- Code trên branch **`feat/NNN-<slug>`** → PR nhỏ vào `develop`. Không commit thẳng `develop` (docs mới được phép), không đụng `main`.
+- `docs/*.md` là decision record **đã chốt** — chỉ sửa đúng mục spec giao. Muốn làm khác điều đã ✅ CHỐT, hoặc thấy 2 brief mâu thuẫn → **dừng, ghi nhận, để chính chủ/T1 quyết** — đừng tự phát minh kiến trúc.
+- Không bao giờ hỏi hay echo secret thật; code bằng `.env.example` (giá trị thật do chính chủ đặt tay). pre-commit + gitleaks đang hoạt động — đừng tìm cách vòng qua.
+- Bí quá ~2 vòng thử → dừng + báo cáo kèm log, đừng đoán tiếp.
+- Commit message tiếng Việt, giải thích *tại sao*, kèm `Co-Authored-By:` của agent thực thi (xem `git log`).

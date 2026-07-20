@@ -62,6 +62,7 @@
 - **📝 2026-07-19 (đóng phiên) — threat model nói rõ hơn:** chính chủ xác nhận thứ thật sự ngại là **social engineering** (thông tin cá nhân bị dùng dựng pretext), KHÔNG phải người đọc được repo/code. Đây là lý do nền của cả private mode (§5) lẫn noti kín đáo (§12). Chi tiết + quyết định giữ repo public: `devops-brief.md` §1.
 - **✅ CHỐT-ủy-quyền — BỎ "đọc thấp ghi cao"** (chủ: "tùy bạn thôi, tư vấn mình"): mô hình write-up (Bell-LaPadula) sinh cho môi trường nhiều người có địch bên trong; threat model thật ở đây là **người nhìn qua vai**. Cho ghi-lên-private từ public = ghi mù không đọc lại/sửa được → tạo bug, không tạo bảo mật. **Private = lớp che hiển thị**; muốn ghi vào private thì bật private (vài giây nhập auth). Ở private ghi được cả public (không cần chuyển).
 - **DEFER → phiên auth:** cơ chế mở private — 2 phương án của chủ ghi nguyên trạng chờ phiên đó: (1) OAuth, account được cấu hình cứng bật private hay không; (2) mật khẩu cứng (có mã hóa/hash), mở cho phạm vi hẹp (một session hoặc hẹp hơn). Phiên auth vốn đã OPEN (`architecture-brief.md` §7) — giờ gánh thêm mục này.
+- 📝 **2026-07-20 — ✅ GIẢI (phiên auth, `auth-brief.md`):** chọn phương án **(2)** — passphrase riêng (Argon2id), mở theo session TTL 15′; **loại (1)** vì allowlist chỉ có 1 account → cờ cứng = private luôn mở = không còn là cổng. Kèm quyết định mới **AI × private (R1–R7)**: AI đi theo đúng cổng private của session ("khi bật private là toàn quyền" — lời chủ, nhất quán ràng buộc §6 "AI PHẢI đọc được"); message sinh lúc unlocked mang `is_private` (K11 mở rộng xuống message); **giữ nguyên** luật §6 không-embed/FTS trên cột mã hóa — thay bằng runtime-search khi unlocked.
 - **Không cửa một chiều:** cờ `is_private` = cột nullable, thêm lúc nào cũng được. Cửa một chiều thật là **mã hóa** (§6). Tiền lệ sẵn: `calendar_event.is_hidden`.
 
 ## 6. Mã hóa — mở phiên riêng "ENCRYPTION REVIEW" ✅ CHỐT
@@ -75,6 +76,38 @@
 - **Điểm mù ghi sớm:** ***tên tracker*** — `"Hút thuốc"` rò gần hết thông tin dù mọi entry mã hóa. Mã hóa entry mà để tên tracker trần = bảo mật hình thức.
 - **Sơ bộ (chưa phải kết luận):** cần cân nhắc = tiền thực trả, entry tracker sức khỏe, note gắn private; gần chắc không = `calendar_event`, `app_setting`, mốc thời gian.
 - **Yêu cầu nghiên cứu cho phiên đó:** tra live chính sách (Neon encryption-at-rest, data-retention của LLM provider khi AI đọc dữ liệu nhạy cảm — nối bookmark "privacy bar Bước 1") — theo checklist infra-research (tra tại chỗ, date-stamp).
+
+### 📝 2026-07-20 — ĐÓNG "ENCRYPTION REVIEW" ✅ CHỐT
+
+**Nghiên cứu live (tra tại chỗ, date-stamp 2026-07-20):**
+- **Neon encryption-at-rest:** AES-256 (XTS-AES-256 trên NVMe) + TLS 1.2/1.3 in transit, SOC 2 Type II. **Khóa do Neon/AWS KMS giữ, không có BYOK** ([Neon Security overview](https://neon.com/docs/security/security-overview), [neon.com/security](https://neon.com/security)). → chỉ chống mất cắp phần cứng ở data center; **không** chống connection-string lộ, account bị chiếm, hay khớp threat-model "social engineering" của chủ — không được tính là "đã mã hóa rồi".
+- **LLM provider data-retention:** Claude API mặc định **không lưu prompt/output**, không train trên data API ([API and data retention — Claude Platform Docs](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention)). Ngoại lệ cần nhớ khi chọn model Bước 1: model lớp "Covered" (vd Fable 5/Mythos 5) **bắt buộc lưu 30 ngày** — loại các model này khỏi ứng viên nếu muốn giữ mặc định no-retention; nội dung bị hệ thống an toàn gắn cờ có thể lưu tới 2 năm (áp dụng mọi model). Embedding provider (bên thứ ba, chưa chọn) → điều kiện chọn thầu Bước 1: phải đạt bar "no retention/no training", không tra trước danh sách cụ thể bây giờ.
+
+**Quyết định phạm vi mã hóa (posture B-hẹp — mã hóa đúng nhóm "lộ = nguyên liệu pretext", KHÔNG mã hóa rộng vì đánh chết AI-first):**
+
+| Cột / nhóm | Phán quyết | Lý do |
+|---|---|---|
+| `tracker.name` (toàn bộ, không chỉ tracker nhạy cảm) | 🔐 mã hóa | Điểm mù đã ghi ở trên — `"Hút thuốc"` rò gần hết dù entry mã hóa. Mã hóa *tất cả* (không rẽ nhánh theo độ nhạy) = một kiểu cột duy nhất, sort/hiển thị ở app-side. |
+| `subscription.name` | 🔐 mã hóa | Danh sách dịch vụ đang trả tiền = nguyên liệu pretext kinh điển ("gọi từ X về thanh toán…"). |
+| `entry.note` (text tự do trên entry) | 🔐 mã hóa | Ngữ cảnh sức khỏe/hành vi tự do gõ. Không cần FTS/embed ở v1. |
+| `note.body_md`, `task.*` khi `is_private=true` | 🔐 mã hóa **theo cờ** | Private = che hiển thị (§5) **+ che at-rest** — nhất quán một nghĩa "private". Nội dung private vốn đã không vào FTS/embedding nên không mất gì thêm. |
+| `note`/`task` không private | 📖 trần | Lõi retrieval của AI Bước 1 — phải FTS/embed được. Escape hatch = bật private. |
+| **Cột tiền** `amount`/`list_amount`/`orig_amount` | 🔐 **mã hóa** *(chủ chọn lật từ đề xuất "trần" ban đầu — an toàn hơn dashboard-aggregate)* | Chấp nhận đánh đổi: mất `SUM`/`ORDER BY`/CHECK trực tiếp trong SQL, mọi tổng dashboard (§8.2) phải kéo entry về app rồi cộng bằng Python (khối lượng vài nghìn dòng — không đau, đã nói ở §6 gốc). |
+| `tracker_group.name` | 📖 trần | Nhãn nhóm chung chung ("Giải trí/Ăn uống") — giá trị pretext ~0; giữ trần cho seed-migration + sort đơn giản. |
+| `tracker.reminder_text` | 📖 trần **có chủ đích** | Được thiết kế là bề mặt công khai (§12 — hiện trên lock-screen qua web-push); mức kín do chủ tự gõ, mã hóa in-DB không đổi bản chất đó. |
+| `calendar_event.*`, `app_setting`, timestamps/enums/ids | 📖 trần | Không đổi so với sơ bộ §6 gốc; calendar vốn nằm ở Google. Luật kèm: `app_setting` **cấm** chứa secret thật (secret → Fly secrets/`.env`, không qua DB). |
+
+**Cơ chế:** mã hóa **app-level** (thư viện `cryptography`, AES-GCM), **không dùng `pgcrypto`** — pgcrypto bắt khóa đi trong câu SQL tới server Neon, tự phá mục đích giữ khóa ở app. Ciphertext có version-prefix (`enc:v1:…`) để xoay khóa sau không phải touch mọi hàng cùng lúc. Master key: Fly secrets (runtime) + `.env` (local dev).
+
+**Luật pgvector/FTS (chốt cứng — đây là chỗ mã hóa "đánh nhau" với AI-first §6 gốc đã nêu):** ***đã mã hóa ⇒ không embed, không tsvector, hết.*** Không cân đo "rò nghĩa bao nhiêu % chấp nhận được" — né hẳn. AI vẫn đọc đủ theo ràng buộc cứng của chủ (app giải mã trước khi nhồi context) — chỉ mất khả năng *tìm bằng ngữ nghĩa/từ khóa trực tiếp trong Postgres* trên các cột mã hóa; tìm theo entity liên kết (vd "entry của tracker X") vẫn qua structured query bình thường, không qua vector.
+
+**Phát hiện phụ (rà toàn-DB phát lộ, chưa ai ghi trước đây):**
+1. **Log AI 3 tầng (schema-physical-brief.md §5 D3) tự phá mã hóa nếu không có luật riêng** — tầng 3 (raw replay blob = prompt đã ráp, **nội dung đã giải mã**) đẩy ra Google Drive = dựng lại đúng đường rò vừa bịt, ở chỗ khác. Luật: tầng 1 (message text) mã hóa cùng cơ chế cột; tầng 2 (metadata) trần; **tầng 3 bắt buộc mã hóa file-level trước khi rời máy**, dùng chung công cụ với backup dump (xem `db-and-data-model-brief.md` §6, cập nhật cùng ngày).
+2. **`audit_log.payload`** (JSONB, Bước 2 write-tool) — khi diff đụng field đã mã hóa: ghi marker + entity id, **không bao giờ ghi plaintext của field mã hóa vào payload**.
+
+**Cửa một chiều thật sự chỉ có MỘT:** bật mã hóa cột (đổ dữ liệu vào rồi đổi ý = migration + backfill giải mã). Chọn *cơ chế* (age vs khác cho file-level), *vị trí lưu khóa*, hay thêm/bớt cột **không** phải cửa một chiều — sửa được bất cứ lúc nào.
+
+Cập nhật ngược cùng ngày: `schema-physical-brief.md` (bảng §1 + mục mã hóa mới), `db-and-data-model-brief.md` §6 (mã hóa dump + vị trí khóa), `CLAUDE.md`.
 
 ## 7. Giải các mục parked của Nhóm 2
 
@@ -149,6 +182,17 @@
 | K11 | `is_private` (tương lai, phiên auth): đặt ở cấp **cha** (task/note/tracker — entry thừa kế theo tracker), không rải từng entry |
 | K12 | Ngoài cụm tracking: bảng cũ khớp luật chung; điểm nhỏ duy nhất `calendar_source.name` nên unique — chốt lúc đúc DDL |
 | K13 | **Chuẩn đặt trước cho subscription:** phải mang `tracker_id` (entry gia hạn sinh ra có chỗ rơi vào sổ chi — không entry mồ côi); nối `entry.subscription_id` nullable, cascade bàn ở bước thiết kế subscription |
+
+### 📝 2026-07-20 — Rà-soát TIỀN-DDL (K18–K21, cùng mandate K; chủ veto được từng mục)
+
+*Lý do có lượt này: encryption-review (§6, đóng 2026-07-20 — SAU lượt K1–K17) lật vài cột sang mã hóa nhưng chưa quay lại vá các K-item viết trước đó. Quét chéo trước khi đúc DDL (`agent-tasks/006`) phát hiện 2 mâu thuẫn thật + 2 điểm vênh — hòa giải sẵn ở đây để executor không phải tự quyết.*
+
+| # | Chốt |
+|---|---|
+| K18 | **Kiểu vật lý của mọi cột 🔐 = `TEXT` mang prefix `enc:v1:`** (một kiểu duy nhất, kể cả cột tiền — NUMERIC không chứa được ciphertext). Hệ quả: precision C2 (`NUMERIC(14,0)`…) + CHECK ≥0 (K5) trên cột tiền mã hóa **chuyển thành validate app-layer trước khi mã hóa** (mở rộng K8 — "PG không nhìn được thì app lo"); `quantity` (trần) giữ nguyên CHECK trong DB |
+| K19 | **K2 sửa cho cột tên đã mã hóa:** AES-GCM nonce ngẫu nhiên → ciphertext không deterministic → unique index `lower(name)` trên `tracker.name`/`subscription.name` **chết im lặng** (không bao giờ bắt trùng). Bỏ index DB ở 2 cột đó → **chống-trùng-tên chuyển lên app-layer** lúc tạo/đổi tên (decrypt-scan danh sách — vài chục dòng, single-writer, đủ). Cửa nâng cấp 2 chiều nếu cần DB-enforced: thêm cột `name_hmac` (HMAC keyed, deterministic) + partial unique. `tracker_group.name` + `calendar_source.name` (trần) giữ unique DB như K2/K12 |
+| K20 | **`subscription.amount`/`list_amount` mã hóa cùng bộ với tiền entry** — verdict §6 chỉ nêu cột tiền của `entry`; để tiền sub trần thì nửa kín nửa hở vô nghĩa (F6 burn-rate vốn đã app-computed). Nhất quán với quyết định "lật sang mã hóa tiền" của chủ. *(Mục dễ veto nhất — nếu chủ muốn tiền sub trần để đơn giản, chỉ đổi 1 dòng, không cửa một chiều trước cutover)* |
+| K21 | **Bảng `session` theo đúng B2** (`created_at`+`updated_at` trigger như mọi bảng; `last_seen_at`/`expires_at`/`private_until` là cột domain thêm vào, không phải ngoại lệ B2). **Bảng message tầng-1** (D3) cột tối thiểu: `id` UUIDv7 · `role` · `content` 🔐 · `is_private` (luật R4) · `trace_id` · timestamps B2 — chi tiết còn lại executor đề xuất trong PR 006 cho T1 duyệt, không cần escalate riêng |
 
 ## 9. Ràng buộc mang sang (không đổi)
 

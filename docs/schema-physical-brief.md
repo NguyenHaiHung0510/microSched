@@ -36,7 +36,8 @@ Postgres + Neon (đã chốt ở `db-and-data-model-brief.md`) mới trả lời
 | D1 | FK cascade | ✅ **calendar = CASCADE; `tracker→entry` = RESTRICT + soft-delete (chốt 2026-07-19, `tracking-brief.md` §7)** | **có** |
 | D2 | Index | ✅ **bộ tối thiểu** (FK + cột thời gian) (§5) | không |
 | D3 | Log AI + xoá | ✅ **log 3 tầng + soft-delete** (§5) | không |
-| D4 | Full-text search | ⏸ **DEFER → Bước 1** | không |
+| D4 | Full-text search | ⏸ **DEFER → Bước 1** (chỉ áp cho cột KHÔNG mã hóa — xem E1) | không |
+| E1 | Mã hóa cột | ✅ **ĐÃ GIẢI 2026-07-20** — app-level AES-GCM trên `tracker.name`/`subscription.name`/`entry.note`/tiền(`amount`,`list_amount`,`orig_amount`)/`note.body_md`+`task.*` khi private (`tracking-brief.md` §6) | **có** (chỉ bật cột, không phải cơ chế/khóa) |
 
 ---
 
@@ -102,6 +103,7 @@ Subtask một người dùng số lượng nhỏ → `int` + đánh số lại k
 Dimension coupling với embedding model → chốt **chiến lược vật lý**, không chốt con số:
 - Để cột `vector` **nullable, CHƯA tạo index**. Thêm dimension + index **HNSW** ở migration Bước 1 (khi đã chốt embedding model).
 - Ghi chú Bước 1: cân nhắc `halfvec` (nửa storage). Ở quy mô 49 note hiện tại, index vector còn *chưa cần thiết* cho tốc độ.
+- **📝 2026-07-20 (encryption-review):** luật cứng — **cột đã mã hóa (§7.1) không bao giờ có embedding**, kể cả `note.body_md` khi `is_private=true`. Tránh hẳn "rò nghĩa qua vector" thay vì cân đo % chấp nhận được. Embedding provider Bước 1 (bên thứ ba, chưa chọn) phải đạt bar "no retention/no training" — điều kiện chọn thầu, xem `tracking-brief.md` §6.
 
 ---
 
@@ -133,9 +135,10 @@ Tách 2 nhu cầu hay bị gộp:
 
 - **Không double-store:** message text ở tầng 1 là nguồn thật; tầng 2 chỉ giữ "phong bì" tham chiếu. Tầng 3 (cái phình) đẩy ra ngoài DB → phần trong Neon tăng rất chậm.
 - **`audit_log` cần thêm:** `trace_id`/`turn_id` (nối tầng 1↔2) + tham chiếu entity bị đụng. Đây là nền cho note gốc #16 ("log all to fine-tune", "acceptance from AI's suggesting").
+- **📝 2026-07-20 (encryption-review):** tầng 1 (message text) mã hóa cùng cơ chế cột (§7.1 dưới); **tầng 3 bắt buộc mã hóa file-level** (`age`) trước khi rời máy — off-DB không có nghĩa là off mã hóa, nếu không thì blob prompt-đã-giải-mã dựng lại đúng đường rò vừa bịt ở nơi khác. `audit_log.payload`: field đã mã hóa → chỉ ghi marker + entity id, không bao giờ ghi plaintext.
 
 ### D4. Full-text search — ⏸ DEFER → Bước 1
-`tsvector`/`pg_trgm` phục vụ hybrid retrieval (structured + semantic + keyword) = Bước 1. Không provision bây giờ.
+`tsvector`/`pg_trgm` phục vụ hybrid retrieval (structured + semantic + keyword) = Bước 1. Không provision bây giờ. **📝 2026-07-20:** chỉ áp cho cột KHÔNG mã hóa (§7.1) — đã mã hóa thì không tsvector, hết, không cân đo tỉ lệ rò.
 
 ---
 
@@ -165,14 +168,29 @@ Ràng buộc mang sang: xây **phần ghi-log trước**, AI phân tích thói q
 
 > **📌 2026-07-19 — phiên tracking ĐANG CHẠY** (`tracking-brief.md`): hướng giải đã ghi — **C2**: tách `entry.value` → `quantity` + bộ cột tiền VND (`amount`/`list_amount`/`orig_amount`+`orig_currency`), precision đề xuất `NUMERIC(14,0)` cho VND (⚠️ chờ gật cuối phiên); **D1-tracker**: giữ nghiêng RESTRICT + soft-delete (chưa chốt riêng). Phát sinh mới: **subscription = entity riêng** (✅ chốt, ngoài ERD v1) + **phiên encryption-review toàn DB** (ràng buộc: AI phải đọc được; điểm nóng: embedding rò nghĩa — chạm C4/D4). Khi phiên tracking kết thúc → cập nhật bảng §1 + mục này.
 
+### 7.1 ✅ 2026-07-20 — PHIÊN ENCRYPTION-REVIEW ĐÃ ĐÓNG (E1, bảng §1)
+
+Chi tiết đầy đủ + bảng phán quyết từng cột + lý do: `tracking-brief.md` §6 (mục "ĐÓNG ENCRYPTION REVIEW"). Tóm tắt neo vào file này (tầng vật lý):
+
+- **Cơ chế:** app-level AES-GCM (`cryptography`), **không `pgcrypto`** (khóa không đi qua SQL tới Neon). Ciphertext version-prefix `enc:v1:…` để xoay khóa không cần touch mọi hàng.
+- **Cột mã hóa:** `tracker.name` (toàn bộ), `subscription.name`, `entry.note`, `note.body_md`+`task.*` khi `is_private=true`, và **cột tiền** `amount`/`list_amount`/`orig_amount` (đánh đổi: mất `SUM`/`ORDER BY`/CHECK trực tiếp trong SQL, dashboard §8.2 tracking-brief kéo entry về app cộng bằng Python).
+- **Cột giữ trần:** `note`/`task` không private (lõi retrieval Bước 1), `tracker_group.name`, `tracker.reminder_text` (bề mặt công khai có chủ đích), `calendar_event.*`/`app_setting`/timestamps/enum/id.
+- **Hệ quả vật lý:** D4 (FTS) + C4 (embedding) chỉ áp cho cột KHÔNG mã hóa (đã ghi ngược ở từng mục trên); D3 tầng-3 blob bắt buộc mã hóa file-level (`age`) trước khi rời máy.
+- **Khóa:** master key AES-GCM (Fly secrets + `.env` local) + private key `age` (mã hóa dump/blob tầng 3) — vị trí lưu cụ thể: `db-and-data-model-brief.md` §6.
+- **Cửa một chiều thật sự:** chỉ có *bật mã hóa cột*. Cơ chế/vị trí khóa/thêm-bớt cột không phải cửa một chiều.
+
+**📝 2026-07-20 (muộn) — Rà-soát tiền-DDL trước khi chạy `agent-tasks/006` (chi tiết + lý do: `tracking-brief.md` §10 mục K18–K21):** encryption-review lật cột sang 🔐 *sau* khi K1–K17 và §11 đã viết → quét chéo phát hiện và hòa giải sẵn 4 điểm: **K18** — mọi cột 🔐 có kiểu vật lý `TEXT` prefix `enc:v1:` (kể cả tiền; NUMERIC/CHECK của C2/K5 chuyển thành validate app-layer trước mã hóa, `quantity` trần giữ CHECK DB); **K19** — unique `lower(name)` (K2) chết im lặng trên ciphertext AES-GCM → bỏ index DB ở `tracker.name`/`subscription.name`, chống-trùng chuyển lên app (cửa nâng cấp: cột `name_hmac`); **K20** — tiền của `subscription` mã hóa cùng bộ với tiền entry; **K21** — bảng `session` theo đúng B2, bảng message tầng-1 có bộ cột tối thiểu ghi sẵn. Executor 006 làm theo K18–K21, không tự hòa giải lại.
+
+---
+
 > **✅ 2026-07-19 (muộn) — PHIÊN TRACKING ĐÃ ĐÓNG, §7 GIẢI TRỌN.** C2 + D1 như bảng §1 (lưu ý VND-only v1: `orig_amount`/`orig_currency` bị cắt). Phát sinh chốt thêm: **+2 bảng** `tracker_group` (nhóm 2 tầng; không soft-delete, hard-delete + FK `SET NULL`) và `subscription` (DATE cho `started_on`/`expires_on` — ngoại lệ có lý với B2; không cột `status` — suy ra từ `expires_on`+`canceled_at`); **cột mới `tracker`**: `direction` in/out, `input_mode` event/money/quantity, `group_id`, `reminder_time TIME`/`reminder_text` (nhắc thuốc), `unit` thu hẹp nghĩa; **cột mới `entry`**: `quantity`/`amount`/`list_amount`/`subscription_id`; **enum C1 mở rộng**: `direction`, `input_mode`; **index D2 cập nhật**: `entry(tracker_id, occurred_at DESC)` composite thay cặp rời + `entry(occurred_at)` + `subscription(expires_on)`; **seed danh mục** = Alembic data-migration lúc cutover (khớp kỷ luật A2). Toàn bộ chi tiết + lý do + rà soát chuẩn hóa (3NF, K1–K17): **`tracking-brief.md`** (đặc biệt §10). **Schema toàn dự án khép từ đây.**
 
 ---
 
 ## 8. Ngoài phạm vi Nhóm 2 (vẫn OPEN ở nơi khác — không phải việc file này)
-- **Auth implementation** (thư viện, cookie/session store) — ⚠️ leaning Google OAuth + allowlist (`architecture-brief.md` §7).
-- **Frontend UI stack cụ thể** + thư viện sync offline-first + web-push — phiên frontend-scaffold.
-- **Embedding model + dimension cột `vector`** + LLM mặc định — Bước 1 (coupling C4).
+- **Auth implementation** — ✅ chốt 2026-07-20 (`auth-brief.md`): Authlib + bảng **`session`** mới (server-side, theo house-rules B1/B2; cột đúc lúc scaffold/Alembic) + cờ `is_private` trên message tầng-1 (luật R4 AI×private) + key TTL trong `app_setting`. Không phạm "schema khép" — mục này vốn để dành cho phiên auth.
+- **Frontend UI stack** — ✅ chốt 2026-07-20 (`frontend-brief.md`): React 19 + TS + Vite 8 + Tailwind/shadcn + TanStack Query + Dexie/outbox tự viết; web-push chi tiết + router/chart để scaffold/build.
+- **Embedding model cụ thể + dimension cột `vector`** + LLM mặc định — Bước 1 (coupling C4). Ràng buộc mới từ encryption-review: chỉ chọn provider đạt bar no-retention/no-training (§7.1).
 
 ---
 

@@ -12,6 +12,7 @@
 - Toàn bộ chi phí "cứng" hiện tại = **1 dòng duy nhất: hosting Fly.io**. Neon, backup, auth, CI/cron đều $0.
 - Có **đường $0 tuyệt đối** (Oracle Always-Free / Render-free) nhưng đánh đổi reliability / cold-start — xem §3.
 - Hai biến số cần canh: **LLM usage** (giờ ≈ $0 nhờ credit) và **domain** (tuỳ chọn, ~$12/năm).
+- **2026-07-20:** thêm **§6 — stack công cụ AI cá nhân (~$80/mo)**, hạch toán RIÊNG — đó là chi phí *học/xây*, không phải chi phí *vận hành app*.
 
 | Hạng mục | Dịch vụ (đã chọn) | Chi phí | Trạng thái |
 |---|---|---|---|
@@ -64,5 +65,21 @@
 - LLM khi hết credit — usage thật, phụ thuộc tần suất + model.
 - Model local sau này (Bước 3) — nếu chạy trên box riêng (vd Oracle) hoặc laptop → $0 tiền mặt, tốn công vận hành.
 
+## 6. 🆕 2026-07-20 — Stack công cụ AI cá nhân (dev-tooling, hạch toán riêng khỏi chi phí app)
+
+> Tra live 2026-07-20, phiên harness (phân vai + lý do chọn/loại: `devops-brief.md` §7). **Soi lại ~10/2026** — thị trường coding-plan đổi giá theo quý (GLM promo $3 thời 2025 chết trong <6 tháng, giá chuẩn ×3–6; Qwen đóng free tier 04/2026; MiniMax entry ×2).
+
+| Tầng | Dịch vụ | Chi phí | Ghi chú |
+|---|---|---|---|
+| T1 óc | Claude Pro | $20/mo | có từ 02/07; **hết Fable trên Pro sau 20/07** → Opus 4.8 (chat) + Sonnet 5 (Claude Code) |
+| T2 tay | ChatGPT Plus (Codex, GPT-5.6) | $20/mo | mua mới 07/2026; 07/2026 bỏ cap 5h → chỉ cap tuần |
+| T3 chạy test | 2× Google AI Pro | ~$40/mo (nếu giá chuẩn $19.99×2) | sẵn có; **re-check 10/2026: còn cần cả 2 account không?** |
+| (option, chưa mua) | DeepSeek V4 API | $0 → ~$1–3 khi dùng | van xả pay-per-token cho bulk ($0.14–0.435/M input) |
+| **TỔNG dev-stack** | | **~$80/mo** | ≈ **40×** hosting app (~$2/mo) — tỉ trọng thật của khoản "học AI-eng" |
+
+**Giá đối chiếu đã tra cùng ngày** (để lần re-check sau đo drift): GLM Coding Lite $12.6 (promo 30%) / $18 chuẩn — kèm quota multiplier 3× giờ cao điểm trùng giờ VN; MiniMax Plus $20; Kimi Code ~$7/tuần (~$28/mo); Qwen $50; Cursor Pro $20; Copilot Pro $10 (chỉ ~$15 credits/mo).
+
+**Lane PAYG "tháng nhẹ" (bổ sung cùng ngày — chi tiết `devops-brief.md` §7):** tháng thuần-học có thể skip sub Codex → OpenRouter (ví duy nhất; **nạp $10 một lần, không hết hạn → 1.000 req/ngày free-models vĩnh viễn**; phí topup 5.5%, nạp cục đừng nạp lắt nhắt) + model rẻ (DeepSeek V4) qua OpenCode hoặc Claude Code endpoint-compatible ≈ **$2–5/tháng**. **Credit đang om (kiểm expiry NGAY):** OpenAI $5 + daily-free data-sharing (~1M/ngày model lớn, 2.5M/ngày mini — reset hằng ngày, om là phí; chỉ việc public-context) · 2× Gemini free tier (Flash ~1.500 req/ngày/project; ⚠️ bật billing = mất free tier project đó → acc có 300K VND credit tách project riêng) · 300K VND Google credit. Earmark toàn bộ cho Bước-1 (eval, embedding, cascade-dev).
+
 ---
-*Cập nhật khi: đổi host/DB/LLM provider, hết credit, hoặc tới mốc soi-lại 3 tháng. Thêm ghi chú có ngày — không xoá trắng con số cũ.*
+*Cập nhật khi: đổi host/DB/LLM provider, hết credit, đổi công cụ dev-stack (§6), hoặc tới mốc soi-lại 3 tháng (~10/2026). Thêm ghi chú có ngày — không xoá trắng con số cũ.*
