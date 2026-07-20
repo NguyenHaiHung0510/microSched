@@ -186,8 +186,8 @@ Chi tiết đầy đủ + bảng phán quyết từng cột + lý do: `tracking-
 ---
 
 ## 8. Ngoài phạm vi Nhóm 2 (vẫn OPEN ở nơi khác — không phải việc file này)
-- **Auth implementation** (thư viện, cookie/session store) — ⚠️ leaning Google OAuth + allowlist (`architecture-brief.md` §7).
-- **Frontend UI stack cụ thể** + thư viện sync offline-first + web-push — phiên frontend-scaffold.
+- **Auth implementation** — ✅ chốt 2026-07-20 (`auth-brief.md`): Authlib + bảng **`session`** mới (server-side, theo house-rules B1/B2; cột đúc lúc scaffold/Alembic) + cờ `is_private` trên message tầng-1 (luật R4 AI×private) + key TTL trong `app_setting`. Không phạm "schema khép" — mục này vốn để dành cho phiên auth.
+- **Frontend UI stack** — ✅ chốt 2026-07-20 (`frontend-brief.md`): React 19 + TS + Vite 8 + Tailwind/shadcn + TanStack Query + Dexie/outbox tự viết; web-push chi tiết + router/chart để scaffold/build.
 - **Embedding model cụ thể + dimension cột `vector`** + LLM mặc định — Bước 1 (coupling C4). Ràng buộc mới từ encryption-review: chỉ chọn provider đạt bar no-retention/no-training (§7.1).
 
 ---
