@@ -187,6 +187,21 @@ Chi tiết đầy đủ + bảng phán quyết từng cột + lý do: `tracking-
 
 ---
 
+### 7.2 ✅ 2026-07-20 — RÀ-SOÁT TIỀN-DDL VÒNG 2 (K22–K25), phát sinh từ escalation của 006
+
+**Bối cảnh:** executor 006 (Sol/xhigh) dừng **trước khi viết DDL** theo giao thức HITL và báo 4 điểm brief chưa cho đáp án duy nhất. T1 kiểm chứng: **cả 4 có thật**. Chủ quyết cùng ngày. Đây là bằng chứng giao thức HITL hoạt động — 4 lỗ này nếu để executor tự lấp thì chỉ lộ ra sau khi đã có data.
+
+| # | Chốt | Lý do |
+|---|---|---|
+| **K22** | **`task.priority` = TEXT + CHECK `('p1','p2','p3')`, `p1` cao nhất.** NULL = chưa đặt ưu tiên (không ép mọi task phải có). Không seed, không bảng lookup. | Hệ ưu tiên 6-mức của app cũ **chủ thực tế không dùng** → đơn giản hoá còn 3. Chọn dạng viết `'p1'/'p2'/'p3'` thay vì `'1'/'2'/'3'` hay `'high'/'medium'/'low'`: **sắp xếp đúng thứ tự tự nhiên** (text `p1<p2<p3`) **và** AI hiểu được sau một lần giải thích. `'high'/'low'` sắp xếp sai theo alphabet; `'1'/'2'/'3'` thì AI không tự biết chiều nào là cao. |
+| **K23** | **Phạm vi mã hoá của `task` khi private = CHỈ cột chữ:** `task.title`, `task.body_md`, `task_item.content`. **Giữ trần:** `status`, `priority`, `due_at`, `is_private`, mọi khoá và timestamp. Giải toả dấu `*` mơ hồ trong §7.1. | Ngày + `'p1'` gần như không rò gì theo threat-model (§1 `devops-brief`). Mã hoá cột cấu trúc sẽ (a) **xung đột trực tiếp với CHECK** của C1 — không thể vừa mã hoá vừa kiểm giá trị, (b) buộc **mọi** truy vấn task phải kéo về app giải mã rồi mới lọc/sắp, đổi lấy gần như không thêm quyền riêng tư. `is_private` bắt buộc để trần vì chính nó là cột dùng để lọc. |
+| **K24** | **`app_setting` theo đúng B1: `id` UUIDv7 PK + `key` TEXT UNIQUE NOT NULL.** Không ngoại lệ. | Ban đầu T1 nghiêng `key` làm PK cho gọn, **đã đổi ý sau khi soi hệ quả code**: B1+B2 hàm ý một **lớp cơ sở dùng chung** (id + timestamps + trigger); bảng nào không có `id` thì không dùng được lớp đó → phải nuôi một ngoại lệ trong mọi thứ đụng tới bảng, **vĩnh viễn**. Cột thừa = giá **một lần**; ngoại lệ = giá **lặp lại**. Đổi tên key cũng thành thao tác thường thay vì đổi danh tính dòng. |
+| **K25** | **Ranh giới uỷ quyền cho executor** (chi tiết còn thiếu: nullability, default, hình dạng trace metadata): executor **được tự quyết**, đổi lại **bắt buộc liệt kê mọi lựa chọn đã tự quyết thành một bảng trong PR** để T1 duyệt một lượt. Vẫn giữ nguyên luật escalate khi gặp *mâu thuẫn* giữa 2 brief. | Chốt tay hàng trăm cột là đốt một buổi cho thứ phần lớn không có ý nghĩa sản phẩm. Đổi mô hình từ "quyết trước" sang "**duyệt sau theo danh sách**" — giữ kiểm soát, bỏ tắc nghẽn. Cùng tinh thần mandate K1–K17. |
+
+**📌 Ghi chú mở đường (chưa phải quyết định):** chủ nêu ý muốn sau này thêm mức kiểu `'Cố định'` / `'Trọng đại'`. Theo khung quản lý danh mục (`tracking-brief.md` §10 — tiêu chí *"code có cần hiểu giá trị để rẽ nhánh không?"*), `priority` thuộc **enum cứng** → thêm giá trị = **một migration nhỏ**, hoàn toàn rẻ, không phải sửa từ UI. ⚠️ Nhưng lưu ý mô hình: *"Cố định"* và *"Trọng đại"* nghe như **trục khác** với độ-gấp — nếu sau này một task cần **vừa** `p1` **vừa** "cố định" thì một cột không diễn đạt nổi, lúc đó thêm cột/cờ riêng (migration cộng thêm, vẫn rẻ). Ghi lại để sau này không ai nhồi hai trục vào một cột.
+
+---
+
 ## 8. Ngoài phạm vi Nhóm 2 (vẫn OPEN ở nơi khác — không phải việc file này)
 - **Auth implementation** — ✅ chốt 2026-07-20 (`auth-brief.md`): Authlib + bảng **`session`** mới (server-side, theo house-rules B1/B2; cột đúc lúc scaffold/Alembic) + cờ `is_private` trên message tầng-1 (luật R4 AI×private) + key TTL trong `app_setting`. Không phạm "schema khép" — mục này vốn để dành cho phiên auth.
 - **Frontend UI stack** — ✅ chốt 2026-07-20 (`frontend-brief.md`): React 19 + TS + Vite 8 + Tailwind/shadcn + TanStack Query + Dexie/outbox tự viết; web-push chi tiết + router/chart để scaffold/build.

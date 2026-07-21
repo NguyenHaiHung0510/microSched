@@ -12,6 +12,7 @@
 - `docs/schema-v1-brief.md` — danh sách entity + quan hệ.
 - `docs/tracking-brief.md` — `tracker`/`entry`/`tracker_group`/`subscription` + §10 (**K1–K21**, gồm composite-FK tracker↔group) + §11/§12. **Đặc biệt K18–K21 (rà-soát tiền-DDL 2026-07-20):** các mâu thuẫn encryption↔schema đã được hòa giải sẵn ở đó (kiểu cột 🔐 = TEXT `enc:v1:`, CHECK tiền → app-layer, bỏ unique DB trên tên mã hóa, tiền subscription cũng 🔐, session theo B2, cột tối thiểu bảng message) — làm theo, **đừng tự hòa giải lại**.
 - `docs/auth-brief.md` §2/§6 — bảng `session` (cột dự kiến), cờ `is_private` trên message tầng-1, key `app_setting` cho TTL private-unlock.
+- 🆕 **`docs/schema-physical-brief.md` §7.2 (K22–K25) — ĐỌC TRƯỚC TIÊN.** Đây là 4 câu chủ đã chốt 2026-07-20 để trả lời đúng escalation của chính task này: giá trị `task.priority`, phạm vi mã hoá `task` khi private, PK của `app_setting`, và ranh giới uỷ quyền. **Không hỏi lại 4 câu đó nữa.**
 - `docs/db-and-data-model-brief.md` — Neon; `docs/migration-mapping-brief.md` — chỉ để biết data sẽ đổ vào sau (task này KHÔNG cutover).
 
 **Sự thật môi trường đã xác minh 2026-07-20 (đừng tra lại, đừng đoán):**
