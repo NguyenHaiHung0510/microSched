@@ -96,14 +96,16 @@ class Task(UUIDTimestampModel, table=True):
             name="priority_values",
         ),
         CheckConstraint(
-            "NOT is_private OR (title LIKE 'enc:v1:%' AND body_md LIKE 'enc:v1:%')",
+            "NOT is_private OR ("
+            "title LIKE 'enc:v1:%' "
+            "AND (body_md IS NULL OR body_md LIKE 'enc:v1:%'))",
             name="private_ciphertext",
         ),
         {"schema": SCHEMA},
     )
 
     title: str = Field(sa_column=Column(Text, nullable=False))
-    body_md: str = Field(sa_column=Column(Text, nullable=False))
+    body_md: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     status: str = Field(
         default="open",
         sa_column=Column(Text, nullable=False, server_default=text("'open'")),
@@ -153,14 +155,14 @@ class Note(UUIDTimestampModel, table=True):
     __tablename__ = "note"
     __table_args__ = (
         CheckConstraint(
-            "NOT is_private OR body_md LIKE 'enc:v1:%'",
+            "NOT is_private OR body_md IS NULL OR body_md LIKE 'enc:v1:%'",
             name="private_body_ciphertext",
         ),
         {"schema": SCHEMA},
     )
 
-    title: str = Field(sa_column=Column(Text, nullable=False))
-    body_md: str = Field(sa_column=Column(Text, nullable=False))
+    title: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    body_md: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     embedding: list[float] | None = Field(
         default=None,
         sa_column=Column(Vector(), nullable=True),
