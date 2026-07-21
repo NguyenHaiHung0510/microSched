@@ -38,6 +38,7 @@ Postgres + Neon (đã chốt ở `db-and-data-model-brief.md`) mới trả lời
 | D3 | Log AI + xoá | ✅ **log 3 tầng + soft-delete** (§5) | không |
 | D4 | Full-text search | ⏸ **DEFER → Bước 1** (chỉ áp cho cột KHÔNG mã hóa — xem E1) | không |
 | E1 | Mã hóa cột | ✅ **ĐÃ GIẢI 2026-07-20** — app-level AES-GCM trên `tracker.name`/`subscription.name`/`entry.note`/tiền(`amount`,`list_amount`,`orig_amount`)/`note.body_md`+`task.*` khi private (`tracking-brief.md` §6) | **có** (chỉ bật cột, không phải cơ chế/khóa) |
+| BUILD-006 | DDL thật | ✅ **ĐÃ ĐÚC 2026-07-21** — Alembic revision **`0001`**, schema `microsched` trên Neon PG18 | — |
 
 ---
 

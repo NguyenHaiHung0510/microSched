@@ -28,7 +28,7 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 | 003 | Scaffold backend — FastAPI skeleton + tooling + CI nền | ✅ DONE (2026-07-20) |
 | 004 | Scaffold frontend — Vite/React/shadcn, serve cùng origin | ✅ DONE (2026-07-20) |
 | 005 | Docker multi-stage + deploy Fly.io đầu tiên | ✅ DONE (2026-07-20) |
-| 006 | Neon + role riêng + đúc DDL thật (Alembic 0001 + QA gates) | 📋 TODO (sau 005) — **PR đáng review kỹ nhất chuỗi** |
+| 006 | Neon + role riêng + đúc DDL thật (Alembic 0001 + QA gates) | ✅ DONE (2026-07-21) — **PR đáng review kỹ nhất chuỗi** |
 | 007 | Auth: Google OIDC + allowlist + session server-side | 📋 TODO (sau 006) — security-critical, executor T1 hoặc T2-Sol |
 
 **Từ 003 (phase B — scaffold):** executor mặc định = **T2 Codex** theo `docs/devops-brief.md` §7; task code chạy trên branch `feat/NNN-<slug>` → PR nhỏ vào `develop` để T1 review diff (docs vẫn commit thẳng `develop`). Chuỗi 003→007 = **walking skeleton**: trang thật trên `*.fly.dev` có login Google. Sau 007 (chưa spec, đừng tự chế): private unlock (Argon2id) · outbox offline · cutover migration · CI-deploy.

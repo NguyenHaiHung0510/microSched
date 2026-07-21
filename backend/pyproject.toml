@@ -5,7 +5,10 @@ description = "FastAPI backend for microSched."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
     "fastapi",
+    "pgvector>=0.5.0",
     "pydantic-settings",
     "sqlmodel",
     "uvicorn",
