@@ -29,7 +29,10 @@
 | Biến env | Vai | Ai dùng | Lên Fly secrets? |
 |---|---|---|---|
 | `NEON_OWNER_URL` | `neondb_owner` — quyền cao | **chỉ** script bootstrap ở mục 1, chạy **từ máy chủ** | ❌ **KHÔNG BAO GIỜ** |
-| `DATABASE_URL` | `microsched_app` — least-privilege (A3) | app runtime + Alembic | ✅ (chủ tự set sau) |
+| `NEON_MIGRATOR_URL` | `microsched_migrator` — **sở hữu schema**, chạy Alembic | migration ở máy chủ; sau này CI-deploy | ❌ (chưa, tới lúc CI-deploy mới bàn) |
+| `DATABASE_URL` | `microsched_app` — least-privilege (A3) | **chỉ** app runtime (DML) | ✅ (chủ tự set sau) |
+
+*(Role `microsched_migrator` = mở rộng A3, chủ duyệt 2026-07-20 — lý do đầy đủ + bẫy PG16 `SET FALSE` ở `schema-physical-brief.md` §2-A3.)*
 
 *Lý do (chốt A3): app cầm quyền owner thì nếu bị khai thác, kẻ tấn công `DROP SCHEMA` / tạo-xoá role tuỳ ý — toàn bộ ý nghĩa của role least-privilege mất sạch. Owner chỉ tồn tại trong bootstrap một lần, từ máy chủ, không bao giờ rời máy đó.*
 

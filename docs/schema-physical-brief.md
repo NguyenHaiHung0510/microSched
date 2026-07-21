@@ -67,6 +67,24 @@ Superuser `postgres` local host nhiều project khác của chủ (vd `micareer_
 - **Schema riêng** `microsched` (không đặt vào `public`) → cô lập sạch. GRANT hẹp: `USAGE` trên schema + `SELECT/INSERT/UPDATE/DELETE` trên bảng app, không hơn.
 - Credentials chỉ trong `.env` (đã chốt CLAUDE.md); `.gitignore` chặn `.env` từ commit đầu.
 
+**📝 2026-07-20 — MỞ RỘNG A3: ba role, không phải hai** (chủ duyệt trong lúc chạy 006). Tách thêm **`microsched_migrator`** = role **sở hữu schema `microsched`** và là danh tính chạy Alembic:
+
+| Role | Vai | Biến env | Dùng ở đâu |
+|---|---|---|---|
+| `neondb_owner` | role cấp tài khoản Neon — **chỉ bootstrap** (tạo schema/role/extension) | `NEON_OWNER_URL` | **chỉ máy chủ**, không bao giờ rời máy |
+| `microsched_migrator` | **sở hữu** schema + chạy migration (DDL) | `NEON_MIGRATOR_URL` | máy chủ; **sau này là CI-deploy** |
+| `microsched_app` | least-privilege, chỉ CRUD (DML) | `DATABASE_URL` | app runtime · **biến duy nhất lên Fly secrets** |
+
+**Lý do tách migrator khỏi owner** (giá trị thật, không phải nghi thức): `neondb_owner` là role quản trị **toàn Neon project**. Nếu nó vừa sở hữu bảng vừa chạy migration thì danh tính thi công DDL trùng danh tính quản trị hạ tầng — và tới lúc bật **CI-deploy tự chạy migration** (`devops-brief.md` §6, đang treo) bạn sẽ buộc phải nhét credential *owner* vào GitHub Actions. Có role migrator thì chỉ nhét credential migrator. Giá phải trả: một role + một chuỗi chỉ sống ở máy chủ và CI.
+
+⚠️ **Bẫy PostgreSQL 16+ phải xử lý trong script bootstrap** (đã đâm thật lúc chạy 006, xác minh bằng `pg_auth_members` trên Neon): khi một role **không phải superuser** (`neondb_owner` trên Neon chính là vậy) tạo role mới, PG tự cấp membership `ADMIN TRUE` nhưng **`INHERIT FALSE, SET FALSE`** — cố ý, để "tạo role" không âm thầm thành "có quyền của role đó". Hệ quả: owner **không `SET ROLE microsched_migrator` được**, nên không tạo nổi object thuộc sở hữu migrator. Cách gỡ (owner đã có `ADMIN` nên đủ thẩm quyền tự cấp):
+
+```sql
+GRANT microsched_migrator TO neondb_owner WITH SET TRUE;
+```
+
+**Lệnh này BẮT BUỘC nằm trong script bootstrap được commit**, không chạy tay — chạy tay thì lần dựng lại Neon project sau sẽ đâm đúng bức tường này và không ai nhớ tại sao.
+
 ---
 
 ## 3. Cụm B — Danh tính & thời gian (chạm *mọi* bảng)
