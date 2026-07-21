@@ -120,7 +120,10 @@ def test_allowlisted_email_gets_a_session_and_reaches_the_api(monkeypatch) -> No
 
     assert response.status_code == 303
     assert len(store.rows) == 1
-    assert client.get("/api/me").json() == {"email": ALLOWED_EMAIL}
+
+    body = client.get("/api/me").json()
+    assert body["email"] == ALLOWED_EMAIL
+    assert body["expires_at"] is not None
 
 
 def test_allowlist_comparison_ignores_case_and_padding(monkeypatch) -> None:

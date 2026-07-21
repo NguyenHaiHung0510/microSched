@@ -17,11 +17,29 @@ LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1"})
 # never offer a way to request access. There is no sign-up for a single-user app.
 DENIED_HTML = """<!doctype html>
 <html lang="vi">
-<head><meta charset="utf-8"><title>Không có quyền truy cập</title></head>
-<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem">
-<h1>Không có quyền truy cập</h1>
-<p>Tài khoản vừa dùng không nằm trong danh sách được phép đăng nhập microSched.</p>
-<p><a href="/">Quay lại trang chủ</a></p>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Không được phép — microSched</title>
+</head>
+<body style="margin:0;background:#fafafa;color:#171717;
+             font-family:system-ui,-apple-system,sans-serif">
+<main style="max-width:30rem;margin:0 auto;padding:5rem 1.5rem">
+  <p style="margin:0;font-size:.875rem;font-weight:500;color:#737373">microSched</p>
+  <h1 style="margin:.5rem 0 0;font-size:1.875rem;font-weight:600;letter-spacing:-.02em">
+    Không được phép
+  </h1>
+  <p style="margin:1.5rem 0 0;line-height:1.6;color:#404040">
+    microSched là <strong>dự án cá nhân</strong>, chỉ mở cho tài khoản của chủ sở hữu.
+    Tài khoản Google bạn vừa dùng không nằm trong danh sách được phép.
+  </p>
+  <p style="margin:1rem 0 0;line-height:1.6;color:#737373;font-size:.875rem">
+    Đây không phải lỗi — ứng dụng không có đăng ký, và không có cách nào xin quyền truy cập.
+  </p>
+  <p style="margin:2rem 0 0">
+    <a href="/" style="color:#171717;font-size:.875rem">← Quay lại trang chủ</a>
+  </p>
+</main>
 </body>
 </html>"""
 
