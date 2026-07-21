@@ -77,6 +77,21 @@ Ghi theo yêu cầu *"cập nhật khi code auth phát hiện khác giả địn
 
 **Ghi chú kiểm thử:** CI chạy `pytest` **không có Postgres** (workflow `backend` không dựng service DB) → tầng lưu phiên được test qua một double in-memory cùng contract, cộng test riêng cho `PostgresSessionStore` khẳng định **chỉ digest được ghi xuống**. Đường SQL thật vẫn phải nghiệm thu bằng tay (localhost + Fly) theo mục Acceptance của `agent-tasks/007`.
 
+## 6.2 📝 2026-07-21 — kết quả security-review PR #9 (Opus 4.8 MAX, session riêng)
+
+**Không có lỗ HIGH/MEDIUM.** Đã soi và loại: bypass allowlist (hoa-thường/khoảng trắng/thiếu `email_verified`/allowlist rỗng/token null/handshake lỗi — **mọi nhánh hỏng đều fail-closed**), session fixation, path traversal qua SPA mount, SQLi trong `scripts/*`, XSS, secret trong CI (workflow dùng `pull_request` chứ không phải `pull_request_target` → PR từ fork không nhận credential), least-privilege của `microsched_app`.
+
+Điểm đáng giữ: reviewer xác nhận `token["userinfo"]` **chỉ** có sau khi Authlib xong `parse_id_token` (JWKS + `iss`/`aud`/`exp`/`nonce`); bỏ qua bước nào cũng ra `claims = {}` → 403.
+
+**Hai mục cần quyết ở tương lai — không phải việc của 007:**
+
+| Mục | Vì sao ghi lại |
+|---|---|
+| **CSRF khi Bước 2 có write-tool** | Hiện `SameSite=Lax` là phòng thủ CSRF **duy nhất**, và nó đủ *chỉ vì* endpoint đổi-trạng-thái duy nhất là `POST /auth/logout` (`fly.dev` nằm trong Public Suffix List nên app anh em vẫn là cross-site). **Lax KHÔNG bảo vệ `GET` đổi trạng thái** — khi Bước 2 mở tool ghi thì phải quyết tường minh (token CSRF hoặc bắt buộc mọi write là POST/PUT). |
+| **Nâng version Authlib = thay đổi có tính bảo mật** | Test mock nguyên client Authlib nên state/nonce/chữ ký **không** được chạy trong CI; tính đúng đắn dựa vào bản đã pin. ⇒ mỗi lần bump `authlib` trong `uv.lock` phải review có ý thức, không merge kiểu dependency-bump thường. |
+
+Hai mục nhỏ hơn (cảnh báo lúc khởi động khi thiếu `OAUTH_STATE_SECRET`; `except Exception` trần ở callback xoá mất phân biệt "Google chết" với "có người dò") — **để dành thành task polish sau merge**, không sửa ngay để diff đã review không đổi.
+
 ## 7. Nguồn (tra live 2026-07-20)
 
 [Authlib PyPI](https://pypi.org/project/Authlib/) · [Authlib FastAPI client](https://docs.authlib.org/en/v1.3.2/client/fastapi.html) · [iOS web push yêu cầu Home Screen (Pushpad)](https://pushpad.xyz/blog/ios-special-requirements-for-web-push-notifications) · Claude API retention (đã tra ở encryption review, `tracking-brief.md` §6)
