@@ -53,3 +53,42 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+
+  migration-qa:
+    name: Migration QA
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: microsched_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d microsched_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      NEON_MIGRATOR_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: uv sync --frozen
+      - run: uv run python -m scripts.prepare_ci_database
+      - run: uv run python -m scripts.check_migration_drops
+      - run: uv run alembic upgrade head
+      - run: uv run python -m scripts.check_migration_drift
+      - run: uv run alembic downgrade base
+      - run: uv run alembic upgrade head
+      - run: uv run python -m scripts.check_migration_drift
