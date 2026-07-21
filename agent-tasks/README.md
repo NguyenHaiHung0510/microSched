@@ -20,6 +20,23 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
   **Luật cứng: skill/MCP là trợ lực, KHÔNG phải điều kiện.** Mọi thứ liệt kê ở đó phải thay thế được bằng tiêu chí viết rõ trong thân spec — spec vẫn phải chạy trọn vẹn bởi executor *không có* skill đó. Lý do: specs ở đây tự-chứa và **executor-agnostic** by design (xem `AGENTS.md`); buộc spec vào một skill là buộc nó vào một harness, mất đúng tính chất khiến 003/004 giao cho ai cũng chạy được. Skill làm việc *nhanh hơn*, không làm việc *khác đi*.
   Phân bổ theo loại việc: **task build** hiếm khi cần MCP · **task test** là chỗ của MCP (Chrome-DevTools/Playwright, vai T3 — `docs/devops-brief.md` §7) · **task UI có quyết định thẩm mỹ thật** là chỗ của design skill (vd `superdesign`) — **không** dùng cho UI kỹ thuật thuần như trang chào của 004.
 
+## Quy ước BÁO CÁO (bổ sung 2026-07-21 — sau 007)
+
+**Executor phải tách rõ hai thứ trong báo cáo/PR: cái đã CHẠY và cái chỉ SUY LUẬN.**
+
+Không viết *"đã làm xong X và nó chạy"*. Viết:
+> **Đã chạy:** `pytest` 34 pass · `ruff` sạch · `vite build` ok
+> **CHƯA chạy:** hành vi nút đăng xuất trên trình duyệt thật
+> **Vì sao vẫn tin là đúng:** *(lập luận — và nói thẳng rằng đây là lập luận, không phải bằng chứng)*
+
+**Lý do (số liệu thật từ 007, cùng một model, cùng một ngày):** lỗi lọt tới chủ **không** phân bố đều theo độ khó, mà bám đúng vào tầng executor **không chạy được** thứ mình viết — backend có pytest: 0 lỗi lọt; frontend/trình duyệt không có vòng lặp nào: 4 lỗi lọt. Biên độ chênh đó **lớn hơn khoảng cách giữa các tier model**.
+
+⇒ Hệ quả cho việc giao task:
+- **Sức mạnh model và vòng lặp kiểm chứng là hai trục khác nhau, và trục vòng lặp thắng.** Model yếu hơn mà *chạy thử rồi mới nói* đáng tin hơn model mạnh *suy luận rồi khẳng định*.
+- §7 `devops-brief` phân tier theo blast-radius vẫn đúng, nhưng **thiếu một trục**: việc nào cần trình duyệt thì giao cho **thứ lái được trình duyệt** (T3 + MCP Chrome-DevTools), bất kể tier.
+- **Build/CI xanh chỉ chứng minh code biên dịch và unit test qua — không chứng minh hành vi.** Acceptance đụng bản build production (Docker, PWA/service worker, cookie, redirect, OAuth) **bắt buộc** có bước nhìn bằng mắt trên bản deploy thật, ghi rõ *nhìn cái gì*.
+- Việc của người review đổi: **kiểm xem ranh giới "đã chạy / chưa chạy" có trung thực không**, và có gì quan trọng đang nằm im trong vùng "chưa chạy" không — thay vì làm lại công việc.
+
 ## Hàng đợi
 | # | Việc | Trạng thái |
 |---|---|---|
@@ -29,7 +46,7 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 | 004 | Scaffold frontend — Vite/React/shadcn, serve cùng origin | ✅ DONE (2026-07-20) |
 | 005 | Docker multi-stage + deploy Fly.io đầu tiên | ✅ DONE (2026-07-20) |
 | 006 | Neon + role riêng + đúc DDL thật (Alembic 0001 + QA gates) | ✅ DONE (2026-07-21) — **PR đáng review kỹ nhất chuỗi** |
-| 007 | Auth: Google OIDC + allowlist + session server-side | 🔍 **CHỜ NGHIỆM THU (2026-07-21)** — code + 32 test xong trên `feat/007-auth-oidc-session` (executor T1); còn 4 mục Acceptance phải chạy tay bằng account thật |
+| 007 | Auth: Google OIDC + allowlist + session server-side | ✅ **DONE (2026-07-21)** — nghiệm thu thật trên fly.dev, 34 test; **walking skeleton khép**. 4 lỗi chỉ lộ ra ở trình duyệt → `auth-brief.md` §6.3 |
 
 **Từ 003 (phase B — scaffold):** executor mặc định = **T2 Codex** theo `docs/devops-brief.md` §7; task code chạy trên branch `feat/NNN-<slug>` → PR nhỏ vào `develop` để T1 review diff (docs vẫn commit thẳng `develop`). Chuỗi 003→007 = **walking skeleton**: trang thật trên `*.fly.dev` có login Google.
 

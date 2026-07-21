@@ -92,6 +92,21 @@ Ghi theo yêu cầu *"cập nhật khi code auth phát hiện khác giả địn
 
 Hai mục nhỏ hơn (cảnh báo lúc khởi động khi thiếu `OAUTH_STATE_SECRET`; `except Exception` trần ở callback xoá mất phân biệt "Google chết" với "có người dò") — **để dành thành task polish sau merge**, không sửa ngay để diff đã review không đổi.
 
+## 6.3 📝 2026-07-21 — bốn lỗi chỉ lộ ra khi mở trình duyệt thật
+
+007 xanh CI 100%, security-review không tìm ra HIGH/MEDIUM — rồi bốn lỗi này vẫn tới tay chủ. **Không cái nào nằm trong code**, nên không công cụ đọc-code nào bắt được:
+
+| # | Triệu chứng | Gốc | Vá |
+|---|---|---|---|
+| **B1** | Fly crash-loop, app không khởi động | `httpx` nằm ở nhóm `dev`; Authlib import nó lúc load package; image production cài `--no-dev`. **pytest chạy *với* nhóm dev nên nhóm dev che mất dependency prod bị thiếu** | chuyển `httpx` sang dependency chính + job CI `runtime-deps` cài `--no-dev` rồi thử `create_app()` |
+| **B2** | Bấm "Đăng nhập bằng Google" không đi đâu cả | `vite-plugin-pwa` mặc định cho service worker trả `index.html` cho **mọi** điều hướng → nuốt luôn `/auth/login`, request không bao giờ tới FastAPI | `workbox.navigateFallbackDenylist: [/^\/auth\//, /^\/api\//]` |
+| **B3** | `?code=…` nằm lại trên thanh địa chỉ **chỉ ở nhánh bị từ chối** | nhánh hợp lệ 303 về `/` nên URL bị thay; nhánh từ chối trả HTML **ngay tại** `/auth/callback` nên code ở lại URL + history | nhánh từ chối cũng 303, sang `/auth/denied` |
+| **B4** | Đăng xuất xong dash vẫn hiện; đăng nhập lại không qua Google | (a) query cache giữ `data` cũ khi refetch lỗi → dash và màn login cùng hiện; (b) Google vẫn giữ phiên riêng của nó nên nhận diện im lặng | (a) đăng xuất bằng **điều hướng thật** thay vì can thiệp cache; (b) `prompt=select_account` |
+
+**B3 do chính chủ tìm ra**, bằng thao tác không agent nào làm: **đối chiếu URL giữa nhánh hợp lệ và nhánh bị từ chối rồi hỏi vì sao khác nhau** — kiểm thử khác biệt, không phải kiểm thử theo checklist. Bài học chung từ B3: **nhánh lỗi và nhánh thành công có bề mặt rò rỉ khác nhau**; chỉ test happy path là mù đúng nửa còn lại.
+
+Quy ước rút ra (đã ghi thành luật ở `agent-tasks/README.md` §"Quy ước BÁO CÁO" và `devops-brief.md` §7.1): **xanh CI ≠ chạy được**; deploy + nhìn bằng mắt là một bước nghiệm thu riêng.
+
 ## 7. Nguồn (tra live 2026-07-20)
 
 [Authlib PyPI](https://pypi.org/project/Authlib/) · [Authlib FastAPI client](https://docs.authlib.org/en/v1.3.2/client/fastapi.html) · [iOS web push yêu cầu Home Screen (Pushpad)](https://pushpad.xyz/blog/ios-special-requirements-for-web-push-notifications) · Claude API retention (đã tra ở encryption review, `tracking-brief.md` §6)
