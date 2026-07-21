@@ -64,6 +64,19 @@ So 2 phương án chủ đã ghi ở `tracking-brief.md` §5:
 
 Bảng **`session`** mới (§2) · cờ **`is_private` trên message tầng-1** (R4) · key `app_setting`: TTL private-unlock (§3). Tất cả theo house-rules `schema-physical-brief.md` (B1/B2); đã ghi chéo ở §8 file đó.
 
+## 6.1 📝 2026-07-21 — thi công 007: 4 điểm thực tế lệch/bổ sung giả định
+
+Ghi theo yêu cầu *"cập nhật khi code auth phát hiện khác giả định"*. **Không** điểm nào lật quyết định §1–§5; đều là chi tiết tầng vật lý brief chưa nói tới.
+
+| # | Phát hiện | Xử lý |
+|---|---|---|
+| **A1** | **Fly cắt TLS ở proxy** → app chỉ thấy request `http`, nên `request.url_for()` dựng ra `http://microsched.fly.dev/auth/callback` — URI **Google chưa từng đăng ký** ⇒ `redirect_uri_mismatch`, login không bao giờ chạy. Brief §1 không lường bước này. | Ép `https` cho mọi host **trừ loopback** (`localhost`/`127.0.0.1` vốn thật sự chạy http). Chọn cách này thay vì thêm biến env `BASE_URL` để không bắt chủ nuôi thêm một secret. Có **test riêng cho cả hai chiều** vì lỗi này *không* hiện ra ở status code — chỉ hiện khi bấm nút thật. |
+| **A2** | Authlib giữ `state`/`nonce` bằng **Starlette `SessionMiddleware`** — tức trong app tồn tại một cơ chế signed-cookie **trông y hệt** session đăng nhập. | Tách cứng: cookie riêng `ms_oauth_state`, TTL **300s**, và `request.session.clear()` ngay tại callback. Có test khẳng định cookie state **chết sau handshake**. Session đăng nhập vẫn đúng §2 (opaque token + bảng `session`). |
+| **A3** | §2 chốt TTL "60–90 ngày" nhưng không chốt số. | Chọn **90**. Lý do: cửa sổ **rolling** nên nó chỉ kích hoạt sau 90 ngày *không dùng gì cả*; rút ngắn chỉ thêm phiền lúc đăng nhập lại trên PWA mà **không** giảm rủi ro máy bị mất — rủi ro đó xử bằng logout/thu hồi phiên, không phải bằng TTL. |
+| **A4** | Brief không nói tới claim `email_verified`. | **Bắt buộc `email_verified=true`** mới qua cổng. Địa chỉ chưa xác minh không chứng minh quyền sở hữu — khớp tinh thần allowlist. |
+
+**Ghi chú kiểm thử:** CI chạy `pytest` **không có Postgres** (workflow `backend` không dựng service DB) → tầng lưu phiên được test qua một double in-memory cùng contract, cộng test riêng cho `PostgresSessionStore` khẳng định **chỉ digest được ghi xuống**. Đường SQL thật vẫn phải nghiệm thu bằng tay (localhost + Fly) theo mục Acceptance của `agent-tasks/007`.
+
 ## 7. Nguồn (tra live 2026-07-20)
 
 [Authlib PyPI](https://pypi.org/project/Authlib/) · [Authlib FastAPI client](https://docs.authlib.org/en/v1.3.2/client/fastapi.html) · [iOS web push yêu cầu Home Screen (Pushpad)](https://pushpad.xyz/blog/ios-special-requirements-for-web-push-notifications) · Claude API retention (đã tra ở encryption review, `tracking-brief.md` §6)

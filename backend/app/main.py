@@ -1,15 +1,21 @@
 """FastAPI application factory."""
 
+import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import Scope
 
 from app.core.settings import get_settings
+from app.web.deps import require_session
+from app.web.oauth import OAUTH_STATE_COOKIE, OAUTH_STATE_TTL_SECONDS
+from app.web.routers.auth import router as auth_router
 from app.web.routers.health import router as health_router
+from app.web.routers.me import router as me_router
 
 
 class SPAStaticFiles(StaticFiles):
@@ -28,12 +34,34 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = get_settings()
     app = FastAPI(title=settings.app_name, version=settings.app_version)
-    app.include_router(health_router)
 
-    @app.get("/api/{path:path}", include_in_schema=False)
+    # Signs the short-lived OAuth handshake cookie and NOTHING else. The login
+    # session is an opaque token row in `session` (auth-brief §2) - never this
+    # cookie. Keeping the two apart matters because merging them still demos fine.
+    # The ephemeral fallback only means a half-finished handshake breaks on restart.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.oauth_state_secret or secrets.token_urlsafe(32),
+        session_cookie=OAUTH_STATE_COOKIE,
+        max_age=OAUTH_STATE_TTL_SECONDS,
+        same_site="lax",
+        https_only=settings.session_cookie_secure,
+    )
+
+    app.include_router(health_router)
+    app.include_router(auth_router)
+
+    # Single mount point for authenticated API routes: including a router here is
+    # what makes it reachable, so a new slice cannot ship without the guard.
+    protected_api = APIRouter(prefix="/api", dependencies=[Depends(require_session)])
+    protected_api.include_router(me_router)
+
+    @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:
         """Keep unknown API paths out of the SPA fallback."""
         raise HTTPException(status_code=404, detail="Not Found")
+
+    app.include_router(protected_api)
 
     frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if frontend_dist.is_dir():

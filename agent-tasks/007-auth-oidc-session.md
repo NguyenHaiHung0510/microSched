@@ -1,6 +1,6 @@
 # 007 — Auth: Google OIDC + allowlist + session server-side
 
-> **Trạng thái:** 📋 TODO (chạy sau 006 — cần bảng `session` + app đã deploy để có redirect URI thật)
+> **Trạng thái:** 🔍 **CHỜ NGHIỆM THU (2026-07-21)** — code + test xong (T1, branch `feat/007-auth-oidc-session`). Phần máy kiểm được đã xanh; 4 mục Acceptance cần account Google thật vẫn chờ chủ chạy tay. Lệch giả định ghi ở `docs/auth-brief.md` §6.1 (A1–A4).
 > **Executor dự kiến:** **T1 (Claude Code / Sonnet 5) hoặc T2-Sol** — auth là security-critical, thuộc vùng T1 theo `docs/devops-brief.md` §7; chủ chọn lúc giao. · **Effort:** high · **Skill gợi ý:** `security-review` (T1, chạy trên diff trước khi merge) · **MCP cần:** (không)
 > *Lý do: code sai ở đây không hiện ra ở demo — nó hiện ra khi bị khai thác. Ưu tiên đúng > nhanh.*
 

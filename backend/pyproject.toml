@@ -7,7 +7,9 @@ requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.5",
     "asyncpg>=0.31.0",
+    "authlib>=1.6.0",
     "fastapi",
+    "itsdangerous>=2.2.0",
     "pgvector>=0.5.0",
     "pydantic-settings",
     "sqlmodel",
