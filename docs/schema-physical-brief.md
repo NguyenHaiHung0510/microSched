@@ -1,4 +1,4 @@
-# Schema vật lý (physical schema) — microSched
+﻿# Schema vật lý (physical schema) — microSched
 
 > **Trạng thái:** ✅ **CHỐT 2026-07-19** cho toàn bộ Nhóm 2, **trừ 2 mục DEFER** về tracking (C2, D1-tracker → §7).
 > Decision record **tự-chứa** (đọc được ở phiên 0-context). Nối tiếp `schema-v1-brief.md` (mức **khái niệm**) → file này là tầng **vật lý**: kiểu cột chính xác, cách sinh khoá, index, ràng buộc, công cụ đúc (ORM/migration), role DB.
@@ -181,7 +181,7 @@ Tách 2 nhu cầu hay bị gộp:
 **Kết luận vs Neon free (0.5 GB = 500 MB/project, trần cứng):**
 - **Nội dung người dùng là chuyện vặt nhiều năm.** Kể cả embedding (49 note → gần 0; 5000 note × 6KB = 30 MB) vẫn dư ~10×+.
 - **Biến số DUY NHẤT** có thể đụng 0.5 GB = **log AI verbose không giới hạn** → chính vì vậy chiến lược 3 tầng D3 (giữ tầng 1–2 gọn, đẩy tầng 3 off-DB) không chỉ là kiến trúc sạch mà là **điều kiện ở lại free tier**.
-- **Chi phí dôi dư có kiểm soát:** trên free, 0.5 GB là **trần cứng (chặn ghi khi đầy), KHÔNG phải hoá đơn bất ngờ**; vượt = **chủ động** nâng Launch (~$5). Blob nặng đã off-DB → không có kịch bản "cháy túi ngầm".
+- **Chi phí dôi dư có kiểm soát:** trên free, 0.5 GB là **trần cứng (chặn ghi khi đầy), KHÔNG phải hoá đơn bất ngờ**; vượt = **chủ động** nâng Launch (~\$5). Blob nặng đã off-DB → không có kịch bản "cháy túi ngầm".
 - **Trục compute:** Neon free cũng giới hạn **100 CU-h/tháng**. App always-on trên Fly nhưng single-user → Neon **autosuspend khi DB rảnh** → CU-h thấp; chỉ cần **cron đừng ping DB quá dày**.
 
 ---

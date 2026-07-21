@@ -3,7 +3,12 @@
 from functools import lru_cache
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.core.settings import get_settings
 
@@ -16,6 +21,16 @@ def get_engine() -> AsyncEngine | None:
         return None
 
     return create_async_engine(database_url, pool_pre_ping=True)
+
+
+@lru_cache
+def get_sessionmaker() -> async_sessionmaker[AsyncSession] | None:
+    """Return the process-wide session factory when the database is configured."""
+    engine = get_engine()
+    if engine is None:
+        return None
+
+    return async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def check_database() -> str:

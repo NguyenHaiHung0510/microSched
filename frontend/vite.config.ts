@@ -11,6 +11,13 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: {
+        // Mặc định service worker trả index.html cho MỌI điều hướng, nên nó nuốt
+        // luôn /auth/login và /auth/callback: request không bao giờ tới FastAPI và
+        // nút đăng nhập im lặng không làm gì. Route nào do server xử lý phải được
+        // loại khỏi fallback để đi thẳng ra mạng.
+        navigateFallbackDenylist: [/^\/auth\//, /^\/api\//],
+      },
       manifest: {
         name: 'microSched',
         short_name: 'microSched',

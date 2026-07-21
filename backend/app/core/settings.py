@@ -17,6 +17,25 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     database_url: str | None = None
 
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    allowed_emails: str = ""
+    oauth_state_secret: str | None = None
+    cron_token: str | None = None
+
+    # auth-brief §2 allows 60-90 days; 90 chosen because the window is rolling, so it
+    # only fires after 90 days of zero use. See the 007 PR for the full rationale.
+    session_ttl_days: int = 90
+    # Only ever false for local http development; production keeps cookies Secure.
+    session_cookie_secure: bool = True
+
+    @property
+    def allowed_email_set(self) -> frozenset[str]:
+        """Return the login allowlist, normalized the same way as Google's claim."""
+        return frozenset(
+            entry.strip().lower() for entry in self.allowed_emails.split(",") if entry.strip()
+        )
+
     @field_validator("database_url", mode="before")
     @classmethod
     def use_async_postgres_driver(cls, value: object) -> object:

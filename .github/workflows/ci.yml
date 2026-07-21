@@ -26,6 +26,27 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest
 
+  runtime-deps:
+    # Bộ test chạy với nhóm `dev`, nên một thư viện chỉ có ở dev vẫn khiến test
+    # xanh trong khi image production (uv sync --no-dev) không import nổi app.
+    # Job này cài đúng bộ deps của Dockerfile rồi thử khởi tạo app.
+    # Thêm 2026-07-21 sau khi thiếu `httpx` làm 007 crash-loop trên Fly.
+    name: Production dependency check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: uv sync --frozen --no-dev
+      - run: uv run --no-dev python -c "from app.main import create_app; create_app()"
+
   hooks:
     name: Repository hooks
     runs-on: ubuntu-latest

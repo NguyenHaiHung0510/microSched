@@ -1,6 +1,7 @@
 # 007 — Auth: Google OIDC + allowlist + session server-side
 
-> **Trạng thái:** 📋 TODO (chạy sau 006 — cần bảng `session` + app đã deploy để có redirect URI thật)
+> **Trạng thái:** ✅ **DONE — nghiệm thu thật 2026-07-21** trên `https://microsched.fly.dev`: đăng nhập Google chạy, allowlist đúng cả 3 loại tài khoản (2 hợp lệ / 2 là test-user nhưng ngoài allowlist), đăng xuất sạch, **không lộ thông tin trên URL**. Executor T1, branch `feat/007-auth-oidc-session`.
+> **Lệch giả định:** `docs/auth-brief.md` §6.1 (A1–A4) · **security-review:** §6.2 (không HIGH/MEDIUM) · **4 lỗi chỉ trình duyệt mới thấy:** §6.3.
 > **Executor dự kiến:** **T1 (Claude Code / Sonnet 5) hoặc T2-Sol** — auth là security-critical, thuộc vùng T1 theo `docs/devops-brief.md` §7; chủ chọn lúc giao. · **Effort:** high · **Skill gợi ý:** `security-review` (T1, chạy trên diff trước khi merge) · **MCP cần:** (không)
 > *Lý do: code sai ở đây không hiện ra ở demo — nó hiện ra khi bị khai thác. Ưu tiên đúng > nhanh.*
 
@@ -10,9 +11,25 @@
 
 Phạm vi task = **đăng nhập/đăng xuất + guard**, tức phần 2a–2c. **Private unlock (Argon2id, TTL 15′) và bộ luật AI R1–R7 KHÔNG thuộc task này** — chúng cần UI riêng + tầng AI chưa tồn tại; sẽ là task sau.
 
-**Việc của CHỦ trước khi chạy task:**
-- [ ] Google Cloud Console: tạo OAuth client (app để **Testing mode** — đủ cho login-only, auth-brief §1), redirect URIs cho cả `http://localhost:8000/...` và `https://<app>.fly.dev/...` (path callback do agent đặt, chủ điền theo PR).
-- [ ] Đặt `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `ALLOWED_EMAILS` / secret ký state vào `.env` local + `fly secrets set` — giá trị thật không bao giờ qua chat/PR.
+**Việc của CHỦ trước khi chạy task — ✅ XONG 2026-07-21:**
+- [x] Google Cloud Console: project `microSched`, Auth Platform **External / Testing**, OAuth client Web `microSched web`, scope chỉ `openid email profile`, branding + authorized domain `microsched.fly.dev`.
+- [x] Đặt `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `ALLOWED_EMAILS` / `OAUTH_STATE_SECRET` vào `.env` local + `fly secrets set` — giá trị thật không bao giờ qua chat/PR. Executor code bằng **tên biến + giá trị mock**, không cần biết giá trị thật.
+
+> **⚠️ ĐẢO SO VỚI BẢN ĐẦU — đọc kỹ:** bản gốc ghi *"path callback do agent đặt"*. **Không còn đúng.** Chủ đã đăng ký sẵn **đúng hai** redirect URI trên Console:
+> - `https://microsched.fly.dev/auth/callback`
+> - `http://localhost:8000/auth/callback`
+>
+> → Path callback **cố định là `/auth/callback`**, executor **không được tự đặt tên khác**. Đặt khác = Google trả `redirect_uri_mismatch`, và sửa phải vào Console (việc của chủ, không phải của executor).
+
+**Ma trận email để test (giá trị thật nằm ở `.env` của chủ — không ghi vào repo public, xem `devops-brief.md` §1 threat model):**
+
+| Vai | Là Google test user? | Trong `ALLOWED_EMAILS`? | Dùng để chứng minh |
+|---|---|---|---|
+| Email chính | ✓ | ✓ | login thành công, tạo session |
+| Email phụ #1 | ✓ | ✓ | allowlist nhận nhiều hơn một email |
+| Email phụ #2, #3 | ✓ | ✗ | **qua được cổng Google, bị cổng app từ chối** |
+
+Chủ đã thêm **4 email làm Google test user**, trong đó **2 nằm trong `ALLOWED_EMAILS`**. Cặp còn lại tồn tại để test đúng tầng: nếu dùng một email ngẫu nhiên chưa phải test user thì **Google** chặn trước, allowlist của app không hề chạy — test đó không chứng minh gì.
 
 ## Mục tiêu
 
@@ -36,14 +53,16 @@ Trên `https://<app>.fly.dev/`: bấm "Đăng nhập bằng Google" → về app
 - **Không** tự chế crypto/random (chỉ `secrets` + `hashlib`/thư viện chuẩn); **không** log token/cookie/secret ra console, log, hay message lỗi.
 - **Không** nới allowlist hay thêm chế độ "dev bypass auth" nào — kể cả sau flag.
 - **Không** đổi thiết kế session (vd chuyển JWT/signed-cookie) — đã chốt và có lý do trong auth-brief §2; muốn khác → DỪNG, escalate T1.
+- **Không** dùng `SessionMiddleware` (hay bất kỳ signed-cookie nào) làm **session đăng nhập**. ⚠️ Bẫy cụ thể: Authlib thường cần Starlette `SessionMiddleware` để giữ `state`/`nonce` **trong lúc handshake OAuth** — đó là vai duy nhất của nó, và là vai của `OAUTH_STATE_SECRET`. Cookie đó **phải chết ngay sau callback**. Session đăng nhập là **opaque token + row trong bảng `session`** (auth-brief §2), không liên quan. Hai thứ này trông giống nhau trong code và **sai kiểu này vẫn demo chạy ngon** — nên phải tách rõ; gộp chúng lại = vi phạm §2, DỪNG và escalate.
 - Giả định nào trong auth-brief §1 (⚠️ Testing mode) sai khi build → **DỪNG, ghi nhận, escalate** — đừng tự đổi kiến trúc auth để "cho chạy được".
 - **Không** commit secret. **Không** rewrite history.
 
 ## Acceptance (kiểm chứng được)
 
 - [ ] Localhost: login email chủ → vào app, thấy email hiển thị; row session trong DB có `token_hash` (không phải token thô).
-- [ ] Login bằng email ngoài allowlist (chủ dùng account phụ) → từ chối, **không** có row session mới.
+- [ ] Login bằng **email phụ #2/#3** (là Google test user, KHÔNG trong allowlist — xem ma trận trên) → từ chối, **không** có row session mới. *Phải dùng đúng loại email này; email lạ bị Google chặn trước, không test được allowlist.*
 - [ ] Cookie đúng flags (kiểm DevTools: HttpOnly, Secure, SameSite=Lax).
+- [ ] Sau khi callback xong, **cookie state của Authlib không còn tồn tại** (DevTools) — chỉ còn đúng cookie session. Chứng minh hai cơ chế đã tách, không gộp.
 - [ ] `/api/*` không cookie → 401; sau logout → 401 (row đã xóa).
 - [ ] `pytest` bộ test mục 8 pass; CI xanh; gitleaks sạch.
 - [ ] Flow chạy được trên `https://<app>.fly.dev` (redirect URI prod đúng).

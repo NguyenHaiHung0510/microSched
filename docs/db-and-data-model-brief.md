@@ -1,4 +1,4 @@
-# Decision brief — DB, hosting & backup (microSched)
+﻿# Decision brief — DB, hosting & backup (microSched)
 
 > Decision record **tự-chứa** (đọc được ở phiên 0-context). Mọi mục dưới **đã chốt 18/07/2026** kèm lý do. Đây là cửa một-chiều (đổi DB/schema sau khi có data thì đắt).
 
@@ -22,7 +22,7 @@ microSched = app task/note/lịch cá nhân **một người dùng**, chạy web
 - **Một tầng đọc sạch dùng chung cho UI + tool Agent** = "API endpoint sạch" mà strategy gọi là *lý do thật của rewrite* (Bước 2 tool ghi = chính các endpoint này).
 
 ## 5. Hosting — ✅ Neon (free tier)
-Ngân sách mục tiêu <$1/tháng cho managed Postgres ≈ **free tier** (flat tier rẻ nhất cũng ~$5/mo: Neon/Heroku Essential; dưới đó chỉ có Neon usage-based scale-to-zero). Single-user → free tier dư dùng rất lâu → thực tế **$0**.
+Ngân sách mục tiêu <\$1/tháng cho managed Postgres ≈ **free tier** (flat tier rẻ nhất cũng ~\$5/mo: Neon/Heroku Essential; dưới đó chỉ có Neon usage-based scale-to-zero). Single-user → free tier dư dùng rất lâu → thực tế **\$0**.
 
 **Đã chọn Neon. Đã cân nhắc Supabase và loại.** So sánh (chính là lý do chọn) — cả hai đều có region Singapore (tốt cho VN) + pgvector:
 

@@ -7,7 +7,12 @@ requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.5",
     "asyncpg>=0.31.0",
+    "authlib>=1.6.0",
     "fastapi",
+    # Runtime, not just test tooling: authlib.integrations.starlette_client imports
+    # its httpx client at package-import time, so the app will not boot without it.
+    "httpx>=0.28.0",
+    "itsdangerous>=2.2.0",
     "pgvector>=0.5.0",
     "pydantic-settings",
     "sqlmodel",
@@ -16,7 +21,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx",
     "pytest",
     "ruff",
 ]
