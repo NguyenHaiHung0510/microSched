@@ -104,7 +104,13 @@ function SignedIn({ session }: { session: SessionResponse }) {
   const health = useQuery({ queryKey: ['healthz'], queryFn: fetchHealth })
   const logout = useMutation({
     mutationFn: postLogout,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session'] }),
+    // remove, not invalidate: an invalidated query keeps serving its last data
+    // while the refetch runs, so the dashboard would linger next to the login
+    // screen instead of disappearing.
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ['session'] })
+      queryClient.removeQueries({ queryKey: ['healthz'] })
+    },
   })
 
   return (
@@ -171,7 +177,8 @@ function App() {
           </div>
         ) : null}
 
-        {session.data ? <SignedIn session={session.data} /> : null}
+        {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
+        {session.data && !loggedOut ? <SignedIn session={session.data} /> : null}
       </div>
     </main>
   )

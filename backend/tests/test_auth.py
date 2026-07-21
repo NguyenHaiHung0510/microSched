@@ -144,9 +144,27 @@ def test_email_outside_allowlist_is_refused_without_creating_a_session(monkeypat
 
     response = complete_login(client, monkeypatch, BLOCKED_EMAIL)
 
-    assert response.status_code == 403
+    assert response.status_code == 303
+    assert response.headers["location"] == "/auth/denied"
     assert store.rows == {}
     assert SESSION_COOKIE_NAME not in response.cookies
+
+
+def test_refusal_redirects_away_from_the_authorization_code(monkeypatch) -> None:
+    """Refusal must not park the browser on the callback URL.
+
+    Rendering the page in place would leave `?code=...` in the address bar and in
+    history. The code is single-use, already spent, and useless without the client
+    secret - but it has no reason to linger there.
+    """
+    client = build_client(InMemorySessionStore())
+
+    response = complete_login(client, monkeypatch, BLOCKED_EMAIL)
+    target = response.headers["location"]
+
+    assert "code" not in target
+    assert "?" not in target
+    assert client.get(target).status_code == 403
 
 
 def test_unverified_google_address_is_refused(monkeypatch) -> None:
@@ -156,7 +174,8 @@ def test_unverified_google_address_is_refused(monkeypatch) -> None:
 
     response = complete_login(client, monkeypatch, ALLOWED_EMAIL, verified=False)
 
-    assert response.status_code == 403
+    assert response.status_code == 303
+    assert response.headers["location"] == "/auth/denied"
     assert store.rows == {}
 
 
@@ -168,8 +187,26 @@ def test_failed_google_handshake_is_refused(monkeypatch) -> None:
 
     response = client.get("/auth/callback?code=x&state=y", follow_redirects=False)
 
-    assert response.status_code == 403
+    assert response.status_code == 303
     assert store.rows == {}
+
+
+def test_login_always_forces_the_google_account_chooser(monkeypatch) -> None:
+    """Without prompt=select_account, signing back in after logout skips Google."""
+    captured: dict[str, object] = {}
+
+    class _Google:
+        async def authorize_redirect(self, request, redirect_uri: str, **params):
+            captured.update(params)
+            return RedirectResponse("https://accounts.google.com", status_code=302)
+
+    monkeypatch.setattr(
+        "app.web.routers.auth.get_oauth",
+        lambda: type("_Registry", (), {"google": _Google()})(),
+    )
+    build_client(InMemorySessionStore()).get("/auth/login", follow_redirects=False)
+
+    assert captured["prompt"] == "select_account"
 
 
 def test_session_cookie_carries_the_expected_flags(monkeypatch) -> None:
@@ -199,7 +236,7 @@ class _CapturingGoogleClient:
     def __init__(self) -> None:
         self.redirect_uri: str | None = None
 
-    async def authorize_redirect(self, request, redirect_uri: str):
+    async def authorize_redirect(self, request, redirect_uri: str, **params):
         self.redirect_uri = redirect_uri
         return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth", status_code=302)
 

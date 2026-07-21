@@ -73,8 +73,24 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 @router.get("/login")
 async def login(request: Request) -> Response:
-    """Send the browser to Google, carrying a signed state parameter."""
-    return await get_oauth().google.authorize_redirect(request, callback_url(request))
+    """Send the browser to Google, carrying a signed state parameter.
+
+    `prompt=select_account` forces the account chooser every time. Without it,
+    Google silently reuses its own session, so signing out of microSched and
+    signing back in happens with no visible Google step at all - which makes the
+    logout button feel like it did nothing.
+    """
+    return await get_oauth().google.authorize_redirect(
+        request,
+        callback_url(request),
+        prompt="select_account",
+    )
+
+
+@router.get("/denied")
+async def access_denied() -> Response:
+    """Serve the refusal page at a URL of its own."""
+    return HTMLResponse(content=DENIED_HTML, status_code=status.HTTP_403_FORBIDDEN)
 
 
 @router.get("/callback", name="auth_callback")
@@ -96,7 +112,11 @@ async def auth_callback(
 
     # An unverified address is not proof of ownership, so it never passes the gate.
     if not claims.get("email_verified") or email not in get_settings().allowed_email_set:
-        return HTMLResponse(content=DENIED_HTML, status_code=status.HTTP_403_FORBIDDEN)
+        # Redirect rather than render in place. Rendering would leave the browser
+        # parked on /auth/callback?code=... so the authorization code stays in the
+        # address bar and in history. The code is single-use, already spent, and
+        # worthless without the client secret - but it has no reason to linger.
+        return RedirectResponse(url="/auth/denied", status_code=status.HTTP_303_SEE_OTHER)
 
     if store is None:
         raise HTTPException(

@@ -95,6 +95,24 @@ Chi phí cả stack + bảng giá đối chiếu: `cost-brief.md` §6. Nguồn c
 
 ---
 
+## 7.1 📝 2026-07-21 — bằng chứng thực nghiệm cho vai T3: ba lỗi chỉ trình duyệt mới thấy
+
+Ngày thi công 007 đẻ ra ba lỗi mà **không** công cụ nào của T1/T2 bắt được — kể cả security-review Opus MAX chạy riêng trên diff (nó soi *code*, ba lỗi này không nằm trong code):
+
+| Lỗi | Vì sao code-review + pytest mù |
+|---|---|
+| Thiếu `httpx` ở production | pytest chạy **với** nhóm `dev`, nơi httpx sẵn có cho TestClient → nhóm dev **che** một dependency production bị thiếu. Viết thêm bao nhiêu test cũng không lộ ra. |
+| Service worker nuốt `/auth/*` | chỉ tồn tại ở **bản build PWA thật**; dev server không đăng ký SW, pytest không có trình duyệt |
+| `?code=...` nằm lại trên URL ở nhánh bị từ chối | chỉ thấy khi **nhìn thanh địa chỉ**, và chỉ ở đúng nhánh từ chối — nhánh hợp lệ redirect đi nên sạch |
+
+Cái thứ ba do **chính chủ** phát hiện, bằng một thao tác mà không agent nào làm: **đối chiếu URL giữa nhánh hợp lệ và nhánh bị từ chối**, rồi hỏi vì sao khác nhau.
+
+⇒ Vai **T3** (chạy test + MCP Chrome-DevTools/Playwright, `§7`) **không phải phần rườm rà của quy trình** — nó là tầng duy nhất nhìn được lớp lỗi này. Kỷ luật rút ra:
+
+- **`flyctl deploy` + mở trình duyệt thật là MỘT BƯỚC NGHIỆM THU RIÊNG**, không phải thủ tục hành chính sau khi "đã test xong".
+- Task nào đụng tới **bản build production** (Docker, PWA/service worker, cookie, redirect, OAuth) thì mục Acceptance **bắt buộc** có bước nhìn bằng mắt trên bản deploy thật — ghi rõ *nhìn cái gì*, không ghi "kiểm tra hoạt động".
+- Xanh CI ≠ chạy được. Ba lỗi trên đều xảy ra khi CI xanh 100%.
+
 ## 8. Chạy nhiều agent song song — ⚠️ GHI NHẬN 2026-07-21, chưa nghiên cứu đủ
 
 Bối cảnh: Codex lẫn Claude Code đều mở được nhiều session cùng lúc, và máy chủ **thừa sức về phần cứng** — nên câu hỏi không phải "máy chịu nổi không" mà là **"cái gì hỏng khi hai agent cùng chạy"**. Ghi lại để nghiên cứu tiếp trước khi mở song song thật (dự kiến từ 009).
