@@ -1,4 +1,4 @@
-# Learnings applied — microSched
+﻿# Learnings applied — microSched
 
 > Nhật ký **kiến thức đã học → áp dụng thật** vào microSched. Ghi ngắn: *học gì · áp vào đâu · ref*. Dùng làm nguyên liệu weekly-notes / blog / phỏng vấn.
 
@@ -73,7 +73,7 @@
 
 ## 2026-07-20 — Phiên harness công cụ dev (đóng, cùng ngày)
 
-- **Thị trường coding-plan đổi theo quý — giá promo là mồi:** GLM $3/mo (2025) chết sau ~5 tháng, giá chuẩn ×3–6; Qwen đóng free tier; MiniMax entry ×2. Quyết định công cụ = decision record có ngày + re-check date, y hệt quyết định hạ tầng (lặp bài "đọc giá gia hạn, không tin giá năm-đầu" — lần này áp cho chính bộ đồ nghề).
+- **Thị trường coding-plan đổi theo quý — giá promo là mồi:** GLM \$3/mo (2025) chết sau ~5 tháng, giá chuẩn ×3–6; Qwen đóng free tier; MiniMax entry ×2. Quyết định công cụ = decision record có ngày + re-check date, y hệt quyết định hạ tầng (lặp bài "đọc giá gia hạn, không tin giá năm-đầu" — lần này áp cho chính bộ đồ nghề).
 - **Phân tầng model theo blast-radius của lỗi, không theo độ to của việc:** nguyên tắc sequencing AI của chính app (Bước 0→3) áp ngược lên dev-tooling — auth/DDL ("sai âm thầm thành nợ") đi model mạnh nhất; CRUD/bulk đi workhorse; vòng lặp đi bậc rẻ. Một nguyên tắc, hai chỗ dùng.
 - **Chiến lược quota = protocol, không phải mua thêm:** thứ đốt limit không phải task khó mà là vòng lặp thử-sai + test-spam → flow đẩy loop xuống tầng quota-rộng (Luna/T3); luật một dòng "Sol chỉ nhận việc đã có spec".
 - **"Model phế" là phế-tương-đối-với-việc:** Gemini không đủ tin làm agent thi công (kinh nghiệm thật của chủ), nhưng "chạy test theo hướng dẫn" là việc khối-lượng-lớn/phán-đoán-thấp — khớp đúng hồ sơ quota-nhiều-chất-vừa. Xếp việc theo chất model, thay vì loại model theo cảm giác chung.

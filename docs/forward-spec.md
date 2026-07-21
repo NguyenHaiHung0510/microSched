@@ -1,4 +1,4 @@
-# forward-spec.md — Backlog tính năng microSched
+﻿# forward-spec.md — Backlog tính năng microSched
 
 > **Tự-chứa.** Nguồn: note "Nâng cấp microSchedule" của chính chủ (18/07/2026) + đối chiếu `chien-luoc-he-2026.md` / `track_ai_eng_strategy.md`.
 > **Forward spec** = tính năng MUỐN CÓ ở bản mới; tách khỏi backward spec (hành vi cũ). Cờ: ✅ đã quyết · ⚠️ OPEN (chưa xếp lịch) · DEFER (để sau) · 🆕 mới.
@@ -56,10 +56,10 @@ Khi tra, cột quyết định **không phải giá mà là "có train trên dat
 ⇒ Model free phủ **phần lớn** tính năng microSched; phần còn lại đã có R1–R7 chặn sẵn. Không phải quyết định mới.
 
 ### 📝 2026-07-21 — retrieval: FTS trước, embedding khi corpus xứng đáng
-Corpus thật hiện tại = **49 note + 163 task**. Semantic search kiếm cơm ở quy mô hàng nghìn+; ở ~200 tài liệu thì `tsvector` + `pg_trgm` chạy ngay trong Neon: $0, không provider, không bar retention, không phải chọn dimension, không gì rời khỏi DB. (`schema-physical-brief.md` §C4 đã ghi sẵn: *"ở quy mô 49 note hiện tại, index vector còn chưa cần thiết cho tốc độ"*.)
+Corpus thật hiện tại = **49 note + 163 task**. Semantic search kiếm cơm ở quy mô hàng nghìn+; ở ~200 tài liệu thì `tsvector` + `pg_trgm` chạy ngay trong Neon: \$0, không provider, không bar retention, không phải chọn dimension, không gì rời khỏi DB. (`schema-physical-brief.md` §C4 đã ghi sẵn: *"ở quy mô 49 note hiện tại, index vector còn chưa cần thiết cho tốc độ"*.)
 **Không phải hoãn AI** — hybrid retrieval vốn ba chân (structured + keyword + semantic); ở cỡ này hai chân đầu gánh gần hết, chân thứ ba thêm vào khi **đo được** nó cải thiện — mà phần "đo được" chính là eval, đúng thứ đáng học. ⇒ quyết định ⚠️ OPEN *embedding provider* tụt từ **chặn đường** xuống **rẻ và để sau**; cột `vector` vốn đã nullable nên thêm sau chỉ là một migration nhỏ.
 
-### 📝 2026-07-21 — credit GCP ₫7,9M (~$300): ✅ chốt BỎ QUA
+### 📝 2026-07-21 — credit GCP ₫7,9M (~\$300): ✅ chốt BỎ QUA
 Tài khoản đã lên full (GPU được mở, nhưng quota mặc định 0 → phải xin). **Quyết định: không đuổi theo.** Fine-tune / distributed / GPU là **ML engineering (hạ tầng huấn luyện)**, không phải **AI engineering (xây trên model)** — track mà kế hoạch hè này nhắm. Đổi hướng học vì ₫8M sắp hết hạn chính là lỗi chi phí cơ hội. Cửa để ngỏ nếu tò mò: **Vertex managed tuning** không cần quota GPU và không kéo theo MLOps (một buổi chiều, không đổi track).
 ⚠️ **Vệ sinh bắt buộc:** account giờ là *full / pay-as-you-go, KHÔNG tự dừng*, và budget alert **chỉ gửi mail chứ không chặn chi**. Credit hết **28/08/2026** → sau đó mọi thứ còn chạy sẽ vào thẻ. Đặt nhắc **27/08 quét sạch tài nguyên**. Rủi ro nằm ở chỗ quên tắt, không nằm ở chỗ để credit hết hạn.
 

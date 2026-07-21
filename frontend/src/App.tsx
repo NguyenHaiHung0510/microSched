@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
 
@@ -100,17 +100,14 @@ function LoginScreen() {
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
-  const queryClient = useQueryClient()
   const health = useQuery({ queryKey: ['healthz'], queryFn: fetchHealth })
   const logout = useMutation({
     mutationFn: postLogout,
-    // remove, not invalidate: an invalidated query keeps serving its last data
-    // while the refetch runs, so the dashboard would linger next to the login
-    // screen instead of disappearing.
-    onSuccess: () => {
-      queryClient.removeQueries({ queryKey: ['session'] })
-      queryClient.removeQueries({ queryKey: ['healthz'] })
-    },
+    // Full navigation, not cache surgery. Logging in is already a real page load
+    // (the OAuth redirect), so logging out being one too keeps the two halves
+    // symmetric - and it makes the server the single source of truth instead of
+    // resting on how the query cache reacts to being invalidated or removed.
+    onSuccess: () => window.location.assign('/'),
   })
 
   return (
