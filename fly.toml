@@ -7,6 +7,15 @@ app = 'microsched'
 primary_region = 'sin'
 
 [build]
+
+# Không phải secret, nên nằm ở đây chứ không phải `flyctl secrets` — nhờ vậy nó
+# nằm trong git, review được, và trả lời được câu "production đang chạy ở chế độ
+# nào" mà không phải nhớ mặc định trong code là gì.
+# Mặc định trong code CŨNG là "production" (app/core/settings.py) — cố ý trùng
+# lặp: nếu dòng này lỡ mất, app rơi về bản nghiêm hơn chứ không nới lỏng.
+[env]
+  APP_ENV = 'production'
+
 [http_service]
   internal_port = 8000
   force_https = true
