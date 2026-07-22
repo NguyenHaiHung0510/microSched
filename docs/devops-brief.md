@@ -24,6 +24,27 @@
 - **Quy ước commit:** **1 commit = 1 phiên quyết định** → history đọc được như nhật ký thiết kế. Message tiếng Việt, mô tả *tại sao* chứ không chỉ *cái gì*, kèm `Co-Authored-By:`.
 - PR đầu tiên: [#1](https://github.com/NguyenHaiHung0510/microSched/pull/1) — gộp 3 phiên thiết kế (kiến trúc, schema vật lý, tracking).
 
+## 2.1 ✅ CHỐT 2026-07-22 — `main` nghĩa là gì, và bao giờ merge vào nó
+
+§2 nói *"`main` = trạng thái đã duyệt"* — quá mơ hồ để hành động, và hậu quả đo được: tới 22/07, **`main` tụt sau `develop` 33 commit**, đứng im ở PR #4 (thời 003/004). Toàn bộ 005 (Docker/Fly), 006 (DDL) và 007 (auth) **không có trên `main`**. Tức `main` không phải bản đang chạy, không phải điểm rollback (nó cũ hơn cả lần deploy thành công đầu tiên), và ruleset `protect-main` đang canh một nhánh không ai dùng. **Một con trỏ chết.**
+
+Nguyên nhân không phải lười: chưa ai định nghĩa *điều kiện* để merge, nên không bao giờ tới lúc "đủ điều kiện".
+
+**Định nghĩa chốt: `main` = bản đang chạy trên Fly mà chính chủ đã dùng tay và tin.** Không phải "code xong" — là **"đã sờ vào và nó sống"**.
+
+| | `develop` | `main` |
+|---|---|---|
+| Nhận từ | mọi `feat/NNN` qua PR nhỏ | `develop`, khi một **lát cắt dùng được** |
+| Điều kiện | CI xanh | CI xanh **+ đã nghiệm thu bằng mắt trên fly.dev** |
+| Nhịp | mỗi task | mỗi 008a·008 / 009 / 010 / 011 / 012 |
+| Ý nghĩa | "đã build" | "đã sống" |
+
+- **Gắn tag `v0.x` mỗi lần merge vào `main`.** Không có tag thì `main` vẫn không phải đường lùi dùng được — muốn quay về "bản chạy tốt tuần trước" phải mò commit hash.
+- **Từ 008b, `main` là cò súng deploy** (CD chỉ bắn từ `main`, không từ `develop`). Điều này khiến định nghĩa trên tự cưỡng chế: cái gì lên `main` là cái đó ra production.
+- **Hệ quả cho việc chọn thứ vào `main`:** một bản vá chưa deploy, chưa nhìn bằng mắt thì **chưa được lên `main`** dù CI xanh và diff đã review. Ví dụ đầu tiên áp luật: PR [#10](https://github.com/NguyenHaiHung0510/microSched/pull/10) (đồng bộ 33 commit) **cố ý không mang theo** bản vá healthz của PR [#11](https://github.com/NguyenHaiHung0510/microSched/pull/11) — vá đó vào `develop` trước, lên `main` ở vòng sau, sau khi deploy và nhìn Neon ngủ thật.
+
+**Vì sao không đơn giản cho `main` bám sát `develop`:** thế thì `main` không mang thêm thông tin nào so với `develop`, và ta mất đi thứ duy nhất đáng có ở một dự án một người — **một con trỏ tới trạng thái đã được chứng minh bằng tay**. Giá trị của `main` nằm đúng ở chỗ nó *tụt lại*, và tụt lại có lý do.
+
 ## 3. Hàng rào secret — ✅ 2 lớp
 
 | Lớp | Ở đâu | Chặn lúc nào | Trạng thái |
@@ -139,5 +160,21 @@ Không phải quota (đo thật 003→006: chỉ ~20% quota tuần). Là **băng
 
 **Cần nghiên cứu thêm:** giới hạn/chi phí Neon branch · worktree ở Codex · có nên dùng Postgres ephemeral (container) cho *test* thay vì Neon branch — lưu ý luật "một store duy nhất" là về **nguồn sự thật của dữ liệu**, không phải về fixture test, nên đây có thể không vi phạm; nhưng 006 đã cho CI chạy trên Neon (`prepare_ci_database.py`) nên phải cân nhắc cùng chỗ.
 
+## 9. ✅ CHỐT 2026-07-22 — CD: dựng ở **008b**, ngay sau 008a và **trước** 008
+
+Tới 22/07 deploy vẫn là `fly deploy` gõ tay. Câu hỏi không phải "có nên tự động hoá không" mà là **bao giờ**, và câu trả lời không đến từ sự tiện lợi.
+
+**Lý do chọn đúng khe này — CD là thứ làm cho luật nghiệm thu đủ rẻ để được tuân thủ.** §7.1 đã chốt: *task đụng bản build production thì Acceptance **bắt buộc** có bước nhìn bằng mắt trên deploy thật*. Từ 008 trở đi **mỗi slice đều đụng** (API + UI + cookie + service worker). Nếu deploy còn là việc thủ công thì mỗi lần nghiệm thu phải trả một khoản ma sát — và ma sát đặt đúng chỗ đó sẽ khiến người ta bỏ qua **đúng bước đã để lọt 4 lỗi ở 007**. CD ở đây không phải tiện nghi, nó là **hạ tầng của kỷ luật kiểm chứng**.
+
+**Vì sao không sớm hơn (ngay bây giờ):** trước 008 chưa có gì để deploy ngoài trang đăng nhập; CD sẽ được chạy gần như 0 lần trước khi thực sự cần. **Vì sao không muộn hơn (sau 008):** 008 là task **đặt khuôn** — mọi slice sau bắt chước nó, kể cả bắt chước *quy trình nghiệm thu* của nó. Muốn khuôn đúng thì lúc đúc khuôn phải đã có CD.
+
+**Nội dung 008b (spec viết sau, đây là ranh giới):**
+- GH Actions: merge vào **`main`** → build + `fly deploy` → **smoke test bắt buộc**, đỏ thì fail. Smoke test gọi `/api/readyz` (không phải `healthz` — xem `health.py`), kiểm `status == "ok"`. Đây đúng là thứ đã bắt được lỗi crash-loop B1 của 007 nếu nó tồn tại lúc đó.
+- Deploy **chỉ từ `main`** — nhất quán với §2.1, và khiến định nghĩa "`main` = bản đang chạy" tự cưỡng chế thay vì trông vào kỷ luật.
+- Nuốt luôn 2 món polish tồn từ 007 (`auth-brief.md` §6.2): cảnh báo lúc khởi động khi thiếu `OAUTH_STATE_SECRET`, và `except Exception` trần ở callback. Cả hai là guardrail lúc khởi động/deploy — mà **CD làm deploy nhanh hơn ⇒ deploy sai cũng nhanh hơn**, nên đây đúng lúc chúng đáng giá nhất.
+- Dựng luôn `CRON_TOKEN` + khung cron endpoint (backup/embed/nhắc thuốc) vì cùng chạm hạ tầng GH Actions.
+
+**Bất biến bắt buộc mang theo (rút từ sự cố Neon 22/07, xem `cost-brief.md` §7):** **không job nền nào được poll DB với chu kỳ ngắn hơn cửa sổ idle 5 phút của Neon, trừ khi đã tính lại ngân sách CU-hr.** Cron backup/embed/nhắc thuốc sắp dựng ở chính 008b sẽ đâm thẳng vào bức tường này nếu không ghi trước.
+
 ---
-*Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). Thêm note có ngày — không xóa kết luận cũ.*
+*Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). §9 đóng khi 008b chạy xong. Thêm note có ngày — không xóa kết luận cũ.*

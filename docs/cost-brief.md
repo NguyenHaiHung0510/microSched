@@ -81,5 +81,60 @@
 
 **Lane PAYG "tháng nhẹ" (bổ sung cùng ngày — chi tiết `devops-brief.md` §7):** tháng thuần-học có thể skip sub Codex → OpenRouter (ví duy nhất; **nạp \$10 một lần, không hết hạn → 1.000 req/ngày free-models vĩnh viễn**; phí topup 5.5%, nạp cục đừng nạp lắt nhắt) + model rẻ (DeepSeek V4) qua OpenCode hoặc Claude Code endpoint-compatible ≈ **\$2–5/tháng**. **Credit đang om (kiểm expiry NGAY):** OpenAI \$5 + daily-free data-sharing (~1M/ngày model lớn, 2.5M/ngày mini — reset hằng ngày, om là phí; chỉ việc public-context) · 2× Gemini free tier (Flash ~1.500 req/ngày/project; ⚠️ bật billing = mất free tier project đó → acc có 300K VND credit tách project riêng) · 300K VND Google credit. Earmark toàn bộ cho Bước-1 (eval, embedding, cascade-dev).
 
+## 7. 🆕 MỞ 2026-07-22 — Mảng theo dõi hoá đơn thật (khác với ước lượng ở §TL;DR)
+
+App đã deploy và **tiền đã bắt đầu chạy**. Chính chủ mở mảng mới: soi hoá đơn thật theo nhịp **3–7 ngày** (và khi thấy bất thường), tách khỏi việc soi giá 3 tháng/lần.
+
+**Vì sao tách hai mảng — sự cố Neon 22/07 tự chứng minh:** §TL;DR ước \$0 cho Neon và **giá đó không sai**. Cái hỏng là **một config ở file khác phá giả định của ước lượng**. Soi giá lại 3 tháng nữa cũng không bao giờ tìm ra nó. Hai mảng đo hai thứ khác nhau:
+
+| | `cost-brief` §1–§6 | Mảng mới §7 |
+|---|---|---|
+| Đo | **giá & lựa chọn** | **hoá đơn & hành vi** |
+| Nhịp | ~3 tháng | 3–7 ngày |
+| Câu hỏi | "còn đáng chọn không?" | "vì sao số này ra thế?" |
+
+### 7.1 Số nền — đo thật 2026-07-22 (thay cho ước lượng)
+
+**Fly — đơn vị hoá đơn: 1 unit = 1 giây máy chạy.** Suy ra và kiểm chứng: machine sinh `2026-07-20T14:00:19Z` ⇒ ngày 20 (UTC) còn lại 35.981 giây, hoá đơn ghi **36.007 units**. Khớp trong 26 giây.
+
+| Ngày | Units | Đọc ra |
+|---|---|---|
+| 07-20 | 36.007 | 10,0h — ngày cụt, máy vừa sinh lúc 21:00 giờ VN |
+| 07-21 | 82.103 | 22,8h — ngày đầy, hụt ~72 phút |
+
+- **"Xu hướng tăng" của Fly là ảo giác của ngày đầu cụt**, không phải xu hướng. Trạng thái ổn định = 86.400 × \$0,00000095 = **\$0,082/ngày → ~\$2,50/tháng**.
+- **Lệch so với ước lượng:** §2 ghi \$2,02 (baseline Amsterdam) kèm chú "`sin` nhỉnh hơn chút". Thực tế `sin` = **\$2,50, +24%**. Vẫn trong ngân sách; giờ là số thật.
+- ~72 phút hụt của ngày 21 *(suy luận)*: các lần deploy restart + **crash-loop `httpx`** (lỗi B1 của 007) — Fly tính theo giây nên máy chết không tính tiền. Hoá đơn có dấu vết của bug.
+
+**Neon — sự cố thật, đã vá** (PR [#11](https://github.com/NguyenHaiHung0510/microSched/pull/11)):
+
+`fly.toml` gọi `/api/healthz` mỗi **30 giây**; endpoint đó chạy `SELECT 1`. Cửa sổ autosuspend của Neon là **5 phút**. 30 giây ≪ 5 phút ⇒ **DB không bao giờ được rảnh đủ lâu để ngủ**. Sàn 0,25 CU × 24h = **6 CU-hrs/ngày** trên hạn mức free **100 CU-hrs/tháng** ⇒ cạn trong **~17 ngày**, sau đó Neon **treo compute tới kỳ sau** — **mất DB giữa tháng, không phải mất tiền**. Số đo khớp: 4,54 CU-hrs sau ~20h chạy liên tục ≈ 0,227 CU ≈ đúng sàn.
+
+**Bài học vượt ra ngoài chuyện tiền:** `schema-physical-brief.md` §185 đã cảnh báo đúng điều này từ 19/07 (*"cron đừng ping DB quá dày"*), rồi 005 vẫn đi thẳng vào. Không test nào đỏ, không log nào báo, security-review không thấy (không phải lỗ bảo mật). **Đây là lỗ hổng giữa hai quyết định đều đúng, nằm ở hai file không tham chiếu nhau** — cùng họ với B1/B2 của 007: thứ chỉ lộ ra khi **nhìn hệ thống đang chạy**, không phải khi đọc code. Đó chính là lý do mảng §7 phải tồn tại.
+
+### 7.2 Ngưỡng báo động — soi số phải có nghĩa, không chỉ "nhìn cho biết"
+
+| Trục | Kỳ vọng | Báo động ⇒ đi tìm cái gì |
+|---|---|---|
+| Fly units/ngày | ~86.400 | **>90.000 ⇒ đang chạy >1 máy** (bẫy `fly launch` tạo 2 máy, §2) |
+| Fly bandwidth | ~\$0 | >0 đáng kể ⇒ có thứ gì đang gọi từ ngoài |
+| Neon CU-hrs/ngày | **<1** (sau khi vá) | >2 ⇒ **có thứ đang giữ DB thức** |
+| Neon storage | 0,03 GB | >0,25 GB ⇒ nửa quota free |
+| Neon dự phóng cuối kỳ | <60 CU-hrs | >80 |
+
+### 7.3 ⚠️ ĐANG THEO DÕI — Neon, 3 ngày, mỗi ngày một lần
+
+**Chốt 2026-07-22:** sau khi PR #11 deploy, soi Neon **mỗi ngày một lần trong 3 ngày** (23/07, 24/07, 25/07).
+
+Nghiệm thu **không nằm ở app mà ở biểu đồ Neon**: để yên >10 phút không đụng vào, biểu đồ Monitoring phải chuyển sang **ENDPOINT INACTIVE**. Còn chạy liên tục ⇒ **còn thứ khác đang ping DB mà ta chưa tìm ra** — và đó mới là phát hiện quan trọng, vì nó nghĩa là mô hình của ta về hệ thống còn thiếu một đường.
+
+Mỗi ngày ghi: CU-hrs cộng dồn · CU-hrs riêng 24h qua · có thấy khoảng INACTIVE không. Sau 3 ngày, nếu <1 CU-hr/ngày thì hạ nhịp về 7 ngày như thường lệ.
+
+**Giá đã trả cho việc cho Neon ngủ:** query đầu sau khi ngủ = **1,719 giây** (đo thật ở 006, ngưỡng báo động 3s). Cold-start là dealbreaker ở read-path (`architecture-brief.md` §64) nên đánh đổi này phải biết rõ: **1,7s một lần, đổi lấy DB không chết giữa tháng.** Nếu thực tế dùng thấy khó chịu thì đường nâng cấp là Neon Launch (~\$5/mo, tắt được scale-to-zero) — **cửa 2 chiều, không phải quyết định bây giờ**.
+
+### 7.4 Còn phải thiết kế
+
+Chính chủ yêu cầu tư vấn chi tiết hơn về mảng này **sau khi vá xong** — nội dung để bàn: tự động hoá (script kéo Fly GraphQL + Neon REST API, in bảng so ngưỡng, lệch thì mở issue) **gộp vào 008b** vì đó đúng lúc hạ tầng GH Actions cron ra đời; cách ghi log số liệu theo thời gian; và ngưỡng cho các dòng chi phí chưa tồn tại (LLM usage ở Bước 1 — dòng biến động nhất sắp tới).
+
 ---
-*Cập nhật khi: đổi host/DB/LLM provider, hết credit, đổi công cụ dev-stack (§6), hoặc tới mốc soi-lại 3 tháng (~10/2026). Thêm ghi chú có ngày — không xoá trắng con số cũ.*
+*Cập nhật khi: đổi host/DB/LLM provider, hết credit, đổi công cụ dev-stack (§6), hoặc tới mốc soi-lại 3 tháng (~10/2026). §7 cập nhật theo nhịp 3–7 ngày — đó là mục đích của nó. Thêm ghi chú có ngày — không xoá trắng con số cũ.*

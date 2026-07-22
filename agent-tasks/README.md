@@ -56,8 +56,9 @@ Ghi 2026-07-21. Bản trước của mục này liệt kê *"private unlock · o
 
 | # | Việc | Ghi chú |
 |---|---|---|
-| **008a** | `app/core/crypto.py` — AES-GCM + prefix `enc:v1:` | Nhỏ (~60–80 dòng + test). **Không phải phiên thiết kế** — cơ chế đã chốt (`schema-physical-brief.md` §7.1), format đã chốt (K18), vị trí khóa đã chốt (`db-and-data-model-brief.md` §6). Chạy **ngay sau 007, trước mọi CRUD**. |
-| **008** | **task slice** — API + UI + test, đi trọn một entity | **Task đặt khuôn**: hình dạng error response, phân trang, cách đăng ký router, cách gọi crypto seam. Mọi slice sau bắt chước. Chạy **một mình**. |
+| **008a** | `app/core/crypto.py` — AES-GCM + prefix `enc:v1:` | Nhỏ (~60–80 dòng + test). **Không phải phiên thiết kế** — cơ chế đã chốt (`schema-physical-brief.md` §7.1), format đã chốt (K18), vị trí khóa đã chốt (`db-and-data-model-brief.md` §6). Chạy **ngay sau 007, trước mọi CRUD**. ⚠️ Cần `ENCRYPTION_MASTER_KEY` — **chủ chưa sinh** (xem `backend/.env.example`, bảng cấp phát). |
+| **008b** | **CD** — merge `main` → build → `fly deploy` → smoke test | ✅ chốt 2026-07-22, lý do đầy đủ ở `devops-brief.md` §9. Không phải tiện nghi: từ 008 mỗi slice đều cần "nhìn bằng mắt trên deploy thật", và **deploy thủ công là ma sát đặt đúng chỗ khiến người ta bỏ qua đúng bước đã để lọt 4 lỗi ở 007**. Nuốt luôn 2 món polish 007 + dựng `CRON_TOKEN`/khung cron. **Mang theo bất biến:** không job nền nào được poll DB dày hơn cửa sổ idle 5 phút của Neon (`cost-brief.md` §7). |
+| **008** | **task slice** — API + UI + test, đi trọn một entity | **Task đặt khuôn**: hình dạng error response, phân trang, cách đăng ký router, cách gọi crypto seam. Mọi slice sau bắt chước — kể cả bắt chước *quy trình nghiệm thu*, nên 008b phải xong trước. Chạy **một mình**. |
 | 009 | note slice | ⇢ song song được (điều kiện: `devops-brief.md` §8) |
 | 010 | calendar + import `.ics/.xlsx` | ⇢ song song được. Giải luôn `migration-mapping-brief.md` §3 (121 dòng lịch lệch) |
 | 011 | tracker capture (ghi log) | **Bắt buộc có 008a** — `entry.amount` CHECK vô điều kiện, không ghi nổi plaintext |
