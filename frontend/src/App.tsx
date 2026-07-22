@@ -8,7 +8,7 @@ type SessionResponse = {
   expires_at: string
 }
 
-type HealthResponse = {
+type ReadinessResponse = {
   status: string
   version: string
   db: string
@@ -31,14 +31,20 @@ async function fetchSession(): Promise<SessionResponse> {
   return response.json() as Promise<SessionResponse>
 }
 
-async function fetchHealth(): Promise<HealthResponse> {
-  const response = await fetch('/api/healthz', { credentials: 'same-origin' })
+/**
+ * Reads the readiness path, not the liveness one: `/api/healthz` deliberately no
+ * longer touches the database, so it can no longer answer "kết nối được". Spending
+ * a query here is fine - someone is looking at the dashboard, so the database is
+ * about to be needed anyway. Automated probes must never call this.
+ */
+async function fetchReadiness(): Promise<ReadinessResponse> {
+  const response = await fetch('/api/readyz', { credentials: 'same-origin' })
 
   if (!response.ok) {
-    throw new Error(`Health check failed with status ${response.status}`)
+    throw new Error(`Readiness check failed with status ${response.status}`)
   }
 
-  return response.json() as Promise<HealthResponse>
+  return response.json() as Promise<ReadinessResponse>
 }
 
 async function postLogout(): Promise<void> {
@@ -100,7 +106,7 @@ function LoginScreen() {
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
-  const health = useQuery({ queryKey: ['healthz'], queryFn: fetchHealth })
+  const health = useQuery({ queryKey: ['readyz'], queryFn: fetchReadiness })
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
