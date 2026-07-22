@@ -136,6 +136,10 @@ Cả hai tính chất đều có test, và **cả hai test đã được chứng
 
 ## Acceptance (kiểm chứng được)
 
+> **✅ Kết quả 2026-07-22 — cố ý KHÔNG tick hàng loạt, vì tick là xoá mất ranh giới "ai đã chạy cái gì":**
+> **khối A + A′** = executor chạy và báo cáo, bằng chứng nằm trong PR [#13](https://github.com/NguyenHaiHung0510/microSched/pull/13) (docker build với SHA thật, curl cron 401/401/200/503, ba kịch bản OAuth trên Chrome thật, 43 test, actionlint, 5/5 check).
+> **khối B** = T1 kiểm trực tiếp sau merge, số liệu ở dòng Trạng thái đầu file — **trừ cron production, chưa chạy được**, xem mục "⚠️ Sót lại" cuối file.
+
 **Chia làm hai khối có chủ ý.** Workflow CD **chưa tồn tại trên `develop`** cho tới khi PR này được merge, nên executor **không thể** chứng minh nó chạy. Đó là giới hạn thật của task, không phải cớ — điều bắt buộc là **nói đúng mình đứng ở khối nào**, đừng để một mục ở khối B được viết như thể đã chạy.
 
 ### A. Executor PHẢI chạy trước khi mở PR
