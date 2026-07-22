@@ -1,6 +1,6 @@
 # 008b — CD: merge `develop` là deploy, kèm smoke test chứng minh bản mới thật sự đang chạy
 
-> **Trạng thái:** 📋 TODO (chạy trước 008; độc lập với 008a)
+> **Trạng thái:** ✅ DONE (2026-07-22; chờ chủ + T1 nghiệm thu khối B sau merge)
 > **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high · **Skill gợi ý:** (không) · **MCP cần:** (không)
 > *Lý do bậc: cùng họ với 005 — CI/CD là chỗ "sai âm thầm thành nợ". Thêm nữa task này cầm `MICROSCHED_DEPLOY_TOKEN`, tức sai một dòng YAML là lộ quyền deploy lên chính app đang chạy.*
 > *Quota **không** phải ràng buộc (đo thật 003→006: cả chuỗi tốn ~20% quota tuần; Codex còn reset dày). **Đừng hạ bậc để tiết kiệm** — task này có cả browser lẫn CI, hạ bậc là mua rủi ro bằng thứ đang dư.*
@@ -99,6 +99,15 @@ Lộ git SHA ra endpoint không auth **không rò gì**: repo public theo quyế
 - **`except Exception` trần ở `app/web/routers/auth.py:104`** — hiện "Google chết" và "có người đang dò" nhìn giống hệt nhau trong log. Bắt hẹp lại + log phân biệt. **Không đổi hành vi trả về:** mọi nhánh hỏng vẫn fail-closed và vẫn 303 sang `/auth/denied` (B3 của 007 — nhánh từ chối không được để `?code=` nằm lại URL).
 
 *Vì sao gộp vào đây:* cả hai là guardrail lúc khởi động/deploy, mà **CD làm deploy nhanh hơn ⇒ deploy sai cũng nhanh hơn**. Đây đúng lúc chúng đáng giá nhất.
+
+**📝 2026-07-22 (T1 review PR #13) — sinh ra biến `APP_ENV`. Mọi slice sau bắt chước chỗ này.**
+Bản đầu suy ra "có phải production không" từ `SESSION_COOKIE_SECURE`. Chạy đúng, nhưng dựng một **sợi dây vô hình**: một ngày nào đó tắt `SESSION_COOKIE_SECURE` vì lý do riêng của nó sẽ tắt luôn một guard chẳng liên quan — đúng hình dạng sự cố Neon. Chốt: **`APP_ENV` là câu trả lời duy nhất cho "app đang chạy ở đâu"**, hỏi qua `settings.is_production`. **Guard nào phụ thuộc môi trường về sau — gửi mail thật, gọi LLM ở Bước 1, job backup — đều phải hỏi biến này, cấm suy ra từ setting hàng xóm.**
+
+Hai tính chất cố ý, đừng "dọn dẹp" mất:
+- **Mặc định trong code = `production`, VÀ `fly.toml [env]` vẫn ghi tường minh `APP_ENV = 'production'`.** Trùng lặp là cố ý, được cả hai mặt: đọc `fly.toml` là biết production đang chạy chế độ nào (không phải nhớ mặc định trong code), mà nếu dòng đó lỡ mất thì app **rơi về bản nghiêm hơn**. Không phải secret ⇒ để trong `fly.toml`, không dùng `flyctl secrets`. **Không tồn tại đường nào để *mất* một dòng mà production dễ dãi đi** — chỉ có đường *gõ thêm* `local` lên server, và đó là việc nhìn thấy được. *(📝 sửa cùng ngày: bản đầu cố ý bỏ trống trên Fly; chủ chỉ ra rằng ghi tường minh vẫn tốt hơn, và đúng — bỏ trống chỉ đổi lấy tính an toàn mà mặc định trong code đã cho sẵn.)*
+- **Kiểu `Literal`, không phải `str`.** `APP_ENV=prod` là lỗi gõ mà nếu so chuỗi thường sẽ *âm thầm* thành "không phải production" rồi tắt guard. Pydantic chặn ngay lúc khởi động — chính là lý do có một câu trả lời tường minh.
+
+Cả hai tính chất đều có test, và **cả hai test đã được chứng minh biết đỏ** (đổi mặc định sang `local` + nới `Literal` ⇒ 2 failed).
 
 **3.2 `CRON_TOKEN` + khung cron.**
 - Dependency FastAPI kiểm `Authorization: Bearer <CRON_TOKEN>`, so sánh bằng `secrets.compare_digest`. **Không** đi qua session user (`auth-brief.md` §5).

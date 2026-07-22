@@ -34,6 +34,14 @@ RUN groupadd --system microsched \
 USER microsched
 WORKDIR /app/backend
 
+# Deliberately the LAST layer that changes: GIT_SHA is different on every single
+# deploy, and Docker rebuilds every layer below the first one that changed. Put
+# this near the top and `uv sync` gets invalidated every time, so each deploy
+# reinstalls the whole production dependency set to learn one 40-character
+# string. Anything added after this line inherits that cost - keep it last.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

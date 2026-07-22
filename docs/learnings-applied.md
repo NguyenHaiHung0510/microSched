@@ -114,3 +114,17 @@
 - **Số "trông ổn" vẫn có thể là phát hiện — bất thường là độ lệch khỏi MÔ HÌNH, không phải độ lớn.** Con số bắt được sự cố là **4,54/100 CU-hrs**, tức 4,5% hạn mức: mọi ngưỡng đều xanh. Thứ bắt được nó là chủ nhìn **hình dạng biểu đồ** và hỏi *"sao chạy liên tục? web đâu có request?"*. ⇒ Câu hỏi lõi khi soi hoá đơn là **"mình giải thích được số này không?"**, không phải "số này có ổn không"; **không giải thích được thì điều tra, bất kể số nhỏ**. Hệ quả cho tự động hoá: script in `4.54 ✅ dưới ngưỡng` sẽ **bỏ sót đúng ca này** ⇒ chỉ tự động hoá phần có ngưỡng rõ, **giữ nguyên bước người nhìn biểu đồ**.
 - **Canh dòng có trần, chặn dòng không trần.** Mảng theo dõi tiền lúc mới mở canh Fly + Neon — mà cả hai **tự có trần** (1 máy cố định / free tier hết thì treo). Dòng thật sự nguy là **LLM API Bước 1**: usage-based, không trần, một vòng lặp agent lỗi đốt sạch trong một đêm. Dashboard là *quan sát*, không phải *phòng thủ*; dòng không trần phải chặn bằng **hard spending limit ở nhà cung cấp**.
 - **Hoá đơn mang dấu vết của bug.** Fly tính theo giây (kiểm chứng: 1 unit = 1 giây, khớp thời điểm sinh machine trong 26 giây) — nên ngày 21/07 hụt ~72 phút so với ngày đầy chính là các lần restart + crash-loop `httpx` của 007. Và "xu hướng tăng" của Fly hoá ra chỉ là **ảo giác của ngày đầu cụt** (máy sinh lúc 21:00). ⇒ Trước khi kết luận về một xu hướng, kiểm xem điểm dữ liệu đầu tiên có phải một kỳ đầy đủ không.
+
+## ⏳ HÀNG ĐỢI HỌC — chưa học, chủ chủ động mở phiên (mở 2026-07-22)
+
+Khác với phần trên: đây **không phải** bài đã rút ra, mà là **thứ đã chạm vào trong lúc làm và biết là mình chưa hiểu**. Ghi lại để nó không tan đi cùng phiên.
+
+### D1 — Docker: layer cache và thứ tự các bước ⏳ mục tiêu: **trước 2026-07-25**
+
+**Vì sao vào hàng đợi:** review PR #13 (008b) lộ ra một lỗi mà bản thân code hoàn toàn "đúng" — `ENV GIT_SHA` đặt ở tầng thứ hai của runtime stage. Docker build lại **mọi tầng nằm dưới tầng đầu tiên bị đổi**, mà mã commit thì đổi mỗi lần deploy theo định nghĩa, nên mỗi lần deploy cài lại toàn bộ dependency production chỉ để biết một chuỗi 40 ký tự. Dời một dòng xuống cuối: **32,8s → 2,5s** (đo thật trên máy chủ, mọi tầng `CACHED`, `readyz` vẫn trả đúng commit).
+
+**Vì sao đáng học chứ không chỉ đáng vá:** đây là lớp lỗi **không test nào bắt được và CI luôn xanh** — cùng họ với sự cố Neon. Nó chỉ hiện ra khi biết cơ chế bên dưới. Từ 008b, deploy chạy mỗi lần merge nên mọi khoản lãng phí ở đây bị nhân lên theo nhịp làm việc.
+
+**Vật liệu học đã có sẵn trong repo, không phải đi tìm:** `Dockerfile` (multi-stage thật, có cả stage Node bị vứt đi), commit `4a2062d` (chính bản vá + lý do), và một vòng lặp đo được bằng `docker build` hai lần.
+
+**Phạm vi đề xuất cho phiên học (~1 buổi):** layer cache + thứ tự bước · vì sao multi-stage làm ảnh nhỏ đi · `.dockerignore` ảnh hưởng cache thế nào · vì sao `COPY` lockfile trước rồi mới `COPY` code. **Không** cần học: orchestration, compose, k8s — dự án chạy đúng một container.

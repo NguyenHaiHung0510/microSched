@@ -5,10 +5,12 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from authlib.integrations.base_client.errors import OAuthError
 from fastapi import HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.core.sessions import (
     SESSION_COOKIE_NAME,
@@ -16,7 +18,7 @@ from app.core.sessions import (
     new_session_token,
     rolling_expiry,
 )
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 from app.domain.auth import PostgresSessionStore
 from app.domain.models import AuthSession
 from app.main import create_app
@@ -35,6 +37,7 @@ def environment(monkeypatch):
     monkeypatch.setenv("CRON_TOKEN", CRON_TOKEN)
     monkeypatch.setenv("SESSION_TTL_DAYS", str(TTL_DAYS))
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
+    monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "state-secret-used-only-by-tests")
     get_settings.cache_clear()
     yield
@@ -82,19 +85,19 @@ class InMemorySessionStore:
 class _FakeGoogleClient:
     """Stands in for Authlib's Google client so CI never calls Google."""
 
-    def __init__(self, claims: dict | None, fail: bool = False) -> None:
+    def __init__(self, claims: dict | None, failure: Exception | None = None) -> None:
         self._claims = claims
-        self._fail = fail
+        self._failure = failure
 
     async def authorize_access_token(self, request) -> dict:
-        if self._fail:
-            raise RuntimeError("handshake rejected")
+        if self._failure:
+            raise self._failure
         return {"userinfo": self._claims}
 
 
 class _FakeOAuth:
-    def __init__(self, claims: dict | None, fail: bool = False) -> None:
-        self.google = _FakeGoogleClient(claims, fail)
+    def __init__(self, claims: dict | None, failure: Exception | None = None) -> None:
+        self.google = _FakeGoogleClient(claims, failure)
 
 
 def build_client(store: InMemorySessionStore) -> TestClient:
@@ -183,12 +186,74 @@ def test_failed_google_handshake_is_refused(monkeypatch) -> None:
     """A broken or forged callback is a refused login, not a server error."""
     store = InMemorySessionStore()
     client = build_client(store)
-    monkeypatch.setattr("app.web.routers.auth.get_oauth", lambda: _FakeOAuth(None, fail=True))
+    failure = OAuthError(error="mismatching_state", description="test-only refusal")
+    monkeypatch.setattr("app.web.routers.auth.get_oauth", lambda: _FakeOAuth(None, failure))
 
     response = client.get("/auth/callback?code=x&state=y", follow_redirects=False)
 
     assert response.status_code == 303
+    assert response.headers["location"] == "/auth/denied"
     assert store.rows == {}
+
+
+def test_unexpected_google_failure_still_redirects_to_denied(monkeypatch) -> None:
+    """Unexpected client failures stay fail-closed without leaving code in the URL."""
+    store = InMemorySessionStore()
+    client = build_client(store)
+    monkeypatch.setattr(
+        "app.web.routers.auth.get_oauth",
+        lambda: _FakeOAuth(None, RuntimeError("unexpected test failure")),
+    )
+
+    response = client.get("/auth/callback?code=x&state=y", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/auth/denied"
+    assert store.rows == {}
+
+
+def test_missing_oauth_state_secret_stops_production_startup(monkeypatch) -> None:
+    """A restart must not silently invalidate every in-flight production handshake."""
+    monkeypatch.setenv("OAUTH_STATE_SECRET", "")
+    monkeypatch.setenv("APP_ENV", "production")
+    get_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="OAUTH_STATE_SECRET"):
+        create_app()
+
+
+def test_production_is_the_default_when_app_env_is_unset(monkeypatch) -> None:
+    """Forgetting APP_ENV must fail closed: the lenient value is never the default.
+
+    Asserted against the class default with the .env file disabled, not against this
+    machine's environment - otherwise a developer's local APP_ENV=local would make the
+    test pass here and fail in CI, or worse, the reverse.
+    """
+    monkeypatch.delenv("APP_ENV", raising=False)
+
+    assert Settings(_env_file=None).is_production is True
+
+
+def test_a_misspelled_app_env_is_rejected_instead_of_read_as_lenient(monkeypatch) -> None:
+    """APP_ENV=prod must not quietly mean 'not production' and drop the guards."""
+    monkeypatch.setenv("APP_ENV", "prod")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_missing_oauth_state_secret_is_allowed_only_for_local_development(
+    monkeypatch, caplog
+) -> None:
+    """Local HTTP remains zero-config but emits an actionable warning."""
+    monkeypatch.setenv("OAUTH_STATE_SECRET", "")
+    monkeypatch.setenv("APP_ENV", "local")
+    get_settings.cache_clear()
+
+    app = create_app()
+
+    assert app is not None
+    assert "OAUTH_STATE_SECRET is not configured" in caplog.text
 
 
 def test_login_always_forces_the_google_account_chooser(monkeypatch) -> None:
@@ -401,6 +466,34 @@ def test_session_token_carries_256_bits_of_entropy() -> None:
 def test_cron_endpoint_accepts_the_configured_bearer_token() -> None:
     """The scheduled-job guard lets the real token through."""
     assert asyncio.run(require_cron_token(f"Bearer {CRON_TOKEN}")) is None
+
+
+def test_cron_heartbeat_uses_bearer_auth_not_a_user_session() -> None:
+    """The real route is independently guarded and never needs a login cookie."""
+    client = build_client(InMemorySessionStore())
+
+    assert client.post("/api/cron/heartbeat").status_code == 401
+    assert (
+        client.post(
+            "/api/cron/heartbeat", headers={"Authorization": "Bearer wrong-token"}
+        ).status_code
+        == 401
+    )
+    response = client.post("/api/cron/heartbeat", headers={"Authorization": f"Bearer {CRON_TOKEN}"})
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_cron_heartbeat_is_closed_and_noisy_when_unconfigured(monkeypatch) -> None:
+    """A missing shared secret is a 503 configuration fault, never an auth bypass."""
+    monkeypatch.setenv("CRON_TOKEN", "")
+    get_settings.cache_clear()
+    client = build_client(InMemorySessionStore())
+
+    response = client.post("/api/cron/heartbeat")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Cron token is not configured"}
 
 
 @pytest.mark.parametrize(

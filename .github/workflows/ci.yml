@@ -36,6 +36,11 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      # APP_ENV is unset here on purpose, so this job exercises the production path
+      # (the code default). That is what makes the secret below necessary: without
+      # it, create_app() correctly refuses to start.
+      OAUTH_STATE_SECRET: ci-only-not-a-production-secret
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
