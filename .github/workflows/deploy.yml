@@ -87,5 +87,9 @@ jobs:
           git fetch origin main develop --tags
           short_sha=$(git rev-parse --short=7 HEAD)
           lag=$(git rev-list --count origin/main..HEAD)
-          tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "chưa có")
+          # Must describe origin/main, not HEAD. Tags live on main's merge commits,
+          # which are descendants of develop - and `git describe` only ever walks
+          # backwards. Asking from HEAD finds nothing and prints "chưa có" forever,
+          # which quietly teaches everyone to ignore this whole panel.
+          tag=$(git describe --tags --abbrev=0 origin/main 2>/dev/null || echo "chưa có")
           echo "develop @ \`$short_sha\` đang chạy production · main đang tụt $lag commit · tag gần nhất: $tag" >> "$GITHUB_STEP_SUMMARY"

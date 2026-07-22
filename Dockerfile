@@ -11,14 +11,11 @@ RUN npm run build
 
 FROM python:3.14-slim-bookworm AS runtime
 
-ARG GIT_SHA=unknown
-
 ENV PATH="/app/backend/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    GIT_SHA=${GIT_SHA}
+    UV_LINK_MODE=copy
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /uvx /bin/
 
@@ -36,6 +33,14 @@ RUN groupadd --system microsched \
 
 USER microsched
 WORKDIR /app/backend
+
+# Deliberately the LAST layer that changes: GIT_SHA is different on every single
+# deploy, and Docker rebuilds every layer below the first one that changed. Put
+# this near the top and `uv sync` gets invalidated every time, so each deploy
+# reinstalls the whole production dependency set to learn one 40-character
+# string. Anything added after this line inherits that cost - keep it last.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 
 EXPOSE 8000
 
