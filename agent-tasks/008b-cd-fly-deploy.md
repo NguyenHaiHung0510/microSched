@@ -100,6 +100,15 @@ Lộ git SHA ra endpoint không auth **không rò gì**: repo public theo quyế
 
 *Vì sao gộp vào đây:* cả hai là guardrail lúc khởi động/deploy, mà **CD làm deploy nhanh hơn ⇒ deploy sai cũng nhanh hơn**. Đây đúng lúc chúng đáng giá nhất.
 
+**📝 2026-07-22 (T1 review PR #13) — sinh ra biến `APP_ENV`. Mọi slice sau bắt chước chỗ này.**
+Bản đầu suy ra "có phải production không" từ `SESSION_COOKIE_SECURE`. Chạy đúng, nhưng dựng một **sợi dây vô hình**: một ngày nào đó tắt `SESSION_COOKIE_SECURE` vì lý do riêng của nó sẽ tắt luôn một guard chẳng liên quan — đúng hình dạng sự cố Neon. Chốt: **`APP_ENV` là câu trả lời duy nhất cho "app đang chạy ở đâu"**, hỏi qua `settings.is_production`. **Guard nào phụ thuộc môi trường về sau — gửi mail thật, gọi LLM ở Bước 1, job backup — đều phải hỏi biến này, cấm suy ra từ setting hàng xóm.**
+
+Hai tính chất cố ý, đừng "dọn dẹp" mất:
+- **Mặc định trong code = `production`.** Giá trị duy nhất từng phải viết ra là giá trị *nới lỏng*, và nó chỉ nằm trong `.env` trên laptop. **Không tồn tại đường nào để quên một biến mà làm production dễ dãi đi** — trên Fly cố ý **không** đặt `APP_ENV`.
+- **Kiểu `Literal`, không phải `str`.** `APP_ENV=prod` là lỗi gõ mà nếu so chuỗi thường sẽ *âm thầm* thành "không phải production" rồi tắt guard. Pydantic chặn ngay lúc khởi động — chính là lý do có một câu trả lời tường minh.
+
+Cả hai tính chất đều có test, và **cả hai test đã được chứng minh biết đỏ** (đổi mặc định sang `local` + nới `Literal` ⇒ 2 failed).
+
 **3.2 `CRON_TOKEN` + khung cron.**
 - Dependency FastAPI kiểm `Authorization: Bearer <CRON_TOKEN>`, so sánh bằng `secrets.compare_digest`. **Không** đi qua session user (`auth-brief.md` §5).
 - Thiếu `CRON_TOKEN` lúc khởi động ⇒ endpoint cron trả **503**, không phải 401 và tuyệt đối không phải "cho qua". Một cổng không cấu hình phải **đóng và ồn ào**.

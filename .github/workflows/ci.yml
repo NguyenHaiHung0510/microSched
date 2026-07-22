@@ -37,7 +37,9 @@ jobs:
       run:
         working-directory: backend
     env:
-      # Test-only value: production must fail fast when this setting is absent.
+      # APP_ENV is unset here on purpose, so this job exercises the production path
+      # (the code default). That is what makes the secret below necessary: without
+      # it, create_app() correctly refuses to start.
       OAUTH_STATE_SECRET: ci-only-not-a-production-secret
     steps:
       - uses: actions/checkout@v4

@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.core.sessions import (
     SESSION_COOKIE_NAME,
@@ -17,7 +18,7 @@ from app.core.sessions import (
     new_session_token,
     rolling_expiry,
 )
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 from app.domain.auth import PostgresSessionStore
 from app.domain.models import AuthSession
 from app.main import create_app
@@ -36,6 +37,7 @@ def environment(monkeypatch):
     monkeypatch.setenv("CRON_TOKEN", CRON_TOKEN)
     monkeypatch.setenv("SESSION_TTL_DAYS", str(TTL_DAYS))
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
+    monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "state-secret-used-only-by-tests")
     get_settings.cache_clear()
     yield
@@ -213,11 +215,31 @@ def test_unexpected_google_failure_still_redirects_to_denied(monkeypatch) -> Non
 def test_missing_oauth_state_secret_stops_production_startup(monkeypatch) -> None:
     """A restart must not silently invalidate every in-flight production handshake."""
     monkeypatch.setenv("OAUTH_STATE_SECRET", "")
-    monkeypatch.setenv("SESSION_COOKIE_SECURE", "true")
+    monkeypatch.setenv("APP_ENV", "production")
     get_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match="OAUTH_STATE_SECRET"):
         create_app()
+
+
+def test_production_is_the_default_when_app_env_is_unset(monkeypatch) -> None:
+    """Forgetting APP_ENV must fail closed: the lenient value is never the default.
+
+    Asserted against the class default with the .env file disabled, not against this
+    machine's environment - otherwise a developer's local APP_ENV=local would make the
+    test pass here and fail in CI, or worse, the reverse.
+    """
+    monkeypatch.delenv("APP_ENV", raising=False)
+
+    assert Settings(_env_file=None).is_production is True
+
+
+def test_a_misspelled_app_env_is_rejected_instead_of_read_as_lenient(monkeypatch) -> None:
+    """APP_ENV=prod must not quietly mean 'not production' and drop the guards."""
+    monkeypatch.setenv("APP_ENV", "prod")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
 
 
 def test_missing_oauth_state_secret_is_allowed_only_for_local_development(
@@ -225,7 +247,7 @@ def test_missing_oauth_state_secret_is_allowed_only_for_local_development(
 ) -> None:
     """Local HTTP remains zero-config but emits an actionable warning."""
     monkeypatch.setenv("OAUTH_STATE_SECRET", "")
-    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
+    monkeypatch.setenv("APP_ENV", "local")
     get_settings.cache_clear()
 
     app = create_app()

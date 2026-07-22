@@ -39,10 +39,13 @@ def create_app() -> FastAPI:
     settings = get_settings()
     oauth_state_secret = settings.oauth_state_secret
     if not oauth_state_secret:
-        if settings.session_cookie_secure:
-            raise RuntimeError(
-                "OAUTH_STATE_SECRET is required when SESSION_COOKIE_SECURE is enabled"
-            )
+        # Gated on APP_ENV rather than on a nearby setting like SESSION_COOKIE_SECURE.
+        # Inferring the environment from an unrelated switch means that one day someone
+        # flips that switch for its own reasons and silently disables this guard too -
+        # the same shape as the Neon incident, where the damage lived in an invisible
+        # link between two individually correct settings.
+        if settings.is_production:
+            raise RuntimeError("OAUTH_STATE_SECRET is required when APP_ENV=production")
         logger.warning(
             "OAUTH_STATE_SECRET is not configured; using an ephemeral local-development secret"
         )
