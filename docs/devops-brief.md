@@ -152,6 +152,118 @@ Kiểm chứng thật bằng Codex: **chạy tốt**, chuyển được giữa n
 - **Có một tài khoản chính chủ cấm đụng.** Tên tài khoản **không ghi vào repo** — chỉ nêu trong prompt giao việc.
 - **Không dán địa chỉ email thật vào PR/commit/docs.** Repo public + threat model = social engineering ⇒ danh sách tài khoản là vật liệu dựng pretext. Viết theo vai (*"tài khoản trong allowlist"*), không viết địa chỉ.
 
+## 7.3 ✅ CHỐT 2026-07-22 (muộn) — Claude **điều phối** Codex trực tiếp, thay cho chuyển tay
+
+Bối cảnh: sau 003→008b, chính chủ đã đủ tin để bỏ khâu **copy prompt/báo cáo qua lại giữa hai harness**. Chính chủ nói rõ đây là đánh đổi có ý thức: *"chọn thêm risk 40% để đổi lấy hiệu suất, rồi tiến tới nâng cấp harness eng để giảm risk xuống như thủ công mà vẫn giữ hiệu suất."*
+
+**Rủi ro thật không phải một khối — tách ra thì chỉ một thứ đáng sợ.** Chuyển tay đang giữ ba thứ: ⓐ chủ đọc spec trước khi Codex chạy (nhỏ — spec do T1 viết, duyệt sau được), ⓑ **chủ đọc báo cáo Codex trước khi Claude tin nó** 🔴, ⓒ nhịp nghỉ để chủ nghĩ. Chỉ ⓑ là rủi ro thật, vì đã đo được: task 004 executor **khai sai về chính việc nó vừa làm** ("chưa có dependency" trong khi lockfile 263KB nằm trên đĩa). Bỏ chủ ra khỏi vòng mà không thay gì vào ⇒ Claude tin lời khai ⇒ lỗi lan sang bước sau. **Cách vá đã có sẵn trong dự án: 008b không kiểm `status: ok` mà kiểm git SHA đã deploy.** Cùng hình dạng ⇒ luật trục:
+
+> **Luật biên lai — Claude KHÔNG BAO GIỜ nhận prose làm bằng chứng.** Task chỉ "xong" khi có **số PR + `gh pr checks` xanh + diff đọc được**. Ghi vào `AGENTS.md` để executor cũng biết.
+
+### a) Công cụ: `openai/codex-plugin-cc` — ✅ dùng
+
+Plugin chính chủ OpenAI (Apache-2.0, v1.0.6 ngày 08/07/2026). **Không** nhúng model OpenAI vào Claude Code — nó là **client**: bọc *Codex app server*, gọi **binary `codex` cài trên máy**, *"applies the same configuration"*. Lệnh: `/codex:review` · `/codex:adversarial-review` · `/codex:rescue` (giao task, có `--background/--wait/--resume/--model/--effort`) · `/codex:transfer` · `/codex:status` · `/codex:result` · `/codex:cancel`. `/codex:result` trả **session ID**, `codex resume <id>` mở tiếp trong Codex thật.
+
+- **Điều kiện cài (kiểm thật trên máy chủ 2026-07-22):** Node v24.15.0 ✓ (cần ≥18.18). Nhưng **`codex` KHÔNG có trên PATH** — máy đang chạy Codex **desktop app**, CLI ẩn ở `…\AppData\Local\OpenAI\Codex\bin\<hash>\codex.exe` (codex-cli 0.145.0-alpha.27), **thư mục có hash nên đổi mỗi lần app update ⇒ không thêm vào PATH được**. Đường sạch: `npm install -g @openai/codex`; bản npm dùng chung `CODEX_HOME` ⇒ chung auth/config/memories. `auth.json` là **ChatGPT tokens, không có API key** ⇒ delegation ăn vào **cap tuần của Plus**, không sinh hoá đơn PAYG.
+- **⛔ KHÔNG bật review gate** (`/codex:setup --enable-review-gate`). Chính README cảnh báo nó tạo vòng lặp Claude↔Codex dài và đốt limit nhanh; và nó đặt cổng **sai chỗ** — chặn *câu trả lời của Claude* thay vì chặn *diff*.
+- **Cây làm việc:** plugin chạy Codex trong **cwd của Claude** (chưa có tài liệu nói khác — `01-codex-self-audit` mục 5 sẽ trả lời). ⇒ Luật tạm: **`--background` thì Claude không được chạm cây làm việc**; cần chạy song song thì dùng lane slot (mục e).
+
+### b) Bộ nhớ: **không có cầu nối** — và Codex đã tốt hơn tưởng
+
+Cái được dùng lại là **bề mặt UI của Claude Code** (slash command, subagent, hook), **không** phải óc/memory/`CLAUDE.md`/skill của Claude. Codex khi bị gọi chỉ đọc: `~/.codex/config.toml` + `~/.codex/memories/` + `AGENTS.md` trong repo + prompt Claude gửi.
+
+**Kiểm thật `~/.codex/` ngày 22/07 — nỗi lo "Codex thiếu memory" (§7 note 1, 20/07) nay có bằng chứng đảo chiều:** `memories/MEMORY.md` 18KB + `raw_memories.md` 17KB + `memory_summary.md` 4,3KB + 4 `rollout_summaries/` (task 003/004/005/006), **và cả thư mục là một git repo**. Nó **tự** rút ra đúng những bài đã phải dạy tay: *"dán output thật vào PR, đừng tóm tắt"* · *timeout ≠ chưa làm gì* · giữ tên job CI · tiếng Việt qua file UTF-8 · dừng sau ~2 vòng bí · tách ba role DB Neon. Nó còn **tự viết một skill**: `~/.codex/memories/skills/microsched-verify-and-pr/SKILL.md`.
+
+⇒ Chỗ Codex thua **không phải cơ chế mà là thứ được nhớ**: memory Codex toàn tri thức *thợ*; memory Claude có thêm tầng *cách làm việc với chủ*.
+
+**✅ Luật ba kênh (chốt) — không copy file bộ nhớ qua lại:**
+
+| Nội dung | Sống ở đâu | Vì sao |
+|---|---|---|
+| Luật riêng dự án microSched | `AGENTS.md` (trong git, review được) | đã chạy tốt từ 20/07 |
+| Cách làm việc **xuyên dự án** với chủ | **`~/.codex/AGENTS.md`** | file này **đang rỗng** → đã viết 22/07 (báo cáo, timeout, ràng buộc-vận-hành, phạm vi/điểm dừng, bẫy PowerShell, cách nói ở tầng của chủ) |
+| Tri thức thao tác lặt vặt | auto-memory mỗi bên | để cơ chế tự chạy |
+
+Ba lý do **không** đổ `~/.claude/.../memory/*.md` vào `~/.codex/memories/`: ① nhân bản sự thật = split-brain, đúng anti-pattern `CLAUDE.md` mở đầu bằng nó; ② thư mục đó là *generated state*, có lifecycle consolidate sẽ **nuốt mất** thứ đặt tay vào; ③ local-only, ngoài git, chủ không review/diff được. Docs OpenAI nói cùng điều: *"Keep required team guidance in `AGENTS.md`… Treat memories as a helpful recall layer, not as the only source for rules that must always apply."*
+
+**⚠️ CHƯA KIỂM (2 mục, có task để trả lời):** ① docs Memories chỉ mô tả phiên **interactive**, **không nói gì** về phiên app-server ⇒ chưa biết đường plugin có được inject memories không. ② config có `memories.disable_on_external_context = true` ⇒ phiên chạm MCP/web-search **không sinh memory mới**. → `agent-tasks/harness-audit/01-codex-self-audit.md`, chạy **hai lần (Codex app / qua plugin) rồi lấy hiệu số** — một lần chạy chỉ cho một bức ảnh; hai lần cho một phép trừ.
+
+### c) ✅ Thang triage **L1/L2/L3** — Claude tự quyết cái gì tới tay chủ
+
+Yêu cầu của chính chủ: *"Claude không được hỏi mình mọi lúc, đã đến lúc harness eng lên tầng cao hơn."* **Trục phân loại = blast radius + khả năng đảo ngược**, không phải "quan trọng" (không quyết được) và không phải "khó" (nhầm trục).
+
+| Mức | Nội dung | Ai quyết | Chủ nghe thế nào |
+|---|---|---|---|
+| **L1** | đụng điều đã ✅ CHỐT trong `docs/` · auth/session/crypto/private gate · schema/migration/DDL · **chạm hạn mức tiền hay quota** · hành vi deploy/CD · hai brief mâu thuẫn · khó đảo ngược | **chủ** — dừng luồng | chi tiết: *hỏng chuyện gì của bạn* → cơ chế → **số đo thật** → hai lựa chọn + khuyến nghị |
+| **L2** | convention **sẽ bị copy về sau** (tên route, hình dạng error response, phân trang, tên miền nghiệp vụ) · thêm dependency · đánh đổi trong một slice | **Claude**, ghi lại | 3–5 dòng **+ một dòng trong PR description** |
+| **L3** | test đỏ/lint/type/wiring/typo · retry sau timeout · câu hỏi spec/brief **đã trả lời sẵn** | **Claude**, im lặng | không báo |
+
+**Bốn luật giữ thang không trôi:** ① không chắc mức nào ⇒ **mặc định L1**; ② quyết L2 **ba lần cùng một vùng** ⇒ đó thật ra là L1 (brief thiếu một quyết định), đẩy lên; ③ Claude **không tự nâng gì lên "đã chốt"** trong `docs/` — L2 là *tạm*; ④ **mọi L2 phải hiện trong PR description** — đây là thứ khiến thang không phải là giấu việc: **không quyết định nào biến mất, chỉ đổi chỗ chủ đọc nó**, từ chat sang mô tả PR, đúng lúc chủ cầm nút merge.
+
+**Ngoại lệ 008 (task đặt khuôn): L2 → L1.** Trên task đặt convention cho cả dự án, một quyết định convention *có* blast radius toàn dự án theo đúng định nghĩa — §8 gọi lớp lỗi này là *"xung đột ngữ nghĩa, nguy hơn conflict git vì git không báo gì"*. Áp dụng nhất quán luật blast-radius, không phải biệt lệ. Hết 008, L2 về mức thường.
+
+**Hiệu chuẩn bắt buộc ở lần chạy đầu:** sau khi task merge, Claude **liệt kê mọi mục đã tự xử ở L3 và mọi L2 đã tự quyết**; chủ đọc một lần, khoanh cái nào lẽ ra phải leo mức. ~10 phút, và nó biến "Claude tự quyết" từ niềm tin thành **số đo**.
+
+**Rủi ro mới thang KHÔNG chữa:** Claude-điều-phối là **điểm hỏng mới** — hiện Claude hiểu sai một spec thì hỏng một task và chủ thấy ngay; khi điều phối, cách hiểu sai đó **nhân bản vào N luồng**. Luật biên lai vẫn bắt ở cửa merge, nhưng **sau khi đã phí N lần công** ⇒ không mở nhiều luồng trên slice mà thiết kế chưa yên.
+
+**⚠️ Cơ chế "Codex hỏi ngược Claude" là theo LƯỢT, không phải hội thoại.** Job nền không có kênh ngược sống: Codex gặp chỗ mơ hồ thì **dừng**, câu hỏi nằm trong `/codex:result`, Claude phải **chủ động poll** rồi đáp bằng `--resume`. ⇒ Hỏi là **đắt** ⇒ spec phải **liệt kê sẵn cái gì đã được quyết**, Codex chỉ được dừng cho thứ ngoài danh sách. Cái giá của kiến trúc này rơi đúng vào chỗ nên rơi: **spec tốt hơn**.
+
+### d) ✅ Lộ trình bốn pha
+
+| Pha | Nội dung | Mốc |
+|---|---|---|
+| **0** | cài `codex` global + plugin (**không** review gate) → chạy `harness-audit/01` hai lần A/B → chạy `02` | trước 008 |
+| **1** | **chỉ review, chưa giao việc**: mỗi diff trước merge chạy `/codex:adversarial-review` **+** `/security-review` của Claude Code — **hai engine khác nhà**, độc lập thật. Đây cũng là phương án rẻ nhất cho §4 (auto-review PR, DEFER từ 19/07) và **không trao thêm quyền cho ai** | 008a + 008 |
+| **2** | giao việc thật qua `/codex:rescue` **một luồng** + bật thang. **008 là lần chạy đầu** — mẫu hiệu chuẩn tốt hơn 009 vì task đặt khuôn đẻ nhiều tình huống L2. Executor 008 = **T2 Codex Sol/high** (không phải T1: §7 giao T1 code chỉ với security-critical; 008 là CRUD slice) | 008 |
+| **3** | mở luồng thứ hai + thử Jules/Antigravity | 009–010 |
+
+⚠️ Hai review pass ở pha 1 **không** thay bước nhìn bằng mắt: §7.1 đã đo — security-review Opus MAX soi *code* rất tốt nhưng **mù cả ba lỗi 007** vì chúng không nằm trong code.
+
+### e) ✅ Neon ra khỏi vòng lặp dev — **lane slot**
+
+Đề xuất của chính chủ: dev + test chạy **local hoàn toàn**. Đúng, và nó giải nhiều hơn một vấn đề — xem note 2026-07-22 ở cuối §8.
+
+- ⛔ **Postgres phải trong Docker, KHÔNG dùng instance Postgres của máy.** `CLAUDE.md` hard boundary: instance đó chứa `microschedule_v2` — **nguồn migration thật, chủ vẫn sửa hằng ngày** — và superuser `postgres` đang phục vụ nhiều dự án khác. Công thức có sẵn: CI job `Migration QA` đã chạy **PG18 + pgvector**, chỉ việc nâng thành `docker-compose` dev.
+- ✗ **Bỏ nhánh "app trên Fly + Postgres local"**: máy Fly không với tới Postgres trên máy chủ (không địa chỉ public, phải dựng tunnel).
+- Neon còn phục vụ đúng ba việc: **CI Migration QA · app trên Fly · nghiệm thu cuối**.
+
+**Lane slot — một "luồng" là một bó cấu hình CỐ ĐỊNH, khai báo một lần dùng mãi.** (Đừng tạo worktree theo từng branch: path mới mỗi task ⇒ phải thêm `trust_level` mỗi task ⇒ sẽ quên.)
+
+| | lane1 | lane2 |
+|---|---|---|
+| worktree | `…\microsched-wt\lane1` | `…\microsched-wt\lane2` |
+| cổng app | 8001 | 8002 |
+| Postgres (Docker) | 5433 | 5434 |
+| OAuth redirect URI | `http://localhost:8001/auth/callback` | `…:8002/…` |
+| `trust_level` trong `~/.codex/config.toml` | thêm **một lần** | thêm **một lần** |
+
+Task mới chỉ `git -C lane1 switch -c feat/NNN-slug` — path không bao giờ đổi.
+
+**⏳ Việc của chủ (đụng cấu hình OAuth app ⇒ L1):** Google Cloud Console → Credentials → OAuth client của microSched → *Authorized redirect URIs* → thêm `:8001` và `:8002`, **không xoá** `:8000` và `https://microsched.fly.dev/auth/callback`. **Không cần sửa code** — đã tra: `auth.py` dựng redirect URI từ chính request đến (`request.url_for("auth_callback")`, ép https trừ loopback), có test khoá hành vi ở `test_auth.py`.
+
+**📌 Đề xuất chưa làm — cổng máy cho chuỗi Alembic:** thêm vào job `Migration QA` một bước bắt `alembic heads` trả **đúng 1 dòng**, >1 thì đỏ. Quy ước "một luồng sở hữu chuỗi migration" là **không đủ** vì git im lặng khi có hai head; đây đúng loại *test cho hành vi vắng mặt* mà sự cố Neon dạy.
+
+### f) 📋 Jules + Antigravity — ghi sổ, **thử ở 008/009** (chủ dặn nhắc lại)
+
+Thang L1/L2/L3 **mở lại được cánh cửa §8 từng đóng**, vì §8 bác song song do nút cổ chai là băng thông review của chủ — mà thang tấn công thẳng nút đó. Nhưng hai thứ này **khác hình dạng, đừng gộp**:
+
+- **Jules** (Google AI Pro sẵn có: **100 task/ngày, 15 concurrent, Gemini 3 Pro**) — cloud VM + clone repo + PR, gán label `jules` vào issue là chạy ⇒ **tự động hoá được**, cắm vào pipeline được.
+- **Antigravity / `gemini-3.6-flash-tiered`** (xuất hiện trong model selector **21/07/2026**) — **chưa GA, không API công khai, không Vertex** ⇒ chỉ là **ghế thủ công** trong IDE của nó, **không thể là một chặng pipeline**. Hợp vai T3 (chạy test + report), không hợp vòng lặp tự động.
+
+**⚠️ Bất đối xứng chi phí lọc:** lọc PR của Codex-do-Claude-brief thì **rẻ** (Claude có sẵn mô hình "đáng lẽ thế nào"); lọc PR Jules chạy tự do thì **đắt** — phải dựng lại ý định từ diff, gần bằng tự viết. Một bộ lọc chỉ tiết kiệm băng thông khi nó **từ chối được rẻ**.
+
+⇒ **Mở bằng số, không bằng niềm tin:** thử **5 task** loại *"đúng/sai do CI quyết"* (viết test theo danh sách T1 đã đặc tả — bulk, phán đoán thấp, blast radius ≈ 0). Đo **tỉ lệ PR được nhận** + **thời gian Claude tốn mỗi PR để lọc**. Nhận <50% hoặc lọc tốn gần bằng tự viết ⇒ **đóng lane**. Chuỗi lọc mong muốn về sau `T2 → T1 → chủ`; **lần đầu chạy thẳng `Claude → chủ`** cho chắc, thêm tầng sau khi có lòng tin.
+
+### g) Nơi để việc + báo cáo
+
+- **`agent-tasks/harness-audit/`** — spec đối soát harness, đánh số riêng `01`/`02` (không thuộc hàng đợi 001–012).
+- **`harness-reports/`** — output. `.gitignore` giữ `README.md` trong git, **chặn nội dung**: repo public + threat model social engineering, mà báo cáo mô tả thói quen làm việc và bộ nhớ cá nhân — **không phải secret nên gitleaks không chặn**, dòng `.gitignore` là cơ chế duy nhất. Kiểm chứng bằng `git add -n`: chỉ `README.md` vào được index.
+- **Vòng đời:** `harness-reports/` là **chỗ tạm ứng, không phải kho** — phát hiện nhập vào `AGENTS.md`/`~/.codex/AGENTS.md`/`docs/` xong thì dọn. Mục tiêu là **giảm** số nơi chứa sự thật.
+
+*Nguồn (tra live 2026-07-22):* [codex-plugin-cc](https://github.com/openai/codex-plugin-cc) · [Codex Memories (OpenAI)](https://learn.chatgpt.com/docs/customization/memories) · [Neon free plan limits](https://neon.com/faqs/free-plan-limits-and-quotas) · [Jules pricing 2026](https://hackup.ai/ai-plans/jules/) · [Gemini 3.6 Flash in Antigravity](https://antigravity.google/blog/gemini-3-6-flash-in-google-antigravity)
+
+---
+
 ## 8. Chạy nhiều agent song song — ⚠️ GHI NHẬN 2026-07-21, chưa nghiên cứu đủ
 
 Bối cảnh: Codex lẫn Claude Code đều mở được nhiều session cùng lúc, và máy chủ **thừa sức về phần cứng** — nên câu hỏi không phải "máy chịu nổi không" mà là **"cái gì hỏng khi hai agent cùng chạy"**. Ghi lại để nghiên cứu tiếp trước khi mở song song thật (dự kiến từ 009).
@@ -173,6 +285,29 @@ Không phải quota (đo thật 003→006: chỉ ~20% quota tuần). Là **băng
 - **007 chạy một mình.** **008 chạy một mình** (đặt khuôn).
 - **Từ 009** mở tối đa **2 luồng**, đủ cả 4 điều kiện: worktree riêng · Neon branch riêng · một chủ sở hữu chuỗi migration · convention đã đóng băng từ 008.
 - Nguyên tắc: **chất lượng > thông lượng.** Không đổi review kỹ lấy song song.
+
+### 📝 2026-07-22 (muộn) — mục này được MỞ LẠI: 4 giới hạn cứng rút còn 2, và kết luận "song song vô ích" hết hiệu lực
+
+Hai thứ mới xuất hiện sau khi §8 được viết (21/07), cả hai đều ở `§7.3`:
+
+**① Danh sách giới hạn cứng rút còn hai.**
+
+| Giới hạn 21/07 | Trạng thái 22/07 |
+|---|---|
+| 1. Một Neon DB chung → schema đá nhau | ✅ **BIẾN MẤT** — dev + test chạy **Postgres trong Docker, mỗi lane một container/port** (§7.3e). Free hơn, nhanh hơn Neon branch, và **không cần Neon branch nữa**. |
+| 2. Một redirect URI `localhost:8000` | ⚠️ **gỡ được, chờ chủ** — Google OAuth đăng ký được nhiều redirect URI; thêm `:8001`/`:8002`. **Không cần sửa code** (đã tra `auth.py`). |
+| 3. Một Alembic head | ⚠️ Còn — nhưng đây là vấn đề *git*, không phải DB. **📌 biến quy ước thành cổng máy**: `Migration QA` bắt `alembic heads` trả đúng 1 dòng. |
+| 4. Chung working dir | ⚠️ Còn — **lane slot** (§7.3e) gộp luôn #2 và #4 thành một bó cấu hình cố định, khai báo một lần. |
+
+**⚠️ Ghi lại một khe hở loại [[feedback-gap-between-correct-decisions]] mà bản 21/07 đã tạo ra:** §8 kê thuốc *"mỗi agent một Neon branch"* — **đúng**, nó chữa va chạm schema. `cost-brief.md` §7 (22/07) ghi *"Neon mong manh, soi hằng ngày"* — cũng **đúng**. Hai file **không tham chiếu nhau**, và khoảng trống giữa chúng là: **branch chữa tính-đúng-đắn nhưng làm TỆ HƠN hạn mức**. Tra live 22/07: Neon free = **10 branch/project, branch dùng chung storage nên gần như miễn phí để tạo — nhưng 100 CU-hours là hạn mức của cả PROJECT, mọi branch xài chung một túi**; cộng autosuspend 5 phút ⇒ **mỗi lần đánh thức tính tối thiểu ~5 phút compute dù test chạy 10 giây** ⇒ 100 CU-h ≈ ~1.200 lần đánh thức/tháng, ba luồng chạy vòng lặp *test-fix-test* đốt hết trong **một buổi chiều**. Đây là biến thể thứ tư của lớp lỗi đó: **không phải hai quyết định để hở, mà là LỜI GIẢI của ràng buộc A làm tệ hơn ràng buộc B.**
+
+**② Kết luận "song song không tạo thông lượng" phải xét lại.** §8 kết luận vậy vì nút cổ chai là **băng thông review của chính chủ** — đúng **với các cơ chế có lúc đó**. **Thang triage L1/L2/L3** (§7.3c) là cơ chế §8 chưa có, và nó **tấn công thẳng nút cổ chai**: Claude nuốt L3, nén L2 xuống một dòng PR ⇒ lượng-đọc-mỗi-luồng tụt hẳn. ⇒ Phần lớn "hiệu suất cộng thêm" nằm ở **thang**, không nằm ở số luồng — thang có tác dụng **ngay ở một luồng**, không cần chờ song song.
+
+**Luật cập nhật cho phase C (thay luật 21/07):**
+- **008 vẫn chạy một mình** — nhưng là **một luồng Codex do Claude điều phối + bật thang**, không phải Claude tự code. Đây là lần hiệu chuẩn thang.
+- **Hai luồng từ 009/010**, sau khi đủ: thang đã có số hiệu chuẩn · lane slot đã dựng (worktree + trust + port + Postgres container) · redirect URI đã đăng ký · cổng `alembic heads` đã có · convention đóng băng từ 008.
+- **Ba luồng: chưa.** Không phải "không bao giờ" — mà chưa giới hạn nào trong bốn cái trên được kiểm với ba.
+- Nguyên tắc cũ **giữ nguyên**: chất lượng > thông lượng.
 
 **Cần nghiên cứu thêm:** giới hạn/chi phí Neon branch · worktree ở Codex · có nên dùng Postgres ephemeral (container) cho *test* thay vì Neon branch — lưu ý luật "một store duy nhất" là về **nguồn sự thật của dữ liệu**, không phải về fixture test, nên đây có thể không vi phạm; nhưng 006 đã cho CI chạy trên Neon (`prepare_ci_database.py`) nên phải cân nhắc cùng chỗ.
 

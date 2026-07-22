@@ -2,6 +2,8 @@
 
 Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một agent chạy độc lập.
 
+> 📁 **`harness-audit/`** (thêm 2026-07-22) — thư mục con, đánh số riêng `01`/`02`, **không** thuộc hàng đợi 001–012. Chứa spec để kiểm tra và đồng bộ **chính bộ máy làm việc** (Claude ↔ Codex) khi chuyển từ chuyển-tay sang Claude-điều-phối-Codex. Output đổ vào `harness-reports/` ở gốc repo (thư mục có trong git, **nội dung thì không** — xem README trong đó).
+
 ## Cách dùng
 1. Mở một session Claude Code mới trong repo này.
 2. Ra lệnh: *"Đọc `agent-tasks/001-precommit-gitleaks.md` và thực hiện đúng spec đó."*

@@ -128,6 +128,13 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# harness-reports/ — báo cáo agent sinh ra về chính bộ máy làm việc (xem README trong đó).
+# Repo PUBLIC + threat model = social engineering; nội dung ở đó mô tả thói quen làm việc
+# và bộ nhớ cá nhân — không phải secret (gitleaks không chặn) nên DÒNG NÀY là cơ chế duy nhất
+# giữ nó lại. Giữ README trong git để thư mục tự giải thích.
+harness-reports/*
+!harness-reports/README.md
+
 # Environments
 .env
 .venv
