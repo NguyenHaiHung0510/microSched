@@ -15,6 +15,11 @@ primary_region = 'sin'
   min_machines_running = 1
   processes = ['app']
 
+  # PHẢI là /api/healthz (liveness), TUYỆT ĐỐI KHÔNG đổi sang /api/readyz.
+  # readyz chạy SQL; nhịp 30 giây ở đây ngắn hơn cửa sổ idle 5 phút của Neon nên
+  # sẽ giữ DB thức 24/7 → 6 CU-hrs/ngày → hết 100 CU-hrs free trong ~17 ngày →
+  # Neon treo compute tới kỳ sau (mất DB, không phải mất tiền). Đó chính là lỗi
+  # đã xảy ra 2026-07-21, xem docstring của backend/app/web/routers/health.py.
   [[http_service.checks]]
     grace_period = '10s'
     interval = '30s'
