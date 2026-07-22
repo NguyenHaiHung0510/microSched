@@ -63,7 +63,9 @@ Ghi 2026-07-21. Bản trước của mục này liệt kê *"private unlock · o
 | 010 | calendar + import `.ics/.xlsx` | ⇢ song song được. Giải luôn `migration-mapping-brief.md` §3 (121 dòng lịch lệch) |
 | 011 | tracker capture (ghi log) | **Bắt buộc có 008a** — `entry.amount` CHECK vô điều kiện, không ghi nổi plaintext |
 | 012 | cutover migration + verify | Theo `migration-mapping-brief.md` §5 |
-| — | private unlock (Argon2id) · outbox offline · CI-deploy | xen vào theo nhu cầu, không chặn cutover |
+| — | private unlock (Argon2id) · outbox offline | xen vào theo nhu cầu, không chặn cutover |
+
+**📝 2026-07-22 — 008a và 008b KHÔNG phụ thuộc nhau.** Ràng buộc thật chỉ có hai: *008a trước mọi CRUD* và *008b trước 008* (để task đặt khuôn có CD lúc nghiệm thu). Giữa 008a↔008b không có chiều nào. ⇒ **008a đang bị chặn vì chủ chưa sinh `ENCRYPTION_MASTER_KEY`, thì chạy 008b trước — không mất gì.** Ghi lại vì thứ tự "008a → 008b" dễ bị đọc nhầm thành dây chuyền, rồi cả hàng đợi đứng chờ một biến môi trường.
 
 **Hai điều kiện cổng cho cutover, dễ quên:** ⓐ app phải **dùng được hằng ngày thay app cũ** (⇒ 008–010 xong) — đổ 163 task + 49 note vào Neon khi chưa xem/sửa được là tự mất daily driver; ⓑ **soi lại giá** — `cost-brief.md` ghi rõ *"bắt buộc trước khi cutover"*.
 
