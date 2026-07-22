@@ -141,6 +141,17 @@ Cái thứ ba do **chính chủ** phát hiện, bằng một thao tác mà khôn
 - Task nào đụng tới **bản build production** (Docker, PWA/service worker, cookie, redirect, OAuth) thì mục Acceptance **bắt buộc** có bước nhìn bằng mắt trên bản deploy thật — ghi rõ *nhìn cái gì*, không ghi "kiểm tra hoạt động".
 - Xanh CI ≠ chạy được. Ba lỗi trên đều xảy ra khi CI xanh 100%.
 
+## 7.2 ✅ ĐÓNG 2026-07-22 — "cho agent lái Chrome profile thật của chủ" (mục MỞ từ 007)
+
+Kiểm chứng thật bằng Codex: **chạy tốt**, chuyển được giữa nhiều profile, đi trọn luồng OAuth trên `microsched.fly.dev` (tài khoản trong allowlist vào được; tài khoản ngoài allowlist bị chặn đúng, sang `/auth/denied`), và **không** chạm trực tiếp cookie/mật khẩu/profile store.
+
+⇒ **Hệ quả cho việc phân vai: trục "ai lái được trình duyệt" không còn trùng với trục tier.** §7.1 rút ra luật *"việc cần trình duyệt thì giao cho thứ lái được trình duyệt, bất kể tier"* trong bối cảnh chỉ T3 làm được. Nay T2 cũng làm được ⇒ **task browser không còn phải cắt đôi giữa hai tầng** — người viết code và người nhìn nó chạy có thể là một, đúng thứ [[feedback-verification-loop-over-model]] gọi là vòng lặp kiểm chứng. T3 vẫn giữ vai chạy test diện rộng.
+
+⚠️ **Nhưng ranh giới dữ liệu siết lại, không nới ra.** Profile đó **không phải môi trường test** — nó là máy của chủ, đang đăng nhập sẵn mọi thứ. Luật đầy đủ ghi ở **`AGENTS.md`** mục *"Lái trình duyệt"* (chỉ dùng tài khoản được nêu tên; không rời phạm vi app; không đọc cookie/history/autofill; soi ảnh chụp trước khi dán; không đổi setting). Hai điểm đáng nhắc lại ở đây vì chúng thuộc threat model §1 chứ không thuộc kỹ thuật:
+
+- **Có một tài khoản chính chủ cấm đụng.** Tên tài khoản **không ghi vào repo** — chỉ nêu trong prompt giao việc.
+- **Không dán địa chỉ email thật vào PR/commit/docs.** Repo public + threat model = social engineering ⇒ danh sách tài khoản là vật liệu dựng pretext. Viết theo vai (*"tài khoản trong allowlist"*), không viết địa chỉ.
+
 ## 8. Chạy nhiều agent song song — ⚠️ GHI NHẬN 2026-07-21, chưa nghiên cứu đủ
 
 Bối cảnh: Codex lẫn Claude Code đều mở được nhiều session cùng lúc, và máy chủ **thừa sức về phần cứng** — nên câu hỏi không phải "máy chịu nổi không" mà là **"cái gì hỏng khi hai agent cùng chạy"**. Ghi lại để nghiên cứu tiếp trước khi mở song song thật (dự kiến từ 009).

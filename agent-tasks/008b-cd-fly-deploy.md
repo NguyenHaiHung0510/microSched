@@ -3,6 +3,8 @@
 > **Trạng thái:** 📋 TODO (chạy trước 008; độc lập với 008a)
 > **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high · **Skill gợi ý:** (không) · **MCP cần:** (không)
 > *Lý do bậc: cùng họ với 005 — CI/CD là chỗ "sai âm thầm thành nợ". Thêm nữa task này cầm `MICROSCHED_DEPLOY_TOKEN`, tức sai một dòng YAML là lộ quyền deploy lên chính app đang chạy.*
+> *Quota **không** phải ràng buộc (đo thật 003→006: cả chuỗi tốn ~20% quota tuần; Codex còn reset dày). **Đừng hạ bậc để tiết kiệm** — task này có cả browser lẫn CI, hạ bậc là mua rủi ro bằng thứ đang dư.*
+> *Executor lái được Chrome bằng **profile thật của chủ** ⇒ đọc `AGENTS.md` mục "Lái trình duyệt" trước khi mở tab đầu tiên.*
 
 ## Bối cảnh (đọc trước, đừng bỏ qua)
 
@@ -134,8 +136,18 @@ Lộ git SHA ra endpoint không auth **không rò gì**: repo public theo quyế
 - [ ] `POST /api/cron/heartbeat` không bearer → **401**; sai bearer → **401**; đúng `CRON_TOKEN` → **200**. Chạy thật bằng `curl`, không chỉ bằng unit test.
 - [ ] Thiếu `CRON_TOKEN` lúc khởi động → endpoint cron trả **503**, không phải 401 và tuyệt đối không phải cho qua.
 - [ ] Thiếu `OAUTH_STATE_SECRET` ở production-mode → app **từ chối khởi động**, log nói rõ biến nào thiếu. Ở dev-mode vẫn chạy được.
-- [ ] Đăng nhập Google **thật** trên bản local sau khi sửa mục 3.1 — chạm đường auth thì mở trình duyệt, không suy luận.
 - [ ] YAML hợp lệ (`actionlint` hoặc tương đương); `pytest`, `ruff`, `pre-commit run --all-files` sạch; 5 required check xanh trên PR.
+
+### A′. Cần TRÌNH DUYỆT — vẫn là việc của executor, nhưng đọc luật profile trước
+
+Executor lái được Chrome (kiểm chứng 2026-07-22). **Đọc `AGENTS.md` mục "Lái trình duyệt" trước khi mở tab đầu tiên** — đó là profile thật của chủ, không phải môi trường test. Tài khoản được phép dùng nêu trong prompt giao việc; **không tự chọn tài khoản.**
+
+Mục 3.1 sửa đúng đoạn xử lý lỗi ở callback OAuth, tức chạm vào chỗ đã sinh ra lỗi B3 của 007 ⇒ phải kiểm lại bằng mắt, không giả định:
+
+- [ ] **Nhánh hợp lệ** (tài khoản trong allowlist): đăng nhập vào được, dashboard hiện phiên.
+- [ ] **Nhánh bị chặn bởi allowlist** (tài khoản là Google test-user nhưng ngoài allowlist): 303 sang `/auth/denied`, **`?code=` KHÔNG nằm lại trên thanh địa chỉ, cũng không nằm lại trong history**.
+- [ ] **Nhánh ngoài cả hai** (không test-user, không allowlist): cũng dừng sạch, không lộ gì trên URL.
+- [ ] Đăng xuất sạch, đóng tab.
 
 ### B. Chỉ chứng minh được SAU merge — ghi vào PR là "chưa chạy", chủ + T1 nghiệm thu
 
@@ -143,7 +155,7 @@ Lộ git SHA ra endpoint không auth **không rò gì**: repo public theo quyế
 - [ ] **Smoke test biết fail:** sửa tạm cho so SHA với giá trị sai → job **đỏ**. Hoàn lại. *(Một smoke test chưa từng đỏ là một smoke test chưa từng được kiểm.)*
 - [ ] Step summary in đúng dòng độ tụt `main`.
 - [ ] Workflow cron gọi được endpoint production ít nhất một lần thật (bearer = bản GitHub, phải khớp bản Fly).
-- [ ] Đăng nhập Google thật trên `microsched.fly.dev` vẫn chạy sau khi deploy.
+- [ ] *(trình duyệt)* Đăng nhập Google thật trên `microsched.fly.dev` vẫn chạy sau khi deploy.
 - [ ] **Chưa cần chứng minh:** deploy từ tag qua `workflow_dispatch` (đường phụ, roll-forward là đường chính).
 
 ## Báo cáo
