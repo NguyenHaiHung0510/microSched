@@ -1,4 +1,4 @@
-# Thiết kế tính năng TRACKING — microSched
+﻿# Thiết kế tính năng TRACKING — microSched
 
 > **Trạng thái: ⚠️ PHIÊN ĐANG CHẠY (2026-07-19)** — bản "chốt tới đâu ghi tới đó" giữa phiên, đề phòng mất context.
 > Cờ từng mục: **✅ CHỐT** (chủ minh thị xác nhận) · **✅ CHỐT-ủy-quyền** (chủ nói "tùy bạn, tư vấn mình" → Claude quyết, có ghi rõ) · **⚠️ ĐỀ XUẤT** (Claude đề xuất, CHƯA gật) · **OPEN** (chưa bàn xong) · **DEFER** (đẩy phiên khác).
@@ -11,7 +11,7 @@
 - Ghi lại để **nhìn rõ** những lần làm hành động không tốt (hút thuốc / uống bia / bi-a) — con số quan trọng nhất là **"lần cuối là bao giờ"**.
 - Có **dashboard thống kê** (tổng lần theo tuần/tháng/năm, trung bình ngày/lần…) *bên cạnh* AI agent assistant.
 - Hút thuốc: **chủ ý KHÔNG ghi số điếu, không ghi tiền**. Bia / bi-a: **cần ghi tiền**.
-- Ngoài log hành động: log **chi tiêu muốn quản lý** (mua game, gói subscription AI…) — sub cần **thời hạn** kèm tiền (optional); có **2 giá**: giá niêm yết ($22.22 ~600k) vs **giá thực trả** (300k khi có promotion).
+- Ngoài log hành động: log **chi tiêu muốn quản lý** (mua game, gói subscription AI…) — sub cần **thời hạn** kèm tiền (optional); có **2 giá**: giá niêm yết (\$22.22 ~600k) vs **giá thực trả** (300k khi có promotion).
 - Kéo theo: chế độ **public/private** (mục gắn "ẩn/nhạy cảm" chỉ hiện full ở private, cần auth) + toggle hiển thị giá.
 
 ---
@@ -39,10 +39,10 @@
 |---|---|---|
 | `amount` | **thực trả, VND** — mọi phép tính/dashboard CHỈ chạm cột này | ✅ CHỐT |
 | `list_amount` | giá niêm yết **quy VND** (600k) → tiết kiệm = `list_amount − amount` | ✅ CHỐT |
-| `orig_amount` + `orig_currency` | `22.22` + `USD` — **dạng SỐ, không text** (lời chủ: "giá trị đó có giá trị sử dụng") — giữ sự thật để hiển thị "$22.22" | ✅ CHỐT |
+| `orig_amount` + `orig_currency` | `22.22` + `USD` — **dạng SỐ, không text** (lời chủ: "giá trị đó có giá trị sử dụng") — giữ sự thật để hiển thị "\$22.22" | ✅ CHỐT |
 
 - **Không quy đổi tỷ giá tự động** ✅ — `list_amount` nhập tay lúc ghi; ngoại tệ chỉ để hiển thị. (Auto-FX kéo theo nguồn tỷ giá + tỷ giá-tại-thời-điểm + lưu lịch sử — chi phí lớn, giá trị ~0 cho một người dùng.)
-- **📝 2026-07-19 (muộn hơn trong phiên) — VND-ONLY cho v1 ✅ CHỐT (lời chủ):** "không cần lưu/xử lý gì liên quan tới $ trong hệ thống hiện tại, cứ dùng VND trước mắt" → **cắt `orig_amount` + `orig_currency` khỏi v1** (2 dòng cuối bảng trên coi như DEFER). Khi nào thật sự cần $ → thêm lại 2 cột nullable (không cửa một chiều), lúc đó mới bàn validate currency (ISO 4217). V1 chỉ còn: `amount` + `list_amount`, đều VND.
+- **📝 2026-07-19 (muộn hơn trong phiên) — VND-ONLY cho v1 ✅ CHỐT (lời chủ):** "không cần lưu/xử lý gì liên quan tới \$ trong hệ thống hiện tại, cứ dùng VND trước mắt" → **cắt `orig_amount` + `orig_currency` khỏi v1** (2 dòng cuối bảng trên coi như DEFER). Khi nào thật sự cần \$ → thêm lại 2 cột nullable (không cửa một chiều), lúc đó mới bàn validate currency (ISO 4217). V1 chỉ còn: `amount` + `list_amount`, đều VND.
 - **Toggle hiển thị giá: `giá gốc / giá thực trả / hybrid`** — ✅ CHỐT là *cần có*; là `app_setting`, thiết kế cụ thể ở **phiên frontend** (📌 đã note).
 - ✅ **CHỐT — KHÔNG trộn "xem giá gốc" với private mode** (chủ gật 2026-07-19): private trả lời "*ai được xem*", toggle giá trả lời "*xem con số nào*"; trộn nhau dễ quên chế độ đang bật và đọc sai mức chi thật. **Hai công tắc riêng.**
 

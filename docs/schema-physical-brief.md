@@ -1,4 +1,4 @@
-# Schema vật lý (physical schema) — microSched
+﻿# Schema vật lý (physical schema) — microSched
 
 > **Trạng thái:** ✅ **CHỐT 2026-07-19** cho toàn bộ Nhóm 2, **trừ 2 mục DEFER** về tracking (C2, D1-tracker → §7).
 > Decision record **tự-chứa** (đọc được ở phiên 0-context). Nối tiếp `schema-v1-brief.md` (mức **khái niệm**) → file này là tầng **vật lý**: kiểu cột chính xác, cách sinh khoá, index, ràng buộc, công cụ đúc (ORM/migration), role DB.
@@ -38,6 +38,7 @@ Postgres + Neon (đã chốt ở `db-and-data-model-brief.md`) mới trả lời
 | D3 | Log AI + xoá | ✅ **log 3 tầng + soft-delete** (§5) | không |
 | D4 | Full-text search | ⏸ **DEFER → Bước 1** (chỉ áp cho cột KHÔNG mã hóa — xem E1) | không |
 | E1 | Mã hóa cột | ✅ **ĐÃ GIẢI 2026-07-20** — app-level AES-GCM trên `tracker.name`/`subscription.name`/`entry.note`/tiền(`amount`,`list_amount`,`orig_amount`)/`note.body_md`+`task.*` khi private (`tracking-brief.md` §6) | **có** (chỉ bật cột, không phải cơ chế/khóa) |
+| BUILD-006 | DDL thật | ✅ **ĐÃ ĐÚC 2026-07-21** — Alembic revision **`0001`**, schema `microsched` trên Neon PG18 | — |
 
 ---
 
@@ -66,6 +67,24 @@ Superuser `postgres` local host nhiều project khác của chủ (vd `micareer_
 - **Role riêng** `microsched_app` — chỉ quyền CRUD trên bảng app, **không superuser**.
 - **Schema riêng** `microsched` (không đặt vào `public`) → cô lập sạch. GRANT hẹp: `USAGE` trên schema + `SELECT/INSERT/UPDATE/DELETE` trên bảng app, không hơn.
 - Credentials chỉ trong `.env` (đã chốt CLAUDE.md); `.gitignore` chặn `.env` từ commit đầu.
+
+**📝 2026-07-20 — MỞ RỘNG A3: ba role, không phải hai** (chủ duyệt trong lúc chạy 006). Tách thêm **`microsched_migrator`** = role **sở hữu schema `microsched`** và là danh tính chạy Alembic:
+
+| Role | Vai | Biến env | Dùng ở đâu |
+|---|---|---|---|
+| `neondb_owner` | role cấp tài khoản Neon — **chỉ bootstrap** (tạo schema/role/extension) | `NEON_OWNER_URL` | **chỉ máy chủ**, không bao giờ rời máy |
+| `microsched_migrator` | **sở hữu** schema + chạy migration (DDL) | `NEON_MIGRATOR_URL` | máy chủ; **sau này là CI-deploy** |
+| `microsched_app` | least-privilege, chỉ CRUD (DML) | `DATABASE_URL` | app runtime · **biến duy nhất lên Fly secrets** |
+
+**Lý do tách migrator khỏi owner** (giá trị thật, không phải nghi thức): `neondb_owner` là role quản trị **toàn Neon project**. Nếu nó vừa sở hữu bảng vừa chạy migration thì danh tính thi công DDL trùng danh tính quản trị hạ tầng — và tới lúc bật **CI-deploy tự chạy migration** (`devops-brief.md` §6, đang treo) bạn sẽ buộc phải nhét credential *owner* vào GitHub Actions. Có role migrator thì chỉ nhét credential migrator. Giá phải trả: một role + một chuỗi chỉ sống ở máy chủ và CI.
+
+⚠️ **Bẫy PostgreSQL 16+ phải xử lý trong script bootstrap** (đã đâm thật lúc chạy 006, xác minh bằng `pg_auth_members` trên Neon): khi một role **không phải superuser** (`neondb_owner` trên Neon chính là vậy) tạo role mới, PG tự cấp membership `ADMIN TRUE` nhưng **`INHERIT FALSE, SET FALSE`** — cố ý, để "tạo role" không âm thầm thành "có quyền của role đó". Hệ quả: owner **không `SET ROLE microsched_migrator` được**, nên không tạo nổi object thuộc sở hữu migrator. Cách gỡ (owner đã có `ADMIN` nên đủ thẩm quyền tự cấp):
+
+```sql
+GRANT microsched_migrator TO neondb_owner WITH SET TRUE;
+```
+
+**Lệnh này BẮT BUỘC nằm trong script bootstrap được commit**, không chạy tay — chạy tay thì lần dựng lại Neon project sau sẽ đâm đúng bức tường này và không ai nhớ tại sao.
 
 ---
 
@@ -103,6 +122,16 @@ Subtask một người dùng số lượng nhỏ → `int` + đánh số lại k
 Dimension coupling với embedding model → chốt **chiến lược vật lý**, không chốt con số:
 - Để cột `vector` **nullable, CHƯA tạo index**. Thêm dimension + index **HNSW** ở migration Bước 1 (khi đã chốt embedding model).
 - Ghi chú Bước 1: cân nhắc `halfvec` (nửa storage). Ở quy mô 49 note hiện tại, index vector còn *chưa cần thiết* cho tốc độ.
+- **⚠️ OPEN 2026-07-21 — PHIÊN BƯỚC 1 BẮT BUỘC CHẠM MỤC NÀY TRƯỚC KHI CHỌN EMBEDDING.** Chủ chất vấn luật "cột mã hoá không bao giờ có embedding" và lập luận đáng cân nhắc lại:
+  1. Luật viết như một **tuyệt đối**, nhưng mối đe doạ nó chặn (rò-nghĩa-qua-vector) chỉ khai thác được bởi kẻ **đã có credential DB** — nằm **ngoài threat model** đã ghi của dự án (social engineering, không phải dump DB; repo vốn public có chủ đích).
+  2. Nội dung thật phần lớn vô hại (hút thuốc, bia rượu, sub, việc cần làm). Thứ thật sự nhạy (mật khẩu, số điện thoại) **không nên nằm trong app này ngay từ đầu**. Rò "lờ mờ ý nghĩa" cho kẻ đã chiếm được DB không đổi kết cục gì.
+  3. Nếu cần kín, chủ có thể **tự đặt tên chỉ mình hiểu** — rẻ hơn nhiều so với hy sinh tính năng lõi.
+  4. Nguyên tắc chủ nêu: *"bảo mật đi từ tối thiểu lên tăng cường tuỳ thời gian và năng lực dư"* — nâng bar bằng rất nhiều công sức cho một app AI-first là **last-mile theo nghĩa xấu**, đúng thứ microSched sinh ra để tránh.
+
+  **Giá phải trả nếu giữ luật:** lịch sử chat + note private **vĩnh viễn không tìm được theo ngữ nghĩa**. (Tìm **từ khoá** thì vẫn được — app giải mã rồi tự quét, R2 đã chốt; ~49 note = mili-giây. Chỉ mất tìm-theo-ý-nghĩa.)
+
+  **Chưa quyết, và cố ý chưa quyết:** cột `vector` đang không dimension/không index, **chưa có gì bị chặn trên thực tế** — quyết bây giờ là quyết mù. **Hướng có thể xoá luôn bài toán:** thay vì embedding toàn bộ lịch sử, dựng **memory có chọn lọc** (chủ chủ động bảo "nhớ cái này", kiểu Claude Code) — nhỏ, có cấu trúc, chủ kiểm soát nội dung nên để **trần** được mà không lấn vùng riêng tư. T1 đánh giá hướng này **mạnh hơn** việc nới luật. **Giữ nguyên:** mã hoá-lúc-lưu (rẻ, chặn kịch bản thật: nhân viên Neon, backup rơi ra ngoài) — chỉ luật *cấm embedding* mới là thứ đem ra cân.
+
 - **📝 2026-07-20 (encryption-review):** luật cứng — **cột đã mã hóa (§7.1) không bao giờ có embedding**, kể cả `note.body_md` khi `is_private=true`. Tránh hẳn "rò nghĩa qua vector" thay vì cân đo % chấp nhận được. Embedding provider Bước 1 (bên thứ ba, chưa chọn) phải đạt bar "no retention/no training" — điều kiện chọn thầu, xem `tracking-brief.md` §6.
 
 ---
@@ -152,7 +181,7 @@ Tách 2 nhu cầu hay bị gộp:
 **Kết luận vs Neon free (0.5 GB = 500 MB/project, trần cứng):**
 - **Nội dung người dùng là chuyện vặt nhiều năm.** Kể cả embedding (49 note → gần 0; 5000 note × 6KB = 30 MB) vẫn dư ~10×+.
 - **Biến số DUY NHẤT** có thể đụng 0.5 GB = **log AI verbose không giới hạn** → chính vì vậy chiến lược 3 tầng D3 (giữ tầng 1–2 gọn, đẩy tầng 3 off-DB) không chỉ là kiến trúc sạch mà là **điều kiện ở lại free tier**.
-- **Chi phí dôi dư có kiểm soát:** trên free, 0.5 GB là **trần cứng (chặn ghi khi đầy), KHÔNG phải hoá đơn bất ngờ**; vượt = **chủ động** nâng Launch (~$5). Blob nặng đã off-DB → không có kịch bản "cháy túi ngầm".
+- **Chi phí dôi dư có kiểm soát:** trên free, 0.5 GB là **trần cứng (chặn ghi khi đầy), KHÔNG phải hoá đơn bất ngờ**; vượt = **chủ động** nâng Launch (~\$5). Blob nặng đã off-DB → không có kịch bản "cháy túi ngầm".
 - **Trục compute:** Neon free cũng giới hạn **100 CU-h/tháng**. App always-on trên Fly nhưng single-user → Neon **autosuspend khi DB rảnh** → CU-h thấp; chỉ cần **cron đừng ping DB quá dày**.
 
 ---
@@ -184,6 +213,23 @@ Chi tiết đầy đủ + bảng phán quyết từng cột + lý do: `tracking-
 ---
 
 > **✅ 2026-07-19 (muộn) — PHIÊN TRACKING ĐÃ ĐÓNG, §7 GIẢI TRỌN.** C2 + D1 như bảng §1 (lưu ý VND-only v1: `orig_amount`/`orig_currency` bị cắt). Phát sinh chốt thêm: **+2 bảng** `tracker_group` (nhóm 2 tầng; không soft-delete, hard-delete + FK `SET NULL`) và `subscription` (DATE cho `started_on`/`expires_on` — ngoại lệ có lý với B2; không cột `status` — suy ra từ `expires_on`+`canceled_at`); **cột mới `tracker`**: `direction` in/out, `input_mode` event/money/quantity, `group_id`, `reminder_time TIME`/`reminder_text` (nhắc thuốc), `unit` thu hẹp nghĩa; **cột mới `entry`**: `quantity`/`amount`/`list_amount`/`subscription_id`; **enum C1 mở rộng**: `direction`, `input_mode`; **index D2 cập nhật**: `entry(tracker_id, occurred_at DESC)` composite thay cặp rời + `entry(occurred_at)` + `subscription(expires_on)`; **seed danh mục** = Alembic data-migration lúc cutover (khớp kỷ luật A2). Toàn bộ chi tiết + lý do + rà soát chuẩn hóa (3NF, K1–K17): **`tracking-brief.md`** (đặc biệt §10). **Schema toàn dự án khép từ đây.**
+
+---
+
+### 7.2 ✅ 2026-07-20 — RÀ-SOÁT TIỀN-DDL VÒNG 2 (K22–K25), phát sinh từ escalation của 006
+
+**Bối cảnh:** executor 006 (Sol/xhigh) dừng **trước khi viết DDL** theo giao thức HITL và báo 4 điểm brief chưa cho đáp án duy nhất. T1 kiểm chứng: **cả 4 có thật**. Chủ quyết cùng ngày. Đây là bằng chứng giao thức HITL hoạt động — 4 lỗ này nếu để executor tự lấp thì chỉ lộ ra sau khi đã có data.
+
+| # | Chốt | Lý do |
+|---|---|---|
+| **K22** | **`task.priority` = TEXT + CHECK `('p1','p2','p3')`, `p1` cao nhất.** NULL = chưa đặt ưu tiên (không ép mọi task phải có). Không seed, không bảng lookup. | Hệ ưu tiên 6-mức của app cũ **chủ thực tế không dùng** → đơn giản hoá còn 3. Chọn dạng viết `'p1'/'p2'/'p3'` thay vì `'1'/'2'/'3'` hay `'high'/'medium'/'low'`: **sắp xếp đúng thứ tự tự nhiên** (text `p1<p2<p3`) **và** AI hiểu được sau một lần giải thích. `'high'/'low'` sắp xếp sai theo alphabet; `'1'/'2'/'3'` thì AI không tự biết chiều nào là cao. |
+| **K23** | **Phạm vi mã hoá của `task` khi private = CHỈ cột chữ:** `task.title`, `task.body_md`, `task_item.content`. **Giữ trần:** `status`, `priority`, `due_at`, `is_private`, mọi khoá và timestamp. Giải toả dấu `*` mơ hồ trong §7.1. | Ngày + `'p1'` gần như không rò gì theo threat-model (§1 `devops-brief`). Mã hoá cột cấu trúc sẽ (a) **xung đột trực tiếp với CHECK** của C1 — không thể vừa mã hoá vừa kiểm giá trị, (b) buộc **mọi** truy vấn task phải kéo về app giải mã rồi mới lọc/sắp, đổi lấy gần như không thêm quyền riêng tư. `is_private` bắt buộc để trần vì chính nó là cột dùng để lọc. |
+| **K24** | **`app_setting` theo đúng B1: `id` UUIDv7 PK + `key` TEXT UNIQUE NOT NULL.** Không ngoại lệ. | Ban đầu T1 nghiêng `key` làm PK cho gọn, **đã đổi ý sau khi soi hệ quả code**: B1+B2 hàm ý một **lớp cơ sở dùng chung** (id + timestamps + trigger); bảng nào không có `id` thì không dùng được lớp đó → phải nuôi một ngoại lệ trong mọi thứ đụng tới bảng, **vĩnh viễn**. Cột thừa = giá **một lần**; ngoại lệ = giá **lặp lại**. Đổi tên key cũng thành thao tác thường thay vì đổi danh tính dòng. |
+| **K25** | **Ranh giới uỷ quyền cho executor** (chi tiết còn thiếu: nullability, default, hình dạng trace metadata): executor **được tự quyết**, đổi lại **bắt buộc liệt kê mọi lựa chọn đã tự quyết thành một bảng trong PR** để T1 duyệt một lượt. Vẫn giữ nguyên luật escalate khi gặp *mâu thuẫn* giữa 2 brief. | Chốt tay hàng trăm cột là đốt một buổi cho thứ phần lớn không có ý nghĩa sản phẩm. Đổi mô hình từ "quyết trước" sang "**duyệt sau theo danh sách**" — giữ kiểm soát, bỏ tắc nghẽn. Cùng tinh thần mandate K1–K17. |
+
+| **K26** | **Sửa lại uỷ quyền K25 sau khi T1 duyệt danh sách (2026-07-21):** `note.title`, `note.body_md`, `task.body_md` → **nullable**. `task.title` giữ NOT NULL. CHECK ciphertext viết tường minh `... IS NULL OR ... LIKE 'enc:v1:%'` thay vì dựa ngầm vào logic ba-giá-trị của SQL. | Executor để cả bốn cột NOT NULL — hợp lý về mặt dữ liệu nhưng **va thẳng vào nguyên tắc capture-một-chạm**: không tạo nổi note nếu chưa nghĩ ra tiêu đề. App sẽ buộc phải nhét `''`, và từ đó "chưa đặt" với "đặt rỗng" không phân biệt được nữa. Sửa lúc DB rỗng = miễn phí; sau cutover = migration + backfill. Một việc thì phải có tên gọi nên `task.title` giữ nguyên. **Đã kiểm chứng thật trên Neon:** note NULL/NULL insert được, task chỉ-tiêu-đề insert được, task NULL-title bị chặn. |
+
+**📌 Ghi chú mở đường (chưa phải quyết định):** chủ nêu ý muốn sau này thêm mức kiểu `'Cố định'` / `'Trọng đại'`. Theo khung quản lý danh mục (`tracking-brief.md` §10 — tiêu chí *"code có cần hiểu giá trị để rẽ nhánh không?"*), `priority` thuộc **enum cứng** → thêm giá trị = **một migration nhỏ**, hoàn toàn rẻ, không phải sửa từ UI. ⚠️ Nhưng lưu ý mô hình: *"Cố định"* và *"Trọng đại"* nghe như **trục khác** với độ-gấp — nếu sau này một task cần **vừa** `p1` **vừa** "cố định" thì một cột không diễn đạt nổi, lúc đó thêm cột/cờ riêng (migration cộng thêm, vẫn rẻ). Ghi lại để sau này không ai nhồi hai trục vào một cột.
 
 ---
 

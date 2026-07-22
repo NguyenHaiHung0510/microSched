@@ -1,7 +1,7 @@
 # 005 — Docker multi-stage + deploy Fly.io đầu tiên
 
 > **Trạng thái:** 📋 TODO (chạy sau 004)
-> **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high
+> **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high · **Skill gợi ý:** (không) · **MCP cần:** (không)
 > *Lý do bậc: Docker/Fly là chỗ "sai âm thầm thành nợ" (bẫy chi phí, cấu hình sống lâu); debug deploy cần model mạnh.*
 
 ## Bối cảnh (đọc trước, đừng bỏ qua)
@@ -12,8 +12,9 @@ Quyết định đã khép: **Fly.io, 1× Machine `shared-cpu-1x` always-on, reg
 
 **Việc của CHỦ trước khi chạy task** (agent không tự làm được và không được hỏi credential):
 - [ ] Tạo tài khoản Fly + `fly auth login` sẵn trên máy (agent gọi `flyctl` qua session đã login — không bao giờ hỏi/token ra chat).
-- [ ] Đặt **spending limit / budget alert** trong Fly dashboard (cost-brief §2 — pay-as-you-go không có free allowance).
-- [ ] Chọn tên app (vd `microsched`) — báo cho agent trong prompt lúc giao task.
+- [ ] ⚠️ **Chặn chi phí — tra lại 2026-07-20: Fly KHÔNG có spending limit và KHÔNG có billing alert.** Yêu cầu cũ ở dòng này là bất khả thi, đừng đi tìm nữa. Cách chặn thật duy nhất = **prepaid credits** (nạp ≥$25, hết credit thì account bị treo → trần cứng, đổi lại app sập khi hết). Không nạp thì phải **tự xem mục "current month to date" trong dashboard** định kỳ. → **Chủ đã chọn 2026-07-20: KHÔNG nạp prepaid, tự theo dõi dashboard + đặt nhắc nhở định kỳ** (lý do: nạp trước cho một app ~$2/mo là chôn vốn quá mức so với rủi ro). Hệ quả phải chấp nhận: **không có trần cứng nào** — nếu cấu hình sai âm thầm (2 máy, VM to hơn, volume) thì hoá đơn cứ chạy tới khi chủ tự nhìn thấy. Vì thế mục 4 ("ép `fly scale count 1`") là hàng rào chi phí **tự động duy nhất** của cả task, phải verify bằng output thật chứ không tin mặc định. *(Nhắc nhở này là ứng viên tự nhiên cho chính app sau khi có tracker — xem `docs/tracking-brief.md` §11 subscription.)*
+- [ ] **Bật Docker Desktop trước khi giao task** — acceptance #1 là `docker build` chạy local. Máy chủ đã cài Docker CLI 29.4.3 nhưng daemon không tự chạy; nếu chưa bật, executor sẽ chết ngay ở bước đầu với lỗi `failed to connect to the docker API at npipe:...`.
+- [ ] Chọn tên app — **ràng buộc của Fly: chỉ chữ thường, số và dấu `-`; không hoa, không `_`**. Nên `microsched`; nếu trùng thì `microsched-hung`. (`microSched` và `microsched_hung` đều **không hợp lệ**.) Báo tên đã chọn cho agent trong prompt lúc giao task.
 
 ## Mục tiêu
 

@@ -64,6 +64,49 @@ So 2 phương án chủ đã ghi ở `tracking-brief.md` §5:
 
 Bảng **`session`** mới (§2) · cờ **`is_private` trên message tầng-1** (R4) · key `app_setting`: TTL private-unlock (§3). Tất cả theo house-rules `schema-physical-brief.md` (B1/B2); đã ghi chéo ở §8 file đó.
 
+## 6.1 📝 2026-07-21 — thi công 007: 4 điểm thực tế lệch/bổ sung giả định
+
+Ghi theo yêu cầu *"cập nhật khi code auth phát hiện khác giả định"*. **Không** điểm nào lật quyết định §1–§5; đều là chi tiết tầng vật lý brief chưa nói tới.
+
+| # | Phát hiện | Xử lý |
+|---|---|---|
+| **A1** | **Fly cắt TLS ở proxy** → app chỉ thấy request `http`, nên `request.url_for()` dựng ra `http://microsched.fly.dev/auth/callback` — URI **Google chưa từng đăng ký** ⇒ `redirect_uri_mismatch`, login không bao giờ chạy. Brief §1 không lường bước này. | Ép `https` cho mọi host **trừ loopback** (`localhost`/`127.0.0.1` vốn thật sự chạy http). Chọn cách này thay vì thêm biến env `BASE_URL` để không bắt chủ nuôi thêm một secret. Có **test riêng cho cả hai chiều** vì lỗi này *không* hiện ra ở status code — chỉ hiện khi bấm nút thật. |
+| **A2** | Authlib giữ `state`/`nonce` bằng **Starlette `SessionMiddleware`** — tức trong app tồn tại một cơ chế signed-cookie **trông y hệt** session đăng nhập. | Tách cứng: cookie riêng `ms_oauth_state`, TTL **300s**, và `request.session.clear()` ngay tại callback. Có test khẳng định cookie state **chết sau handshake**. Session đăng nhập vẫn đúng §2 (opaque token + bảng `session`). |
+| **A3** | §2 chốt TTL "60–90 ngày" nhưng không chốt số. | Chọn **90**. Lý do: cửa sổ **rolling** nên nó chỉ kích hoạt sau 90 ngày *không dùng gì cả*; rút ngắn chỉ thêm phiền lúc đăng nhập lại trên PWA mà **không** giảm rủi ro máy bị mất — rủi ro đó xử bằng logout/thu hồi phiên, không phải bằng TTL. |
+| **A4** | Brief không nói tới claim `email_verified`. | **Bắt buộc `email_verified=true`** mới qua cổng. Địa chỉ chưa xác minh không chứng minh quyền sở hữu — khớp tinh thần allowlist. |
+
+**Ghi chú kiểm thử:** CI chạy `pytest` **không có Postgres** (workflow `backend` không dựng service DB) → tầng lưu phiên được test qua một double in-memory cùng contract, cộng test riêng cho `PostgresSessionStore` khẳng định **chỉ digest được ghi xuống**. Đường SQL thật vẫn phải nghiệm thu bằng tay (localhost + Fly) theo mục Acceptance của `agent-tasks/007`.
+
+## 6.2 📝 2026-07-21 — kết quả security-review PR #9 (Opus 4.8 MAX, session riêng)
+
+**Không có lỗ HIGH/MEDIUM.** Đã soi và loại: bypass allowlist (hoa-thường/khoảng trắng/thiếu `email_verified`/allowlist rỗng/token null/handshake lỗi — **mọi nhánh hỏng đều fail-closed**), session fixation, path traversal qua SPA mount, SQLi trong `scripts/*`, XSS, secret trong CI (workflow dùng `pull_request` chứ không phải `pull_request_target` → PR từ fork không nhận credential), least-privilege của `microsched_app`.
+
+Điểm đáng giữ: reviewer xác nhận `token["userinfo"]` **chỉ** có sau khi Authlib xong `parse_id_token` (JWKS + `iss`/`aud`/`exp`/`nonce`); bỏ qua bước nào cũng ra `claims = {}` → 403.
+
+**Hai mục cần quyết ở tương lai — không phải việc của 007:**
+
+| Mục | Vì sao ghi lại |
+|---|---|
+| **CSRF khi Bước 2 có write-tool** | Hiện `SameSite=Lax` là phòng thủ CSRF **duy nhất**, và nó đủ *chỉ vì* endpoint đổi-trạng-thái duy nhất là `POST /auth/logout` (`fly.dev` nằm trong Public Suffix List nên app anh em vẫn là cross-site). **Lax KHÔNG bảo vệ `GET` đổi trạng thái** — khi Bước 2 mở tool ghi thì phải quyết tường minh (token CSRF hoặc bắt buộc mọi write là POST/PUT). |
+| **Nâng version Authlib = thay đổi có tính bảo mật** | Test mock nguyên client Authlib nên state/nonce/chữ ký **không** được chạy trong CI; tính đúng đắn dựa vào bản đã pin. ⇒ mỗi lần bump `authlib` trong `uv.lock` phải review có ý thức, không merge kiểu dependency-bump thường. |
+
+Hai mục nhỏ hơn (cảnh báo lúc khởi động khi thiếu `OAUTH_STATE_SECRET`; `except Exception` trần ở callback xoá mất phân biệt "Google chết" với "có người dò") — **để dành thành task polish sau merge**, không sửa ngay để diff đã review không đổi.
+
+## 6.3 📝 2026-07-21 — bốn lỗi chỉ lộ ra khi mở trình duyệt thật
+
+007 xanh CI 100%, security-review không tìm ra HIGH/MEDIUM — rồi bốn lỗi này vẫn tới tay chủ. **Không cái nào nằm trong code**, nên không công cụ đọc-code nào bắt được:
+
+| # | Triệu chứng | Gốc | Vá |
+|---|---|---|---|
+| **B1** | Fly crash-loop, app không khởi động | `httpx` nằm ở nhóm `dev`; Authlib import nó lúc load package; image production cài `--no-dev`. **pytest chạy *với* nhóm dev nên nhóm dev che mất dependency prod bị thiếu** | chuyển `httpx` sang dependency chính + job CI `runtime-deps` cài `--no-dev` rồi thử `create_app()` |
+| **B2** | Bấm "Đăng nhập bằng Google" không đi đâu cả | `vite-plugin-pwa` mặc định cho service worker trả `index.html` cho **mọi** điều hướng → nuốt luôn `/auth/login`, request không bao giờ tới FastAPI | `workbox.navigateFallbackDenylist: [/^\/auth\//, /^\/api\//]` |
+| **B3** | `?code=…` nằm lại trên thanh địa chỉ **chỉ ở nhánh bị từ chối** | nhánh hợp lệ 303 về `/` nên URL bị thay; nhánh từ chối trả HTML **ngay tại** `/auth/callback` nên code ở lại URL + history | nhánh từ chối cũng 303, sang `/auth/denied` |
+| **B4** | Đăng xuất xong dash vẫn hiện; đăng nhập lại không qua Google | (a) query cache giữ `data` cũ khi refetch lỗi → dash và màn login cùng hiện; (b) Google vẫn giữ phiên riêng của nó nên nhận diện im lặng | (a) đăng xuất bằng **điều hướng thật** thay vì can thiệp cache; (b) `prompt=select_account` |
+
+**B3 do chính chủ tìm ra**, bằng thao tác không agent nào làm: **đối chiếu URL giữa nhánh hợp lệ và nhánh bị từ chối rồi hỏi vì sao khác nhau** — kiểm thử khác biệt, không phải kiểm thử theo checklist. Bài học chung từ B3: **nhánh lỗi và nhánh thành công có bề mặt rò rỉ khác nhau**; chỉ test happy path là mù đúng nửa còn lại.
+
+Quy ước rút ra (đã ghi thành luật ở `agent-tasks/README.md` §"Quy ước BÁO CÁO" và `devops-brief.md` §7.1): **xanh CI ≠ chạy được**; deploy + nhìn bằng mắt là một bước nghiệm thu riêng.
+
 ## 7. Nguồn (tra live 2026-07-20)
 
 [Authlib PyPI](https://pypi.org/project/Authlib/) · [Authlib FastAPI client](https://docs.authlib.org/en/v1.3.2/client/fastapi.html) · [iOS web push yêu cầu Home Screen (Pushpad)](https://pushpad.xyz/blog/ios-special-requirements-for-web-push-notifications) · Claude API retention (đã tra ở encryption review, `tracking-brief.md` §6)

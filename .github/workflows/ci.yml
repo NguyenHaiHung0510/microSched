@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+
+jobs:
+  backend:
+    name: Backend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest
+
+  runtime-deps:
+    # Bộ test chạy với nhóm `dev`, nên một thư viện chỉ có ở dev vẫn khiến test
+    # xanh trong khi image production (uv sync --no-dev) không import nổi app.
+    # Job này cài đúng bộ deps của Dockerfile rồi thử khởi tạo app.
+    # Thêm 2026-07-21 sau khi thiếu `httpx` làm 007 crash-loop trên Fly.
+    name: Production dependency check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: uv sync --frozen --no-dev
+      - run: uv run --no-dev python -c "from app.main import create_app; create_app()"
+
+  hooks:
+    name: Repository hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install pre-commit
+      - run: pre-commit run --all-files
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  migration-qa:
+    name: Migration QA
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: microsched_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d microsched_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      NEON_MIGRATOR_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: uv sync --frozen
+      - run: uv run python -m scripts.prepare_ci_database
+      - run: uv run python -m scripts.check_migration_drops
+      - run: uv run alembic upgrade head
+      - run: uv run python -m scripts.check_migration_drift
+      - run: uv run alembic downgrade base
+      - run: uv run alembic upgrade head
+      - run: uv run python -m scripts.check_migration_drift
