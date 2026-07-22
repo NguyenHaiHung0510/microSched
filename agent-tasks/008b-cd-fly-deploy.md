@@ -44,7 +44,7 @@ Tới 2026-07-22 deploy vẫn là `fly deploy` gõ tay. **Vì sao tự động h
   *Vì sao không dùng tên mặc định `FLY_API_TOKEN`:* tên phải phản ánh **phạm vi quyền**, mà token này chỉ có quyền trên app `microsched` — tên mặc định ngụ ý "token API của Fly", rộng hơn hẳn. Giá phải trả là đúng một dòng map trong workflow (mục 1.3).
   ⛔ Token này **không bao giờ** lên Fly secrets: app không gọi `flyctl`, nên đưa vào chỉ tạo đường leo thang *"đọc được env" ⇒ "deploy được code tuỳ ý"*. Cùng lý do với `NEON_OWNER_URL`/`NEON_MIGRATOR_URL`.
 - [x] **`CRON_TOKEN` — `backend/.env` (giá trị A) + Fly secrets (giá trị B, đã `Deployed`)**, hai giá trị khác nhau.
-- [ ] ⚠️ **Đặt `CRON_TOKEN` vào GitHub repo secrets, giá trị phải BẰNG bản trên Fly** (không phải bản local). Workflow cron gọi endpoint **production**, nên nó xác thực với bản Fly.
+- [x] **`CRON_TOKEN` đã vào GitHub repo secrets**, giá trị **bằng bản trên Fly** (không phải bản local) — kiểm bằng `gh secret list` 2026-07-22. Workflow cron gọi endpoint **production** nên nó xác thực với bản Fly.
   *Quên bước này thì workflow cron trả 401 — trông y hệt lỗi "dependency bearer sai" ở mục 3.2, dễ đi sửa nhầm code thay vì sửa cấu hình.*
 - [x] Docker Desktop đã bật (không bắt buộc — build chạy trên remote builder của Fly — nhưng có thì `docker build` thử local được).
 
