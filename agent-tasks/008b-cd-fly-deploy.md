@@ -1,6 +1,6 @@
 # 008b — CD: merge `develop` là deploy, kèm smoke test chứng minh bản mới thật sự đang chạy
 
-> **Trạng thái:** ✅ DONE (2026-07-22; chờ chủ + T1 nghiệm thu khối B sau merge)
+> **Trạng thái:** ✅ **DONE + NGHIỆM THU 2026-07-22.** PR [#13](https://github.com/NguyenHaiHung0510/microSched/pull/13) merged; deploy tự động **đầu tiên** chạy thật (1m41s, mọi step xanh). Khối B đạt: `readyz.commit` = `c569878…` **khớp merge commit**, `healthz` không đổi, bảng độ tụt in `main đang tụt 7 commit · tag gần nhất: v0.2`. **Còn treo một mục**, xem "⚠️ Sót lại" cuối file.
 > **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high · **Skill gợi ý:** (không) · **MCP cần:** (không)
 > *Lý do bậc: cùng họ với 005 — CI/CD là chỗ "sai âm thầm thành nợ". Thêm nữa task này cầm `MICROSCHED_DEPLOY_TOKEN`, tức sai một dòng YAML là lộ quyền deploy lên chính app đang chạy.*
 > *Quota **không** phải ràng buộc (đo thật 003→006: cả chuỗi tốn ~20% quota tuần; Codex còn reset dày). **Đừng hạ bậc để tiết kiệm** — task này có cả browser lẫn CI, hạ bậc là mua rủi ro bằng thứ đang dư.*
@@ -176,3 +176,16 @@ Theo quy ước `agent-tasks/README.md` §"Quy ước BÁO CÁO": tách rõ **Đ
 Branch **`feat/008b-cd-fly-deploy`** → PR nhỏ vào `develop`, kèm output verify. Người merge = chủ sau khi T1 review diff. Commit message tiếng Việt *tại sao*, kèm `Co-Authored-By:` của agent thực thi.
 
 ⚠️ **Lưu ý riêng của task này:** merge PR này vào `develop` **chính là** lần deploy tự động đầu tiên. Đọc lại mục 1.1–1.2 trước khi bấm merge.
+
+---
+
+## ⚠️ Sót lại sau nghiệm thu (2026-07-22) — `workflow_dispatch` chưa tồn tại
+
+`gh workflow run cron.yml --ref develop` trả **`HTTP 404: workflow not found on the default branch`**. GitHub chỉ mở `workflow_dispatch` khi file workflow **đã có mặt trên default branch** (`main`) — mà `main` chưa nhận 008b. Không ai biết luật này trước khi va vào.
+
+Hai hệ quả, cả hai đều là *chưa chạy*, không phải *hỏng*:
+
+1. **Cron production chưa được gọi lần nào.** Bằng chứng đầu tiên sẽ là lần chạy theo lịch: **03:17 UTC = 10:17 giờ VN**. Kiểm bằng `gh run list --workflow=cron.yml`; endpoint phải trả 200 và **không** đánh thức Neon (heartbeat cố ý không chạm DB).
+2. **`workflow_dispatch` của `deploy.yml` — đường lùi phụ — cũng chưa tồn tại.** Không phá gì: đường lùi chính vẫn là **roll-forward** (`git revert` trên `develop` → CD chạy), và đó là đường được đi mỗi ngày nên luôn hoạt động. Nhưng giờ nó là *đường lùi duy nhất đang sống*, và đó là sự thật đã kiểm chứ không phải giả định. Cả hai `workflow_dispatch` tự sống lại ở lần merge `develop` → `main` kế tiếp.
+
+**Bài học đáng mang đi:** một cơ chế **có mặt trong code** vẫn có thể **chưa hoạt động** vì một luật nằm ở hệ thống khác (ở đây là quy tắc default-branch của GitHub). Cùng họ với sự cố Neon — chỗ hỏng nằm giữa hai thứ đều đúng, ở hai nơi không tham chiếu nhau. ⇒ Với mọi "đường thoát hiểm" dựng thêm: **hỏi ngay nó đã dùng được chưa, đừng chờ tới lúc cần**.
