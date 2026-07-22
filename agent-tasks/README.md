@@ -50,23 +50,24 @@ Không viết *"đã làm xong X và nó chạy"*. Viết:
 
 **Từ 003 (phase B — scaffold):** executor mặc định = **T2 Codex** theo `docs/devops-brief.md` §7; task code chạy trên branch `feat/NNN-<slug>` → PR nhỏ vào `develop` để T1 review diff (docs vẫn commit thẳng `develop`). Chuỗi 003→007 = **walking skeleton**: trang thật trên `*.fly.dev` có login Google.
 
-## Sau 007 — phase C (lộ trình, **chưa có spec; đừng tự chế**)
+## Sau 007 — phase C (lộ trình; **chỉ 008b có spec — phần còn lại đừng tự chế**)
 
 Ghi 2026-07-21. Bản trước của mục này liệt kê *"private unlock · outbox · cutover migration · CI-deploy"* và **sót hẳn CRUD + UI** — tức khối việc lớn nhất của dự án không nằm trong hàng đợi. Vá lại:
 
 | # | Việc | Ghi chú |
 |---|---|---|
 | **008a** | `app/core/crypto.py` — AES-GCM + prefix `enc:v1:` | Nhỏ (~60–80 dòng + test). **Không phải phiên thiết kế** — cơ chế đã chốt (`schema-physical-brief.md` §7.1), format đã chốt (K18), vị trí khóa đã chốt (`db-and-data-model-brief.md` §6). Chạy **ngay sau 007, trước mọi CRUD**. ⚠️ Cần `ENCRYPTION_MASTER_KEY` — **chủ chưa sinh** (xem `backend/.env.example`, bảng cấp phát). |
-| **008b** | **CD** — merge `main` → build → `fly deploy` → smoke test | ✅ chốt 2026-07-22, lý do đầy đủ ở `devops-brief.md` §9. Không phải tiện nghi: từ 008 mỗi slice đều cần "nhìn bằng mắt trên deploy thật", và **deploy thủ công là ma sát đặt đúng chỗ khiến người ta bỏ qua đúng bước đã để lọt 4 lỗi ở 007**. Nuốt luôn 2 món polish 007 + dựng `CRON_TOKEN`/khung cron. **Mang theo bất biến:** không job nền nào được poll DB dày hơn cửa sổ idle 5 phút của Neon (`cost-brief.md` §7). |
+| **008b** | **CD** — merge `develop` → build → `fly deploy` → smoke test | 📋 **SPEC ĐÃ VIẾT: `008b-cd-fly-deploy.md`** (2026-07-22). Không phải tiện nghi: từ 008 mỗi slice đều cần "nhìn bằng mắt trên deploy thật", và **deploy thủ công là ma sát đặt đúng chỗ khiến người ta bỏ qua đúng bước đã để lọt 4 lỗi ở 007**. ⚠️ **Trigger deploy đổi từ `main` → `develop`**, và `main` **không deploy nữa** (giải vòng tròn §2.1↔§9, xem note 22/07 ở `devops-brief.md` §2.1). Smoke test kiểm **cả git SHA**, không chỉ `status`. Nuốt 2 món polish 007 + `CRON_TOKEN`/khung cron. **Mang theo bất biến:** không job nền nào được poll DB dày hơn cửa sổ idle 5 phút của Neon (`cost-brief.md` §7). |
+| 008c | Script soi hoá đơn Fly/Neon → in bảng so ngưỡng | Tách khỏi 008b (2026-07-22). `cost-brief.md` §7.4 định gộp vì *"đúng lúc hạ tầng cron ra đời"* — nhưng hạ tầng đó **còn nguyên sau 008b**, gộp chỉ làm PR phình gấp đôi + cần thêm 2 secret. Không chặn 008. |
 | **008** | **task slice** — API + UI + test, đi trọn một entity | **Task đặt khuôn**: hình dạng error response, phân trang, cách đăng ký router, cách gọi crypto seam. Mọi slice sau bắt chước — kể cả bắt chước *quy trình nghiệm thu*, nên 008b phải xong trước. Chạy **một mình**. |
 | 009 | note slice | ⇢ song song được (điều kiện: `devops-brief.md` §8) |
 | 010 | calendar + import `.ics/.xlsx` | ⇢ song song được. Giải luôn `migration-mapping-brief.md` §3 (121 dòng lịch lệch) |
-| 011 | tracker capture (ghi log) | **Bắt buộc có 008a** — `entry.amount` CHECK vô điều kiện, không ghi nổi plaintext |
+| 011 | tracker capture (ghi log) **+ nhắc thuốc** | **Bắt buộc có 008a** — `entry.amount` CHECK vô điều kiện, không ghi nổi plaintext. **Nhận nhắc thuốc từ 008b (2026-07-22):** cron 5 phút/lần hỏi DB "tới giờ chưa" = **sự cố Neon 22/07 mặc áo khác** (nhịp tối thiểu GH Actions cron đúng bằng cửa sổ idle Neon). Lời giải — lịch tính trước vs PWA notification (vướng caveat iOS, `frontend-brief.md`) — là **quyết định thiết kế chưa chốt**, không thuộc task hạ tầng. |
 | 012 | cutover migration + verify | Theo `migration-mapping-brief.md` §5 |
 | — | **phiên AI Bước 1** (embedding provider, dimension, LLM mặc định, hybrid retrieval) | ✅ chốt 2026-07-22: **sau 012, không sớm hơn**. `forward-spec.md` §60 đã hạ nó từ *chặn đường* xuống *rẻ và để sau* (cột `vector` nullable ⇒ thêm sau chỉ là một migration nhỏ), và ở cỡ dữ liệu này hai chân structured+keyword gánh gần hết. **⚠️ Điều kiện vào phiên:** phải xử lý ⚠️ OPEN ở `schema-physical-brief.md` §125 (**luật "cột mã hoá không bao giờ có embedding"**) **TRƯỚC** khi chọn provider — chọn provider rồi mới nhớ ra là chọn mù. |
 | — | private unlock (Argon2id) · outbox offline | xen vào theo nhu cầu, không chặn cutover |
 
-**📝 2026-07-22 — 008a và 008b KHÔNG phụ thuộc nhau.** Ràng buộc thật chỉ có hai: *008a trước mọi CRUD* và *008b trước 008* (để task đặt khuôn có CD lúc nghiệm thu). Giữa 008a↔008b không có chiều nào. ⇒ **008a đang bị chặn vì chủ chưa sinh `ENCRYPTION_MASTER_KEY`, thì chạy 008b trước — không mất gì.** Ghi lại vì thứ tự "008a → 008b" dễ bị đọc nhầm thành dây chuyền, rồi cả hàng đợi đứng chờ một biến môi trường.
+**📝 2026-07-22 — 008a và 008b KHÔNG phụ thuộc nhau.** Ràng buộc thật chỉ có hai: *008a trước mọi CRUD* và *008b trước 008* (để task đặt khuôn có CD lúc nghiệm thu). Giữa 008a↔008b không có chiều nào. ⇒ **008a đang bị chặn vì chủ chưa sinh `ENCRYPTION_MASTER_KEY`, thì chạy 008b trước — không mất gì.** Ghi lại vì thứ tự "008a → 008b" dễ bị đọc nhầm thành dây chuyền, rồi cả hàng đợi đứng chờ một biến môi trường. *(📝 cùng ngày, muộn hơn: `ENCRYPTION_MASTER_KEY` đã sinh + `.env` + Fly ⇒ **008a hết bị chặn**. Ghi chú trên giữ nguyên vì bài học về dây-chuyền-tưởng-tượng vẫn đúng, chỉ là ví dụ đã hết hiệu lực.)*
 
 **Hai điều kiện cổng cho cutover, dễ quên:** ⓐ app phải **dùng được hằng ngày thay app cũ** (⇒ 008–010 xong) — đổ 163 task + 49 note vào Neon khi chưa xem/sửa được là tự mất daily driver; ⓑ **soi lại giá** — `cost-brief.md` ghi rõ *"bắt buộc trước khi cutover"*.
 

@@ -40,7 +40,12 @@ Nguyên nhân không phải lười: chưa ai định nghĩa *điều kiện* đ
 | Ý nghĩa | "đã build" | "đã sống" |
 
 - **Gắn tag `v0.x` mỗi lần merge vào `main`.** Không có tag thì `main` vẫn không phải đường lùi dùng được — muốn quay về "bản chạy tốt tuần trước" phải mò commit hash.
-- **Từ 008b, `main` là cò súng deploy** (CD chỉ bắn từ `main`, không từ `develop`). Điều này khiến định nghĩa trên tự cưỡng chế: cái gì lên `main` là cái đó ra production.
+- **Từ 008b, `main` là trigger deploy** (CD chỉ chạy từ `main`, không từ `develop`). Điều này khiến định nghĩa trên tự cưỡng chế: cái gì lên `main` là cái đó ra production.
+  - **📝 2026-07-22 (muộn trong ngày) — ĐẢO LẠI: trigger deploy là `develop`.** Gạch đầu dòng trên và điều kiện ở bảng (*"đã nghiệm thu bằng mắt trên fly.dev"*) tạo một **vòng tròn**: muốn merge vào `main` phải đã thấy nó chạy trên fly.dev, mà thứ duy nhất đưa code lên fly.dev lại là merge vào `main`. Hôm nay chưa cắn vì deploy còn gõ tay từ `develop`; sau 008b thì cắn. Nặng hơn: nếu lời giải là *"vẫn deploy tay để nghiệm thu"* thì **008b không gỡ được đúng khoản ma sát nó sinh ra để gỡ**. → **Chốt (chủ): merge vào `develop` = deploy production ngay; `main` không deploy, chỉ đánh dấu release ổn định kèm tag `v0.x`.** Chi tiết: `agent-tasks/008b-cd-fly-deploy.md`.
+  - **📝 2026-07-22 — `main` KHÔNG deploy, và việc kiểm chứng dời hẳn sang `develop`.** Không có trigger nào trên `main`, cả trước lẫn sau 008b. **Chủ + T3 test ngay trên `develop`** — hợp lý vì `develop` *chính là* bản đang chạy production. `main` chỉ còn là **nhãn release ổn định**; lúc cân nhắc đẩy ra có thể test + review lại kỹ, nhưng đó là tuỳ nghi, không phải cổng.
+    **Nói thẳng cái đã đổi, đừng để câu chữ cũ đánh lừa người đọc sau:** định nghĩa ở dòng 33 hàm ý việc chứng minh diễn ra **tại cổng vào `main`**. Nay nó diễn ra **liên tục trên `develop`**, nên `main` không thêm lớp kiểm chứng riêng nào nữa. Giá trị còn lại — vẫn thật, chỉ khác loại — là **điểm lùi được chọn có chủ ý**: mốc mà chủ đã nhìn lại cả lát cắt và nói "đây là chỗ đáng quay về". Ai đọc `main` như một cổng chất lượng là đọc sai kể từ 2026-07-22.
+    **Hệ quả phải canh:** `main` giờ **không có cơ chế tự cưỡng chế nào** — chính thứ đã làm nó tụt 33 commit thành con trỏ chết. Phanh duy nhất là workflow CD in độ tụt `main` sau mỗi lần deploy (`agent-tasks/008b` mục 1.5). Nếu con số đó cứ lớn dần qua vài tuần thì luật này đang chết lần thứ hai, và lần này đã có sẵn đồng hồ đo.
+  - **Đường lùi trong mô hình mới:** đường chính là **roll-forward** (`git revert` trên `develop` → CD chạy), vì nó đi đúng con đường được chạy mỗi ngày nên luôn ở trạng thái hoạt động. Deploy-từ-tag chỉ là đường phụ (`workflow_dispatch`). Lưu ý cái *không* mất: code trên `main` **đã từng chạy production** — nó đi qua `develop` trước; thứ chưa từng được kiểm là *cơ chế* deploy-từ-ref, không phải code.
 - **Hệ quả cho việc chọn thứ vào `main`:** một bản vá chưa deploy, chưa nhìn bằng mắt thì **chưa được lên `main`** dù CI xanh và diff đã review. Ví dụ đầu tiên áp luật: PR [#10](https://github.com/NguyenHaiHung0510/microSched/pull/10) (đồng bộ 33 commit) **cố ý không mang theo** bản vá healthz của PR [#11](https://github.com/NguyenHaiHung0510/microSched/pull/11) — vá đó vào `develop` trước, lên `main` ở vòng sau, sau khi deploy và nhìn Neon ngủ thật.
 
 **Vì sao không đơn giản cho `main` bám sát `develop`:** thế thì `main` không mang thêm thông tin nào so với `develop`, và ta mất đi thứ duy nhất đáng có ở một dự án một người — **một con trỏ tới trạng thái đã được chứng minh bằng tay**. Giá trị của `main` nằm đúng ở chỗ nó *tụt lại*, và tụt lại có lý do.
@@ -175,6 +180,14 @@ Tới 22/07 deploy vẫn là `fly deploy` gõ tay. Câu hỏi không phải "có
 - Dựng luôn `CRON_TOKEN` + khung cron endpoint (backup/embed/nhắc thuốc) vì cùng chạm hạ tầng GH Actions.
 
 **Bất biến bắt buộc mang theo (rút từ sự cố Neon 22/07, xem `cost-brief.md` §7):** **không job nền nào được poll DB với chu kỳ ngắn hơn cửa sổ idle 5 phút của Neon, trừ khi đã tính lại ngân sách CU-hr.** Cron backup/embed/nhắc thuốc sắp dựng ở chính 008b sẽ đâm thẳng vào bức tường này nếu không ghi trước.
+
+**📝 2026-07-22 (muộn trong ngày) — spec đã viết: `agent-tasks/008b-cd-fly-deploy.md`. Ba điểm lệch so với ranh giới ở trên:**
+
+1. **Trigger deploy = `develop`, không phải `main`; `main` không deploy nữa** — xem note ở §2.1, đó là chỗ giải vòng tròn.
+2. **Smoke test kiểm thêm git SHA**, không chỉ `status == "ok"`. Lý do: nếu deploy hỏng một phần và Fly giữ machine cũ đang chạy tốt, smoke test chỉ kiểm `status` sẽ **xanh trên bản cũ** — báo thành công cho một lần deploy thất bại. Cùng họ với "test cho hành vi vắng mặt".
+3. **Thu hẹp phạm vi — hai món đẩy ra:**
+   - **Nhắc thuốc → 011.** Cách ngây thơ là cron 5 phút/lần hỏi DB "tới giờ chưa"; nhịp tối thiểu của GitHub Actions cron **đúng bằng 5 phút**, bằng luôn cửa sổ idle Neon, và lịch GH Actions còn hay trễ ⇒ **sự cố 22/07 mặc áo khác**. Lời giải là một quyết định thiết kế chưa chốt (lịch tính trước vs PWA notification), không thuộc một task hạ tầng.
+   - **Script soi hoá đơn Fly/Neon → 008c.** `cost-brief.md` §7.4 gộp nó vào 008b vì *"đúng lúc hạ tầng GH Actions cron ra đời"* — nhưng hạ tầng đó **vẫn còn nguyên sau 008b**, nên gộp chỉ làm PR phình gấp đôi và cần thêm 2 secret mới.
 
 ---
 *Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). §9 đóng khi 008b chạy xong. Thêm note có ngày — không xóa kết luận cũ.*
