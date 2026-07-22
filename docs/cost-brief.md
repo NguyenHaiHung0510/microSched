@@ -119,14 +119,31 @@ App đã deploy và **tiền đã bắt đầu chạy**. Chính chủ mở mản
 | Fly units/ngày | ~86.400 | **>90.000 ⇒ đang chạy >1 máy** (bẫy `fly launch` tạo 2 máy, §2) |
 | Fly bandwidth | ~\$0 | >0 đáng kể ⇒ có thứ gì đang gọi từ ngoài |
 | Neon CU-hrs/ngày | **<1** (sau khi vá) | >2 ⇒ **có thứ đang giữ DB thức** |
-| Neon storage | 0,03 GB | >0,25 GB ⇒ nửa quota free |
-| Neon dự phóng cuối kỳ | <60 CU-hrs | >80 |
+| Neon storage | 0,03 GB | >0,25 GB ⇒ nửa quota free — **hạn mức liên tục, KHÔNG reset hàng tháng** |
+| Neon dự phóng tới **20/08** | <60 CU-hrs | >80 |
+
+**Hai loại ngưỡng, đừng gộp:** CU-hours và network transfer **reset ngày 20 hàng tháng** ⇒ soi theo *tốc độ tiêu* và *dự phóng tới ngày 20*. Storage/branches là **hạn mức liên tục** ⇒ soi theo *mức tuyệt đối*, và nó chỉ có một chiều: tăng. Nhầm hai loại này sẽ yên tâm sai về storage sau cutover 012.
+
+**Dòng nguy nhất KHÔNG nằm trong bảng trên — và đó là chủ ý phải ghi rõ:** Fly bị chặn cứng bởi 1 máy cố định (trần ~\$2,50), Neon bị chặn bởi free tier (hết thì treo, không âm thầm tính tiền). **Cả hai tự có trần.** Dòng duy nhất **không có trần** là **LLM API ở Bước 1** — usage-based, và một vòng lặp agent lỗi đốt hết trong một đêm. Dòng đó **không canh bằng dashboard mà chặn bằng hard spending limit ở phía nhà cung cấp** (đây là lý do "nạp OpenRouter \$10 một lần" ở §6 là thiết kế tốt: **ví có đáy**). Nguyên tắc: **dòng có trần thì quan sát, dòng không trần thì chặn.**
+
+**GitHub Actions = \$0** — public repo dùng standard runner miễn phí không giới hạn, nên CD ở 008b **không thêm dòng chi phí nào**. Ghi lại vì đây là **cổ tức không tính trước của quyết định public repo** (`devops-brief.md` §1, vốn quyết theo threat model): nếu lần re-check nào có ai cân nhắc chuyển private thì đây là một phần cái giá.
 
 ### 7.3 ⚠️ ĐANG THEO DÕI — Neon, 3 ngày, mỗi ngày một lần
 
 **Chốt 2026-07-22:** sau khi PR #11 deploy, soi Neon **mỗi ngày một lần trong 3 ngày** (23/07, 24/07, 25/07).
 
 Nghiệm thu **không nằm ở app mà ở biểu đồ Neon**: để yên >10 phút không đụng vào, biểu đồ Monitoring phải chuyển sang **ENDPOINT INACTIVE**. Còn chạy liên tục ⇒ **còn thứ khác đang ping DB mà ta chưa tìm ra** — và đó mới là phát hiện quan trọng, vì nó nghĩa là mô hình của ta về hệ thống còn thiếu một đường.
+
+**✅ Ngày 0 (22/07) — NGHIỆM THU ĐẠT, cả hai chiều:**
+- Compute `production` chuyển sang **Idle** ("Compute is suspended and automatically activates on client connections") — tức Fly ping `/api/healthz` mỗi 30 giây **không còn đánh thức DB**.
+- Chủ mở web và dùng thật → **Active ngay lập tức**. Đây là nửa quan trọng thứ hai: nếu chỉ kiểm chiều "ngủ được" thì có thể vô tình đã làm hỏng đường đánh thức mà không biết.
+- Gọi thật: `GET /api/healthz` → `{"status":"ok","version":"0.1.0"}` (**không còn key `db`**) · `GET /api/readyz` → `{...,"db":"up"}`.
+
+**📅 Chu kỳ free — chốt điểm mù (chủ tra 2026-07-22, [Neon plans](https://neon.com/docs/introduction/plans#usage-metrics)):** hạn mức reset **ngày 20 hàng tháng**; chu kỳ hiện tại bắt đầu **20/07/2026**, đợt sau **20/08/2026**. CU-hours và network transfer reset theo chu kỳ; **storage/branches là hạn mức liên tục, KHÔNG reset** — nên đây là hai loại ngưỡng khác nhau, đừng gộp khi soi. Vượt hạn mức ⇒ compute suspended tới chu kỳ sau, **dữ liệu không bị ảnh hưởng**.
+
+Có ngày reset thật thì mọi dự phóng mới tính được:
+- **Đường đã tránh được:** 4,54 CU-hrs lúc 22/07, còn 95,46 cho 29 ngày. Với 6 CU-hrs/ngày (bản chưa vá) ⇒ cạn sau ~15,9 ngày ⇒ **compute treo khoảng 06–07/08**, tức **mất DB 13 ngày** trước khi reset 20/08. Ước lượng ~06/08 nêu lúc chưa biết ngày reset **khớp**.
+- **Đường hiện tại:** 4,54 + 29 ngày × (<1) ⇒ **~20–34 CU-hrs cuối chu kỳ**, dư 3–5×. Gần như toàn bộ 4,54 đã tiêu là do chính con bug.
 
 Mỗi ngày ghi: CU-hrs cộng dồn · CU-hrs riêng 24h qua · có thấy khoảng INACTIVE không. Sau 3 ngày, nếu <1 CU-hr/ngày thì hạ nhịp về 7 ngày như thường lệ.
 
