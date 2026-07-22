@@ -1,0 +1,91 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or commit to deploy
+        required: true
+        default: develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Resolve deployed revision
+        id: revision
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Deploy to Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.MICROSCHED_DEPLOY_TOKEN }} # App-scoped secret mapped to flyctl's required name.
+        run: flyctl deploy --remote-only --build-arg GIT_SHA=${{ steps.revision.outputs.sha }}
+      - name: Smoke-test the deployed revision
+        env:
+          EXPECTED_SHA: ${{ steps.revision.outputs.sha }}
+        shell: python
+        # This intentionally calls readyz (and spends a DB query) only on the sparse
+        # deploy event. It is not a probe or poll; one wake costs about 0.02 CU-hr.
+        run: |
+          import json
+          import os
+          import time
+          import urllib.request
+
+          expected = os.environ["EXPECTED_SHA"]
+          deadline = time.monotonic() + 90
+          delay = 2
+          last_error = "no response"
+          payload = {}
+
+          while time.monotonic() < deadline:
+              try:
+                  with urllib.request.urlopen(
+                      "https://microsched.fly.dev/api/readyz", timeout=10
+                  ) as response:
+                      payload = json.load(response)
+                  if payload.get("status") != "ok":
+                      raise RuntimeError(f"readiness status is {payload.get('status')!r}")
+                  if payload.get("commit") != expected:
+                      raise RuntimeError(
+                          f"expected commit {expected}, got {payload.get('commit')!r}"
+                      )
+                  print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+                  break
+              except Exception as error:
+                  last_error = str(error)
+                  remaining = deadline - time.monotonic()
+                  if remaining <= 0:
+                      break
+                  print(f"Deployment not ready yet; retrying in {min(delay, remaining):.0f}s")
+                  time.sleep(min(delay, remaining))
+                  delay = min(delay * 2, 15)
+          else:
+              raise SystemExit(f"Smoke test timed out: {last_error}")
+
+          if payload.get("status") != "ok" or payload.get("commit") != expected:
+              raise SystemExit(f"Smoke test timed out: {last_error}")
+      - name: Report release lag
+        shell: bash
+        run: |
+          git fetch origin main develop --tags
+          short_sha=$(git rev-parse --short=7 HEAD)
+          lag=$(git rev-list --count origin/main..HEAD)
+          tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "chưa có")
+          echo "develop @ \`$short_sha\` đang chạy production · main đang tụt $lag commit · tag gần nhất: $tag" >> "$GITHUB_STEP_SUMMARY"

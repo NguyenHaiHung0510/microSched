@@ -1,0 +1,25 @@
+name: Cron heartbeat
+
+on:
+  schedule:
+    # Daily and off the top of the hour. This heartbeat never touches the database;
+    # future DB jobs must also stay outside Neon's five-minute idle window.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  heartbeat:
+    name: Cron heartbeat
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call production heartbeat
+        env:
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: >-
+          curl --fail-with-body --silent --show-error
+          --request POST
+          --header "Authorization: Bearer ${CRON_TOKEN}"
+          https://microsched.fly.dev/api/cron/heartbeat

@@ -1,6 +1,6 @@
 # 008b — CD: merge `develop` là deploy, kèm smoke test chứng minh bản mới thật sự đang chạy
 
-> **Trạng thái:** 📋 TODO (chạy trước 008; độc lập với 008a)
+> **Trạng thái:** ✅ DONE (2026-07-22; chờ chủ + T1 nghiệm thu khối B sau merge)
 > **Executor dự kiến:** T2 — Codex · **Bậc model: Sol (bậc cao)** · **Effort:** high · **Skill gợi ý:** (không) · **MCP cần:** (không)
 > *Lý do bậc: cùng họ với 005 — CI/CD là chỗ "sai âm thầm thành nợ". Thêm nữa task này cầm `MICROSCHED_DEPLOY_TOKEN`, tức sai một dòng YAML là lộ quyền deploy lên chính app đang chạy.*
 > *Quota **không** phải ràng buộc (đo thật 003→006: cả chuỗi tốn ~20% quota tuần; Codex còn reset dày). **Đừng hạ bậc để tiết kiệm** — task này có cả browser lẫn CI, hạ bậc là mua rủi ro bằng thứ đang dư.*

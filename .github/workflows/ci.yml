@@ -36,6 +36,9 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      # Test-only value: production must fail fast when this setting is absent.
+      OAUTH_STATE_SECRET: ci-only-not-a-production-secret
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

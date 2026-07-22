@@ -11,11 +11,14 @@ RUN npm run build
 
 FROM python:3.14-slim-bookworm AS runtime
 
+ARG GIT_SHA=unknown
+
 ENV PATH="/app/backend/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    GIT_SHA=${GIT_SHA}
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /uvx /bin/
 

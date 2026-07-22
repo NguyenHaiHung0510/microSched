@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     app_name: str = "microSched"
     app_version: str = "0.1.0"
+    git_sha: str = "unknown"
     database_url: str | None = None
 
     google_client_id: str | None = None
