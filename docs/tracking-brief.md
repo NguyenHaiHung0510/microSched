@@ -90,12 +90,32 @@
 | `tracker.name` (toàn bộ, không chỉ tracker nhạy cảm) | 🔐 mã hóa | Điểm mù đã ghi ở trên — `"Hút thuốc"` rò gần hết dù entry mã hóa. Mã hóa *tất cả* (không rẽ nhánh theo độ nhạy) = một kiểu cột duy nhất, sort/hiển thị ở app-side. |
 | `subscription.name` | 🔐 mã hóa | Danh sách dịch vụ đang trả tiền = nguyên liệu pretext kinh điển ("gọi từ X về thanh toán…"). |
 | `entry.note` (text tự do trên entry) | 🔐 mã hóa | Ngữ cảnh sức khỏe/hành vi tự do gõ. Không cần FTS/embed ở v1. |
-| `note.body_md`, `task.*` khi `is_private=true` | 🔐 mã hóa **theo cờ** | Private = che hiển thị (§5) **+ che at-rest** — nhất quán một nghĩa "private". Nội dung private vốn đã không vào FTS/embedding nên không mất gì thêm. |
+| `note.title` + `note.body_md`, `task.title` + `task.body_md` khi `is_private=true` | 🔐 mã hóa **theo cờ** | Private = che hiển thị (§5) **+ che at-rest** — nhất quán một nghĩa "private". Nội dung private vốn đã không vào FTS/embedding nên không mất gì thêm. *(Liệt kê đủ tên cột — xem note 2026-07-23 ngay dưới bảng về việc `task.*` cũ đã sinh ra chuyện gì.)* |
 | `note`/`task` không private | 📖 trần | Lõi retrieval của AI Bước 1 — phải FTS/embed được. Escape hatch = bật private. |
 | **Cột tiền** `amount`/`list_amount`/`orig_amount` | 🔐 **mã hóa** *(chủ chọn lật từ đề xuất "trần" ban đầu — an toàn hơn dashboard-aggregate)* | Chấp nhận đánh đổi: mất `SUM`/`ORDER BY`/CHECK trực tiếp trong SQL, mọi tổng dashboard (§8.2) phải kéo entry về app rồi cộng bằng Python (khối lượng vài nghìn dòng — không đau, đã nói ở §6 gốc). |
 | `tracker_group.name` | 📖 trần | Nhãn nhóm chung chung ("Giải trí/Ăn uống") — giá trị pretext ~0; giữ trần cho seed-migration + sort đơn giản. |
 | `tracker.reminder_text` | 📖 trần **có chủ đích** | Được thiết kế là bề mặt công khai (§12 — hiện trên lock-screen qua web-push); mức kín do chủ tự gõ, mã hóa in-DB không đổi bản chất đó. |
 | `calendar_event.*`, `app_setting`, timestamps/enums/ids | 📖 trần | Không đổi so với sơ bộ §6 gốc; calendar vốn nằm ở Google. Luật kèm: `app_setting` **cấm** chứa secret thật (secret → Fly secrets/`.env`, không qua DB). |
+
+📝 **2026-07-23 — ✅ CHỐT: `note.title` mã hóa khi private; và vá cách viết `task.*`.**
+
+Phát hiện lúc security review toàn dự án: dòng phán quyết trên **trước đây viết `note.body_md` (đích danh một cột) và `task.*` (dấu sao = mọi cột) trong CÙNG một ô**. DDL ở `agent-tasks/006` thi hành **trung thực cả hai** ⇒ `task` che cả tiêu đề, `note` chỉ che body. **Không bên nào sai spec** — nên đây không phải lỗi thi công, mà là **một câu hỏi chưa ai từng đặt**: *tiêu đề note private có phải bí mật không?* Nó bị trả lời ngầm hai lần theo hai hướng, bên trong một ô bảng viết một lượt.
+
+**Chốt (chủ, 2026-07-23): CHE — `note.title` mã hóa theo cờ, bằng `task`.** Ba lý do:
+
+1. **Lập luận đã có sẵn ngay trong §6 này, chỉ chưa mang qua.** Dòng "điểm mù" phía trên viết: *"tên tracker `'Hút thuốc'` rò gần hết thông tin dù mọi entry mã hóa. Mã hóa entry mà để tên tracker trần = bảo mật hình thức."* Tiêu đề note **cùng hình dạng** với tên tracker — nhãn người-đọc-được nén nội dung lại. §6 đã hành động theo lập luận đó cho `tracker.name` rồi dừng ở đó.
+2. **Để trần làm chính câu biện minh của ô này thành sai.** Ô ghi *"Nội dung private vốn đã không vào FTS/embedding nên không mất gì thêm"*. Nhưng luật là **cột mã hóa** mới bị cấm khỏi FTS/embedding — vế ngược lại chưa ai nói ra: **cột trần thì ĐƯỢC PHÉP vào**. Tiêu đề note private để trần ⇒ đủ điều kiện đi vào pgvector ⇒ **rò ngay trong lúc dùng app, kể cả khi private mode đang khóa** (đâm thẳng R1–R7, `auth-brief.md`). Đây là cửa rò thứ hai, độc lập với chuyện "ai đó lấy được dump".
+3. **Chi phí ≈ 0 và đã được chấp nhận từ trước.** Mất `ORDER BY`/hiển thị ở SQL — nhưng ô `tracker.name` ngay trên đã chốt *"sort/hiển thị ở app-side"*, và **K19** đã chuyển chống-trùng-tên lên app-layer cho cột tên mã hóa. Không sinh **loại** việc mới, chỉ dùng lại đường 008a bắt buộc phải dựng. Quy mô: 49 note lúc cutover.
+
+**Bài học về cách viết, không chỉ về kết luận:** dấu `*` trong một ô bảng quyết định là **cách viết cấm dùng từ nay** — nó đọc được thành hai nghĩa và không ai thấy điều đó cho tới khi hai DDL khác nhau ra đời. Liệt kê đủ tên cột, kể cả khi dài.
+
+📝 **2026-07-23 — ✅ CHỐT: `note_item.content` / `task_item.content` do APP canh, không phải DB.**
+
+Bảng con không có cờ `is_private` (**K11** cấm rải cờ xuống con) và không có ràng buộc nào ⇒ checklist dưới một note private hiện **nằm trần**. Không gian lựa chọn đã bị hai luật khóa sẵn: K11 loại phương án nhân bản cờ; **posture "B-hẹp"** của chính §6 loại phương án mã hóa vô điều kiện (item non-private là vật liệu retrieval của Bước 1, và mã hóa rộng còn phá tính chất *"cutover không chạm cột mã hóa ⇒ rủi ro backfill ≈ 0"* — chính lý do 008a xếp được sớm và rẻ).
+
+Còn đúng hai: trigger tra cha (DB cưỡng chế, thêm một loại cơ chế) hoặc **app-layer**. **Chốt: app-layer**, đúng nguyên tắc **K8/K18** repo đã tự đặt — *"PG không nhìn được thì app lo"* — và hợp với thực tế single-app/single-writer.
+
+⚠️ **Đánh đổi phải nói thẳng, đừng để người đọc sau tưởng có CHECK đứng gác:** đây là **bất biến KHÔNG được DB cưỡng chế**. Code quên một chỗ thì **không có gì báo động**. Hệ quả: bài test cho bất biến này ở **008** nặng ký hơn bình thường vì 009–012 chép lại khuôn 008 — một chỗ hở là hở năm lần. Test bắt buộc **chứng minh được biết đỏ**.
 
 **Cơ chế:** mã hóa **app-level** (thư viện `cryptography`, AES-GCM), **không dùng `pgcrypto`** — pgcrypto bắt khóa đi trong câu SQL tới server Neon, tự phá mục đích giữ khóa ở app. Ciphertext có version-prefix (`enc:v1:…`) để xoay khóa sau không phải touch mọi hàng cùng lúc. Master key: Fly secrets (runtime) + `.env` (local dev).
 

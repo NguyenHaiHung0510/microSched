@@ -1,7 +1,7 @@
 # 008d — Ba mục tồn từ security review toàn dự án (2026-07-23)
 
-> **Trạng thái:** 📋 SPEC (chưa chạy) — viết 2026-07-23
-> Executor: **T2 Codex** · Bậc: **Terra** (mục 2+3) / **Sol** (mục 1, sau khi chủ đã quyết) · Effort: thấp
+> **Trạng thái:** 📋 SPEC — sẵn sàng giao (2026-07-23). **Không còn mục nào chờ chủ quyết.**
+> Executor: **T2 Codex** · Bậc: **Terra** (mục 2+3) / **Sol** (mục 1 — đụng schema + migration) · Effort: thấp
 > **Skill gợi ý:** không cần · **MCP cần:** không cần (không có phần nào phải nhìn bằng mắt trên trình duyệt)
 
 ## Bối cảnh (đọc được ở session 0-context)
@@ -16,7 +16,12 @@ Mục ⓐ `/api/readyz` chạy SQL không cần auth **đã được chủ xử 
 
 ## Mục 1 — Bất biến `private ⇒ ciphertext` áp không đồng đều
 
-### ⚠️ ĐÂY LÀ QUYẾT ĐỊNH, KHÔNG PHẢI LỖI — CHỦ/T1 QUYẾT TRƯỚC, EXECUTOR KHÔNG TỰ CHỌN
+### ✅ CHỦ ĐÃ QUYẾT 2026-07-23 — executor thi hành, không mở lại
+
+> **Chốt: phương án A — `note.title` mã hóa theo cờ, bằng `task`.** Lý do đầy đủ đã ghi vào `docs/tracking-brief.md` §6 (note 2026-07-23) — đọc ở đó, không chép lại vào PR.
+> **Bảng con `note_item`/`task_item`: app-layer canh, KHÔNG phải DB.** Cũng ở §6.
+>
+> Phần nền dưới đây giữ nguyên để đọc được ở session 0-context — nó giải thích *vì sao* hai bảng lệch nhau, thứ mà chỉ nhìn diff sẽ không thấy.
 
 Hai bảng cùng loại dữ liệu đang mã hoá hai câu trả lời khác nhau cho cùng một câu hỏi.
 
@@ -55,7 +60,7 @@ name="private_body_ciphertext",
 
 Lập luận đó áp cho `tracker.name` (⇒ mã hoá **vô điều kiện**). Tiêu đề note private là cùng hình dạng: tiêu đề thường mang gần hết thông tin của note.
 
-### Hai lựa chọn (chủ chọn một, ghi lý do vào `tracking-brief.md` §6)
+### Hai lựa chọn đã cân — ✅ chọn A
 
 | | **A — siết `note` cho bằng `task`** | B — nới `task` cho bằng `note` |
 |---|---|---|
@@ -82,7 +87,7 @@ Lập luận đó áp cho `tracker.name` (⇒ mã hoá **vô điều kiện**). 
 - **K11** (`tracking-brief.md` §10) chốt: *"`is_private` đặt ở cấp **cha** (task/note/tracker), **không rải từng** entry"* ⇒ phương án "nhân bản cờ xuống bảng con + CHECK có điều kiện" **hết cửa** — nó chính là thứ K11 cấm.
 - **Posture §6 = "B-hẹp"**: *"mã hóa đúng nhóm 'lộ = nguyên liệu pretext', **KHÔNG mã hóa rộng** vì đánh chết AI-first"* ⇒ mã hoá `content` vô điều kiện (kiểu `message.content`, [`models.py:440`](../backend/app/domain/models.py)) đi ngược posture, vì item **non-private là vật liệu retrieval**. Nó còn phá một tính chất đã ghi ở `agent-tasks/README.md`: *"dữ liệu migrate không chạm cột mã hóa nào ⇒ rủi ro backfill ≈ 0"* — chính lý do 008a xếp được sớm và rẻ. Chọn nó thì 97 `task_item` + 81 `note_item` phải mã hoá lúc cutover.
 
-Còn lại đúng hai, và **khuyến nghị là (b)**:
+Còn lại đúng hai — ✅ **chủ chọn (b) app-layer**:
 
 | | (a) trigger tra cha | **(b) enforce ở app-layer** |
 |---|---|---|
@@ -93,12 +98,21 @@ Còn lại đúng hai, và **khuyến nghị là (b)**:
 
 **⚠️ Cảnh báo đi kèm nếu chọn (b):** 009–012 sẽ **chép lại** khuôn của 008, nên test cho bất biến này ở 008 quan trọng hơn bình thường và **bắt buộc chứng minh được biết đỏ**. Ghi nó vào docs như một **bất biến KHÔNG được DB cưỡng chế** — nói thẳng ra, đừng để người đọc sau tưởng có CHECK đứng gác.
 
-### Phải làm (sau khi chủ đã chọn)
+### Phải làm
 
-1. Sửa `CheckConstraint` tương ứng trong `backend/app/domain/models.py`.
-2. Sinh migration Alembic mới (**không sửa `0001_initial_schema.py`** — nó đã chạy trên production).
-3. Thêm test ở `backend/tests/test_schema_models.py`: insert vi phạm phải **bị DB từ chối**. Test phải được **chứng minh là biết đỏ** (bỏ constraint → test fail), theo `learnings-applied.md`.
-4. Ghi quyết định + lý do vào `docs/tracking-brief.md` §6 kèm ngày.
+1. **`Note` trong `backend/app/domain/models.py`:** thêm `title` vào `CheckConstraint`, cho khớp hình dạng của `Task`. `title` là `nullable=True` nên phải chịu NULL:
+   ```
+   NOT is_private OR (
+     (title IS NULL OR title LIKE 'enc:v1:%')
+     AND (body_md IS NULL OR body_md LIKE 'enc:v1:%')
+   )
+   ```
+   Đổi luôn `name=` cho hết sai lệch (`private_body_ciphertext` → `private_ciphertext`, bằng `Task`).
+   **KHÔNG đụng `Task`** — nó đã đúng.
+2. Sinh migration Alembic mới (**không sửa `0001_initial_schema.py`** — nó đã chạy trên production). Đổi tên constraint = `drop` + `create`, viết cả `downgrade`.
+3. Test ở `backend/tests/test_schema_models.py`: `is_private=true` + `title` trần phải **bị DB từ chối**; `title IS NULL` + body ciphertext phải **được nhận**. Test phải **chứng minh được biết đỏ** (bỏ constraint → đỏ; hoàn nguyên → xanh), dán output cả hai chiều.
+4. `docs/tracking-brief.md` §6 **đã có** note quyết định 2026-07-23 — đọc, đừng viết lại. Chỉ bổ sung nếu thi công phát hiện điều §6 chưa lường.
+5. **`*_item`: không đụng schema.** Quyết định là app-layer (§6). Ở task này chỉ ghi bất biến đó vào `docs/tracking-brief.md` §6 nếu chưa đủ rõ — **việc cài đặt thuộc seam crypto của 008**, không thuộc 008d.
 
 ---
 
@@ -152,7 +166,8 @@ if scheme.lower() != "bearer" or not secrets.compare_digest(presented, expected)
 
 ## KHÔNG được làm
 
-- **Không tự chọn phương án cho Mục 1.** Đây là quyết định thiết kế thuộc chủ/T1 (`AGENTS.md`: thấy 2 brief mâu thuẫn → dừng, báo, không tự phát minh kiến trúc). Nếu spec tới tay mà chủ chưa ghi lựa chọn → **làm Mục 2+3, dừng ở Mục 1 và báo**.
+- **Không mở lại Mục 1.** Chủ đã quyết 2026-07-23 (A + app-layer), lý do ở `tracking-brief.md` §6. Thấy có vẻ nên làm khác → **dừng, ghi nhận, đẩy lên T1** (`AGENTS.md`), đừng tự đổi.
+- **Không cài đặt phần `*_item` ở task này.** Nó thuộc seam crypto của 008. Ở đây chỉ đụng `note`.
 - **Không sửa `0001_initial_schema.py`** — migration đã chạy trên production, sửa tại chỗ là làm lệch giữa DB thật và lịch sử migration.
 - **Không nới điều kiện "trông thật" của gitleaks** để cho dễ bắt hơn — sẽ báo nhầm `.env.example` và dạy người ta bỏ qua hook, đúng thứ `devops-brief.md` §3 đã tránh.
 - **Không gộp ba mục vào một PR.** Mục 1 đụng schema + migration, mục 2 đụng hàng rào secret, mục 3 đụng auth — ba blast radius khác nhau. Tách ít nhất: `feat/008d-schema-private-invariant` và `feat/008d-security-polish` (gộp mục 2+3 được).
@@ -160,7 +175,7 @@ if scheme.lower() != "bearer" or not secrets.compare_digest(presented, expected)
 
 ## Acceptance (kiểm chứng được)
 
-**Mục 1** (nếu chủ đã quyết):
+**Mục 1:**
 - [ ] `uv run alembic upgrade head` rồi `uv run python -m scripts.check_migration_drift` → diff rỗng
 - [ ] round-trip `downgrade base` / `upgrade head` xanh (job `Migration QA` sẵn có)
 - [ ] test vi phạm constraint **fail đúng ở tầng DB**, và đã chứng minh biết đỏ — dán output cả hai chiều
@@ -179,5 +194,5 @@ if scheme.lower() != "bearer" or not secrets.compare_digest(presented, expected)
 
 ## Việc của CHỦ trước khi chạy task
 
-- [ ] **Quyết Mục 1**: phương án A hay B, và hướng xử lý `*_item` — ghi thẳng vào spec này hoặc vào `tracking-brief.md` §6. Không quyết thì executor chỉ làm được Mục 2+3.
+- [x] **Quyết Mục 1** — xong 2026-07-23 (A + app-layer, `tracking-brief.md` §6). **Không còn gì chặn task này.**
 - [ ] Không cần Docker/DB local cho Mục 2+3. **Mục 1 cần Postgres** để chạy Migration QA local — hoặc để CI chạy (job `Migration QA` đã có container `pgvector/pgvector:pg18`).
