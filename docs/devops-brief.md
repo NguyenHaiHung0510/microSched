@@ -376,5 +376,44 @@ Tới 22/07 deploy vẫn là `fly deploy` gõ tay. Câu hỏi không phải "có
 
 **Một mục còn treo, đã kiểm chứ không phải đoán:** `gh workflow run` trả `HTTP 404: workflow not found on the default branch` — GitHub chỉ mở `workflow_dispatch` khi file workflow **đã có trên default branch** (`main`), mà `main` chưa nhận 008b. ⇒ ⓐ cron production chưa gọi lần nào, bằng chứng đầu tiên là lần chạy theo lịch **10:17 giờ VN 23/07**; ⓑ **`workflow_dispatch` của `deploy.yml` — đường lùi phụ — cũng chưa tồn tại**, nên roll-forward hiện là đường lùi *duy nhất đang sống*. Cả hai tự sống lại ở lần merge `develop` → `main` kế tiếp. Chi tiết: `agent-tasks/008b-cd-fly-deploy.md` mục "⚠️ Sót lại".
 
+## 10. ✅ CHỐT 2026-07-23 — Cron production rời GitHub Actions sang **Google Cloud Scheduler**
+
+**Bằng chứng đóng mục treo ở §9.** §9 để lại câu *"cron production chưa gọi lần nào, bằng chứng đầu tiên là lần chạy theo lịch 10:17 giờ VN 23/07"*. Câu trả lời không phải "chưa tới giờ" mà là **nó sẽ không bao giờ chạy**, và kiểm được bằng một lệnh:
+
+```
+git ls-tree --name-only origin/main .github/workflows/   →  chỉ có ci.yml
+```
+
+`cron.yml` và `deploy.yml` **chỉ nằm trên `develop`**. GitHub đọc `schedule:` **chỉ từ default branch** — đúng cùng một luật đã làm `gh workflow run` trả 404 ở §9, nhưng §9 mới ghi nhận nó cho `workflow_dispatch` mà chưa suy tiếp sang `schedule`. Một luật, hai hệ quả, chỉ bắt được một.
+
+**Vì sao KHÔNG vá bằng cách đưa `cron.yml` sang `main`.** Ba tầng lý do, tầng sau nặng hơn tầng trước:
+
+1. GitHub **tự tắt scheduled workflow sau 60 ngày không có commit trên default branch** — tag, issue, PR **không** tính, chỉ commit. Tắt xong chỉ gửi **một email** cho người bật gần nhất; tab Actions không hiện lỗi gì.
+2. Mà §2.1 chốt `main` **không deploy**, là nhãn release hiếm khi động vào — tức **được thiết kế để im lặng**. ⇒ **Luật git của chính dự án bảo đảm cron sẽ chết.** Vá bằng bot-commit định kỳ lên `main` thì phá luôn ý nghĩa duy nhất còn lại của `main` (điểm rollback chọn có chủ ý): mua scheduler bằng cách để lịch sử `main` nói dối về chính nó.
+3. **Tầng nặng nhất, do chủ nêu:** microSched là app cá nhân — *không dev nữa thì app vẫn phải chạy*. GitHub Actions cron gắn lịch chạy vào **hoạt động phát triển**. Đó là **sai phạm trù**, không phải sai cấu hình. Cộng thêm trễ 5–30 phút là thường, >60 phút có ghi nhận lúc cao điểm.
+
+**Cũng đã loại — cron từ trong app ra, vì va scale-to-zero (`architecture-brief.md` §5 note 23/07):** APScheduler in-process (máy ngủ ⇒ scheduler ngủ) · `fly machine run --schedule` (chỉ fuzzy hourly/daily/weekly/monthly, không có cron expression ⇒ không đặt được 20:00, lại không trigger tay được) · Supercronic/process `cron` trong `fly.toml` (là **máy thứ 2 always-on** ⇒ mua lại đúng khoản vừa tiết kiệm).
+
+**✅ Chốt: Google Cloud Scheduler.** Đã cân nhắc cron-job.org / Cloudflare Workers Cron / Upstash QStash; cái quyết định là **chủ đã trả sẵn cái giá duy nhất tôi dùng để loại nó** — project `microSched` (tạo 21/07) đã là **Tier 1 · Prepay** với budget alert 88k VNĐ.
+
+| | cron-job.org | **Cloud Scheduler** |
+|---|---|---|
+| Timeout mỗi lần gọi | **30s cứng** (cold start 8s ăn 27% ngân sách) | attempt deadline mặc định **180s**, chỉnh tới 30′ |
+| Retry khi fail | không | **cấu hình được** (số lần + min/max backoff) |
+| Kiểu chết im lặng | tự disable sau **25 fail liên tiếp** | không có |
+| Giá | \$0 | **\$0** — 3 job free/billing account, dùng **1** |
+
+**Thiết kế: MỘT job duy nhất, mãi mãi.** Nhắc thuốc 20:00 là job thật; heartbeat chỉ là dây điện — đừng tạo hai.
+- **Bây giờ:** 1 job, cron `0 20 * * *`, timezone `Asia/Ho_Chi_Minh`, target `POST https://microsched.fly.dev/api/cron/heartbeat`, header `Authorization: Bearer <CRON_TOKEN>`. Chiếm sẵn slot 20:00 với payload vô hại.
+- **Tới slice nhắc thuốc (011):** đổi URL sang endpoint thật. Vẫn 1 job, vẫn free, không migration.
+- **Job đó ghi kèm RSS + uptime mỗi lần chạy** — canh rò rỉ bộ nhớ của `suspend` (§5 note 23/07) **không cần job thứ hai**.
+- `cron.yml` đã **gỡ `schedule:`**, giữ `workflow_dispatch` làm nút bấm tay. ⚠️ Đừng thêm lại — sẽ thành nguồn cron thứ hai bắn song song vào cùng endpoint.
+
+**📌 Hai free tier khác nhau, đừng gộp** (chủ hỏi đúng chỗ này): free tier **Gemini API** mất khi bật billing trên project — đó là cảnh báo ở `cost-brief.md` §6, và nó **không còn áp** vì project `microSched` bật billing từ đầu. Free tier **Cloud Scheduler** tính theo billing account (3 job), **cần** billing mới dùng được. Không cần email khác, không cần project khác, không phải trả 2k/tháng (đó là giá job thứ 4).
+
+**Lớp biên lai — mỏng, và biết vì sao mỏng.** Ban đầu lập luận *"lời nhắc vắng mặt thì không phát hiện được"*; **chủ bác đúng**: thuốc uống lúc ăn cơm, 20:00 là ngưỡng >97,5% đã uống rồi ⇒ lời nhắc là **backstop**, không phải cơ chế chính, nên rủi ro là **tích của hai xác suất nhỏ độc lập** (quên uống × cron hỏng), không phải một điểm chết. ⇒ Ghi `last_cron_run_at` + cảnh báo khi cũ: **có, nhưng mỏng**, ghép luôn vào job trên. Không dựng hệ giám sát riêng.
+
+**Bất biến §9 vẫn nguyên giá trị, nay cộng thêm một:** ① không job nền nào poll DB dày hơn cửa sổ idle 5 phút của Neon; ② 🔒 **endpoint cron phải làm xong việc bên trong request** — proxy Fly mù với việc sinh ra sau khi response đã trả, và không có cách nào để app nói "tôi đang bận". Với deadline 180s của Cloud Scheduler thì đây gần như không phải hy sinh gì.
+
 ---
-*Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). **§9 đã đóng 2026-07-22**; mở lại nếu đổi hạ tầng deploy. §7.2 xem lại nếu đổi cách agent truy cập trình duyệt. Thêm note có ngày — không xóa kết luận cũ.*
+*Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). **§9 đã đóng 2026-07-22**; mở lại nếu đổi hạ tầng deploy. **§10 chốt 2026-07-23**; mở lại nếu đổi nhà cung cấp cron hoặc khi 011 cần >3 job. §7.2 xem lại nếu đổi cách agent truy cập trình duyệt. Thêm note có ngày — không xóa kết luận cũ.*

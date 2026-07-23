@@ -1,10 +1,16 @@
 name: Cron heartbeat
 
+# 📝 2026-07-23 — `schedule:` GỠ BỎ. Lịch chạy production chuyển sang Google
+# Cloud Scheduler (`devops-brief.md` §10). GitHub chỉ đọc `schedule:` từ default
+# branch, mà luật của dự án giữ `main` im lặng có chủ đích (§2.1) — nên cron này
+# chưa chạy lần nào, và GitHub còn tự tắt scheduled workflow sau 60 ngày không
+# có commit trên default branch. Nói cách khác: luật git của chính dự án bảo đảm
+# nó sẽ chết. Sâu hơn: app phải sống khi không còn ai dev, nên lịch chạy KHÔNG
+# ĐƯỢC gắn vào hoạt động của repo.
+# Giữ lại `workflow_dispatch` làm nút bấm tay để test dây điện cron.
+# ⚠️ ĐỪNG thêm `schedule:` lại vào đây — sẽ thành nguồn cron thứ hai bắn song
+# song với Cloud Scheduler vào cùng một endpoint.
 on:
-  schedule:
-    # Daily and off the top of the hour. This heartbeat never touches the database;
-    # future DB jobs must also stay outside Neon's five-minute idle window.
-    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
