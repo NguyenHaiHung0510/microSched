@@ -164,7 +164,7 @@ Cập nhật ngược cùng ngày: `schema-physical-brief.md` (bảng §1 + mụ
 
 ### ✅ 2 câu PRODUCT — chủ gật khuyến nghị 2026-07-19
 - **Q1 — xóa nhóm ✅ CHỐT:** group **không soft-delete, xóa thật + FK `tracker.group_id ON DELETE SET NULL`** (tracker thành "chưa nhóm"; group = cấu trúc rẻ, khác tracker/entry = lịch sử quý).
-- **Q2 — seed khởi đầu ✅ CHỐT:** **có**, qua Alembic data-migration lúc cutover; bộ lấy từ đời thật của chủ (nhóm: Thu nhập/Giải trí/Ăn uống/Học tập…; tracker: Hút thuốc/Bia rượu/Bi-a/Mua game/Sub AI/Lương/Chu cấp…).
+- **Q2 — seed khởi đầu ✅ CHỐT:** **có**, qua Alembic data-migration lúc cutover; bộ mẫu khởi đầu (nhóm: Thu nhập/Giải trí/Ăn uống/Học tập…; tracker: Hút thuốc/Bia rượu/Bi-a/Mua game/Sub AI/Lương/Chu cấp…).
 
 ### ✅ CHỐT-kỹ-thuật (K — executor-level theo mandate rà soát 2026-07-19; chủ veto được từng mục)
 | # | Chốt |

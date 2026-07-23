@@ -14,7 +14,19 @@
 **Threat model của chính chủ (quan trọng — chi phối mọi quyết định bảo mật sau này):**
 - **KHÔNG ngại:** người vào đọc code (*"biết đâu lại là nhà tuyển dụng"* — repo còn là portfolio cho mục tiêu AI-eng), hay AI crawl nội dung (không có động cơ khai thác).
 - **NGẠI:** **social engineering** — đây mới là lý do thật đằng sau private mode (`tracking-brief.md` §5) và noti nhắc thuốc kín đáo (§12). Nói cách khác: rủi ro không nằm ở *ai đọc được repo*, mà ở *thông tin cá nhân bị dùng để dựng pretext*.
-- **Đánh đổi đã biết khi giữ public:** secret scanning + push protection **free** (private repo cần GitHub Advanced Security trả phí) + giữ được giá trị portfolio. Đổi lại: `docs/tracking-brief.md` §12 có ví dụ noti nêu tên một loại thuốc thật → chính chủ đã cân nhắc và **chấp nhận**; nếu đổi ý, sửa ví dụ thành trung tính (git history vẫn còn, muốn sạch hẳn phải rewrite).
+- **Đánh đổi đã biết khi giữ public:** secret scanning + push protection **free** (private repo cần GitHub Advanced Security trả phí) + giữ được giá trị portfolio.
+
+  📝 **2026-07-23 — soi lại phần "đổi lại", và ghi đúng cỡ của nó.** Bản trước mô tả khoản đánh đổi là *"§12 có một ví dụ noti nêu tên một loại thuốc thật"*. Đó là **mô tả nhỏ hơn hiện thực**, nên nó không còn làm được việc của một biên bản: đọc lại sẽ tưởng phạm vi đã cân nhắc chỉ là một chuỗi, rồi không soi lại nữa. Cùng cơ chế đã giết định nghĩa `main` ở §2.1 — câu chữ đứng yên trong khi hiện thực đi tiếp.
+
+  **Hiện thực (rà toàn repo 2026-07-23):** tên thuốc ở **ba** file (`tracking-brief.md` §12, `forward-spec.md` §11, `learnings-applied.md`) · giờ uống hằng ngày (§12) · hồ sơ hành vi hút thuốc/bia/bi-a (§1, §10) · họ tên + email thật trong mọi commit (git metadata). Ghép lại là một người **định danh được** kèm bệnh mạn tính, thuốc, nhịp sinh hoạt và hai yếu tố nguy cơ đi thẳng với chính bệnh đó.
+
+  **Đường rủi ro thật không phải đường đã ghi ở gạch đầu dòng trên.** Pretext-attacker là chuyện xác suất thấp (không ai bỏ công dựng hồ sơ một sinh viên). Đường có thật là **người đọc được mời tới**: repo public một phần vì *"biết đâu lại là nhà tuyển dụng"* — và docs đang khai đúng với họ. Không cần kẻ tấn công, không cần động cơ.
+
+  **Chủ tái khẳng định GIỮ (2026-07-23), có lý do:** *một công ty phân tích thông tin cá nhân ứng viên qua repo, rồi quyết định tuyển dựa vào đó, thì đã tự loại mình — và nếu điều kiện làm việc ở đó nguy hiểm cho sức khoẻ thì càng không.* Đây là **lọc ngược có chủ ý**, không phải bỏ qua rủi ro.
+
+  **Đã sửa duy nhất một chỗ:** §10 Q2 bỏ cụm *"bộ lấy từ đời thật của chủ"* → *"bộ mẫu khởi đầu"* — sáu chữ không mang thông tin thiết kế nào, chỉ **xác nhận** danh sách là có thật. Giữ nguyên: tên thuốc, giờ giấc, và danh sách tracker hành vi (chúng là ràng buộc schema thật — §1 chốt thuốc lá không ghi số điếu, bia/bi-a phải ghi tiền; xoá đi là mất lý do).
+
+  **KHÔNG rewrite git history — quyết định, không phải bỏ sót.** Repo public đã lâu, giả định đã bị clone/index; `filter-repo` đổi mọi hash và phá mọi bản clone để đổi lấy lợi ích một phần. Người đọc thật đọc HEAD, không đọc history.
 
 ## 2. Git workflow — ✅ CHỐT
 
