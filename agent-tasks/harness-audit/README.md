@@ -22,7 +22,7 @@ Bối cảnh (chốt 2026-07-22): dự án chuyển từ **chuyển tay giữa h
 
 ## Nơi đổ báo cáo
 
-Mọi output của hai task này ghi vào **`harness-reports/`** ở gốc repo — xem `harness-reports/README.md` để biết luật. Tóm tắt: thư mục đó **có trong git nhưng nội dung KHÔNG lên public** (repo này public; báo cáo nói về thói quen làm việc và bộ nhớ cá nhân).
+Mọi output của hai task này ghi vào **`agent-tasks/harness-reports/`** — xem README trong đó để biết luật. *(2026-07-23: thư mục đã dời từ gốc repo về đây cho nằm cạnh spec sinh ra nó; `.gitignore` đã được sửa từ `harness-reports/*` sang `**/harness-reports/*` vì mẫu cũ neo vào gốc repo nên hết khớp sau khi dời — xem `01-…/comparison.md` §8.)* Tóm tắt: thư mục đó **có trong git nhưng nội dung KHÔNG lên public** (repo này public; báo cáo nói về thói quen làm việc và bộ nhớ cá nhân).
 
 ## Ba luật chung cho cả hai task
 
@@ -34,5 +34,5 @@ Mọi output của hai task này ghi vào **`harness-reports/`** ở gốc repo 
 
 | # | Việc | Trạng thái |
 |---|---|---|
-| 01 | Codex tự khai cấu hình (chạy 2 lần A/B) | ⏳ CHƯA CHẠY |
-| 02 | Đối soát bộ nhớ hai bên + đề xuất patch | ⏳ CHƯA CHẠY (chờ 01) |
+| 01 | Codex tự khai cấu hình (chạy 2 lần A/B) | ✅ **XONG 2026-07-23** — nghiệm thu đạt (1 mục đạt một phần). Ba kết luận: ① plugin **giữ** memory của Codex · ② cwd Codex **trùng** cwd Claude ⇒ luật "chạy nền ⇒ Claude không chạm cây làm việc" **bắt buộc** · ③ hai trường "ghi file" **không so được** (prompt tự khai read-only làm nhiễu). |
+| 02 | Đối soát bộ nhớ hai bên + đề xuất patch | ✅ **XONG 2026-07-23** (Sol/xhigh, Codex app, không web/MCP). 4 rổ: A 10 · B 6 · C 8 · D 3, đủ nhãn + đường dẫn, không mục nào tự chọn bên ở rổ D. **T1 đã áp:** rổ A → cả hai `AGENTS.md` · rổ B → memory Claude · **D1 = mâu thuẫn thật, đã vá `CLAUDE.md`** · D2/D3 không phải mâu thuẫn (memory Codex là ảnh chụp đóng băng lúc phiên kết thúc). **Còn lại: rổ C (8 điểm trùng lặp) chờ chủ quyết.** |

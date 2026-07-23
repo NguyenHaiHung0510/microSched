@@ -132,8 +132,14 @@ celerybeat.pid
 # Repo PUBLIC + threat model = social engineering; nội dung ở đó mô tả thói quen làm việc
 # và bộ nhớ cá nhân — không phải secret (gitleaks không chặn) nên DÒNG NÀY là cơ chế duy nhất
 # giữ nó lại. Giữ README trong git để thư mục tự giải thích.
-harness-reports/*
-!harness-reports/README.md
+# 2026-07-23: mẫu cũ là `harness-reports/*` — có dấu `/` ở giữa nên git NEO VÀO GỐC REPO,
+# chỉ khớp `<gốc>/harness-reports/`. Khi thư mục được dời sang `agent-tasks/harness-reports/`
+# thì mẫu hết khớp và báo cáo trở thành untracked-nhưng-KHÔNG-ignored: một `git add -A` là
+# đẩy thói quen làm việc cá nhân lên repo public. Tiền tố `**/` khớp ở MỌI độ sâu, nên lần
+# dời tiếp theo không phá lại cơ chế. Vẫn dùng `/*` (nội dung) chứ không phải `/` (thư mục):
+# git không cho re-include file khi thư mục cha đã bị loại, `!...README.md` sẽ chết theo.
+**/harness-reports/*
+!**/harness-reports/README.md
 
 # Environments
 .env

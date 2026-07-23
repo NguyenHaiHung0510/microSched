@@ -1,6 +1,6 @@
 # 01 — Codex tự khai cấu hình (chạy HAI lần, A và B)
 
-**Trạng thái:** ⏳ CHƯA CHẠY
+**Trạng thái:** ✅ **XONG 2026-07-23** — A + B đã chạy, T1 đã nghiệm thu (1 mục đạt một phần, xem §Acceptance). Báo cáo: `agent-tasks/harness-reports/01-codex-self-audit/` (`run-A.md`, `run-B.md`, `comparison.md`).
 
 > Executor: **T2 Codex** · Bậc: **Sol** · Effort: **high** · **Skill gợi ý:** không · **MCP cần:** KHÔNG — *cố ý*, xem §"Không được làm"
 
@@ -8,10 +8,10 @@
 
 ## Việc của CHỦ trước khi chạy task
 
-- [ ] **Cài `codex` toàn cục:** `npm install -g @openai/codex`. *Hiện `codex` KHÔNG có trên PATH* — máy đang chạy Codex desktop app với CLI ẩn ở `…\AppData\Local\OpenAI\Codex\bin\<hash>\codex.exe`, mà thư mục có hash nên **không thêm vào PATH được**. Bản npm dùng chung `~/.codex` (cùng `CODEX_HOME`) ⇒ chung auth, chung config, chung memories.
-- [ ] **Cài plugin** trong Claude Code: `/plugin marketplace add openai/codex-plugin-cc` → `/plugin install codex@openai-codex` → `/reload-plugins` → `/codex:setup`.
-- [ ] **KHÔNG bật review gate** (`--enable-review-gate`). README của plugin cảnh báo nó tạo vòng lặp Claude↔Codex dài và đốt limit nhanh; nó cũng đặt cổng sai chỗ (chặn *câu trả lời của Claude*, chứ không chặn *diff*).
-- [ ] Node ≥ 18.18 — máy đang có v24.15.0 ✓ (không cần làm gì).
+- [x] **Cài `codex` toàn cục:** `npm install -g @openai/codex`. *Hiện `codex` KHÔNG có trên PATH* — máy đang chạy Codex desktop app với CLI ẩn ở `…\AppData\Local\OpenAI\Codex\bin\<hash>\codex.exe`, mà thư mục có hash nên **không thêm vào PATH được**. Bản npm dùng chung `~/.codex` (cùng `CODEX_HOME`) ⇒ chung auth, chung config, chung memories.
+- [x] **Cài plugin** trong Claude Code: `/plugin marketplace add openai/codex-plugin-cc` → `/plugin install codex@openai-codex` → `/reload-plugins` → `/codex:setup`.
+- [x] **KHÔNG bật review gate** (`--enable-review-gate`). README của plugin cảnh báo nó tạo vòng lặp Claude↔Codex dài và đốt limit nhanh; nó cũng đặt cổng sai chỗ (chặn *câu trả lời của Claude*, chứ không chặn *diff*).
+- [x] Node ≥ 18.18 — máy đang có v24.15.0 ✓ (không cần làm gì).
 
 Lỗi sẽ gặp nếu quên bước 1: plugin báo không tìm thấy binary `codex`.
 
@@ -99,16 +99,20 @@ Kết thúc bằng đúng một dòng:
 
 ## Acceptance (kiểm chứng được)
 
-- [ ] Tồn tại `harness-reports/01-codex-self-audit/run-A.md` và `run-B.md`, mỗi file mở đầu bằng dòng `Lần chạy:` đúng bản của nó.
-- [ ] Cả hai file có đủ 8 mục và **mọi ý đều có nhãn** `[QUAN SÁT]` / `[SUY LUẬN]` / `[KHÔNG BIẾT]`. Ý không nhãn ⇒ chạy lại, không tự suy ra nhãn hộ.
-- [ ] Cả hai file kết bằng đúng dòng `TỔNG KẾT: …` với đủ 7 trường.
-- [ ] Có một bảng so sánh A↔B (do T1 hoặc chính chủ viết, không phải Codex tự viết) nêu **mọi trường khác nhau** giữa hai dòng TỔNG KẾT.
+> **Nghiệm thu bởi T1 (Claude) ngày 2026-07-23.** Phán quyết đầy đủ + bằng chứng:
+> `agent-tasks/harness-reports/01-codex-self-audit/comparison.md`.
+> *(Đường dẫn báo cáo trong spec này viết `harness-reports/…` theo vị trí cũ ở gốc repo; thư mục đã dời sang `agent-tasks/harness-reports/`.)*
+
+- [~] **ĐẠT MỘT PHẦN** — Hai file tồn tại; **A** mở đầu đúng `Lần chạy: A (Codex app)`. **B KHÔNG đạt:** phần Codex không có dòng `Lần chạy:` nào (chuỗi đó chỉ hiện ở dòng 268 dưới dạng *trích dẫn* trong mục 8 — tức chỉ thị **đã tới nơi nhưng không được thi hành**). → **Đề xuất chấp nhận, không chạy lại** (lý do ở `comparison.md` §6); quyết định **L2**, chính chủ lật được.
+- [x] Cả hai file có đủ 8 mục và **mọi ý đều có nhãn**. Đo bằng script, không bằng mắt: **A** 8 heading / 142 bullet ngoài code fence / **0 thiếu nhãn**; **B** 8 heading / 54 bullet / **0 thiếu nhãn**.
+- [x] Cả hai kết bằng `TỔNG KẾT:` **đủ 7 trường**, tên trường khớp từng cặp (A dòng 181 · B dòng 290).
+- [x] Bảng so sánh A↔B do **T1** viết (Codex không đọc, không được hỏi ý): `comparison.md` §1 (7 trường) + §3 (khác biệt **không** nằm trên dòng TỔNG KẾT: sandbox, bản kê tool, kỷ luật nhãn, mâu thuẫn nội bộ trường `mạng`).
 
 ## Quyết định mà kết quả này mở khoá
 
-| Kết quả | Hệ quả |
-|---|---|
-| B **có** memories trong context | Đường plugin giữ được trí nhớ ⇒ giao việc qua plugin không mất ngữ cảnh tích luỹ. |
-| B **không** có, A **có** | Đúng như nghi ngờ: plugin là bề mặt "sạch trí nhớ". ⇒ **mọi luật phải-luôn-áp-dụng bắt buộc nằm trong `AGENTS.md`**, memory chỉ là lớp gợi nhớ. Ảnh hưởng trực tiếp task 02. |
-| B **ghi được ngoài cwd** | Codex chạy qua plugin có thể đổ báo cáo vào `harness-reports/` — cần biết trước khi thiết kế task 02. |
-| B cwd **khác** cwd của Claude | Mở đường cho worktree riêng mỗi luồng (giới hạn cứng #4, `devops-brief.md` §8). Nếu **trùng** cwd thì luật *"chạy nền ⇒ Claude không chạm cây làm việc"* là bắt buộc. |
+| Kết quả | Hệ quả | **Đo được 2026-07-23** |
+|---|---|---|
+| B **có** memories trong context | Đường plugin giữ được trí nhớ ⇒ giao việc qua plugin không mất ngữ cảnh tích luỹ. | ✅ **ĐÚNG NHÁNH NÀY.** B còn là bản trích ra *nội dung* `MEMORY_SUMMARY` thật, bằng chứng mạnh hơn A (A chỉ trích khối *hướng dẫn*). ⚠️ Chỉ nói memory của Codex sống sót qua plugin — **không** nói memory đi được Claude→Codex; luật `CLAUDE.md` không bị đụng. |
+| B **không** có, A **có** | Đúng như nghi ngờ: plugin là bề mặt "sạch trí nhớ". ⇒ **mọi luật phải-luôn-áp-dụng bắt buộc nằm trong `AGENTS.md`**, memory chỉ là lớp gợi nhớ. Ảnh hưởng trực tiếp task 02. | ❌ Nhánh này **không** xảy ra. |
+| B **ghi được ngoài cwd** | Codex chạy qua plugin có thể đổ báo cáo vào `harness-reports/` — cần biết trước khi thiết kế task 02. | ⚠️ **CHƯA TRẢ LỜI ĐƯỢC — phép đo bị nhiễu.** Prompt của chính task tự khai "phiên chỉ-đọc" ⇒ subagent rescue đúng luật khi bỏ `--write` ⇒ `sandbox: read-only` (`codex-companion.mjs:491`). B đo **cái prompt**, không đo đường plugin. `apply_patch` vẫn có trong bản kê tool của B. Chi tiết: `comparison.md` §4. |
+| B cwd **khác** cwd của Claude | Mở đường cho worktree riêng mỗi luồng (giới hạn cứng #4, `devops-brief.md` §8). Nếu **trùng** cwd thì luật *"chạy nền ⇒ Claude không chạm cây làm việc"* là bắt buộc. | ❌ **TRÙNG** (`C:\Users\os\Desktop\ai_eng_path\microsched`). Nhánh worktree **không mở**; luật *"chạy nền ⇒ Claude không chạm cây làm việc"* **kích hoạt và thành bắt buộc** — ràng buộc cứng cho lane slot, `devops-brief.md` §8. |

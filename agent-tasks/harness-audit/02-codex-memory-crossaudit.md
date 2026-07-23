@@ -8,10 +8,10 @@
 
 ## Việc của CHỦ trước khi chạy task
 
-- [ ] **`01-codex-self-audit.md` đã chạy xong cả A lẫn B**, và đã có bảng so sánh. Kết quả đó quyết định rổ A nên đề xuất đích đến nào.
-- [ ] **Chạy trong Codex app** (interactive), **KHÔNG qua plugin**.
-- [ ] **Tắt web search và mọi MCP tool** trong phiên đó.
-- [ ] Chọn Sol + xhigh trong UI.
+- [x] **`01-codex-self-audit.md` đã chạy xong cả A lẫn B**, và đã có bảng so sánh. Kết quả đó quyết định rổ A nên đề xuất đích đến nào.
+- [x] **Chạy trong Codex app** (interactive), **KHÔNG qua plugin**.
+- [x] **Tắt web search và mọi MCP tool** trong phiên đó.
+- [x] Chọn Sol + xhigh trong UI.
 
 ## Vì sao chạy ở app chứ không qua plugin
 
