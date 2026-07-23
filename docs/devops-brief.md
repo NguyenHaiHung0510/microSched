@@ -50,6 +50,17 @@ Nguyên nhân không phải lười: chưa ai định nghĩa *điều kiện* đ
 
 **Vì sao không đơn giản cho `main` bám sát `develop`:** thế thì `main` không mang thêm thông tin nào so với `develop`, và ta mất đi thứ duy nhất đáng có ở một dự án một người — **một con trỏ tới trạng thái đã được chứng minh bằng tay**. Giá trị của `main` nằm đúng ở chỗ nó *tụt lại*, và tụt lại có lý do.
 
+## 2.2 Ruleset — cấu hình sống **NGOÀI git**, nên phải chép vào đây
+
+*(Ghi 2026-07-23. Trước đó ba dữ kiện này chỉ tồn tại trong memory của Claude — tức nếu đổi máy hoặc mất memory là mất hẳn. Đây là loại sự thật **không có file nào trong repo phản ánh**, nên brief là nhà đúng của nó.)*
+
+| Ruleset | Id | Nội dung | Vì sao đúng như vậy |
+|---|---|---|---|
+| **`protect-main`** | `19172264` | chặn `deletion` + `non_fast_forward`, bắt buộc PR, **5 required status check**: `Backend checks` · `Frontend checks` · `Repository hooks` · `Migration QA` · `Production dependency check`. `bypass_actors: []` | approvals = **0 cố ý** (dự án 1 người). `bypass_actors` rỗng nghĩa là **không có cửa thoát nếu CI hỏng** — kẹt thì tạm `PATCH enforcement: disabled`, sửa xong bật lại. |
+| **`protect-develop`** | — | **chỉ** `deletion` + `non_fast_forward`. **Cố ý KHÔNG đặt required check.** | Để giữ quy ước *"docs commit thẳng `develop`"* (§5). Đặt required check ở đây là tự khoá đường đi hằng ngày của chính mình. |
+
+⚠️ **Required check khớp theo TÊN job.** Thêm job mới thì phải thêm tay vào ruleset (`gh api`); **đổi tên job cũ làm PR vào `main` kẹt vĩnh viễn** ở trạng thái *"Expected"* — không có lỗi đỏ nào để nhìn, chỉ là chờ mãi một check không bao giờ tới. Luật này đã được chép sang `AGENTS.md` cho executor.
+
 ## 3. Hàng rào secret — ✅ 2 lớp
 
 | Lớp | Ở đâu | Chặn lúc nào | Trạng thái |
