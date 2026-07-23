@@ -36,7 +36,13 @@ name="private_ciphertext",
 name="private_body_ciphertext",
 ```
 
-**Không bên nào "quên".** `tracking-brief.md` §6 chốt nguyên văn *"private note/task **bodies**"* ⇒ **`Note` đúng spec, `Task` chặt hơn spec.** Câu hỏi *"tiêu đề note private có phải secret không"* chưa bao giờ được quyết một lần — nó bị quyết ngầm hai lần theo hai hướng, ở hai chỗ không tham chiếu nhau. Cùng họ sự cố Neon 22/07.
+**Không bên nào "quên", và không bên nào sai spec.** Dòng phán quyết ở `tracking-brief.md` §6 viết nguyên văn:
+
+> `note.body_md`, **`task.*`** khi `is_private=true` │ 🔐 mã hóa **theo cờ**
+
+`task.*` = **mọi cột text của task**; `note` thì chỉ nêu đúng một cột. ⇒ **Cả hai DDL đều thi hành trung thực.** Bất đối xứng nằm **bên trong một dòng của brief**, viết trong cùng một lượt, ở hai mức chi tiết khác nhau.
+
+Điều đó đổi bản chất câu hỏi: **không có quyết định nào để tôn trọng ở cả hai phía.** Câu hỏi *"tiêu đề note private có phải secret không"* chưa bao giờ được đặt ra — chứ không phải được quyết rồi bị làm sai. Cùng họ sự cố Neon 22/07.
 
 **Vì sao đáng quyết bây giờ, không để sau:**
 - **008 là task đặt khuôn**, 009–012 chép lại. Sai khuôn ở đây là sai 5 lần.
@@ -51,18 +57,41 @@ Lập luận đó áp cho `tracker.name` (⇒ mã hoá **vô điều kiện**). 
 
 ### Hai lựa chọn (chủ chọn một, ghi lý do vào `tracking-brief.md` §6)
 
-| | A — siết `Note` cho bằng `Task` | B — nới `Task` cho bằng spec |
+| | **A — siết `note` cho bằng `task`** | B — nới `task` cho bằng `note` |
 |---|---|---|
 | Làm gì | thêm `title` vào CHECK của `note` | bỏ `title` khỏi CHECK của `task` |
-| Được | bất biến đồng nhất; khớp tiền lệ `tracker.name` | khớp đúng chữ đã chốt ở §6 |
-| Mất | tiêu đề note private không sort/tìm được ở DB (phải giải mã app-side) | tiêu đề task private nằm plaintext trong Neon |
-| Ghi chú | **nghiêng phương án này** — nhất quán với lập luận §76 | chỉ chọn nếu chủ xác nhận tiêu đề không nhạy |
+| Được | bất biến đồng nhất; khớp tiền lệ `tracker.name` | tiêu đề task private còn sort/tìm được trong SQL |
+| Mất | tiêu đề note private phải giải mã app-side để sort/hiển thị | tiêu đề task private nằm plaintext trong Neon; **và phải sửa một DDL đã deploy** |
+| Ghi chú | ✅ **khuyến nghị** (lý do bên dưới) | chỉ chọn nếu chủ xác nhận tiêu đề **không** nhạy |
+
+**Bốn lý do nghiêng A:**
+
+1. **§6 đã lập luận sẵn, chỉ là không mang qua.** Lời của chính brief: *"tên tracker `'Hút thuốc'` rò gần hết thông tin dù mọi entry mã hóa. Mã hóa entry mà để tên tracker trần = **bảo mật hình thức**."* Tiêu đề note cùng hình dạng với tên tracker — nhãn người-đọc-được nén nội dung lại. §6 hành động theo lập luận đó cho `tracker.name` (mã hoá **vô điều kiện**), rồi dừng ở đó.
+2. **B làm chính câu biện minh của §6 thành sai.** §6 giải thích vì sao mã hoá nội dung private: *"Nội dung private vốn đã không vào FTS/embedding nên không mất gì thêm."* Dưới B, `note.title` vẫn trần khi private ⇒ **đủ điều kiện** vào FTS/embedding ⇒ tiêu đề note private chảy được vào pgvector. Mâu thuẫn trực tiếp với luật §6 (*"không-embed/FTS trên cột mã hóa"*) và với R1–R7. Dưới A không có lỗ này.
+3. **Chi phí của A ≈ 0, và là chi phí đã chấp nhận rồi.** §6 đã chốt *"sort/hiển thị ở app-side"* cho `tracker.name`; **K19** đã chuyển chống-trùng-tên lên app-layer cho cột tên mã hoá; **K18** chốt nguyên tắc *"PG không nhìn được thì app lo"*. A không thêm **loại** việc nào mới — dùng lại đúng bộ máy 008a bắt buộc phải dựng. Quy mô: 49 note.
+4. **B đắt hơn A** — đòi sửa một DDL đã chạy production, để khớp một cách viết nhiều khả năng là sơ suất soạn thảo.
+
+**Kèm theo (bắt buộc, dù chọn A hay B):** sửa dòng §6 cho hết mơ hồ — liệt kê **đủ tên cột** cho cả hai bảng thay vì `task.*`, kèm dated note ghi rõ *đây là vá bất đối xứng soạn thảo, không phải đảo quyết định*. Cách viết `*` là thứ đã sinh ra cả mục này.
 
 ### Mục con: bảng `*_item`
 
 `note_item.content` ([`models.py:193`](../backend/app/domain/models.py)) và `task_item` **không có cờ `is_private`, cũng không có ràng buộc nào** — tức hiện tại **không có cách nào diễn đạt** "item này thuộc một cha private". Checklist con của một note private đang nằm plaintext không ràng buộc.
 
-Đây là câu hỏi thứ hai, quyết cùng lúc: (i) bỏ qua có chủ đích (ghi lý do), (ii) thêm CHECK tham chiếu cha qua trigger/hàm, hay (iii) mã hoá `content` vô điều kiện như `message.content` đang làm ([`models.py:440`](../backend/app/domain/models.py)).
+Đây là câu hỏi thứ hai, quyết cùng lúc — nhưng **hai luật đã khoá sẵn phần lớn không gian**, đọc trước khi cân:
+
+- **K11** (`tracking-brief.md` §10) chốt: *"`is_private` đặt ở cấp **cha** (task/note/tracker), **không rải từng** entry"* ⇒ phương án "nhân bản cờ xuống bảng con + CHECK có điều kiện" **hết cửa** — nó chính là thứ K11 cấm.
+- **Posture §6 = "B-hẹp"**: *"mã hóa đúng nhóm 'lộ = nguyên liệu pretext', **KHÔNG mã hóa rộng** vì đánh chết AI-first"* ⇒ mã hoá `content` vô điều kiện (kiểu `message.content`, [`models.py:440`](../backend/app/domain/models.py)) đi ngược posture, vì item **non-private là vật liệu retrieval**. Nó còn phá một tính chất đã ghi ở `agent-tasks/README.md`: *"dữ liệu migrate không chạm cột mã hóa nào ⇒ rủi ro backfill ≈ 0"* — chính lý do 008a xếp được sớm và rẻ. Chọn nó thì 97 `task_item` + 81 `note_item` phải mã hoá lúc cutover.
+
+Còn lại đúng hai, và **khuyến nghị là (b)**:
+
+| | (a) trigger tra cha | **(b) enforce ở app-layer** |
+|---|---|---|
+| Cưỡng chế ở | DB (không phạm K11 vì không thêm cột) | seam crypto của 008 |
+| Được | bất biến không thể lách kể cả ghi từ ngoài app | không thêm cơ chế mới; đúng nguyên tắc **K8/K18** repo tự đặt (*"PG không nhìn được thì app lo"*) |
+| Mất | thêm một loại cơ chế (hiện repo chỉ có `set_updated_at`) | bất biến **chỉ tốt bằng seam ở 008** |
+| Đáng chọn khi | có đường ghi từ ngoài app | ✅ single app, single writer — đúng dự án này |
+
+**⚠️ Cảnh báo đi kèm nếu chọn (b):** 009–012 sẽ **chép lại** khuôn của 008, nên test cho bất biến này ở 008 quan trọng hơn bình thường và **bắt buộc chứng minh được biết đỏ**. Ghi nó vào docs như một **bất biến KHÔNG được DB cưỡng chế** — nói thẳng ra, đừng để người đọc sau tưởng có CHECK đứng gác.
 
 ### Phải làm (sau khi chủ đã chọn)
 
