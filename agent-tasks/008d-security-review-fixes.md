@@ -1,8 +1,9 @@
 # 008d — Ba mục tồn từ security review toàn dự án (2026-07-23)
 
 > **Trạng thái:** 📋 SPEC — sẵn sàng giao (2026-07-23). **Không còn mục nào chờ chủ quyết.**
-> Executor: **T2 Codex** · Bậc: **Terra** (mục 2+3) / **Sol** (mục 1 — đụng schema + migration) · Effort: thấp
-> **Skill gợi ý:** không cần · **MCP cần:** không cần (không có phần nào phải nhìn bằng mắt trên trình duyệt)
+> Executor: **Agent Claude/Opus (T1)** · Effort: **MAX** · **Skill gợi ý:** không cần · **MCP cần:** không cần (không có phần nào phải nhìn bằng mắt trên trình duyệt)
+>
+> **📝 2026-07-24 — đổi executor + effort so với dòng gốc (T2 Codex / Terra-Sol / thấp).** Cả ba mục là security-critical (Mục 1 đụng migration + bất biến mã hoá, Mục 3 đụng đường auth, Mục 2 đụng hàng rào secret), mà `CLAUDE.md` §7 giao **T1** viết code security-critical — Codex vào việc thật ở **008** (CRUD slice), không phải ở đây. Effort **MAX** vì migration là chỗ lỗi đắt (CHECK sai = rò tiêu đề private âm thầm; migration không round-trip = Migration QA gãy), chi phí MAX trên task nhỏ không đáng kể. Quyết bởi Claude-điều-phối, khớp khuôn 008a.
 
 ## Bối cảnh (đọc được ở session 0-context)
 
