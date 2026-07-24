@@ -1,7 +1,7 @@
 """Regression tests for one-way physical-schema decisions."""
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Text
+from sqlalchemy import CheckConstraint, Text
 from sqlmodel import SQLModel
 
 import app.domain.models  # noqa: F401 - importing registers every table
@@ -60,6 +60,29 @@ def test_encrypted_money_is_text_and_names_are_not_unique() -> None:
     assert isinstance(subscription.c.amount.type, Text)
     assert not any(index.unique and "name" in index.columns for index in tracker.indexes)
     assert not any(index.unique and "name" in index.columns for index in subscription.indexes)
+
+
+def test_private_note_requires_ciphertext_title_and_body() -> None:
+    """A private note hides title as well as body: note now matches task (§6, 2026-07-23).
+
+    The invariant is DB-enforced (unlike note_item/task_item, which are app-side per §6);
+    this test guards the ORM half so a rename or a dropped clause fails loudly here.
+    """
+    note = table("note")
+
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in note.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    # Renamed to match task's private_ciphertext; the old body-only name is gone.
+    assert "ck_note_private_ciphertext" in checks
+    assert "ck_note_private_body_ciphertext" not in checks
+
+    condition = checks["ck_note_private_ciphertext"]
+    assert "title IS NULL OR title LIKE 'enc:v1:%'" in condition
+    assert "body_md IS NULL OR body_md LIKE 'enc:v1:%'" in condition
 
 
 def test_app_setting_has_uuid_identity_and_unique_key() -> None:
