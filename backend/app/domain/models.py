@@ -155,8 +155,10 @@ class Note(UUIDTimestampModel, table=True):
     __tablename__ = "note"
     __table_args__ = (
         CheckConstraint(
-            "NOT is_private OR body_md IS NULL OR body_md LIKE 'enc:v1:%'",
-            name="private_body_ciphertext",
+            "NOT is_private OR ("
+            "(title IS NULL OR title LIKE 'enc:v1:%') "
+            "AND (body_md IS NULL OR body_md LIKE 'enc:v1:%'))",
+            name="private_ciphertext",
         ),
         {"schema": SCHEMA},
     )
