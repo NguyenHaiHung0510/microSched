@@ -409,6 +409,14 @@ git ls-tree --name-only origin/main .github/workflows/   →  chỉ có ci.yml
 - **Job đó ghi kèm RSS + uptime mỗi lần chạy** — canh rò rỉ bộ nhớ của `suspend` (§5 note 23/07) **không cần job thứ hai**.
 - `cron.yml` đã **gỡ `schedule:`**, giữ `workflow_dispatch` làm nút bấm tay. ⚠️ Đừng thêm lại — sẽ thành nguồn cron thứ hai bắn song song vào cùng endpoint.
 
+**✅ Job đã tạo + nghiệm thu 2026-07-24** (`web_check/04`): force run trả **200 OK**. Ba bẫy đã gặp khi tạo, ghi để lần tạo job sau (hoặc job thứ 2) không đạp lại:
+- **Target type = HTTP, KHÔNG Pub/Sub.** Hướng dẫn mặc định của Google Cloud Scheduler dẫn sang Pub/Sub (chọn topic, gõ "Hello world"); microSched là endpoint HTTP trần, chọn Pub/Sub thì message rơi vào topic không ai đọc, app không nhận gì.
+- **Mục "Auth header" của Scheduler để None.** Đó là OIDC/OAuth token để xác thực *với dịch vụ Google khác*; bật lên nó ghi đè header `Authorization` ⇒ Bearer token của mình mất ⇒ 401. Token của app đi ở dòng **HTTP headers** custom, không phải mục Auth header.
+- **Ô URL nhạy khoảng trắng đuôi.** Lần đầu dính tab `%09` ở cuối (`/heartbeat%09`) ⇒ **405**. Copy-paste dễ dính; cắt sạch.
+- Retry đặt **3** (miễn phí — Scheduler tính theo job/tháng, không theo lần chạy); attempt deadline để trống (= 3 phút, thừa cho cold start ~9s).
+
+🔒 **Bất biến bắt buộc mang sang 011 (nhắc thuốc) — retry + chưa idempotent = nhắc TRÙNG.** Khi endpoint đổi từ "ghi log" sang "gửi web-push", kịch bản: push gửi xong → response rớt → Scheduler tưởng fail → thử lại → **push lần hai**. ⇒ Endpoint nhắc thuốc **phải đánh dấu "đã nhắc hôm nay" và biến các lần gọi sau thành no-op TRƯỚC KHI** dựa vào retry. Heartbeat lũy đẳng sẵn nên chưa đụng; nhắc thuốc thì bắt buộc.
+
 **📌 Hai free tier khác nhau, đừng gộp** (chủ hỏi đúng chỗ này): free tier **Gemini API** mất khi bật billing trên project — đó là cảnh báo ở `cost-brief.md` §6, và nó **không còn áp** vì project `microSched` bật billing từ đầu. Free tier **Cloud Scheduler** tính theo billing account (3 job), **cần** billing mới dùng được. Không cần email khác, không cần project khác, không phải trả 2k/tháng (đó là giá job thứ 4).
 
 **Lớp biên lai — mỏng, và biết vì sao mỏng.** Ban đầu lập luận *"lời nhắc vắng mặt thì không phát hiện được"*; **chủ bác đúng**: thuốc uống lúc ăn cơm, 20:00 là ngưỡng >97,5% đã uống rồi ⇒ lời nhắc là **backstop**, không phải cơ chế chính, nên rủi ro là **tích của hai xác suất nhỏ độc lập** (quên uống × cron hỏng), không phải một điểm chết. ⇒ Ghi `last_cron_run_at` + cảnh báo khi cũ: **có, nhưng mỏng**, ghép luôn vào job trên. Không dựng hệ giám sát riêng.

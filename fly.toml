@@ -1,47 +1,22 @@
-# fly.toml app configuration file generated for microsched on 2026-07-23T09:23:17+07:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# Quyết định + lý do cho MỌI giá trị dưới đây: docs/architecture-brief.md §5.
+# File này bị `fly launch`/`fly deploy` sinh lại và XOÁ COMMENT (đã xảy ra 23/07)
+# nên KHÔNG ghi lý do ở đây — ghi ở §5. Giá trị nhạy (min_machines_running=0,
+# path=/api/healthz) giải thích tại đó; sửa file này thì đọc §5 trước.
 
 app = 'microsched'
 primary_region = 'sin'
 
-# Không phải secret, nên nằm ở đây chứ không phải `flyctl secrets` — nhờ vậy nó
-# nằm trong git, review được, và trả lời được câu "production đang chạy ở chế độ
-# nào" mà không phải nhớ mặc định trong code là gì.
-# Mặc định trong code CŨNG là "production" (app/core/settings.py) — cố ý trùng
-# lặp: nếu dòng này lỡ mất, app rơi về bản nghiêm hơn chứ không nới lỏng.
 [env]
   APP_ENV = 'production'
 
 [http_service]
   internal_port = 8000
   force_https = true
-  # 📝 2026-07-23 — ĐẢO quyết định always-on của `architecture-brief.md` §5.
-  # Đo thật: ngủ 10h38 rồi dậy vẫn ~8s (boot VM 1,6s + Uvicorn ~5s), tức Fly
-  # autostart KHÁC HẲN "cold-start 30–60s" của Render mà §5 gộp chung khi loại.
-  # `min_machines_running` PHẢI là 0: chỉ có 1 máy, để 1 thì nó không bao giờ stop.
-  #
-  # 'suspend' chứ không phải 'stop': Fly tính tiền HAI TRẠNG THÁI NHƯ NHAU (chỉ
-  # rootfs đã dùng, $0.15/GB/tháng — không CPU/RAM), nhưng resume từ snapshot bỏ
-  # được ~5s khởi động Python. Xấu nhất khi mất snapshot = cold start y như
-  # 'stop' ⇒ không có đường thua. Điều kiện RAM ≤ 2GB: đang 256MB ✓; socket chết
-  # qua resume đã chặn bằng pool_pre_ping ở app/core/db.py.
-  # ⚠️ ĐÁNH ĐỔI DUY NHẤT: tiến trình không bao giờ restart ⇒ rò rỉ bộ nhớ tích
-  # luỹ (với 'stop' thì mỗi lần dậy là tiến trình mới, vệ sinh miễn phí). Job
-  # cron 20:00 ghi RSS + uptime mỗi lần chạy để canh; RSS trôi thì về 'stop'.
-  # ⚠️ File này là NGUỒN SỰ THẬT — bấm đổi trên dashboard Fly sẽ bị `fly deploy`
-  # lần sau ghi đè lại theo dòng dưới đây.
   auto_stop_machines = 'suspend'
   auto_start_machines = true
   min_machines_running = 0
   processes = ['app']
 
-  # PHẢI là /api/healthz (liveness), TUYỆT ĐỐI KHÔNG đổi sang /api/readyz.
-  # readyz chạy SQL; nhịp 30 giây ở đây ngắn hơn cửa sổ idle 5 phút của Neon nên
-  # sẽ giữ DB thức 24/7 → 6 CU-hrs/ngày → hết 100 CU-hrs free trong ~17 ngày →
-  # Neon treo compute tới kỳ sau (mất DB, không phải mất tiền). Đó chính là lỗi
-  # đã xảy ra 2026-07-21, xem docstring của backend/app/web/routers/health.py.
   [[http_service.checks]]
     interval = '30s'
     timeout = '5s'
