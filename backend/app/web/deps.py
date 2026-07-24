@@ -70,5 +70,9 @@ async def require_cron_token(authorization: str | None = Header(default=None)) -
 
     scheme, _, presented = (authorization or "").partition(" ")
     # compare_digest keeps the check constant-time; a plain == leaks the prefix length.
-    if scheme.lower() != "bearer" or not secrets.compare_digest(presented, expected):
+    # Compare on bytes: str compare_digest raises TypeError on non-ASCII input, which
+    # would turn a hostile "Bearer é" into a 500 instead of the clean 401 below.
+    if scheme.lower() != "bearer" or not secrets.compare_digest(
+        presented.encode(), expected.encode()
+    ):
         raise _unauthenticated()

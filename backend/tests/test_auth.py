@@ -506,3 +506,16 @@ def test_cron_endpoint_rejects_anything_else(header) -> None:
         asyncio.run(require_cron_token(header))
 
     assert error.value.status_code == 401
+
+
+def test_cron_endpoint_rejects_non_ascii_bearer_with_401_not_500() -> None:
+    """A non-ASCII bearer is a clean 401, never a compare_digest TypeError (500).
+
+    secrets.compare_digest on str raises TypeError for non-ASCII input; before the
+    bytes fix this line escaped as an unhandled 500 on the one endpoint reachable
+    without a session. The guard must reject it the same way as any wrong token.
+    """
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(require_cron_token("Bearer é"))
+
+    assert error.value.status_code == 401
