@@ -72,3 +72,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Role split:** the owner decides architecture/product and reviews; Claude executes. Present options at the **strategy/product level**, not as low-level backend claims — the owner does not retain backend detail of the old app.
 - Where a decision in `docs/` conflicts with the parent strategy docs in `../../hoc_he_2026`, the newer decision here wins (those docs predate this project's design phase).
 - **pre-commit + gitleaks are active** (`.pre-commit-config.yaml`, gốc repo): mọi `git commit` chạy qua hook vệ sinh cơ bản + gitleaks (chặn secret lọt vào commit trước cả khi push). Hook **không tự theo `git clone`** — sau khi clone máy mới, chạy `pip install pre-commit` rồi `pre-commit install` trong repo để kích hoạt lại.
+
+## Delegation qua `agy-bridge` (T1 → T3, bớt thủ công) — ✅ chốt + đo tận tay 2026-07-24
+
+MCP server `agy-bridge` (cài `-s user`, gọi binary `agy` = Antigravity CLI) để **T1 đẩy việc đọc-nặng/cố-vấn sang Gemini mà không phình context T1** — chỉ *câu trả lời* quay về. Đây là lớp **de-manualize kênh T1→T3**, song song `codex-plugin-cc` (T1→T2); **KHÔNG đổi luật 3 tầng** — T3 vẫn là tầng bị điều hướng (`devops-brief.md §7`; §7.f có dated note 24/07 đảo nửa dòng "Antigravity chỉ là ghế thủ công" — giờ nó *là* kênh giao việc lập trình được).
+
+**Chỉ hai lane (chốt 24/07 — bắt đầu HẸP, nới dần theo tin cậy đo được):**
+1. **Phản biện khác-họ** (`adversarial_review`) — thêm một góc nhìn cố vấn NGOÀI T2; model khác họ bắt lỗi T1 sót. Dùng `follow_up` (kèm `session_id`) để hỏi tiếp, không gửi lại context.
+2. **Tìm fact / đọc nhiều file** (`analyze_files`, `deep_search`, `web_lookup`) — thứ T1/T3 làm lại thì tốn; offload để **tiết kiệm token/context**.
+
+**KHÔNG giao:** sửa 1 file nhỏ; việc trả lời được từ context đã nạp; việc cần tool chỉ T1 có; **và không để Gemini làm gì ngoài hai lane trên** (không code, không quyết định, không chạm secret/dữ liệu riêng). Độ tin cậy T2/T3 **đo tăng dần trong lúc dùng** → giao thêm nếu muốn; **giờ bắt đầu bounded**.
+
+**⚠️ Bẫy chất lượng (đo 24/07):** auto-routing **rơi về "agy default"** (`no preferred model available`) ⇒ **phải truyền `model:` tên THẬT từ `agy models`** (không phải tên đẹp trong schema). Đo thật: fact-finding + phản biện thường → `gemini-3.6-flash-high` (bắt đủ lỗ critical, 0 bịa); review cao nhất/vét cạn → `gemini-3.1-pro-high`; **đừng** chọn `claude-*` của agy cho `adversarial_review` (mất tác dụng khác-họ). **Tên model cứng + bảng lane + probe tái dùng ở memory `agy-model-capabilities`; `agy models` đổi danh sách ⇒ DỪNG, báo chủ re-probe.** Kết quả agy là **cố vấn**, KHÔNG phải biên lai code — luật biên lai (PR#/checks/diff/SHA) chỉ áp cho code T2/Codex; T1 vẫn tự kiểm cái gì quan trọng (Gemini vẫn bịa).
+
+**Quota:** 2 account Google AI Pro (2× hạn mức) — **ưu tiên cho agy (hỗ trợ T1 + chạy test T3), KHÔNG dồn vào Jules** (Jules hiện quá phế: một workflow tự do đốt quota khổng lồ + vẫn phải lọc PR = lỗ ròng). Gemini báo hết quota giữa chừng ⇒ T1 **dừng, nhắc chủ log out → account 2** (tên account cố ý không ghi trong repo). **Máy mới:** cần `agy` trên `PATH` hoặc set `AGY_PATH`, rồi `claude mcp add-json -s user agy-bridge '{...}'`.
