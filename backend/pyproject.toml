@@ -8,6 +8,7 @@ dependencies = [
     "alembic>=1.18.5",
     "asyncpg>=0.31.0",
     "authlib>=1.6.0",
+    "cryptography>=49.0.0",
     "fastapi",
     # Runtime, not just test tooling: authlib.integrations.starlette_client imports
     # its httpx client at package-import time, so the app will not boot without it.

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     allowed_emails: str = ""
     oauth_state_secret: str | None = None
     cron_token: str | None = None
+    # App-held AES-256 key for the encrypted columns; crypto.py validates and uses it.
+    encryption_master_key: str | None = None
 
     # auth-brief §2 allows 60-90 days; 90 chosen because the window is rolling, so it
     # only fires after 90 days of zero use. See the 007 PR for the full rationale.
