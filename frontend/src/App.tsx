@@ -1,6 +1,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 
+import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
+import { TasksScreen } from '@/TasksScreen'
 
 type SessionResponse = {
   email: string
@@ -8,54 +10,14 @@ type SessionResponse = {
   expires_at: string
 }
 
-type ReadinessResponse = {
-  status: string
-  version: string
-  db: string
-}
-
-/** Raised only for a 401 so the UI can tell "logged out" from "API is broken". */
-class UnauthenticatedError extends Error {}
-
 async function fetchSession(): Promise<SessionResponse> {
-  const response = await fetch('/api/me', { credentials: 'same-origin' })
-
-  if (response.status === 401) {
-    throw new UnauthenticatedError('No active session')
-  }
-
-  if (!response.ok) {
-    throw new Error(`Session check failed with status ${response.status}`)
-  }
-
-  return response.json() as Promise<SessionResponse>
-}
-
-/**
- * Reads the readiness path, not the liveness one: `/api/healthz` deliberately no
- * longer touches the database, so it can no longer answer "kết nối được". Spending
- * a query here is fine - someone is looking at the dashboard, so the database is
- * about to be needed anyway. Automated probes must never call this.
- */
-async function fetchReadiness(): Promise<ReadinessResponse> {
-  const response = await fetch('/api/readyz', { credentials: 'same-origin' })
-
-  if (!response.ok) {
-    throw new Error(`Readiness check failed with status ${response.status}`)
-  }
-
-  return response.json() as Promise<ReadinessResponse>
+  return apiRequest<SessionResponse>('/api/me')
 }
 
 async function postLogout(): Promise<void> {
-  const response = await fetch('/auth/logout', {
+  await apiRequest<void>('/auth/logout', {
     method: 'POST',
-    credentials: 'same-origin',
   })
-
-  if (!response.ok) {
-    throw new Error(`Logout failed with status ${response.status}`)
-  }
 }
 
 function greeting(): string {
@@ -65,27 +27,6 @@ function greeting(): string {
   if (hour < 14) return 'Chào buổi trưa'
   if (hour < 18) return 'Chào buổi chiều'
   return 'Chào buổi tối'
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return '—'
-
-  return new Date(value).toLocaleString('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs text-neutral-500">{label}</dt>
-      <dd className="mt-0.5 text-sm font-medium tabular-nums">{value}</dd>
-    </div>
-  )
 }
 
 function LoginScreen() {
@@ -106,7 +47,6 @@ function LoginScreen() {
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
-  const health = useQuery({ queryKey: ['readyz'], queryFn: fetchReadiness })
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -117,8 +57,8 @@ function SignedIn({ session }: { session: SessionResponse }) {
   })
 
   return (
-    <section className="space-y-5 rounded-lg border bg-white p-6 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-6">
+      <header className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-medium">{greeting()} 👋</h2>
           <p className="mt-1 text-sm text-neutral-600">{session.email}</p>
@@ -131,18 +71,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
         >
           {logout.isPending ? 'Đang thoát…' : 'Đăng xuất'}
         </Button>
-      </div>
-
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-4">
-        <Stat label="Đăng nhập lúc" value={formatDate(session.signed_in_at)} />
-        <Stat label="Phiên hết hạn" value={formatDate(session.expires_at)} />
-        <Stat label="Phiên bản" value={health.data?.version ?? '…'} />
-        <Stat
-          label="Cơ sở dữ liệu"
-          value={health.data ? (health.data.db === 'up' ? 'kết nối được' : 'mất kết nối') : '…'}
-        />
-      </dl>
-    </section>
+      </header>
+      <TasksScreen />
+    </div>
   )
 }
 
@@ -157,11 +88,11 @@ function App() {
   const loggedOut = session.isError && session.error instanceof UnauthenticatedError
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-6 px-6">
+    <main className="mx-auto min-h-screen max-w-3xl space-y-6 px-4 py-10 sm:px-6">
       <div className="space-y-2">
-        <p className="text-sm font-medium text-neutral-500">Welcome</p>
+        <p className="text-sm font-medium text-neutral-500">Task workspace</p>
         <h1 className="text-4xl font-semibold tracking-tight">microSched</h1>
-        <p className="text-neutral-600">Your personal schedule, ready to grow.</p>
+        <p className="text-neutral-600">Lên việc, chia checklist, hoàn thành từng bước.</p>
       </div>
 
       <div aria-live="polite">

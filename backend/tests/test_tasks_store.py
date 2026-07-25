@@ -61,11 +61,6 @@ from app.domain.models import AuthSession
 
 pytestmark = [
     pytest.mark.pg,
-    pytest.mark.xfail(
-        raises=ImportError,
-        reason="Phase 1 (Codex): implement app/domain/tasks.py, then DELETE this marker",
-        strict=True,
-    ),
 ]
 
 VIETNAMESE = "Hẹn gặp lúc 9 giờ — cà phê Đá, nhớ mang hồ sơ đã ký."

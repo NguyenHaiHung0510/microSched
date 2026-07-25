@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "tsc -p tsconfig.test.json && node --test --test-isolation=none --experimental-strip-types tests/api.test.ts tests/task-ui.test.ts dist/test/tests/task-form.test.js"
   },
   "dependencies": {
     "@tanstack/react-query": "5.101.2",
