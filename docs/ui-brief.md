@@ -47,7 +47,8 @@ Tiêu chí là **kỹ thuật, không phải gu**: rủi ro lớn nhất của f
 - Family thật là **`"Nunito Variable"`** (không phải `"Nunito"`). Là font biến thiên: **một file phủ trọn weight 200–1000**, nhưng **tách theo bộ ký tự** — mỗi subset là một `.woff2` riêng, không phải một file duy nhất cho cả font.
 - Mỗi subset có `unicode-range` riêng ⇒ trình duyệt chỉ tải `latin` + `vietnamese`.
 - Phải import **cả `wght-italic.css`**; thiếu nó thì `<em>`/italic ra chữ nghiêng **giả** do trình duyệt tự xiên.
-- ⚠️ **`globPatterns` mặc định của `vite-plugin-pwa` KHÔNG gồm `woff2`** ⇒ font không vào precache ⇒ offline vẫn mất font. Đã vá ở `vite.config.ts`, và cố ý **không** kê `svg`/`webmanifest` vì plugin đã tự thêm (kê lại là precache trùng — đã đo 10 mục / 9 địa chỉ). Kết quả cuối: **9 mục / 9 địa chỉ**, có 3 subset font, không có cyrillic.
+- ⚠️ **`globPatterns` mặc định của `vite-plugin-pwa` KHÔNG gồm `woff2`** ⇒ font không vào precache ⇒ offline vẫn mất font. Đã vá ở `vite.config.ts`, và cố ý **không** kê `svg`/`webmanifest` vì plugin đã tự thêm (kê lại là precache trùng — đã đo 10 mục / 9 địa chỉ). Kết quả cuối: **12 mục / 12 địa chỉ** — không mục nào trùng, và không có cyrillic.
+> 📝 **Đo lại 2026-07-25 (008e):** chỗ này từng ghi *"9 mục / 9 địa chỉ, có 3 subset font"*. Số **3 subset** đúng (`latin`, `latin-ext`, `vietnamese`) nhưng mỗi subset có **hai** file — nghiêng và không nghiêng — nên là 6 file font. Số 9 là bản đo **trước** khi thêm `wght-italic.css`, chép vào brief sau đó mà không đo lại. Cách kiểm dùng lại được: đọc `dist/sw.js`, đếm `url:"…"` rồi so **tổng với số địa chỉ khác nhau**; hai số lệch nhau mới là precache trùng, còn tổng tăng chỉ có nghĩa là có thêm file thật.
 
 ## 4. Màu ✅ CHỐT
 
@@ -103,7 +104,22 @@ Chủ chọn **6** trong 10 cơ chế được kiểm kê:
 
 ## 7. Còn mở ⚠️
 
-- **Bộ component còn thiếu:** Card, Input, Textarea, Select, Checkbox, Badge, Dialog, Sonner (toast). Hiện chỉ có `button`.
-- **`lucide-react` chưa cài** dù `components.json` đã khai — cài trước khi thay nút chữ bằng nút icon.
+- ~~**Bộ component còn thiếu**~~ · ~~**`lucide-react` chưa cài**~~ — **✅ xong 2026-07-25 (008e, nhịp T1)**, xem §8.
 - **Undo toast** (app cũ hoàn toàn không có) — hợp đồng "Hoàn tác = soft-delete" đã chốt ở `tracking-brief.md` §8.1; phần UI chưa dựng.
 - **Dark mode** — DEFER, xem §6.7.
+
+## 8. Bộ component ✅ dựng 2026-07-25 — và bốn cái bẫy của `shadcn add`
+
+Có đủ **9 component** ở `frontend/src/components/ui/`: `button` (cũ) + `badge` · `card` · `checkbox` · `dialog` · `input` · `select` · `sonner` · `textarea`. Dependency thêm: `lucide-react`, `sonner`. Style `radix-nova`, import primitive từ gói hợp nhất `radix-ui` — **009–012 cứ `shadcn add`, đừng viết tay**.
+
+Bốn thứ dưới đây đều **không làm CI đỏ**, nên phải kiểm bằng tay mỗi lần thêm component:
+
+**(a) 🔒 CLI ghi ra sai thư mục mà vẫn báo thành công.** shadcn đọc alias `@/*` từ đúng `tsconfig.json`, nhưng dự án Vite khai `paths` trong `tsconfig.app.json` (file gốc chỉ là *solution file*, `files: []`). Không thấy `paths` thì nó **không báo lỗi** — nó tạo một thư mục **tên `@`** ở `frontend/@/components/ui/` rồi in `✔ Created 9 files`. Đã vá bằng cách khai lặp `baseUrl` + `paths` vào `tsconfig.json` (có ghi chú tại chỗ). *Cùng họ với bài học 22/07: hai file đều đúng theo luật của riêng nó, lỗi nằm ở chỗ không file nào tham chiếu file kia.*
+
+**(b) Prompt ghi đè làm rụng component còn lại, im lặng.** Chạy `add` một lượt 8 component: tới `button.tsx` (đã có) CLI hỏi ghi đè, phiên không có bàn phím ⇒ nó dừng luôn, `dialog` **không bao giờ được tạo** mà lệnh vẫn kết thúc bình thường. ⇒ **Đếm file thật sau mỗi lần `add`, đừng đọc dòng tổng kết.** Cách chạy an toàn khi trùng tên: xoá tạm file của ta, `add`, rồi `git checkout --` để lấy lại bản của ta.
+
+**(c) `sonner` mặc định theo dark mode của hệ điều hành.** Bản CLI sinh ra đọc theme qua `useTheme()` của `next-themes` với mặc định `"system"`. Dự án light-only và không có `ThemeProvider` ⇒ `useTheme()` trả undefined ⇒ rơi đúng vào `"system"` ⇒ **iPhone đang để dark mode sẽ thấy toast nền đen** giữa giao diện sáng. Đã chốt cứng `theme="light"` và **gỡ `next-themes`**. Làm dark mode sau thì thêm lại. *Luật light-only bị phá không phải do ai viết dark mode, mà do một **giá trị mặc định**.*
+
+**(d) Token `--radius` trần không tồn tại.** shadcn khai một `--radius` gốc rồi suy ra sm/md/lg; ta khai thẳng từng bậc. Component nào đọc `var(--radius)` (đã gặp ở `sonner.tsx`) sẽ ra **rỗng** — không lỗi, chỉ âm thầm rơi về mặc định của thư viện. Đã thêm alias `--radius: 16px`. **Đây là token duy nhất được thêm ở 008e.**
+
+**Ghi chú kích thước chạm:** thang `radix-nova` khá nhỏ — nút mặc định `h-8` (32px), lớn nhất `h-9` (36px). 32px **đạt** WCAG 2.2 SC 2.5.8 mức AA (24×24) nhưng **dưới** khuyến nghị 44px của Apple. ⇒ trên màn hình chạm, hành động chính dùng `size="lg"`, nút icon dùng `icon-lg`, và chừa khoảng cách giữa các đích chạm. Ô `input` đã có sẵn `text-base md:text-sm` — **đừng bỏ `text-base`**: chữ dưới 16px làm Safari iOS **tự phóng to trang** khi chạm vào ô nhập.
