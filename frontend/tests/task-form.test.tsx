@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-import { TaskForm } from '../src/TaskForm.js'
+import { TaskForm } from '../src/TaskForm'
 
 test('task form renders the complete edit surface with existing values', () => {
   const html = renderToStaticMarkup(
@@ -23,8 +23,8 @@ test('task form renders the complete edit surface with existing values', () => {
 
   assert.match(html, /Chuẩn bị họp/)
   assert.match(html, /Mang tài liệu/)
-  assert.match(html, /P1 — cao/)
-  assert.match(html, /checked=""/)
+  assert.match(html, /data-selected-priority="p1">P1/)
+  assert.match(html, /data-state="checked"/)
   assert.match(html, /Lưu thay đổi/)
   assert.match(html, /Huỷ/)
 })

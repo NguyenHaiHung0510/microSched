@@ -77,6 +77,11 @@
      đứng SAU trong CSS đã build nên đè lên (đo: byte 21151 vs 2005, `rounded-lg`
      ra 16px). Kiểm lại bằng:
        grep -bo "\-\-radius-lg:[^;]*" dist/assets/*.css   → giá trị của ta phải đứng sau */
+  /* shadcn khai thang bo góc theo chiều ngược lại: một `--radius` gốc rồi suy ra
+     sm/md/lg. Ta khai thẳng từng bậc, nên component nào CLI sinh ra mà đọc
+     `var(--radius)` trần sẽ ra giá trị RỖNG — không lỗi, chỉ âm thầm rơi về mặc
+     định của thư viện (đã gặp ở `sonner.tsx`). Giữ một alias để bịt đường đó. */
+  --radius:     16px;
   --radius-sm:   8px;
   --radius-md:  12px;
   --radius-lg:  16px;

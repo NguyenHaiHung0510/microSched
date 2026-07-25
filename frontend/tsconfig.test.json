@@ -2,18 +2,23 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "outDir": "./dist/test",
-    "rootDir": ".",
+    "module": "ESNext",
+    /* `bundler`, không phải `NodeNext`: test giờ chạy qua vitest, tức qua chính
+       phép phân giải của Vite. NodeNext bắt mọi import phải có đuôi `.js` tường
+       minh, mà component shadcn sinh ra luôn viết `@/lib/utils` không đuôi —
+       bộ chạy cũ (tsc emit ra JS rồi `node --test`) vì thế KHÔNG BAO GIỜ nạp
+       nổi một component shadcn: alias `@/` không sống sót qua bước emit. */
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node", "vitest/globals"]
   },
-  "include": [
-    "src/TaskForm.tsx",
-    "src/task-ui.ts",
-    "tests/task-form.test.tsx"
-  ]
+  "include": ["tests"]
 }

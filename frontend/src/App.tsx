@@ -1,7 +1,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { LogIn, LogOut, RefreshCw } from 'lucide-react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { TasksScreen } from '@/TasksScreen'
 
 type SessionResponse = {
@@ -20,33 +22,45 @@ async function postLogout(): Promise<void> {
   })
 }
 
-function greeting(): string {
-  const hour = new Date().getHours()
-
-  if (hour < 11) return 'Chào buổi sáng'
-  if (hour < 14) return 'Chào buổi trưa'
-  if (hour < 18) return 'Chào buổi chiều'
-  return 'Chào buổi tối'
+function todayLabel(): string {
+  return new Intl.DateTimeFormat('vi-VN', {
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+  }).format(new Date())
 }
 
 function LoginScreen() {
   return (
-    <section className="space-y-4 rounded-lg border bg-white p-6 shadow-sm">
-      <div className="space-y-1">
-        <h2 className="font-medium">Cần đăng nhập</h2>
-        <p className="text-sm text-neutral-600">
-          microSched là dự án cá nhân, chỉ mở cho tài khoản của chủ sở hữu.
+    <div className="mx-auto max-w-lg space-y-5 pt-10 sm:pt-20">
+      <div className="space-y-1 text-center">
+        <h1 className="text-2xl font-extrabold tracking-tight text-primary">
+          microSched
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Lên việc, chia checklist, hoàn thành từng bước.
         </p>
       </div>
-      {/* A real link, not fetch: the OAuth handshake needs a full page navigation. */}
-      <Button asChild>
-        <a href="/auth/login">Đăng nhập bằng Google</a>
-      </Button>
-    </section>
+      <Card className="gap-5 rounded-lg bg-card p-6 shadow-2 ring-0">
+        <div className="space-y-1">
+          <h2 className="text-lg font-bold">Cần đăng nhập</h2>
+          <p className="text-sm text-muted-foreground">
+            microSched là dự án cá nhân, chỉ mở cho tài khoản của chủ sở hữu.
+          </p>
+        </div>
+        {/* A real link, not fetch: the OAuth handshake needs a full page navigation. */}
+        <Button asChild size="lg">
+          <a href="/auth/login">
+            <LogIn data-icon="inline-start" />
+            Đăng nhập bằng Google
+          </a>
+        </Button>
+      </Card>
+    </div>
   )
 }
 
-function SignedIn({ session }: { session: SessionResponse }) {
+function SignedIn() {
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -57,22 +71,31 @@ function SignedIn({ session }: { session: SessionResponse }) {
   })
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-medium">{greeting()} 👋</h2>
-          <p className="mt-1 text-sm text-neutral-600">{session.email}</p>
+    <div className="overflow-hidden rounded-xl bg-background shadow-3">
+      <header className="flex items-center justify-between gap-4 px-5 pt-5 pb-2 sm:px-6">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="text-xl font-extrabold tracking-tight text-primary">
+            microSched
+          </h1>
+          <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
         </div>
         <Button
-          variant="outline"
-          size="sm"
+          variant="secondary"
+          size="icon-lg"
+          aria-label="Đăng xuất"
           disabled={logout.isPending}
           onClick={() => logout.mutate()}
         >
-          {logout.isPending ? 'Đang thoát…' : 'Đăng xuất'}
+          <LogOut />
         </Button>
       </header>
-      <TasksScreen />
+
+      <div className="px-5 pt-3 pb-6 sm:px-6">
+        <TasksScreen />
+        {logout.isError ? (
+          <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -82,37 +105,54 @@ function App() {
     queryKey: ['session'],
     queryFn: fetchSession,
     // Being logged out is an answer, not a failure worth retrying.
-    retry: (failureCount, error) => !(error instanceof UnauthenticatedError) && failureCount < 2,
+    retry: (failureCount, error) =>
+      !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
 
   const loggedOut = session.isError && session.error instanceof UnauthenticatedError
 
   return (
-    <main className="mx-auto min-h-screen max-w-3xl space-y-6 px-4 py-10 sm:px-6">
-      <div className="space-y-2">
-        <p className="text-sm font-medium text-neutral-500">Task workspace</p>
-        <h1 className="text-4xl font-semibold tracking-tight">microSched</h1>
-        <p className="text-neutral-600">Lên việc, chia checklist, hoàn thành từng bước.</p>
-      </div>
-
-      <div aria-live="polite">
+    <main className="min-h-screen bg-muted px-4 py-6 sm:px-6 sm:py-8">
+      {/* `aria-live` từng nằm trên chính div này. Nó bọc cả app, nên mọi thay đổi
+          bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
+          Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}
+      <div className="mx-auto max-w-5xl">
         {session.isPending ? (
-          <p className="text-sm text-neutral-600">Đang kiểm tra phiên đăng nhập…</p>
+          <Card
+            className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
+            role="status"
+          >
+            <h1 className="text-2xl font-extrabold tracking-tight text-primary">
+              microSched
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Đang kiểm tra phiên đăng nhập…
+            </p>
+          </Card>
         ) : null}
 
         {loggedOut ? <LoginScreen /> : null}
 
         {session.isError && !loggedOut ? (
-          <div className="flex items-center gap-3">
-            <p className="text-sm text-red-700">Không kết nối được API.</p>
-            <Button variant="outline" size="sm" onClick={() => void session.refetch()}>
+          <Card
+            className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
+            role="alert"
+          >
+            <div className="space-y-1">
+              <h1 className="text-2xl font-extrabold tracking-tight text-primary">
+                microSched
+              </h1>
+              <p className="text-sm text-bad">Không kết nối được API.</p>
+            </div>
+            <Button variant="outline" size="lg" onClick={() => void session.refetch()}>
+              <RefreshCw data-icon="inline-start" />
               Thử lại
             </Button>
-          </div>
+          </Card>
         ) : null}
 
         {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
-        {session.data && !loggedOut ? <SignedIn session={session.data} /> : null}
+        {session.data && !loggedOut ? <SignedIn /> : null}
       </div>
     </main>
   )
