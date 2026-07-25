@@ -268,7 +268,7 @@ function TaskCard({
             </div>
           </div>
 
-          <div className="flex shrink-0 flex-wrap justify-end gap-1">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
             <Button
               size="icon-lg"
               variant="ghost"
@@ -657,7 +657,7 @@ export function TasksScreen() {
             ref={quickInputRef}
             className="h-11 flex-1 rounded-lg bg-card px-4 shadow-1"
             aria-label="Thêm task nhanh"
-            placeholder="Thêm việc…  ↵ để lưu"
+            placeholder="Thêm việc rồi lưu…"
             value={quickTitle}
             onChange={(event) => setQuickTitle(event.target.value)}
           />
@@ -711,7 +711,7 @@ export function TasksScreen() {
           <h2 className="sr-only" id="task-list-heading">
             Danh sách task
           </h2>
-          <div className="flex flex-wrap gap-1" aria-label="Lọc task">
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Lọc task">
             {(Object.keys(filterLabels) as TaskFilter[]).map((value) => (
               <Button
                 className="rounded-full px-4"

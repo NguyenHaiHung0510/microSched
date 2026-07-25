@@ -113,9 +113,15 @@ function App() {
 
   return (
     <main className="min-h-screen bg-muted px-4 py-6 sm:px-6 sm:py-8">
-      <div className="mx-auto max-w-5xl" aria-live="polite">
+      {/* `aria-live` từng nằm trên chính div này. Nó bọc cả app, nên mọi thay đổi
+          bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
+          Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}
+      <div className="mx-auto max-w-5xl">
         {session.isPending ? (
-          <Card className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0">
+          <Card
+            className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
+            role="status"
+          >
             <h1 className="text-2xl font-extrabold tracking-tight text-primary">
               microSched
             </h1>
@@ -128,7 +134,10 @@ function App() {
         {loggedOut ? <LoginScreen /> : null}
 
         {session.isError && !loggedOut ? (
-          <Card className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0">
+          <Card
+            className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
+            role="alert"
+          >
             <div className="space-y-1">
               <h1 className="text-2xl font-extrabold tracking-tight text-primary">
                 microSched
