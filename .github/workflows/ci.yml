@@ -24,7 +24,9 @@ jobs:
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run pytest
+      # `-m "not pg"` keeps this job database-free and fast. The DB-backed tests run
+      # in Migration QA below, which already has a Postgres service migrated to head.
+      - run: uv run pytest -m "not pg"
 
   runtime-deps:
     # Bộ test chạy với nhóm `dev`, nên một thư viện chỉ có ở dev vẫn khiến test
@@ -118,3 +120,7 @@ jobs:
       - run: uv run alembic downgrade base
       - run: uv run alembic upgrade head
       - run: uv run python -m scripts.check_migration_drift
+      # DB-backed tests run here, reusing this job's migrated pgvector service instead
+      # of standing up a second Postgres in the backend job (spec §0.4, least
+      # duplication). The schema is at head from the step above.
+      - run: uv run pytest -m pg

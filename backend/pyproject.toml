@@ -36,3 +36,9 @@ select = ["E", "F", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# `pg` marks tests that need a live Postgres. The `backend` CI job runs `-m "not pg"`
+# (fast, no database); the `Migration QA` job, which already stands up a pgvector
+# service and migrates to head, runs `-m pg`. So each test runs in exactly one job.
+markers = [
+    "pg: DB-backed test; requires Postgres via NEON_MIGRATOR_URL (skipped otherwise)",
+]
