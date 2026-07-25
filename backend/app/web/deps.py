@@ -1,8 +1,10 @@
-"""Request-scoped guards shared by every protected route."""
+"""Request-scoped guards and transaction dependencies for protected routes."""
 
 import secrets
+from collections.abc import AsyncIterator
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_sessionmaker
 from app.core.sessions import SESSION_COOKIE_NAME
@@ -35,6 +37,24 @@ def get_session_store() -> SessionStore | None:
         return None
 
     return PostgresSessionStore(factory, get_settings().session_ttl_days)
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """Yield one transaction-scoped database session for the whole HTTP request."""
+    factory = get_sessionmaker()
+    if factory is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not configured",
+        )
+
+    async with factory() as db:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def require_session(
