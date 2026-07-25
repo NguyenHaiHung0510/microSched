@@ -14,7 +14,7 @@ Giao diện hỏng không phải vì người thi công kém, mà vì **repo lú
 Đọc `docs/ui-brief.md` toàn bộ. Tóm phần bắt buộc:
 
 - **Hướng B "hồng ấm"**, light mode. Không tự thêm dark mode.
-- **Token đã dựng xong** ở `frontend/src/index.css`. **Không sửa file đó** trong task này; nếu thấy thiếu token thì dừng và báo, đừng tự thêm màu.
+- **Token đã dựng xong** ở `frontend/src/index.css`. Được phép **thêm** token mà `shadcn add` đòi (ví dụ biến animation, `--sidebar-*`) — đó là điều kiện để CLI chạy. **Không được sửa hay xoá** token màu/bo góc/bóng đã có, và **không tự chế màu mới**: cần một sắc thái chưa có thì dừng và hỏi. Mọi token thêm vào phải liệt kê trong PR description.
 - 🔒 `--rose-500` là màu nhận diện nhưng **KHÔNG được mang chữ** (3,07:1). Mọi nền có chữ trắng dùng `--primary` (= rose-700, 5,78:1). Đừng "sửa cho tươi hơn" — con số đó là lý do nó tồn tại.
 - 🔒 **Không dùng `--n-400` cho chữ** (2,54:1). Chữ mờ nhất là `--muted-foreground`.
 - 🔒 **Không hardcode màu.** Không `text-neutral-500`, không `#hex`, không `oklch(...)` trong component. Mọi màu qua class Tailwind ánh xạ token (`bg-primary`, `text-muted-foreground`, `bg-brand-50`, `text-bad`, …).
@@ -54,7 +54,7 @@ Sáu cơ chế bắt buộc có (`ui-brief.md` §5):
 
 ## 3. KHÔNG được làm
 
-- **Không** sửa `frontend/src/index.css`, `components.json`, `vite.config.ts`, `index.html`.
+- **Không** sửa `components.json`, `vite.config.ts`, `index.html`. `index.css` chỉ được **thêm** token CLI đòi (xem §1), không sửa/xoá cái đang có.
 - **Không** đụng `backend/`, migration, hay bất kỳ file test backend nào.
 - **Không** đổi `api.ts` / `task-ui.ts` / hình dạng request-response.
 - **Không** thêm dark mode.
@@ -67,7 +67,8 @@ Sáu cơ chế bắt buộc có (`ui-brief.md` §5):
 1. `npm run lint` sạch.
 2. `npm run build` xanh.
 3. `npm test` — **9 test hiện có vẫn phải qua**. Nếu phải sửa test thì giải thích trong PR *vì sao hành vi đổi*, đừng sửa test cho vừa code.
-4. `grep -rE "#[0-9a-fA-F]{6}|oklch\(|text-neutral-|bg-neutral-|text-gray-|bg-gray-" frontend/src --include=*.tsx` → **không ra kết quả nào**. Đây là cách máy kiểm luật "không hardcode màu".
+4. `grep -rE "text-neutral-|bg-neutral-|text-gray-|bg-gray-|text-slate-|bg-slate-|oklch\(" frontend/src --include=*.tsx` → **không ra kết quả nào**. Đây là cách máy kiểm luật "không hardcode màu".
+   *(Cố ý không bắt `#hex`: thuộc tính `fill`/`stroke` của SVG nội tuyến có thể cần hex hợp lệ, chặn cứng sẽ đẩy người làm đi đường vòng. Hex trong `className` vẫn bị cấm bởi §1 — T1 đọc diff để kiểm.)*
 5. PR mở vào `develop`, `gh pr checks <PR>` **xanh toàn bộ** trước khi báo xong.
 
 ## 5. Báo cáo

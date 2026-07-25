@@ -44,8 +44,9 @@ Tiêu chí là **kỹ thuật, không phải gu**: rủi ro lớn nhất của f
 
 **Cách giao font — không được đổi tuỳ tiện:**
 - Tự host qua `@fontsource-variable/nunito`, **không** gọi Google Fonts: đây là PWA, font qua CDN thì mở offline sẽ rơi về font hệ thống.
-- Family thật là **`"Nunito Variable"`** (không phải `"Nunito"`), một file biến thiên phủ weight 200–1000.
+- Family thật là **`"Nunito Variable"`** (không phải `"Nunito"`). Là font biến thiên: **một file phủ trọn weight 200–1000**, nhưng **tách theo bộ ký tự** — mỗi subset là một `.woff2` riêng, không phải một file duy nhất cho cả font.
 - Mỗi subset có `unicode-range` riêng ⇒ trình duyệt chỉ tải `latin` + `vietnamese`.
+- Phải import **cả `wght-italic.css`**; thiếu nó thì `<em>`/italic ra chữ nghiêng **giả** do trình duyệt tự xiên.
 - ⚠️ **`globPatterns` mặc định của `vite-plugin-pwa` KHÔNG gồm `woff2`** ⇒ font không vào precache ⇒ offline vẫn mất font. Đã vá ở `vite.config.ts`, và cố ý **không** kê `svg`/`webmanifest` vì plugin đã tự thêm (kê lại là precache trùng — đã đo 10 mục / 9 địa chỉ). Kết quả cuối: **9 mục / 9 địa chỉ**, có 3 subset font, không có cyrillic.
 
 ## 4. Màu ✅ CHỐT
@@ -66,6 +67,11 @@ Token đầy đủ ở `frontend/src/index.css`. Ba quyết định có lý do, 
 | banner trễ hạn | **4,12:1** | 4,5 | ⇒ `--bad` đậm lại thành `#B44B3B` (4,58:1) |
 
 **Mắt không đo được tương phản** — bản vẽ trông ổn vẫn có thể trượt chuẩn. Mọi màu mới thêm về sau phải chạy lại phép đo này.
+
+**(d) Chỗ thứ năm, do phản biện khác-họ bắt được sau khi (c) đã "xong".** Viền focus đặt là `rose-400` = **2,55:1** trên nền — mà viền focus thuộc *non-text contrast* (WCAG 1.4.11), vẫn cần **3:1**. Đổi sang `rose-600` (3,90:1).
+> Đáng ghi vì nó là bài học chứ không phải một dòng sửa: (c) đã đo **chữ trên nền** rất kỹ rồi tuyên bố xong, nhưng **không đo thứ không phải chữ**. Một luật phát biểu theo một chiều thì chiều còn lại tự động được thả — cùng họ với bài học `note.title` ngày 23/07. **Nói to cả hai nửa.**
+
+**(e) `--popover` phải SÁNG.** Nó là nền của Select/Dropdown/Dialog trong shadcn, không phải nền tooltip. Tooltip nền tối có token riêng `--tooltip`. Gộp hai thứ này lại thì mọi menu thả xuống sẽ đen giữa giao diện sáng.
 
 ## 5. Cơ chế giữ từ app cũ ✅ CHỐT
 

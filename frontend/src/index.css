@@ -3,6 +3,9 @@
    nên trình duyệt chỉ tải phần latin + vietnamese. Tự host chứ không gọi Google
    Fonts: đây là PWA, font qua CDN thì mở offline sẽ rơi về font hệ thống. */
 @import "@fontsource-variable/nunito";
+/* Bản nghiêng phải import riêng — thiếu nó thì <em>/italic ra chữ nghiêng GIẢ
+   (trình duyệt tự xiên), không phải nét nghiêng thật của font. */
+@import "@fontsource-variable/nunito/wght-italic.css";
 
 /* ============================================================================
    microSched — design tokens.  Quyết định + lý do: docs/ui-brief.md
@@ -47,8 +50,12 @@
   --foreground:             var(--n-900);
   --card:                   var(--n-0);
   --card-foreground:        var(--n-900);
-  --popover:                var(--n-900);
-  --popover-foreground:     var(--n-100);
+  /* popover của shadcn là nền của Select/Dropdown/Dialog ⇒ phải SÁNG.
+     Tooltip nền tối là một thứ khác, có token riêng bên dưới — đừng gộp. */
+  --popover:                var(--n-0);
+  --popover-foreground:     var(--n-900);
+  --tooltip:                var(--n-900);
+  --tooltip-foreground:     var(--n-100);
   --primary:                var(--rose-700);
   --primary-foreground:     var(--n-0);
   --secondary:              var(--n-100);
@@ -59,11 +66,17 @@
   --accent-foreground:      var(--rose-700);
   --border:                 var(--n-200);
   --input:                  var(--n-200);
-  --ring:                   var(--rose-400);
+  /* rose-400 chỉ đạt 2,55:1 trên nền, mà viền focus là "non-text contrast"
+     cần 3:1 (WCAG 1.4.11). rose-600 = 3,90:1. Đừng làm nhạt lại cho "đẹp". */
+  --ring:                   var(--rose-600);
   --destructive:            var(--bad);
   --destructive-foreground: var(--n-0);
 
-  /* --- bo góc: hướng B mềm, nên thang bắt đầu cao hơn mặc định shadcn --- */
+  /* --- bo góc: hướng B mềm, nên thang bắt đầu cao hơn mặc định shadcn ---
+     Tailwind v4 cũng khai `--radius-*` trong theme mặc định của nó; khối này
+     đứng SAU trong CSS đã build nên đè lên (đo: byte 21151 vs 2005, `rounded-lg`
+     ra 16px). Kiểm lại bằng:
+       grep -bo "\-\-radius-lg:[^;]*" dist/assets/*.css   → giá trị của ta phải đứng sau */
   --radius-sm:   8px;
   --radius-md:  12px;
   --radius-lg:  16px;
@@ -71,10 +84,12 @@
   --radius-full: 999px;
 
   /* --- bóng ngả ấm, không phải bóng xám trung tính --- */
-  --shadow-1:    0 1px 3px -1px rgb(60 30 40 / 0.10);
-  --shadow-2:    0 2px 10px -3px rgb(60 30 40 / 0.13);
-  --shadow-3:    0 8px 24px -8px rgb(60 30 40 / 0.22);
-  --shadow-rose: 0 3px 14px -3px rgb(200 80 120 / 0.24);
+  /* tên nguồn cố ý KHÁC `--shadow-*`: `--shadow-*` là namespace của Tailwind,
+     trùng tên sẽ thành tự tham chiếu vòng và không sinh ra gì cả. */
+  --sh-1:    0 1px 3px -1px rgb(60 30 40 / 0.10);
+  --sh-2:    0 2px 10px -3px rgb(60 30 40 / 0.13);
+  --sh-3:    0 8px 24px -8px rgb(60 30 40 / 0.22);
+  --sh-rose: 0 3px 14px -3px rgb(200 80 120 / 0.24);
 }
 
 @theme inline {
@@ -86,6 +101,8 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-tooltip: var(--tooltip);
+  --color-tooltip-foreground: var(--tooltip-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -110,6 +127,13 @@
   --color-brand-700: var(--rose-700);
   --color-brand-800: var(--rose-800);
   --color-brand-900: var(--rose-900);
+
+  /* Không khai ở đây thì `shadow-2`/`shadow-rose` không sinh ra utility nào,
+     component sẽ phải viết `shadow-[var(--shadow-2)]` — dễ trôi thành hardcode. */
+  --shadow-1: var(--sh-1);
+  --shadow-2: var(--sh-2);
+  --shadow-3: var(--sh-3);
+  --shadow-rose: var(--sh-rose);
 
   --color-ok: var(--ok);
   --color-ok-bg: var(--ok-bg);
