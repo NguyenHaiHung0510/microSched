@@ -3,5 +3,15 @@
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }
-  ]
+  ],
+  // Bản dịch thật đọc `tsconfig.app.json` (file này chỉ là solution file, `files: []`).
+  // Nhưng shadcn CLI đọc alias từ ĐÚNG `tsconfig.json` này: không thấy `paths` thì
+  // nó KHÔNG báo lỗi — nó tạo một thư mục tên `@/` ở gốc frontend rồi báo
+  // "✔ Created 9 files". Khai lặp ở đây để `shadcn add` sinh file vào `src/`.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
 }
