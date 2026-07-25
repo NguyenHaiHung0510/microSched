@@ -123,3 +123,19 @@ Bốn thứ dưới đây đều **không làm CI đỏ**, nên phải kiểm b�
 **(d) Token `--radius` trần không tồn tại.** shadcn khai một `--radius` gốc rồi suy ra sm/md/lg; ta khai thẳng từng bậc. Component nào đọc `var(--radius)` (đã gặp ở `sonner.tsx`) sẽ ra **rỗng** — không lỗi, chỉ âm thầm rơi về mặc định của thư viện. Đã thêm alias `--radius: 16px`. **Đây là token duy nhất được thêm ở 008e.**
 
 **Ghi chú kích thước chạm:** thang `radix-nova` khá nhỏ — nút mặc định `h-8` (32px), lớn nhất `h-9` (36px). 32px **đạt** WCAG 2.2 SC 2.5.8 mức AA (24×24) nhưng **dưới** khuyến nghị 44px của Apple. ⇒ trên màn hình chạm, hành động chính dùng `size="lg"`, nút icon dùng `icon-lg`, và chừa khoảng cách giữa các đích chạm. Ô `input` đã có sẵn `text-base md:text-sm` — **đừng bỏ `text-base`**: chữ dưới 16px làm Safari iOS **tự phóng to trang** khi chạm vào ô nhập.
+
+## 9. 📝 Bổ chính 2026-07-25 (sau khi 008e lên prod)
+
+Bốn mục dưới đây là **sửa/nói rõ luật đã có**, không phải quyết định mới. Đặt ở đây vì 009–012 đọc file này làm khuôn.
+
+**(a) Luật "không có tương tác nào chỉ sống bằng hover" (§6.6) — nói rõ cả hai nửa.** Phản biện khác-họ đọc §6.6 rồi kết luận tooltip trên thẻ task là vi phạm, vì nó `md:block` + `group-hover` + `aria-hidden`. **Không phải vi phạm**, nhưng luật viết chưa kín nên đọc kiểu nào cũng có lý. Phát biểu đầy đủ:
+
+> Hover được phép làm **lối tắt** cho desktop, **với điều kiện** mọi thông tin và mọi hành động trong đó còn một đường **chạm** khác đạt tới được. Hover là đường duy nhất tới một thứ ⇒ cấm.
+
+Ở 008 điều kiện đó thoả: nội dung tooltip đều lấy lại được bằng cách chạm mở Dialog.
+
+**(b) Ghim xuyên qua bộ lọc — đúng luật nhưng nhìn như bug, sẽ đổi.** §5 ghi ghim "luôn xếp đầu, bất chấp đang sắp xếp kiểu gì", và 008 hiện thực đúng nghĩa đen: một task **đã xong** mà đang ghim vẫn nằm **đầu danh sách "Đang mở"** (quan sát được trên prod 25/07). Chủ ý sửa: **ghim nổi lên đầu TRONG phạm vi bộ lọc, không xuyên qua bộ lọc.** Chờ slice đưa `pinned` xuống DB làm luôn.
+
+**(c) 🔒 Mọi lời gọi mạng phải có hạn — không có ngoại lệ.** `apiRequest` từng gọi `fetch` không timeout: request treo ⇒ promise không settle ⇒ mutation kẹt `isPending` **vĩnh viễn** ⇒ nút đứng ở "Đang thêm…", không lỗi, không retry, không đường thoát ngoài tải lại trang. Đã vá bằng `AbortSignal.timeout(20s)` + `TimeoutError`. Kèm một luật con dễ quên: **`onSuccess` của mutation đừng `await invalidateQueries`** — React Query giữ mutation ở `isPending` cho tới khi `onSuccess` resolve, nên await ở đó làm nút vẫn báo "đang lưu" *dù đã lưu xong*, và treo theo nếu lượt tải lại treo. Con số 20 giây neo vào thời gian đánh thức máy (~8s, hệ quả scale-to-zero): **đổi hạ tầng thì phải xem lại con số này.**
+
+**(d) 🔒 Nghiệm thu giao diện phải dùng dữ liệu ác ý, không dùng dữ liệu gọn gàng.** `Item 1`…`Item 5` thì layout nào cũng sống. Bộ tối thiểu phải thử ở mọi slice: chuỗi ~70 ký tự **không có dấu cách** (không có chỗ ngắt dòng), tiếng Việt ~150 ký tự dấu dày (kiểm dấu `ế ữ ộ ằ` có bị cắt theo chiều cao dòng), CHỮ HOA CÓ DẤU, emoji lẫn chữ, đúng 1 ký tự, thừa khoảng trắng hai đầu, và chuỗi **toàn khoảng trắng** (phải bị từ chối). Câu hỏi khi nghiệm thu là *"nó vỡ ở đâu"*, không phải *"nó có chạy không"* — và câu trả lời phải nói rõ: xuống dòng / cắt bằng dấu ba chấm / tràn ra ngoài thẻ / đẩy nút hành động ra khỏi màn / nuốt mất chữ.
