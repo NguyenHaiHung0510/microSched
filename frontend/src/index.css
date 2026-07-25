@@ -1,36 +1,150 @@
 @import "tailwindcss";
+/* Nunito Variable: một file phủ weight 200–1000, mỗi subset có unicode-range riêng
+   nên trình duyệt chỉ tải phần latin + vietnamese. Tự host chứ không gọi Google
+   Fonts: đây là PWA, font qua CDN thì mở offline sẽ rơi về font hệ thống. */
+@import "@fontsource-variable/nunito";
+/* Bản nghiêng phải import riêng — thiếu nó thì <em>/italic ra chữ nghiêng GIẢ
+   (trình duyệt tự xiên), không phải nét nghiêng thật của font. */
+@import "@fontsource-variable/nunito/wght-italic.css";
+
+/* ============================================================================
+   microSched — design tokens.  Quyết định + lý do: docs/ui-brief.md
+   Hướng B "hồng ấm", light-only.  ĐỪNG hardcode màu trong component: mọi màu
+   phải đi qua token ở đây, nếu không 009–012 sẽ trôi mỗi màn một kiểu.
+   ========================================================================= */
+:root {
+  /* --- thang thương hiệu (hồng ấm) --- */
+  --rose-50:  #fef2f5;
+  --rose-100: #fde4ea;
+  --rose-200: #fbcbd8;
+  --rose-300: #f7a3bb;
+  --rose-400: #f0759b;
+  --rose-500: #e8698c; /* ★ màu nhận diện — CHỈ cho mảng KHÔNG mang chữ (3,07:1) */
+  --rose-600: #d44b74;
+  --rose-700: #b13a5e; /* nền của mọi thứ mang chữ trắng (5,78:1) */
+  --rose-800: #8f3050;
+  --rose-900: #762a45;
+
+  /* --- trung tính ngả ấm: xám lạnh đặt cạnh hồng ấm sẽ trông bẩn --- */
+  --n-0:   #ffffff;
+  --n-25:  #fdfbfb;
+  --n-50:  #faf7f7;
+  --n-100: #f3eeef;
+  --n-200: #e8dedf;
+  --n-300: #d6c8ca;
+  --n-400: #ab999d; /* ⚠ KHÔNG dùng cho chữ (2,54:1) — chỉ viền, icon trang trí */
+  --n-500: #7d6b6f; /* ngưỡng thấp nhất còn đọc được (4,69:1) */
+  --n-700: #4a3c40;
+  --n-900: #241d20;
+
+  /* --- ngữ nghĩa: đã hạ độ tươi để không cãi nhau với hồng --- */
+  --ok:      #2f8f6b;
+  --ok-bg:   #e6f4ee;
+  --warn:    #b6761d;
+  --warn-bg: #fdf1de;
+  --bad:     #b44b3b; /* đậm hơn bản vẽ để đạt 4,58:1 trên --bad-bg */
+  --bad-bg:  #fdeceb;
+
+  /* --- hợp đồng token của shadcn: component đang chạy đọc đúng các tên này --- */
+  --background:             var(--n-50);
+  --foreground:             var(--n-900);
+  --card:                   var(--n-0);
+  --card-foreground:        var(--n-900);
+  /* popover của shadcn là nền của Select/Dropdown/Dialog ⇒ phải SÁNG.
+     Tooltip nền tối là một thứ khác, có token riêng bên dưới — đừng gộp. */
+  --popover:                var(--n-0);
+  --popover-foreground:     var(--n-900);
+  --tooltip:                var(--n-900);
+  --tooltip-foreground:     var(--n-100);
+  --primary:                var(--rose-700);
+  --primary-foreground:     var(--n-0);
+  --secondary:              var(--n-100);
+  --secondary-foreground:   var(--n-700);
+  --muted:                  var(--n-100);
+  --muted-foreground:       var(--n-500);
+  --accent:                 var(--rose-100);
+  --accent-foreground:      var(--rose-700);
+  --border:                 var(--n-200);
+  --input:                  var(--n-200);
+  /* rose-400 chỉ đạt 2,55:1 trên nền, mà viền focus là "non-text contrast"
+     cần 3:1 (WCAG 1.4.11). rose-600 = 3,90:1. Đừng làm nhạt lại cho "đẹp". */
+  --ring:                   var(--rose-600);
+  --destructive:            var(--bad);
+  --destructive-foreground: var(--n-0);
+
+  /* --- bo góc: hướng B mềm, nên thang bắt đầu cao hơn mặc định shadcn ---
+     Tailwind v4 cũng khai `--radius-*` trong theme mặc định của nó; khối này
+     đứng SAU trong CSS đã build nên đè lên (đo: byte 21151 vs 2005, `rounded-lg`
+     ra 16px). Kiểm lại bằng:
+       grep -bo "\-\-radius-lg:[^;]*" dist/assets/*.css   → giá trị của ta phải đứng sau */
+  --radius-sm:   8px;
+  --radius-md:  12px;
+  --radius-lg:  16px;
+  --radius-xl:  22px;
+  --radius-full: 999px;
+
+  /* --- bóng ngả ấm, không phải bóng xám trung tính --- */
+  /* tên nguồn cố ý KHÁC `--shadow-*`: `--shadow-*` là namespace của Tailwind,
+     trùng tên sẽ thành tự tham chiếu vòng và không sinh ra gì cả. */
+  --sh-1:    0 1px 3px -1px rgb(60 30 40 / 0.10);
+  --sh-2:    0 2px 10px -3px rgb(60 30 40 / 0.13);
+  --sh-3:    0 8px 24px -8px rgb(60 30 40 / 0.22);
+  --sh-rose: 0 3px 14px -3px rgb(200 80 120 / 0.24);
+}
 
 @theme inline {
+  --font-sans: "Nunito Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-tooltip: var(--tooltip);
+  --color-tooltip-foreground: var(--tooltip-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
-  --color-input: var(--input);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
   --color-border: var(--border);
+  --color-input: var(--input);
   --color-ring: var(--ring);
   --color-destructive: var(--destructive);
-}
+  --color-destructive-foreground: var(--destructive-foreground);
 
-:root {
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.94 0 0);
-  --input: oklch(0.92 0 0);
-  --border: oklch(0.92 0 0);
-  --ring: oklch(0.708 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --radius-md: 0.375rem;
+  --color-brand-50:  var(--rose-50);
+  --color-brand-100: var(--rose-100);
+  --color-brand-200: var(--rose-200);
+  --color-brand-300: var(--rose-300);
+  --color-brand-400: var(--rose-400);
+  --color-brand-500: var(--rose-500);
+  --color-brand-600: var(--rose-600);
+  --color-brand-700: var(--rose-700);
+  --color-brand-800: var(--rose-800);
+  --color-brand-900: var(--rose-900);
+
+  /* Không khai ở đây thì `shadow-2`/`shadow-rose` không sinh ra utility nào,
+     component sẽ phải viết `shadow-[var(--shadow-2)]` — dễ trôi thành hardcode. */
+  --shadow-1: var(--sh-1);
+  --shadow-2: var(--sh-2);
+  --shadow-3: var(--sh-3);
+  --shadow-rose: var(--sh-rose);
+
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
 }
 
 * {
-  border-color: var(--input);
+  border-color: var(--border);
 }
 
 body {
@@ -39,5 +153,6 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }

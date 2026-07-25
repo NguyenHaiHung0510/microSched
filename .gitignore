@@ -194,3 +194,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 /web_check
+
+# Phan tich chua du lieu that cua app cu - CHI LOCAL, khong len origin.
+# Dung mau **/ de luat khong chet khi thu muc bi doi cho (bai hoc 23/07).
+**/_local/
