@@ -27,9 +27,9 @@ type InitialTask = {
 }
 
 const priorityLabels: Record<TaskPriority, string> = {
-  p1: 'P1 — cao',
-  p2: 'P2 — vừa',
-  p3: 'P3 — thấp',
+  p1: 'P1',
+  p2: 'P2',
+  p3: 'P3',
 }
 
 function dueForInput(value: string | null): string {

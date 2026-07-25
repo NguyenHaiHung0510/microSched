@@ -66,9 +66,9 @@ type CreateSource = 'quick' | 'detail'
 const PINNED_STORAGE_KEY = 'microsched:pinned-task-ids'
 
 const priorityLabels: Record<TaskPriority, string> = {
-  p1: 'Gấp',
-  p2: 'Vừa',
-  p3: 'Thấp',
+  p1: 'P1',
+  p2: 'P2',
+  p3: 'P3',
 }
 
 const filterLabels: Record<TaskFilter, string> = {
