@@ -3,7 +3,13 @@
 This file is written RED on purpose. ``app.domain.tasks`` does not exist yet; Phase 0
 (Agent-Opus) ships only the DB invariant, and Phase 1 (Codex) makes these pass. Each
 test therefore imports the module lazily, inside the test body, and the whole module
-is marked ``xfail(strict=True)``:
+is marked ``xfail(raises=ImportError, strict=True)``.
+
+``raises=ImportError`` is load-bearing, not decoration: a bare ``xfail`` absorbs ANY
+exception as "expected", so a broken DSN, a typo in a helper, or a half-built store
+that crashes would all be swallowed into a green CI run - the contract would rot
+silently while reporting success. Pinning the exception means only "the module is
+still missing" counts as expected; every other failure stays red.
 
   * Phase 0 - the import raises, every test is an expected failure (xfailed), the CI
     gate stays green while the contract is provably unmet.
@@ -56,6 +62,7 @@ from app.domain.models import AuthSession
 pytestmark = [
     pytest.mark.pg,
     pytest.mark.xfail(
+        raises=ImportError,
         reason="Phase 1 (Codex): implement app/domain/tasks.py, then DELETE this marker",
         strict=True,
     ),
