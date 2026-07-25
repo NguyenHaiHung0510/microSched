@@ -1,12 +1,22 @@
 import { type FormEvent, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import {
   canSubmitTask,
   type TaskFormState,
   type TaskPayload,
   type TaskPriority,
   taskPayload,
-} from './task-ui.js'
+} from '@/task-ui'
 
 type InitialTask = {
   title: string
@@ -16,20 +26,21 @@ type InitialTask = {
   is_private: boolean
 }
 
-const inputClass =
-  'h-9 w-full rounded-md border bg-white px-3 text-sm outline-none focus:border-neutral-500'
-const textareaClass =
-  'min-h-20 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500'
-const primaryButtonClass =
-  'h-8 rounded-lg bg-neutral-900 px-2.5 text-sm font-medium text-white disabled:pointer-events-none disabled:opacity-50'
-const outlineButtonClass =
-  'h-8 rounded-lg border bg-white px-2.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50'
+const priorityLabels: Record<TaskPriority, string> = {
+  p1: 'P1 — cao',
+  p2: 'P2 — vừa',
+  p3: 'P3 — thấp',
+}
 
 function dueForInput(value: string | null): string {
   if (!value) return ''
   const date = new Date(value)
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
   return local.toISOString().slice(0, 16)
+}
+
+function selectedPriorityLabel(priority: TaskPriority | ''): string {
+  return priority ? priorityLabels[priority] : 'Không đặt'
 }
 
 export function TaskForm({
@@ -64,69 +75,82 @@ export function TaskForm({
   }
 
   return (
-    <form className="space-y-3" onSubmit={submit}>
-      <label className="block space-y-1 text-sm">
+    <form className="space-y-4" onSubmit={submit}>
+      <label className="block space-y-1.5 text-sm font-semibold">
         <span>Tiêu đề</span>
-        <input
-          className={inputClass}
+        <Input
+          className="h-10 bg-card"
           value={title}
           minLength={1}
           required
           onChange={(event) => setTitle(event.target.value)}
         />
       </label>
-      <label className="block space-y-1 text-sm">
+
+      <label className="block space-y-1.5 text-sm font-semibold">
         <span>Nội dung</span>
-        <textarea
-          className={textareaClass}
+        <Textarea
+          className="min-h-24 bg-card font-normal"
           value={body}
           onChange={(event) => setBody(event.target.value)}
         />
       </label>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block space-y-1 text-sm">
-          <span>Ưu tiên</span>
-          <select
-            className={inputClass}
-            value={priority}
-            onChange={(event) => setPriority(event.target.value as TaskPriority | '')}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <span className="text-sm font-semibold">Ưu tiên</span>
+          <Select
+            value={priority || 'none'}
+            onValueChange={(value) =>
+              setPriority(value === 'none' ? '' : (value as TaskPriority))
+            }
           >
-            <option value="">Không đặt</option>
-            <option value="p1">P1 — cao</option>
-            <option value="p2">P2 — vừa</option>
-            <option value="p3">P3 — thấp</option>
-          </select>
-        </label>
-        <label className="block space-y-1 text-sm">
+            <SelectTrigger className="h-10 w-full bg-card" aria-label="Ưu tiên">
+              <span data-selected-priority={priority || 'none'}>
+                {selectedPriorityLabel(priority)}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Không đặt</SelectItem>
+              <SelectItem value="p1">{priorityLabels.p1}</SelectItem>
+              <SelectItem value="p2">{priorityLabels.p2}</SelectItem>
+              <SelectItem value="p3">{priorityLabels.p3}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <label className="block space-y-1.5 text-sm font-semibold">
           <span>Hạn</span>
-          <input
-            className={inputClass}
+          <Input
+            className="h-10 bg-card"
             type="datetime-local"
             value={dueAt}
             onChange={(event) => setDueAt(event.target.value)}
           />
         </label>
       </div>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
+
+      <label className="flex min-h-9 items-center gap-3 text-sm font-semibold">
+        <Checkbox
+          className="size-5 rounded-md"
           checked={isPrivate}
-          onChange={(event) => setIsPrivate(event.target.checked)}
+          onCheckedChange={(checked) => setIsPrivate(checked === true)}
         />
-        Riêng tư
+        <span>Riêng tư</span>
       </label>
-      <div className="flex gap-2">
-        <button
-          className={primaryButtonClass}
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button
+          size="lg"
           type="submit"
           disabled={!canSubmitTask(title, pending)}
         >
           {pending ? 'Đang lưu…' : submitLabel}
-        </button>
+        </Button>
         {onCancel ? (
-          <button className={outlineButtonClass} type="button" onClick={onCancel}>
+          <Button size="lg" variant="outline" type="button" onClick={onCancel}>
             Huỷ
-          </button>
+          </Button>
         ) : null}
       </div>
     </form>
