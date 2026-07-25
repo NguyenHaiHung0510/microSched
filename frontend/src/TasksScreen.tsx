@@ -227,7 +227,10 @@ function TaskCard({
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              {pinned ? <Pin className="size-4 text-brand-500" aria-hidden="true" /> : null}
+              {/* rose-500 trên nền thẻ ghim (rose-50) chỉ đạt 2,82:1, dưới ngưỡng
+                  3:1 của non-text contrast. Dùng `--primary` (rose-700, 5,29:1)
+                  — vẫn là màu nhận diện, chỉ đậm hơn. */}
+              {pinned ? <Pin className="size-4 text-primary" aria-hidden="true" /> : null}
               <Button
                 className={[
                   'h-auto min-w-0 justify-start whitespace-normal p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
