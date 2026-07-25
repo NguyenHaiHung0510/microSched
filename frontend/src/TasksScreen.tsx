@@ -18,7 +18,7 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
+import { ApiError, apiRequest, TimeoutError, UnauthenticatedError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -79,6 +79,7 @@ const filterLabels: Record<TaskFilter, string> = {
 
 function errorMessage(error: unknown): string {
   if (error instanceof UnauthenticatedError) return 'Phiên đã hết hạn. Tải lại để đăng nhập.'
+  if (error instanceof TimeoutError) return error.message
   if (error instanceof ApiError) return error.message
   return 'Không kết nối được API.'
 }
@@ -144,24 +145,28 @@ function TaskCard({
   const [expanded, setExpanded] = useState(false)
   const [newItem, setNewItem] = useState('')
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+  /* `void`, không `await`: React Query giữ mutation ở `isPending` cho tới khi
+     `onSuccess` resolve, mà `invalidateQueries` thì đợi luôn cả lượt tải lại.
+     Await ở đây nghĩa là nút vẫn ghi "Đang thêm…" DÙ việc đã lưu xong — và nếu
+     lượt tải lại treo thì nút treo theo vĩnh viễn. Ghi xong là ghi xong. */
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
   const update = useMutation({
     mutationFn: (payload: Partial<TaskPayload> & { status?: TaskStatus }) =>
       apiRequest<Task>(`/api/tasks/${task.id}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
-    onSuccess: async () => {
+    onSuccess: () => {
       setEditing(false)
-      await refresh()
+      refresh()
     },
   })
   const remove = useMutation({
     mutationFn: () => apiRequest<void>(`/api/tasks/${task.id}`, { method: 'DELETE' }),
-    onSuccess: async () => {
+    onSuccess: () => {
       setDetailsOpen(false)
       onRemoved()
-      await refresh()
+      refresh()
     },
   })
   const addItem = useMutation({
@@ -170,9 +175,9 @@ function TaskCard({
         method: 'POST',
         body: JSON.stringify({ content, position: task.items.length }),
       }),
-    onSuccess: async () => {
+    onSuccess: () => {
       setNewItem('')
-      await refresh()
+      refresh()
     },
   })
   const changeItem = useMutation({
