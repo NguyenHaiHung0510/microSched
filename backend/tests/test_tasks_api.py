@@ -381,9 +381,7 @@ def test_restore_is_idempotent_and_preserves_items_and_privacy_gate(pg_dsn):
                 assert second_restore.status_code == 200
                 assert second_restore.content == restored.content
 
-                live = (
-                    await client.post("/api/tasks", json={"title": "Chưa từng xoá"})
-                ).json()
+                live = (await client.post("/api/tasks", json={"title": "Chưa từng xoá"})).json()
                 live_id = UUID(live["id"])
                 created_ids.append(live_id)
                 live_restore = await client.post(f"/api/tasks/{live_id}/restore")
@@ -422,10 +420,7 @@ def test_restore_is_idempotent_and_preserves_items_and_privacy_gate(pg_dsn):
                 async with maker() as inspection:
                     deleted_at = (
                         await inspection.execute(
-                            text(
-                                "SELECT deleted_at FROM microsched.task "
-                                "WHERE id = :task_id"
-                            ),
+                            text("SELECT deleted_at FROM microsched.task WHERE id = :task_id"),
                             {"task_id": private_id},
                         )
                     ).scalar_one()

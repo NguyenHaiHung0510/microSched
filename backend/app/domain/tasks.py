@@ -296,13 +296,11 @@ class TaskStore:
         await db.flush()
         return True
 
-    async def restore(
-        self, db: AsyncSession, auth: AuthSession, task_id: UUID
-    ) -> TaskRead | None:
+    async def restore(self, db: AsyncSession, auth: AuthSession, task_id: UUID) -> TaskRead | None:
         """Restore a privacy-visible task without exposing why a row is hidden."""
-        deleted_stmt = with_privacy_gate(
-            select(Task).where(Task.id == task_id), Task, auth
-        ).where(Task.deleted_at.is_not(None))
+        deleted_stmt = with_privacy_gate(select(Task).where(Task.id == task_id), Task, auth).where(
+            Task.deleted_at.is_not(None)
+        )
         deleted_result = await db.execute(deleted_stmt)
         task = deleted_result.scalar_one_or_none()
 

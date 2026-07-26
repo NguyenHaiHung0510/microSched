@@ -13,9 +13,7 @@ def can_see_private(session: AuthSession) -> bool:
     return session.private_until is not None and session.private_until > datetime.now(UTC)
 
 
-def with_privacy_gate(
-    stmt: Select[Any], model: Any, session: AuthSession
-) -> Select[Any]:
+def with_privacy_gate(stmt: Select[Any], model: Any, session: AuthSession) -> Select[Any]:
     """Restrict a query to rows visible through this session's private gate."""
     return stmt if can_see_private(session) else stmt.where(model.is_private.is_(False))
 

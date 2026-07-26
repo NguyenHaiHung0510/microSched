@@ -77,9 +77,7 @@ async def delete_task(task_id: UUID, db: Database, session: CurrentSession) -> R
 
 
 @router.post("/tasks/{task_id}/restore", response_model=dict[str, str])
-async def restore_task(
-    task_id: UUID, db: Database, session: CurrentSession
-) -> dict[str, str]:
+async def restore_task(task_id: UUID, db: Database, session: CurrentSession) -> dict[str, str]:
     """Restore one privacy-visible task without returning its content."""
     task = await store.restore(db, session, task_id)
     if task is None:
