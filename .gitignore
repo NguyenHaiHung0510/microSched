@@ -198,3 +198,16 @@ cython_debug/
 # Phan tich chua du lieu that cua app cu - CHI LOCAL, khong len origin.
 # Dung mau **/ de luat khong chet khi thu muc bi doi cho (bai hoc 23/07).
 **/_local/
+
+# 2026-07-26: output của gitleaks khi chạy TAY (`gitleaks detect --report-path ...`).
+# Vì sao phải chặn ở đây thay vì trông vào người chạy: mỗi finding trong report có
+# field `Secret` và `Match` = GIÁ TRỊ SECRET DẠNG CHỮ THẬT. Lần đo 26/07: một
+# `gl-report.json` bỏ lại trong working tree có 14 finding từ `backend/.env`
+# (Neon URL, master key, cron token) + 1 flyio-access-token — tức là một bản sao
+# GIẢI MÃ của `.env`, và nó KHÔNG được mẫu nào phủ nên đứng ở trạng thái
+# untracked-nhưng-không-ignored trên một repo PUBLIC. Cùng lớp lỗi với
+# harness-reports 23/07: gitleaks không chặn nó, vì bản thân nó không phải commit.
+gl-report.json
+gl-files.txt
+**/gitleaks-report*.json
+**/*gitleaks*report*.json
