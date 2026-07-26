@@ -17,7 +17,9 @@ Nhưng hoãn *hàng đợi* thì rẻ, hoãn *hai cái seam* thì đắt theo c�
 
 008 là **lát cắt đặt khuôn** — 009/010/011/012 chép hình dạng của nó. Không có hai seam này thì khuôn là *online-only*, và lúc outbox về là phải sửa **năm** lát cắt thay vì một.
 
-**Và nó vá một rủi ro đang sống, không phải phòng xa:** `008i` ghi nhận nguy cơ **tạo trùng task** khi request treo rồi người dùng tải lại trang. Timeout 20 giây chỉ làm việc treo *hiện ra*; nó không ngăn cú bấm thứ hai sinh ra bản ghi thứ hai. Ghi idempotent thì có.
+**📝 Sửa 2026-07-26 — đoạn này trước đây NÓI QUÁ, và phản biện spec bắt được.** Bản đầu viết: *"`008i` ghi nhận nguy cơ tạo trùng task khi request treo rồi người dùng tải lại trang… Ghi idempotent thì có [ngăn]"*. **Sai ở phạm vi.** Tải lại trang là **mất `id`** — nó chỉ sống trong bộ nhớ trang, mà outbox/IndexedDB đang cố ý hoãn. Nên task này **không** ngăn được ca "treo → reload → bấm lại".
+
+**Cái nó thật sự cho, phát biểu cho đúng:** ghi trở nên **idempotent theo `id`**, nên **mọi retry mang cùng `id` đều an toàn** — retry của `apiRequest`, cú bấm thứ hai trên cùng một trang chưa reload, và sau này là retry của outbox. Không có nó thì mỗi retry là một dòng trùng, và chính đó là thứ khoá cửa cho lát cắt outbox. Ca "reload rồi bấm lại" chỉ đóng được khi `id` được **lưu bền** — đó là slice outbox, không phải slice này.
 
 ## 1. Đã KHOÁ — chép ra code, không mở lại
 
@@ -45,6 +47,8 @@ Nhưng hoãn *hàng đợi* thì rẻ, hoãn *hai cái seam* thì đắt theo c�
   - `id` có giá trị **và chưa tồn tại** ⇒ tạo bản ghi với đúng id đó.
   - `id` có giá trị **và đã tồn tại** ⇒ **không tạo gì**, trả về bản ghi đang có, status `200` (không phải `201`).
 - 🔒 **Chống đua bằng DB, không bằng "kiểm rồi ghi".** Hai request cùng id tới cùng lúc thì `SELECT` rồi `INSERT` vẫn lọt cả hai. Dùng `INSERT … ON CONFLICT (id) DO NOTHING` rồi đọc lại, hoặc bắt `IntegrityError` rồi đọc lại. **Kiểm-rồi-ghi là sai**, và test §2.4 sẽ bắt.
+- 🔴 **`payload.items` PHẢI bị bỏ hoàn toàn khi dòng cha đã tồn tại.** *(Thêm 26/07 sau phản biện spec — đây là lỗ mà bản đầu để hở.)* `TaskStore.create` hiện chạy `db.add_all(items)` **vô điều kiện** sau khi flush dòng cha (`backend/app/domain/tasks.py:221-229`). Nếu chỉ làm dòng cha idempotent mà để nguyên khối items, thì gửi lại lần hai sẽ **đắp thêm checklist vào task cũ** — tức vẫn là "biến tạo thành sửa", chỉ đổi chỗ. ⇒ Phải biết **INSERT dòng cha có thật sự xảy ra hay không** (số dòng bị ảnh hưởng của `ON CONFLICT … DO NOTHING`, hoặc bắt `IntegrityError`), và **chỉ khi nó xảy ra** mới tạo items. Trùng id ⇒ đọc lại và trả về **items đang có**, không thêm dòng nào.
+- **Phân biệt "vô hình" với "không tồn tại".** Để trả `409` đúng như §2.3, `create` cần biết id **có tồn tại vật lý** hay không, mà cửa đọc thường (`readable()`) trả `None` cho cả hai ca. Cách làm: sau khi `INSERT … ON CONFLICT DO NOTHING` **không** tạo được dòng nào, đọc lại **hai lần** — một lần qua `readable()` (đọc được ⇒ `200`, trả bản ghi đang có), một lần bằng `select(Task.id).where(Task.id == …)` **không qua cửa** (chỉ lấy `id`, tuyệt đối không đọc trường nội dung nào ⇒ `409` thân rỗng). **Không** sửa `reading.py` để làm việc này.
 
 ### 2.3 🔒 Đây là chỗ task này có thể tạo lỗ bảo mật — đọc kỹ
 
@@ -52,7 +56,8 @@ Nhưng hoãn *hàng đợi* thì rẻ, hoãn *hai cái seam* thì đắt theo c�
 
 1. **Không được biến "tạo" thành "sửa".** Trùng id ⇒ trả về **bản ghi đang có nguyên vẹn**, tuyệt đối **không** ghi đè trường nào bằng payload mới. Nếu không, ai đó gửi `create` với id của một task đang có là sửa được nó qua cửa `POST`.
 2. **Trùng id với một task KHÔNG đọc được** (riêng tư lúc cổng khoá, hoặc đã soft-delete) ⇒ **`409 Conflict`, không kèm nội dung gì**. Không `200` (lộ sự tồn tại + nội dung), không `201` (sẽ nổ ở DB). Chỉ `409` trống.
-3. **Không tin định dạng.** Ép kiểu `UUID` của Pydantic là đủ; **không** ghép chuỗi id vào bất kỳ câu SQL nào bằng tay.
+3. **Không tin định dạng.** **Không** ghép chuỗi id vào bất kỳ câu SQL nào bằng tay — ép kiểu `UUID` của Pydantic lo phần cú pháp.
+4. 🔴 **Phải kiểm `version == 7`, và trả `422` nếu không.** *(Thêm 26/07 sau phản biện spec — bản đầu viết "ép kiểu Pydantic là đủ", và điều đó KHÔNG đủ.)* `UUID` của Pydantic nhận **mọi** version: v4, v1, kể cả nil `00000000-0000-0000-0000-000000000000`. Mà `schema-physical-brief.md` chọn **PK = UUIDv7 chính vì nó sắp được theo thời gian** — client gửi v4 là phá đúng tính chất đó, và không có gì báo lỗi. ⇒ validator trên `TaskCreate` từ chối id có `version != 7`. Test: gửi một UUIDv4 hợp lệ ⇒ `422`, **không** phải `201`.
 
 ### 2.4 Test — bắt buộc chứng minh BIẾT ĐỎ
 
@@ -62,6 +67,8 @@ Nhưng hoãn *hàng đợi* thì rẻ, hoãn *hai cái seam* thì đắt theo c�
 | Gửi id mới | `201`, bản ghi mang **đúng** id đã gửi |
 | Gửi lại y hệt | `200`, **vẫn đúng một dòng** trong DB |
 | 🔒 Gửi lại với payload KHÁC | `200`, và bản ghi **không đổi một trường nào** — đây là test chống-biến-thành-sửa |
+| 🔴 Gửi lại với `items` KHÁC | `200`, và **số dòng `task_item` không đổi** (đếm trong DB, đừng chỉ đọc response) — test cho luật ở §2.2 |
+| 🔴 Gửi id không phải v7 | Một UUIDv4 hợp lệ ⇒ `422`, **không** có dòng nào được tạo |
 | 🔒 Hai request song song cùng id | Đúng một dòng được tạo, cả hai bên đều nhận trả lời hợp lệ, **không** `500` |
 | 🔒 Trùng id với task riêng tư lúc cổng khoá | `409`, thân rỗng, và task gốc **không đổi** |
 | Trùng id với task đã soft-delete | `409`, và `deleted_at` **vẫn nguyên** |
@@ -70,11 +77,18 @@ Test "hai request song song" là test **chứng minh chống đua**: viết nó 
 
 ### 2.5 Frontend dùng seam đó
 
-Mutation `create` trong `frontend/src/TasksScreen.tsx` sinh `id` **trước** khi gọi API và gửi kèm trong body.
+> **📝 Viết lại 2026-07-26.** Bản đầu ghi *"đây là **dòng duy nhất** bạn được sửa trong `TasksScreen.tsx`"*. Phản biện spec chỉ ra ràng buộc đó **tự phá mục tiêu của task**: chỗ duy nhất sửa được khi đó là `mutationFn`, mà `mutationFn` chạy lại mỗi lần `mutate()` ⇒ **mỗi lần bấm lại sinh một `id` mới**, tức không còn idempotency nào. Phạm vi đúng là bốn chỗ dưới đây.
 
-⚠️ **Đây là dòng duy nhất bạn được sửa trong `TasksScreen.tsx`.** File đó đang có PR khác sống trong nó. Chạm thêm chỗ nào là conflict.
+`id` phải được sinh **tại thời điểm người dùng submit**, nằm trong payload, và **không được sinh lại** khi cùng payload đó được gửi lần nữa:
 
-Lợi ích thấy ngay, và nên nói trong PR: người dùng bấm "Thêm", request treo, họ tải lại trang rồi bấm lại — **không còn sinh ra task thứ hai**.
+1. `frontend/src/task-ui.ts` — thêm `id: string` vào type `TaskPayload`.
+2. `TasksScreen.tsx` · `quickAdd` (form thêm nhanh) — sinh `uuidv7()` và đính vào payload trước khi `create.mutate(...)`.
+3. `TasksScreen.tsx` · `onSubmit` của dialog tạo task — y như trên.
+4. `TasksScreen.tsx` · `mutationFn` của `create` — chỉ **truyền payload đã có `id`** vào body. **Tuyệt đối không** gọi `uuidv7()` ở đây.
+
+⚠️ **Chỉ sửa bốn chỗ trên trong `TasksScreen.tsx`; mọi handler khác giữ nguyên.** `008g` sẽ viết lại phần render danh sách của cùng file này ngay sau bạn — chạm rộng là conflict.
+
+**Nói đúng lợi ích trong PR, đừng nói quá** (xem §0): cùng một payload gửi lại — do `apiRequest` retry, do người dùng bấm lần hai khi request đầu còn treo — **chỉ tạo đúng một task**. Ca "tải lại trang rồi bấm lại" **vẫn tạo task thứ hai**, vì `id` chưa được lưu bền; đóng ca đó là việc của slice outbox.
 
 ## 3. KHÔNG được làm
 
@@ -83,8 +97,10 @@ Lợi ích thấy ngay, và nên nói trong PR: người dùng bấm "Thêm", re
 - **Không** dựng outbox / Dexie / IndexedDB / service-worker sync. Task này **chỉ** mở seam.
 - **Không** làm cho `note`/`tracker`/`entry` — chỉ `task`.
 - **Không** thêm bảng lưu idempotency key.
-- **Không** đụng `frontend/src/api.ts` (hợp đồng vừa vá ở `008i`), `reading.py`, `deleted_at`, `pinned`, `App.tsx`, hay `HomePage.tsx`.
-- **Không** sửa gì khác trong `TasksScreen.tsx` ngoài đúng chỗ ở §2.5.
+- **Không** đụng `frontend/src/api.ts` (hợp đồng vừa vá ở `008i`), `reading.py`, `deleted_at`, `pinned`, `App.tsx`, hay `HomePage.tsx`. *(`frontend/src/task-ui.ts` thì **được** — §2.5 mục 1 yêu cầu.)*
+- **Không** sửa gì khác trong `TasksScreen.tsx` ngoài **bốn chỗ** ở §2.5.
+- **Không** gọi `uuidv7()` bên trong `mutationFn` (xem §2.5).
+- **Không** tạo `task_item` khi dòng cha đã tồn tại (xem §2.2).
 - **Không** đổi tên required check trong CI.
 
 ## 4. Acceptance — kiểm chứng được
