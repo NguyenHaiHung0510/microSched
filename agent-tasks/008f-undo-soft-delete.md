@@ -32,10 +32,44 @@ async def restore(self, db, auth, task_id) -> TaskRead | None
 
 - Tìm dòng `task` theo `id`, **bỏ qua bộ lọc `deleted_at`** nhưng **giữ nguyên bộ lọc riêng tư** của `readable()`. Đừng viết một câu truy vấn trần bỏ cả hai — đó là chỗ rò rỉ.
 - Không tìm thấy, hoặc tìm thấy nhưng session không được đọc ⇒ trả `None`.
-- Tìm thấy và `deleted_at IS NULL` (chưa từng bị xoá) ⇒ **vẫn trả về task đó**, không lỗi. Khôi phục phải **idempotent**: người dùng bấm "Hoàn tác" hai lần, hoặc bấm sau khi đã hoàn tác ở tab khác, không được ăn lỗi.
-- Đặt `deleted_at = None`, commit, trả `TaskRead` **đã kèm `items`** (dùng lại đúng đường ráp mà `get()` đang dùng — đừng chép lại logic giải mã).
+- Tìm thấy và `deleted_at IS NULL` (chưa từng bị xoá) ⇒ **vẫn trả về thành công**, không lỗi. Khôi phục phải **idempotent**: người dùng bấm "Hoàn tác" hai lần, hoặc bấm sau khi đã hoàn tác ở tab khác, không được ăn lỗi. *(Có ý kiến phản biện đề xuất trả `404` cho ca này cho "nhất quán với bộ lọc". Cố ý KHÔNG theo: bấm hai lần rồi thấy báo lỗi cho một việc đã thành công là tệ hơn.)*
+- Đặt `deleted_at = None`, commit.
 
-⚠️ **Cách tách bộ lọc là phần khó nhất của task này.** `readable()` (`backend/app/domain/reading.py`) hiện gộp *cả hai* điều kiện. Đừng sửa `readable()` theo hướng làm nó nhận cờ bật/tắt lọc `deleted_at` cho **mọi** lời gọi — một hàm bảo vệ mà có công tắc tắt là một hàm bảo vệ đang chờ bị tắt nhầm. Cách đúng: tách phần *điều kiện riêng tư* ra thành một mảnh dùng lại được, rồi `restore` tự ghép mảnh đó với điều kiện của riêng nó. Nếu bạn thấy cách gọn hơn mà **không** tạo công tắc, cứ làm và giải thích trong PR.
+🔒 **Response KHÔNG chứa nội dung task.** Trả `200` + `{"id": "<uuid>", "status": "restored"}` — **không** `TaskRead`, **không** `title`, **không** `body_md`. Client vẫn phải `invalidateQueries` nên nó chẳng cần payload đó, mà bỏ payload đi là bỏ luôn cả một lớp rò rỉ (giải mã nhầm lúc cổng riêng tư đang khoá). Rẻ hơn là chứng minh nó không rò.
+
+🔒 **`task_item` KHÔNG có cột `deleted_at`** — đã kiểm `models.py`. Con **không hề bị xoá** khi cha bị soft-delete; chúng chỉ bị ẩn vì đường đọc con phải đi qua cha. Nghĩa là khôi phục cha xong con **tự hiện lại**, và bạn **không được** chạy bất kỳ `UPDATE task_item` nào. Viết `UPDATE task_item SET deleted_at = NULL` sẽ nổ vì cột đó không tồn tại.
+
+🔒 **Trigger của migration `0003` không liên quan.** Trigger trên `task` khai `BEFORE UPDATE OF is_private`; câu `UPDATE` của restore chỉ chạm `deleted_at` nên PostgreSQL bỏ qua nó. Đừng đi vòng để "tránh trigger" — không có gì phải tránh.
+
+⚠️ **Cách tách bộ lọc là phần khó nhất của task này, và nó cũng là một bản vá KHUÔN.**
+
+`backend/app/domain/reading.py:16-19` hiện gộp cứng cả hai điều kiện:
+
+```python
+def readable(stmt, model, session):
+    stmt = stmt.where(model.deleted_at.is_(None))
+    return stmt if can_see_private(session) else stmt.where(model.is_private.is_(False))
+```
+
+**Tách thành hai mảnh, tên đặt đúng như sau** (đừng tự đặt tên khác — 009–012 sẽ gọi chúng):
+
+```python
+def with_privacy_gate(stmt, model, session)  # chỉ lọc is_private
+def not_deleted(stmt, model)                 # chỉ lọc deleted_at
+def readable(stmt, model, session)           # = not_deleted(with_privacy_gate(...))
+```
+
+`readable()` giữ **nguyên hành vi cũ** cho mọi chỗ đang gọi — đây là refactor, không phải đổi luật. `restore` thì gọi `with_privacy_gate(...)` rồi tự thêm `.where(model.deleted_at.is_not(None))`.
+
+🔒 **Tuyệt đối KHÔNG cho `readable()` một tham số kiểu `include_deleted=True`.** Một hàm bảo vệ có công tắc tắt là một hàm bảo vệ đang chờ bị tắt nhầm.
+
+**Vì sao đây là bản vá khuôn, không chỉ là dọn dẹp:** `readable()` gọi `model.deleted_at` **vô điều kiện**, mà không phải bảng nào cũng có cột đó. Đã kiểm `backend/app/domain/models.py`:
+
+| Có `deleted_at` | **KHÔNG có** |
+|---|---|
+| `task` · `note` · `tracker` · `subscription` · `entry` | `task_item` · `note_item` · **`calendar_source`** · **`calendar_event`** · `tracker_group` · `message` |
+
+⇒ **010 (calendar) chép `readable()` như hiện tại là sập ngay dòng đầu** — cả cha lẫn con đều không có `deleted_at`, `AttributeError` trên 100% API GET. Tách hai mảnh bây giờ là lý do 010 không phải gỡ sau.
 
 ### 2.2 Backend — endpoint
 
@@ -56,13 +90,21 @@ Bắt buộc có, và **phải chứng minh biết đỏ** (`AGENTS.md`): phá �
 | 🔒 **Cổng riêng tư** | Task riêng tư đã xoá, session **khoá** private ⇒ `404`, và `deleted_at` trong DB **vẫn nguyên** |
 | Cần session | Không có session ⇒ `401` (route nằm dưới `require_session`, test để chốt là nó không lọt ra ngoài) |
 
-Test cổng riêng tư là test quan trọng nhất ở đây — nó là chỗ duy nhất task này có thể tạo lỗ bảo mật.
+Test cổng riêng tư là test quan trọng nhất ở đây. Bốn đường rò đã được nêu ra, chặn cả bốn:
+
+1. **Payload** — đã chặn bằng cách response không chứa nội dung (§2.2).
+2. 🔒 **Kênh phụ qua mã lỗi.** Task riêng tư lúc cổng khoá phải ra **`404`, y hệt task không tồn tại**. **Không** `403`, **không** thông báo kiểu *"task này riêng tư"*, **không** thân response khác nhau. Chênh nhau một chữ là đủ để dò ID mà biết task nào có thật. `get()` đang làm đúng thế — chép cách đó (`tasks.py`, docstring *"without disclosing why it is hidden"*).
+3. **Con theo cha** — không có đường đọc `task_item` nào không đi qua cha.
+4. 🔒 **Log.** Không ghi `title`/`body_md` vào log hay `audit_log` ở đường restore. Ghi `id` là đủ.
+
+Thêm một test cho mục 2: **so sánh response của "task riêng tư đang khoá" với "id không tồn tại" — hai cái phải giống nhau từng byte** (status + body).
 
 ### 2.4 Frontend — toast hoàn tác
 
 Trong `frontend/src/TasksScreen.tsx`:
 
-- Mutation `remove` thành công ⇒ gọi `toast(...)` với **hành động `Hoàn tác`**, thời lượng **8000ms** (mặc định 4s của sonner quá ngắn cho một quyết định).
+- Mutation `remove` thành công ⇒ gọi `toast(...)` với **hành động `Hoàn tác`**, thời lượng **10 000ms**.
+  🔒 Con số 10 giây **không phải tôi chọn** — nó là quyết định đã khoá ở `tracking-brief.md:150` ("✅ CHỐT-ủy-quyền — chính sách Hoàn tác"), cùng chỗ chốt luôn rằng *Hoàn tác = soft-delete* và *toast chỉ là lối tắt, hết toast vẫn phải sửa/xoá được từ danh sách*. Đừng đổi. Task này là lần đầu chính sách đó được thi công.
 - Nội dung toast: `Đã xoá "<tiêu đề>"` — tiêu đề dài phải **cắt bằng CSS**, không cắt chuỗi trong JS (`ui-brief.md`: cắt ở tầng hiển thị, giữ nguyên dữ liệu). Nhắc lại bài học vừa vá ở `008k`: một tiêu đề 70 ký tự **liền không dấu cách** sẽ phá vỡ hộp nếu thiếu `min-w-0` + `break-words`.
 - Bấm `Hoàn tác` ⇒ gọi `POST /api/tasks/{id}/restore`, xong thì `void queryClient.invalidateQueries(...)`.
 - 🔒 **`onSuccess` KHÔNG được `await invalidateQueries`.** React Query giữ mutation ở `isPending` cho tới khi `onSuccess` resolve — đây đúng là lỗi `008i` vừa sửa, đừng chép lại. Xem chú thích tại `TasksScreen.tsx` chỗ `refresh()`.

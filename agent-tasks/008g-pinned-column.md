@@ -41,7 +41,13 @@ Và nó hỏng thật, không chỉ hỏng về nguyên tắc: ghim **không s�
 
 ### 2.3 Sắp xếp ở tầng đọc
 
-`TaskStore.list` sắp `pinned DESC` **trước** thứ tự hiện có (đọc code để biết thứ tự hiện tại là gì; đừng đổi nó, chỉ thêm khoá sắp xếp lên trước). Client bỏ hết phần tự sắp theo ghim.
+`TaskStore.list` hiện sắp `due_at.asc().nulls_last(), created_at.desc()` (`backend/app/domain/tasks.py:178`). Thứ tự mới, **viết đúng một chuỗi này, đừng biến tấu**:
+
+```python
+stmt.order_by(Task.pinned.desc(), Task.due_at.asc().nulls_last(), Task.created_at.desc())
+```
+
+Client **bỏ hết** phần tự sắp theo ghim — thứ tự nay do server quyết, một nơi duy nhất. Hai nơi cùng sắp là hai nơi sẽ lệch nhau.
 
 ### 2.4 🔴 Mang ghim đang có sang — một lần, ở client
 
@@ -49,12 +55,18 @@ Chủ **đang có ghim thật** trong `localStorage` của PWA trên iPhone. Dep
 
 Trong `TasksScreen.tsx`, chạy **đúng một lần**:
 
-1. Đọc `microsched:pinned-task-ids`. Rỗng hoặc không có ⇒ không làm gì.
-2. Với mỗi id trong đó **mà có mặt trong danh sách task vừa tải về**, gửi `PATCH /api/tasks/{id}` với `{ pinned: true }`.
-3. **Chỉ khi tất cả lời gọi đều thành công** mới `localStorage.removeItem(...)`. Một cái hỏng ⇒ **giữ nguyên khoá** để lần mở sau thử lại. Xoá khoá trước khi chắc chắn là tự tay vứt dữ liệu.
-4. Không chặn giao diện, không hiện spinner. Hỏng thì im lặng và thử lại lần sau — nhưng **ghi `console.warn`** để còn dấu vết mà đọc.
+1. **Chỉ chạy sau khi danh sách task đã tải xong** (`tasks.isSuccess === true`). Chạy sớm hơn là gửi `PATCH` cho những id chưa biết còn tồn tại hay không.
+2. Đọc `microsched:pinned-task-ids`. Rỗng, không có, hoặc `navigator.onLine === false` ⇒ **không làm gì, không xoá gì**.
+3. Với mỗi id **có mặt trong danh sách vừa tải**, gửi `PATCH /api/tasks/{id}` `{ pinned: true }`. Id **không** có trong danh sách (task đã xoá) ⇒ coi như xong, bỏ id đó đi.
+4. 🔒 **`Promise.allSettled`, không `Promise.all`.** Một `404` hay một lỗi mạng không được phép huỷ lượt mang dữ liệu của những id còn lại.
+5. 🔒 **Xoá theo TỪNG ID, không xoá cả khoá.** Ghi lại vào `localStorage` đúng những id **chưa** thành công. Cách "tất cả xong mới xoá" là sai ở chỗ: một id hỏng vĩnh viễn thì lượt sau retry lại cả mười, mãi mãi.
+6. Không chặn giao diện, không spinner. Hỏng thì im và thử lại lần mở sau — nhưng **`console.warn`** để còn dấu vết.
 
-⚠️ Id trong `localStorage` có thể trỏ tới task đã bị xoá. Bỏ qua, đừng để một `404` làm hỏng cả lượt mang dữ liệu (đó là lý do bước 2 lọc theo danh sách vừa tải).
+⚠️ **Đua với chính người dùng.** Trong lúc lượt mang dữ liệu đang chạy, người dùng bấm *bỏ ghim* một task — request của migration tới sau sẽ ghim lại và **nuốt mất thao tác vừa rồi**. Chặn bằng cách **vô hiệu hoá nút ghim cho tới khi lượt mang dữ liệu kết thúc** (nó chỉ kéo dài vài trăm ms). Đừng chọn cách "so sánh timestamp" — phức tạp hơn và vẫn thua.
+
+⚠️ **Hai tab.** Đặt cờ `microsched:pinned-migrated-v1 = "1"` **NGAY TRƯỚC** khi phát request đầu tiên, và kiểm cờ đó trước khi chạy. Tab thứ hai mở sẵn từ trước thấy cờ thì đứng yên. Không cần `storage` event listener — cờ đọc lúc chạy là đủ cho ca này.
+
+⚠️ **Mất gói xác nhận.** `PATCH {pinned: true}` là idempotent ở server, nên client retry vô hại. Đó là lý do bước 5 an toàn.
 
 ### 2.5 Frontend — bỏ trạng thái client
 
@@ -76,6 +88,14 @@ Backend, và **phải chứng minh biết đỏ**:
 | Thứ tự × bộ lọc | Ghim vẫn nổi lên đầu khi `status` filter đang bật |
 | Không rò riêng tư | `pinned` **không** làm lộ task riêng tư khi private mode khoá |
 
+### 2.7 ⚠️ Bạn đang làm SAU 008f — đây là những gì bạn sẽ thấy khác spec
+
+`008f` merge trước và nó **đổi cấu trúc `backend/app/domain/reading.py`**: `readable()` được tách thành `with_privacy_gate()` + `not_deleted()`, và `readable()` giữ nguyên hành vi. Bạn **không cần đụng gì** ở đó — chỉ đừng ngạc nhiên khi mã không giống mô tả cũ.
+
+`008f` cũng chèn **toast Hoàn tác** vào `TasksScreen.tsx` (mutation `remove`, `onSuccess`). Task này viết lại phần render danh sách để bỏ trạng thái ghim ở client. 🔒 **Đừng viết đè lên toast đó.** Trước khi commit, kiểm lại: xoá một task vẫn phải hiện toast có nút `Hoàn tác`, và nút đó vẫn phải chạy. Nếu bạn thấy mình đang xoá dòng nào liên quan tới `toast`, dừng lại.
+
+*(Vì sao 008f đi trước dù nó phức tạp hơn: bản refactor `readable()` của nó là một **bản vá khuôn** — `readable()` hiện gọi `model.deleted_at` vô điều kiện, mà `calendar_source`/`calendar_event` không có cột đó, nên 010 chép nguyên là sập. Cái đó xuống càng sớm càng ít slice chép phải hình sai.)*
+
 ## 3. KHÔNG được làm
 
 - **Không** thêm index (xem §2.1).
@@ -87,6 +107,7 @@ Backend, và **phải chứng minh biết đỏ**:
 - **Không** đụng `api.ts`, `deleted_at`, hay bất cứ gì thuộc `008f`.
 - **Không** tự chạy `alembic upgrade` lên Neon. Migration áp bằng tay, do T1 (xem §6).
 - **Không** đổi tên required check trong CI.
+- 🔒 **Không** chép đoạn mang dữ liệu `localStorage` ở §2.4 sang 009/010/011/012. Nó là vá tình thế cho **đúng một** dữ liệu cũ có thật; các slice sau không có gì để mang, chép sang chỉ tạo request thừa và một đường đua vô cớ. Ghi rõ điều này trong PR description để người làm 009 đọc thấy.
 
 ## 4. Acceptance — kiểm chứng được
 
