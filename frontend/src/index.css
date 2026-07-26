@@ -32,7 +32,9 @@
   --n-100: #f3eeef;
   --n-200: #e8dedf;
   --n-300: #d6c8ca;
-  --n-400: #ab999d; /* ⚠ KHÔNG dùng cho chữ (2,54:1) — chỉ viền, icon trang trí */
+  --n-400: #ab999d; /* ⚠ KHÔNG dùng cho chữ (2,54:1), cũng KHÔNG cho viền control
+                       hay icon mang nghĩa: 2,70:1 trên nền trắng, vẫn dưới ngưỡng
+                       non-text 3:1. Chỉ còn hợp lệ cho trang trí thuần tuý. */
   --n-500: #7d6b6f; /* ngưỡng thấp nhất còn đọc được (4,69:1) */
   --n-700: #4a3c40;
   --n-900: #241d20;
@@ -64,8 +66,16 @@
   --muted-foreground:       var(--n-500);
   --accent:                 var(--rose-100);
   --accent-foreground:      var(--rose-700);
+  /* `--border` là ranh giới TRANG TRÍ (viền thẻ, đường phân cách). WCAG không đòi
+     3:1 cho thứ không mang thông tin, nên n-200 ở lại. */
   --border:                 var(--n-200);
-  --input:                  var(--n-200);
+  /* `--input` là viền của CONTROL — checkbox, input, select, textarea, nút outline.
+     Với checkbox chưa tick thì cái viền LÀ toàn bộ hình hài của control, nên nó rơi
+     đúng vào non-text contrast 3:1 (WCAG 1.4.11). n-200 chỉ đạt 1,32:1 trên nền thẻ
+     — đo được ở QA 2026-07-25, và đây là lần THỨ BA cùng một luật phát biểu một
+     chiều làm lọt: lần 1 chữ trên nền, lần 2 viền focus, lần 3 viền control.
+     n-500 = 4,99:1. Đừng làm nhạt lại cho "nhẹ mắt". */
+  --input:                  var(--n-500);
   /* rose-400 chỉ đạt 2,55:1 trên nền, mà viền focus là "non-text contrast"
      cần 3:1 (WCAG 1.4.11). rose-600 = 3,90:1. Đừng làm nhạt lại cho "đẹp". */
   --ring:                   var(--rose-600);
