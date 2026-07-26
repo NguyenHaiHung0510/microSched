@@ -468,8 +468,9 @@ def test_cron_endpoint_accepts_the_configured_bearer_token() -> None:
     assert asyncio.run(require_cron_token(f"Bearer {CRON_TOKEN}")) is None
 
 
-def test_cron_heartbeat_uses_bearer_auth_not_a_user_session() -> None:
+def test_cron_heartbeat_uses_bearer_auth_not_a_user_session(monkeypatch) -> None:
     """The real route is independently guarded and never needs a login cookie."""
+    monkeypatch.setattr("app.web.routers.cron.read_rss_kb", lambda: 42_000)
     client = build_client(InMemorySessionStore())
 
     assert client.post("/api/cron/heartbeat").status_code == 401
@@ -481,7 +482,7 @@ def test_cron_heartbeat_uses_bearer_auth_not_a_user_session() -> None:
     )
     response = client.post("/api/cron/heartbeat", headers={"Authorization": f"Bearer {CRON_TOKEN}"})
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "rss_kb": None}
+    assert response.json() == {"status": "ok", "rss_kb": 42_000}
 
 
 def test_cron_heartbeat_is_closed_and_noisy_when_unconfigured(monkeypatch) -> None:
