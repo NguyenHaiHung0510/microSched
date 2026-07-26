@@ -18,7 +18,7 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
+import { ApiError, apiRequest, TimeoutError, UnauthenticatedError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -79,6 +79,7 @@ const filterLabels: Record<TaskFilter, string> = {
 
 function errorMessage(error: unknown): string {
   if (error instanceof UnauthenticatedError) return 'Phiên đã hết hạn. Tải lại để đăng nhập.'
+  if (error instanceof TimeoutError) return error.message
   if (error instanceof ApiError) return error.message
   return 'Không kết nối được API.'
 }
@@ -144,24 +145,28 @@ function TaskCard({
   const [expanded, setExpanded] = useState(false)
   const [newItem, setNewItem] = useState('')
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+  /* `void`, không `await`: React Query giữ mutation ở `isPending` cho tới khi
+     `onSuccess` resolve, mà `invalidateQueries` thì đợi luôn cả lượt tải lại.
+     Await ở đây nghĩa là nút vẫn ghi "Đang thêm…" DÙ việc đã lưu xong — và nếu
+     lượt tải lại treo thì nút treo theo vĩnh viễn. Ghi xong là ghi xong. */
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
   const update = useMutation({
     mutationFn: (payload: Partial<TaskPayload> & { status?: TaskStatus }) =>
       apiRequest<Task>(`/api/tasks/${task.id}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
-    onSuccess: async () => {
+    onSuccess: () => {
       setEditing(false)
-      await refresh()
+      refresh()
     },
   })
   const remove = useMutation({
     mutationFn: () => apiRequest<void>(`/api/tasks/${task.id}`, { method: 'DELETE' }),
-    onSuccess: async () => {
+    onSuccess: () => {
       setDetailsOpen(false)
       onRemoved()
-      await refresh()
+      refresh()
     },
   })
   const addItem = useMutation({
@@ -170,9 +175,9 @@ function TaskCard({
         method: 'POST',
         body: JSON.stringify({ content, position: task.items.length }),
       }),
-    onSuccess: async () => {
+    onSuccess: () => {
       setNewItem('')
-      await refresh()
+      refresh()
     },
   })
   const changeItem = useMutation({
@@ -562,15 +567,19 @@ export function TasksScreen() {
         method: 'POST',
         body: JSON.stringify({ ...payload, items: [] }),
       }),
-    onSuccess: async (_task, variables) => {
-      await queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
-
+    // Cùng luật với `refresh()` của TaskCard, và đây mới là chỗ bug được BÁO:
+    // nút "Đang thêm…" đọc `create.isPending`, mà React Query giữ `isPending` cho
+    // tới khi `onSuccess` resolve. Await ở đây là bắt người dùng nhìn nút đứng im
+    // suốt lượt tải lại DÙ task đã lưu xong. Dọn giao diện trước, làm mới sau.
+    onSuccess: (_task, variables) => {
       if (variables.source === 'quick') {
         setQuickTitle('')
         window.requestAnimationFrame(() => quickInputRef.current?.focus())
       } else {
         setCreateOpen(false)
       }
+
+      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
     },
   })
 
@@ -671,6 +680,17 @@ export function TasksScreen() {
           </Button>
         </form>
 
+        {/* Lỗi của `create` trước đây CHỈ được vẽ bên trong Dialog, mà Dialog đóng
+            thì `DialogContent` không còn trong cây. Nghĩa là thêm nhanh mà hỏng thì
+            nút lặng lẽ quay từ "Đang thêm…" về "Thêm" và không nói gì cả — đúng cái
+            "không có cách nào để THẤT BẠI" mà 008i sinh ra để chữa. Lọc theo
+            `source` để một lần hỏng không hiện lời báo ở cả hai nơi. */}
+        {create.isError && create.variables?.source === 'quick' ? (
+          <p className="mt-2 px-1 text-sm text-bad" role="alert">
+            {errorMessage(create.error)}
+          </p>
+        ) : null}
+
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
           <p className="text-xs text-muted-foreground">
             Lưu xong ô tự xoá và giữ con trỏ để gõ tiếp.
@@ -695,8 +715,10 @@ export function TasksScreen() {
                 onSubmit={(payload) => create.mutate({ payload, source: 'detail' })}
                 onCancel={() => setCreateOpen(false)}
               />
-              {create.isError ? (
-                <p className="text-sm text-bad">{errorMessage(create.error)}</p>
+              {create.isError && create.variables?.source === 'detail' ? (
+                <p className="text-sm text-bad" role="alert">
+                  {errorMessage(create.error)}
+                </p>
               ) : null}
               <p className="text-xs text-muted-foreground">
                 Task riêng tư sẽ được mã hoá và ẩn cho tới khi private unlock được mở.
