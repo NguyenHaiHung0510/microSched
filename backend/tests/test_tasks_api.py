@@ -321,3 +321,121 @@ def test_task_http_rejections_cover_401_404_422_and_locked_parent(pg_dsn):
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_restore_is_idempotent_and_preserves_items_and_privacy_gate(pg_dsn):
+    """Restore recovers children, stays idempotent, and hides locked private rows."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(os.environ["NEON_MIGRATOR_URL"]))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        app = create_app()
+        auth_state = {"value": _auth()}
+        created_ids: list[UUID] = []
+
+        async def current_session() -> AuthSession:
+            return auth_state["value"]
+
+        async def request_session():
+            async with maker() as db:
+                try:
+                    yield db
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+        app.dependency_overrides[require_session] = current_session
+        app.dependency_overrides[get_session] = request_session
+        transport = httpx.ASGITransport(app=app)
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post(
+                        "/api/tasks",
+                        json={"title": "Có thể hoàn tác", "items": ["Mục một", "Mục hai"]},
+                    )
+                ).json()
+                task_id = UUID(created["id"])
+                created_ids.append(task_id)
+
+                assert (await client.delete(f"/api/tasks/{task_id}")).status_code == 204
+                assert task_id not in {
+                    UUID(task["id"])
+                    for task in (await client.get("/api/tasks?status=all")).json()["items"]
+                }
+
+                restored = await client.post(f"/api/tasks/{task_id}/restore")
+                assert restored.status_code == 200
+                assert restored.json() == {"id": str(task_id), "status": "restored"}
+                assert set(restored.json()) == {"id", "status"}
+
+                listed = (await client.get("/api/tasks?status=all")).json()["items"]
+                restored_task = next(task for task in listed if UUID(task["id"]) == task_id)
+                assert [item["content"] for item in restored_task["items"]] == [
+                    "Mục một",
+                    "Mục hai",
+                ]
+
+                second_restore = await client.post(f"/api/tasks/{task_id}/restore")
+                assert second_restore.status_code == 200
+                assert second_restore.content == restored.content
+
+                live = (await client.post("/api/tasks", json={"title": "Chưa từng xoá"})).json()
+                live_id = UUID(live["id"])
+                created_ids.append(live_id)
+                live_restore = await client.post(f"/api/tasks/{live_id}/restore")
+                assert live_restore.status_code == 200
+                assert live_restore.json() == {"id": str(live_id), "status": "restored"}
+
+                missing_response = await client.post(f"/api/tasks/{uuid4()}/restore")
+                assert missing_response.status_code == 404
+
+                private = (
+                    await client.post(
+                        "/api/tasks",
+                        json={
+                            "title": "Không được lộ",
+                            "body_md": "Nội dung riêng",
+                            "is_private": True,
+                        },
+                    )
+                ).json()
+                private_id = UUID(private["id"])
+                created_ids.append(private_id)
+                assert (await client.delete(f"/api/tasks/{private_id}")).status_code == 204
+
+                auth_state["value"] = _auth(unlocked=False)
+                hidden_response = await client.post(f"/api/tasks/{private_id}/restore")
+                missing_twin = await client.post(f"/api/tasks/{uuid4()}/restore")
+                assert hidden_response.status_code == 404
+                assert (
+                    hidden_response.status_code,
+                    hidden_response.content,
+                ) == (
+                    missing_twin.status_code,
+                    missing_twin.content,
+                )
+
+                async with maker() as inspection:
+                    deleted_at = (
+                        await inspection.execute(
+                            text("SELECT deleted_at FROM microsched.task WHERE id = :task_id"),
+                            {"task_id": private_id},
+                        )
+                    ).scalar_one()
+                    assert deleted_at is not None
+
+            unauthenticated_app = create_app()
+            unauthenticated_transport = httpx.ASGITransport(app=unauthenticated_app)
+            async with httpx.AsyncClient(
+                transport=unauthenticated_transport, base_url="http://test"
+            ) as client:
+                response = await client.post(f"/api/tasks/{uuid4()}/restore")
+                assert response.status_code == 401
+                assert response.json() == {"detail": "Not authenticated"}
+        finally:
+            await _cleanup(pg_dsn, created_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())

@@ -18,8 +18,9 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
-import { ApiError, apiRequest, TimeoutError, UnauthenticatedError } from '@/api'
+import { apiRequest, UnauthenticatedError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -43,6 +44,7 @@ import {
   taskQueryKey,
   toggledStatus,
 } from '@/task-ui'
+import { errorMessage, restoreTask } from '@/task-undo'
 
 type TaskItem = {
   id: string
@@ -76,13 +78,6 @@ const filterLabels: Record<TaskFilter, string> = {
   open: 'Đang mở',
   completed: 'Đã xong',
   all: 'Tất cả',
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof UnauthenticatedError) return 'Phiên đã hết hạn. Tải lại để đăng nhập.'
-  if (error instanceof TimeoutError) return error.message
-  if (error instanceof ApiError) return error.message
-  return 'Không kết nối được API.'
 }
 
 function loadPinnedIds(): Set<string> {
@@ -168,6 +163,18 @@ function TaskCard({
       setDetailsOpen(false)
       onRemoved()
       refresh()
+      toast(
+        <span className="block min-w-0 max-w-full break-words">
+          Đã xoá &quot;{task.title}&quot;
+        </span>,
+        {
+          duration: 10000,
+          action: {
+            label: 'Hoàn tác',
+            onClick: () => void restoreTask(task.id, refresh),
+          },
+        },
+      )
     },
   })
   const addItem = useMutation({

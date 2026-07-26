@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
 from app.domain.models import AuthSession, Task, TaskItem
-from app.domain.reading import readable
+from app.domain.reading import readable, with_privacy_gate
 
 TaskStatus = Literal["open", "completed"]
 TaskListStatus = Literal["open", "completed", "all"]
@@ -295,6 +295,26 @@ class TaskStore:
         task.deleted_at = datetime.now(UTC)
         await db.flush()
         return True
+
+    async def restore(self, db: AsyncSession, auth: AuthSession, task_id: UUID) -> TaskRead | None:
+        """Restore a privacy-visible task without exposing why a row is hidden."""
+        deleted_stmt = with_privacy_gate(select(Task).where(Task.id == task_id), Task, auth).where(
+            Task.deleted_at.is_not(None)
+        )
+        deleted_result = await db.execute(deleted_stmt)
+        task = deleted_result.scalar_one_or_none()
+
+        if task is None:
+            # A live task is already restored. Resolve it through the ordinary
+            # readable gate so idempotency never bypasses privacy.
+            task = await self._parent(db, auth, task_id)
+            if task is None:
+                return None
+        else:
+            task.deleted_at = None
+            await db.flush()
+
+        return self._task_read(task, await self._items(db, task_id))
 
     async def list_items(
         self, db: AsyncSession, auth: AuthSession, task_id: UUID
