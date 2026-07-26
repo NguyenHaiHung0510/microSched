@@ -76,6 +76,17 @@ async def delete_task(task_id: UUID, db: Database, session: CurrentSession) -> R
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/tasks/{task_id}/restore", response_model=dict[str, str])
+async def restore_task(
+    task_id: UUID, db: Database, session: CurrentSession
+) -> dict[str, str]:
+    """Restore one privacy-visible task without returning its content."""
+    task = await store.restore(db, session, task_id)
+    if task is None:
+        raise _not_found()
+    return {"id": str(task.id), "status": "restored"}
+
+
 @router.get("/tasks/{task_id}/items", response_model=list[TaskItemRead])
 async def list_task_items(
     task_id: UUID, db: Database, session: CurrentSession

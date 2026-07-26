@@ -4,6 +4,7 @@ import { LogIn, LogOut, RefreshCw } from 'lucide-react'
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Toaster } from '@/components/ui/sonner'
 import { TasksScreen } from '@/TasksScreen'
 
 type SessionResponse = {
@@ -154,6 +155,7 @@ function App() {
         {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
         {session.data && !loggedOut ? <SignedIn /> : null}
       </div>
+      <Toaster />
     </main>
   )
 }
