@@ -35,11 +35,32 @@ Thêm **một step nữa** vào job `secret-scan` đang có. **Không** bỏ ste
 
 ### Ràng buộc kỹ thuật, mỗi cái là một cách hỏng im lặng
 
-1. 🔒 **`actions/checkout@v4` mặc định `fetch-depth: 1`.** Quét lịch sử trên một shallow clone chỉ soi đúng 1 commit rồi báo xanh — **hỏng im lặng, đúng họ lỗi mà 013 vừa đi vá**. Phải đặt `fetch-depth: 0`.
-2. **Phạm vi quét phải là commit MỚI của PR**, không phải toàn bộ lịch sử. Lý do: quét toàn bộ mỗi lần vừa chậm vừa biến một secret lịch sử (nếu có) thành CI đỏ vĩnh viễn không ai gỡ được — mà `git revert` không xoá được lịch sử. Gợi ý: `--log-opts` giới hạn theo dải `origin/<base>..HEAD`.
-3. **Vẫn phải `--config .gitleaks.toml`** — thiếu là mất 2 rule riêng của 008d.
-4. **Vẫn phải `-v`** — 013 đã học: đỏ mà không in RuleID/file/dòng thì người đọc bảng CI không hành động được.
-5. `push` vào `develop` và `pull_request` là hai ngữ cảnh khác nhau — `github.base_ref` chỉ có ở PR. Xử lý rõ ràng, đừng để step im lặng không chạy ở một trong hai.
+1. 🔒 **`actions/checkout@v4` mặc định `fetch-depth: 1`.** Quét lịch sử trên một shallow clone chỉ soi đúng 1 commit rồi báo xanh — **hỏng im lặng, đúng họ lỗi mà 013 vừa đi vá**. Phải đặt `fetch-depth: 0` **trên checkout của riêng job `secret-scan`** (không ảnh hưởng job khác — mỗi job một runner riêng).
+
+2. 🔒 **Phạm vi quét phải tính bằng SHA từ event payload, KHÔNG dùng tên nhánh.** Đây là chỗ dễ hỏng nhất, và hỏng theo hai kiểu khác nhau:
+   - Trên **push**, `github.base_ref` **rỗng** ⇒ `origin/${{ github.base_ref }}..HEAD` nở thành `origin/..HEAD` ⇒ `fatal: bad revision`, **đỏ mọi lần push vào `develop`**. Không phải hỏng im lặng, nhưng là hỏng ngay lập tức.
+   - Trên **pull_request**, checkout lấy **commit merge tổng hợp** (`refs/pull/N/merge`), không phải head của PR ⇒ dải theo tên nhánh kéo thêm cả commit merge đó vào. Với PR từ fork thì việc phân giải tên ref còn mong manh hơn.
+
+   ⇒ Dùng SHA tường minh, xác định trong một step riêng:
+   ```yaml
+   - name: Xác định dải commit cần quét
+     id: range
+     run: |
+       if [ "${{ github.event_name }}" = "pull_request" ]; then
+         echo "opts=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+       elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+         echo "opts=HEAD~1..HEAD" >> "$GITHUB_OUTPUT"
+       else
+         echo "opts=${{ github.event.before }}..${{ github.event.after }}" >> "$GITHUB_OUTPUT"
+       fi
+   ```
+   Nhánh `0000…` là lần push đầu tiên của một ref (không có "before"). **Không** để rơi vào quét toàn bộ lịch sử: một secret lịch sử (nếu có) sẽ thành CI đỏ vĩnh viễn mà `git revert` không gỡ được.
+
+3. 🔒 **Thứ tự step là bắt buộc, không phải sở thích: `dir` TRƯỚC, lịch sử SAU.** GitHub Actions dừng job ở step đỏ đầu tiên. Nếu để step lịch sử chạy trước, nó đỏ và step `dir` **bị SKIP** ⇒ bảng CI ra ĐỎ + SKIPPED, **không bao giờ tạo được cặp lệch** vốn là toàn bộ bằng chứng của task này. Thêm `if: always()` cho step lịch sử để nó vẫn chạy kể cả khi `dir` đỏ.
+
+4. **Vẫn phải `--config .gitleaks.toml`** — thiếu là mất 2 rule riêng của 008d.
+5. **Vẫn phải `-v`** — 013 đã học: đỏ mà không in RuleID/file/dòng thì người đọc bảng CI không hành động được.
+6. Dùng `gitleaks git`, **không** `gitleaks detect` (deprecated từ v8.19.0).
 
 ⚠️ **Đừng đụng** 5 job cũ, `deploy.yml`, hay `.gitleaks.toml` (rule là task riêng — xem §Liên quan).
 
@@ -52,10 +73,12 @@ Trên nhánh `feat/015-...`:
 1. Commit **A**: thêm file chứa connection string giả.
 2. Commit **B**: **xoá** file đó.
 3. Push cả hai cùng lúc, mở PR.
-4. **Kết quả phải thấy:** step `dir` **XANH** (cây đã sạch ở B) trong khi step quét lịch sử **ĐỎ** (secret nằm ở commit A). *Chính cặp lệch này là bằng chứng, không phải chỉ "job đỏ".*
+4. **Kết quả phải thấy:** step `dir` **XANH** (cây đã sạch ở B) trong khi step quét lịch sử **ĐỎ** (secret nằm ở commit A). *Chính cặp lệch này là bằng chứng, không phải chỉ "job đỏ".* Nếu thấy ĐỎ + SKIPPED thay vì XANH + ĐỎ thì thứ tự step đang sai — xem ràng buộc 3.
 5. Dán output đỏ có RuleID + commit SHA vào PR.
-6. Gỡ hai commit đó khỏi nhánh (rebase/reset rồi force-push nhánh feature), xác nhận CI **XANH**.
-7. **Merge bằng squash** — 013 đã đặt tiền lệ: fixture giả không được phép vào lịch sử `develop`.
+6. Commit **C**: đưa dải quét về sạch (ví dụ: `git revert` commit A, hoặc đơn giản là để commit B đã xoá file rồi mở một PR mới trên nền sạch). Xác nhận CI **XANH**.
+7. **Merge bằng squash** — squash gộp thành một commit mang **cây cuối**, nên fixture không vào lịch sử `develop`. Đây cũng là cách 013 đã làm và đã verify (`gitleaks git` trên `develop` sau merge: 104 commit, `no leaks found`).
+
+> 📝 **Bản v1 của spec này bắt force-push xoá hai commit fixture ở bước 6 RỒI vẫn squash ở bước 7 — thừa và tự mâu thuẫn** (phản biện T3 bắt): nếu bước 6 đã xoá sạch commit khỏi nhánh thì lý do "squash để fixture không vào develop" ở bước 7 không còn nghĩa. Nay chỉ giữ **một** cơ chế: squash. Cùng bài học với 013 — đừng chồng hai lớp bảo vệ rồi tưởng cả hai đang làm việc.
 
 ⚠️ **Fixture phải là connection string giả, KHÔNG dùng `AKIA…`.** Repo public + push protection đang bật; provider pattern bị chặn lúc push và để lại alert vĩnh viễn. `non_provider_patterns` đang tắt nên chuỗi DB giả đi lọt push protection mà rule riêng vẫn nổ (đo thật 26/07).
 
