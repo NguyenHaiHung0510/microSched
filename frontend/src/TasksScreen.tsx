@@ -1,5 +1,6 @@
 import {
   type FormEvent,
+  type MouseEvent,
   useEffect,
   useMemo,
   useRef,
@@ -200,12 +201,19 @@ function TaskCard({
   const mutationError =
     update.error ?? remove.error ?? addItem.error ?? changeItem.error ?? removeItem.error
 
-  function openDetails() {
+  /* Dialog chi tiết mở bằng state chứ không bọc `DialogTrigger`, nên Radix không có
+     `triggerRef` để trả focus về khi đóng — focus rơi xuống `body` và người dùng bàn
+     phím phải Tab lại từ đầu trang. Tự nhớ lấy nút đã mở nó. */
+  const detailsReturnRef = useRef<HTMLButtonElement | null>(null)
+
+  function openDetails(event: MouseEvent<HTMLButtonElement>) {
+    detailsReturnRef.current = event.currentTarget
     setEditing(false)
     setDetailsOpen(true)
   }
 
-  function openEditor() {
+  function openEditor(event: MouseEvent<HTMLButtonElement>) {
+    detailsReturnRef.current = event.currentTarget
     setEditing(true)
     setDetailsOpen(true)
   }
@@ -238,7 +246,15 @@ function TaskCard({
               {pinned ? <Pin className="size-4 text-primary" aria-hidden="true" /> : null}
               <Button
                 className={[
-                  'h-auto min-w-0 justify-start whitespace-normal p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
+                  // Tràn 733px chữ trong thẻ rộng 318px, đè lên cả ba nút hành động
+                  // (QA 2026-07-25). Phải đủ BA thứ, thiếu một là không chữa được:
+                  //   `shrink`      — lớp gốc của Button có `shrink-0`, tức flex item
+                  //                   từ chối co, nên hộp luôn rộng bằng max-content
+                  //                   và chẳng có gì ép chữ phải xuống dòng cả.
+                  //   `min-w-0`     — gỡ `min-width:auto` mặc định của flex item.
+                  //   `break-words` — `whitespace-normal` chỉ xuống dòng ở khoảng
+                  //                   trắng; một cụm 70 ký tự liền thì không có chỗ.
+                  'h-auto min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
                   task.status === 'completed' ? 'line-through' : '',
                 ].join(' ')}
                 variant="ghost"
@@ -319,9 +335,13 @@ function TaskCard({
                   }
                 />
                 <span
-                  className={
-                    item.is_completed ? 'text-muted-foreground line-through' : ''
-                  }
+                  className={[
+                    // Cùng bệnh với tiêu đề: mục checklist dài hoặc một cụm liền
+                    // không dấu cách sẽ đẩy rộng cả thẻ nếu không có `min-w-0` để
+                    // được phép co, và `break-words` để có chỗ mà cắt.
+                    'min-w-0 break-words',
+                    item.is_completed ? 'text-muted-foreground line-through' : '',
+                  ].join(' ')}
                 >
                   {item.content}
                 </span>
@@ -382,7 +402,18 @@ function TaskCard({
           if (!open) setEditing(false)
         }}
       >
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent
+          className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+          // `isConnected` chứ không phải chỉ kiểm null: nút mở có thể đã biến mất
+          // khỏi cây (thẻ vừa bị xoá, danh sách vừa được lọc lại). Focus vào một
+          // node đã tháo là không làm gì cả — thà nhường lại cho xử lý mặc định.
+          onCloseAutoFocus={(event) => {
+            const opener = detailsReturnRef.current
+            if (!opener?.isConnected) return
+            event.preventDefault()
+            opener.focus()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{editing ? `Sửa · ${task.title}` : task.title}</DialogTitle>
             <DialogDescription>
