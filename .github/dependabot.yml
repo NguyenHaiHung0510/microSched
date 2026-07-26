@@ -1,0 +1,25 @@
+# ⚠️ File này chỉ có hiệu lực khi nằm trên DEFAULT BRANCH (`main`).
+# Bản trên `develop` là bản sao để người đọc không tưởng nó biến mất — GitHub
+# KHÔNG đọc bản đó. Xem note 26/07 trong CLAUDE.md: đây là thứ ba trong họ
+# "GitHub chỉ đọc từ default branch", sau `schedule:` của workflow và chính
+# vị trí của file này.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /backend
+    # 🔒 Không có dòng này thì Dependabot mở PR vào DEFAULT BRANCH (`main`) —
+    # nhánh KHÔNG deploy và cố ý tụt hậu. Bản nâng version sẽ nằm ở nơi không
+    # ai chạy, còn `develop` (nhánh thật sự deploy) thì không bao giờ nhận.
+    # Đo thật 26/07: PR #29-#33 đều nhắm `main`; #31 đã merge vào `main` và
+    # tạo drift ngược chiều — `main` có thứ `develop` không có.
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: npm
+    directory: /frontend
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
