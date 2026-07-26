@@ -481,7 +481,7 @@ def test_cron_heartbeat_uses_bearer_auth_not_a_user_session() -> None:
     )
     response = client.post("/api/cron/heartbeat", headers={"Authorization": f"Bearer {CRON_TOKEN}"})
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "rss_kb": None}
 
 
 def test_cron_heartbeat_is_closed_and_noisy_when_unconfigured(monkeypatch) -> None:
