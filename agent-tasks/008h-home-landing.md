@@ -2,7 +2,20 @@
 
 > **Executor: Codex (T2).** Nhánh `feat/008h-home-landing` → PR nhỏ vào `develop`.
 > Spec tự-chứa. Đọc `CLAUDE.md` + `AGENTS.md` trước; **`docs/ui-brief.md` là luật của task này.**
-> ⚠️ **Chưa giao được ngay.** §2.1 cần một bản dựng thị giác mà chủ đã bấm chọn — T1 làm bước đó trước.
+
+## ⛔ ĐANG HOÃN — làm SAU CÙNG, không phải bây giờ (chủ quyết 2026-07-26)
+
+**Task này chuyển xuống cuối hàng: 008f → 008m → 008g → 009 → 010 → 011 → 012 → *rồi mới* 008h.**
+
+Lý do chủ nêu, và nó đúng: **trang giới thiệu tính năng chưa thuyết phục được vì chưa có tính năng nào để giới thiệu.** Hiện chỉ có lát cắt `task` chạy thật. Dựng trang bây giờ là dựng một trang phải viết lại toàn bộ sau mỗi lát cắt 009–012. Trang home là thứ **đắp vào cuối**, khi đã có cái để trưng.
+
+**Ba việc phải xong trước khi mở lại task này:**
+
+1. **009–012 xong** — mới có ghi chú, lịch, tracker để nói tới ở thì hiện tại.
+2. 🔒 **Một phiên riêng với chủ về nhận diện hình ảnh** — logo microSched, bộ icon, hình biểu tượng. Chủ **đích thân** làm, không giao executor. Trang này không dựng được ra hồn khi chưa có logo.
+3. **Viết lại văn phong** — xem §2.3a.
+
+Phần dưới đây **giữ nguyên làm hồ sơ**: bản dựng đã chọn, cấu trúc, và mọi ràng buộc kỹ thuật vẫn còn giá trị. Chỉ phần **nội dung chữ** là phải làm lại.
 
 ## 0. Bối cảnh — vì sao có task này
 
@@ -21,11 +34,17 @@ Cái khó thật của trang này: **không ai đăng ký được.** Google OAu
 
 ## 2. Phải làm
 
-### 2.1 ⚠️ Điều kiện tiên quyết — T1 làm trước khi giao
+### 2.1 ✅ Bản dựng thị giác — chủ đã chọn 2026-07-26
 
-Như `008e`, chủ chọn bằng cách **bấm vào bản dựng chạy được**, không bằng cách đọc mô tả. T1 dựng 2–3 bản HTML của trang này, chủ chọn một, bản đó đặt ở `docs/_local/` (gitignore) và **spec này trỏ vào nó**. Chỗ nào bản dựng và `ui-brief.md` nói khác nhau: **`ui-brief.md` thắng về luật** (màu, tương phản, cỡ chữ), **bản dựng thắng về hình**.
+📍 **`docs/_local/home-b-chosen.html`** (gitignore, nằm trên đĩa cùng thư mục làm việc).
 
-Executor: nếu tới tay bạn mà mục này chưa điền đường dẫn ⇒ **dừng và hỏi**, đừng tự tưởng tượng bố cục.
+Ba bản A/B/C được dựng thành trang chạy được cho chủ bấm; chủ chọn **B — trưng bày sản phẩm**: khối "Nhìn thử" nằm trên nếp gấp, khung video 16:9 lớn, ba ảnh 9:16 xếp so le, hồ sơ kỹ thuật ở dưới. Đó là bản duy nhất thật sự đặt phần trưng bày lên trước — đúng thứ tự chủ đã chốt.
+
+Chỗ nào bản dựng và `ui-brief.md` nói khác nhau: **`ui-brief.md` thắng về luật** (màu, tương phản, cỡ chữ), **bản dựng thắng về hình**.
+
+Bản dựng đã được đo trên trình duyệt thật ở 390px: không cuộn ngang · 0 chữ dưới 12px · 0 đích chạm dưới 24px · 0 cặp trượt tương phản. **Đừng làm nó tệ đi khi chuyển sang React.**
+
+⚠️ **Bố cục của bản dựng B viết cho nội dung CŨ.** Nội dung mới (§2.2a) có sáu trụ cột thay vì bốn — bố cục phải giãn ra theo, không phải nhét thêm vào chỗ cũ.
 
 ### 2.2 Cấu trúc — bảy khối, đúng thứ tự này
 
@@ -39,9 +58,36 @@ Executor: nếu tới tay bạn mà mục này chưa điền đường dẫn ⇒
 | 6 | Quyền truy cập | Đoạn ngắn nói thật về chuyện không đăng ký được |
 | 7 | Footer | Liên kết + một dòng kết |
 
-### 2.3 Nội dung — chép nguyên văn, đừng viết lại
+### 2.2a 🔴 SÁU TRỤ CỘT — khung nội dung mới (chủ đề xuất 2026-07-26)
 
-Bản này đã qua một vòng soi giọng và đã được chốt. **Không tự sửa chữ.** Thấy sai chính tả hay sai sự thật thì **dừng và báo**, đừng tự chữa.
+Bản copy ở §2.3 được viết quanh *"bốn chỗ làm khác"*. Chủ đã thay khung đó. Nội dung trang xoay quanh **bốn trụ chính + hai trụ phụ**:
+
+| | Trụ | Nói gì |
+|---|---|---|
+| 1 | **microSched là gì** | Thay hẳn câu mở *"microSched là ứng dụng cá nhân tôi tự viết…"*. Đây là trụ, không phải một dòng giới thiệu. |
+| 2 | **Hạ tầng đằng sau** | Fly.io scale-to-zero, Neon PG18, Docker, CD tự động, chi phí thật |
+| 3 | **Tech stack đằng sau** | FastAPI · SQLModel · React 19 · Vite · Tailwind v4 · TanStack Query · PWA |
+| 4 | 🔑 **Harness engineering dựng nên nó** | Mô hình ba tầng T1/T2/T3, spec-trước-thi-công, luật biên lai, phản biện khác-họ. **Đây là trụ khác biệt nhất** — thứ mà một trang giới thiệu app cá nhân bình thường không có. |
+| 5 | *(phụ)* **Bảo mật** | AES-256-GCM tầng ứng dụng, OAuth + allowlist, tách quyền DB |
+| 6 | *(phụ)* **QA** | Dữ liệu ác ý, đo tương phản bằng số, kiểm trên thiết bị thật |
+
+⚠️ Trụ 4 **chưa có tài liệu công khai nào để trỏ tới** — `harness-*` hiện nằm trong memory và trong `devops-brief.md` §7. Trước khi viết trụ này, kiểm xem có gì công khai được không, và **tuyệt đối không** để lọt tên tài khoản, tên công cụ nội bộ có gắn danh tính, hay chi tiết thói quen làm việc (`devops-brief.md` §1).
+
+### 2.3a 🔴 VĂN PHONG — phải viết lại, đừng dùng bản §2.3 như đang có
+
+Chủ đã đọc bản §2.3 và **chưa ưng**. Một chỉnh sửa cụ thể, bắt buộc:
+
+🔒 **Bỏ hết ngôi "tôi". Viết ở góc nhìn khác.** Không *"tôi tự viết"*, không *"tôi thà nói vậy còn hơn hứa"*, không *"Bản cũ của app này…"* kể theo ngôi thứ nhất. Trang nói về **sản phẩm và cách nó được dựng**, không phải về tác giả kể chuyện mình.
+
+Việc này còn phục vụ threat model: bớt ngôi thứ nhất là bớt vật liệu dựng pretext (`devops-brief.md` §1).
+
+Bản §2.3 dưới đây **giữ lại làm hồ sơ** — phần *sự thật kỹ thuật* trong đó đã được đối soát và vẫn đúng; phần *cách nói* thì bỏ.
+
+### 2.3 Nội dung — ⚠️ BẢN CŨ, GIỮ LÀM HỒ SƠ, KHÔNG DÙNG NGUYÊN VĂN
+
+⛔ **Bản dưới đây KHÔNG còn là nội dung sẽ dùng.** Chủ đã đọc và chưa ưng văn phong (§2.3a), và khung nội dung đã đổi sang sáu trụ cột (§2.2a). Giữ lại vì **các dữ kiện kỹ thuật trong đó đã được đối soát với repo và vẫn đúng** — chúng là nguyên liệu, không phải bản thảo.
+
+*(Ba câu đã bị gỡ ở vòng phản biện 26/07, đừng vô tình dựng lại: "Ghi vào máy trước, đồng bộ sau" — **sai**, không có đường ghi offline; tiêu đề kê bốn tính năng khi mới một cái chạy; và mọi con số thời gian đánh thức máy — resume có đuôi trễ ~12s nên không con số nào nói đúng được.)*
 
 **Khối 2 — Hero**
 > **Một cái app cho đúng một người.**
