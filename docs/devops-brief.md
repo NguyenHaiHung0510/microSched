@@ -290,6 +290,43 @@ Thang L1/L2/L3 **mở lại được cánh cửa §8 từng đóng**, vì §8 b�
 
 *Nguồn (tra live 2026-07-22):* [codex-plugin-cc](https://github.com/openai/codex-plugin-cc) · [Codex Memories (OpenAI)](https://learn.chatgpt.com/docs/customization/memories) · [Neon free plan limits](https://neon.com/faqs/free-plan-limits-and-quotas) · [Jules pricing 2026](https://hackup.ai/ai-plans/jules/) · [Gemini 3.6 Flash in Antigravity](https://antigravity.google/blog/gemini-3-6-flash-in-google-antigravity)
 
+### h) 📝 2026-07-27 — quota T1 là nút cổ chai mới; Codex được cấp full-access git/Docker; chính sách model/effort theo loại việc
+
+**Bối cảnh:** dù đã áp đúng harness (T1 không thi công, mọi CRUD đi T2/T3), riêng phần **"điều phối + check"** còn lại của T1 vẫn ăn **~25%/ngày quota Opus/high**, 3 ngày chạm 91% quota tuần. Chẩn đoán, không suy đoán:
+
+1. **Trên gói Pro, Opus và Sonnet dùng CHUNG một pool token**, và Opus tốn **3–5× token** của Sonnet cho cùng việc. Effort (`low/medium/high`) là **trục độc lập** nhân thêm lên trên. Dùng Opus+high cho **mọi** việc — kể cả việc lặt vặt — là tổ hợp đốt quota nhanh nhất.
+2. **Phần "check" tốn nhất không phải judgment mà là cơ học:** vì Codex qua đường plugin bị sandbox chặn Docker/`.git` (xem mục b dưới), T1 phải **tự chạy lại toàn bộ verification bằng tay** (ruff, pytest, build) — cơ học × context dài (~1300 dòng `CLAUDE.md` + hàng chục memory) × effort cao = đốt quota dù không có gì sai.
+3. Benchmark thật (07/2026): trên **Terminal-Bench 2.1** — đúng sân của T2 — **Sol dẫn 88.8% vs Sonnet 5 chỉ 80.4%**. Nghĩa là *"T1 phải mạnh hơn T2 mới quản được T2"* không đứng vững từ số đo — giá trị của vai quản lý đến từ **spec rõ + test độc lập + hai reviewer khác họ** (cơ chế đã có), không phải từ chênh lệch IQ.
+
+**a) ✅ Chính sách model/effort theo loại việc (mới, thay "Opus/high mặc định"):**
+
+| Loại việc | Model/effort | Vì sao |
+|---|---|---|
+| Security-critical, ops không hoàn tác, hoà giải khi T2/T3 bất đồng, quyết định kiến trúc | **Opus/high** (giữ nguyên) | Ít khối lượng, đáng tiền — đúng chỗ frontier reasoning trả công |
+| Điều phối/bookkeeping còn lại: đọc receipt, draft spec lần đầu, report đóng phiên, đọc doc | **Sonnet 5/medium** (mới) | Không phải judgment call; Sonnet không rõ ràng yếu hơn T2 trên đúng loại việc T2 làm (mục 3 trên) |
+
+**b) ✅ Codex được cấp full-access cho git/Docker (chủ chốt 2026-07-27, tin tưởng năng lực gpt-5.6-sol/terra):**
+
+Xác nhận lại kỹ thuật (đã ghi trong comment `~/.codex/config.toml` từ 25/07, nay đo khớp với docs Codex CLI công khai): sandbox Windows ở `workspace-write` đóng **`Deny Write` ACE** lên `.git` bất kể `writable_roots` (Deny luôn thắng Allow trên Windows); Docker bị chặn vì lý do khác (quyền daemon/named-pipe dưới restricted-token). `danger-full-access` gỡ **toàn bộ** sandbox (file + network) — OpenAI gọi là elevated-risk.
+
+**Điểm mới quan trọng:** `-s danger-full-access` và `--dangerously-bypass-approvals-and-sandbox` (kiểm bằng `codex exec --help`) là **cờ theo TỪNG LỆNH `codex exec`**, không phải config bền — khác hẳn kiểu "full-access có giám sát, hạn cứng 45 phút, tự thu hồi" đã dùng cho Agent-Opus (đó là trạng thái phiên/worktree phải nhớ đóng). Ở đây **không có gì để quên tắt** — hết lệnh là hết quyền. T1 chỉ cần gắn cờ đúng lệnh cần git/Docker, lệnh chỉ sửa code vẫn giữ `workspace-write` mặc định.
+
+⚠️ **Chưa kiểm (cần probe ~30s trước khi giao việc thật):** vì Codex được T1 gọi **không tương tác** (không ai ngồi trả lời approval), `-s danger-full-access` một mình có thể treo chờ approval không bao giờ tới nếu `approval_policy` chưa phải `never`. `--dangerously-bypass-approvals-and-sandbox` (docs: *"intended solely for environments that are externally sandboxed"*) nhiều khả năng mới đúng cho kịch bản này. **Việc đầu phiên sau: chạy probe rẻ xác nhận cờ nào dùng được cho lệnh git/merge thật, theo đúng thói quen "đổi config Codex thì probe trước khi giao việc lớn" (25/07).**
+
+**c) ✅ Luồng merge/DevOps thiết kế lại — KHÔNG bỏ bước review:**
+
+Bản đầu đề xuất `gh pr merge --auto` (tự merge khi CI xanh) bị bác — nó bỏ qua đúng bước **T3/T2 review đã nhiều lần bắt bug thật** (008i, 008k, spec 008h... — xem các note 📝 26/07 ở `CLAUDE.md`). Luồng đúng:
+
+1. T2 mở PR (workspace-write, như cũ).
+2. T3/T2 review theo thang criticality đã có (`pr-merge-gate-by-criticality`) — **giữ nguyên, không cắt**.
+3. Có vấn đề → Codex tự sửa theo feedback (workspace-write, đã chạy được, **không cần** full-access).
+4. Review đạt → **Codex, full-access CHỈ cho lệnh này, tự `git push` + `gh pr merge`** — không phải `gh pr merge --auto` mù, không cần T1 bấm tay.
+5. DevOps/DevSecOps thi hành (migration, gitleaks, lane PG cần Docker) → Codex full-access khi cần; T1 chỉ đọc receipt, không rerun.
+
+**T1 còn lại sau redesign:** viết spec, đọc receipt, xử lý bất đồng/escalation, và phần thật sự critical (L1). Khối lượng cơ học gây bottleneck (mục 2) chuyển hết sang T2.
+
+*Nguồn tra 2026-07-27:* [Claude usage limits 2026](https://www.explainx.ai/blog/claude-usage-limits-2026-timeline-explained) · [Claude Max plan pricing](https://intuitionlabs.ai/articles/claude-max-plan-pricing-usage-limits) · [Codex sandbox & approvals](https://developers.openai.com/codex/agent-approvals-security) · [Sonnet 5 vs GPT-5.6 Sol benchmarks](https://benchlm.ai/compare/claude-sonnet-5-vs-gpt-5-6-sol) · [Pull Request Automation Workflow](https://developertoolkit.ai/en/codex/lessons/pr-automation/)
+
 ---
 
 ## 8. Chạy nhiều agent song song — ⚠️ GHI NHẬN 2026-07-21, chưa nghiên cứu đủ
