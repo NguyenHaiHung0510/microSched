@@ -33,6 +33,9 @@ GATE_AXES = {
     "__delete_gate__": "deleted_at",
 }
 
+# Alembic revision bookkeeping created by the migration runner; deliberately has no model.
+_NON_DOMAIN_TABLES = frozenset({"alembic_version"})
+
 
 def table(name: str):
     """Return an application table from SQLModel metadata."""
@@ -146,11 +149,14 @@ def test_reading_gate_registry_matches_live_schema(pg_dsn: str) -> None:
 
         models = table_models()
         db_tables = {f"microsched.{row['table_name']}" for row in table_rows}
+        domain_db_tables = {
+            t for t in db_tables if t.removeprefix("microsched.") not in _NON_DOMAIN_TABLES
+        }
         columns_by_table = {table_name: set() for table_name in db_tables}
         for row in column_rows:
             columns_by_table[f"microsched.{row['table_name']}"].add(row["column_name"])
 
-        assert db_tables == set(models)
+        assert domain_db_tables == set(models)
         assert_gate_declarations_match_columns(models, columns_by_table)
 
     asyncio.run(scenario())
