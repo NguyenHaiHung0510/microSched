@@ -1,10 +1,15 @@
 """Regression tests for one-way physical-schema decisions."""
 
+import asyncio
+
+import asyncpg
+import pytest
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import CheckConstraint, Text
 from sqlmodel import SQLModel
 
 import app.domain.models  # noqa: F401 - importing registers every table
+from app.domain.models import Gate
 
 EXPECTED_TABLES = {
     "app_setting",
@@ -23,10 +28,138 @@ EXPECTED_TABLES = {
     "tracker_group",
 }
 
+GATE_AXES = {
+    "__privacy_gate__": "is_private",
+    "__delete_gate__": "deleted_at",
+}
+
+# Alembic revision bookkeeping created by the migration runner; deliberately has no model.
+_NON_DOMAIN_TABLES = frozenset({"alembic_version"})
+
 
 def table(name: str):
     """Return an application table from SQLModel metadata."""
     return SQLModel.metadata.tables[f"microsched.{name}"]
+
+
+def table_models() -> dict[str, type[SQLModel]]:
+    """Discover every table=True model recursively, without a copied model list."""
+    discovered: dict[str, type[SQLModel]] = {}
+    pending = [SQLModel]
+    seen: set[type[SQLModel]] = set()
+    while pending:
+        parent = pending.pop()
+        for model in parent.__subclasses__():
+            if model in seen:
+                continue
+            seen.add(model)
+            pending.append(model)
+            model_table = vars(model).get("__table__")
+            if model_table is not None:
+                assert model_table.fullname not in discovered
+                discovered[model_table.fullname] = model
+    return discovered
+
+
+def assert_gate_declarations_match_columns(
+    models: dict[str, type[SQLModel]],
+    columns_by_table: dict[str, set[str]],
+) -> None:
+    """Check both gate axes and every VIA_PARENT FK contract."""
+    for fullname, model in models.items():
+        table_name = fullname.removeprefix("microsched.")
+        for flag_name, column_name in GATE_AXES.items():
+            assert flag_name in vars(model), f"{table_name} chưa khai {flag_name}"
+            gate = vars(model)[flag_name]
+            assert isinstance(gate, Gate), f"{table_name}.{flag_name} phải là Gate, nhận {gate!r}"
+            has_column = column_name in columns_by_table[fullname]
+            assert (gate is Gate.APPLIES) == has_column, (
+                f"{table_name}.{flag_name}={gate.name} nhưng "
+                f"{'có' if has_column else 'không có'} cột {column_name}"
+            )
+
+            for foreign_key in vars(model)["__table__"].foreign_keys:
+                parent_table = foreign_key.column.table
+                parent_model = models.get(parent_table.fullname)
+                if parent_model is None:
+                    continue
+                parent_gate = vars(parent_model).get(flag_name)
+                if parent_gate not in {Gate.APPLIES, Gate.VIA_PARENT}:
+                    continue
+                assert gate is not Gate.NONE, (
+                    f"{model.__name__}.{flag_name}=Gate.NONE nhưng parent "
+                    f"{parent_model.__name__}.{flag_name}=Gate.{parent_gate.name}; "
+                    f"đổi {model.__name__}.{flag_name} thành Gate.VIA_PARENT"
+                )
+
+            if gate is not Gate.VIA_PARENT:
+                continue
+            model_table = vars(model)["__table__"]
+            parent_fullnames = {
+                foreign_key.column.table.fullname for foreign_key in model_table.foreign_keys
+            }
+            guarded_parents = [
+                parent_name
+                for parent_name in parent_fullnames
+                if parent_name in models
+                and vars(models[parent_name]).get(flag_name) is Gate.APPLIES
+            ]
+            assert guarded_parents, (
+                f"{table_name}.{flag_name}=VIA_PARENT nhưng không có FK tới "
+                "model cha khai APPLIES trên cùng trục"
+            )
+
+
+def test_reading_gate_declarations_match_metadata() -> None:
+    """Every model declares both axes and the declarations match ORM schema metadata."""
+    models = table_models()
+    metadata_tables = {
+        item.fullname: {column.name for column in item.columns}
+        for item in SQLModel.metadata.tables.values()
+    }
+
+    assert set(models) == set(metadata_tables)
+    assert_gate_declarations_match_columns(models, metadata_tables)
+
+
+@pytest.mark.pg
+def test_reading_gate_registry_matches_live_schema(pg_dsn: str) -> None:
+    """The live schema has exactly the modeled tables and matching gate columns."""
+
+    async def scenario() -> None:
+        connection = await asyncpg.connect(pg_dsn)
+        try:
+            table_rows = await connection.fetch(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'microsched'
+                  AND table_type = 'BASE TABLE'
+                """
+            )
+            column_rows = await connection.fetch(
+                """
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'microsched'
+                """
+            )
+        finally:
+            await connection.close()
+
+        models = table_models()
+        db_tables = {f"microsched.{row['table_name']}" for row in table_rows}
+        domain_db_tables = {
+            t for t in db_tables if t.removeprefix("microsched.") not in _NON_DOMAIN_TABLES
+        }
+        columns_by_table = {table_name: set() for table_name in db_tables}
+        for row in column_rows:
+            columns_by_table[f"microsched.{row['table_name']}"].add(row["column_name"])
+
+        assert domain_db_tables == set(models)
+        assert_gate_declarations_match_columns(models, columns_by_table)
+
+    asyncio.run(scenario())
 
 
 def test_every_table_uses_uuidv7_and_uniform_timestamps() -> None:

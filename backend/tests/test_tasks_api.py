@@ -78,7 +78,7 @@ def test_store_serializes_toggle_and_item_write_on_the_parent_row(pg_dsn):
     """The real store emits FOR UPDATE, so a competing item write sees the new flag."""
 
     async def scenario():
-        engine = create_async_engine(async_postgres_url(os.environ["NEON_MIGRATOR_URL"]))
+        engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         monitor = await asyncpg.connect(pg_dsn)
         store = TaskStore()
@@ -142,7 +142,7 @@ def test_task_crud_and_nested_items_through_http(pg_dsn):
     """Happy path covers the list envelope, updates, filters, children, and deletes."""
 
     async def scenario():
-        engine = create_async_engine(async_postgres_url(os.environ["NEON_MIGRATOR_URL"]))
+        engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app = create_app()
         auth_state = {"value": _auth()}
@@ -245,7 +245,7 @@ def test_task_http_rejections_cover_401_404_422_and_locked_parent(pg_dsn):
     """Refusal paths stay generic and never let nested item access bypass the parent."""
 
     async def scenario():
-        engine = create_async_engine(async_postgres_url(os.environ["NEON_MIGRATOR_URL"]))
+        engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app = create_app()
         auth_state = {"value": _auth()}
@@ -327,7 +327,7 @@ def test_restore_is_idempotent_and_preserves_items_and_privacy_gate(pg_dsn):
     """Restore recovers children, stays idempotent, and hides locked private rows."""
 
     async def scenario():
-        engine = create_async_engine(async_postgres_url(os.environ["NEON_MIGRATOR_URL"]))
+        engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app = create_app()
         auth_state = {"value": _auth()}
