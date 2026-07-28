@@ -1,4 +1,4 @@
-import {
+import React, {
   type FormEvent,
   type MouseEvent,
   useEffect,
@@ -112,7 +112,8 @@ function PriorityBadge({ priority }: { priority: TaskPriority }) {
   )
 }
 
-function TaskCard({
+// ⚡ Bolt: Memoized to prevent re-rendering all tasks on keystroke in Quick Add input
+const TaskCard = React.memo(function TaskCard({
   task,
   migratingPins,
 }: {
@@ -560,7 +561,7 @@ function TaskCard({
       </Dialog>
     </>
   )
-}
+})
 
 export function TasksScreen() {
   const queryClient = useQueryClient()
