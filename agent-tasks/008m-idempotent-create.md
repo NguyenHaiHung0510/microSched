@@ -119,3 +119,33 @@ Biên lai: số PR + checks xanh + diff đọc được. Sandbox chặn Docker/`
 ## 6. Sau khi merge
 
 **Không có migration** — đừng chạy `alembic upgrade` theo quán tính.
+
+## 7. T2 feasibility review (2026-07-28)
+
+- **Non-blocking — type frontend trong spec không khớp vai trò hiện tại của
+  `TaskPayload`.** `TaskPayload` đang là output của `taskPayload()`/`TaskForm` và được
+  dùng cho cả create lẫn update. Nếu chỉ thêm `id: string` đúng nguyên văn §2.5.1 thì
+  `taskPayload(state)` không thể tạo giá trị hợp lệ, đồng thời payload edit cũng bị ép
+  mang một `id` không thuộc PATCH. Judgment call: tách type payload form/update không
+  có `id` khỏi `TaskPayload` dành riêng cho create có `id`; `TaskForm` tiếp tục phát
+  type không có `id`, còn đúng hai submit path tạo task trong `TasksScreen.tsx` gắn
+  `uuidv7()` trước khi gọi mutation. Việc này giữ nguyên bốn vùng sửa được phép trong
+  `TasksScreen.tsx` và đúng seam product đã khóa.
+- **Non-blocking — status động cần thêm tín hiệu ngoài `TaskRead`.** Route hiện khóa
+  `status_code=201`, còn `TaskStore.create()` chỉ trả `TaskRead`; vì vậy store phải trả
+  thêm kết quả “đã insert hay đã tồn tại” để route đặt `201`/`200`, và biểu diễn riêng
+  conflict vô hình để route trả `409` thân rỗng. Đây là plumbing bắt buộc suy ra trực
+  tiếp từ acceptance, không đổi API contract.
+- **Không có blocker ở hai lần đọc.** `readable(select(Task)..., Task, auth)` hiện lọc
+  đồng thời privacy và soft-delete; sau `ON CONFLICT DO NOTHING`, có thể đọc visible
+  row qua chính gate này rồi chỉ khi không thấy mới chạy `select(Task.id)` vật lý.
+  Query thứ hai không cần và không được lấy prose, nên không phải sửa `reading.py`.
+- **Không có blocker ở race test PG.** Lane `@pytest.mark.pg` đã dùng Postgres thật,
+  nhiều connection/transaction độc lập và `asyncio` trong
+  `test_task_item_trigger.py`; fixture từ chối DB remote mặc định. Cùng pattern đó có
+  thể dựng hai request/store transaction đồng thời với cùng UUID và đếm trực tiếp
+  trong DB. Red proof có thể thay tạm upsert bằng check-then-insert để thấy một nhánh
+  lỗi/500, rồi hoàn nguyên.
+- **Giả định line number của spec đã drift nhưng hành vi vẫn đúng.** Khối hiện tại ở
+  `TaskStore.create()` vẫn flush parent rồi luôn dựng và `db.add_all(items)`; do đó
+  nguy cơ đắp checklist mà §2.2 mô tả là có thật dù số dòng không còn chính xác.

@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   canSubmitTask,
   type TaskFormState,
-  type TaskPayload,
+  type TaskWritePayload,
   type TaskPriority,
   taskPayload,
 } from '@/task-ui'
@@ -53,7 +53,7 @@ export function TaskForm({
   initial?: InitialTask
   submitLabel: string
   pending: boolean
-  onSubmit: (payload: TaskPayload) => void
+  onSubmit: (payload: TaskWritePayload) => void
   onCancel?: () => void
 }) {
   const [title, setTitle] = useState(initial?.title ?? '')
