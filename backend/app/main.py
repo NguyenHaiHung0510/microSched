@@ -3,7 +3,7 @@
 import secrets
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -38,6 +38,15 @@ def create_app() -> FastAPI:
     # Signs the short-lived OAuth handshake cookie and NOTHING else. The login
     # session is an opaque token row in `session` (auth-brief §2) - never this
     # cookie. Keeping the two apart matters because merging them still demos fine.
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
     # The ephemeral fallback only means a half-finished handshake breaks on restart.
     app.add_middleware(
         SessionMiddleware,
