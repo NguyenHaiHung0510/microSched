@@ -27,6 +27,22 @@ def test_healthz_reports_liveness_without_database(monkeypatch) -> None:
     assert response.json() == {"status": "ok", "version": "0.1.0"}
 
 
+def test_security_headers_are_present(monkeypatch) -> None:
+    """Defense-in-depth headers must be returned on every response."""
+    _configure_test_app(monkeypatch)
+    database_check = AsyncMock(return_value="up")
+    monkeypatch.setattr("app.web.routers.health.check_database", database_check)
+    client = TestClient(create_app())
+
+    response = client.get("/api/healthz")
+
+    assert response.headers.get("X-Content-Type-Options") == "nosniff"
+    assert response.headers.get("X-Frame-Options") == "DENY"
+    assert (
+        response.headers.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains"
+    )
+
+
 def test_healthz_never_queries_the_database(monkeypatch) -> None:
     """Guard the Neon CU-hr budget, which no other test can see.
 

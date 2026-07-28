@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import Scope
 
@@ -21,6 +22,17 @@ from app.web.routers.me import router as me_router
 from app.web.routers.tasks import router as tasks_router
 
 logger = logging.getLogger(__name__)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add basic defense-in-depth headers to every response."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
 
 class SPAStaticFiles(StaticFiles):
@@ -58,6 +70,8 @@ def create_app() -> FastAPI:
     # session is an opaque token row in `session` (auth-brief §2) - never this
     # cookie. Keeping the two apart matters because merging them still demos fine.
     # The ephemeral fallback is allowed only for explicitly insecure local development.
+    app.add_middleware(SecurityHeadersMiddleware)
+
     app.add_middleware(
         SessionMiddleware,
         secret_key=oauth_state_secret,
