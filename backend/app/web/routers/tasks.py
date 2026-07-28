@@ -52,9 +52,7 @@ async def create_task(
         task = await store.create(db, session, payload)
     except TaskIdConflict:
         return Response(status_code=status.HTTP_409_CONFLICT)
-    response.status_code = (
-        status.HTTP_201_CREATED if task.created else status.HTTP_200_OK
-    )
+    response.status_code = status.HTTP_201_CREATED if task.created else status.HTTP_200_OK
     return task
 
 

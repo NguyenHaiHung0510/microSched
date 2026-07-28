@@ -210,9 +210,7 @@ def test_client_selected_id_is_idempotent_and_race_safe(pg_dsn):
                 deleted_id = _uuid7()
                 created_ids.append(deleted_id)
                 assert (
-                    await client.post(
-                        "/api/tasks", json={"id": str(deleted_id), "title": "Đã xoá"}
-                    )
+                    await client.post("/api/tasks", json={"id": str(deleted_id), "title": "Đã xoá"})
                 ).status_code == 201
                 assert (await client.delete(f"/api/tasks/{deleted_id}")).status_code == 204
                 deleted_conflict = await client.post(
