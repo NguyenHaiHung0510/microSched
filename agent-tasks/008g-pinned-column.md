@@ -3,6 +3,8 @@
 > **Executor: Codex (T2).** Nhánh `feat/008g-pinned-column` → PR nhỏ vào `develop`.
 > Spec tự-chứa. Đọc `CLAUDE.md` + `AGENTS.md` trước.
 > ⚠️ **Task này CÓ migration.** Đọc §6 trước khi báo xong.
+> ✅ Đã qua 1 lượt `adversarial_review` (T3, `gemini-3.6-flash-high`, 2026-07-28, đọc code thật
+> `tasks.py`/`reading.py`/`TasksScreen.tsx`/`0003`) — xem §7.
 
 ## 0. Bối cảnh — vì sao có task này
 
@@ -34,7 +36,7 @@ Và nó hỏng thật, không chỉ hỏng về nguyên tắc: ghim **không s�
 - `backend/app/domain/models.py`: thêm `pinned` vào `Task`, khớp đúng migration (`nullable=False`, `server_default=text('false')`).
 - `backend/app/domain/tasks.py`:
   - `TaskRead` — thêm `pinned: bool`.
-  - `TaskUpdate` — thêm `pinned: bool | None = None`.
+  - `TaskUpdate` — thêm `pinned: bool | None = None`, **và thêm `"pinned"` vào danh sách trong `reject_null_required_fields`** (`tasks.py:88-94`) cùng với `title`/`status`/`is_private`. `pinned` là `NOT NULL` ở DB y như ba cột đó; bỏ sót bước này thì `PATCH {"pinned": null}` lọt qua Pydantic và nổ `IntegrityError` 500 chưa được bắt ở `db.flush()`.
   - `TaskCreate` — **không** thêm. Task mới tạo không bao giờ được ghim sẵn; ghim là một hành động riêng.
 - `TaskStore.update` phải xử lý `pinned` **cùng đường với các trường thường khác** (`title`, `priority`, …).
   🔒 **Không** đưa `pinned` vào nhánh khoá dòng cha. `008` đã chốt: chỉ đổi `is_private` mới `SELECT … FOR UPDATE`, vì đó là trường duy nhất mà đua transaction làm hỏng bất biến. `pinned` không đụng bất biến nào.
@@ -55,14 +57,14 @@ Chủ **đang có ghim thật** trong `localStorage` của PWA trên iPhone. Dep
 
 Trong `TasksScreen.tsx`, chạy **đúng một lần**:
 
-1. **Chỉ chạy sau khi danh sách task đã tải xong** (`tasks.isSuccess === true`). Chạy sớm hơn là gửi `PATCH` cho những id chưa biết còn tồn tại hay không.
+1. **Chỉ chạy sau khi danh sách task đã tải xong** (`tasks.isSuccess === true`). Đây chỉ là mốc **thời điểm** để chờ app mount xong — **không** dùng làm nguồn xác định "id còn tồn tại hay không" (xem điểm 3).
 2. Đọc `microsched:pinned-task-ids`. Rỗng, không có, hoặc `navigator.onLine === false` ⇒ **không làm gì, không xoá gì**.
-3. Với mỗi id **có mặt trong danh sách vừa tải**, gửi `PATCH /api/tasks/{id}` `{ pinned: true }`. Id **không** có trong danh sách (task đã xoá) ⇒ coi như xong, bỏ id đó đi.
+3. 🔒 **Với MỌI id đọc được từ `localStorage`**, gửi `PATCH /api/tasks/{id}` `{ pinned: true }` — **đừng lọc qua `tasks.data.items` trước**. Danh sách đó bị cắt ở `limit=100` (`TasksScreen.tsx:599`, `/api/tasks?status=all&limit=100&offset=0`); một task ghim thật nằm ngoài 100 dòng đầu (sắp theo `due_at`/`created_at`) sẽ bị coi nhầm là "đã xoá" và **mất ghim vĩnh viễn, không lỗi không log**. Để chính response của `PATCH` làm trọng tài tồn-tại: `404` ⇒ task đã xoá thật, coi như xong, bỏ id đi; `2xx` ⇒ thành công, bỏ id đi; lỗi mạng/5xx ⇒ chưa xong, giữ lại để thử lần sau.
 4. 🔒 **`Promise.allSettled`, không `Promise.all`.** Một `404` hay một lỗi mạng không được phép huỷ lượt mang dữ liệu của những id còn lại.
-5. 🔒 **Xoá theo TỪNG ID, không xoá cả khoá.** Ghi lại vào `localStorage` đúng những id **chưa** thành công. Cách "tất cả xong mới xoá" là sai ở chỗ: một id hỏng vĩnh viễn thì lượt sau retry lại cả mười, mãi mãi.
+5. 🔒 **Xoá theo TỪNG ID, không xoá cả khoá.** Ghi lại vào `localStorage` đúng những id **chưa** thành công theo định nghĩa ở điểm 3 (tức chỉ giữ lại id gặp lỗi mạng/5xx). Cách "tất cả xong mới xoá" là sai ở chỗ: một id hỏng vĩnh viễn thì lượt sau retry lại cả mười, mãi mãi.
 6. Không chặn giao diện, không spinner. Hỏng thì im và thử lại lần mở sau — nhưng **`console.warn`** để còn dấu vết.
 
-⚠️ **Đua với chính người dùng.** Trong lúc lượt mang dữ liệu đang chạy, người dùng bấm *bỏ ghim* một task — request của migration tới sau sẽ ghim lại và **nuốt mất thao tác vừa rồi**. Chặn bằng cách **vô hiệu hoá nút ghim cho tới khi lượt mang dữ liệu kết thúc** (nó chỉ kéo dài vài trăm ms). Đừng chọn cách "so sánh timestamp" — phức tạp hơn và vẫn thua.
+⚠️ **Đua với chính người dùng.** Trong lúc lượt mang dữ liệu đang chạy, người dùng bấm *bỏ ghim* một task — request của migration tới sau sẽ ghim lại và **nuốt mất thao tác vừa rồi**. Chặn bằng một cờ `migrating` ở `TasksScreen` (state, không phải prop mỗi thẻ tự tính), truyền xuống **vô hiệu hoá nút ghim của MỌI `TaskCard`** cho tới khi lượt mang dữ liệu kết thúc — không chỉ những task đang được migrate, vì người dùng có thể bấm ghim một task BẤT KỲ trong lúc đó (nó chỉ kéo dài vài trăm ms). Đừng chọn cách "so sánh timestamp" — phức tạp hơn và vẫn thua.
 
 ⚠️ **Hai tab.** Đặt cờ `microsched:pinned-migrated-v1 = "1"` **NGAY TRƯỚC** khi phát request đầu tiên, và kiểm cờ đó trước khi chạy. Tab thứ hai mở sẵn từ trước thấy cờ thì đứng yên. Không cần `storage` event listener — cờ đọc lúc chạy là đủ cho ca này.
 
@@ -129,3 +131,29 @@ Biên lai, không phải lời khai: số PR + checks xanh + diff. Sandbox chặ
 Thứ tự bắt buộc: **áp migration lên Neon TRƯỚC, rồi mới merge.** Cột có `DEFAULT false` và code cũ không đọc nó, nên schema mới tương thích ngược với bản đang chạy — áp trước là an toàn, áp sau là một cửa sổ hỏng.
 
 Verify **không dừng ở `alembic current`** — truy vấn `information_schema.columns` thật trên Neon để thấy cột có mặt.
+
+## 7. Lượt phản biện T3 (2026-07-28) — đã fold, sẵn sàng giao Codex
+
+`adversarial_review` (`gemini-3.6-flash-high`, đọc trực tiếp `agent-tasks/008g-pinned-column.md` +
+`backend/alembic/versions/0003_task_item_privacy_trigger.py` + `backend/app/domain/tasks.py` +
+`backend/app/domain/reading.py` + `frontend/src/TasksScreen.tsx`), câu hỏi *"spec sai ở đâu"*.
+
+**3 finding thật, đã fold vào §2.2/§2.4 ở trên:**
+1. [MAJOR] §2.4 dùng danh sách đã tải (cắt ở `limit=100`) để quyết "còn tồn tại hay không" ⇒ task
+   ghim nằm ngoài 100 dòng đầu bị coi nhầm là đã xoá, mất ghim vĩnh viễn không lỗi không log. Vá:
+   dùng response của chính `PATCH` (`404` so với `2xx`) làm trọng tài, không dùng list membership.
+2. [MAJOR] `TaskUpdate.reject_null_required_fields` (`tasks.py:88-94`) không có `pinned` trong danh
+   sách cột `NOT NULL` được gác ⇒ `PATCH {"pinned": null}` lọt qua Pydantic, nổ `IntegrityError` 500.
+3. [MINOR] "Vô hiệu hoá nút ghim khi đang migrate" thiếu chỉ dẫn nó phải là **một cờ toàn cục**
+   (mọi `TaskCard`), không phải chỉ những task đang được mang dữ liệu — người dùng có thể ghim BẤT
+   KỲ task nào trong lúc đó.
+
+**1 finding SAI, đã kiểm tay và loại bỏ (không fold):** T3 cho rằng chuyển sắp xếp xuống
+`TaskStore.list` (`Task.pinned.desc()`) sẽ làm task ghim đã hoàn thành biến mất khi tab lọc
+`status=open`, vì `list()` áp `WHERE status = status` trước khi sắp xếp (`tasks.py:190-193`). Đọc
+`TasksScreen.tsx:596-599`: client **luôn** gọi `/api/tasks?status=all&limit=100&offset=0` bất kể tab
+đang chọn — lọc theo tab hoàn toàn ở client (`visibleTasks`, dòng 630-649), giữ nguyên hành vi
+"ghim nổi bất chấp bộ lọc" mà không đụng gì tới nhánh `status != "all"` ở server. T3 kết luận đúng
+từ code nó đọc (`tasks.py`) nhưng bỏ sót phía gọi (`TasksScreen.tsx`) — không phải nguy cơ thật.
+
+Kết luận: **agy là cố vấn, đã kiểm tay từng mục** ([[agy-model-capabilities]]). Spec sẵn sàng giao T2.
