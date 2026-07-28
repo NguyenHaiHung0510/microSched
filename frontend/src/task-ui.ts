@@ -12,12 +12,16 @@ export type TaskFormState = {
   isPrivate: boolean
 }
 
-export type TaskPayload = {
+export type TaskWritePayload = {
   title: string
   body_md: string | null
   priority: TaskPriority | null
   due_at: string | null
   is_private: boolean
+}
+
+export type TaskPayload = TaskWritePayload & {
+  id: string
 }
 
 export const taskInvalidationKey = ['tasks'] as const
@@ -26,7 +30,7 @@ export function taskQueryKey(filter: TaskFilter) {
   return ['tasks', filter] as const
 }
 
-export function taskPayload(state: TaskFormState): TaskPayload {
+export function taskPayload(state: TaskFormState): TaskWritePayload {
   return {
     title: state.title,
     body_md: state.body || null,

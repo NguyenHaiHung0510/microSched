@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
@@ -57,6 +58,7 @@ class TaskItemRead(BaseModel):
 class TaskCreate(BaseModel):
     """Fields accepted when creating a task and its initial checklist."""
 
+    id: UUID | None = None
     title: str = Field(min_length=1)
     body_md: str | None = None
     status: TaskStatus = "open"
@@ -64,6 +66,13 @@ class TaskCreate(BaseModel):
     due_at: datetime | None = None
     is_private: bool = False
     items: list[NonEmptyText] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_uuidv7(self) -> "TaskCreate":
+        """Client-selected task IDs must preserve the UUIDv7 ordering contract."""
+        if self.id is not None and self.id.version != 7:
+            raise ValueError("id must be a UUIDv7")
+        return self
 
 
 class TaskUpdate(BaseModel):
@@ -98,6 +107,11 @@ class TaskRead(BaseModel):
     items: list[TaskItemRead]
     created_at: datetime | None
     updated_at: datetime | None
+    created: bool | None = Field(default=None, exclude=True)
+
+
+class TaskIdConflict(Exception):
+    """A client-selected ID belongs to a row hidden by a reading gate."""
 
 
 def _clear(value: str | None) -> str | None:
@@ -202,16 +216,40 @@ class TaskStore:
 
     async def create(self, db: AsyncSession, auth: AuthSession, payload: TaskCreate) -> TaskRead:
         """Create a task and its initial checklist atomically."""
-        task = Task(
-            title=_sealed(payload.title) if payload.is_private else payload.title,
-            body_md=_sealed(payload.body_md) if payload.is_private else payload.body_md,
-            status=payload.status,
-            priority=payload.priority,
-            due_at=payload.due_at,
-            is_private=payload.is_private,
-        )
-        db.add(task)
-        await db.flush()
+        values = {
+            "title": _sealed(payload.title) if payload.is_private else payload.title,
+            "body_md": _sealed(payload.body_md) if payload.is_private else payload.body_md,
+            "status": payload.status,
+            "priority": payload.priority,
+            "due_at": payload.due_at,
+            "is_private": payload.is_private,
+        }
+        if payload.id is None:
+            task = Task(**values)
+            db.add(task)
+            await db.flush()
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(Task)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[Task.id])
+                    .returning(Task.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                existing = await self._parent(db, auth, payload.id)
+                if existing is None:
+                    physical = await db.execute(select(Task.id).where(Task.id == payload.id))
+                    if physical.scalar_one_or_none() is not None:
+                        raise TaskIdConflict
+                    raise RuntimeError("conflicting task disappeared before it could be read")
+                result = self._task_read(existing, await self._items(db, payload.id))
+                result.created = False
+                return result
+
+            inserted = await db.execute(select(Task).where(Task.id == inserted_id))
+            task = inserted.scalar_one()
 
         # The parent is new and cannot yet be reached by another transaction, but
         # taking the same lock used by every other item-write path keeps the store's
@@ -228,7 +266,9 @@ class TaskStore:
         ]
         db.add_all(items)
         await db.flush()
-        return self._task_read(task, items)
+        result = self._task_read(task, items)
+        result.created = True
+        return result
 
     async def update(
         self,

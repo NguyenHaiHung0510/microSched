@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.models import AuthSession
 from app.domain.tasks import (
     TaskCreate,
+    TaskIdConflict,
     TaskItemCreate,
     TaskItemRead,
     TaskItemUpdate,
@@ -43,9 +44,16 @@ async def list_tasks(
 
 
 @router.post("/tasks", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
-async def create_task(payload: TaskCreate, db: Database, session: CurrentSession) -> TaskRead:
+async def create_task(
+    payload: TaskCreate, db: Database, session: CurrentSession, response: Response
+) -> TaskRead | Response:
     """Create a task and initial checklist in one request transaction."""
-    return await store.create(db, session, payload)
+    try:
+        task = await store.create(db, session, payload)
+    except TaskIdConflict:
+        return Response(status_code=status.HTTP_409_CONFLICT)
+    response.status_code = status.HTTP_201_CREATED if task.created else status.HTTP_200_OK
+    return task
 
 
 @router.get("/tasks/{task_id}", response_model=TaskRead)

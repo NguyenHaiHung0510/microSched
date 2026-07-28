@@ -34,6 +34,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { uuidv7 } from '@/lib/uuidv7'
 import { TaskForm } from '@/TaskForm'
 import {
   type TaskFilter,
@@ -673,6 +674,7 @@ export function TasksScreen() {
     create.mutate({
       source: 'quick',
       payload: {
+        id: uuidv7(),
         title,
         body_md: null,
         priority: null,
@@ -750,7 +752,9 @@ export function TasksScreen() {
               <TaskForm
                 submitLabel="Tạo task"
                 pending={create.isPending}
-                onSubmit={(payload) => create.mutate({ payload, source: 'detail' })}
+                onSubmit={(payload) =>
+                  create.mutate({ payload: { ...payload, id: uuidv7() }, source: 'detail' })
+                }
                 onCancel={() => setCreateOpen(false)}
               />
               {create.isError && create.variables?.source === 'detail' ? (
