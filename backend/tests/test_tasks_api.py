@@ -176,6 +176,7 @@ def test_task_crud_and_nested_items_through_http(pg_dsn):
                 )
                 assert created_response.status_code == 201
                 created = created_response.json()
+                assert created["pinned"] is False
                 task_id = UUID(created["id"])
                 created_ids.append(task_id)
                 first_item_id = created["items"][0]["id"]
@@ -191,6 +192,22 @@ def test_task_crud_and_nested_items_through_http(pg_dsn):
                 assert changed.status_code == 200
                 assert changed.json()["title"] == "Chuẩn bị họp tuần"
                 assert changed.json()["body_md"] is None
+
+                pinned = await client.patch(
+                    f"/api/tasks/{task_id}",
+                    json={"pinned": True},
+                )
+                assert pinned.status_code == 200
+                assert pinned.json()["pinned"] is True
+                assert (await client.get(f"/api/tasks/{task_id}")).json()["pinned"] is True
+
+                unpinned = await client.patch(
+                    f"/api/tasks/{task_id}",
+                    json={"pinned": False},
+                )
+                assert unpinned.status_code == 200
+                assert unpinned.json()["pinned"] is False
+                assert (await client.get(f"/api/tasks/{task_id}")).json()["pinned"] is False
 
                 checked = await client.patch(
                     f"/api/tasks/{task_id}/items/{first_item_id}",
@@ -276,6 +293,9 @@ def test_task_http_rejections_cover_401_404_422_and_locked_parent(pg_dsn):
                 ).status_code == 422
                 assert (
                     await client.patch(f"/api/tasks/{missing}", json={"status": None})
+                ).status_code == 422
+                assert (
+                    await client.patch(f"/api/tasks/{missing}", json={"pinned": None})
                 ).status_code == 422
 
                 private_response = await client.post(

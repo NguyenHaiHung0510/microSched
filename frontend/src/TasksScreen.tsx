@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { apiRequest, UnauthenticatedError } from '@/api'
+import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -62,12 +62,14 @@ type Task = {
   priority: TaskPriority | null
   due_at: string | null
   is_private: boolean
+  pinned: boolean
   items: TaskItem[]
 }
 
 type CreateSource = 'quick' | 'detail'
 
-const PINNED_STORAGE_KEY = 'microsched:pinned-task-ids'
+const LEGACY_PIN_IDS_KEY = 'microsched:pinned-task-ids'
+const PINNED_MIGRATED_KEY = 'microsched:pinned-migrated-v1'
 
 const priorityLabels: Record<TaskPriority, string> = {
   p1: 'P1',
@@ -79,21 +81,6 @@ const filterLabels: Record<TaskFilter, string> = {
   open: 'Đang mở',
   completed: 'Đã xong',
   all: 'Tất cả',
-}
-
-function loadPinnedIds(): Set<string> {
-  if (typeof window === 'undefined') return new Set()
-
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(PINNED_STORAGE_KEY) ?? '[]')
-    return new Set(
-      Array.isArray(stored)
-        ? stored.filter((value): value is string => typeof value === 'string')
-        : [],
-    )
-  } catch {
-    return new Set()
-  }
 }
 
 function formatDue(value: string): string {
@@ -127,14 +114,10 @@ function PriorityBadge({ priority }: { priority: TaskPriority }) {
 
 function TaskCard({
   task,
-  pinned,
-  onTogglePin,
-  onRemoved,
+  migratingPins,
 }: {
   task: Task
-  pinned: boolean
-  onTogglePin: () => void
-  onRemoved: () => void
+  migratingPins: boolean
 }) {
   const queryClient = useQueryClient()
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -148,7 +131,9 @@ function TaskCard({
      lượt tải lại treo thì nút treo theo vĩnh viễn. Ghi xong là ghi xong. */
   const refresh = () => void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
   const update = useMutation({
-    mutationFn: (payload: Partial<TaskPayload> & { status?: TaskStatus }) =>
+    mutationFn: (
+      payload: Partial<TaskPayload> & { status?: TaskStatus; pinned?: boolean },
+    ) =>
       apiRequest<Task>(`/api/tasks/${task.id}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
@@ -162,7 +147,6 @@ function TaskCard({
     mutationFn: () => apiRequest<void>(`/api/tasks/${task.id}`, { method: 'DELETE' }),
     onSuccess: () => {
       setDetailsOpen(false)
-      onRemoved()
       refresh()
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -231,7 +215,7 @@ function TaskCard({
       <Card
         className={[
           'group/task relative gap-3 overflow-visible rounded-lg px-4 py-4 shadow-2 ring-0 transition-shadow',
-          pinned ? 'bg-brand-50 shadow-rose' : 'bg-card',
+          task.pinned ? 'bg-brand-50 shadow-rose' : 'bg-card',
           task.status === 'completed' ? 'opacity-70' : '',
         ].join(' ')}
       >
@@ -251,7 +235,7 @@ function TaskCard({
               {/* rose-500 trên nền thẻ ghim (rose-50) chỉ đạt 2,82:1, dưới ngưỡng
                   3:1 của non-text contrast. Dùng `--primary` (rose-700, 5,29:1)
                   — vẫn là màu nhận diện, chỉ đậm hơn. */}
-              {pinned ? <Pin className="size-4 text-primary" aria-hidden="true" /> : null}
+              {task.pinned ? <Pin className="size-4 text-primary" aria-hidden="true" /> : null}
               <Button
                 className={[
                   // Tràn 733px chữ trong thẻ rộng 318px, đè lên cả ba nút hành động
@@ -301,10 +285,11 @@ function TaskCard({
             <Button
               size="icon-lg"
               variant="ghost"
-              aria-label={pinned ? `Bỏ ghim ${task.title}` : `Ghim ${task.title}`}
-              onClick={onTogglePin}
+              aria-label={task.pinned ? `Bỏ ghim ${task.title}` : `Ghim ${task.title}`}
+              disabled={migratingPins || update.isPending}
+              onClick={() => update.mutate({ pinned: !task.pinned })}
             >
-              {pinned ? <PinOff /> : <Pin />}
+              {task.pinned ? <PinOff /> : <Pin />}
             </Button>
             <Button
               size="icon-lg"
@@ -583,15 +568,7 @@ export function TasksScreen() {
   const [filter, setFilter] = useState<TaskFilter>('open')
   const [quickTitle, setQuickTitle] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(loadPinnedIds)
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify([...pinnedIds]))
-    } catch {
-      // Pinning is a best-effort client preference until it gets a database column.
-    }
-  }, [pinnedIds])
+  const [migratingPins, setMigratingPins] = useState(false)
 
   const tasks = useQuery({
     queryKey: taskQueryKey('all'),
@@ -600,6 +577,83 @@ export function TasksScreen() {
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
+
+  useEffect(() => {
+    if (!tasks.isSuccess || !navigator.onLine) return
+
+    let pinnedIds: string[]
+    try {
+      if (window.localStorage.getItem(PINNED_MIGRATED_KEY) === '1') return
+      const stored = JSON.parse(window.localStorage.getItem(LEGACY_PIN_IDS_KEY) ?? '[]')
+      pinnedIds = Array.isArray(stored)
+        ? [...new Set(stored.filter((value): value is string => typeof value === 'string'))]
+        : []
+    } catch (error) {
+      console.warn('Could not read legacy pinned tasks; migration will retry later.', error)
+      return
+    }
+    if (pinnedIds.length === 0) return
+
+    try {
+      // This synchronous marker closes the two-tab race before the first PATCH starts.
+      window.localStorage.setItem(PINNED_MIGRATED_KEY, '1')
+    } catch (error) {
+      console.warn('Could not claim legacy pin migration; migration will retry later.', error)
+      return
+    }
+
+    queueMicrotask(() => setMigratingPins(true))
+    void Promise.allSettled(
+      pinnedIds.map((taskId) =>
+        apiRequest<Task>(`/api/tasks/${taskId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ pinned: true }),
+        }),
+      ),
+    ).then((results) => {
+      const retryIds = results.flatMap((result, index) => {
+        if (result.status === 'fulfilled') return []
+        if (result.reason instanceof ApiError && result.reason.status === 404) return []
+
+        const shouldRetry =
+          (result.reason instanceof ApiError && result.reason.status >= 500) ||
+          !(
+            result.reason instanceof ApiError ||
+            result.reason instanceof UnauthenticatedError
+          )
+        if (shouldRetry) {
+          console.warn(
+            'Could not migrate a legacy pinned task; migration will retry later.',
+            result.reason,
+          )
+          return [pinnedIds[index]]
+        }
+        return []
+      })
+
+      try {
+        if (retryIds.length === 0) {
+          window.localStorage.removeItem(LEGACY_PIN_IDS_KEY)
+        } else {
+          window.localStorage.setItem(LEGACY_PIN_IDS_KEY, JSON.stringify(retryIds))
+          // A partial migration is not complete: release the cross-tab claim so a
+          // later app open can retry only the network/5xx failures retained above.
+          window.localStorage.removeItem(PINNED_MIGRATED_KEY)
+        }
+      } catch (error) {
+        console.warn('Could not persist legacy pin migration progress.', error)
+        try {
+          window.localStorage.removeItem(PINNED_MIGRATED_KEY)
+        } catch {
+          // The original per-ID list remains the retry source when storage is blocked.
+        }
+      }
+
+      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+      setMigratingPins(false)
+    })
+  }, [queryClient, tasks.isSuccess])
+
   const create = useMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       apiRequest<Task>('/api/tasks', {
@@ -633,38 +687,9 @@ export function TasksScreen() {
     return items
       .filter(
         (task) =>
-          pinnedIds.has(task.id) || filter === 'all' || task.status === filter,
+          task.pinned || filter === 'all' || task.status === filter,
       )
-      .sort((left, right) => {
-        const pinOrder =
-          Number(pinnedIds.has(right.id)) - Number(pinnedIds.has(left.id))
-        if (pinOrder !== 0) return pinOrder
-
-        const leftDue = left.due_at ? new Date(left.due_at).getTime() : Infinity
-        const rightDue = right.due_at ? new Date(right.due_at).getTime() : Infinity
-        if (leftDue !== rightDue) return leftDue - rightDue
-
-        return left.title.localeCompare(right.title, 'vi')
-      })
-  }, [filter, pinnedIds, tasks.data?.items])
-
-  function togglePinned(taskId: string) {
-    setPinnedIds((current) => {
-      const next = new Set(current)
-      if (next.has(taskId)) next.delete(taskId)
-      else next.add(taskId)
-      return next
-    })
-  }
-
-  function forgetPinned(taskId: string) {
-    setPinnedIds((current) => {
-      if (!current.has(taskId)) return current
-      const next = new Set(current)
-      next.delete(taskId)
-      return next
-    })
-  }
+  }, [filter, tasks.data?.items])
 
   function quickAdd(event: FormEvent) {
     event.preventDefault()
@@ -812,9 +837,7 @@ export function TasksScreen() {
           {visibleTasks.map((task) => (
             <TaskCard
               task={task}
-              pinned={pinnedIds.has(task.id)}
-              onTogglePin={() => togglePinned(task.id)}
-              onRemoved={() => forgetPinned(task.id)}
+              migratingPins={migratingPins}
               key={task.id}
             />
           ))}
