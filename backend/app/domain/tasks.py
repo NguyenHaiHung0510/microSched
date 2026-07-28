@@ -84,11 +84,12 @@ class TaskUpdate(BaseModel):
     priority: TaskPriority | None = None
     due_at: datetime | None = None
     is_private: bool | None = None
+    pinned: bool | None = None
 
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> "TaskUpdate":
         """Explicit nulls cannot replace non-null task columns."""
-        for field in ("title", "status", "is_private"):
+        for field in ("title", "status", "is_private", "pinned"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null")
         return self
@@ -104,6 +105,7 @@ class TaskRead(BaseModel):
     priority: TaskPriority | None
     due_at: datetime | None
     is_private: bool
+    pinned: bool
     items: list[TaskItemRead]
     created_at: datetime | None
     updated_at: datetime | None
@@ -172,6 +174,7 @@ class TaskStore:
             priority=task.priority,
             due_at=task.due_at,
             is_private=task.is_private,
+            pinned=task.pinned,
             items=[self._item_read(item) for item in items],
             created_at=task.created_at,
             updated_at=task.updated_at,
@@ -190,7 +193,11 @@ class TaskStore:
         stmt = readable(select(Task), Task, auth)
         if status != "all":
             stmt = stmt.where(Task.status == status)
-        stmt = stmt.order_by(Task.due_at.asc().nulls_last(), Task.created_at.desc())
+        stmt = stmt.order_by(
+            Task.pinned.desc(),
+            Task.due_at.asc().nulls_last(),
+            Task.created_at.desc(),
+        )
         result = await db.execute(stmt.limit(limit).offset(offset))
         parents = list(result.scalars())
         if not parents:
@@ -321,7 +328,7 @@ class TaskStore:
                 body_md = changes["body_md"]
                 task.body_md = _sealed(body_md) if task.is_private else body_md
 
-        for field in ("status", "priority", "due_at"):
+        for field in ("status", "priority", "due_at", "pinned"):
             if field in changes:
                 setattr(task, field, changes[field])
         await db.flush()

@@ -132,6 +132,10 @@ class Task(UUIDTimestampModel, table=True):
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),
     )
+    pinned: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+    )
     deleted_at: datetime | None = deleted_timestamp()
 
 

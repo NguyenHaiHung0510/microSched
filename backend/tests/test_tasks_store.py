@@ -39,7 +39,7 @@ Contract the store must satisfy (spec §1.3, §2.1-§2.3, §2.6):
   * task_item.task_id is immutable - update_item must refuse a reparent (§2.1, #7);
   * DELETE is soft (sets deleted_at); the row stays, filtered out on read (§2.6).
 
-TaskRead exposes .id/.title/.body_md/.is_private/.items; each item read exposes
+TaskRead exposes .id/.title/.body_md/.is_private/.pinned/.items; each item read exposes
 .id/.content. Adjust attribute names here and in tasks.py together if you must, but
 keep the behaviours - 009-012 copy this shape.
 """
@@ -420,6 +420,86 @@ def test_soft_delete_leaves_the_row_with_a_timestamp(pg_dsn):
                 pg_dsn, "SELECT deleted_at FROM microsched.task WHERE id = $1", task_id
             )
             assert deleted_at is not None
+        finally:
+            await _cleanup(pg_dsn, task_id)
+
+    asyncio.run(scenario())
+
+
+def test_pinned_tasks_sort_first_in_all_and_status_filtered_lists(pg_dsn):
+    """Pinned ordering wins over due date, including inside an active status filter."""
+
+    async def scenario():
+        tasks = _tasks()
+        store = tasks.TaskStore()
+        auth = _auth(unlocked=True)
+        unpinned_id = None
+        pinned_id = None
+        try:
+            async with _session() as db:
+                unpinned = await store.create(
+                    db,
+                    auth,
+                    tasks.TaskCreate(
+                        title="Đến hạn trước nhưng không ghim",
+                        due_at=datetime.now(UTC),
+                    ),
+                )
+                await db.commit()
+                unpinned_id = unpinned.id
+
+                pinned = await store.create(
+                    db,
+                    auth,
+                    tasks.TaskCreate(
+                        title="Tạo sau, đến hạn sau, nhưng được ghim",
+                        due_at=datetime.now(UTC) + timedelta(days=7),
+                    ),
+                )
+                pinned_id = pinned.id
+                await store.update(db, auth, pinned_id, tasks.TaskUpdate(pinned=True))
+                await db.commit()
+
+                all_tasks = await store.list(db, auth, status="all")
+                open_tasks = await store.list(db, auth, status="open")
+                assert [task.id for task in all_tasks if task.id in {pinned_id, unpinned_id}] == [
+                    pinned_id,
+                    unpinned_id,
+                ]
+                assert [task.id for task in open_tasks if task.id in {pinned_id, unpinned_id}] == [
+                    pinned_id,
+                    unpinned_id,
+                ]
+        finally:
+            await _cleanup(pg_dsn, unpinned_id, pinned_id)
+
+    asyncio.run(scenario())
+
+
+def test_pinned_does_not_bypass_the_private_read_gate(pg_dsn):
+    """Pinning a private task never makes it visible while private mode is locked."""
+
+    async def scenario():
+        tasks = _tasks()
+        store = tasks.TaskStore()
+        unlocked = _auth(unlocked=True)
+        task_id = None
+        try:
+            async with _session() as db:
+                created = await store.create(
+                    db,
+                    unlocked,
+                    tasks.TaskCreate(title="Ghim nhưng vẫn riêng tư", is_private=True),
+                )
+                task_id = created.id
+                await store.update(db, unlocked, task_id, tasks.TaskUpdate(pinned=True))
+                await db.commit()
+
+                locked = _auth(unlocked=False)
+                assert await store.get(db, locked, task_id) is None
+                assert all(
+                    task.id != task_id for task in await store.list(db, locked, status="all")
+                )
         finally:
             await _cleanup(pg_dsn, task_id)
 
