@@ -254,9 +254,14 @@ không Postgres, không đăng nhập.
 - `webServer` chạy trên **bản build** (`npm run build` rồi `vite preview`), không chạy `vite dev` —
   gần với prod hơn và bắt được lỗi chỉ xuất hiện sau build.
 - 🔒 **`serviceWorkers: 'block'` trong `playwright.config.ts`** (`use`/context options). `vite.config.ts`
-  bật `VitePWA({ registerType: 'autoUpdate' })` ⇒ bản `preview` **có service worker thật**, và
-  service worker chặn request **trước** lớp giả lập của `page.route`. Thiếu dòng này thì mock bị đi
-  vòng qua hoặc ăn phải bản precache, test treo ở màn đăng nhập với một lỗi không nói lên điều gì.
+  bật `VitePWA({ registerType: 'autoUpdate' })` ⇒ bản `preview` **có service worker thật** đang chạy
+  trên trang. ⚠️ **Không khẳng định chắc chắn nó chặn `/api/*`** — cấu hình hiện tại chỉ khai
+  `navigateFallbackDenylist: [/^\/auth\//, /^\/api\//]` (loại trừ **điều hướng trang**, không phải
+  fetch/XHR) và **không có `runtimeCaching`** cho `/api/*`, nên có thể request API vẫn lọt thẳng ra
+  mạng. Đặt `serviceWorkers: 'block'` **dù vậy** vì đây là khuyến nghị phòng thủ chuẩn khi test
+  Playwright trên một trang có SW đang active — rủi ro không nằm ở việc SW này *xử lý* request thế
+  nào, mà ở việc **có một SW active là đủ để một số bản Playwright/Chromium đọc lệch tầng CDP** so
+  với khi không có SW. Rẻ để bật, không có lý do để bỏ qua dù chưa đo được app này có dính hay không.
 - Giả lập `/api/me` (trả session hợp lệ) + `/api/tasks*` + các route ghi. Thiếu `/api/me` là app
   đứng ở màn đăng nhập và mọi test rơi vào một lỗi khó hiểu.
 - Dữ liệu fixture theo **`docs/qa-framework.md` §5**: đủ bộ ác ý **và** ≥ 30 mục có mục nằm ngoài màn
@@ -275,7 +280,9 @@ không Postgres, không đăng nhập.
   nào là quyền của executor, nhưng đừng vá một nơi rồi tin hai nơi kia tự khớp.
 - **Job CI mới trong `.github/workflows/ci.yml`**, tên **`Frontend e2e`** (`npx playwright install
   --with-deps chromium`).
-  🔒 **Không đụng ruleset, không thêm nó vào required checks, không đổi tên 5 job đang có.** Required
+  🔒 **Không đụng ruleset, không thêm nó vào required checks, không đổi tên 6 job đang có** (`Backend
+  checks` · `Production dependency check` · `Repository hooks` · `Secret scan` · `Frontend checks` ·
+  `Migration QA` — đọc `ci.yml`, đừng đoán số). Required
   check trỏ vào một job không tồn tại trên nhánh kia làm **mọi PR treo vĩnh viễn** — dự án này đã dính
   đúng lỗi đó (26/07). Việc bật required là của T1/chủ, sau, và chỉ trên `protect-develop`.
 
@@ -300,16 +307,20 @@ Giữ vitest cho phần logic thuần. Nếu §2.3 sinh hàm chọn view (`isOve
 chuyển về `open`) thì **tách ra `task-ui.ts`** và test ở đó — đúng khuôn hiện có (`task-ui.ts` là
 "pure state rules kept testable without a browser runtime").
 
-🔒 **Ít nhất một test Playwright phải chứng minh biết đỏ**: phá đúng hành vi nó canh → thấy đỏ đúng lý
-do → hoàn nguyên → thấy xanh. Ghi vào PR. *(Test chạy ở trạng thái đúng rồi thấy xanh không chứng
-minh nó đang bảo vệ điều gì.)*
+🔒 **Ít nhất một test Playwright phải chứng minh biết đỏ, theo đúng quy trình đo được** (không phải một
+câu văn trong PR): chọn một test (khuyến nghị: kịch bản §2.3 "ghim không xuyên lọc") → **tạm** đảo
+ngược đúng một điều kiện nó canh trong code app (ví dụ trả `task.pinned ||` về như cũ) → chạy
+`npx playwright test`, **dán log đỏ thật** vào PR kèm đúng lý do đỏ → hoàn nguyên code → chạy lại,
+**dán log xanh**. Hai đoạn log là biên lai; thiếu một trong hai là chưa chứng minh được gì. *(Test
+chạy ở trạng thái đúng rồi thấy xanh không chứng minh nó đang bảo vệ điều gì — cùng quy trình
+`008m` đã dùng cho race-proof.)*
 
 ## 3. KHÔNG được làm
 
 - **Không** thêm đường vòng xác thực cho test, dù chỉ ở `APP_ENV=local` (§1.6).
 - **Không** nới `TaskFilter` trong `task-ui.ts` để nhét `'overdue'` (§1.3).
 - **Không** gắn `tabIndex`/`role="button"` lên `Card` (§2.2).
-- **Không** đổi tên 5 required check đang có, **không** đụng ruleset, **không** thêm `Frontend e2e`
+- **Không** đổi tên 6 required check đang có (§2.7), **không** đụng ruleset, **không** thêm `Frontend e2e`
   vào required checks (§2.7).
 - **Không** đụng backend: không route mới, không đổi schema, **không migration**.
 - **Không** đụng đường mang dữ liệu ghim từ `localStorage` (`TasksScreen.tsx:581-655`) — nó là vá
@@ -328,7 +339,7 @@ minh nó đang bảo vệ điều gì.)*
 1. `npm run lint` · `npm test` · `npm run build` xanh.
 2. `npx playwright test` xanh **cả hai project** (`mobile` + `desktop`), chạy cục bộ.
 3. Ít nhất một test Playwright đã **chứng minh biết đỏ**, ghi rõ trong PR (§2.8).
-4. `gh pr checks <PR>` xanh — 5 check cũ **+ `Frontend e2e`**.
+4. `gh pr checks <PR>` xanh — **7 check** (6 cái cũ ở §2.7 **+ `Frontend e2e`**).
 5. Đo và **chép số** vào PR:
    - `refetchInterval`: tab đang mở & focus ⇒ **~60 request/60s**; tab ẩn ⇒ **0 request/60s**.
    - 🔒 **Ở màn đăng nhập (chưa đăng nhập) ⇒ 0 request `/api/me` sau lượt 401 đầu tiên.** Đây là ca
@@ -399,5 +410,49 @@ mục bằng cách mở đúng file/dòng nó dẫn.
   thứ đã đo trong dự án này**, nên thay vì bác trắng, §2.1 + §4.6 giữ lại **một bước kiểm tay trên
   iPhone thật** — rẻ, và nếu T3 đúng thì nó lộ ra ở đúng chỗ đó.
 
-### Lượt 2 — T2 (Codex), *"spec không làm được ở đâu"*
-⏳ chưa chạy — chạy ngay trước khi giao thi công.
+### Lượt 2 — T2 (Codex, `gpt-5.6-sol`), rubric 6 trục đầy đủ, ưu tiên "thử thật" ở trục khả thi — ✅ 2026-07-29
+
+Chạy sau khi lượt T3 đã fold, đúng thứ tự khung hạng-đôi (`devops-brief.md` §7.3.i). **4 finding —
+2 fold thẳng, 1 fold có làm rõ, 1 ghi nhận vận hành.** Không có finding CRITICAL.
+
+**Đã fold:**
+
+1. **[MAJOR] Tooltip không khớp nghĩa đen `ui-brief.md:87`** — §5 (chốt trước 25/07) ghi tooltip phải
+   *"chạm để mở, chạm ngoài để đóng"*; Radix Tooltip (§2.1) không mở bằng chạm. **Đúng họ lỗi quen
+   thuộc của dự án**: `ui-brief.md` §9(a) (25/07) đã nới luật hover cho **đúng tooltip này** bằng lý
+   lẽ "Dialog là đường thay thế đủ", nhưng không quay lại sửa câu chữ cụ thể ở §5 — hai quyết định
+   đều đúng, khoá nhau bởi một câu chưa ai xoá. Đã thêm dòng chốt vào `ui-brief.md` §5 (dated note
+   29/07) đóng vòng, không phải sửa code — 008e đã đúng theo cách đọc này từ đầu.
+2. **[MAJOR] Đếm sai job CI: spec ghi "5 job đang có", `ci.yml` có 6** (`Backend checks` ·
+   `Production dependency check` · `Repository hooks` · `Secret scan` · `Frontend checks` ·
+   `Migration QA`). Lỗi đếm thuần, sửa cả 3 chỗ trong spec.
+
+**Đã fold có làm rõ:**
+
+3. **[MINOR, INFERRED] Lý do `serviceWorkers: 'block'` nêu chắc như đinh trong bản trước** — T2 đọc
+   `vite.config.ts` thấy `navigateFallbackDenylist` chỉ loại trừ **điều hướng trang**, không phải
+   fetch/XHR, và không có `runtimeCaching` cho `/api/*` ⇒ chưa có gì chứng minh SW này thật sự chặn
+   API. **Vẫn giữ `serviceWorkers: 'block'`** — đây là khuyến nghị phòng thủ chuẩn khi test trên
+   trang có SW active, không phụ thuộc SW đó có xử lý `/api/*` hay không — nhưng đã sửa câu chữ trong
+   spec để không khẳng định quá tay điều chưa đo được.
+
+**Ghi nhận vận hành, không fold vào spec:**
+
+4. **[MINOR, axis 6] "Chứng minh biết đỏ" chỉ là văn xuôi PR, không có quy trình đo được** — đã sửa
+   §2.8 thành quy trình cụ thể (đảo điều kiện → log đỏ → hoàn nguyên → log xanh, cả hai đoạn log dán
+   vào PR), theo đúng khuôn `008m` đã dùng cho race-proof.
+
+**🔒 Bài học vận hành — quan trọng hơn cả 4 finding:** T2 chạy lượt này **không có `-s
+danger-full-access`**, dù mục đích cả lượt là "thử thật" ở trục #3. Kết quả: `npm install` chết
+`ENOTCACHED` (sandbox chặn mạng), `vite preview`/`npm run build` chết `EPERM` khi spawn native binary
+(Tailwind oxide). T2 tự báo đúng — *"đây là giới hạn môi trường, không phải bằng chứng spec sai"* —
+và không suy diễn quá lời. Nhưng hệ quả là **trục #3 (khả thi) gần như không được kiểm chứng
+empirically như rubric đòi**: cả 4 finding thật đều tới từ đọc code (trục #1/#2/#6), không phải từ
+chạy thử. ⇒ **Sửa vào `devops-brief.md` §7.3.i**: giao T2 review theo hạng-đôi mà muốn trục #3 được
+trả lời bằng "thử thật" thì phải **tường minh xin `-s danger-full-access`** trong prompt giao việc —
+`write: true` của lớp forwarder không tự động kèm quyền mạng/spawn. Đây cũng là mảnh còn thiếu của
+việc treo từ 27/07 ("probe cờ nào đúng cho lệnh không tương tác") — nay biết thêm: thiếu cờ thì lượt
+review tự động **rơi về INFERRED trên trục #3**, không báo lỗi, chỉ báo "không thử được".
+
+Kết luận: **agy/Codex là cố vấn, T1 kiểm tay từng mục** — cả 4 finding đã kiểm bằng cách đọc đúng
+file/dòng nó dẫn. Spec sẵn sàng giao thi công thật.

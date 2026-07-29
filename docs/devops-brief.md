@@ -383,7 +383,20 @@ riêng, đừng trộn vào bảng.
 
 **Kết quả áp dụng đầu tiên (`018`, PR #52):** lượt T3 bắt 5/6 finding thật (fold), 1 bác. Xét lại theo
 hạng ở trên: `018` là hạng đôi (khớp cả 3 tiêu chí) — lượt T2 chạy tiếp trước khi merge, không merge
-chỉ với 1 lượt như quy ước cũ cho phép. Xem PR #52 để có bằng chứng T2 review.
+chỉ với 1 lượt như quy ước cũ cho phép. Lượt T2 bắt thêm 2 finding thật (đếm sai job CI · một câu
+trong `ui-brief.md` chưa đóng vòng với chính bản sửa 25/07 của nó) + 1 finding làm rõ chứ không sửa
+code. Chi tiết đầy đủ ở §7 của `agent-tasks/018-qa-polish-playwright.md`.
+
+🔒 **Bài học vận hành lộ ra ngay ở lượt áp dụng đầu tiên: `write: true` của lớp forwarder KHÔNG kèm
+quyền mạng hay quyền spawn tiến trình native.** T2 chạy lượt trên không có `-s danger-full-access`
+dù mục đích cả lượt là trả lời trục #3 (khả thi) **bằng thử thật** — `npm install` chết `ENOTCACHED`
+(sandbox chặn mạng), `vite preview` chết `EPERM` (chặn spawn binary Tailwind). T2 tự báo đúng đây là
+giới hạn môi trường chứ không suy diễn thành lỗi spec — nhưng hệ quả là trục #3 gần như rơi hết về
+INFERRED, đúng thứ rubric này sinh ra để tránh. ⇒ **Giao T2 review hạng-đôi muốn trục #3 được trả lời
+bằng thử thật thì phải tường minh xin `-s danger-full-access` trong prompt giao việc**, không mặc
+định `write: true` là đủ. Đây cũng là mảnh còn thiếu của việc treo từ 27/07 (mục `h`, *"probe cờ nào
+đúng cho lệnh không tương tác"*) — nay biết thêm: thiếu cờ thì lượt review không báo lỗi, chỉ lặng lẽ
+rơi về suy luận.
 
 ---
 
