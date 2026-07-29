@@ -58,6 +58,9 @@ cover/
 
 # Django stuff:
 *.log
+
+# Local Playwright screenshots and HTML reports are QA receipts, not source.
+/frontend/output/playwright/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal

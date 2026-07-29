@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "e2e": "playwright test",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "tsc -p tsconfig.test.json && vitest run"
@@ -29,6 +30,7 @@
     "@babel/plugin-transform-runtime": "7.29.7",
     "@babel/runtime": "7.29.7",
     "@eslint/js": "9.39.5",
+    "@playwright/test": "^1.62.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "24.13.3",
     "@types/react": "19.2.17",
