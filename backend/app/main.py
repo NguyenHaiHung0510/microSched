@@ -4,7 +4,7 @@ import logging
 import secrets
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -83,6 +83,16 @@ def create_app() -> FastAPI:
         raise HTTPException(status_code=404, detail="Not Found")
 
     app.include_router(protected_api)
+
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        """Add essential security headers to all responses (defense in depth)."""
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "0"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
     frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if frontend_dist.is_dir():

@@ -1,0 +1,4 @@
+## 2026-07-29 - [Added Security Headers to Backend]
+**Vulnerability:** The FastAPI backend responses were missing basic security headers like `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 0`, and `Strict-Transport-Security`. This lack of headers exposed the application to clickjacking, MIME-type sniffing, and made it vulnerable to certain downgrade attacks or XSS exploits depending on the client.
+**Learning:** Security headers are not automatically injected by FastAPI or the standard web server by default. Explicit middleware is needed to guarantee these headers are appended to all HTTP responses, providing a critical layer of defense-in-depth across the API.
+**Prevention:** Implement a standard `http` middleware in the `FastAPI` instance that automatically injects these headers before returning the response to the client. This should be a standard inclusion for all future API endpoints.
