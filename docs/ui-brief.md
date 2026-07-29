@@ -84,7 +84,7 @@ Chủ chọn **6** trong 10 cơ chế được kiểm kê:
 | ✅ | Ghim | Viền/nền nổi + **luôn xếp đầu**, bất chấp đang sắp xếp kiểu gì |
 | ✅ | Gấp tràn `+N mục khác…` | Quá 3 mục thì gấp; thẻ không phình, lưới không vỡ |
 | ✅ | Tick checklist ngay trên thẻ | Không mở dialog; kèm gạch ngang + đếm `X/Y mục nhỏ` |
-| ✅ | Tooltip phân nhóm | ⚠️ **iPhone không có hover** ⇒ phải là *chạm để mở, chạm ngoài để đóng*; hover chỉ là bổ sung cho desktop |
+| ✅ | Tooltip phân nhóm | ⚠️ **iPhone không có hover** ⇒ phải là *chạm để mở, chạm ngoài để đóng*; hover chỉ là bổ sung cho desktop.<br>**📝 Sửa 2026-07-29:** câu này chưa được đóng vòng với §9(a) — bắt bởi lượt phản biện T2 (`018`). §9(a) (25/07) nới luật hover (§6.6) cho **đúng tooltip này** bằng lý do "Dialog là đường chạm thay thế đủ", nhưng không quay lại sửa yêu cầu "chạm để mở" cụ thể ở đây. Từ 008e, tooltip **chưa bao giờ** mở bằng chạm — chỉ có nội dung lấy lại được qua Dialog. `018` dùng Radix Tooltip (không mở bằng chạm) tiếp tục theo đúng cách đọc của §9(a), không phải §5 nghĩa đen. **Chốt: §9(a) thắng, câu "chạm để mở" ở dòng này coi như đã bị thay bởi lý lẽ Dialog-là-đường-thay-thế** — không viết đè, chỉ ghi để không ai đọc lại phải tự suy luận lần nữa. |
 | ✅ | Banner việc trễ hạn | Ghim trên cùng, dùng `--bad` / `--bad-bg` |
 
 **Không lấy:** chip preset thời lượng/địa điểm, đoán icon từ tên địa điểm, chip ưu tiên tự định nghĩa — chưa cần ở 008, chưa loại vĩnh viễn.
