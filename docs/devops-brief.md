@@ -331,6 +331,60 @@ Bản đầu đề xuất `gh pr merge --auto` (tự merge khi CI xanh) bị bá
 
 *Nguồn tra 2026-07-27:* [Claude usage limits 2026](https://www.explainx.ai/blog/claude-usage-limits-2026-timeline-explained) · [Claude Max plan pricing](https://intuitionlabs.ai/articles/claude-max-plan-pricing-usage-limits) · [Codex sandbox & approvals](https://developers.openai.com/codex/agent-approvals-security) · [Sonnet 5 vs GPT-5.6 Sol benchmarks](https://benchlm.ai/compare/claude-sonnet-5-vs-gpt-5-6-sol) · [Pull Request Automation Workflow](https://developertoolkit.ai/en/codex/lessons/pr-automation/)
 
+### i) ✅ CHỐT 2026-07-29 — hai hạng phản biện spec + rubric hợp nhất (thay "T3 hỏi X, T2 hỏi Y")
+
+**Vì sao đổi:** quy ước 26/07 ("T3 hỏi *spec sai ở đâu*, T2 hỏi *spec không làm được ở đâu*") tách hai
+câu hỏi thành hai lượt tách biệt, và trong thực hành đã sinh ra đúng lỗ nó không lường tới: `018`
+(harness Playwright + CI job mới + đặt khuôn cho 009–012) chỉ chạy lượt T3 rồi **suýt** merge — tự cho
+phép hoãn lượt T2 vì hai câu hỏi bị coi là hai việc độc lập, tách được. Sai: hai câu hỏi đó chỉ là
+**tập con** của một rubric đầy đủ, và một việc đặt-khuôn cần cả hai bộ mắt **trước khi merge**, không
+phải trước khi giao thi công rồi thôi.
+
+**Hai hạng — trục khác với L1/L2/L3.** L1/L2/L3 (`c` phía trên, [[harness-triage-ladder]]) trả lời
+*"chủ có cần biết không"*; hạng dưới đây trả lời *"cần mấy bộ mắt trước khi giao thi công thật"*. Hai
+trục compose được, không thay thế nhau.
+
+| | Hạng đơn — chỉ T3 | Hạng đôi — cả T2 + T3 |
+|---|---|---|
+| Mặc định | ✅ | |
+| Kích hoạt hạng đôi (≥1 mục) | | có migration · đụng auth/session/crypto/secret · **đặt khuôn** (slice/harness đầu tiên mà việc sau chép) · thêm **hạ tầng mới** (CI job, dependency, cấu hình runtime) · giả định về **môi trường thực thi** mà chỉ executor thật mới biết đúng/sai |
+| Ví dụ | `008g` (đổi cột, theo khuôn có sẵn) | `008`, `013` (CI mới), `018` (CI job mới + harness Playwright mà 009–012 chép + đụng 3 hành vi đã chốt) |
+
+**Rubric hợp nhất — cả hai engine dùng chung, không tách câu hỏi.** Mọi lượt `adversarial_review`,
+bất kể giao T2 hay T3, chạy đủ sáu trục:
+
+1. **Đúng theo decision record** — khớp `docs/*.md` phần ✅ CHỐT không, có mâu thuẫn nào không.
+2. **Đúng theo code thật** — bắt buộc đọc file nguồn thật trước khi phán, không suy từ text spec.
+   *(Dòng lệnh quan trọng nhất trong prompt — thiếu nó là suy luận từ mô tả, không phải phản biện.)*
+3. **Khả thi khi thi công** — bước cụ thể có chạy được không, đúng ràng buộc môi trường (sandbox,
+   phiên bản tool, tên CI job, thứ tự migration). Trục này **T2 có lợi thế tự nhiên** vì nó chính là
+   executor.
+4. **Blast radius / khó hoàn tác** — có đụng thứ không quay lại được không; mục "KHÔNG được làm" đã
+   đủ chưa.
+5. **Tự mâu thuẫn** — cấm một chiều mà cho phép chiều kia (họ lỗi `note.title`, 23/07), hai quyết
+   định đều đúng nhưng khoá nhau (họ lỗi lặp ≥7 lần trong dự án, [[feedback_gap_between_correct_decisions]]).
+6. **Acceptance đo được** — tiêu chí có kiểm chứng được thật hay chỉ "làm cho tốt".
+
+Mỗi finding bắt buộc: **severity** (CRITICAL/MAJOR/MINOR) + **file:line trích dẫn** + nhãn
+**OBSERVED/INFERRED** ([[feedback-probe-by-difference]]). Không có trích dẫn ⇒ chưa phải finding, xếp
+riêng, đừng trộn vào bảng.
+
+**T2 và T3 khác nhau ở *cách trả lời* trục #3, không ở câu hỏi được hỏi:**
+- **T3 (Gemini, không có quyền thực thi):** trả lời trục #3 bằng **suy luận** đọc code.
+- **T2 (Codex, chính là executor):** nên trả lời trục #3 bằng **thử thật** khi rẻ — dựng server cục
+  bộ + thử một mock, hoặc probe sandbox cho đúng thao tác nghi ngờ — thay vì chỉ đọc rồi suy luận.
+  Áp đúng luật đã có: *"chạy thử rồi mới nói đáng tin hơn model mạnh suy luận rồi khẳng định"*
+  ([[feedback_verification_loop_over_model]]). Một finding T2 kiểu "tôi thử chạy X, nó lỗi Y" nặng
+  ký hơn "tôi đọc code, X có thể lỗi".
+
+**Thứ tự cho hạng đôi:** giao **T3 trước** (rẻ, nhanh, không cần quyền ghi) → fold → giao **T2** với
+đúng rubric sáu trục, nhắc ưu tiên thử thật ở trục #3 → fold → merge. Không đảo thứ tự để tiết kiệm
+— T2 phản biện *sau khi* T3 đã fold thì review đúng bản spec sắp thi công, không phải bản nháp.
+
+**Kết quả áp dụng đầu tiên (`018`, PR #52):** lượt T3 bắt 5/6 finding thật (fold), 1 bác. Xét lại theo
+hạng ở trên: `018` là hạng đôi (khớp cả 3 tiêu chí) — lượt T2 chạy tiếp trước khi merge, không merge
+chỉ với 1 lượt như quy ước cũ cho phép. Xem PR #52 để có bằng chứng T2 review.
+
 ---
 
 ## 8. Chạy nhiều agent song song — ⚠️ GHI NHẬN 2026-07-21, chưa nghiên cứu đủ
