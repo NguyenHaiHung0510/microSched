@@ -4,7 +4,7 @@ import logging
 import secrets
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -53,6 +53,15 @@ def create_app() -> FastAPI:
         oauth_state_secret = secrets.token_urlsafe(32)
 
     app = FastAPI(title=settings.app_name, version=settings.app_version)
+
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        """Apply defense-in-depth security headers to all responses."""
+        response = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
     # Signs the short-lived OAuth handshake cookie and NOTHING else. The login
     # session is an opaque token row in `session` (auth-brief §2) - never this
