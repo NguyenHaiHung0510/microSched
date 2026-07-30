@@ -1,0 +1,1 @@
+## 2024-05-24 - TaskCard Memoization\n**Learning:** In a React list where the parent component manages typing state (like a quick-add input), the entire list re-renders on every keystroke. This causes performance issues on long task lists.\n**Action:** Use `React.memo()` on the list item component (e.g., `TaskCard`) to prevent unnecessary re-renders when parent state changes.

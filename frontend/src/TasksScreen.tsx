@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  memo,
 } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -112,7 +113,10 @@ function PriorityBadge({ priority }: { priority: TaskPriority }) {
   )
 }
 
-function TaskCard({
+// ⚡ Bolt: Wraps TaskCard in memo to prevent unnecessary re-renders when parent state
+// (like `quickTitle` when typing in the quick-add input) changes. This significantly
+// improves typing responsiveness when there are many tasks on the screen.
+const TaskCard = memo(function TaskCard({
   task,
   migratingPins,
 }: {
@@ -560,7 +564,7 @@ function TaskCard({
       </Dialog>
     </>
   )
-}
+})
 
 export function TasksScreen() {
   const queryClient = useQueryClient()
