@@ -5,6 +5,7 @@ import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { TasksScreen } from '@/TasksScreen'
 
 type SessionResponse = {
@@ -105,6 +106,9 @@ function App() {
   const session = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
+    // The session has a long TTL. Window focus already checks it when returning
+    // to the tab, so it must opt out of the live task polling default.
+    refetchInterval: false,
     // Being logged out is an answer, not a failure worth retrying.
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,
@@ -113,50 +117,52 @@ function App() {
   const loggedOut = session.isError && session.error instanceof UnauthenticatedError
 
   return (
-    <main className="min-h-screen bg-muted px-4 py-6 sm:px-6 sm:py-8">
-      {/* `aria-live` từng nằm trên chính div này. Nó bọc cả app, nên mọi thay đổi
-          bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
-          Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}
-      <div className="mx-auto max-w-5xl">
-        {session.isPending ? (
-          <Card
-            className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
-            role="status"
-          >
-            <h1 className="text-2xl font-extrabold tracking-tight text-primary">
-              microSched
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Đang kiểm tra phiên đăng nhập…
-            </p>
-          </Card>
-        ) : null}
-
-        {loggedOut ? <LoginScreen /> : null}
-
-        {session.isError && !loggedOut ? (
-          <Card
-            className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
-            role="alert"
-          >
-            <div className="space-y-1">
+    <TooltipProvider>
+      <main className="min-h-screen bg-muted px-4 py-6 sm:px-6 sm:py-8">
+        {/* `aria-live` từng nằm trên chính div này. Nó bọc cả app, nên mọi thay đổi
+            bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
+            Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}
+        <div className="mx-auto max-w-5xl">
+          {session.isPending ? (
+            <Card
+              className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
+              role="status"
+            >
               <h1 className="text-2xl font-extrabold tracking-tight text-primary">
                 microSched
               </h1>
-              <p className="text-sm text-bad">Không kết nối được API.</p>
-            </div>
-            <Button variant="outline" size="lg" onClick={() => void session.refetch()}>
-              <RefreshCw data-icon="inline-start" />
-              Thử lại
-            </Button>
-          </Card>
-        ) : null}
+              <p className="text-sm text-muted-foreground">
+                Đang kiểm tra phiên đăng nhập…
+              </p>
+            </Card>
+          ) : null}
 
-        {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
-        {session.data && !loggedOut ? <SignedIn /> : null}
-      </div>
-      <Toaster />
-    </main>
+          {loggedOut ? <LoginScreen /> : null}
+
+          {session.isError && !loggedOut ? (
+            <Card
+              className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
+              role="alert"
+            >
+              <div className="space-y-1">
+                <h1 className="text-2xl font-extrabold tracking-tight text-primary">
+                  microSched
+                </h1>
+                <p className="text-sm text-bad">Không kết nối được API.</p>
+              </div>
+              <Button variant="outline" size="lg" onClick={() => void session.refetch()}>
+                <RefreshCw data-icon="inline-start" />
+                Thử lại
+              </Button>
+            </Card>
+          ) : null}
+
+          {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
+          {session.data && !loggedOut ? <SignedIn /> : null}
+        </div>
+        <Toaster />
+      </main>
+    </TooltipProvider>
   )
 }
 

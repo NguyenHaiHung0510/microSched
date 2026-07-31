@@ -35,6 +35,11 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { uuidv7 } from '@/lib/uuidv7'
 import { TaskForm } from '@/TaskForm'
 import {
@@ -68,6 +73,7 @@ type Task = {
 }
 
 type CreateSource = 'quick' | 'detail'
+type ListView = TaskFilter | 'overdue'
 
 const LEGACY_PIN_IDS_KEY = 'microsched:pinned-task-ids'
 const PINNED_MIGRATED_KEY = 'microsched:pinned-migrated-v1'
@@ -82,6 +88,11 @@ const filterLabels: Record<TaskFilter, string> = {
   open: 'Đang mở',
   completed: 'Đã xong',
   all: 'Tất cả',
+}
+
+const listFilterLabels: Record<ListView, string> = {
+  ...filterLabels,
+  overdue: 'Trễ hạn',
 }
 
 function formatDue(value: string): string {
@@ -205,7 +216,37 @@ const TaskCard = memo(function TaskCard({
   const detailsReturnRef = useRef<HTMLButtonElement | null>(null)
 
   function openDetails(event: MouseEvent<HTMLButtonElement>) {
+    // Same guard as `openDetailsFromCard`: the title itself is a `<button>`,
+    // and today's browsers happen not to let a drag form a selection over
+    // one — but that is a browser quirk, not something this code enforces.
+    // Checking here too means the guard still holds if that ever changes.
+    const selection = window.getSelection()
+    if (selection && !selection.isCollapsed) return
+
     detailsReturnRef.current = event.currentTarget
+    setEditing(false)
+    setDetailsOpen(true)
+  }
+
+  function openDetailsFromCard(event: MouseEvent<HTMLDivElement>) {
+    const selection = window.getSelection()
+    if (selection && !selection.isCollapsed) return
+
+    const target = event.target
+    if (!(target instanceof Element)) return
+    if (
+      target.closest(
+        'button, a, input, textarea, select, label, [role="button"], [contenteditable="true"]',
+      )
+    ) {
+      return
+    }
+
+    const title = event.currentTarget.querySelector<HTMLButtonElement>(
+      '[data-testid="task-title"]',
+    )
+    if (!title) return
+    detailsReturnRef.current = title
     setEditing(false)
     setDetailsOpen(true)
   }
@@ -219,6 +260,9 @@ const TaskCard = memo(function TaskCard({
   return (
     <>
       <Card
+        data-testid="task-card"
+        data-task-id={task.id}
+        onClick={openDetailsFromCard}
         className={[
           'group/task relative gap-3 overflow-visible rounded-lg px-4 py-4 shadow-2 ring-0 transition-shadow',
           task.pinned ? 'bg-brand-50 shadow-rose' : 'bg-card',
@@ -227,6 +271,7 @@ const TaskCard = memo(function TaskCard({
       >
         <div className="flex items-start gap-3">
           <Checkbox
+            data-testid="task-checkbox"
             className="mt-1 size-5 rounded-md"
             aria-label={`Đánh dấu ${task.title} hoàn thành`}
             checked={task.status === 'completed'}
@@ -242,25 +287,46 @@ const TaskCard = memo(function TaskCard({
                   3:1 của non-text contrast. Dùng `--primary` (rose-700, 5,29:1)
                   — vẫn là màu nhận diện, chỉ đậm hơn. */}
               {task.pinned ? <Pin className="size-4 text-primary" aria-hidden="true" /> : null}
-              <Button
-                className={[
-                  // Tràn 733px chữ trong thẻ rộng 318px, đè lên cả ba nút hành động
-                  // (QA 2026-07-25). Phải đủ BA thứ, thiếu một là không chữa được:
-                  //   `shrink`      — lớp gốc của Button có `shrink-0`, tức flex item
-                  //                   từ chối co, nên hộp luôn rộng bằng max-content
-                  //                   và chẳng có gì ép chữ phải xuống dòng cả.
-                  //   `min-w-0`     — gỡ `min-width:auto` mặc định của flex item.
-                  //   `break-words` — `whitespace-normal` chỉ xuống dòng ở khoảng
-                  //                   trắng; một cụm 70 ký tự liền thì không có chỗ.
-                  'h-auto min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
-                  task.status === 'completed' ? 'line-through' : '',
-                ].join(' ')}
-                variant="ghost"
-                aria-label={`Mở chi tiết ${task.title}`}
-                onClick={openDetails}
-              >
-                {task.title}
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    data-testid="task-title"
+                    className={[
+                      // Tràn 733px chữ trong thẻ rộng 318px, đè lên cả ba nút hành động
+                      // (QA 2026-07-25). Phải đủ BA thứ, thiếu một là không chữa được:
+                      //   `shrink`      — lớp gốc của Button có `shrink-0`, tức flex item
+                      //                   từ chối co, nên hộp luôn rộng bằng max-content
+                      //                   và chẳng có gì ép chữ phải xuống dòng cả.
+                      //   `min-w-0`     — gỡ `min-width:auto` mặc định của flex item.
+                      //   `break-words` — `whitespace-normal` chỉ xuống dòng ở khoảng
+                      //                   trắng; một cụm 70 ký tự liền thì không có chỗ.
+                      'h-auto min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
+                      task.status === 'completed' ? 'line-through' : '',
+                    ].join(' ')}
+                    variant="ghost"
+                    aria-label={`Mở chi tiết ${task.title}`}
+                    onClick={openDetails}
+                  >
+                    {task.title}
+                  </Button>
+                </TooltipTrigger>
+                {task.body_md || task.items.length > 0 ? (
+                  <TooltipContent>
+                    {task.items.length > 0 ? (
+                      <p>
+                        <span className="font-bold">Checklist · </span>
+                        {task.items.map((item) => item.content).join(' · ')}
+                      </p>
+                    ) : null}
+                    {task.body_md ? (
+                      <p className={task.items.length > 0 ? 'mt-2' : ''}>
+                        <span className="font-bold">Ghi chú · </span>
+                        {task.body_md}
+                      </p>
+                    ) : null}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
               {task.is_private ? (
                 <Badge variant="secondary">
@@ -289,6 +355,7 @@ const TaskCard = memo(function TaskCard({
 
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
             <Button
+              data-testid="task-pin"
               size="icon-lg"
               variant="ghost"
               aria-label={task.pinned ? `Bỏ ghim ${task.title}` : `Ghim ${task.title}`}
@@ -298,6 +365,7 @@ const TaskCard = memo(function TaskCard({
               {task.pinned ? <PinOff /> : <Pin />}
             </Button>
             <Button
+              data-testid="task-edit"
               size="icon-lg"
               variant="ghost"
               aria-label={`Sửa ${task.title}`}
@@ -306,6 +374,7 @@ const TaskCard = memo(function TaskCard({
               <Edit3 />
             </Button>
             <Button
+              data-testid="task-delete"
               size="icon-lg"
               variant="ghost"
               className="text-bad hover:text-bad"
@@ -326,6 +395,7 @@ const TaskCard = memo(function TaskCard({
                 key={item.id}
               >
                 <Checkbox
+                  data-testid="task-checkbox"
                   aria-label={`Đánh dấu ${item.content} hoàn thành`}
                   checked={item.is_completed}
                   disabled={changeItem.isPending}
@@ -373,25 +443,6 @@ const TaskCard = memo(function TaskCard({
           <p className="ml-8 text-sm text-bad">{errorMessage(mutationError)}</p>
         ) : null}
 
-        {task.body_md || task.items.length > 0 ? (
-          <div
-            className="pointer-events-none absolute top-[calc(100%-0.25rem)] right-4 left-4 z-10 hidden translate-y-1 rounded-md bg-tooltip px-4 py-3 text-xs leading-relaxed text-tooltip-foreground opacity-0 shadow-3 transition-all group-hover/task:translate-y-0 group-hover/task:opacity-100 md:block"
-            aria-hidden="true"
-          >
-            {task.items.length > 0 ? (
-              <p>
-                <span className="font-bold">Checklist · </span>
-                {task.items.map((item) => item.content).join(' · ')}
-              </p>
-            ) : null}
-            {task.body_md ? (
-              <p className={task.items.length > 0 ? 'mt-2' : ''}>
-                <span className="font-bold">Ghi chú · </span>
-                {task.body_md}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
       </Card>
 
       <Dialog
@@ -402,6 +453,7 @@ const TaskCard = memo(function TaskCard({
         }}
       >
         <DialogContent
+          data-testid="task-detail-dialog"
           className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
           // `isConnected` chứ không phải chỉ kiểm null: nút mở có thể đã biến mất
           // khỏi cây (thẻ vừa bị xoá, danh sách vừa được lọc lại). Focus vào một
@@ -571,7 +623,7 @@ const TaskCard = memo(function TaskCard({
 export function TasksScreen() {
   const queryClient = useQueryClient()
   const quickInputRef = useRef<HTMLInputElement>(null)
-  const [filter, setFilter] = useState<TaskFilter>('open')
+  const [filter, setFilter] = useState<ListView>('open')
   const [quickTitle, setQuickTitle] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [migratingPins, setMigratingPins] = useState(false)
@@ -687,15 +739,21 @@ export function TasksScreen() {
     [tasks.data?.items],
   )
 
+  // Completing the final overdue task closes that derived view immediately;
+  // keeping this as a derived value avoids a cascading render from an effect.
+  const activeFilter: ListView =
+    filter === 'overdue' && overdueCount === 0 ? 'open' : filter
+
   const visibleTasks = useMemo(() => {
     const items = tasks.data?.items ?? []
 
     return items
-      .filter(
-        (task) =>
-          task.pinned || filter === 'all' || task.status === filter,
+      .filter((task) =>
+        activeFilter === 'overdue'
+          ? isOverdue(task)
+          : activeFilter === 'all' || task.status === activeFilter,
       )
-  }, [filter, tasks.data?.items])
+  }, [activeFilter, tasks.data?.items])
 
   function quickAdd(event: FormEvent) {
     event.preventDefault()
@@ -715,16 +773,26 @@ export function TasksScreen() {
     })
   }
 
+  const filterValues: ListView[] = ['open', 'completed', 'all']
+  if (overdueCount > 0 || activeFilter === 'overdue') filterValues.push('overdue')
+
   return (
     <div className="space-y-4">
       {overdueCount > 0 ? (
         <div
-          className="flex items-center gap-3 rounded-lg bg-bad-bg px-4 py-3 text-sm font-bold text-bad"
           role="status"
         >
-          <AlertTriangle className="size-5 shrink-0" aria-hidden="true" />
-          {/* Tiếng Việt không đổi dạng số nhiều — đừng thêm nhánh đếm ở đây. */}
-          <span>{overdueCount} việc trễ hạn</span>
+          <Button
+            data-testid="overdue-banner"
+            className="h-auto min-h-11 w-full justify-start rounded-lg bg-bad-bg px-4 py-3 text-sm font-bold text-bad hover:bg-bad-bg"
+            size="lg"
+            aria-label={`Xem ${overdueCount} việc trễ hạn`}
+            onClick={() => setFilter('overdue')}
+          >
+            <AlertTriangle className="size-5 shrink-0" aria-hidden="true" />
+            {/* Tiếng Việt không đổi dạng số nhiều — đừng thêm nhánh đếm ở đây. */}
+            <span>{overdueCount} việc trễ hạn</span>
+          </Button>
         </div>
       ) : null}
 
@@ -734,6 +802,7 @@ export function TasksScreen() {
         </h2>
         <form className="flex gap-2" onSubmit={quickAdd}>
           <Input
+            data-testid="quick-add-input"
             ref={quickInputRef}
             className="h-11 flex-1 rounded-lg bg-card px-4 shadow-1"
             aria-label="Thêm task nhanh"
@@ -742,6 +811,7 @@ export function TasksScreen() {
             onChange={(event) => setQuickTitle(event.target.value)}
           />
           <Button
+            data-testid="quick-add-submit"
             className="h-11 rounded-lg px-5"
             size="lg"
             type="submit"
@@ -757,23 +827,23 @@ export function TasksScreen() {
             "không có cách nào để THẤT BẠI" mà 008i sinh ra để chữa. Lọc theo
             `source` để một lần hỏng không hiện lời báo ở cả hai nơi. */}
         {create.isError && create.variables?.source === 'quick' ? (
-          <p className="mt-2 px-1 text-sm text-bad" role="alert">
+          <p data-testid="quick-add-error" className="mt-2 px-1 text-sm text-bad" role="alert">
             {errorMessage(create.error)}
           </p>
         ) : null}
 
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
-          <p className="text-xs text-muted-foreground">
-            Lưu xong ô tự xoá và giữ con trỏ để gõ tiếp.
-          </p>
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
               <Button className="h-auto px-0 py-1 text-xs" size="sm" variant="link">
                 <Plus data-icon="inline-start" />
-                Thêm đủ chi tiết
+                Thêm chi tiết
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+            <DialogContent
+              data-testid="task-create-dialog"
+              className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+            >
               <DialogHeader>
                 <DialogTitle>Tạo task</DialogTitle>
                 <DialogDescription>
@@ -807,16 +877,17 @@ export function TasksScreen() {
             Danh sách task
           </h2>
           <div className="flex flex-wrap gap-1" role="group" aria-label="Lọc task">
-            {(Object.keys(filterLabels) as TaskFilter[]).map((value) => (
+            {filterValues.map((value) => (
               <Button
+                data-testid={`filter-${value}`}
                 className="rounded-full px-4"
                 size="lg"
-                variant={filter === value ? 'secondary' : 'ghost'}
-                aria-pressed={filter === value}
+                variant={activeFilter === value ? 'secondary' : 'ghost'}
+                aria-pressed={activeFilter === value}
                 key={value}
                 onClick={() => setFilter(value)}
               >
-                {filterLabels[value]}
+                {listFilterLabels[value]}
               </Button>
             ))}
           </div>
@@ -839,7 +910,7 @@ export function TasksScreen() {
           </Card>
         ) : null}
 
-        <div className="space-y-3">
+        <div data-testid="task-list" className="space-y-3">
           {visibleTasks.map((task) => (
             <TaskCard
               task={task}

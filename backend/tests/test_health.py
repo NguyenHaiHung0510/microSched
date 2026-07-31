@@ -84,3 +84,18 @@ def test_readyz_stays_200_when_database_is_down(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "degraded"
     assert response.json()["db"] == "down"
+
+
+def test_security_headers_applied(monkeypatch) -> None:
+    """Ensure standard security headers are applied to responses."""
+    _configure_test_app(monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get("/api/healthz")
+
+    assert response.headers.get("X-Content-Type-Options") == "nosniff"
+    assert response.headers.get("X-Frame-Options") == "DENY"
+    assert (
+        response.headers.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains"
+    )
+    assert response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"

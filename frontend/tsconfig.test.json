@@ -20,5 +20,6 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["tests"]
+  "include": ["tests"],
+  "exclude": ["e2e"]
 }
