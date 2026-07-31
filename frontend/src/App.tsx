@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { PrivateGate } from '@/PrivateGate'
+import type { PrivateSessionState } from '@/private-gate'
 import { TasksScreen } from '@/TasksScreen'
 
-type SessionResponse = {
+type SessionResponse = PrivateSessionState & {
   email: string
   signed_in_at: string | null
   expires_at: string
@@ -62,7 +64,7 @@ function LoginScreen() {
   )
 }
 
-function SignedIn() {
+function SignedIn({ session }: { session: SessionResponse }) {
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -81,15 +83,18 @@ function SignedIn() {
           </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
         </div>
-        <Button
-          variant="secondary"
-          size="icon-lg"
-          aria-label="Đăng xuất"
-          disabled={logout.isPending}
-          onClick={() => logout.mutate()}
-        >
-          <LogOut />
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <PrivateGate session={session} />
+          <Button
+            variant="secondary"
+            size="icon-lg"
+            aria-label="Đăng xuất"
+            disabled={logout.isPending}
+            onClick={() => logout.mutate()}
+          >
+            <LogOut />
+          </Button>
+        </div>
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
@@ -158,7 +163,7 @@ function App() {
           ) : null}
 
           {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
-          {session.data && !loggedOut ? <SignedIn /> : null}
+          {session.data && !loggedOut ? <SignedIn session={session.data} /> : null}
         </div>
         <Toaster />
       </main>
