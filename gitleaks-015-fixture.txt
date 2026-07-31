@@ -1,0 +1,1 @@
+NEON_OWNER_URL=postgresql://fakeuser:FakePass015xyz@ep-fake-015.us-east-2.aws.neon.tech/microsched
