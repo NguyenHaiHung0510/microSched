@@ -18,6 +18,7 @@ from app.web.routers.auth import router as auth_router
 from app.web.routers.cron import router as cron_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
+from app.web.routers.private import router as private_router
 from app.web.routers.tasks import router as tasks_router
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     # what makes it reachable, so a new slice cannot ship without the guard.
     protected_api = APIRouter(prefix="/api", dependencies=[Depends(require_session)])
     protected_api.include_router(me_router)
+    protected_api.include_router(private_router)
     protected_api.include_router(tasks_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)

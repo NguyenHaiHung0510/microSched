@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
 from app.domain.models import AuthSession, Task, TaskItem
-from app.domain.reading import readable, with_privacy_gate
+from app.domain.reading import can_see_private, readable, with_privacy_gate
 
 TaskStatus = Literal["open", "completed"]
 TaskListStatus = Literal["open", "completed", "all"]
@@ -114,6 +114,10 @@ class TaskRead(BaseModel):
 
 class TaskIdConflict(Exception):
     """A client-selected ID belongs to a row hidden by a reading gate."""
+
+
+class PrivateWriteLocked(Exception):
+    """A write tried to create private data while the display gate was closed."""
 
 
 def _clear(value: str | None) -> str | None:
@@ -223,6 +227,8 @@ class TaskStore:
 
     async def create(self, db: AsyncSession, auth: AuthSession, payload: TaskCreate) -> TaskRead:
         """Create a task and its initial checklist atomically."""
+        if payload.is_private and not can_see_private(auth):
+            raise PrivateWriteLocked
         values = {
             "title": _sealed(payload.title) if payload.is_private else payload.title,
             "body_md": _sealed(payload.body_md) if payload.is_private else payload.body_md,
@@ -292,6 +298,8 @@ class TaskStore:
             return None
         items = await self._items(db, task_id)
         target_private = changes.get("is_private", task.is_private)
+        if target_private and not can_see_private(auth):
+            raise PrivateWriteLocked
 
         if wants_toggle and target_private != task.is_private:
             if target_private:

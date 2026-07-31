@@ -23,12 +23,17 @@ Three guards, on purpose:
     damage. Set ``ALLOW_REMOTE_PG_TESTS=1`` to override deliberately.
 """
 
+import asyncio
 import os
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
+import asyncpg
 import pytest
 from sqlalchemy.engine import make_url
 
 from app.core.database_urls import asyncpg_dsn
+from app.domain.models import AuthSession
 
 # Hosts that can only ever be a throwaway database: the CI service container or a
 # local Docker Postgres. Anything else (Neon, staging) is assumed to hold real data.
@@ -52,3 +57,47 @@ def pg_dsn() -> str:
             pytrace=False,
         )
     return asyncpg_dsn(url)
+
+
+@pytest.fixture
+def seed_auth_session(pg_dsn: str):
+    """Insert and return a real session row for APIs that update it by ID."""
+
+    async def seed() -> AuthSession:
+        now = datetime.now(UTC)
+        conn = await asyncpg.connect(pg_dsn)
+        try:
+            await conn.execute(
+                "DELETE FROM microsched.app_setting "
+                "WHERE key IN ('private_pin', 'private_unlock_throttle')"
+            )
+            row = await conn.fetchrow(
+                "INSERT INTO microsched.session "
+                "(token_hash, user_email, last_seen_at, expires_at) "
+                "VALUES ($1, $2, $3, $4) "
+                "RETURNING id, token_hash, user_email, created_at, updated_at, "
+                "last_seen_at, expires_at, private_until",
+                f"private-api-test-{uuid4()}",
+                "owner@example.test",
+                now,
+                now + timedelta(days=1),
+            )
+            return AuthSession(**dict(row))
+        finally:
+            await conn.close()
+
+    session = asyncio.run(seed())
+    yield session
+
+    async def cleanup() -> None:
+        conn = await asyncpg.connect(pg_dsn)
+        try:
+            await conn.execute("DELETE FROM microsched.session WHERE id = $1", session.id)
+            await conn.execute(
+                "DELETE FROM microsched.app_setting "
+                "WHERE key IN ('private_pin', 'private_unlock_throttle')"
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(cleanup())
