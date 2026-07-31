@@ -18,6 +18,7 @@ from app.web.routers.auth import router as auth_router
 from app.web.routers.cron import router as cron_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
+from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
 from app.web.routers.tasks import router as tasks_router
 
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(me_router)
     protected_api.include_router(private_router)
     protected_api.include_router(tasks_router)
+    protected_api.include_router(notes_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:
