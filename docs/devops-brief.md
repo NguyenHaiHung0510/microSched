@@ -286,6 +286,8 @@ Thang L1/L2/L3 **mở lại được cánh cửa §8 từng đóng**, vì §8 b�
 
 ⇒ **Mở bằng số, không bằng niềm tin:** thử **5 task** loại *"đúng/sai do CI quyết"* (viết test theo danh sách T1 đã đặc tả — bulk, phán đoán thấp, blast radius ≈ 0). Đo **tỉ lệ PR được nhận** + **thời gian Claude tốn mỗi PR để lọc**. Nhận <50% hoặc lọc tốn gần bằng tự viết ⇒ **đóng lane**. Chuỗi lọc mong muốn về sau `T2 → T1 → chủ`; **lần đầu chạy thẳng `Claude → chủ`** cho chắc, thêm tầng sau khi có lòng tin.
 
+> **📝 2026-07-31 — sửa danh tính + lịch Jules, chủ xác nhận trực tiếp.** PR/commit gắn nhãn *"⚡ Bolt: …"* và *"🛡️ Sentinel: …"* (vd #55, #56) **chính là hai tác vụ định kỳ của Jules** nói ở trên — "Bolt" = tác vụ performance, "Sentinel" = tác vụ security; không phải bot/dịch vụ ngoài nào khác. Vẫn đúng T3/Gemini 3.1 Pro trên nền Jules, không đổi vai trong thang 3 tầng. **Lịch đúng (đè lịch sai ghi ở note 29/07 phía trên — nightly 23h cho security là SAI):** **cả hai tác vụ chạy hàng tuần, Chủ Nhật 23:30**, tới **2026-09-30** (không phải 2026-08-15 như ghi nhầm trước đó). PR của hai tác vụ này **vẫn cần soát định kỳ và xử lý** như PR Jules thường — không tự động merge theo đề xuất của nó, theo đúng luật cố-vấn-không-phải-biên-lai đã chốt 29/07.
+
 ### g) Nơi để việc + báo cáo
 
 - **`agent-tasks/harness-audit/`** — spec đối soát harness, đánh số riêng `01`/`02` (không thuộc hàng đợi 001–012).
