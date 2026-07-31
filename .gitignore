@@ -58,6 +58,12 @@ cover/
 
 # Django stuff:
 *.log
+
+# Local Playwright screenshots and HTML reports are QA receipts, not source.
+/frontend/output/playwright/
+# Playwright's own default artifact dir (trace.zip/screenshots on failure,
+# .last-run.json) — separate from the custom reporter output above.
+/frontend/test-results/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -128,6 +134,19 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# harness-reports/ — báo cáo agent sinh ra về chính bộ máy làm việc (xem README trong đó).
+# Repo PUBLIC + threat model = social engineering; nội dung ở đó mô tả thói quen làm việc
+# và bộ nhớ cá nhân — không phải secret (gitleaks không chặn) nên DÒNG NÀY là cơ chế duy nhất
+# giữ nó lại. Giữ README trong git để thư mục tự giải thích.
+# 2026-07-23: mẫu cũ là `harness-reports/*` — có dấu `/` ở giữa nên git NEO VÀO GỐC REPO,
+# chỉ khớp `<gốc>/harness-reports/`. Khi thư mục được dời sang `agent-tasks/harness-reports/`
+# thì mẫu hết khớp và báo cáo trở thành untracked-nhưng-KHÔNG-ignored: một `git add -A` là
+# đẩy thói quen làm việc cá nhân lên repo public. Tiền tố `**/` khớp ở MỌI độ sâu, nên lần
+# dời tiếp theo không phá lại cơ chế. Vẫn dùng `/*` (nội dung) chứ không phải `/` (thư mục):
+# git không cho re-include file khi thư mục cha đã bị loại, `!...README.md` sẽ chết theo.
+**/harness-reports/*
+!**/harness-reports/README.md
+
 # Environments
 .env
 .venv
@@ -180,3 +199,21 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+/web_check
+
+# Phan tich chua du lieu that cua app cu - CHI LOCAL, khong len origin.
+# Dung mau **/ de luat khong chet khi thu muc bi doi cho (bai hoc 23/07).
+**/_local/
+
+# 2026-07-26: output của gitleaks khi chạy TAY (`gitleaks detect --report-path ...`).
+# Vì sao phải chặn ở đây thay vì trông vào người chạy: mỗi finding trong report có
+# field `Secret` và `Match` = GIÁ TRỊ SECRET DẠNG CHỮ THẬT. Lần đo 26/07: một
+# `gl-report.json` bỏ lại trong working tree có 14 finding từ `backend/.env`
+# (Neon URL, master key, cron token) + 1 flyio-access-token — tức là một bản sao
+# GIẢI MÃ của `.env`, và nó KHÔNG được mẫu nào phủ nên đứng ở trạng thái
+# untracked-nhưng-không-ignored trên một repo PUBLIC. Cùng lớp lỗi với
+# harness-reports 23/07: gitleaks không chặn nó, vì bản thân nó không phải commit.
+gl-report.json
+gl-files.txt
+**/gitleaks-report*.json
+**/*gitleaks*report*.json

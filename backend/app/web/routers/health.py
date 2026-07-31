@@ -48,4 +48,5 @@ async def readyz() -> dict[str, str]:
         "status": "ok" if database == "up" else "degraded",
         "version": settings.app_version,
         "db": database,
+        "commit": settings.git_sha,
     }

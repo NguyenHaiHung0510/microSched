@@ -24,7 +24,9 @@ jobs:
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run pytest
+      # `-m "not pg"` keeps this job database-free and fast. The DB-backed tests run
+      # in Migration QA below, which already has a Postgres service migrated to head.
+      - run: uv run pytest -m "not pg"
 
   runtime-deps:
     # Bộ test chạy với nhóm `dev`, nên một thư viện chỉ có ở dev vẫn khiến test
@@ -36,6 +38,11 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      # APP_ENV is unset here on purpose, so this job exercises the production path
+      # (the code default). That is what makes the secret below necessary: without
+      # it, create_app() correctly refuses to start.
+      OAUTH_STATE_SECRET: ci-only-not-a-production-secret
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -58,6 +65,22 @@ jobs:
       - run: pip install pre-commit
       - run: pre-commit run --all-files
 
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gitleaks
+        run: |
+          curl --fail --silent --show-error --location \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            | tar -xz gitleaks
+      - name: Scan working tree
+        # `-v` là bắt buộc, không phải trang trí: thiếu nó, job đỏ chỉ in
+        # "leaks found: N" mà KHÔNG nói rule nào / file nào / dòng nào, nên
+        # người đọc bảng CI không hành động được. `--redact` vẫn che giá trị.
+        run: ./gitleaks dir . --config .gitleaks.toml --redact -v --exit-code 1
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest
@@ -73,7 +96,25 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm test
       - run: npm run build
+
+  frontend-e2e:
+    name: Frontend e2e
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
 
   migration-qa:
     name: Migration QA
@@ -113,3 +154,7 @@ jobs:
       - run: uv run alembic downgrade base
       - run: uv run alembic upgrade head
       - run: uv run python -m scripts.check_migration_drift
+      # DB-backed tests run here, reusing this job's migrated pgvector service instead
+      # of standing up a second Postgres in the backend job (spec §0.4, least
+      # duplication). The schema is at head from the step above.
+      - run: uv run pytest -m pg

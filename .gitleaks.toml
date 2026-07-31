@@ -22,9 +22,18 @@ tags = ["database", "connection-string"]
 # Biến môi trường dễ bị dán nhầm giá trị thật lúc debug/copy log.
 # Cùng điều kiện "trông thật": có chữ số + đủ dài, để không báo nhầm
 # với placeholder kiểu PGPASSWORD=your_password_here.
+#
+# 📝 2026-07-24 (008d, Mục 2): thêm 5 biến quyền-CAO nhất dự án. Trước đó rule
+# này chỉ che DATABASE_URL/PGPASSWORD (credential ÍT quyền nhất — CRUD-only),
+# còn NEON_OWNER_URL/NEON_MIGRATOR_URL (đổi schema, tạo role — ⛔ không bao giờ
+# lên Fly, backend/.env.example) chỉ còn rule connection-string che, mà rule đó
+# đòi mật khẩu chứa chữ số đúng vị trí ⇒ URL Neon có mật khẩu không-chữ-số lọt
+# cả hai. Bất đối xứng đúng chiều nguy hiểm. Thêm cả ENCRYPTION_MASTER_KEY (mất
+# = mất mọi cột 🔐), CRON_TOKEN, OAUTH_STATE_SECRET. GIỮ NGUYÊN điều kiện
+# "trông thật" (có chữ số) — nới ra sẽ báo nhầm .env.example và dạy bỏ qua hook.
 [[rules]]
 id = "microsched-db-env-var-value"
-description = "DATABASE_URL / PGPASSWORD được gán giá trị trông thật (không phải placeholder)"
-regex = '''(?i)(DATABASE_URL|PGPASSWORD)\s*=\s*['"]?[A-Za-z0-9_\-:/.@]{4,}[0-9][A-Za-z0-9_\-:/.@]{2,}['"]?'''
-keywords = ["DATABASE_URL", "PGPASSWORD"]
+description = "Secret env-var quyền cao (DB URL / master key / token) gán giá trị trông thật (không phải placeholder)"
+regex = '''(?i)(DATABASE_URL|PGPASSWORD|NEON_OWNER_URL|NEON_MIGRATOR_URL|ENCRYPTION_MASTER_KEY|CRON_TOKEN|OAUTH_STATE_SECRET)\s*=\s*['"]?[A-Za-z0-9_\-:/.@]{4,}[0-9][A-Za-z0-9_\-:/.@]{2,}['"]?'''
+keywords = ["DATABASE_URL", "PGPASSWORD", "NEON_OWNER_URL", "NEON_MIGRATOR_URL", "ENCRYPTION_MASTER_KEY", "CRON_TOKEN", "OAUTH_STATE_SECRET"]
 tags = ["database", "env-var"]

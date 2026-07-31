@@ -1,5 +1,9 @@
 """Google login, logout, and the allowlist gate (auth-brief §1-§2)."""
 
+import logging
+
+import httpx
+from authlib.integrations.base_client.errors import OAuthError
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -10,6 +14,7 @@ from app.web.deps import get_session_store
 from app.web.oauth import get_oauth
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
@@ -101,7 +106,23 @@ async def auth_callback(
     """Verify Google's response, apply the allowlist, then open a session."""
     try:
         token = await get_oauth().google.authorize_access_token(request)
-    except Exception:  # any handshake failure is simply a refused login
+    except OAuthError as error:
+        # Invalid/mismatched state and provider refusals are expected when a callback
+        # is stale, malformed, or being probed. Never log the code or state values.
+        logger.warning(
+            "Google OAuth callback rejected by protocol validation (%s)",
+            error.error or type(error).__name__,
+        )
+        token = None
+    except httpx.HTTPError as error:
+        # This is operationally different from a bad callback: Google or the network
+        # failed while exchanging the code. Log only the class, never request data.
+        logger.error("Google OAuth token exchange unavailable (%s)", type(error).__name__)
+        token = None
+    except Exception:
+        # Preserve the fail-closed 303 behavior for unexpected library failures while
+        # keeping them visibly distinct from rejected callbacks and upstream outages.
+        logger.exception("Unexpected Google OAuth callback failure")
         token = None
 
     # The handshake is finished either way, so the state cookie must not outlive it.

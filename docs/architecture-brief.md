@@ -76,6 +76,51 @@ Yêu cầu cứng đã nêu: xem task hôm nay / ghi ý tưởng ngay **không �
 - **Cửa 2 chiều:** Docker image chuẩn → đổi sang Render/VPS trong vài giờ nếu cần.
 - **Bắt buộc vận hành:** đặt spending/budget alert (pay-as-you-go theo giây, không free allowance).
 
+### 📝 2026-07-23 — ✅ ĐẢO: always-on → **scale-to-zero** (`auto_stop_machines = 'suspend'`, `min_machines_running = 0`)
+
+**Quyết định cũ ở trên vẫn giữ nguyên làm hồ sơ — nó đúng với dữ liệu lúc đó.** Cái sai không nằm ở kết luận mà ở **một phép gộp**: dòng "loại thẳng mọi phương án scale-to-zero (Render free, Fly-autostop)" đặt Fly-autostop **cùng rổ** với Render free, rồi thừa hưởng luôn con số 30–60s của Render. Không ai đo Fly-autostop. Ràng buộc "cold-start là dealbreaker" **hoàn toàn đúng** — nó chỉ bị áp lên một con số chưa từng tồn tại.
+
+**Chủ tự đo, hai lần** (log Fly đầy đủ ở `web_check/01-auto-stop-enabled.md`):
+
+| Đo | Số thật |
+|---|---|
+| Ngủ ngắn (2′27″) → dậy, tới lúc reachable | **~4,5–5,2s** |
+| Ngủ dài (**10h38′**) → dậy, tới lúc trả xong request thật | **~8s** |
+| Tách khúc | boot Firecracker **1,6s** + Uvicorn khởi động **~5s** |
+| Tự ngắt sau khi hết traffic | ~6,5–7 phút (health check **không** tính là traffic) |
+
+**Số đáng giá nhất là dòng thứ hai: ngủ 10 tiếng dậy không chậm hơn ngủ 2 phút.** Không có "ngủ sâu" như Render/Neon-pause. ⇒ 8s, không phải 30–60s. Chủ chấp nhận đánh đổi này minh thị: *"tiết kiệm 50k/tháng đổi lấy 8s trễ lần đầu, oke"*.
+
+**Cấu hình chốt:** `auto_stop_machines = 'suspend'`, `auto_start_machines = true`, `min_machines_running = 0`. Lý do chọn `suspend` thay `stop`: Fly **tính tiền hai trạng thái như nhau** (chỉ rootfs đã dùng), nên xấu nhất `suspend` = `stop`; tốt nhất là bỏ được cả cold start ⇒ **không có đường thua**. Điều kiện RAM ≤ 2GB thoả (256MB); bẫy socket chết qua resume đã chặn sẵn bằng `pool_pre_ping=True`.
+
+📝 **2026-07-24 — hai giá trị nhạy của `fly.toml` ghi ở ĐÂY vì file đó không giữ được** (chủ chỉ ra). `fly launch`/`fly deploy` sinh lại `fly.toml` và xoá mọi comment — đã xảy ra 23/07 — nên lý do **không được sống trong file cấu hình**, phải sống ở đây; `fly.toml` chỉ còn một dòng trỏ về §5. Hai giá trị mà một lần regen âm thầm đổi sẽ **tái sinh bug cũ**:
+1. **`min_machines_running = 0` bắt buộc.** Chỉ có 1 máy; để `1` thì Fly không bao giờ có "máy dư" để tắt ⇒ autostop **không bao giờ chạy** ⇒ lặng lẽ quay về always-on, hoá đơn tăng mà không ai nhận ra. Đây là số trông vô hại nhất nhưng khoá toàn bộ quyết định scale-to-zero.
+2. **Health check PHẢI trỏ `/api/healthz`, KHÔNG BAO GIỜ `/api/readyz`.** `readyz` chạy SQL; nhịp 30s < cửa sổ idle 5 phút của Neon ⇒ giữ DB thức 24/7 ⇒ tái tạo sự cố 21/07 (mất DB giữa tháng). Lý do đầy đủ ở docstring `backend/app/web/routers/health.py` — một file `fly` **không** đụng tới, nên đó là nơi bền thứ hai. `readyz` còn được viết trả `200` cả khi DB sập (không phải `503`) chính để một lần lỡ trỏ nhầm cũng không thành vòng lặp restart — hàng rào ở tầng code, không phải comment.
+
+📝 **2026-07-24 — đo thật cả HAI chế độ back-to-back** (`web_check/03`), xác nhận và vượt dự đoán:
+
+| Chế độ | Ngủ | Request đầu | Đọc ra |
+|---|---|---|---|
+| `stop` (cold start) | 50′ | **~9s** | boot VM 1,6s + Python ~5s, như §5 note trên |
+| `suspend` (resume) | 1h22′ | **0,33s** | nhảy qua CẢ boot VM lẫn Python |
+| `suspend` (resume) | **8h18′** | **0,48s** | giấc dài không làm chậm hơn — snapshot bền trong thực tế dùng |
+
+Dự đoán cũ ("bỏ được ~5s khởi động Python") **hụt về hướng thận trọng**: resume không bỏ 5s, nó bỏ **cả 9s**, về thẳng ~0,4s vì khôi phục nguyên trạng RAM chứ không khởi động lại gì. **Đánh đổi rò rỉ bộ nhớ vẫn nguyên giá trị** — resume nhanh chính vì tiến trình không bao giờ mới, xem canh RSS ở dưới.
+
+📝 **2026-07-24 (bổ sung) — resume có ĐUÔI TRỄ, đừng ghi 0,4s như thể luôn đúng** (`web_check/05`). Đo thêm bắt được một lần resume **~12s**, tệ hơn cả `stop` cold start. Mổ log: **không phải app** — cùng một log có 3 lần resume, `machine started` luôn 356–578ms cả ba, chênh lệch nằm hết ở `became reachable` (tầng mạng), và lần chậm **không có** log `Application startup complete` ⇒ tiến trình được khôi phục chứ không boot lại ⇒ 12s đó là **thiết bị mạng ảo gắn lại sau resume** (nhiều khả năng do Fly di trú VM sang host khác khi đánh thức), thuần Fly-side. Hai hệ quả phải nhớ:
+
+1. **Tối ưu boot time (D2) KHÔNG cứu được resume chậm** — resume bỏ qua hẳn khúc boot app; D2 chỉ giúp `stop` cold start và lần dậy sau deploy. Đừng nhầm hai trục.
+2. **Bản chất của `suspend` là phân phối hai đỉnh:** gần như luôn 0,3–0,5s, **hoạ hoằn** thoái hoá ~cold-start-hoặc-tệ-hơn (vì trả phí thử-lại-rồi-bỏ trước khi thông), chỉ ảnh hưởng request ĐẦU sau khi dậy. Giá trị kỳ vọng vẫn thắng `stop` áp đảo. Con số đuôi ~12s một phần do **phương pháp test** (force-suspend + dội request + auto-suspend timer đụng nhau — log 02:45:05 hiện `machine still active, refusing to start`); dùng thật (một request đánh thức máy ngủ hẳn nhiều giờ) cho 0,33s/0,48s như `web_check/03`. Nếu đuôi trễ khó chịu trong dùng thật ⇒ cửa thoát là `stop` (đoán được 9s) hoặc always-on — cửa 2 chiều.
+
+**⚠️ Đánh đổi thật của `suspend`, phải canh:** tiến trình **không bao giờ restart** ⇒ rò rỉ bộ nhớ tích luỹ, trong khi `stop` cho tiến trình mới mỗi lần dậy (vệ sinh miễn phí). Đây là lý do job cron 20:00 ghi kèm RSS + uptime. RSS trôi ⇒ về `stop`. Cửa 2 chiều, đổi một chữ.
+
+**Ba giới hạn đã tra ở Fly docs, ghi để khỏi ai đi tìm lại:**
+1. **Không chỉnh được idle timeout.** Không có setting nào kéo 6,5 phút thành 15–20 phút. Và **tự ping không có tác dụng** — proxy bỏ qua request máy gọi chính nó. Đòn bẩy còn lại: traffic ngoài thật (vd frontend keepalive khi tab visible — **DEFER, phiên frontend**; chỗ khó là "tab visible ≠ đang dùng"), hoặc **rút ngắn cold start**. Vế sau tốt hơn: kéo dài window trả tiền tuyến tính, rút ngắn boot trả một lần.
+2. **Proxy CÓ đếm request in-flight từ client ngoài** ⇒ đang dùng app thì không bị ngắt; request đồng bộ chạy lâu vẫn an toàn. Nhưng *"The proxy looks at inbound traffic. It does not look inside the container"* và *"no way for your application to tell the proxy 'I'm busy'"* ⇒ **việc sinh ra SAU khi response đã trả thì proxy mù hoàn toàn**. ⇒ 🔒 **Luật: endpoint cron phải làm xong việc bên trong request — không `BackgroundTasks`, không `asyncio.create_task` fire-and-forget.**
+3. **Rootfs của máy đang ngủ tính theo dung lượng THẬT ĐÃ DÙNG**, không phải 8GB cấp phát (Fly staff: *"charge only for the used RootFS"*) ⇒ ước ~\$0,05–0,12/tháng.
+
+**Hệ quả buộc phải đọc kèm — hai quyết định này khoá nhau:** always-on + cron hỏng ⇒ app vẫn đang chạy. Scale-to-zero + cron hỏng ⇒ **app nằm im, không gì đánh thức**. Bật scale-to-zero **nâng cron từ "nên có" thành "hạ tầng bắt buộc"** — xem `devops-brief.md` §10, quyết cùng phiên vì đúng lý do này.
+
 ## 6. Truy cập & domain — ✅ `*.fly.dev` trước, domain riêng khi cần bền
 - Fly cấp sẵn `tên-app.fly.dev` + HTTPS tự động, **miễn phí, dùng ngay** — không cần mua gì, không đụng IP thô.
 - **Domain riêng = tuỳ chọn**, đáng mua *sớm* nếu định đổi host về sau: PWA-install + đăng ký web-push gắn với **origin** → đổi host mà giữ nguyên domain thì không phải cài lại PWA/re-subscribe push. Mua ở Cloudflare Registrar (giá gốc, không bẫy renewal). Chi tiết giá: `cost-brief.md`.
