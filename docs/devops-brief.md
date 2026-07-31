@@ -398,6 +398,25 @@ bằng thử thật thì phải tường minh xin `-s danger-full-access` trong 
 đúng cho lệnh không tương tác"*) — nay biết thêm: thiếu cờ thì lượt review không báo lỗi, chỉ lặng lẽ
 rơi về suy luận.
 
+**🔒 Phát hiện thêm (`018`, lượt T3 thứ hai — trên chính diff thi công, không phải spec):** một spec
+đặt-khuôn đáng có thêm một lượt phản biện **sau khi code thật đã viết xong**, không chỉ trước khi giao
+thi công — đặc biệt nếu quá trình thi công đi qua nhiều vòng vá dưới áp lực thời gian (nhiều bàn tay,
+nhiều lần sửa nhanh). Bốn finding thật (2 CRITICAL) bị lọt qua cả hai lượt review-spec ban đầu vì
+chúng chỉ tồn tại trong CODE, không tồn tại trong SPEC — không cách nào một lượt đọc spec bắt được.
+⇒ **Với hạng-đôi: cân nhắc thêm một lượt phản biện trên diff thật (không phải spec) khi việc thi công
+đã đi qua ≥2 vòng vá bởi nhiều bên** (T1 + T2 xen kẽ) — đây không phải tiêu chí cứng như bảng hạng ở
+trên, mà là tín hiệu bổ sung: *quá trình thi công lộn xộn* cũng đáng một lượt soi thêm, không chỉ
+*loại việc* mới đáng.
+
+**📝 2026-07-31 — biên T1→T2 siết thêm một nấc, sau khi T1 hai lần tự sửa code thuộc phạm vi T2
+trong cùng phiên (`018`).** Chi tiết đầy đủ + bằng chứng: [[harness-eng-operating-model]] (memory),
+`CLAUDE.md` 📝 31/07. Tóm tắt: **phát hiện bug trong sản phẩm T2 KHÔNG tự động cho phép T1 sửa nó** —
+mặc định là dừng, trình bày, giao lại T2 qua CLI trực tiếp; T1 chỉ tự sửa khi bug nằm ngoài app-code
+thật (docs/memory/gitignore/config một dòng) hoặc chủ minh thị cho phép. Lý do đảo hướng: bằng chứng
+sống trong chính phiên này — Codex tự chẩn đoán đúng nguyên nhân gốc (đo bằng
+`window.getSelection()` thay vì đoán), tự chạy đủ verify thật, tự khai trung thực phần chưa làm
+được — chất lượng ngang hoặc hơn một lượt T1 tự làm.
+
 ---
 
 ## 8. Chạy nhiều agent song song — ⚠️ GHI NHẬN 2026-07-21, chưa nghiên cứu đủ
