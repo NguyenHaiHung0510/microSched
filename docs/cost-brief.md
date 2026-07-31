@@ -157,6 +157,12 @@ Chính chủ yêu cầu tư vấn chi tiết hơn về mảng này **sau khi vá
 
 📝 **2026-07-23:** vế *"gộp vào 008b vì đúng lúc hạ tầng GH Actions cron ra đời"* **hết căn cứ** — §9 devops đã đẩy script sang **008c**, và giờ hạ tầng cron **không còn là GH Actions** (§10 devops). Script soi hoá đơn chạy ở đâu là câu hỏi mở lại: GH Actions vẫn dùng được cho việc **không phải production runtime** (chạy trễ 30 phút không sao), nhưng nếu đã có Cloud Scheduler thì cân nhắc gộp một mối.
 
+📝 **2026-07-31 — chủ nâng phạm vi `008c` từ "script in bảng" thành một tính năng thật trong app; CHƯA làm ngay, ghi ý tưởng lại chờ rảnh.** Không còn là script đứng ngoài — **tích hợp vào chính microSched**: fetch số liệu Fly GraphQL + Neon REST API cùng nhịp với các fetch khác của app (mỗi lần chủ dùng), **cộng thêm CRON riêng 3 ngày/lần trên Cloud Scheduler** để không phụ thuộc app có đang mở hay không, báo khi vượt ngưỡng hoặc số liệu bất thường.
+
+**Ý hay nhất, đáng giữ nguyên khi viết spec:** tự động phát hiện lúc gói cước *renew* mà không cần biết trước ngày renew chính xác — so **giá trị tuyệt đối** giữa hai lần đo liên tiếp: nếu chi phí tích luỹ đang đo (vd Fly ~\$2) mà lượt fetch kế tiếp ra **nhỏ hơn** hẳn (thường về 0 hoặc rất nhỏ) thì đó là dấu hiệu chu kỳ tính phí vừa tất toán — tự động chốt số cũ thành "đã dùng hết chu kỳ trước là X" rồi bắt đầu đếm lại từ số mới. Áp được cho cả Fly (không có ngày reset cố định, tính theo billing cycle riêng của tài khoản) lẫn Neon (có ngày reset cố định 20 hàng tháng, nhưng cách đo-bằng-hiệu-số này vẫn cho một cách kiểm chứng độc lập không phụ thuộc phải nhớ đúng ngày 20). Đây là cách né việc phải hard-code ngày renew — điều mà `cost-brief.md` §7.3 hiện đang phải tự tính tay ("chu kỳ hiện tại bắt đầu 20/07/2026, đợt sau 20/08/2026").
+
+**Khi nào làm:** không chặn gì, ưu tiên thấp. Khi có thời gian rảnh, viết thành spec `agent-tasks/008c-*.md` đúng khuôn (tự-chứa, acceptance kiểm chứng được), giao **T2 thiết kế toàn bộ** (không chỉ thi công theo spec có sẵn — phạm vi này đủ mới để T2 tự đề xuất DDL bảng lưu lịch sử số liệu + endpoint đọc + cách UI hiển thị, T1 review sau).
+
 ### 7.5 🆕 2026-07-23 — scale-to-zero: số mới, và một cảnh báo §6 đã hết hiệu lực
 
 **Fly — dòng chi phí đổi hẳn.** Trạng thái ổn định cũ = 86.400 units/ngày ⇒ **\$2,50/tháng** (§7.1 đo thật). Với `auto_stop_machines = 'suspend'` + `min_machines_running = 0`, chỉ còn trả tiền lúc máy thức + rootfs lúc ngủ:

@@ -2,7 +2,7 @@
 
 > Executor: T2 Codex (`gpt-5.6-sol`, `--write`) · Bậc: L2 · Effort: small · **Skill gợi ý:** không cần · **MCP cần:** không cần
 
-**Trạng thái:** ⚠️ OPEN — chủ đã đồng ý tách task riêng (2026-07-26), chưa duyệt nội dung.
+**Trạng thái:** ✅ DONE (2026-07-31) — thi công qua Codex full-access. PR #63 (`feat/015-gitleaks-history-scan`) là bằng chứng đỏ/xanh, **đóng-không-merge có chủ ý, giữ nhánh vĩnh viễn** (dir xanh/history đỏ đúng RuleID+SHA, log dán trong mô tả PR). PR #64 (nhánh sạch, chưa từng chứa commit fixture) mới là bản merge thật vào `develop`. Chi tiết đầy đủ + bài học (một commit từng vào lịch sử nhánh không thể "dọn" khỏi dải quét `base..head`, chỉ nhánh mới mới sạch): `CLAUDE.md` 📝 31/07, `docs/learnings-applied.md`.
 
 ---
 
