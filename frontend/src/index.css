@@ -158,8 +158,13 @@
   --color-bad-bg: var(--bad-bg);
 }
 
-* {
-  border-color: var(--border);
+/* Default viền trang trí phải ở base layer. Nếu để unlayered, rule `*` sẽ thắng
+   utilities của Tailwind và âm thầm biến `border-input` / `border-transparent`
+   thành `--border`, dù class đúng vẫn còn trên DOM. */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
 }
 
 body {
