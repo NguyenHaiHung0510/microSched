@@ -215,7 +215,52 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
         return
       }
 
-      await route.fulfill({ status: 404 })
+      const itemMatch = path.match(/^\/api\/tasks\/([^/]+)\/items\/?([^/]*)$/)
+      if (itemMatch) {
+        const [, taskId, itemId] = itemMatch
+        const owner = state.tasks.find((entry) => entry.id === taskId)
+        if (!owner) {
+          await route.fulfill({ status: 404 })
+          return
+        }
+
+        if (method === 'POST' && !itemId) {
+          const payload = JSON.parse(request.postData() ?? '{}') as {
+            content?: string
+            position?: number
+          }
+          const created = item(`item-created-${Date.now()}`, String(payload.content ?? ''))
+          owner.items.push(created)
+          await route.fulfill(jsonResponse(created, 201))
+          return
+        }
+
+        if (method === 'PATCH' && itemId) {
+          const target = owner.items.find((entry) => entry.id === itemId)
+          if (!target) {
+            await route.fulfill({ status: 404 })
+            return
+          }
+          const payload = JSON.parse(request.postData() ?? '{}') as {
+            is_completed?: boolean
+          }
+          Object.assign(target, payload)
+          await route.fulfill(jsonResponse(target))
+          return
+        }
+
+        if (method === 'DELETE' && itemId) {
+          owner.items = owner.items.filter((entry) => entry.id !== itemId)
+          await route.fulfill({ status: 204 })
+          return
+        }
+      }
+
+      // `fallback()`, not a hard 404: this handler only owns `/api/tasks*`
+      // and `/api/me`. A future slice's fixture (notes, calendar, ...) may
+      // register its own `**/api/**` route alongside this one — a hard 404
+      // here would eat that request before its own handler ever saw it.
+      await route.fallback()
     })
 
     await use(state)

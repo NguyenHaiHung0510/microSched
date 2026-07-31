@@ -210,6 +210,13 @@ function TaskCard({
   const detailsReturnRef = useRef<HTMLButtonElement | null>(null)
 
   function openDetails(event: MouseEvent<HTMLButtonElement>) {
+    // Same guard as `openDetailsFromCard`: the title itself is a `<button>`,
+    // and today's browsers happen not to let a drag form a selection over
+    // one — but that is a browser quirk, not something this code enforces.
+    // Checking here too means the guard still holds if that ever changes.
+    const selection = window.getSelection()
+    if (selection && !selection.isCollapsed) return
+
     detailsReturnRef.current = event.currentTarget
     setEditing(false)
     setDetailsOpen(true)

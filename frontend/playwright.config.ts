@@ -28,6 +28,7 @@ export default defineConfig({
         hasTouch: true,
         isMobile: true,
         userAgent: devices['iPhone 13'].userAgent,
+        deviceScaleFactor: devices['iPhone 13'].deviceScaleFactor,
       },
     },
     {
