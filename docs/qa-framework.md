@@ -1,6 +1,6 @@
 # QA framework — khung soi giao diện dùng chung
 
-> **Trạng thái: ✅ CHỐT 2026-07-29 (v1), +3.E thêm 2026-07-31 (v1.1).** Áp cho `009`–`012` và mọi slice có UI sau đó.
+> **Trạng thái: ✅ CHỐT 2026-07-29 (v1), +3.E thêm 2026-07-31 (v1.1), +hash-verify ảnh thêm 2026-08-01 (v1.2).** Áp cho `009`–`012` và mọi slice có UI sau đó.
 > Đọc kèm `docs/ui-brief.md` §6 (luật UI cứng). **File này không lặp lại luật đó** — nó là
 > cách kiểm xem luật đó có còn được giữ không, cộng với những trục mà luật UI không nói tới.
 > Tự-chứa: đọc được ở phiên 0-context, dùng thẳng làm nguồn cho prompt giao T3/T2.
@@ -197,6 +197,14 @@ cáo, đừng trộn vào bảng.
 ảnh chụp đã lưu + 2-4 câu nhận xét. **Không** ghi vào bảng (b) — không có `file:line`/số đo nên không
 đạt điều kiện của bảng đó. Phần này chủ tự đọc, không phải thứ T1 kiểm-tay-từng-mục như §8.
 
+🔒 **Thêm 2026-08-01 (QA `009`) — mỗi ảnh phải đi kèm mô tả banner/chữ đầu trang, và T1 phải `md5sum`
+đối chiếu N ảnh TRƯỚC khi đọc N nhận xét.** Đo thật: agy claim đủ 4 ảnh phân biệt, nhưng 2 cặp trùng
+byte-for-byte (chép đè ảnh cũ để đủ số lượng) — và phần "nhận xét" cho ảnh giả không hề nhắc tới nội
+dung rất nổi bật (banner khoá riêng tư) đang có trong ảnh, vì văn bản không được sinh từ việc thật sự
+nhìn ảnh. Số lượng file đúng theo yêu cầu **không chứng minh** nội dung đúng. Yêu cầu prompt QA: bắt
+T3 mô tả 1 câu "chữ/banner gì đang hiện ở đầu trang" cho MỖI ảnh trước khi viết nhận xét — nếu mô tả
+đó thiếu chi tiết rõ ràng đang có trong ảnh thật, đó là dấu hiệu ảnh giả hoặc ảnh không được nhìn.
+
 ## 8. Luật đọc kết quả — dành cho T1
 
 🔒 **T3 là cố vấn, T1 kiểm tay từng mục.** Không phải vì T3 kém: dạng sai của nó rất đặc trưng và
@@ -209,6 +217,8 @@ Thao tác kiểm, theo thứ tự rẻ dần:
 1. Mục có **số đo** ⇒ đo lại đúng một lần bằng đường khác.
 2. Mục có **`file:line`** ⇒ mở file, đọc dòng đó.
 3. Mục **không có cả hai** ⇒ chưa phải finding.
+4. Ảnh (trục 3.E) ⇒ `md5sum` toàn bộ ảnh claim là phân biệt TRƯỚC khi đọc nhận xét — file trùng hash
+   mà mô tả khác nhau là bằng chứng ảnh giả, không phải trùng hợp (xem §7(c)).
 
 Và luật ngược lại, cũng đã sinh lỗi thật: **lời tự khai của một agent về năng lực của chính nó là dữ
 liệu về cấu hình hiện tại, không phải về giới hạn** — "CANNOT-DO" đã hai lần hoá ra là làm được.

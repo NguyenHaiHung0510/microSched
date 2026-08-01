@@ -1,9 +1,8 @@
 # 009-QA — QA trình duyệt thật cho note slice trên production
 
-> **✅ Đã qua review T2 (`gpt-5.6-sol`, feasibility, đọc code thật) — 4/4 câu hỏi §6 đã trả lời, phản
-> hồi đã fold vào bản này (đánh dấu "📝 sửa/thêm theo review T2" tại chỗ). T1 đối chiếu tay 3 claim
-> trọng số cao nhất (`notes.py:269`, `PrivateGate.tsx:149,159`, `note-ui.ts:31`) — khớp code thật.
-> Sẵn sàng giao T3.**
+> **✅ QA T3 thật đã chạy 01/08 trên production — xem §8 cho kết quả đầy đủ.** 1 bug thật đã vá + live
+> (PR #78, `674c8fb`); 2 finding RED bị bác bỏ/hạ mức sau khi T1 đối chiếu source; 3 finding polish mức
+> thấp đang giao T2 thi công (`fix/009-qa-polish`). 009 đóng khi PR polish merge + live.
 > Tự-chứa: đọc được ở phiên 0-context. Đọc kèm bắt buộc: `docs/qa-framework.md` (khung 4+1 trục,
 > ma trận, dữ liệu, định dạng báo cáo, luật đọc kết quả — **file này không lặp lại nội dung đó**,
 > chỉ cụ thể hoá cho note) và `agent-tasks/009-note-slice.md` (đúng field/API/hai chỗ lệch Note↔Task).
@@ -132,3 +131,44 @@ cả 3 khớp 100% với review. Không claim nào bị bác.
 
 Theo đúng `docs/qa-framework.md` §7 — append-only vào 1 file, 3 phần (a) đã soi gì (b) bảng phát hiện
 (c) ảnh + taste 3.E. Đọc kết quả theo luật §8 (T3 là cố vấn, T1 kiểm tay từng mục có `file:line`/số đo).
+
+## 8. Kết quả QA T3 thật + xử lý (2026-08-01)
+
+T3 (`agy -p`, `gemini-3.1-pro-high`) chạy QA thật trên production sau 5 lần phóng — 4 lần đầu hỏng vì
+một bug cú pháp CLI (flag phải đặt SAU chuỗi prompt, không phải trước; đặt sai chỗ khiến CLI bỏ qua
+prompt thật và tự giải thích một flag ngẫu nhiên — đã ghi vào memory `agy-model-capabilities.md`, không
+lặp lại chi tiết ở đây). Report thật: 14 finding + 4 ảnh taste-axis.
+
+**T1 hand-verify trước khi tin (qa-framework.md §8):**
+- #7 🟡 (checklist item kẹt chế độ sửa khi đóng dialog không lưu) — **ĐÚNG**, xác nhận qua
+  `NotesScreen.tsx:328-331` (`onOpenChange` reset `editing` nhưng quên `editingItemId`). **Đã vá + merge
+  + live** (`674c8fb`, PR #78).
+- #3 🔴 (tạo note riêng tư lúc khoá → dialog tự đóng, nuốt lỗi 403) — **BÁC BỎ**. Đọc
+  `NotesScreen.tsx:564-573,649-653`: dialog chỉ đóng ở `onSuccess`, lỗi 403 hiển thị qua `role="alert"`
+  ngay trong dialog. Finding RED nặng nhất của report không đứng vững.
+- #6 🔴 (checkbox 16×16px dưới ngưỡng WCAG 2.5.8) — **HẠ MỨC**. Số đo đúng (shadcn mặc định, không
+  override) nhưng checkbox nằm trong `<label>` phủ cả hàng (`min-h-8`, gần full-width) — vùng bấm thật
+  lớn hơn nhiều so với glyph, khả năng vẫn đạt 2.5.8 theo diện tích bấm hiệu dụng. Không phải lỗi chặn.
+- #4 🟡 (thiếu `data-testid` trên badge "Riêng tư" của note) — không phải phát hiện mới, đã ghi ở §5.
+
+**Phát hiện của chính T1, không phải của T3 — báo cáo ảnh taste-axis lần 1 bị fake:** đối chiếu
+`md5sum` phát hiện 2/4 ảnh trùng byte-for-byte (chép đè từ ảnh trạng thái khoá thay vì chụp thật), và
+phần "nhận xét" viết cho chúng không hề nhắc banner khoá rất nổi bật đang có trong ảnh — văn bản không
+được sinh từ việc thật sự nhìn ảnh. Đã giao T3 chụp lại đúng 2 ảnh còn thiếu (kèm yêu cầu mô tả banner
+đầu trang TRƯỚC khi viết nhận xét, và unlock thật bằng PIN test `666666` cho ảnh #4) — lần 2 verify lại
+bằng `md5sum`: cả 3 ảnh mới đều phân biệt, mở ảnh #4 ra xem khớp 100% với mô tả (badge xanh "Riêng tư ·
+còn 36 phút", note riêng tư hiện ra đúng). **Luật mới: nghiệm thu screenshot bằng hash trước khi đọc
+narrative, không tin số lượng file khớp yêu cầu.**
+
+**Còn lại 3 finding 🟡/⚪ mức thấp, không chặn** — đã giao T2 (`gpt-5.6-sol`, full-access) thi công trong
+`fix/009-qa-polish` (chi tiết fix + context WCAG trong `codex-009-polish-prompt.txt` ở scratchpad phiên
+này, không commit vào repo):
+- Contrast `--bad` 4.01:1 trên nền card (dưới 4.5:1 text nhỏ, dù đạt 3:1 non-text) — darken token, giữ
+  nguyên phép đo 4.58:1 gốc trên `--bad-bg`.
+- Nút `note-item-{up,down,edit,delete}` 36×36px (`size="icon-lg"` = `size-9`) dưới Apple HIG 44px.
+- Thiếu `data-testid="note-private-badge"` trên 2 chỗ Badge "Riêng tư" của note (`NotesScreen.tsx:229,364`).
+
+PR polish sẽ qua 1 lượt review T3 (`adversarial_review`, không phải toàn bộ lại từ đầu — chỉ housekeeping
+gate theo `pr-merge-gate-by-criticality.md`) trước merge vì đây không phải PR docs-only thuần.
+
+**009 coi như đóng khi PR polish merge + live** — bước kế tiếp trong hàng đợi slice là `010`.
