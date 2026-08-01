@@ -1,8 +1,8 @@
 # 009-QA — QA trình duyệt thật cho note slice trên production
 
-> **✅ QA T3 thật đã chạy 01/08 trên production — xem §8 cho kết quả đầy đủ.** 1 bug thật đã vá + live
-> (PR #78, `674c8fb`); 2 finding RED bị bác bỏ/hạ mức sau khi T1 đối chiếu source; 3 finding polish mức
-> thấp đang giao T2 thi công (`fix/009-qa-polish`). 009 đóng khi PR polish merge + live.
+> **✅ 009 ĐÓNG TRỌN VÒNG ĐỜI 01/08 — xem §8 cho kết quả đầy đủ.** QA T3 thật trên production bắt 1 bug
+> thật (đã vá, PR #78 `674c8fb`), bác bỏ/hạ mức 2 finding RED sai; 3 finding polish mức thấp qua T2
+> (PR #79, live `2b6a2fb`, gồm 1 fix thêm sau `adversarial_review` — testid trùng). Bước kế tiếp: `010`.
 > Tự-chứa: đọc được ở phiên 0-context. Đọc kèm bắt buộc: `docs/qa-framework.md` (khung 4+1 trục,
 > ma trận, dữ liệu, định dạng báo cáo, luật đọc kết quả — **file này không lặp lại nội dung đó**,
 > chỉ cụ thể hoá cho note) và `agent-tasks/009-note-slice.md` (đúng field/API/hai chỗ lệch Note↔Task).
@@ -171,4 +171,29 @@ này, không commit vào repo):
 PR polish sẽ qua 1 lượt review T3 (`adversarial_review`, không phải toàn bộ lại từ đầu — chỉ housekeeping
 gate theo `pr-merge-gate-by-criticality.md`) trước merge vì đây không phải PR docs-only thuần.
 
-**009 coi như đóng khi PR polish merge + live** — bước kế tiếp trong hàng đợi slice là `010`.
+**`adversarial_review` (T3, `claude-sonnet-4-6`) trên diff PR #79 — 7 finding, T1 kiểm tay từng cái:**
+- 🔴 "CSS đổi `--bad` không có trong diff" — **BÁC BỎ, lỗi của chính T1**: diff dán vào review bị cắt cụt
+  ngay sau dòng header file `index.css`, không phải PR thiếu. Xác nhận lại bằng `git diff` trực tiếp trên
+  nhánh: hunk thật có đủ, contrast mới đo được 5,40:1/`--card` và 4,73:1/`--bad-bg`, đều tốt hơn bản gốc.
+- 🟡 `--destructive: var(--bad)` kéo theo mọi consumer khác (nút destructive `TasksScreen.tsx:619`, vài
+  chỗ `text-bad`/`bg-bad-bg`) — **ĐÚNG nhưng không rủi ro**: đổi màu chỉ làm ĐẬM hơn, mọi nơi dùng chung
+  token chỉ được lợi về contrast, không có hướng nào bị thụt lùi.
+- 🔴 nút sửa/xoá ở HEADER card (`note-edit`/`note-delete`, dòng 252/261) vẫn `icon-lg` 36px, không được
+  bump theo bộ nút checklist item — **ĐÚNG, đã xác nhận qua source**, nhưng nằm ngoài phạm vi finding gốc
+  (chỉ nhắm `note-item-*`), không phải lỗi mới sinh ra từ PR này. Ghi backlog, không chặn merge.
+- 🟡 `data-testid="note-private-badge"` trùng ở 2 nơi (Card luôn mount + DialogContent chỉ mount khi mở)
+  — **ĐÚNG, xác nhận qua source**: Card và Dialog là anh em cùng cấp trong `NoteCard`, Dialog không
+  unmount Card, nên mở chi tiết một note riêng tư sẽ có CẢ HAI badge cùng lúc trong DOM →
+  `getByTestId('note-private-badge')` sẽ ném ambiguous-match cho bất kỳ test Playwright nào sau này.
+  **Đã vá**: giao lại T2 (cùng branch `fix/009-qa-polish`, follow-up nhỏ) đổi thành
+  `note-private-badge-card` / `note-private-badge-detail`, commit `1d8ab76`, lint+build sạch.
+- 3 finding Minor còn lại (chênh hàng cao thấp thẩm mỹ, thiếu test coverage riêng cho testid mới, hover
+  contrast biên) — không kiểm sâu, để dành cho vòng polish UI kế tiếp nếu có, không chặn `009`.
+
+**Kết quả cuối:** PR #79 merge (squash + xoá nhánh), CI 9/9 xanh cả hai lượt (trước và sau follow-up
+testid), deploy xác nhận qua `/api/readyz` → `commit: 2b6a2fb1ac7ff37342503a6544f76b491ed97fc7`, khớp
+`origin/develop`. PR #78 (`674c8fb`) và PR #80 (docs results-log, `ed8e429`) đã merge/live trước đó cùng
+phiên.
+
+**`009` ĐÓNG TRỌN VÒNG ĐỜI** — spec → thi công (Codex) → QA thật T3 trên production → fix + polish → review
+chéo → merge → live, đủ cả vòng. Bước kế tiếp trong hàng đợi slice: **`010`** (calendar).
