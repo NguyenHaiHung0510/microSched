@@ -327,7 +327,10 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         open={detailsOpen}
         onOpenChange={(open) => {
           setDetailsOpen(open)
-          if (!open) setEditing(false)
+          if (!open) {
+            setEditing(false)
+            setEditingItemId(null)
+          }
         }}
       >
         <DialogContent
