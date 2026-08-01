@@ -18,8 +18,9 @@ Gộp cả cụm vào một PR thì nó to hơn `009` và `010a` cộng lại, v
   ghi dưới 3 giây, hoàn tác được, và nhìn thấy "lần cuối là bao giờ" + "tháng này tiêu bao nhiêu".
 - **`011b`** (`agent-tasks/011b-medication-reminder-webpush.md`, đã viết) — hạ tầng Web Push + cron
   3 khe + nhắc thuốc + nhắc sub hết hạn. **Phụ thuộc `011a`** cho đường ghi `Entry`.
-- **`011c`** (chưa viết) — entity `subscription`, luồng gia hạn (`tracking-brief.md` §11), **F6**
-  (burn cố định), và toggle hiển thị giá qua `app_setting`. Dàn ý ở §9.
+- **`011c`** (`agent-tasks/011c-subscription-renewal-settings.md`, **đã viết 2026-08-01**) — entity
+  `subscription`, luồng gia hạn (`tracking-brief.md` §11), **F6** (burn cố định), toggle hiển thị giá
+  qua `app_setting`, và seam định tuyến. Nó sửa vào ba file của `011a` — xem §9.
 
 **Thứ tự thi công: `011a` → `011c` → `011b`.** `011b` nhắc được cả thuốc lẫn sub, mà phần nhắc sub
 cần `subscription` đã tồn tại; làm `011b` ở cuối thì không phải ship một nửa tính năng rồi quay lại.

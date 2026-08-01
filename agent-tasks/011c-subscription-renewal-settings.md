@@ -2,8 +2,9 @@
 
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: không cần.**
-> **Trạng thái: DRAFT 2026-08-01 (T1 Opus 5 viết) — CHƯA được chủ duyệt, CHƯA qua phản biện T2/T3.
-> Đừng giao thi công trước khi chủ duyệt.**
+> **Trạng thái: DRAFT 2026-08-01 (T1 Opus 5 viết) — đã qua phản biện **T3** (`gemini-3.1-pro-high`,
+> 9 finding) + **T2 Codex** (18 finding); T1 kiểm tay từng finding rồi vá, và ghi rõ chỗ nào kết luận
+> đúng nhưng lý do sai (§8). **CHƯA được chủ duyệt — đừng giao thi công trước khi chủ duyệt.**
 
 ## 0. Bối cảnh — lô này nằm GIỮA, không phải cuối
 
@@ -35,11 +36,11 @@ Phạm vi file này **dừng ở đó**: không push, không cron, không servic
 
 | Thứ | Dòng | Ghi chú |
 |---|---|---|
-| bảng `subscription` | `models.py:348-399` | đủ 14 cột theo `tracking-brief.md` §11; `__privacy_gate__ = VIA_PARENT`, `__delete_gate__ = APPLIES` |
+| bảng `subscription` | `models.py:348-399` | đủ 15 cột theo `tracking-brief.md` §11; `__privacy_gate__ = VIA_PARENT`, `__delete_gate__ = APPLIES` |
 | CHECK của nó | `models.py:353-368` | `name`/`amount` phải `enc:v1:%` (**vô điều kiện**) · `list_amount` null-hoặc-ciphertext · `period_count > 0` · `period_unit IN (day,week,month,year)` · `expires_on >= started_on` |
-| `entry.subscription_id` | `models.py:427-435` | UUID NULL, FK `ON DELETE SET NULL` (K15) |
+| `entry.subscription_id` | `models.py:432-439` | UUID NULL, FK `ON DELETE SET NULL` (K15) |
 | bảng `app_setting` | `models.py:458-470` | `key` TEXT unique · `value` JSONB · `__privacy_gate__ = NONE`, `__delete_gate__ = NONE` |
-| index | `models.py:571-572, 580` | `ix_subscription_tracker_id` · `ix_subscription_expires_on` (K16) · `ix_entry_subscription_id` |
+| index | `models.py:571-572, 579` | `ix_subscription_tracker_id` · `ix_subscription_expires_on` (K16) · `ix_entry_subscription_id` |
 
 ⇒ **Không tạo file alembic nào trong `011c`.** Thấy "cần thêm cột" thì **dừng lại và hỏi** — nhiều
 khả năng đang đi chệch một quyết định đã chốt ở `tracking-brief.md` §11, không phải schema thiếu.
@@ -59,7 +60,7 @@ bảng `app_setting` trông như một bảng cấu hình vô hại, nhưng `pri
 
 | Key | Nội dung `value` | Rò ra thì sao |
 |---|---|---|
-| `private_pin` | `{"hash": <argon2id>, "bootstrap": bool}` (`private_gate.py:114-120`) | Hash của một **PIN 6 chữ số** — không gian 10⁶. Đẩy ra client là mời brute-force offline, bỏ qua toàn bộ throttle leo thang 10/20/36 phút đã dựng ở `016` |
+| `private_pin` | `{"hash": <argon2id>, "bootstrap": bool}` (`private_gate.py:114-120`) | Hash của một **PIN 6 chữ số** — không gian 10⁶. Đẩy ra client là mời brute-force offline, bỏ qua toàn bộ throttle leo thang (ngưỡng 10/20/36 lần sai, khoá 5/8/18 phút — `private_gate.py:23`) đã dựng ở `016` |
 | `private_unlock_throttle` | `{"fail_count": n, "locked_until": …}` | Ghi được = tự xoá lịch sử sai PIN |
 | `private_unlock_ttl_minutes` | `{"value": n}` | Ghi được = tự nới TTL phiên riêng tư lên vô hạn |
 
@@ -83,8 +84,8 @@ dùng `422` cho `PATCH` (lý lẽ: payload sai); đổi sau phản biện T3 202
 điều kiện là lời mời để người thi công sau "làm cho đúng ngữ nghĩa" và vô tình tách `private_pin`
 (có thật) khỏi `key_bịa` (không có) thành hai phản hồi khác nhau. Một mã thì không có gì để tách.
 Test bắt buộc, mỗi bài phải đỏ được khi gỡ luật:
-`GET` danh sách **không** chứa ba key trên; `PATCH` từng key trong ba key ⇒ `422` **và** giá trị
-trong DB không đổi một byte.
+`GET` danh sách **không** chứa ba key trên; `GET`/`PATCH` từng key trong ba key ⇒ **`404`** (không
+phải `422` — `422` chỉ dành cho key hợp lệ mà giá trị sai) **và** giá trị trong DB không đổi một byte.
 
 ### 2.2 🔴 `subscription` đọc qua **cha** — `readable(stmt, Subscription, auth)` sẽ **ném lỗi**
 
@@ -131,16 +132,28 @@ Hỏng cụ thể: chủ gia hạn Netflix tháng 8, mạng chập, outbox gửi
 ⇒ **Chốt: buộc (b) vào kết quả thật của (a), trong CÙNG một transaction.**
 
 ```python
-# Trong SubscriptionStore.renew(), một transaction:
-row = await db.execute(
-    insert(Entry).values(...).on_conflict_do_nothing(index_elements=[Entry.id]).returning(Entry.id)
+# Trong SubscriptionStore.renew(), một transaction.
+# KHÔNG tự viết INSERT — gọi lại đúng đường tạo entry của 011a (xem hộp ngay dưới).
+entry_id, created = await tracker_store.create_entry(
+    db, payload, auth, subscription_id=subscription.id   # subscription_id là tham số TIN CẬY, không đến từ API
 )
-created_id = row.scalar_one_or_none()
-if created_id is None:
+if not created:
     # Lần gửi lại: KHÔNG đẩy expires_on. Đọc lại qua cổng, trả 200 + trạng thái hiện tại.
     return await self._renew_result(db, subscription_id, created=False, auth=auth)
 # Chỉ nhánh này mới được UPDATE subscription SET expires_on = ...
 ```
+
+> 🔴 **Đừng nhân bản đường tạo entry — T2 bắt 2026-08-01.** Bản nháp trước viết thẳng
+> `insert(Entry) … ON CONFLICT DO NOTHING` trong `renew`, và như thế là **chép lại bốn thứ** mà
+> `011a` đã sở hữu: mã hoá tiền (`_sealed(money.to_storage(...))`), kiểm UUIDv7, ép `occurred_at`
+> tz-aware, và luật K8 (`input_mode` × field). Bốn bản sao đó sẽ lệch ở lượt sửa đầu tiên. Tệ hơn:
+> `011a` §4.2 bẫy 5 quy định conflict phải **đọc lại row qua cổng** rồi mới kết luận — trùng id
+> nhưng thuộc bản ghi khác ⇒ `409`, không phải "retry". Coi mọi conflict là retry như bản nháp là
+> **âm thầm nuốt một `409` thật**.
+> ⇒ **`011a` phải xuất `create_entry` trả về `(entry_id, created: bool)` và nhận thêm keyword
+> `subscription_id: UUID | None = None`** — tham số nội bộ, **không** có trong `EntryCreate` DTO,
+> router của `011a` không bao giờ set (nó vẫn bị cấm chạm `subscription_id` theo `011a` §6). Chỉ
+> `renew` truyền vào. Đây là chỗ thứ ba `011c` sửa file của `011a`, đã ghi vào §6.
 
 Khoá hàng sub bằng `SELECT … FOR UPDATE` **trước** khi tính ngày mới (hai tab cùng bấm gia hạn).
 Test bắt buộc: gửi **cùng một** `POST /renew` với cùng `entry_id` hai lần ⇒ đúng một `Entry`, và
@@ -161,8 +174,24 @@ tracker này"*). Đối xứng với luật của `011b` §4.3 (tracker nhắc t
 **Hệ quả ngược cần chặn luôn:** `011a` cho `PATCH` đổi `input_mode` của tracker. Đổi một tracker
 đang có sub từ `money` sang `event` là mở lại đúng cái bẫy trên bằng cửa sau. `011c` **mở rộng**
 `TrackerStore.update_tracker`: nếu tracker còn ít nhất một `subscription` chưa xoá mềm thì đổi
-`input_mode` khỏi `money` (hoặc `kind` khỏi `finance`) ⇒ `422`, kèm số lượng sub đang gắn. Đây là
-một trong hai chỗ `011c` được phép sửa file của `011a` (chỗ kia: §4.3).
+`input_mode` khỏi `money` (hoặc `kind` khỏi `finance`) ⇒ `422`, kèm số lượng sub đang gắn.
+
+> 🔴 **Hai cửa sau của chính guard này — T2 bắt 2026-08-01, cả hai đều thật:**
+> 1. **Đường vòng qua `restore`.** Xoá mềm hết sub ⇒ guard hết đếm được ⇒ đổi tracker sang `event` ⇒
+>    `POST /subscriptions/{id}/restore` khôi phục sub dưới một tracker nay đã sai kiểu. ⇒ `restore`
+>    **phải validate lại `finance` + `money`** của tracker cha, sai ⇒ `422` chỉ đúng cách sửa. Rẻ hơn
+>    là đếm cả sub đã xoá mềm trong guard, nhưng thế thì xoá sub xong vẫn không đổi được tracker mãi
+>    mãi — chọn validate ở `restore`.
+> 2. **Archive tracker còn sub sống** ⇒ ba lô hiểu khác nhau về cùng một hàng dữ liệu: `011a` cho
+>    archive vô điều kiện · `011c` đọc qua `readable(…, Tracker, …)` nên **sub biến mất khỏi UI và
+>    F6** · `011b` §3.4 mục 4 **không** lọc `Tracker.deleted_at` nên **vẫn bắn notification**, và
+>    notification đó mở tới một màn trả 404. ⇒ **Chốt: `soft_delete_tracker` chặn khi tracker còn sub
+>    chưa xoá mềm** (`422`, *"Còn N đăng ký đang gắn — xoá hoặc chuyển chúng trước"*). Cùng họ lý lẽ
+>    với D1 (`RESTRICT` bảo vệ lịch sử), và là luật rẻ nhất vì nó áp một chỗ thay vì bắt cả ba lô
+>    đồng bộ predicate. **`011b` không phải sửa gì** — điều kiện của nó tự đúng khi tracker không thể
+>    archive lúc còn sub.
+
+Đây là chỗ `011c` được phép sửa file của `011a`; danh sách đầy đủ ở §6.
 
 ### 2.6 Chống trùng tên: không có unique index, quét ở app — và quét **TRONG** cổng
 
@@ -301,7 +330,8 @@ F6 là một ô của cùng một dashboard (`tracking-brief.md` §8.2). Thêm v
 "f6": {
   "monthly_burn": Decimal,              # tổng burn cố định quy về tháng
   "subscription_count": int,            # số sub đang tính vào burn
-  "upcoming": [ {subscription_id, name, amount, expires_on, days_left, monthly_amount} ],
+  "upcoming": [ {subscription_id, name, amount: Decimal|null, monthly_amount: Decimal|null,
+                 expires_on, days_left, corrupted: bool} ],   # null + corrupted=true: xem hộp dưới
   "corrupted_subscription_count": int   # cùng luật §4.3 của 011a
 }
 ```
@@ -341,9 +371,10 @@ và notification là lỗi người dùng sẽ thấy ngay.
 > mới bỏ mục đó.
 
 **Ba luật chung của tầng dashboard (`011a` §4.3) áp nguyên cho F6:** riêng tư khoá ⇒ số thiếu và
-không chú thích · tháng rỗng ⇒ `200` với số 0 · một dòng ciphertext hỏng ⇒ bỏ qua dòng đó +
-`logger.error` kèm `subscription.id` (**không** kèm ciphertext) + đếm vào `corrupted_subscription_count`,
-**không** hạ cả dashboard.
+không chú thích · tháng rỗng ⇒ `200` với số 0 · một dòng ciphertext hỏng ⇒ bỏ dòng đó **khỏi phép
+cộng burn** (không phải khỏi cả response — nó vẫn ở `upcoming` với `corrupted: true` nếu tên còn đọc
+được) + `logger.error` kèm `subscription.id` (**không** kèm ciphertext) + đếm vào
+`corrupted_subscription_count`, **không** hạ cả dashboard.
 
 ⚠️ **F6 không đi theo `?month=`.** F1–F5 nhìn về quá khứ theo tháng được chọn; F6 trả lời *"mỗi tháng
 tôi mất cố định bao nhiêu **từ giờ trở đi**"* — nó là ảnh chụp hiện tại. Xem lại tháng 6 vẫn thấy F6
@@ -387,6 +418,7 @@ docstring, nếu không lượt review sau sẽ "sửa cho đồng nhất".
 | DELETE | `/api/subscriptions/{id}` | `204`, **soft-delete** |
 | POST | `/api/subscriptions/{id}/restore` | khuôn `notes.py:98-104` |
 | GET | `/api/settings` | **chỉ** key trong allowlist, kèm giá trị hiệu lực (đã áp mặc định) |
+| GET | `/api/settings/{key}` | `404` cho mọi key ngoài allowlist |
 | PATCH | `/api/settings/{key}` | `404` cho mọi key ngoài allowlist (§2.1 — cùng mã với GET); `422` chỉ khi key **hợp lệ** mà giá trị sai kiểu hoặc ngoài biên |
 
 `datetime` naive bị từ chối `422` ở `occurred_at`/`canceled_at` (cùng luật `011a` §4.4). `date` thì
@@ -396,8 +428,8 @@ nhận `YYYY-MM-DD` trần — nó là ngày lịch, không có múi giờ (K14)
 
 ### 5.1 🔴 Seam định tuyến — app **CHƯA có router**, và `011b` đã giả định là có
 
-Đo tay 2026-08-01: `frontend/src/App.tsx:104-125` chuyển màn bằng `useState` (`activeScreen`), và
-`frontend/package.json` **không có `react-router`** (chỉ `dexie`, `sonner`, TanStack Query). Trong
+Đo tay 2026-08-01: `frontend/src/App.tsx:70` khai `activeScreen` bằng `useState` (khối tab ở
+`104-125`, nhánh render ở `127`), và `frontend/package.json` **không có `react-router`**. Trong
 khi đó `011b` §3.2 + §4.2 viết payload push mang URL `/reminder-confirm?dispatch=…` và *"URL mở màn
 subscription/highlight=id"* — **hai deep link vào một ứng dụng không có đường dẫn nào**. Không spec
 nào nhận phần dựng đường đi đó; nó rơi đúng vào khe giữa `011a` (không cần route) và `011b` (cần,
@@ -407,9 +439,14 @@ nhưng giả định đã có).
 
 **Chốt: seam tối thiểu tự viết, KHÔNG thêm `react-router`.**
 
-- `frontend/src/lib/route.ts` (~40 dòng): `usePath()` đọc `window.location.pathname` +
-  `useSyncExternalStore` trên `popstate`; `navigate(path)` gọi `history.pushState` rồi phát
-  `popstate`. Đọc query bằng `URLSearchParams` sẵn có.
+- `frontend/src/lib/route.ts` (~40 dòng): `useLocation()` đọc **`pathname + search`** (một chuỗi,
+  không phải riêng `pathname`) + `useSyncExternalStore` trên `popstate`; `navigate(path)` gọi
+  `history.pushState` rồi phát `popstate`. Đọc query bằng `URLSearchParams` sẵn có.
+  > 🔴 **Snapshot phải gồm cả `search` — T2 bắt 2026-08-01.** Cả hai deep link mang tham số trong
+  > query (`?highlight=`, `?dispatch=`). Nếu snapshot chỉ là `pathname` thì đi từ `/subscription`
+  > sang `/subscription?highlight=id` cho ra **cùng một giá trị**, `useSyncExternalStore` coi là
+  > không đổi và **không rerender** — notification thứ hai trỏ sang sub khác sẽ không làm gì cả.
+  > Lỗi này không lộ ra ở lần tap đầu tiên (lúc đó là tải nguội), chỉ lộ khi app đang mở.
 - `App.tsx` rẽ **hai** nhánh: `/subscription` ⇒ `SubscriptionScreen`; còn lại ⇒ khối tab hiện có
   (mọi tab giữ nguyên URL `/`, đừng đổi hành vi tab đang chạy tốt).
 - **Tab cố ý KHÔNG sở hữu URL.** Chỉ hai deep link có path riêng; `activeScreen` vẫn là `useState`
@@ -508,7 +545,8 @@ Id riêng đi bằng `data-subscription-id`.
 - Không gọi `readable()` trực tiếp lên `Subscription` (§2.2).
 - **Không đọc/ghi `app_setting` ngoài allowlist** — tuyệt đối không chạm `private_pin`,
   `private_unlock_throttle`, `private_unlock_ttl_minutes` (§2.1).
-- Không thêm cột/field `status` (§2.7).
+- Không thêm **cột DB** `status` (§2.7). Field `status` **tính sẵn** trong `SubscriptionRead` thì
+  ngược lại là **bắt buộc** — đừng đọc mục này thành "cấm luôn field DTO" (T2 bắt 2026-08-01).
 - Không làm nút "đã gia hạn" một chạm, không auto-write từ notification (§3 mục 1).
 - Không chạm `push_subscription` / `reminder_dispatch` / service worker / cron — `011b` lo. Không
   gửi notification từ lô này.
@@ -516,8 +554,18 @@ Id riêng đi bằng `data-subscription-id`.
 - Không thêm tab thứ năm (§5.2). Không dựng màn Settings riêng (§5.4).
 - Không thêm `react-router` hay bất kỳ dependency runtime mới nào (§5.1).
 - Không seed dữ liệu mẫu (§3 mục 12).
-- Không sửa file của `task`/`note`/`calendar`. File của `011a` chỉ được sửa đúng **hai** chỗ đã nêu:
-  `update_tracker` (§2.5) và `dashboard.py` (§4.3).
+- Không sửa file của `task`/`note`/`calendar`.
+- **Danh sách đầy đủ file của `011a` mà `011c` được sửa** (T2 bắt 2026-08-01: bản nháp trước chỉ
+  liệt kê hai chỗ backend trong khi §5 lại yêu cầu sửa cả frontend — spec tự cấm thứ chính nó bắt
+  làm). Ngoài danh sách này thì không:
+  | File | Sửa gì |
+  |---|---|
+  | `app/domain/tracker.py` | guard `update_tracker` + chặn `soft_delete_tracker` khi còn sub (§2.5); `create_entry` trả `(entry_id, created)` + nhận keyword nội bộ `subscription_id` (§2.4) |
+  | `app/domain/dashboard.py` | thêm ô `f6` (§4.3) |
+  | `frontend/src/App.tsx` | thêm nhánh path `/subscription` (§5.1) — **không** đổi cơ chế tab |
+  | `TrackerScreen.tsx` | thêm đúng một đường vào màn sub (§5.2) |
+  | danh sách entry của `011a` | áp `show_list_price` (§5.4) |
+  | `MoneyInput` (component dùng chung của `011a`) | **chỉ import, không sửa** (§5.5) |
 
 ## 7. Nghiệm thu (Definition of Done)
 
@@ -566,7 +614,7 @@ Id riêng đi bằng `data-subscription-id`.
    390×844, đủ ma trận trạng thái §4 của file đó, có phần (a) "đã soi những gì".
 5. PR mô tả rõ mọi **judgment call** tự quyết lúc thi công (luật `feedback-t1-verify-not-refix`).
 
-## 8. Sáu mục chủ veto được (T1 tự quyết lúc viết spec, đổi chỉ tốn 1–2 dòng)
+## 8. Chín mục chủ veto được (T1 tự quyết lúc viết spec, đổi chỉ tốn 1–2 dòng)
 
 1. **Tracker cha của sub bắt buộc `finance` + `money`** (§2.5) — chặt hơn `tracking-brief.md` §11
    (chỉ nói "phải mang `tracker_id`"). Đổi = bỏ ràng buộc và chấp nhận `422` lúc gia hạn.
@@ -591,7 +639,28 @@ Id riêng đi bằng `data-subscription-id`.
 > không có gì để phân biệt. Vẫn gộp về một mã `404` (§2.1) vì lý do khác: hai mã cho cùng một điều
 > kiện là chỗ để lượt sửa sau vô tình tách ra. Ghi lại cả hai vế — đúng dạng lỗi `qa-framework.md`
 > §8 (**kết luận dùng được, trích dẫn sai**), không được để lời giải thích sai đi kèm bản vá đúng.
-> **T2 review chéo với repo thật đang chạy** — kết quả sẽ ghi tiếp vào đây.
+
+> ✅ **T2 Codex (`gpt-5.6-sol`) review chéo với repo thật, 2026-08-01: 18 finding.** Lane này đọc
+> được code nên bắt đúng loại T3 không bắt được. Bốn cái đáng nhất, T1 đã kiểm tay từng cái rồi vá:
+> - **`navigateFallbackDenylist` không tồn tại dưới `injectManifest`** — option đó thuộc
+>   `GeneratePartial` (`workbox-build/build/types.d.ts:286`), còn `InjectManifestOptions`
+>   (`types.d.ts:487`) không gồm partial đó. `011b` §4.1 bảo "giữ nguyên" một thứ **không giữ được**,
+>   và mất nó là `/auth/*` bị service worker nuốt — đúng sự cố nút đăng nhập câm ghi trong
+>   `vite.config.ts`. Vá ở `011b`: chuyển sang `NavigationRoute` viết tay trong `sw.ts`.
+> - **`return_to` chưa tồn tại ở đâu cả** (`App.tsx:59` trỏ `/auth/login` cứng, `auth.py:148` luôn
+>   redirect `/`) — noti lúc session hết hạn sẽ **nuốt mất lượt nhắc thuốc**. Giao `011b`, kèm luật
+>   chống open-redirect.
+> - **Archive tracker còn sub** ⇒ ba lô hiểu khác nhau về cùng một hàng: `011a` cho archive ·
+>   `011c` làm sub biến mất khỏi UI/F6 · `011b` vẫn bắn noti tới màn trả 404. Vá bằng một luật ở
+>   `soft_delete_tracker` (§2.5) thay vì bắt ba lô đồng bộ predicate.
+> - **`renew` tự viết `INSERT Entry`** = nhân bản mã hoá/UUIDv7/timezone/K8 của `011a` **và** nuốt
+>   mất `409` thật. Vá: dùng lại `create_entry` của `011a` (§2.4).
+>
+> Cộng thêm: mâu thuẫn nội bộ về API settings, `status` bị chính §6 cấm, phạm vi sửa file frontend
+> không khai, `usePath` không thấy đổi query, schema `upcoming` chưa khớp luật corrupted, và bốn
+> **sai số thật trong chính spec này** (throttle `016` là *ngưỡng 10/20/36 lần, khoá 5/8/18 phút* chứ
+> không phải "10/20/36 phút" — con số này còn đang sai trong `CLAUDE.md`; `subscription` có 15 cột
+> không phải 14; hai dải dòng `models.py` lệch; `App.tsx` khai `useState` ở dòng 70). Tất cả đã sửa.
 
 ## 9. Hợp đồng `011c` → `011b` (đừng đổi khi thi công mà không sửa `011b`)
 

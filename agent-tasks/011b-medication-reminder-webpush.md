@@ -8,7 +8,8 @@
 > **📝 Cập nhật cùng ngày, sau khi `011a` được viết: `011` tách làm BA lô, không phải hai.**
 > `011a` = `tracker_group`/`tracker`/`entry` + lưới ghi + dashboard A1–A4/F1–F5
 > (`agent-tasks/011a-tracker-capture-dashboard.md`). `011c` = entity `subscription` + luồng gia hạn
-> + F6 + `app_setting` (chưa viết, dàn ý ở `011a` §9). **Thứ tự thi công: `011a` → `011c` → `011b`**
+> + F6 + `app_setting` + seam định tuyến (**đã viết 2026-08-01**:
+> `agent-tasks/011c-subscription-renewal-settings.md`). **Thứ tự thi công: `011a` → `011c` → `011b`**
 > — file này nhắc cả thuốc lẫn sub, mà phần nhắc sub (§3.4 điểm 4) cần `subscription` đã tồn tại;
 > làm cuối thì không phải ship một nửa rồi quay lại. Trong file này, mọi tham chiếu tới CRUD
 > tracker/entry là `011a`; mọi tham chiếu tới `subscription`/F6/`app_setting` là `011c`.
@@ -165,6 +166,18 @@ banner. Cơ chế thay thế, **tái dùng nguyên xi triết lý "ghi ngay + ho
    thể tạo hai Entry.
 3. Nếu session hết hạn ⇒ login bình thường nhưng phải giữ `return_to=/reminder-confirm?dispatch=...`;
    login xong route chạy tiếp. Nếu private gate khoá ⇒ unlock riêng tư rồi retry (§3.6), không bypass.
+   > 🔴 **`return_to` hiện KHÔNG tồn tại ở bất kỳ đâu — T2 bắt 2026-08-01, và việc này thuộc `011b`.**
+   > Kiểm tay: UI luôn trỏ `/auth/login` cứng (`App.tsx:59`) và callback OAuth luôn
+   > `RedirectResponse(url="/")` (`auth.py:148`). `011c` chỉ dựng seam định tuyến phía client, không
+   > đụng auth. Nghĩa là kịch bản thật — noti lúc 8h sáng, session đã hết hạn — sẽ **nuốt mất lượt
+   > nhắc**: đăng nhập xong rơi về trang chủ, `dispatch` mất, không ai ghi Entry.
+   > ⇒ `011b` phải làm, **đủ ba lớp**: (a) client đính `return_to` (đường dẫn **tương đối**, bắt đầu
+   > bằng đúng một `/`, **không** `//` và không có scheme/host) khi chuyển sang login; (b) server
+   > giữ nó trong **OAuth `state` đã ký**, không phải query trần — `state` là chỗ duy nhất không bị
+   > sửa giữa đường; (c) callback validate lại **same-origin, đường dẫn tương đối** trước khi
+   > redirect, không khớp ⇒ về `/`. Test bắt buộc: `return_to=https://evil.example` và
+   > `return_to=//evil.example` đều **phải** rơi về `/` (open-redirect là lỗ kinh điển của đúng
+   > tính năng này).
 4. Nếu offline ⇒ Dexie queue **request confirmation** (dispatch id + stable entry id + thời điểm tap),
    không queue generic create-entry. Hành động vẫn chạy trong tab app, không fetch trần từ service
    worker; auth/private gate vẫn do server thi hành khi outbox flush.
@@ -289,7 +302,8 @@ def build_medication_payload(
 def build_subscription_payload(
     subscription_name: str, expires_on: date, subscription_id: UUID, is_private: bool
 ) -> dict:
-    # URL mở màn subscription/highlight=id, KHÔNG đi reminder-confirm và KHÔNG tự tạo Entry.
+    # URL CHÍNH XÁC: f"/subscription?highlight={subscription_id}" (hợp đồng 011c §9 mục 1).
+    # KHÔNG đi reminder-confirm và KHÔNG tự tạo Entry.
     # Parent Tracker private ⇒ generic "Một đăng ký sắp hết hạn", KHÔNG có subscription_name.
     # Public ⇒ "Sắp hết hạn: {name} — còn {n} ngày"; n tính từ VN-today.
     ...
@@ -488,10 +502,28 @@ self.addEventListener('notificationclick', (event) => {
 })
 ```
 
+> 🔴 **`navigateFallbackDenylist` KHÔNG tồn tại dưới `injectManifest` — kiểm tay 2026-08-01 sau
+> phản biện T2, và đây là bẫy nặng nhất của §4.1.** Option đó thuộc `GeneratePartial`
+> (`workbox-build/build/types.d.ts:286`, trong khối `178-348`), còn
+> `InjectManifestOptions = BasePartial & GlobPartial & InjectPartial & …` (`types.d.ts:487`) **không
+> gồm `GeneratePartial`**. Nghĩa là "giữ nguyên option cũ" ở `vite.config.ts:22` là **không làm được**
+> — nó sẽ bị bỏ qua (im lặng, hoặc lỗi type), và cùng lúc `/auth/*` + `/api/*` mất hàng rào. Đúng
+> cái sự cố mà comment ngay tại `vite.config.ts` mô tả: nút đăng nhập câm.
+> ⇒ **Chuyển sang code trong `sw.ts`**, không phải config:
+> ```ts
+> import { createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
+> import { NavigationRoute, registerRoute } from 'workbox-routing'
+> precacheAndRoute(self.__WB_MANIFEST)
+> registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html'), {
+>   denylist: [/^\/auth\//, /^\/api\//],
+> }))
+> ```
+> Nghiệm thu phải kiểm **bốn** đường trên bản build thật: `/auth/login` (đi tới server, không bị SW
+> nuốt) · `/api/*` · và hai deep link `/reminder-confirm`, `/subscription` (phải trả `index.html`).
+
 **Rủi ro thi công thật cần đo tay trước khi tin spec này**: `injectManifest` đổi cách Workbox build
-service worker — cần chạy `npm run build` xong kiểm `dist/sw.js` có đúng cả route-caching cũ (đặc
-biệt `navigateFallbackDenylist` cho `/auth/`, `/api/` — vite.config.ts:22, comment ở đó giải thích vì
-sao thiếu nó thì nút đăng nhập câm) lẫn hai listener mới. Đây thuộc "thử trước khi code" mà chủ đã nói
+service worker — cần chạy `npm run build` xong kiểm `dist/sw.js` có đúng cả route-caching cũ (nay là
+`NavigationRoute` + denylist viết tay theo hộp trên) lẫn hai listener mới. Đây thuộc "thử trước khi code" mà chủ đã nói
 sẽ làm — ghi vào Definition of Done, không chặn viết spec này.
 
 ### 4.2 Route `/reminder-confirm` — ghi ngay, idempotent theo dispatch
