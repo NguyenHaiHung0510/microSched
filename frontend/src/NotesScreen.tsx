@@ -226,7 +226,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 {label}
               </Button>
               {note.is_private ? (
-                <Badge data-testid="note-private-badge" variant="secondary">
+                <Badge data-testid="note-private-badge-card" variant="secondary">
                   <LockKeyhole data-icon="inline-start" />
                   Riêng tư
                 </Badge>
@@ -361,7 +361,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           ) : (
             <div className="space-y-5">
               {note.is_private ? (
-                <Badge data-testid="note-private-badge" variant="secondary">
+                <Badge data-testid="note-private-badge-detail" variant="secondary">
                   <LockKeyhole data-icon="inline-start" />
                   Riêng tư
                 </Badge>
