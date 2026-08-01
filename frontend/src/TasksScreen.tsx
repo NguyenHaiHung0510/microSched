@@ -313,16 +313,32 @@ const TaskCard = memo(function TaskCard({
                 {task.body_md || task.items.length > 0 ? (
                   <TooltipContent>
                     {task.items.length > 0 ? (
-                      <p>
-                        <span className="font-bold">Checklist · </span>
-                        {task.items.map((item) => item.content).join(' · ')}
-                      </p>
+                      <div>
+                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
+                          Checklist ({task.items.length})
+                        </span>
+                        <ol className="mt-1 space-y-0.5">
+                          {task.items.slice(0, 3).map((item, index) => (
+                            <li key={item.id} className="flex gap-1.5">
+                              <span className="opacity-60">{index + 1}.</span>
+                              {item.content}
+                            </li>
+                          ))}
+                        </ol>
+                        {task.items.length > 3 ? (
+                          <p className="mt-1 text-xs opacity-70 italic">
+                            … và {task.items.length - 3} mục nữa
+                          </p>
+                        ) : null}
+                      </div>
                     ) : null}
                     {task.body_md ? (
-                      <p className={task.items.length > 0 ? 'mt-2' : ''}>
-                        <span className="font-bold">Ghi chú · </span>
+                      <div className={task.items.length > 0 ? 'mt-2' : ''}>
+                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
+                          Ghi chú
+                        </span>
                         {task.body_md}
-                      </p>
+                      </div>
                     ) : null}
                   </TooltipContent>
                 ) : null}
@@ -835,7 +851,7 @@ export function TasksScreen() {
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="h-auto px-0 py-1 text-xs" size="sm" variant="link">
+              <Button className="h-auto py-1 pl-0! pr-0! text-xs" size="sm" variant="link">
                 <Plus data-icon="inline-start" />
                 Thêm chi tiết
               </Button>
