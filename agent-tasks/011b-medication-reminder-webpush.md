@@ -360,7 +360,11 @@ Luồng `POST /api/cron/reminder`:
 4. **Nhắc sub sắp hết hạn — chỉ chạy ở khe `19:00`** (một lần/ngày là đủ, tránh nhắc 3 lần/ngày cho
    cùng một sub sắp hết hạn; chọn khe cuối ngày vì không gấp theo giờ như thuốc). `SELECT`
    `subscription` còn sống, `canceled_at IS NULL`, `expires_on - today <= 3` (ngưỡng
-   `app_setting`, `tracking-brief.md` §11 S2) **và** `expires_on >= today` (đã hết hạn thì thôi, đừng
+   `app_setting` — **key `subscription_expiry_lead_days`, mặc định 3, đọc qua
+   `expiry_lead_days(db)` của `011c` §4.4**: hàm đó trả mặc định + `logger.error` khi hàng JSON
+   hỏng, cố ý **không ném**, để một dòng cấu hình sai không giết luôn lượt nhắc thuốc buổi sáng
+   chạy cùng endpoint. Đừng đọc thẳng `AppSetting` ở đây, và đừng hard-code số 3 — nguồn gốc con
+   số: `tracking-brief.md` §11 S2) **và** `expires_on >= today` (đã hết hạn thì thôi, đừng
    nhắc số âm), **JOIN parent Tracker** để biết `is_private` và build payload generic khi private
    (§3.2); không lọc private ra khỏi cron vì lời nhắc generic vẫn là chức năng sức khoẻ/tài chính chủ
    đã bật. Cùng cơ chế `reminder_dispatch` (`subject_type='subscription'`) chống lặp, **áp đúng
@@ -492,6 +496,22 @@ sẽ làm — ghi vào Definition of Done, không chặn viết spec này.
 
 ### 4.2 Route `/reminder-confirm` — ghi ngay, idempotent theo dispatch
 
+> 🔴 **Vá 2026-08-01 (T1, lúc viết `011c`) — file này giả định một router chưa từng tồn tại.**
+> Đo tay cùng ngày: `App.tsx:104-125` chuyển màn bằng `useState`, `package.json` **không có**
+> `react-router`. Nghĩa là cả hai deep link của lô này (`/reminder-confirm?dispatch=…` ở đây và URL
+> màn subscription ở §3.2) không có đường nào để tới, và `navigate('/')` dưới kia không có hàm nào
+> để gọi. Lỗ nằm **giữa** `011a` (không cần route) và file này (cần, nhưng tưởng đã có) — không spec
+> nào nhận.
+> **Đã vá bằng cách giao cho `011c`** (`agent-tasks/011c-subscription-renewal-settings.md` §5.1):
+> seam tự viết ~40 dòng ở `frontend/src/lib/route.ts` (`usePath()` + `navigate()` trên
+> `history.pushState`/`popstate`), **không thêm `react-router`**; `App.tsx` rẽ nhánh theo path.
+> `011c` chạy trước lô này nên tới đây seam đã có sẵn. **Việc của `011b` chỉ là thêm một nhánh
+> `/reminder-confirm`** — không dựng router, không đổi cơ chế tab. Nếu vì lý do nào đó `011c` bị bỏ
+> qua, **dừng lại và báo T1**, đừng tự dựng router thứ hai.
+> Backend đã sẵn sàng cho tải nguội: `SPAStaticFiles` trả `index.html` cho path không khớp file
+> (`main.py:28-37, 102`) — đã kiểm, không phải giả định. Nhưng §4.1 đổi sang `injectManifest` thì
+> phải giữ `navigateFallbackDenylist` như cũ, nếu vỡ thì deep link chết chung với nút đăng nhập.
+
 Component `ReminderConfirm.tsx` đọc **chỉ** `dispatch` từ query; lúc mount sinh một UUIDv7 + chụp
 `occurred_at` +07 một lần, giữ ổn định qua mọi render/retry, rồi gọi
 `POST /api/reminder-dispatch/{dispatch}/confirm` (§3.6). **Không** gọi thẳng generic create-entry và
@@ -610,6 +630,12 @@ nên xảy ra nếu theo đúng thứ tự đề xuất ở §0.
 3. Ngưỡng "sắp hết hạn 3 ngày" thuộc `app_setting`; **`011c`** phải tạo CRUD + seed/default cho nó
    (`tracking-brief.md` §11 S2 nói "hằng số `app_setting`, chưa cần per-sub"). `011a` cấm chạm
    `app_setting`; bản nháp trước giao việc này cho `011a` là mâu thuẫn scope, T2 đã bắt và sửa ở đây.
+   📝 **2026-08-01: `011c` đã viết xong** (`agent-tasks/011c-subscription-renewal-settings.md` §4.4)
+   — key là `subscription_expiry_lead_days`, mặc định 3, biên 0–30, và **CRUD `app_setting` chạy qua
+   allowlist hằng số**. Lý do allowlist quan trọng với chính lô này: `private_gate.py:19-21` dùng
+   chung bảng đó cho `private_pin` (chứa hash Argon2id của PIN 6 chữ số), `private_unlock_throttle`
+   và `private_unlock_ttl_minutes`; một CRUD tổng quát sẽ đẩy hash PIN ra client. Nếu `011b` cần đọc
+   thêm bất kỳ setting nào, **thêm key vào allowlist của `011c`**, đừng mở đường đọc tự do.
 
 ## 8. Hai judgment call chủ veto được trước khi giao executor
 

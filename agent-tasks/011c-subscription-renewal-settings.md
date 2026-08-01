@@ -1,0 +1,537 @@
+# 011c — `subscription` + luồng gia hạn + F6 + `app_setting` + seam định tuyến
+
+> **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
+> · Skill gợi ý: không cần · MCP cần: không cần.**
+> **Trạng thái: DRAFT 2026-08-01 (T1 Opus 5 viết) — CHƯA được chủ duyệt, CHƯA qua phản biện T2/T3.
+> Đừng giao thi công trước khi chủ duyệt.**
+
+## 0. Bối cảnh — lô này nằm GIỮA, không phải cuối
+
+`011` tách làm ba (`011a` §0). Thứ tự thi công **`011a` → `011c` (file này) → `011b`**:
+
+- **`011a`** (đã viết) — `tracker_group`/`tracker`/`entry`, lưới ghi một chạm, dashboard A1–A4 +
+  F1–F5. Là nền của mọi thứ dưới đây.
+- **`011c`** (file này) — entity `subscription`, luồng gia hạn S2, **F6** (burn cố định/tháng),
+  CRUD `app_setting` tối thiểu, và **seam định tuyến** (§5.1 — phát sinh khi rà, không có trong dàn
+  ý gốc).
+- **`011b`** (đã viết) — Web Push + cron 3 khe + nhắc thuốc + **nhắc sub sắp hết hạn**. Chạy cuối vì
+  nửa sau của nó cần `subscription` tồn tại, cần ngưỡng "sắp hết hạn" trong `app_setting`
+  (`011b` §7 mục 3), và cần một màn để notification mở ra.
+
+**Ba món nợ có tên, `011c` là chủ nợ:**
+
+| Nợ | Ai ghi | Trả ở đâu trong file này |
+|---|---|---|
+| Toggle giá gốc/thực trả (cần `app_setting`) | `011a` §5.4 + §8 mục 4 | §4.4 + §5.4 |
+| Ngưỡng "sắp hết hạn 3 ngày" trong `app_setting` | `011b` §7 mục 3 | §4.4 |
+| Màn để notification sub-expiry mở ra (`/subscription?highlight=id`) | `011b` §3.2 + §4.2 | §5.1 + §5.2 |
+
+Phạm vi file này **dừng ở đó**: không push, không cron, không service worker — `011b` lo.
+
+## 1. Sự thật đo được về schema — **`011c` KHÔNG có migration**
+
+Đọc tay `backend/app/domain/models.py` + `backend/alembic/versions/0001_initial_schema.py` ngày
+2026-08-01. Mọi thứ lô này cần **đã có sẵn**:
+
+| Thứ | Dòng | Ghi chú |
+|---|---|---|
+| bảng `subscription` | `models.py:348-399` | đủ 14 cột theo `tracking-brief.md` §11; `__privacy_gate__ = VIA_PARENT`, `__delete_gate__ = APPLIES` |
+| CHECK của nó | `models.py:353-368` | `name`/`amount` phải `enc:v1:%` (**vô điều kiện**) · `list_amount` null-hoặc-ciphertext · `period_count > 0` · `period_unit IN (day,week,month,year)` · `expires_on >= started_on` |
+| `entry.subscription_id` | `models.py:427-435` | UUID NULL, FK `ON DELETE SET NULL` (K15) |
+| bảng `app_setting` | `models.py:458-470` | `key` TEXT unique · `value` JSONB · `__privacy_gate__ = NONE`, `__delete_gate__ = NONE` |
+| index | `models.py:571-572, 580` | `ix_subscription_tracker_id` · `ix_subscription_expires_on` (K16) · `ix_entry_subscription_id` |
+
+⇒ **Không tạo file alembic nào trong `011c`.** Thấy "cần thêm cột" thì **dừng lại và hỏi** — nhiều
+khả năng đang đi chệch một quyết định đã chốt ở `tracking-brief.md` §11, không phải schema thiếu.
+Trước khi bắt đầu, xác minh trên Neon bằng `information_schema.columns` + `pg_constraint` (luật cứng
+`CLAUDE.md`: không dừng ở `alembic current`).
+
+**Không có unique index cho `subscription.name`** — đúng theo K19 (§2.6), không phải thiếu sót. Đừng
+thêm.
+
+## 2. Bảy chỗ sẽ SAI nếu chép khuôn `011a`/`notes.py` nguyên xi
+
+### 2.1 🔴 `app_setting` là bảng **DÙNG CHUNG với cổng riêng tư** — CRUD tổng quát làm rò hash PIN
+
+Đây là mục nguy hiểm nhất của cả lô, và nó **không nhìn thấy được** nếu chỉ đọc `tracking-brief.md`:
+bảng `app_setting` trông như một bảng cấu hình vô hại, nhưng `private_gate.py:19-21` đã dùng nó cho
+**ba key bí mật**:
+
+| Key | Nội dung `value` | Rò ra thì sao |
+|---|---|---|
+| `private_pin` | `{"hash": <argon2id>, "bootstrap": bool}` (`private_gate.py:114-120`) | Hash của một **PIN 6 chữ số** — không gian 10⁶. Đẩy ra client là mời brute-force offline, bỏ qua toàn bộ throttle leo thang 10/20/36 phút đã dựng ở `016` |
+| `private_unlock_throttle` | `{"fail_count": n, "locked_until": …}` | Ghi được = tự xoá lịch sử sai PIN |
+| `private_unlock_ttl_minutes` | `{"value": n}` | Ghi được = tự nới TTL phiên riêng tư lên vô hạn |
+
+Một `GET /api/settings` trả nguyên bảng, hoặc một `PATCH /api/settings/{key}` nhận key tuỳ ý, phá
+đúng cái cửa mà `016` vừa đóng xong. Người viết code sẽ **không** thấy điều này: cả ba key nằm trong
+một file khác (`private_gate.py`), không có comment nào trong `models.py` cảnh báo.
+
+⇒ **Chốt: allowlist hằng số trong code, không bao giờ truy vấn theo key do client gửi.**
+
+```python
+# app/domain/settings.py
+PUBLIC_SETTING_SPECS: Final[dict[str, SettingSpec]] = {...}   # đúng 2 key, §4.4
+
+# Router chỉ được đọc/ghi key có trong PUBLIC_SETTING_SPECS.
+# CẤM select(AppSetting) không kèm .where(AppSetting.key.in_(PUBLIC_SETTING_SPECS)).
+```
+
+Key ngoài allowlist ⇒ **`404`** ở `GET` và **`422`** ở `PATCH` (404 cho đọc để không xác nhận sự tồn
+tại của key lạ; 422 cho ghi vì đó là payload sai). Test bắt buộc, mỗi bài phải đỏ được khi gỡ luật:
+`GET` danh sách **không** chứa ba key trên; `PATCH` từng key trong ba key ⇒ `422` **và** giá trị
+trong DB không đổi một byte.
+
+### 2.2 🔴 `subscription` đọc qua **cha** — `readable(stmt, Subscription, auth)` sẽ **ném lỗi**
+
+`models.py:352`: `__privacy_gate__ = Gate.VIA_PARENT`; `reading.py:92-93` ném `ReadingGateError` khi
+gặp `VIA_PARENT`. Cha là **`Tracker` qua `Subscription.tracker_id`** (`models.py:370-376`) — **không
+phải `tracker_group`**. Khuôn đúng, chép nguyên xi:
+
+```python
+stmt = select(Subscription).join(Tracker, Subscription.tracker_id == Tracker.id)
+stmt = readable(stmt, Tracker, auth)        # cổng riêng tư + xoá-mềm của CHA
+stmt = not_deleted(stmt, Subscription)      # xoá-mềm của CHÍNH nó
+```
+
+Hệ quả không được quên: tracker cha riêng tư + cổng đang khoá ⇒ sub **biến mất hoàn toàn** (404 khi
+đọc trực tiếp, vắng mặt trong danh sách, vắng mặt trong F6). Đó là **đúng**, và **không** được thêm
+chú thích "một số mục đang ẩn" — cùng lý lẽ `011a` §4.3 (nói cho người ngó qua vai biết là có dữ
+liệu riêng tư tồn tại).
+
+### 2.3 🔴 Tiền của sub cũng là ciphertext (K20) — mọi phép cộng chạy ở Python
+
+`subscription.amount`/`list_amount` mang CHECK `enc:v1:%` y như `entry` (`models.py:355-361`). Vì
+thế:
+
+- **Cấm** `func.sum(Subscription.amount)`, cấm `ORDER BY amount`, cấm mọi so sánh số trong SQL trên
+  hai cột đó. Chạy được, ra rác (so chuỗi base64) — hỏng im lặng.
+- Dùng lại **nguyên xi** `app/domain/money.py` của `011a` §4.1 (`to_storage` / `from_storage`).
+  **Không** viết hàm định dạng thứ hai cho sub; hai bản khác nhau của cùng một hợp đồng chuỗi là mầm
+  lệch round-trip.
+- F6 kéo các sub đủ điều kiện về, `_clear()`, `from_storage()`, cộng bằng `Decimal` (§4.3).
+- `started_on`/`expires_on` **là `DATE` trần** — so sánh/lọc trong SQL thì **được** (K14). Đừng gộp
+  chung luật với tiền.
+
+### 2.4 🔴 Gia hạn có **HAI** tác dụng, chỉ một cái tự idempotent
+
+Luồng S2 làm hai việc trong một lượt: (a) tạo `entry` gắn `subscription_id`, (b) đẩy `expires_on`
+thêm một chu kỳ. `011a` §4.2 bẫy 5 đã làm (a) idempotent theo id client (`ON CONFLICT DO NOTHING`).
+**(b) thì không tự idempotent** — và hàng đợi offline gửi lại đúng một request đã thành công là
+chuyện bình thường, không phải ngoại lệ.
+
+Hỏng cụ thể: chủ gia hạn Netflix tháng 8, mạng chập, outbox gửi lại ⇒ **một** entry (đúng, nhờ
+`ON CONFLICT`) nhưng `expires_on` nhảy **hai** tháng ⇒ tháng 9 không được nhắc, hết hạn im lặng.
+Đúng loại lỗi mà tính năng này tồn tại để chặn.
+
+⇒ **Chốt: buộc (b) vào kết quả thật của (a), trong CÙNG một transaction.**
+
+```python
+# Trong SubscriptionStore.renew(), một transaction:
+row = await db.execute(
+    insert(Entry).values(...).on_conflict_do_nothing(index_elements=[Entry.id]).returning(Entry.id)
+)
+created_id = row.scalar_one_or_none()
+if created_id is None:
+    # Lần gửi lại: KHÔNG đẩy expires_on. Đọc lại qua cổng, trả 200 + trạng thái hiện tại.
+    return await self._renew_result(db, subscription_id, created=False, auth=auth)
+# Chỉ nhánh này mới được UPDATE subscription SET expires_on = ...
+```
+
+Khoá hàng sub bằng `SELECT … FOR UPDATE` **trước** khi tính ngày mới (hai tab cùng bấm gia hạn).
+Test bắt buộc: gửi **cùng một** `POST /renew` với cùng `entry_id` hai lần ⇒ đúng một `Entry`, và
+`expires_on` chỉ tiến **một** chu kỳ.
+
+### 2.5 🔴 Tracker cha của sub phải là `finance` + `money`, nếu không luồng gia hạn tự vấp K8
+
+Luồng gia hạn tạo một `Entry` **có `amount`**. `011a` §4.2 bẫy 2 (K8) bắt entry phải khớp
+`input_mode` của tracker: `event` ⇒ `amount` phải vắng ⇒ **`422`**. Nghĩa là nếu chủ lỡ gắn sub vào
+một tracker `event` (ví dụ "Hút thuốc"), mọi lần gia hạn sẽ `422` — và nó nổ **đúng lúc chủ vừa trả
+tiền xong**, chỗ tệ nhất để gặp lỗi.
+
+⇒ **Chốt: chặn ở cửa vào, không để tới lúc gia hạn.** `POST`/`PATCH` subscription kiểm tracker cha
+phải `kind='finance'` **và** `input_mode='money'`, sai ⇒ `422` với câu tiếng Việt chỉ đúng cách sửa
+(*"Đăng ký phải gắn vào một tracker tài chính nhập số tiền — chọn tracker khác hoặc đổi kiểu nhập của
+tracker này"*). Đối xứng với luật của `011b` §4.3 (tracker nhắc thuốc phải `health` + `event`).
+
+**Hệ quả ngược cần chặn luôn:** `011a` cho `PATCH` đổi `input_mode` của tracker. Đổi một tracker
+đang có sub từ `money` sang `event` là mở lại đúng cái bẫy trên bằng cửa sau. `011c` **mở rộng**
+`TrackerStore.update_tracker`: nếu tracker còn ít nhất một `subscription` chưa xoá mềm thì đổi
+`input_mode` khỏi `money` (hoặc `kind` khỏi `finance`) ⇒ `422`, kèm số lượng sub đang gắn. Đây là
+một trong hai chỗ `011c` được phép sửa file của `011a` (chỗ kia: §4.3).
+
+### 2.6 Chống trùng tên: không có unique index, quét ở app — và quét **TRONG** cổng
+
+K19 (`tracking-brief.md` §10, note 2026-07-20): AES-GCM nonce ngẫu nhiên ⇒ unique index trên
+`lower(name)` của cột đã mã hoá **không bao giờ bắt được trùng**, nên `models.py` cố ý không khai.
+Bảng `subscription` ăn đúng luật đó.
+
+⇒ Chống trùng bằng decrypt-scan ở app lúc tạo/đổi tên, **và quét TRONG cổng riêng tư** — nhất quán
+với quyết định đã chốt ở `011a` §2.4 (ưu tiên không-rò hơn không-trùng: trả `409` cho một hàng người
+dùng không nhìn thấy vừa khó hiểu vừa rò). Phạm vi quét = các sub đọc được qua khuôn §2.2. Đua ghi
+được chấp nhận (single-writer). **Đừng** thêm unique index, **đừng** dựng `name_hmac`.
+
+### 2.7 Trạng thái là **suy ra**, và ba trạng thái không dùng thay nhau được
+
+`tracking-brief.md` §11: **không cột `status`** — suy từ (`expires_on`, `canceled_at`), lưu riêng là
+update-anomaly. Bảng chốt (tính theo **ngày Việt Nam**, `+07:00`, không phải UTC — cùng quy ước K14):
+
+| Trạng thái | Điều kiện | F6 đếm? | `011b` nhắc? | Nút "Ghi gia hạn"? |
+|---|---|---|---|---|
+| `active` | `canceled_at IS NULL` và `expires_on >= today` | chỉ khi `auto_renew` | có, khi sắp hết hạn | có |
+| `canceled` (đã huỷ, còn hạn) | `canceled_at IS NOT NULL` và `expires_on >= today` | **không** | **không** | có (huỷ rồi đổi ý) |
+| `expired` | `expires_on < today` | **không** | **không** (`011b` §3.4 mục 4: `expires_on >= today`) | có |
+
+Viết **một** hàm thuần `derive_status(expires_on, canceled_at, today)` trong `app/domain/subscription.py`
+và dùng nó ở cả API lẫn F6. Ba chỗ tự suy lại bằng `if` rời rạc là cách chắc chắn để chúng lệch nhau
+sau lượt sửa thứ hai. `SubscriptionRead` trả `status` như **field tính sẵn**, không phải cột.
+
+## 3. Đã khoá — chép ra code, không mở lại
+
+Nguồn: `tracking-brief.md` §11 + §8.2 (F6) + `ui-brief.md` + `qa-framework.md`. Có mâu thuẫn thì
+brief thắng file này, báo lại T1.
+
+1. **KHÔNG nút "đã gia hạn" một chạm** từ notification (S2 — chủ **sửa** đề xuất gốc 2026-07-19:
+   *"cần xem xét + đánh giá + trả tiền rồi mới được coi là gia hạn"*). Noti chỉ **báo**; app chỉ
+   **ghi nhận việc thật đã xảy ra ở ngoài**. Auto-write không confirm để dành AI Bước 2.
+2. **Không cột `status`** (§2.7). Không thêm.
+3. **`started_on`/`expires_on` là `DATE`** (K14) — ngoại lệ có chủ đích với B2, **không** ép
+   timestamptz. `canceled_at` + timestamps vẫn timestamptz.
+4. **`auto_renew` mặc định `false`** (amendment của chủ 2026-07-19: *"app là ghi lại thôi, quyết
+   định thực tế ở ngoài"*). Đừng "tiện tay" bật mặc định.
+5. **F6 chỉ đếm `auto_renew = true`** (`tracking-brief.md` §8.2) — món trả-trước-một-cục không phải
+   burn cố định.
+6. **VND-only** — chỉ `amount` + `list_amount`, không quy đổi tỷ giá.
+7. **Không bảng price-history** — lịch sử giá thật chính là các `entry` gắn `subscription_id` (§11).
+8. **Sub xoá mềm** (K10); tracker cha `ON DELETE RESTRICT` nên **không** xoá cứng tracker còn sub.
+9. **Ranh giới sub vs entry thường** (S1): tiêu chí duy nhất = **có ngày hết hạn hay không**. Game
+   pass / gói trả trước một cục ⇒ vẫn là sub (`auto_renew=false`). Mua đứt vĩnh viễn ⇒ `entry`
+   thường. Đừng phát minh tiêu chí thứ hai.
+10. **Luật UI cứng `ui-brief.md` §6** áp nguyên (không thẻ thô, không hardcode màu, không chiều cao
+    cứng, chữ ≥12px, không tương tác chỉ-hover, light-only). Thiếu component thì `shadcn add` (§8 +
+    4 cái bẫy), không viết tay.
+11. **Chuẩn `data-testid`** `qa-framework.md` §6.3; id riêng đi bằng `data-subscription-id`.
+12. **Không seed dữ liệu mẫu** (Q2 — data-migration Alembic lúc cutover = `012`). Màn phải dùng được
+    từ DB rỗng.
+
+## 4. Backend
+
+### 4.1 `backend/app/domain/subscription.py` — DTO + `SubscriptionStore` (file mới)
+
+Mirror **cấu trúc** `app/domain/tracker.py` của `011a` (DTO → exception → store; store không giữ
+state, nhận `db: AsyncSession`, tham gia transaction của request). Dùng lại nguyên xi `_clear()` /
+`_sealed()`, `require_uuidv7`, `reject_null_required_fields`, `PrivateWriteLocked` — **import, đừng
+chép lần thứ ba**.
+
+| DTO | Field | Ghi chú |
+|---|---|---|
+| `SubscriptionCreate` | `id: UUID\|None` · `name: str` · `tracker_id: UUID` · `amount: Decimal` · `list_amount: Decimal\|None` · `period_count: int = 1` · `period_unit: Literal["day","week","month","year"] = "month"` · `started_on: date` · `expires_on: date` · `auto_renew: bool = False` · `note_md: str\|None` | `name` strip rồi kiểm rỗng; `expires_on >= started_on` kiểm ở app **trước** khi chạm DB (câu tiếng Việt, không để CHECK ném `IntegrityError` → `500`) |
+| `SubscriptionUpdate` | mọi field trên **trừ `id`, `tracker_id`** · thêm `canceled_at: datetime\|None` | **Cấm đổi `tracker_id`** — sub đã có entry gắn theo tracker cũ, reparent làm lệch F3/F6 lịch sử. Muốn đổi thì xoá mềm rồi tạo mới |
+| `SubscriptionRead` | các cột + `status: Literal["active","canceled","expired"]` (§2.7) + `days_left: int` + `monthly_amount: Decimal\|None` (§4.3) + timestamps | tiền đã `from_storage()` ⇒ ra ngoài là **số**. `days_left` âm khi đã hết hạn — trả đúng số âm, UI tự diễn giải |
+| `RenewRequest` | `entry_id: UUID\|None` · `amount: Decimal\|None` · `occurred_at: datetime\|None` · `new_expires_on: date\|None` · `note_md: str\|None` | mọi field vắng ⇒ lấy default từ sub (§4.2) |
+| `RenewResult` | `subscription: SubscriptionRead` · `entry_id: UUID` · `created: bool` | `created=False` = lần gửi lại (§2.4) |
+
+**Method:** `list_subscriptions(status?, tracker_id?)` · `get_subscription` · `create_subscription` ·
+`update_subscription` · `cancel_subscription` (đặt `canceled_at`, **không** phải xoá) ·
+`uncancel_subscription` · `soft_delete_subscription` · `restore_subscription` · `renew`.
+
+Bẫy còn lại:
+
+1. **Idempotent create theo id** (seam `008m`, khuôn `011a` §4.2 bẫy 5) — áp cho `subscription` y
+   như ba bảng kia.
+2. **`PrivateWriteLocked` ⇒ `403`** khi tracker cha riêng tư và cổng đang khoá? **Không** — cha
+   không đọc được thì trả **`404`** (§2.2), đúng và không rò. Sub **không có** cờ `is_private` riêng;
+   đừng thêm.
+3. **Huỷ ≠ xoá.** `cancel_subscription` chỉ đặt `canceled_at = now()`; `DELETE` là soft-delete
+   (`deleted_at`). Hai đường khác nhau, hai nút khác nhau, đừng gộp.
+4. **`list_subscriptions` không phân trang** (vài chục dòng, cùng lý lẽ `011a` §4.2). Sắp mặc định:
+   `active` trước (theo `expires_on` tăng dần — sắp hết hạn lên trên), rồi `canceled`, rồi `expired`.
+   `expires_on` là DATE trần nên sắp **trong SQL** được, dùng `ix_subscription_expires_on`.
+
+### 4.2 Luồng gia hạn — `POST /api/subscriptions/{id}/renew`
+
+Một transaction, đúng thứ tự:
+
+1. `SELECT … FOR UPDATE` hàng sub **qua cổng §2.2**; không thấy ⇒ `404`.
+2. Kiểm tracker cha vẫn `finance` + `money` (§2.5); không ⇒ `422`.
+3. Tính giá trị mặc định: `amount` ← `amount` hiện tại của sub; `occurred_at` ← `now()`;
+   `entry_id` ← client gửi (outbox sinh UUIDv7) hoặc server sinh; `new_expires_on` ← **`expires_on`
+   hiện tại + `period_count` × `period_unit`** (§4.2 dưới).
+4. `INSERT … ON CONFLICT DO NOTHING RETURNING id` (§2.4). 0 dòng ⇒ trả `200`, `created=False`,
+   **không** đụng `expires_on`.
+5. Có dòng ⇒ `UPDATE subscription SET expires_on = new_expires_on, canceled_at = NULL` — gia hạn
+   một sub "đã huỷ còn hạn" là hành động khôi phục nó, đúng ý người dùng.
+6. Trả `RenewResult`.
+
+**Cộng chu kỳ — chốt cứng:** `day`/`week` cộng bằng `timedelta`; `month`/`year` cộng bằng **số
+tháng** với luật cắt-cuối-tháng: 31/01 + 1 tháng = 28/02 (hoặc 29/02 năm nhuận), **không** tràn sang
+03/03. Viết hàm thuần `add_period(d: date, count: int, unit: str) -> date` + test bảng biên
+(31/01, 30/01, 29/02, 31/12 + 1 năm). Không dùng `dateutil` (không có trong `pyproject.toml`, và ba
+dòng số học lịch thì không đáng một dependency).
+
+**`new_expires_on` client gửi lên thì server nhận** (sub hết hạn ba tháng trước, chủ gia hạn hôm nay
+và muốn mốc mới tính từ hôm nay) — validate `> expires_on` cũ **và** `>= started_on`, sai ⇒ `422`.
+Không có luật nào tự "đuổi" ngày cho tới khi vượt hôm nay: app **ghi nhận** cái đã xảy ra, không đoán.
+
+### 4.3 F6 — thêm vào `dashboard.py` của `011a`, **không** endpoint mới
+
+F6 là một ô của cùng một dashboard (`tracking-brief.md` §8.2). Thêm vào response của
+`GET /api/tracker/dashboard` (`011a` §4.3) — đây là chỗ thứ hai `011c` được sửa file của `011a`.
+
+```
+"f6": {
+  "monthly_burn": Decimal,              # tổng burn cố định quy về tháng
+  "subscription_count": int,            # số sub đang tính vào burn
+  "upcoming": [ {subscription_id, name, amount, expires_on, days_left, monthly_amount} ],
+  "corrupted_subscription_count": int   # cùng luật §4.3 của 011a
+}
+```
+
+**Điều kiện vào burn** (tất cả phải đúng): `deleted_at IS NULL` · `canceled_at IS NULL` ·
+`expires_on >= today_vn` · `auto_renew = true` · đọc được qua cổng §2.2.
+
+**Quy về tháng — công thức chốt:** `monthly = amount / (số tháng của một chu kỳ)`, với
+
+| `period_unit` | số tháng của chu kỳ |
+|---|---|
+| `month` | `period_count` |
+| `year` | `period_count × 12` |
+| `week` | `period_count × 7 / 30.4375` |
+| `day` | `period_count / 30.4375` |
+
+`30.4375 = 365.25 / 12`. Làm tròn **cuối cùng** về đồng nguyên, `ROUND_HALF_UP`, chỉ khi trả ra
+ngoài — cộng bằng `Decimal` chưa làm tròn ở giữa. UI hiện `≈` trước số (§5.5): đây là **ước lượng**,
+không phải sao kê, và nói thẳng ra thì rẻ hơn để chủ tự phát hiện lệch vài nghìn rồi mất tin.
+
+**`upcoming`** = sub `active` có `days_left <= ngưỡng app_setting` (§4.4), sắp tăng dần theo
+`expires_on`, tối đa 5 mục. Dùng **cùng một ngưỡng** với `011b` — hai con số khác nhau giữa màn hình
+và notification là lỗi người dùng sẽ thấy ngay.
+
+**Ba luật chung của tầng dashboard (`011a` §4.3) áp nguyên cho F6:** riêng tư khoá ⇒ số thiếu và
+không chú thích · tháng rỗng ⇒ `200` với số 0 · một dòng ciphertext hỏng ⇒ bỏ qua dòng đó +
+`logger.error` kèm `subscription.id` (**không** kèm ciphertext) + đếm vào `corrupted_subscription_count`,
+**không** hạ cả dashboard.
+
+⚠️ **F6 không đi theo `?month=`.** F1–F5 nhìn về quá khứ theo tháng được chọn; F6 trả lời *"mỗi tháng
+tôi mất cố định bao nhiêu **từ giờ trở đi**"* — nó là ảnh chụp hiện tại. Xem lại tháng 6 vẫn thấy F6
+của hôm nay. Cùng họ lý lẽ với A2/A3/A4 trong `011a` §4.3 (bám hôm nay, không bám `month`). Ghi vào
+docstring, nếu không lượt review sau sẽ "sửa cho đồng nhất".
+
+### 4.4 `backend/app/domain/settings.py` — `app_setting` có allowlist (file mới)
+
+Đúng **hai** key ở `011c`. Quy ước `value` = `{"value": <scalar>}`, mirror
+`private_gate.py:189-194` (kể cả cái bẫy nhỏ ở đó: `isinstance(value, bool)` phải bị loại khi kiểm
+`int`, vì `True` là `int` trong Python).
+
+| Key | Kiểu | Mặc định | Biên | Ai dùng |
+|---|---|---|---|---|
+| `subscription_expiry_lead_days` | int | `3` | `0 ≤ n ≤ 30` | F6 `upcoming` (§4.3) + cron nhắc sub của `011b` §3.4 mục 4 |
+| `show_list_price` | bool | `true` | — | UI hiện/ẩn giá niêm yết gạch ngang (`011a` §5.4, §8 mục 4) |
+
+- **Hàng vắng ⇒ dùng mặc định**, không phải lỗi (khuôn `_ttl_minutes`). Không seed lúc khởi động;
+  ghi lần đầu bằng `INSERT … ON CONFLICT DO UPDATE`.
+- **Giá trị sai kiểu/ngoài biên trong DB ⇒ ném ồn ào** ở đường đọc của settings (dữ liệu hỏng, không
+  đoán) — nhưng **cron của `011b` phải chịu được**: `011b` đọc ngưỡng qua một hàm
+  `expiry_lead_days(db)` trả **mặc định 3 + `logger.error`** nếu hàng hỏng, chứ không để một dòng
+  JSON sai làm chết lượt nhắc thuốc buổi sáng. Hai đường, hai cách xử — viết rõ vào docstring.
+- Allowlist §2.1 là **luật cứng** của file này.
+
+### 4.5 Router
+
+`backend/app/web/routers/subscription.py` + `settings.py`, cả hai đăng ký **dưới `protected_api`**
+(`main.py:87-91` — đọc file thật, đừng đoán tên biến). Mirror `routers/notes.py`: `Database` /
+`CurrentSession` alias, `_not_found()`.
+
+| Method | Path | Ghi chú |
+|---|---|---|
+| GET | `/api/subscriptions` | envelope `{"items": [...]}`; query `status?`, `tracker_id?`; không phân trang |
+| GET | `/api/subscriptions/{id}` | `404` qua cổng |
+| POST | `/api/subscriptions` | `201` mới / `200` trùng id; `409` trùng tên (quét trong cổng, §2.6); `422` tracker cha sai kiểu (§2.5); `404` tracker cha không đọc được |
+| PATCH | `/api/subscriptions/{id}` | không đổi `tracker_id`; `422` `expires_on < started_on` |
+| POST | `/api/subscriptions/{id}/cancel` | đặt `canceled_at`; `200` + bản ghi mới |
+| POST | `/api/subscriptions/{id}/uncancel` | `canceled_at = NULL` |
+| POST | `/api/subscriptions/{id}/renew` | §4.2; `200` cho cả lần đầu lẫn lần gửi lại (`created` phân biệt) |
+| DELETE | `/api/subscriptions/{id}` | `204`, **soft-delete** |
+| POST | `/api/subscriptions/{id}/restore` | khuôn `notes.py:98-104` |
+| GET | `/api/settings` | **chỉ** key trong allowlist, kèm giá trị hiệu lực (đã áp mặc định) |
+| PATCH | `/api/settings/{key}` | `404` key ngoài allowlist ở GET / `422` ở PATCH (§2.1); `422` sai kiểu hoặc ngoài biên |
+
+`datetime` naive bị từ chối `422` ở `occurred_at`/`canceled_at` (cùng luật `011a` §4.4). `date` thì
+nhận `YYYY-MM-DD` trần — nó là ngày lịch, không có múi giờ (K14).
+
+## 5. Frontend
+
+### 5.1 🔴 Seam định tuyến — app **CHƯA có router**, và `011b` đã giả định là có
+
+Đo tay 2026-08-01: `frontend/src/App.tsx:104-125` chuyển màn bằng `useState` (`activeScreen`), và
+`frontend/package.json` **không có `react-router`** (chỉ `dexie`, `sonner`, TanStack Query). Trong
+khi đó `011b` §3.2 + §4.2 viết payload push mang URL `/reminder-confirm?dispatch=…` và *"URL mở màn
+subscription/highlight=id"* — **hai deep link vào một ứng dụng không có đường dẫn nào**. Không spec
+nào nhận phần dựng đường đi đó; nó rơi đúng vào khe giữa `011a` (không cần route) và `011b` (cần,
+nhưng giả định đã có).
+
+`011c` nhận, vì nó ship trước `011b` và sở hữu chính cái màn mà notification phải mở.
+
+**Chốt: seam tối thiểu tự viết, KHÔNG thêm `react-router`.**
+
+- `frontend/src/lib/route.ts` (~40 dòng): `usePath()` đọc `window.location.pathname` +
+  `useSyncExternalStore` trên `popstate`; `navigate(path)` gọi `history.pushState` rồi phát
+  `popstate`. Đọc query bằng `URLSearchParams` sẵn có.
+- `App.tsx` rẽ **hai** nhánh: `/subscription` ⇒ `SubscriptionScreen`; còn lại ⇒ khối tab hiện có
+  (mọi tab giữ nguyên URL `/`, đừng đổi hành vi tab đang chạy tốt).
+- Lý do không dùng `react-router`: một dependency runtime mới cho đúng hai đường dẫn, trong một app
+  một-người-dùng, đi ngược quy ước supply-chain npm ở `frontend-brief.md`. Cửa nâng cấp để mở: khi
+  có deep link thứ tư, đổi seam này sang `react-router` là việc một buổi.
+- **Tải nguội không 404**: backend đã có `SPAStaticFiles` trả `index.html` cho path không khớp file
+  (`main.py:28-37, 102`) — đã kiểm, không phải giả định. `011b` §4.1 đổi sang `injectManifest` thì
+  phải giữ `navigateFallbackDenylist` như cũ; nếu vỡ, deep link chết chung với nút đăng nhập.
+
+**Đây là hợp đồng `011b` dựa vào** — chép sang §9.
+
+### 5.2 Màn `SubscriptionScreen` — vào từ tab Tracker, **không** thêm tab thứ năm
+
+Thanh tab sẽ có `Task` · `Ghi chú` · `Lịch` (010a) · `Tracker` (011a). Tab thứ năm trên màn 390px là
+vỡ; sub cũng không phải thứ mở hàng ngày như lưới ghi.
+
+- Đường vào: một nút/hàng trong `TrackerScreen` (khối tài chính) — *"Đăng ký · N khoản"*, bấm ⇒
+  `navigate('/subscription')`. Có nút quay lại rõ ràng.
+- `?highlight=<id>`: cuộn tới thẻ đó + viền nhấn ~2 giây rồi tắt. **Không tự mở dialog, không tự mở
+  form gia hạn** — tap một notification trên màn khoá mà app tự mở form ghi tiền là thao tác ngoài ý
+  muốn; S2 nói rõ chủ phải *xem xét* trước.
+- `id` không tồn tại / không đọc được (riêng tư đang khoá) ⇒ hiện danh sách bình thường, **không**
+  báo lỗi "không tìm thấy đăng ký X" (rò sự tồn tại). Cùng lý lẽ §2.2.
+- Danh sách nhóm theo `status` (§2.7), mỗi thẻ: tên · số tiền/chu kỳ · `expires_on` + `days_left` ·
+  chip trạng thái · `auto_renew`. Empty state có đường tạo mới (DB rỗng phải dùng được).
+
+### 5.3 Form gia hạn — "xem trước rồi mới bấm"
+
+Mở từ nút **Ghi gia hạn** trên thẻ. Default sẵn từ sub, mọi ô sửa được: số tiền (giá đổi thì sửa) ·
+ngày trả · **ngày hết hạn mới** (hiện sẵn kết quả `add_period`, sửa được) · ghi chú.
+
+Ngay trên nút xác nhận, một dòng tóm tắt bằng chữ: *"Ghi 260.000 ₫ vào Sub AI · hết hạn mới:
+15/09/2026"*. Đây là "nhìn thấy được" theo `forward-spec.md` — luồng này ghi tiền **và** dời một cột
+mốc; cả hai phải đọc được trước khi bấm.
+
+- `entry_id` sinh ở client bằng UUIDv7 (seam `008m`) và **giữ nguyên khi bấm lại sau lỗi mạng** —
+  đây là nửa client của §2.4. Sinh id mới ở lần retry là tự phá idempotency.
+- Nút xác nhận khoá từ lúc bấm tới khi mutation settle (khuôn debounce `011a` §5.3).
+- Thành công ⇒ toast, đóng form, cập nhật thẻ. **Không** toast Hoàn tác 10 giây ở đây: hoàn tác một
+  lượt gia hạn phải lùi cả `expires_on`, và đó là một endpoint chưa có. Sửa nhầm thì sửa entry
+  (`011a`) + sửa `expires_on` (form sửa sub) — hai thao tác nhìn thấy được, đúng tinh thần S2.
+
+### 5.4 Hai món nợ cấu hình
+
+- **Toggle giá gốc** (`show_list_price`, nợ từ `011a` §5.4): bật ⇒ chỗ nào có `list_amount` khác
+  `amount` thì hiện giá niêm yết gạch ngang cạnh giá thực trả (cả thẻ sub lẫn danh sách entry của
+  `011a`); tắt ⇒ chỉ giá thực trả. Đặt trong một khối "Cài đặt" nhỏ ngay trong `SubscriptionScreen` —
+  **không** dựng màn Settings riêng ở lô này (hai key thì chưa đáng).
+- **Ngưỡng sắp hết hạn** (`subscription_expiry_lead_days`): ô số 0–30 cùng khối, đổi ⇒ F6
+  `upcoming` đổi theo ngay (invalidate query dashboard).
+
+### 5.5 Tiền, ngày, microcopy, dữ liệu ác ý
+
+- Tiền: **dùng lại nguyên xi** ô nhập tiền của `011a` §5.4 — kể cả **dòng vọng lại** *"= 260.000 ₫"*
+  cập nhật theo từng phím. Đừng viết ô thứ hai.
+- Ngày: `<input type="date">` (không phải `datetime-local`) — `started_on`/`expires_on` là DATE, gửi
+  `YYYY-MM-DD` trần, **không** nối `+07:00`, **không** `toISOString()`. Đây là chỗ khác `011a` và
+  executor rất dễ chép nhầm luật.
+- Hiển thị ngày: `Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })`. `days_left` tính
+  từ **hôm nay theo giờ VN**, không phải `new Date()` của thiết bị.
+- F6: `≈ 1.240.000 ₫/tháng` — giữ dấu `≈` (§4.3). `monthly_burn = 0` ⇒ *"Chưa có khoản cố định
+  nào"*, không phải `≈ 0 ₫`.
+- `corrupted_subscription_count > 0` ⇒ dải cảnh báo *"N bản ghi không đọc được — số liệu có thể
+  thiếu"* (khuôn `011a`).
+- **Nghiệm thu bằng dữ liệu ác ý** (`ui-brief.md` §9(d) + `qa-framework.md` §5): tên sub 70 ký tự
+  không khoảng trắng · tiếng Việt 150 ký tự dấu dày · emoji · toàn khoảng trắng (phải bị từ chối) ·
+  `amount` 14 chữ số · `period_count = 999` · sub hết hạn 400 ngày trước (`days_left` âm lớn, thẻ
+  không vỡ).
+
+### 5.6 `data-testid`
+
+`subscription-screen` · `subscription-card` · `subscription-status` · `subscription-form` ·
+`subscription-renew` · `subscription-renew-form` · `subscription-renew-summary` ·
+`subscription-cancel` · `subscription-empty` · `dashboard-f6-burn` · `dashboard-f6-upcoming` ·
+`settings-list-price-toggle` · `settings-expiry-lead-days`.
+Id riêng đi bằng `data-subscription-id`.
+
+## 6. Không được làm
+
+- Không tạo migration, không thêm cột, không thêm index (§1).
+- Không thêm unique index cho `subscription.name`, không dựng `name_hmac` (§2.6).
+- Không `SUM`/`ORDER BY`/so sánh số trong SQL trên `amount`/`list_amount` (§2.3).
+- Không gọi `readable()` trực tiếp lên `Subscription` (§2.2).
+- **Không đọc/ghi `app_setting` ngoài allowlist** — tuyệt đối không chạm `private_pin`,
+  `private_unlock_throttle`, `private_unlock_ttl_minutes` (§2.1).
+- Không thêm cột/field `status` (§2.7).
+- Không làm nút "đã gia hạn" một chạm, không auto-write từ notification (§3 mục 1).
+- Không chạm `push_subscription` / `reminder_dispatch` / service worker / cron — `011b` lo. Không
+  gửi notification từ lô này.
+- Không chạm `reminder_time`/`reminder_text` của tracker (`011b`).
+- Không thêm tab thứ năm (§5.2). Không dựng màn Settings riêng (§5.4).
+- Không thêm `react-router` hay bất kỳ dependency runtime mới nào (§5.1).
+- Không seed dữ liệu mẫu (§3 mục 12).
+- Không sửa file của `task`/`note`/`calendar`. File của `011a` chỉ được sửa đúng **hai** chỗ đã nêu:
+  `update_tracker` (§2.5) và `dashboard.py` (§4.3).
+
+## 7. Nghiệm thu (Definition of Done)
+
+1. `uv run ruff check` + `uv run pytest` xanh; `npm run build` + `npm run lint` xanh.
+2. Test bắt buộc, **mỗi bài phải chứng minh được biết đỏ** (gỡ luật ⇒ test đỏ):
+   - **Allowlist settings:** `GET /api/settings` không chứa `private_pin` /
+     `private_unlock_throttle` / `private_unlock_ttl_minutes`; `PATCH` từng key đó ⇒ `422` và giá trị
+     DB **không đổi** (so byte trước/sau). Bài này là bài quan trọng nhất lô (§2.1).
+   - **Gia hạn idempotent:** hai `POST /renew` cùng `entry_id` ⇒ đúng một `Entry`, `expires_on` tiến
+     đúng **một** chu kỳ, lần hai trả `created=false` (§2.4).
+   - **`add_period` biên:** 31/01 +1 tháng ⇒ 28/02 (và 29/02 năm nhuận) · 31/12 +1 năm ⇒ 31/12 năm
+     sau · `week`/`day` cộng đúng.
+   - **Tracker cha sai kiểu:** tạo sub trên tracker `event` ⇒ `422`, không `500`; và `PATCH`
+     `input_mode` của tracker **đang có sub** khỏi `money` ⇒ `422` (§2.5).
+   - **Trạng thái suy ra:** ba tổ hợp (`canceled_at`, `expires_on`) ⇒ đúng ba `status`; sub `expired`
+     và sub `canceled` **không** vào `monthly_burn`.
+   - **F6:** `auto_renew=false` không vào burn · quy đổi `year`/`week`/`day` đúng tới đồng ·
+     `?month=` tháng quá khứ **không** đổi F6 (§4.3).
+   - **Riêng tư:** sub dưới tracker riêng tư biến mất khỏi list + F6 khi cổng khoá, hiện lại khi mở;
+     `?highlight=<id>` của sub đó **không** làm lộ tên (§5.2).
+   - **Ciphertext hỏng:** một dòng `subscription.amount` hỏng cố ý ⇒ dashboard vẫn `200`,
+     `corrupted_subscription_count=1`, các dòng còn lại cộng đúng.
+   - **Idempotent create** theo id: gửi hai lần cùng `id` ⇒ một dòng, lần hai `200`.
+   - **Playwright:** mở `/subscription?highlight=<id>` ⇒ đúng thẻ đó được cuộn tới + nhấn viền, và
+     **không** có dialog nào tự mở (§5.2).
+   - **Playwright:** form gia hạn hiện đúng dòng tóm tắt (số tiền đã định dạng + ngày hết hạn mới)
+     trước khi bấm (§5.3).
+3. Migration: **không có** — dán output `information_schema.columns` chứng minh `subscription` +
+   `app_setting` đã sẵn trên Neon (§1).
+4. QA giao diện theo `qa-framework.md` (T3 trước, T2 nếu T3 tắc — **không chạy ở T1**), viewport
+   390×844, đủ ma trận trạng thái §4 của file đó, có phần (a) "đã soi những gì".
+5. PR mô tả rõ mọi **judgment call** tự quyết lúc thi công (luật `feedback-t1-verify-not-refix`).
+
+## 8. Sáu mục chủ veto được (T1 tự quyết lúc viết spec, đổi chỉ tốn 1–2 dòng)
+
+1. **Tracker cha của sub bắt buộc `finance` + `money`** (§2.5) — chặt hơn `tracking-brief.md` §11
+   (chỉ nói "phải mang `tracker_id`"). Đổi = bỏ ràng buộc và chấp nhận `422` lúc gia hạn.
+2. **`30.4375` ngày/tháng cho quy đổi `day`/`week`** (§4.3) — thay bằng 30 cho tròn cũng được, lệch
+   ~1,4%.
+3. **F6 không đi theo `?month=`** (§4.3) — nó là ảnh chụp hiện tại, không phải số liệu tháng.
+4. **Seam định tuyến tự viết thay vì `react-router`** (§5.1).
+5. **Sub vào từ tab Tracker, không phải tab thứ năm** (§5.2).
+6. **Không có toast Hoàn tác cho lượt gia hạn** (§5.3) — vì hoàn tác phải lùi cả `expires_on`.
+
+## 9. Hợp đồng `011c` → `011b` (đừng đổi khi thi công mà không sửa `011b`)
+
+`011b` được viết **trước** file này và đã giả định sẵn bốn thứ. Đổi thì phải sửa `011b` cùng lượt:
+
+1. **Route `/subscription?highlight=<id>`** tồn tại và mở đúng thẻ (§5.1, §5.2) — `011b` §3.2
+   `build_subscription_payload` dựng đúng URL này.
+2. **Ngưỡng `subscription_expiry_lead_days` trong `app_setting`**, mặc định 3, đọc qua
+   `expiry_lead_days(db)` **chịu được hàng hỏng** (§4.4) — `011b` §3.4 mục 4 dùng để lọc
+   `expires_on - today <= ngưỡng`.
+3. **Cách suy `status`** (§2.7): `011b` nhắc **chỉ** sub `canceled_at IS NULL` **và**
+   `expires_on >= today`. Dùng chung `derive_status`, không viết lại điều kiện.
+4. **Seam định tuyến** (§5.1) là chỗ `011b` §4.2 gắn route `/reminder-confirm`. `011b` **không** phải
+   dựng router, chỉ thêm một nhánh.
+
+> 📌 Hai lỗ hổng phát hiện lúc viết file này, **không** phải phát minh mới: (a) không spec nào nhận
+> phần dựng định tuyến dù `011b` cần hai deep link (§5.1); (b) `app_setting` dùng chung với
+> `private_gate.py` nên một CRUD "bình thường" sẽ rò hash PIN (§2.1). Cả hai đều nằm **giữa** hai
+> quyết định đúng ở hai file không tham chiếu nhau — đúng dạng lỗi `qa-framework.md` §8 và memory
+> `feedback_gap_between_correct_decisions` đã cảnh báo.

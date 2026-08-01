@@ -567,6 +567,17 @@ Id riêng đi bằng `data-tracker-id` / `data-entry-id`.
 
 ## 9. Dàn ý `011c` (viết sau, đừng làm trong lô này)
 
+> 📝 **2026-08-01 — `011c` đã được viết thành spec đầy đủ:**
+> `agent-tasks/011c-subscription-renewal-settings.md`. Dàn ý dưới đây giữ nguyên làm dấu vết, nhưng
+> **file kia mới là bản thi công**. Hai chỗ `011c` sẽ **sửa vào file của `011a`** — biết trước để
+> lượt review sau không coi là vượt phạm vi:
+> - `TrackerStore.update_tracker`: chặn đổi `input_mode` khỏi `money` (hoặc `kind` khỏi `finance`)
+>   khi tracker còn subscription ⇒ `422`. Lý do: luồng gia hạn tạo `Entry` **có `amount`**, mà K8
+>   (§4.2 bẫy 2) bắt entry khớp `input_mode` — không chặn thì mọi lần gia hạn `422` đúng lúc chủ vừa
+>   trả tiền xong (`011c` §2.5).
+> - `dashboard.py`: thêm ô `f6` vào response của `GET /api/tracker/dashboard` (`011c` §4.3). **F6 cố
+>   ý KHÔNG đi theo `?month=`** — nó là ảnh chụp hiện tại, cùng họ với A2/A3/A4.
+
 - Entity `subscription`: DTO + store, `name`/`amount` 🔐 **vô điều kiện**, `list_amount` nullable 🔐;
   `started_on`/`expires_on` là `DATE` (K14, ngoại lệ có chủ đích với B2 — **không** ép timestamptz).
 - Trạng thái **suy ra**, không lưu: `active` / `đã huỷ còn hạn` / `hết hạn` từ (`expires_on`,
