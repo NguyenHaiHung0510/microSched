@@ -77,8 +77,12 @@ PUBLIC_SETTING_SPECS: Final[dict[str, SettingSpec]] = {...}   # đúng 2 key, §
 # CẤM select(AppSetting) không kèm .where(AppSetting.key.in_(PUBLIC_SETTING_SPECS)).
 ```
 
-Key ngoài allowlist ⇒ **`404`** ở `GET` và **`422`** ở `PATCH` (404 cho đọc để không xác nhận sự tồn
-tại của key lạ; 422 cho ghi vì đó là payload sai). Test bắt buộc, mỗi bài phải đỏ được khi gỡ luật:
+Key ngoài allowlist ⇒ **`404` ở CẢ `GET` LẪN `PATCH`** — một luật, một mã, cho mọi key không nằm
+trong allowlist, **không phân biệt** key đó có tồn tại thật trong bảng hay không. Bản nháp trước
+dùng `422` cho `PATCH` (lý lẽ: payload sai); đổi sau phản biện T3 2026-08-01 vì hai mã cho cùng một
+điều kiện là lời mời để người thi công sau "làm cho đúng ngữ nghĩa" và vô tình tách `private_pin`
+(có thật) khỏi `key_bịa` (không có) thành hai phản hồi khác nhau. Một mã thì không có gì để tách.
+Test bắt buộc, mỗi bài phải đỏ được khi gỡ luật:
 `GET` danh sách **không** chứa ba key trên; `PATCH` từng key trong ba key ⇒ `422` **và** giá trị
 trong DB không đổi một byte.
 
@@ -228,7 +232,7 @@ chép lần thứ ba**.
 | `SubscriptionCreate` | `id: UUID\|None` · `name: str` · `tracker_id: UUID` · `amount: Decimal` · `list_amount: Decimal\|None` · `period_count: int = 1` · `period_unit: Literal["day","week","month","year"] = "month"` · `started_on: date` · `expires_on: date` · `auto_renew: bool = False` · `note_md: str\|None` | `name` strip rồi kiểm rỗng; `expires_on >= started_on` kiểm ở app **trước** khi chạm DB (câu tiếng Việt, không để CHECK ném `IntegrityError` → `500`) |
 | `SubscriptionUpdate` | mọi field trên **trừ `id`, `tracker_id`** · thêm `canceled_at: datetime\|None` | **Cấm đổi `tracker_id`** — sub đã có entry gắn theo tracker cũ, reparent làm lệch F3/F6 lịch sử. Muốn đổi thì xoá mềm rồi tạo mới |
 | `SubscriptionRead` | các cột + `status: Literal["active","canceled","expired"]` (§2.7) + `days_left: int` + `monthly_amount: Decimal\|None` (§4.3) + timestamps | tiền đã `from_storage()` ⇒ ra ngoài là **số**. `days_left` âm khi đã hết hạn — trả đúng số âm, UI tự diễn giải |
-| `RenewRequest` | `entry_id: UUID\|None` · `amount: Decimal\|None` · `occurred_at: datetime\|None` · `new_expires_on: date\|None` · `note_md: str\|None` | mọi field vắng ⇒ lấy default từ sub (§4.2) |
+| `RenewRequest` | `entry_id: UUID\|None` · `amount: Decimal\|None` · `occurred_at: datetime\|None` · `new_expires_on: date\|None` · `note_md: str\|None` · **`clear_canceled: bool = False`** | mọi field vắng ⇒ lấy default từ sub (§4.2). `clear_canceled` = **quyết định của chủ**, không phải suy luận của server: ghi một lượt trả tiền cuối cho sub đã đánh dấu huỷ là chuyện có thật, và tự xoá `canceled_at` là app đoán ý — đúng thứ §3 mục 1 cấm |
 | `RenewResult` | `subscription: SubscriptionRead` · `entry_id: UUID` · `created: bool` | `created=False` = lần gửi lại (§2.4) |
 
 **Method:** `list_subscriptions(status?, tracker_id?)` · `get_subscription` · `create_subscription` ·
@@ -255,23 +259,38 @@ Một transaction, đúng thứ tự:
 1. `SELECT … FOR UPDATE` hàng sub **qua cổng §2.2**; không thấy ⇒ `404`.
 2. Kiểm tracker cha vẫn `finance` + `money` (§2.5); không ⇒ `422`.
 3. Tính giá trị mặc định: `amount` ← `amount` hiện tại của sub; `occurred_at` ← `now()`;
-   `entry_id` ← client gửi (outbox sinh UUIDv7) hoặc server sinh; `new_expires_on` ← **`expires_on`
-   hiện tại + `period_count` × `period_unit`** (§4.2 dưới).
+   `entry_id` ← client gửi (outbox sinh UUIDv7) hoặc server sinh; `new_expires_on` ←
+   `add_period(max(expires_on, today_vn), period_count, period_unit, anchor_day)` (chốt ngay dưới).
 4. `INSERT … ON CONFLICT DO NOTHING RETURNING id` (§2.4). 0 dòng ⇒ trả `200`, `created=False`,
    **không** đụng `expires_on`.
-5. Có dòng ⇒ `UPDATE subscription SET expires_on = new_expires_on, canceled_at = NULL` — gia hạn
-   một sub "đã huỷ còn hạn" là hành động khôi phục nó, đúng ý người dùng.
+5. Có dòng ⇒ `UPDATE subscription SET expires_on = new_expires_on` — và **`canceled_at` chỉ bị xoá
+   khi payload gửi `clear_canceled=true`** (§4.1), không bao giờ tự động.
 6. Trả `RenewResult`.
 
 **Cộng chu kỳ — chốt cứng:** `day`/`week` cộng bằng `timedelta`; `month`/`year` cộng bằng **số
-tháng** với luật cắt-cuối-tháng: 31/01 + 1 tháng = 28/02 (hoặc 29/02 năm nhuận), **không** tràn sang
-03/03. Viết hàm thuần `add_period(d: date, count: int, unit: str) -> date` + test bảng biên
-(31/01, 30/01, 29/02, 31/12 + 1 năm). Không dùng `dateutil` (không có trong `pyproject.toml`, và ba
-dòng số học lịch thì không đáng một dependency).
+tháng** với luật cắt-cuối-tháng: 31/01 + 1 tháng = 28/02 (29/02 năm nhuận), **không** tràn sang
+03/03. Hàm thuần `add_period(d: date, count: int, unit: str, anchor_day: int) -> date`, không dùng
+`dateutil` (không có trong `pyproject.toml`; số học lịch ba dòng không đáng một dependency).
 
-**`new_expires_on` client gửi lên thì server nhận** (sub hết hạn ba tháng trước, chủ gia hạn hôm nay
-và muốn mốc mới tính từ hôm nay) — validate `> expires_on` cũ **và** `>= started_on`, sai ⇒ `422`.
-Không có luật nào tự "đuổi" ngày cho tới khi vượt hôm nay: app **ghi nhận** cái đã xảy ra, không đoán.
+> 🔴 **`anchor_day` không phải trang trí — thiếu nó là mất ngày thanh toán, âm thầm, mỗi năm một
+> ít (thêm 2026-08-01 sau phản biện T3).** Cộng dồn từ `expires_on` **đã bị cắt** thì mốc trôi một
+> chiều và không bao giờ quay lại: 31/01 → 28/02 → **28/03** → 28/04… Sub tính tiền ngày 31 hàng
+> tháng bị ghi nhận thành ngày 28 sau đúng hai lần gia hạn, và từ đó `011b` nhắc sớm 3 ngày mãi mãi.
+> Không có test nào tự đỏ vì mỗi bước lẻ đều "đúng".
+> ⇒ **`anchor_day = started_on.day`** (bất biến, không lấy từ `expires_on`). `add_period` cộng tháng
+> rồi đặt ngày về `min(anchor_day, số ngày của tháng đích)`. Kết quả: 31/01 → 28/02 → **31/03**.
+> Chỉ áp cho `month`/`year`; `day`/`week` không có khái niệm neo.
+
+**Sub đã lapsed thì mốc mới tính từ HÔM NAY, không từ mốc cũ.** Sub hết hạn 3 tháng trước, chủ trả
+tiền hôm nay ⇒ cộng từ `expires_on` cũ ra một ngày **vẫn ở quá khứ**: chủ vừa trả tiền xong mà app
+vẫn báo `expired`, và `011b` không bao giờ nhắc lại. Vì thế mặc định lấy `max(expires_on, today_vn)`
+— với sub còn hạn thì `max` chính là `expires_on`, không đổi gì, nên luật không-trôi ở trên vẫn giữ
+nguyên. *(T3 xếp đây là CRITICAL; T1 đồng ý: §5.3 có hiện ngày mới trước khi bấm nên chủ **thấy**
+được, nhưng một mặc định sai buộc chủ sửa tay mỗi lần là mặc định sai.)*
+
+**`new_expires_on` client gửi lên thì server nhận** — validate `> expires_on` cũ **và**
+`>= started_on`, sai ⇒ `422`. Ngoài mặc định `max(...)` ở trên, server **không** tự đuổi ngày thêm
+lần nữa: app **ghi nhận** cái đã xảy ra, không đoán chủ đã trả mấy kỳ.
 
 ### 4.3 F6 — thêm vào `dashboard.py` của `011a`, **không** endpoint mới
 
@@ -303,9 +322,23 @@ F6 là một ô của cùng một dashboard (`tracking-brief.md` §8.2). Thêm v
 ngoài — cộng bằng `Decimal` chưa làm tròn ở giữa. UI hiện `≈` trước số (§5.5): đây là **ước lượng**,
 không phải sao kê, và nói thẳng ra thì rẻ hơn để chủ tự phát hiện lệch vài nghìn rồi mất tin.
 
+> 🔴 **Hằng số phải là `Decimal("30.4375")`, không phải literal `30.4375` (thêm 2026-08-01 sau phản
+> biện T3).** `amount` là `Decimal` sau `from_storage()`, và trong Python `Decimal / float` ném
+> `TypeError` — không phải ra số sai, mà là **`500` cho cả dashboard** ngay khi tồn tại đúng một sub
+> `week`/`day`. Khai `MONTH_DAYS: Final = Decimal("30.4375")` ở cấp module. Test bắt buộc phải có
+> **một sub `period_unit='week'`** trong fixture F6, nếu không bài test xanh mà production đỏ.
+
 **`upcoming`** = sub `active` có `days_left <= ngưỡng app_setting` (§4.4), sắp tăng dần theo
 `expires_on`, tối đa 5 mục. Dùng **cùng một ngưỡng** với `011b` — hai con số khác nhau giữa màn hình
 và notification là lỗi người dùng sẽ thấy ngay.
+
+> 📝 **Sub hỏng ciphertext vẫn phải hiện trong `upcoming` (thêm 2026-08-01 sau phản biện T3).** Luật
+> bỏ-qua-dòng-hỏng ở trên đúng cho **burn**, nhưng nếu áp luôn cho `upcoming` thì một sub sắp trừ
+> tiền trong 2 ngày sẽ biến mất khỏi đúng cái danh sách sinh ra để cảnh báo nó — chủ chỉ thấy con số
+> `corrupted_subscription_count = 1` mà không biết là khoản nào. ⇒ `upcoming` **giữ** mục đó với
+> `amount: null` + `corrupted: true`; UI hiện tên + ngày hết hạn và thay chỗ số tiền bằng *"không đọc
+> được"*. Tên vẫn giải mã được (`name` và `amount` là hai lần mã hoá độc lập); tên **cũng** hỏng thì
+> mới bỏ mục đó.
 
 **Ba luật chung của tầng dashboard (`011a` §4.3) áp nguyên cho F6:** riêng tư khoá ⇒ số thiếu và
 không chú thích · tháng rỗng ⇒ `200` với số 0 · một dòng ciphertext hỏng ⇒ bỏ qua dòng đó +
@@ -354,7 +387,7 @@ docstring, nếu không lượt review sau sẽ "sửa cho đồng nhất".
 | DELETE | `/api/subscriptions/{id}` | `204`, **soft-delete** |
 | POST | `/api/subscriptions/{id}/restore` | khuôn `notes.py:98-104` |
 | GET | `/api/settings` | **chỉ** key trong allowlist, kèm giá trị hiệu lực (đã áp mặc định) |
-| PATCH | `/api/settings/{key}` | `404` key ngoài allowlist ở GET / `422` ở PATCH (§2.1); `422` sai kiểu hoặc ngoài biên |
+| PATCH | `/api/settings/{key}` | `404` cho mọi key ngoài allowlist (§2.1 — cùng mã với GET); `422` chỉ khi key **hợp lệ** mà giá trị sai kiểu hoặc ngoài biên |
 
 `datetime` naive bị từ chối `422` ở `occurred_at`/`canceled_at` (cùng luật `011a` §4.4). `date` thì
 nhận `YYYY-MM-DD` trần — nó là ngày lịch, không có múi giờ (K14).
@@ -379,6 +412,16 @@ nhưng giả định đã có).
   `popstate`. Đọc query bằng `URLSearchParams` sẵn có.
 - `App.tsx` rẽ **hai** nhánh: `/subscription` ⇒ `SubscriptionScreen`; còn lại ⇒ khối tab hiện có
   (mọi tab giữ nguyên URL `/`, đừng đổi hành vi tab đang chạy tốt).
+- **Tab cố ý KHÔNG sở hữu URL.** Chỉ hai deep link có path riêng; `activeScreen` vẫn là `useState`
+  như hiện nay. Đừng "làm cho đồng nhất" bằng cách đẩy cả 4 tab vào path — đó là viết lại điều hướng
+  của ba lô đã chạy tốt, ngoài phạm vi `011c`.
+  > 📝 **Hệ quả phải xử, không được bỏ lửng (T3 nêu 2026-08-01, T1 thu hẹp lại):** T3 cảnh báo
+  > `activeScreen` sẽ "lệch pha" với lịch sử trình duyệt. Kiểm tay thì kịch bản T3 mô tả **không xảy
+  > ra** — `activeScreen` luôn có giá trị hợp lệ nên không có màn trắng, và Back từ `/subscription`
+  > về `/` trả đúng tab đang mở. Nhưng có một trường hợp **thật** ở gần đó: **tải nguội**
+  > `/subscription` từ notification thì không có mục lịch sử nào phía trước. ⇒ Nút quay lại trong màn
+  > **phải** gọi `navigate('/')`, **không** `history.back()` (back sẽ rơi ra ngoài app). Playwright
+  > phải phủ đúng đường này: mở thẳng `/subscription`, bấm quay lại, khẳng định đang ở khối tab.
 - Lý do không dùng `react-router`: một dependency runtime mới cho đúng hai đường dẫn, trong một app
   một-người-dùng, đi ngược quy ước supply-chain npm ở `frontend-brief.md`. Cửa nâng cấp để mở: khi
   có deep link thứ tư, đổi seam này sang `react-router` là việc một buổi.
@@ -435,8 +478,11 @@ mốc; cả hai phải đọc được trước khi bấm.
 - Ngày: `<input type="date">` (không phải `datetime-local`) — `started_on`/`expires_on` là DATE, gửi
   `YYYY-MM-DD` trần, **không** nối `+07:00`, **không** `toISOString()`. Đây là chỗ khác `011a` và
   executor rất dễ chép nhầm luật.
-- Hiển thị ngày: `Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })`. `days_left` tính
-  từ **hôm nay theo giờ VN**, không phải `new Date()` của thiết bị.
+- Hiển thị ngày: `Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })`. **`days_left` lấy
+  thẳng từ `SubscriptionRead` của server, frontend KHÔNG tính lại** — server đã cắt biên theo giờ VN
+  (§4.1), tính lại bằng `new Date()` của thiết bị là dựng chỗ thứ hai định nghĩa "hôm nay" và hai
+  chỗ đó lệch nhau đúng quanh nửa đêm (sửa 2026-08-01 sau phản biện T3: bản nháp trước bảo tính lại
+  ở client, mâu thuẫn với chính §4.1).
 - F6: `≈ 1.240.000 ₫/tháng` — giữ dấu `≈` (§4.3). `monthly_burn = 0` ⇒ *"Chưa có khoản cố định
   nào"*, không phải `≈ 0 ₫`.
 - `corrupted_subscription_count > 0` ⇒ dải cảnh báo *"N bản ghi không đọc được — số liệu có thể
@@ -478,12 +524,25 @@ Id riêng đi bằng `data-subscription-id`.
 1. `uv run ruff check` + `uv run pytest` xanh; `npm run build` + `npm run lint` xanh.
 2. Test bắt buộc, **mỗi bài phải chứng minh được biết đỏ** (gỡ luật ⇒ test đỏ):
    - **Allowlist settings:** `GET /api/settings` không chứa `private_pin` /
-     `private_unlock_throttle` / `private_unlock_ttl_minutes`; `PATCH` từng key đó ⇒ `422` và giá trị
-     DB **không đổi** (so byte trước/sau). Bài này là bài quan trọng nhất lô (§2.1).
+     `private_unlock_throttle` / `private_unlock_ttl_minutes`; `GET` **và** `PATCH` từng key đó ⇒
+     `404` (cùng một mã, §2.1) và giá trị DB **không đổi** (so byte trước/sau); `GET`/`PATCH` một key
+     bịa hoàn toàn ⇒ **`404` giống hệt**, không phân biệt được với ba key trên. Bài này là bài quan
+     trọng nhất lô.
    - **Gia hạn idempotent:** hai `POST /renew` cùng `entry_id` ⇒ đúng một `Entry`, `expires_on` tiến
      đúng **một** chu kỳ, lần hai trả `created=false` (§2.4).
    - **`add_period` biên:** 31/01 +1 tháng ⇒ 28/02 (và 29/02 năm nhuận) · 31/12 +1 năm ⇒ 31/12 năm
      sau · `week`/`day` cộng đúng.
+   - **`add_period` DÂY CHUYỀN (bài bắt trôi mốc, §4.2):** `anchor_day=31`, gia hạn ba lần liên tiếp
+     từ 31/01 ⇒ **28/02 → 31/03 → 30/04**, không phải 28/02 → 28/03 → 28/04. Bỏ `anchor_day` đi thì
+     bài này phải đỏ; các bài một-bước ở trên **vẫn xanh** — đó chính là lý do phải có bài này.
+   - **Sub đã lapsed:** `expires_on` cách đây 3 tháng, `POST /renew` không gửi `new_expires_on` ⇒
+     mốc mới **ở tương lai** và `status` trả về là `active`, không phải `expired` (§4.2).
+   - **`clear_canceled`:** gia hạn một sub đang `canceled` mà **không** gửi cờ ⇒ `canceled_at` giữ
+     nguyên; gửi `clear_canceled=true` ⇒ mới bị xoá (§4.1).
+   - **F6 có sub `period_unit='week'` trong fixture** ⇒ dashboard `200` và burn đúng tới đồng. Bài
+     này chặn đúng bẫy `Decimal / float` ném `TypeError` (§4.3); fixture chỉ có `month` thì bẫy lọt.
+   - **Sub hỏng ciphertext `amount` nhưng sắp hết hạn** ⇒ vẫn có mặt trong `f6.upcoming` với
+     `amount: null` + `corrupted: true`, **và** vẫn đếm vào `corrupted_subscription_count` (§4.3).
    - **Tracker cha sai kiểu:** tạo sub trên tracker `event` ⇒ `422`, không `500`; và `PATCH`
      `input_mode` của tracker **đang có sub** khỏi `money` ⇒ `422` (§2.5).
    - **Trạng thái suy ra:** ba tổ hợp (`canceled_at`, `expires_on`) ⇒ đúng ba `status`; sub `expired`
@@ -497,6 +556,8 @@ Id riêng đi bằng `data-subscription-id`.
    - **Idempotent create** theo id: gửi hai lần cùng `id` ⇒ một dòng, lần hai `200`.
    - **Playwright:** mở `/subscription?highlight=<id>` ⇒ đúng thẻ đó được cuộn tới + nhấn viền, và
      **không** có dialog nào tự mở (§5.2).
+   - **Playwright:** tải nguội thẳng `/subscription` (không đi qua tab) rồi bấm nút quay lại ⇒ về
+     khối tab, **không** rơi ra ngoài app (§5.1 — `navigate('/')`, không phải `history.back()`).
    - **Playwright:** form gia hạn hiện đúng dòng tóm tắt (số tiền đã định dạng + ngày hết hạn mới)
      trước khi bấm (§5.3).
 3. Migration: **không có** — dán output `information_schema.columns` chứng minh `subscription` +
@@ -515,6 +576,22 @@ Id riêng đi bằng `data-subscription-id`.
 4. **Seam định tuyến tự viết thay vì `react-router`** (§5.1).
 5. **Sub vào từ tab Tracker, không phải tab thứ năm** (§5.2).
 6. **Không có toast Hoàn tác cho lượt gia hạn** (§5.3) — vì hoàn tác phải lùi cả `expires_on`.
+7. **`anchor_day = started_on.day`** cho cộng tháng/năm (§4.2) — chấp nhận `expires_on` "nhảy" từ
+   28/02 lên 31/03. Bỏ neo thì mốc trôi một chiều; đổi neo sang một cột riêng thì cần migration.
+8. **Sub lapsed thì mặc định tính từ hôm nay** (`max(expires_on, today_vn)`, §4.2) — chỗ duy nhất
+   server "đoán" thay chủ, và nó chỉ kích hoạt khi mốc cũ đã ở quá khứ.
+9. **`clear_canceled` mặc định `false`** (§4.1) — ghi một lượt trả tiền không tự bỏ đánh dấu đã huỷ.
+
+> ✅ **T3 (`gemini-3.1-pro-high`) đã soi bản đầu 2026-08-01: 9 finding, T1 kiểm tay từng cái.**
+> Nhận 8 (mục 1/2/3 CRITICAL đều thật: trôi mốc thanh toán · `Decimal / float` ném `TypeError` làm
+> `500` cả dashboard · sub lapsed gia hạn xong vẫn `expired`; cộng 4 mục MAJOR/MINOR — sub hỏng bị
+> giấu khỏi `upcoming`, tự xoá `canceled_at`, `days_left` tính hai nơi, thiếu bài test dây chuyền).
+> **Một mục lập luận sai:** T3 cho rằng `404` ở GET vs `422` ở PATCH tạo "oracle" phân biệt
+> `private_pin` với key bịa — không đúng, bản nháp trả `422` cho **mọi** key ngoài allowlist nên
+> không có gì để phân biệt. Vẫn gộp về một mã `404` (§2.1) vì lý do khác: hai mã cho cùng một điều
+> kiện là chỗ để lượt sửa sau vô tình tách ra. Ghi lại cả hai vế — đúng dạng lỗi `qa-framework.md`
+> §8 (**kết luận dùng được, trích dẫn sai**), không được để lời giải thích sai đi kèm bản vá đúng.
+> **T2 review chéo với repo thật đang chạy** — kết quả sẽ ghi tiếp vào đây.
 
 ## 9. Hợp đồng `011c` → `011b` (đừng đổi khi thi công mà không sửa `011b`)
 
