@@ -273,8 +273,14 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         {note.items.length > 0 ? (
           <div className="space-y-2">
             {visibleItems.map((item) => (
-              <label className="flex min-h-8 items-center gap-3 text-sm" key={item.id}>
+              <label
+                className="flex min-h-8 items-center gap-3 text-sm"
+                data-testid="note-item"
+                data-note-item-id={item.id}
+                key={item.id}
+              >
                 <Checkbox
+                  data-testid="note-item-checkbox"
                   aria-label={`Đánh dấu ${item.content} hoàn thành`}
                   checked={item.is_completed}
                   disabled={changeItem.isPending}
@@ -283,6 +289,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                   }
                 />
                 <span
+                  data-testid="note-item-content"
                   className={`min-w-0 break-words ${
                     item.is_completed ? 'text-muted-foreground line-through' : ''
                   }`}
@@ -383,16 +390,23 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 ) : (
                   <div className="space-y-2">
                     {note.items.map((item, index) => (
-                      <div className="flex min-h-11 items-center gap-2" key={item.id}>
+                      <div
+                        className="flex min-h-11 items-center gap-2"
+                        data-testid="note-item"
+                        data-note-item-id={item.id}
+                        key={item.id}
+                      >
                         {editingItemId === item.id ? (
                           <>
                             <Input
+                              data-testid="note-item-edit-input"
                               className="h-10 min-w-0 flex-1 bg-card"
                               aria-label={`Sửa mục ${item.content}`}
                               value={editingItemContent}
                               onChange={(event) => setEditingItemContent(event.target.value)}
                             />
                             <Button
+                              data-testid="note-item-edit-save"
                               size="lg"
                               disabled={!editingItemContent.trim() || changeItem.isPending}
                               onClick={() =>
@@ -408,6 +422,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                         ) : (
                           <>
                             <Checkbox
+                              data-testid="note-item-checkbox"
                               aria-label={`Đánh dấu ${item.content} hoàn thành`}
                               checked={item.is_completed}
                               disabled={changeItem.isPending}
@@ -419,6 +434,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               }
                             />
                             <span
+                              data-testid="note-item-content"
                               className={`min-w-0 flex-1 break-words text-sm ${
                                 item.is_completed ? 'text-muted-foreground line-through' : ''
                               }`}
@@ -426,6 +442,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               {item.content}
                             </span>
                             <Button
+                              data-testid="note-item-up"
                               size="icon-lg"
                               variant="ghost"
                               aria-label={`Đưa ${item.content} lên`}
@@ -435,6 +452,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               <ArrowUp />
                             </Button>
                             <Button
+                              data-testid="note-item-down"
                               size="icon-lg"
                               variant="ghost"
                               aria-label={`Đưa ${item.content} xuống`}
@@ -444,6 +462,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               <ArrowDown />
                             </Button>
                             <Button
+                              data-testid="note-item-edit"
                               size="icon-lg"
                               variant="ghost"
                               aria-label={`Sửa mục ${item.content}`}
@@ -452,6 +471,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               <Edit3 />
                             </Button>
                             <Button
+                              data-testid="note-item-delete"
                               size="icon-lg"
                               variant="ghost"
                               className="text-bad hover:text-bad"
@@ -477,6 +497,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                   }}
                 >
                   <Input
+                    data-testid="note-item-add-input"
                     aria-label={`Thêm checklist cho ${label}`}
                     className="h-10 bg-card"
                     placeholder="Thêm checklist…"
@@ -484,6 +505,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                     onChange={(event) => setNewItem(event.target.value)}
                   />
                   <Button
+                    data-testid="note-item-add-submit"
                     size="lg"
                     type="submit"
                     variant="secondary"

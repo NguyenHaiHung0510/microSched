@@ -1,6 +1,6 @@
 # QA framework — khung soi giao diện dùng chung
 
-> **Trạng thái: ✅ CHỐT 2026-07-29 (v1).** Áp cho `009`–`012` và mọi slice có UI sau đó.
+> **Trạng thái: ✅ CHỐT 2026-07-29 (v1), +3.E thêm 2026-07-31 (v1.1).** Áp cho `009`–`012` và mọi slice có UI sau đó.
 > Đọc kèm `docs/ui-brief.md` §6 (luật UI cứng). **File này không lặp lại luật đó** — nó là
 > cách kiểm xem luật đó có còn được giữ không, cộng với những trục mà luật UI không nói tới.
 > Tự-chứa: đọc được ở phiên 0-context, dùng thẳng làm nguồn cho prompt giao T3/T2.
@@ -108,6 +108,22 @@ công cụ, chép **con số** vào báo cáo.
 - **Tiếng Việt không đổi dạng số nhiều** — đừng thêm nhánh đếm.
 - **Không viết chữ vào chỗ chỉ hover mới thấy** (trục 3.B).
 
+### 3.E Thẩm mỹ tổng thể (taste) — 📝 Thêm 2026-07-31 (đề xuất chủ, phiên QA `009`)
+
+Bốn trục trên đo được bằng máy hoặc quy tắc rõ. Trục này khác: **không có ngưỡng, không đạt/không
+đạt**, và **không vào bảng phát hiện** ở §7(b) — bảng đó bắt buộc `file:line`/số đo, trục này không có
+cái nào trong hai thứ đó. Mục đích: thu thập cảm nhận tổng thể **có hệ thống**, thay vì bỏ ngỏ như câu
+hỏi mở cũ đã bỏ ở §1 — khác ở chỗ đây là ảnh chụp thật + vài câu, không phải một câu hỏi mở chung
+chung.
+
+- **Chụp ảnh màn hình thật** (không mô tả bằng chữ) ở các checkpoint bắt buộc: danh sách ≥30 mục (cả
+  390px lẫn 1280px) · một `note-detail-dialog` đang mở với checklist dài · trạng thái riêng tư đang
+  khoá · trạng thái riêng tư vừa mở.
+- Mỗi ảnh kèm 2-4 câu: nhịp điệu/khoảng cách đều không · mật độ thông tin vừa mắt không · có chỗ nào
+  trông thô, chưa xong, hoặc lệch tông với phần còn lại của app không.
+- **Chủ tự quyết, T3 không chấm đạt/không đạt.** Không cần đồng ý với hướng "B hồng ấm" đã chốt
+  (`ui-brief.md`) — chỉ báo cáo cảm nhận kèm ảnh để chủ xem, không tự ý đề xuất đổi token màu.
+
 ## 4. Ma trận trạng thái — chỗ QA kịch bản hay trượt nhất
 
 Không soi *màn hình*, soi **màn hình × trạng thái**. Mỗi màn phải đi qua đủ:
@@ -160,7 +176,7 @@ Ghi **append theo từng lô** vào một file trên đĩa, chỉ append, không
 21KB báo cáo sống sót **chỉ nhờ luật append**. Nghiệm thu bằng **sản phẩm trên đĩa**; cả exit code
 lẫn stdout đều nói dối, mỗi cái một chiều ngược nhau.)*
 
-Mỗi lô gồm hai phần, **thiếu phần đầu là không nghiệm thu được**:
+Mỗi lô gồm ba phần, **thiếu phần (a) là không nghiệm thu được**:
 
 **(a) Đã soi những gì** — liệt kê màn × trạng thái × viewport đã đi qua. *Một lượt QA "không tìm thấy
 gì" và một lượt QA không soi gì trông giống hệt nhau nếu thiếu phần này.*
@@ -176,6 +192,10 @@ thẩm mỹ, chủ quyết.
 
 **Mỗi dòng phải có `file:line` hoặc số đo.** Không có ⇒ nó là ấn tượng, ghi xuống mục riêng cuối báo
 cáo, đừng trộn vào bảng.
+
+**(c) Ảnh + taste (trục 3.E)** — 📝 Thêm 2026-07-31. Với mỗi checkpoint bắt buộc của 3.E: đường dẫn
+ảnh chụp đã lưu + 2-4 câu nhận xét. **Không** ghi vào bảng (b) — không có `file:line`/số đo nên không
+đạt điều kiện của bảng đó. Phần này chủ tự đọc, không phải thứ T1 kiểm-tay-từng-mục như §8.
 
 ## 8. Luật đọc kết quả — dành cho T1
 
