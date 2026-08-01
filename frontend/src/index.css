@@ -44,7 +44,7 @@
   --ok-bg:   #e6f4ee;
   --warn:    #b6761d;
   --warn-bg: #fdf1de;
-  --bad:     #b44b3b; /* đậm hơn bản vẽ để đạt 4,58:1 trên --bad-bg */
+  --bad:     #b04a3a; /* 5,40:1 trên --card; 4,73:1 trên --bad-bg */
   --bad-bg:  #fdeceb;
 
   /* --- hợp đồng token của shadcn: component đang chạy đọc đúng các tên này --- */

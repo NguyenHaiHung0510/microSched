@@ -226,7 +226,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 {label}
               </Button>
               {note.is_private ? (
-                <Badge variant="secondary">
+                <Badge data-testid="note-private-badge" variant="secondary">
                   <LockKeyhole data-icon="inline-start" />
                   Riêng tư
                 </Badge>
@@ -361,7 +361,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           ) : (
             <div className="space-y-5">
               {note.is_private ? (
-                <Badge variant="secondary">
+                <Badge data-testid="note-private-badge" variant="secondary">
                   <LockKeyhole data-icon="inline-start" />
                   Riêng tư
                 </Badge>
@@ -448,6 +448,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               data-testid="note-item-up"
                               size="icon-lg"
                               variant="ghost"
+                              className="size-11"
                               aria-label={`Đưa ${item.content} lên`}
                               disabled={index === 0 || reorderItems.isPending}
                               onClick={() => moveItem(index, -1)}
@@ -458,6 +459,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               data-testid="note-item-down"
                               size="icon-lg"
                               variant="ghost"
+                              className="size-11"
                               aria-label={`Đưa ${item.content} xuống`}
                               disabled={index === note.items.length - 1 || reorderItems.isPending}
                               onClick={() => moveItem(index, 1)}
@@ -468,6 +470,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               data-testid="note-item-edit"
                               size="icon-lg"
                               variant="ghost"
+                              className="size-11"
                               aria-label={`Sửa mục ${item.content}`}
                               onClick={() => startEditingItem(item)}
                             >
@@ -477,7 +480,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               data-testid="note-item-delete"
                               size="icon-lg"
                               variant="ghost"
-                              className="text-bad hover:text-bad"
+                              className="size-11 text-bad hover:text-bad"
                               aria-label={`Xoá mục ${item.content}`}
                               disabled={removeItem.isPending}
                               onClick={() => removeItem.mutate(item)}
