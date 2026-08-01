@@ -2,7 +2,7 @@
 
 > Executor: T2 Codex (CLI trực tiếp) · Bậc: Sol · Effort: medium (thuần CSS/JSX tĩnh, không còn logic click mới) · **Skill gợi ý:** không cần · **MCP cần:** không cần (Playwright chạy bằng `npm`/Chromium cục bộ, không cần Docker/DB — xem §Việc của CHỦ)
 
-Trạng thái: ⚠️ OPEN
+Trạng thái: ✅ DONE 2026-08-01 — PR #75 merge (`ca49c3d`), live production xác nhận qua `/api/readyz` (`commit` khớp `e7c7845`, HEAD của `develop` ngay sau merge). Thi công qua Codex (`gpt-5.6-sol`, high, full-access) trong worktree cô lập (`../microsched-wt-019`) — chủ ý tách khỏi cây làm việc chính vì có phiên Claude/Codex khác chạy song song trong cùng thư mục lúc đó, không collision. T1 tự đọc diff (đúng 3 file: `TasksScreen.tsx`, `frontend/e2e/tasks.spec.ts`, `agent-tasks/README.md`, không lệch phạm vi) + verify độc lập `gh pr checks 75` (10/10 xanh) trước khi merge.
 
 ## Bối cảnh
 
