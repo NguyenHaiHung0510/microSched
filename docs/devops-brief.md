@@ -557,5 +557,21 @@ git ls-tree --name-only origin/main .github/workflows/   →  chỉ có ci.yml
 
 **Bất biến §9 vẫn nguyên giá trị, nay cộng thêm một:** ① không job nền nào poll DB dày hơn cửa sổ idle 5 phút của Neon; ② 🔒 **endpoint cron phải làm xong việc bên trong request** — proxy Fly mù với việc sinh ra sau khi response đã trả, và không có cách nào để app nói "tôi đang bận". Với deadline 180s của Cloud Scheduler thì đây gần như không phải hy sinh gì.
 
+### 📝 2026-08-02 — Fly always-on không đảo quyết định Scheduler
+
+App nay giữ đúng một Machine 256MB chạy liên tục (`architecture-brief.md` §5), nên **cron không còn
+nhiệm vụ đánh thức Fly**. Phần so cold-start và các phương án bị loại vì va `suspend` ở trên là bằng
+chứng lịch sử của quyết định 23/07, không phải mô tả runtime hiện hành.
+
+Google Cloud Scheduler **vẫn được giữ**: lịch chạy độc lập với deploy/commit, retry cấu hình được và
+attempt deadline rõ ràng. APScheduler/Supercronic trong process trở lại khả thi về mặt kỹ thuật, nhưng
+vẫn bị loại vì buộc lịch nhắc vào uptime/restart của chính app và làm mất retry/result reporting của
+một scheduler ngoài.
+
+RSS + uptime ở các khe cron nay quan sát **rò rỉ của tiến trình 256MB sống dài**, không còn quan sát
+snapshot `suspend`. Endpoint vẫn phải hoàn tất đồng bộ trong request để Scheduler nhận đúng success
+hay failure và retry đúng; lý do hiện hành là biên lai kết quả chính xác, **không phải** lo Fly Proxy
+suspend Machine sau khi response trả về.
+
 ---
 *Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). **§9 đã đóng 2026-07-22**; mở lại nếu đổi hạ tầng deploy. **§10 chốt 2026-07-23**; mở lại nếu đổi nhà cung cấp cron hoặc khi 011 cần >3 job. §7.2 xem lại nếu đổi cách agent truy cập trình duyệt. Thêm note có ngày — không xóa kết luận cũ.*

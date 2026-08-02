@@ -15,7 +15,7 @@ Lý do chủ nêu, và nó đúng: **trang giới thiệu tính năng chưa thuy
 2. 🔒 **Một phiên riêng với chủ về nhận diện hình ảnh** — logo microSched, bộ icon, hình biểu tượng. Chủ **đích thân** làm, không giao executor. Trang này không dựng được ra hồn khi chưa có logo.
 3. **Viết lại văn phong** — xem §2.3a.
 
-Phần dưới đây **giữ nguyên làm hồ sơ**: bản dựng đã chọn, cấu trúc, và mọi ràng buộc kỹ thuật vẫn còn giá trị. Chỉ phần **nội dung chữ** là phải làm lại.
+Phần dưới đây **giữ nguyên làm hồ sơ**: bản dựng đã chọn, cấu trúc, và các ràng buộc UI/kỹ thuật còn giá trị. Trước khi mở lại phải viết lại **nội dung chữ và mọi dữ kiện hạ tầng/chi phí hiện hành**; phần hạ tầng đã đổi ngày 2026-08-02.
 
 ## 0. Bối cảnh — vì sao có task này
 
@@ -28,7 +28,7 @@ Cái khó thật của trang này: **không ai đăng ký được.** Google OAu
 1. **Trang này thay `LoginScreen`.** App vẫn không có router: `App.tsx` đã phân nhánh theo `loggedOut`. Home là nhánh chưa-đăng-nhập. **Không thêm `react-router` hay bất kỳ thư viện định tuyến nào.**
 2. **Nút đăng nhập nằm ở header, góc phải, sticky.** Là thẻ `<a href="/auth/login">` bọc trong `Button asChild` — OAuth cần điều hướng cả trang, không phải `fetch`. Chép đúng cách `App.tsx:52-57` đang làm.
 3. **Không hứa cái chưa có.** Hiện chỉ có slice `task` chạy thật — `backend/app/main.py:78` chỉ nạp `tasks_router`; note / calendar / tracker chưa có endpoint nào. Trang nói rõ phần nào đã chạy, phần nào đang xây. **Đây là ràng buộc, không phải gợi ý.**
-4. **Không có con số thời gian thức máy trên trang.** `architecture-brief.md` §105-110 ghi resume 0,33–0,48s **nhưng có đuôi trễ, một lần đo ~12s**. Một con số mà khách bấm phát đầu là thấy sai thì tệ hơn không có con số. Con số **chi phí** thì giữ — nó ổn định và kiểm được.
+4. **Không có con số thời gian thức máy trên trang.** Hạ tầng đã chuyển về always-on ngày 2026-08-02, nhưng deploy/restart/replacement và Neon wake-up vẫn làm một số đơn lẻ dễ gây hiểu sai. Con số **chi phí** cũng chỉ được dùng sau khi re-check ngay trước lúc viết: phải tách gross resource cost khỏi net invoice waiver có điều kiện (`cost-brief.md` §7.6), không được quảng bá “free tier”.
 5. **Light-only, hồng ấm.** Không dark mode, không glassmorphism, không hiệu ứng ngoài `ui-brief.md`.
 6. **Ảnh và video là placeholder trong task này.** Xem §2.4. Không tự đi chụp màn hình, không tự sinh ảnh.
 
@@ -65,7 +65,7 @@ Bản copy ở §2.3 được viết quanh *"bốn chỗ làm khác"*. Chủ đ�
 | | Trụ | Nói gì |
 |---|---|---|
 | 1 | **microSched là gì** | Thay hẳn câu mở *"microSched là ứng dụng cá nhân tôi tự viết…"*. Đây là trụ, không phải một dòng giới thiệu. |
-| 2 | **Hạ tầng đằng sau** | Fly.io scale-to-zero, Neon PG18, Docker, CD tự động, chi phí thật |
+| 2 | **Hạ tầng đằng sau** | Fly.io 1× shared-cpu-1x 256MB always-on, Neon PG18 autosuspend độc lập, Docker, CD tự động, gross cost và invoice waiver có điều kiện |
 | 3 | **Tech stack đằng sau** | FastAPI · SQLModel · React 19 · Vite · Tailwind v4 · TanStack Query · PWA |
 | 4 | 🔑 **Harness engineering dựng nên nó** | Mô hình ba tầng T1/T2/T3, spec-trước-thi-công, luật biên lai, phản biện khác-họ. **Đây là trụ khác biệt nhất** — thứ mà một trang giới thiệu app cá nhân bình thường không có. |
 | 5 | *(phụ)* **Bảo mật** | AES-256-GCM tầng ứng dụng, OAuth + allowlist, tách quyền DB |
@@ -81,11 +81,11 @@ Chủ đã đọc bản §2.3 và **chưa ưng**. Một chỉnh sửa cụ thể
 
 Việc này còn phục vụ threat model: bớt ngôi thứ nhất là bớt vật liệu dựng pretext (`devops-brief.md` §1).
 
-Bản §2.3 dưới đây **giữ lại làm hồ sơ** — phần *sự thật kỹ thuật* trong đó đã được đối soát và vẫn đúng; phần *cách nói* thì bỏ.
+Bản §2.3 dưới đây **giữ lại làm hồ sơ** — phần *cách nói* thì bỏ; phần *sự thật kỹ thuật* chỉ là ảnh chụp trước 2026-08-02 và phải đối soát lại với decision record hiện hành.
 
 ### 2.3 Nội dung — ⚠️ BẢN CŨ, GIỮ LÀM HỒ SƠ, KHÔNG DÙNG NGUYÊN VĂN
 
-⛔ **Bản dưới đây KHÔNG còn là nội dung sẽ dùng.** Chủ đã đọc và chưa ưng văn phong (§2.3a), và khung nội dung đã đổi sang sáu trụ cột (§2.2a). Giữ lại vì **các dữ kiện kỹ thuật trong đó đã được đối soát với repo và vẫn đúng** — chúng là nguyên liệu, không phải bản thảo.
+⛔ **Bản dưới đây KHÔNG còn là nội dung sẽ dùng.** Chủ đã đọc và chưa ưng văn phong (§2.3a), và khung nội dung đã đổi sang sáu trụ cột (§2.2a). Giữ lại làm nguyên liệu lịch sử; **không giả định các dữ kiện hạ tầng/chi phí trong đó còn đúng** — Fly scale-to-zero đã bị đảo ngày 2026-08-02.
 
 *(Ba câu đã bị gỡ ở vòng phản biện 26/07, đừng vô tình dựng lại: "Ghi vào máy trước, đồng bộ sau" — **sai**, không có đường ghi offline; tiêu đề kê bốn tính năng khi mới một cái chạy; và mọi con số thời gian đánh thức máy — resume có đuôi trễ ~12s nên không con số nào nói đúng được.)*
 
@@ -183,7 +183,7 @@ Hai nút: `Mã nguồn trên GitHub` · `Đọc hồ sơ kiến trúc`
 - **Không** đụng bốn file đã kê ở §2.5.
 - **Không** sửa chữ trong §2.3 (thấy sai thì dừng và báo).
 - **Không** đưa lên trang: ảnh chụp có dữ liệu thật, địa chỉ email thật, tên thật, hay bất cứ gì về lịch sinh hoạt của chủ.
-- **Không** thêm số liệu hiệu năng nào ngoài con số chi phí đã cho (§1.4).
+- **Không** thêm số liệu hiệu năng. Mọi con số chi phí phải re-check ngay trước khi viết và ghi đủ **gross resource cost + điều kiện net waiver** theo `cost-brief.md` §7.6; cấm claim vô điều kiện “\$0” hoặc “free tier”.
 - **Không** thêm form, ô nhập email, nút "đăng ký", "liên hệ", hay bất cứ thứ gì gợi ý rằng có đường xin quyền truy cập.
 - **Không** thêm analytics, tracking pixel, font từ CDN, script ngoài, ảnh remote — nói cách khác: **trang không được TỰ ĐỘNG tải bất cứ thứ gì ngoài origin**. Liên kết `<a href>` để người dùng tự bấm ra ngoài thì **được phép** — đó là hai chuyện khác nhau, đừng gộp. Hai đích duy nhất, ghi đủ URL, `target="_blank"` kèm `rel="noopener noreferrer"`:
   `https://github.com/NguyenHaiHung0510/microSched` và `https://github.com/NguyenHaiHung0510/microSched/blob/main/docs/architecture-brief.md`.

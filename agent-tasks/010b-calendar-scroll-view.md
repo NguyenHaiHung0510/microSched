@@ -121,8 +121,8 @@ Ngoài ra app cũ hardcode bảng màu ưu tiên task (`calendar_view_service.py
    `LIVE_REFETCH_MS = 1000` — **mọi query hiển thị tự poll lại mỗi giây**, trừ khi tự khai
    `refetchInterval: false`. Cửa sổ ±6 tháng của §5.2 mở **13 query tháng** song song; cộng query
    annotation và query task phân trang thì con số poll có thể lên **20–30 request/giây liên tục**
-   khi tab Lịch đang mở — đủ để dội DB Neon và làm Fly (scale-to-zero, cold start ~8s) không bao giờ
-   được ngủ. Đây là loại lỗi **CI xanh tuyệt đối, chỉ lộ ra khi chủ dùng thật** — không acceptance
+   khi tab Lịch đang mở — đủ để dội DB Neon và tạo tải CPU/network vô ích liên tục trên Fly
+   always-on. Đây là loại lỗi **CI xanh tuyệt đối, chỉ lộ ra khi chủ dùng thật** — không acceptance
    nào của 010a hay bản nháp đầu 010b đo lưu lượng request.
    **Luật bắt buộc:** mọi `useQuery` mà 010b thêm (tháng sự kiện, annotation, task phân trang) phải
    khai tường minh `refetchInterval: false`. Dữ liệu lịch không cần "sống" theo giây như task —
