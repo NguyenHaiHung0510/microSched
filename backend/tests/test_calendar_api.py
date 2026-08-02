@@ -127,6 +127,7 @@ def test_calendar_crud_import_visibility_and_safety(pg_dsn: str) -> None:
         engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app = create_app()
+
         async def current_session() -> AuthSession:
             return _auth()
 

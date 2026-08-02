@@ -155,9 +155,7 @@ async def list_events(
 
 
 @router.post("/calendar/events", response_model=EventRead, status_code=status.HTTP_201_CREATED)
-async def create_event(
-    payload: EventCreate, db: Database, session: CurrentSession
-) -> EventRead:
+async def create_event(payload: EventCreate, db: Database, session: CurrentSession) -> EventRead:
     """Create one event under a manual source."""
     try:
         return await store.create_event(db, session, payload)

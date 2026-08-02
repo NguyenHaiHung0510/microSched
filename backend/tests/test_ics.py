@@ -76,17 +76,13 @@ def test_parser_checks_utf8_bytes_before_parsing() -> None:
 
 def test_parser_rejects_too_many_events_before_deep_parse() -> None:
     content = "\n".join(
-        ["BEGIN:VCALENDAR"]
-        + ["begin:vevent\nEND:VEVENT"] * (MAX_EVENTS + 1)
-        + ["END:VCALENDAR"]
+        ["BEGIN:VCALENDAR"] + ["begin:vevent\nEND:VEVENT"] * (MAX_EVENTS + 1) + ["END:VCALENDAR"]
     )
     with pytest.raises(ValueError, match="too many events"):
         parse_ics(content)
 
 
-@pytest.mark.parametrize(
-    "dtend", [None, "DTEND:broken", "DTEND:20260814", "DTEND:20260815"]
-)
+@pytest.mark.parametrize("dtend", [None, "DTEND:broken", "DTEND:20260814", "DTEND:20260815"])
 def test_all_day_missing_invalid_or_non_increasing_end_uses_next_day(
     dtend: str | None,
 ) -> None:

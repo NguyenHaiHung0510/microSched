@@ -121,9 +121,11 @@ def _parse_datetime(value: str) -> datetime | None:
     """Parse one supported date/time value without consulting the host timezone."""
     try:
         if value.endswith("Z"):
-            return datetime.strptime(value[:-1], "%Y%m%dT%H%M%S").replace(
-                tzinfo=UTC
-            ).astimezone(VIETNAM_TZ)
+            return (
+                datetime.strptime(value[:-1], "%Y%m%dT%H%M%S")
+                .replace(tzinfo=UTC)
+                .astimezone(VIETNAM_TZ)
+            )
         return datetime.strptime(value, "%Y%m%dT%H%M%S").replace(tzinfo=VIETNAM_TZ)
     except ValueError:
         return None
@@ -178,9 +180,7 @@ def parse_ics(text: str) -> ParseReport:
 
     for number, block in enumerate(event_blocks, start=1):
         properties = _properties(block)
-        unsupported = next(
-            (name for name in _UNSUPPORTED_PROPERTIES if name in properties), None
-        )
+        unsupported = next((name for name in _UNSUPPORTED_PROPERTIES if name in properties), None)
         start_entries = properties.get("DTSTART", [])
         if unsupported is not None:
             skipped.append(
