@@ -190,3 +190,39 @@ Codex thi công theo đúng thứ tự hàng đợi (`010a → 010b → 011a →
 tiếp KHÔNG phụ thuộc phiên này: `010a` đã duyệt từ trước, sẵn sàng giao Codex bất kỳ lúc nào.
 
 **Quota:** 2 account Google AI Pro (2× hạn mức) — **ưu tiên cho agy (hỗ trợ T1 + chạy test T3), KHÔNG dồn vào Jules** (Jules hiện quá phế: một workflow tự do đốt quota khổng lồ + vẫn phải lọc PR = lỗ ròng). Gemini báo hết quota giữa chừng ⇒ T1 **dừng, nhắc chủ log out → account 2** (tên account cố ý không ghi trong repo). **Máy mới:** cần `agy` trên `PATH` hoặc set `AGY_PATH`, rồi `claude mcp add-json -s user agy-bridge '{...}'`.
+
+---
+
+## 2026-08-02 — thi công `010a`, migration `0005`, PR #86 + live production
+
+**Việc làm:** giao T2 Codex thi công toàn bộ spec `010a` (parser `.ics`, CRUD nguồn/buổi, re-import
+thay sạch, màn danh sách, test). T1 chạy acceptance độc lập; T3 audit code so với spec bắt 6 lỗi thật:
+`datetime-local` có giây sinh ISO sai, mutation error bị che sau modal, all-day không về 00:00, guard
+`MAX_EVENTS` phân biệt hoa/thường lệch parser, fallback all-day sai thành 90 phút, và `TZID` ở `DTEND`
+bị hiểu nhầm là giờ Việt Nam. T2 vá một lượt giới hạn + regression tests; T3 review cuối trên cây đã merge
+`develop` trả **không blocker**.
+
+**Biên lai:** PR #86 merge vào `develop` thành `64e722c`; migration `0005` chạy tay trên Neon
+(`0004 → 0005`) rồi query thật schema `microsched` thấy đủ `calendar_event.description_md` (TEXT NULL),
+`calendar_event.all_day` (BOOLEAN NOT NULL DEFAULT false), `calendar_source.is_visible` (BOOLEAN NOT
+NULL DEFAULT true). Bốn file thật parse đúng `139 · 8 · 6 · 164`, skipped/trùng đều 0; mô tả ca thi giữ
+đủ 6 dòng/6 nhãn mà không in giá trị. Local sau merge: backend non-PG 91 pass, frontend 27 unit + 4
+Playwright calendar pass; CI trước merge và CI hậu-merge đều xanh, gồm lane PostgreSQL Migration QA.
+Deploy production thành công; `/api/readyz` trả `status=ok`, `db=up`, commit đúng `64e722c`.
+
+**Hai chỗ quy trình tự bắt lỗi:** (1) `ruff check` xanh không bao gồm `ruff format --check`; CI đỏ lần đầu
+vì 4 file chưa format, sửa thuần định dạng rồi CI xanh. (2) phiên vốn đã ở worktree trên `develop` nhưng
+T1 gọi `EnterWorktree` thêm lần nữa; base `fresh` bám `origin/main` (default branch tụt hậu), làm branch
+thiếu 009/private/spec mới và PR conflict ở `main.py`/`App.tsx`/`api.ts`. Đã merge `origin/develop`, giữ
+cả Notes/private gate/shared `ApiError` lẫn Calendar, rồi chạy lại toàn acceptance. Luật lâu dài đã ghi vào
+memory `github-default-branch-silent-failures`.
+
+**Quy tắc tier review chủ chốt lại trong phiên:** PR không-housekeeping phải có ít nhất một tier review
+khác họ. Khi T1 tạm là GPT Sol và T2 Codex cũng họ GPT, mặc định ưu tiên một T3 Gemini; nếu thật sự cần
+thêm lượt thì thêm T3 Claude Sonnet/Opus 4.6 thay vì gọi Codex lần nữa; DeepSeek chỉ là lớp đa dạng họ
+model tiếp theo. Không mặc định gọi hai T3 cho mọi PR.
+
+**Trạng thái cuối phiên:** `010a` đã merge, migration áp, code live và health xanh; **chưa đóng trọn vòng
+đời** vì file picker/FileReader trên iPhone chưa được QA tay. Việc kế tiếp thật sự: QA production `010a`,
+sau đó giao `010b` (spec đã duyệt; phụ thuộc cứng `010a` nay đã thoả). Hàng đợi sau đó giữ nguyên:
+`011a → 011c → 011b → 020 → 012 → 008h`.
