@@ -224,3 +224,14 @@ def test_app_setting_has_uuid_identity_and_unique_key() -> None:
 
     assert setting.c.id.primary_key
     assert any(constraint.name == "uq_app_setting_key" for constraint in setting.constraints)
+
+
+def test_calendar_010a_columns_are_nullable_or_defaulted_as_locked() -> None:
+    """The 010a migration seam is visible in ORM metadata before a live DB exists."""
+    source = table("calendar_source")
+    event = table("calendar_event")
+    assert source.c.is_visible.nullable is False
+    assert str(source.c.is_visible.server_default.arg) == "true"
+    assert event.c.description_md.nullable is True
+    assert event.c.all_day.nullable is False
+    assert str(event.c.all_day.server_default.arg) == "false"

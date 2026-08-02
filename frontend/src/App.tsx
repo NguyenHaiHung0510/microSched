@@ -1,11 +1,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { LogIn, LogOut, RefreshCw } from 'lucide-react'
+import { CalendarDays, ListTodo, LogIn, LogOut, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { CalendarScreen } from '@/CalendarScreen'
 import { TasksScreen } from '@/TasksScreen'
 
 type SessionResponse = {
@@ -63,6 +65,7 @@ function LoginScreen() {
 }
 
 function SignedIn() {
+  const [activeTab, setActiveTab] = useState<'tasks' | 'calendar'>('tasks')
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -93,7 +96,29 @@ function SignedIn() {
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
-        <TasksScreen />
+        <div className="mb-5 flex flex-wrap gap-2" role="tablist" aria-label="Khu vực ứng dụng">
+          <Button
+            role="tab"
+            aria-selected={activeTab === 'tasks'}
+            variant={activeTab === 'tasks' ? 'secondary' : 'ghost'}
+            size="lg"
+            onClick={() => setActiveTab('tasks')}
+          >
+            <ListTodo data-icon="inline-start" />
+            Task
+          </Button>
+          <Button
+            role="tab"
+            aria-selected={activeTab === 'calendar'}
+            variant={activeTab === 'calendar' ? 'secondary' : 'ghost'}
+            size="lg"
+            onClick={() => setActiveTab('calendar')}
+          >
+            <CalendarDays data-icon="inline-start" />
+            Lịch
+          </Button>
+        </div>
+        {activeTab === 'tasks' ? <TasksScreen /> : <CalendarScreen />}
         {logout.isError ? (
           <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>
         ) : null}

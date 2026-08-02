@@ -240,6 +240,10 @@ class CalendarSource(UUIDTimestampModel, table=True):
     name: str = Field(sa_column=Column(Text, nullable=False))
     kind: str = Field(sa_column=Column(Text, nullable=False))
     color: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    is_visible: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=text("true")),
+    )
 
 
 class CalendarEvent(UUIDTimestampModel, table=True):
@@ -264,6 +268,11 @@ class CalendarEvent(UUIDTimestampModel, table=True):
     location: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     starts_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     ends_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    description_md: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    all_day: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+    )
     is_hidden: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),

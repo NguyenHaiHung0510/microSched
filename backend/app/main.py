@@ -15,6 +15,7 @@ from app.core.settings import get_settings
 from app.web.deps import require_session
 from app.web.oauth import OAUTH_STATE_COOKIE, OAUTH_STATE_TTL_SECONDS
 from app.web.routers.auth import router as auth_router
+from app.web.routers.calendar import router as calendar_router
 from app.web.routers.cron import router as cron_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
@@ -76,6 +77,27 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
 
+    @app.middleware("http")
+    async def calendar_import_body_guard(request: Request, call_next):
+        """Reject oversized import bodies before FastAPI parses their JSON."""
+        if (
+            request.method == "POST"
+            and request.url.path.startswith("/api/calendar/sources/")
+            and request.url.path.endswith("/import")
+            and (content_length := request.headers.get("content-length")) is not None
+        ):
+            try:
+                too_large = int(content_length) > 2 * 1024 * 1024
+            except ValueError:
+                too_large = False
+            if too_large:
+                return Response(
+                    content='{"detail":"Request body quá lớn."}',
+                    status_code=413,
+                    media_type="application/json",
+                )
+        return await call_next(request)
+
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(cron_router)
@@ -85,6 +107,7 @@ def create_app() -> FastAPI:
     protected_api = APIRouter(prefix="/api", dependencies=[Depends(require_session)])
     protected_api.include_router(me_router)
     protected_api.include_router(tasks_router)
+    protected_api.include_router(calendar_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:
