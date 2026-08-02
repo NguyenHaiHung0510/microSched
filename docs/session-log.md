@@ -148,4 +148,45 @@ MCP server `agy-bridge` (cài `-s user`, gọi binary `agy` = Antigravity CLI) �
 
 **⚠️ Bẫy chất lượng (đo 24/07):** auto-routing **rơi về "agy default"** (`no preferred model available`) ⇒ **phải truyền `model:` tên THẬT từ `agy models`** (không phải tên đẹp trong schema). Đo thật: fact-finding + phản biện thường → `gemini-3.6-flash-high` (bắt đủ lỗ critical, 0 bịa); review cao nhất/vét cạn → `gemini-3.1-pro-high`; **đừng** chọn `claude-*` của agy cho `adversarial_review` (mất tác dụng khác-họ). **Tên model cứng + bảng lane + probe tái dùng ở memory `agy-model-capabilities`; `agy models` đổi danh sách ⇒ DỪNG, báo chủ re-probe.** Kết quả agy là **cố vấn**, KHÔNG phải biên lai code — luật biên lai (PR#/checks/diff/SHA) chỉ áp cho code T2/Codex; T1 vẫn tự kiểm cái gì quan trọng (Gemini vẫn bịa).
 
+---
+
+## 2026-08-02 — 011c viết mới + 012/020 viết mới + vá hai vòng phản biện, PR #84
+
+**Việc làm:** dùng phần "T1 còn dư budget" của phiên trước để (1) viết `011c` (subscription/renewal +
+F6 dashboard + `app_setting` CRUD) — mảnh giữa còn thiếu khiến `011b` (đã viết đầy đủ) không thể thi
+công thật; (2) trong lúc viết `011c`, phát hiện và vá tại chỗ hai lỗ hổng nằm GIỮA các spec đã viết
+(routing seam cho deep link web push chưa ai sở hữu; `app_setting` CRUD generic có nguy cơ lộ PIN hash
+nếu không có allowlist); (3) viết mới `012` (cutover dữ liệu thật) + `020` (3 cột giữ dữ liệu app cũ,
+phụ thuộc cứng của `012`) — lộ ra khi map cột-với-cột cho cutover; (4) chạy hai vòng phản biện T3
+(`agy-bridge`, model `gemini-3.1-pro-high`) + T2 (`codex exec -m gpt-5.6-sol -s danger-full-access`,
+chạy nền) — vòng 1 trên 011a/011b/011c (9 finding T3, 18 finding T2), vòng 2 trên 012/020 (8 finding
+T3, 16 finding T2) — T1 kiểm tay từng finding đối chiếu repo thật trước khi vá, vá finding đúng, bác
+finding sai kèm lý do (không âm thầm bỏ qua, không âm thầm nhận).
+
+**Finding nặng nhất cả hai vòng:** predicate nhận diện "buổi lịch thủ công" ở `012` bản đầu
+(`calendar_sources.kind='manual_task_calendar'` / `event_type='manual'`) **không tồn tại trên đường ghi
+thật của app cũ** — T2 tự đọc code app cũ (`old main.py:1774-1792`,
+`app/migration/migrate_sqlite_to_postgres.py:261,329`) để chứng minh, không suy đoán. Với predicate cũ,
+script sẽ đếm ra 0 dòng ở **mọi lần chạy thật**, và vì spec cũ coi "đếm ra 0 ⇒ bỏ qua, bình thường" là
+đường thoát hợp lệ, đây là dạng lỗi tệ nhất: mất **im lặng** đúng dữ liệu mục đó viết ra để cứu, không
+một cảnh báo nào bật lên. Nhận diện đúng nằm ở `external_uid` (`manual_%` = thêm tay, `v1-schedule-%` =
+import gốc từ SQLite), không phải `kind`/`event_type`. Chi tiết đầy đủ cả hai vòng + finding bị bác
+(orphaned `priority_id` FK — T3 nêu nhưng FK enforced ở nguồn nên tình huống không thể xảy ra): `012`
+§10, `020` §6, `011c` §8.
+
+**Trạng thái cuối phiên:** `011a`/`011b`/`011c`/`012`/`020` đều **DRAFT, đã qua phản biện, chưa qua
+duyệt bản chi tiết của chủ**. Không có code thi công, không migration nào áp lên Neon, không hành vi
+app production nào đổi. Toàn bộ nằm trên nhánh `docs/011-tracker-specs`, PR #84 (mô tả đã đồng bộ theo
+phạm vi thật của nhánh, trước đó mô tả cũ chỉ nói 011a+011b).
+
+**Bài học phương pháp (chi tiết ở `learnings-applied.md`):** một reviewer full-access có thể tự đọc
+code NGOÀI repo mục tiêu (ở đây: repo app cũ, tách biệt hoàn toàn) làm bằng chứng — đây là cách bắt được
+finding nặng nhất, không phải suy luận. Và: thiết kế verify theo "so sánh TOÀN BẢNG hai đầu" vỡ ngay khi
+đích được phép không-rỗng (một quy tắc chung cho mọi script ghi-một-lần lên hệ thống đang sống).
+
+**Phiên kế tiếp (chủ chọn):** (a) đọc + duyệt bản chi tiết 011a/011b/011c/012/020 — có thể làm ngay
+trong PR #84; (b) hoặc bỏ qua bước duyệt-đọc-từng-dòng, tin vào vòng phản biện đã chạy, giao thẳng cho
+Codex thi công theo đúng thứ tự hàng đợi (`010a → 010b → 011a → 011c → 011b → 020 → 012`); (c) việc kế
+tiếp KHÔNG phụ thuộc phiên này: `010a` đã duyệt từ trước, sẵn sàng giao Codex bất kỳ lúc nào.
+
 **Quota:** 2 account Google AI Pro (2× hạn mức) — **ưu tiên cho agy (hỗ trợ T1 + chạy test T3), KHÔNG dồn vào Jules** (Jules hiện quá phế: một workflow tự do đốt quota khổng lồ + vẫn phải lọc PR = lỗ ròng). Gemini báo hết quota giữa chừng ⇒ T1 **dừng, nhắc chủ log out → account 2** (tên account cố ý không ghi trong repo). **Máy mới:** cần `agy` trên `PATH` hoặc set `AGY_PATH`, rồi `claude mcp add-json -s user agy-bridge '{...}'`.
