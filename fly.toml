@@ -1,6 +1,6 @@
 # Quyết định + lý do cho MỌI giá trị dưới đây: docs/architecture-brief.md §5.
 # File này bị `fly launch`/`fly deploy` sinh lại và XOÁ COMMENT (đã xảy ra 23/07)
-# nên KHÔNG ghi lý do ở đây — ghi ở §5. Giá trị nhạy (min_machines_running=0,
+# nên KHÔNG ghi lý do ở đây — ghi ở §5. Giá trị nhạy (min_machines_running=1,
 # path=/api/healthz) giải thích tại đó; sửa file này thì đọc §5 trước.
 
 app = 'microsched'
@@ -12,9 +12,9 @@ primary_region = 'sin'
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = 'suspend'
+  auto_stop_machines = false
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ['app']
 
   [[http_service.checks]]

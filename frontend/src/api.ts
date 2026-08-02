@@ -16,10 +16,11 @@ export class ApiError extends Error {
 /** Mạng treo là một kết cục riêng, không phải một lỗi HTTP — nó cần lời riêng. */
 export class TimeoutError extends Error {}
 
-/* Máy chủ chạy scale-to-zero nên lần gọi đầu sau khi máy ngủ phải trả tiền đánh
-   thức (đo được khoảng 8 giây). 20 giây là gấp đôi con số đó cộng biên: đủ rộng
-   để một lần đánh thức bình thường KHÔNG bị cắt oan, đủ hẹp để người dùng không
-   ngồi nhìn một nút đứng im tới vô hạn. */
+/* Mọi request phải có một kết cục hữu hạn kể cả khi mạng di động, proxy hoặc
+   server treo. 20 giây rộng hơn nhiều so với lần đánh thức Neon đã đo (~1,7 giây)
+   và các request tương tác bình thường, nhưng vẫn đủ ngắn để người dùng không
+   nhìn một nút đứng im tới vô hạn. Tác vụ nặng như import lịch dùng `timeoutMs`
+   tường minh; caller signal vẫn được ghép vào chứ không thay timeout. */
 const REQUEST_TIMEOUT_MS = 20_000
 type ApiRequestInit = RequestInit & { timeoutMs?: number }
 

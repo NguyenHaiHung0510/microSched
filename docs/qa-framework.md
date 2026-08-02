@@ -36,7 +36,7 @@ nếu T3 tắc. T1 chỉ **viết kịch bản** và **đọc kết quả**.
 
 | | Bắt buộc | Ghi chú |
 |---|---|---|
-| Môi trường | `microsched.fly.dev` (bản đang chạy thật) | Không QA trên `vite dev` — service worker, bản build, và cold start đều khác |
+| Môi trường | `microsched.fly.dev` (bản đang chạy thật) | Không QA trên `vite dev` — service worker, production build/config, mạng thật, Neon wake-up và lifecycle deploy/restart đều khác |
 | Viewport chính | **390 × 844** (iPhone) | Thiết bị chính của chủ. Mọi mục đỏ ở đây là đỏ thật |
 | Viewport phụ | 1280 × 800 | Chỉ để kiểm lối tắt desktop (hover) không hỏng |
 | Thiết bị thật | ít nhất 1 lượt/slice trên iPhone thật | Bàn phím ảo, safe area, và độ nhạy chạm không mô phỏng được |

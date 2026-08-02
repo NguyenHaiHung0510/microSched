@@ -390,8 +390,9 @@ Luồng `POST /api/cron/reminder`:
    sau khi transaction đã lưu row ở `pending` (§1.4), để Cloud Scheduler thật sự kích retry. Chỉ log warning mà
    vẫn `200` thì cơ chế "retry kế tiếp" trong §1.4 không bao giờ xảy ra.
 6. **Giữ nguyên hành vi ghi RSS/uptime của heartbeat cũ ở CẢ BA khe** (không chỉ khe có nhắc) — rẻ,
-   và tăng tần suất mẫu canh rò rỉ bộ nhớ `suspend` từ 1 lần/ngày lên 3 lần/ngày, đúng mục đích gốc
-   của heartbeat (`devops-brief.md` §10 dòng "canh rò rỉ bộ nhớ").
+   và tăng tần suất mẫu canh rò rỉ bộ nhớ của tiến trình always-on từ 1 lần/ngày lên 3 lần/ngày.
+   `suspend` không còn là lý do, nhưng tiến trình 256MB sống dài giữa các lần deploy vẫn cần cùng mẫu
+   quan sát (`devops-brief.md` §10).
 
 ### 3.5 `app/web/routers/push.py` — CRUD subscription, sau `require_session`
 
