@@ -3,7 +3,9 @@
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: không cần.**
 > **Trạng thái: DRAFT — viết bởi T1 (Opus 5) 2026-08-01, chủ đã chốt hướng, chưa duyệt bản chi tiết.**
-> Phản biện: 1 lượt là đủ (tiền lệ `008g` — migration thuần cộng cột, theo đúng khuôn `0004`).
+> Phản biện: đã chạy chung một vòng với `012` 2026-08-02 (không tách riêng 1 lượt như dự tính ban đầu,
+> vì `012` viết trước làm lộ ra `020` không chỉ "migration thuần cộng cột" — cột `completed_at` có
+> logic nối dây thật). T1 đã vá mọi finding xác nhận đúng (xem §6 cuối file).
 
 ## 0. Vì sao có task này
 
@@ -49,7 +51,7 @@ File mới `backend/alembic/versions/0006_legacy_preserving_columns.py`, theo đ
 | Cột | Bảng | Kiểu | Ghi chú |
 |---|---|---|---|
 | `completed_at` | `task` | `TIMESTAMPTZ NULL` | Không backfill. Hàng cũ để `NULL` — nghĩa là "không biết", không phải "chưa xong". |
-| `pinned` | `note` | `BOOLEAN NOT NULL DEFAULT false` | Y hệt `task.pinned` (`0004`) để hai thực thể cùng hình dạng. |
+| `pinned` | `note` | `BOOLEAN NOT NULL DEFAULT false` | Y hệt `task.pinned` (`0004`) để hai thực thể cùng hình dạng — **kể cả** cách khai ở `models.py`: `sa_column=Column(Boolean, nullable=False, server_default=text("false"))` (`Task.pinned`, `models.py:135-137`), không chỉ Pydantic `default=False`. Thiếu `server_default` là drift thật: `check_migration_drift` so `compare_server_default`, migration có `server_default` mà model không khai cũng bị soi ra lệch. *(2026-08-02, làm rõ sau phản biện T3.)* |
 | `priority` | `note` | `TEXT NULL` + `CHECK (priority IS NULL OR priority IN ('p1','p2','p3'))` | Cùng CHECK với `task.priority` — dùng lại nguyên văn ràng buộc ở `models.py:107-110`, đừng phát minh thang khác. |
 
 `downgrade()` drop cả ba (drop trong `downgrade` không cần nhãn review — `scripts/check_migration_drops.py`
@@ -70,6 +72,35 @@ Một cột không ai ghi là một cột chết. Trong task store (`backend/app
 - `TaskRead` thêm `completed_at` để client đọc được. **Không** thêm vào `TaskCreate`/`TaskUpdate` —
   đây là trường do server suy ra, không phải do client khai.
 
+> 📝 **2026-08-02 — LÀM RÕ hai điểm sau phản biện T2 + T3, "chuyển" đọc mơ hồ dễ cài sai ngay lần đầu.**
+>
+> **1. `PATCH /task/{id}` — bắt buộc so `old_status` với `new_status`, không so một chiều.**
+> `TaskStore.update()` hiện đã có sẵn khuôn đúng: `changes = payload.model_dump(exclude_unset=True)`
+> rồi set field trong loop (`tasks.py:294`, `339-341`). Cắm `completed_at` vào **đúng** loop đó, nhưng
+> phải lấy `old_status = task.status` **trước** khi gán field mới, rồi chỉ set mốc khi
+> `"status" in changes and changes["status"] != old_status`:
+> - `old_status != "completed"` và `new_status == "completed"` ⇒ `completed_at = now()`.
+> - `old_status == "completed"` và `new_status == "open"` ⇒ `completed_at = None`.
+> - mọi trường hợp khác (kể cả `"status" in changes` nhưng `new_status == old_status` — ví dụ client
+>   PATCH gửi lại nguyên `status` hiện tại kèm đổi `title`) ⇒ **không chạm** `completed_at`.
+>
+> Nếu chỉ viết "khi status chuyển sang completed thì set `completed_at=now()`" mà không neo vào
+> `old_status`, cài tự nhiên nhất (`if changes.get("status") == "completed": completed_at = now()`) sẽ
+> **ghi đè mốc hoàn thành cũ** mỗi lần PATCH một task đã completed từ trước kèm `status: "completed"`
+> trong payload (kể cả khi giá trị không đổi) — mất đúng mốc mà `012` vừa cutover từ dữ liệu cũ sang.
+> Test bắt buộc thêm: PATCH `{"status":"completed"}` **hai lần liên tiếp** trên cùng một task ⇒
+> `completed_at` của lần gọi thứ hai phải **bằng hệt** lần đầu, không nhảy tới `now()` mới.
+>
+> **2. `POST /task` với `status="completed"` ngay từ đầu — hiện KHÔNG được cutover-020 nối dây.**
+> `TaskCreate` cho phép `status: TaskStatus = "open"` bao gồm giá trị `"completed"` (`tasks.py:58,64`),
+> và `TaskStore.create()` ghi thẳng `payload.status` (`tasks.py:235`) mà không đụng `completed_at`. Kết
+> quả: tạo task mới với `status="completed"` ngay từ `POST` sẽ để lại `completed_at = NULL` — một task
+> "đã xong" nhưng không có mốc xong, chính cái lỗ mà cột này sinh ra để vá. Không cấm giá trị đó ở
+> `TaskCreate` (đường thi công `008`/`009` đã cho phép, không phải phạm vi task này để đổi), chỉ cần
+> đối xứng với luật `update()`: trong `TaskStore.create()`, nếu `payload.status == "completed"` thì set
+> `values["completed_at"] = now()` cùng lúc set `status`. Test bắt buộc thêm: `POST /task` với
+> `status:"completed"` ⇒ response có `completed_at` khác `null`.
+
 ## 4. Cố ý KHÔNG làm
 
 - **Không** dựng UI ghim/ưu tiên cho note. Hai cột đó ở task này chỉ để **`012` có chỗ đổ dữ liệu vào**;
@@ -80,15 +111,48 @@ Một cột không ai ghi là một cột chết. Trong task store (`backend/app
 - **Không** tự áp migration lên Neon nếu chưa được chủ bật đèn — theo luật `CLAUDE.md`
   ("migrations are never auto-applied on deploy"). `010a` §581 có tiền lệ chủ cho Codex tự chạy;
   **task này chưa có tiền lệ đó**, phải hỏi.
+- **Không** chạy `alembic downgrade` nhắm vào Neon, kể cả để test. `backend/alembic/env.py:19,27,34-36`
+  đọc thẳng `neon_migrator_url` từ `backend/.env` mà **không có guard chặn remote host** — không có gì
+  ở tầng Alembic tự ngăn một `downgrade -1` gõ nhầm chạy lên Neon thật. Round-trip test ở §5 mục 1
+  **chỉ được chạy trên Postgres throwaway local** (khuôn CI hiện có), không phải trên biến môi trường
+  trỏ Neon. *(2026-08-02, thêm sau phản biện T2 — phát hiện §5 mục 1 và luật này ở ngay phía trên nó
+  có thể tự mâu thuẫn nếu không nói rõ round-trip chạy ở đâu.)*
 
 ## 5. Acceptance (chạy được, không phải "làm cho tốt")
 
-1. `uv run alembic upgrade head` rồi `alembic downgrade -1` rồi `upgrade head` lại — cả ba xanh.
+1. `uv run alembic upgrade head` rồi `alembic downgrade -1` rồi `upgrade head` lại — cả ba xanh, **chạy
+   trên Postgres throwaway local/CI** (§4 — không phải Neon).
 2. `uv run python -m scripts.check_migration_drift` ⇒ `migration_drift=empty`.
 3. `uv run python -m scripts.check_migration_drops` ⇒ `migration_drop_guard=ok`.
 4. `uv run pytest` xanh, có **test mới**: tick xong ⇒ `completed_at` không NULL · mở lại ⇒ về NULL ·
-   đổi `title` mà không đụng `status` ⇒ `completed_at` giữ nguyên · ghi `note.priority='p4'` ⇒ DB từ chối.
+   đổi `title` mà không đụng `status` ⇒ `completed_at` giữ nguyên · PATCH `{"status":"completed"}` **hai
+   lần liên tiếp** trên task đã completed ⇒ `completed_at` không đổi giữa hai lần · `POST /task` với
+   `status:"completed"` ⇒ `completed_at` khác `null` ngay từ response đầu · ghi `note.priority='p4'` ⇒
+   DB từ chối.
 5. `uv run ruff check` + `uv run ruff format --check` sạch — **chạy đúng danh sách lệnh trong
    `.github/workflows/ci.yml`**, không chạy danh sách nhớ trong đầu.
 6. Sau khi áp lên Neon: query thật `information_schema.columns` thấy đủ 3 cột, và `pg_constraint`
    thấy CHECK mới của `note.priority`. **`alembic current` không tính là bằng chứng.**
+
+## 6. Vòng phản biện T2 + T3 (2026-08-02) — đã vá, ghi lại để không lặp lại
+
+Chạy chung một vòng với `012` (xem `012` §10 để biết đầy đủ setup). Phần liên quan tới file này:
+
+**Đã xác nhận đúng và vá trực tiếp** (dated note `2026-08-02` tại từng chỗ):
+- **[MAJOR, T2]** §3 chỉ nói "khi status chuyển open→completed" mà không nêu cơ chế so `old_status` với
+  `new_status` — cài tự nhiên nhất theo câu chữ gốc (`if new_status == "completed": completed_at =
+  now()`) sẽ ghi đè mốc hoàn thành cũ mỗi lần PATCH một task **đã** completed kèm `status:"completed"`
+  trong payload. Đã viết lại thành quy tắc so hai trạng thái tường minh + test PATCH-hai-lần-liên-tiếp.
+- **[MAJOR, T2]** `POST /task` với `status="completed"` ngay từ đầu không được nối dây — `TaskCreate`
+  cho phép giá trị đó (`tasks.py:58,64`), `TaskStore.create()` ghi thẳng `status` mà không đụng
+  `completed_at` (`tasks.py:235`) ⇒ ra một task "đã xong" nhưng `completed_at=NULL`. Đã thêm luật đối
+  xứng cho nhánh create + test.
+- **[BLOCKER, T2]** §5 mục 1 (round-trip `upgrade → downgrade -1 → upgrade`) không nói rõ chạy ở đâu,
+  trong khi `alembic env.py` đọc thẳng `NEON_MIGRATOR_URL` không có guard chặn remote host — nguy cơ
+  `downgrade` chạy nhầm lên Neon. Đã ghi cứng: round-trip chỉ chạy trên Postgres throwaway local/CI.
+- **[MINOR, T3]** "Y hệt `task.pinned`" không nói rõ có bao gồm `server_default=text("false")` ở
+  `models.py` hay chỉ Pydantic `default=False` — thiếu `server_default` là drift thật dưới
+  `compare_server_default`. Đã làm rõ: sao chép nguyên cách khai, không chỉ giá trị.
+
+**Không có finding nào bị xác nhận sai** ở phần dành cho file này (khác với `012`, nơi một finding của
+T3 bị bác sau khi kiểm DDL thật — xem `012` §10).
