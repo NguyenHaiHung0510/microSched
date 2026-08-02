@@ -153,7 +153,9 @@ export function groupEvents(events: CalendarEvent[]): Array<[string, CalendarEve
 }
 
 export function importConflict(error: unknown): { existingSourceId: string; message: string } | null {
-  const detail = (error as ApiError | undefined)?.detail
+  const responseBody = (error as ApiError | undefined)?.body
+  if (!responseBody || typeof responseBody !== 'object' || !('detail' in responseBody)) return null
+  const detail = (responseBody as { detail?: unknown }).detail
   if (!detail || typeof detail !== 'object') return null
   const body = detail as { code?: unknown; existing_source_id?: unknown; message?: unknown }
   if (body.code !== 'source_name_taken' || typeof body.existing_source_id !== 'string') return null
@@ -164,7 +166,11 @@ export function importConflict(error: unknown): { existingSourceId: string; mess
 }
 
 export function importErrorMessage(error: unknown): string {
-  const detail = (error as { detail?: unknown } | undefined)?.detail
+  const responseBody = (error as ApiError | undefined)?.body
+  const detail =
+    responseBody && typeof responseBody === 'object' && 'detail' in responseBody
+      ? (responseBody as { detail?: unknown }).detail
+      : undefined
   if (detail && typeof detail === 'object' && 'message' in detail) {
     const message = (detail as { message?: unknown }).message
     if (typeof message === 'string') return message

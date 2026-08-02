@@ -1,5 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="title">
-  <title>microSched placeholder icon</title>
-  <rect width="192" height="192" rx="40" fill="#171717"/>
-  <path d="M54 48v96M78 48v96M114 48v96M138 48v96" stroke="#fafafa" stroke-linecap="round" stroke-width="14"/>
+  <title id="title">microSched icon — hoa anh đào</title>
+  <rect width="192" height="192" rx="40" fill="#fbeef1"/>
+  <g fill="#f4a6c0">
+    <ellipse cx="96" cy="62" rx="20" ry="28"/>
+    <g transform="rotate(72 96 96)"><ellipse cx="96" cy="62" rx="20" ry="28"/></g>
+    <g transform="rotate(144 96 96)"><ellipse cx="96" cy="62" rx="20" ry="28"/></g>
+    <g transform="rotate(216 96 96)"><ellipse cx="96" cy="62" rx="20" ry="28"/></g>
+    <g transform="rotate(288 96 96)"><ellipse cx="96" cy="62" rx="20" ry="28"/></g>
+  </g>
+  <g fill="#d9a441">
+    <circle cx="90" cy="90" r="4"/>
+    <circle cx="102" cy="90" r="4"/>
+    <circle cx="96" cy="103" r="4"/>
+  </g>
 </svg>

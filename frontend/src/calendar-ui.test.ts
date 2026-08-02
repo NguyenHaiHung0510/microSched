@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { ApiError } from '@/api'
 import {
   addVietnamDays,
   allDayVietnamRange,
@@ -32,7 +33,12 @@ describe('calendar UI helpers', () => {
   })
 
   it('keeps event mutation errors available for the open dialog', () => {
-    expect(eventDialogErrorMessage(null, { detail: { message: 'Không lưu được.' } })).toBe('Không lưu được.')
+    expect(
+      eventDialogErrorMessage(
+        null,
+        new ApiError(422, 'Không lưu được.', { detail: { message: 'Không lưu được.' } }),
+      ),
+    ).toBe('Không lưu được.')
     expect(eventDialogErrorMessage('Lỗi trong form.', new Error('ignored'))).toBe('Lỗi trong form.')
   })
 

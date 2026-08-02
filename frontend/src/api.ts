@@ -4,12 +4,12 @@ export class UnauthenticatedError extends Error {}
 
 export class ApiError extends Error {
   status: number
-  detail: unknown
+  body: unknown
 
-  constructor(status: number, message: string, detail?: unknown) {
+  constructor(status: number, message: string, body?: unknown) {
     super(message)
     this.status = status
-    this.detail = detail
+    this.body = body
   }
 }
 
@@ -77,23 +77,37 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
     throw error
   }
 
-  if (response.status === 401) {
+  let body: unknown
+  if (response.status !== 204) {
+    try {
+      body = await response.json()
+    } catch {
+      // A proxy may return a non-JSON error; status still carries the verdict.
+    }
+  }
+
+  const detail =
+    body && typeof body === 'object' && 'detail' in body
+      ? (body as { detail?: unknown }).detail
+      : undefined
+
+  // Private PIN mismatch deliberately uses 401 too, with a different envelope.
+  // Only the shared auth guard means "the login session is gone".
+  if (
+    response.status === 401 &&
+    (body === undefined || detail === 'Not authenticated')
+  ) {
     throw new UnauthenticatedError('No active session')
   }
 
   if (!response.ok) {
-    let message = `API request failed with status ${response.status}`
-    let detail: unknown
-    try {
-      const body = (await response.json()) as { detail?: unknown }
-      detail = body.detail
-      if (typeof body.detail === 'string' && body.detail) message = body.detail
-    } catch {
-      // The status remains the useful error when a proxy returns a non-JSON body.
-    }
-    throw new ApiError(response.status, message, detail)
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : `API request failed with status ${response.status}`
+    throw new ApiError(response.status, message, body)
   }
 
   if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+  return body as T
 }

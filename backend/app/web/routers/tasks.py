@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import AuthSession
 from app.domain.tasks import (
+    PrivateWriteLocked,
     TaskCreate,
     TaskIdConflict,
     TaskItemCreate,
@@ -31,6 +32,13 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
 
+def _private_locked() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Private mode is locked",
+    )
+
+
 @router.get("/tasks", response_model=dict[str, list[TaskRead]])
 async def list_tasks(
     db: Database,
@@ -52,6 +60,8 @@ async def create_task(
         task = await store.create(db, session, payload)
     except TaskIdConflict:
         return Response(status_code=status.HTTP_409_CONFLICT)
+    except PrivateWriteLocked as error:
+        raise _private_locked() from error
     response.status_code = status.HTTP_201_CREATED if task.created else status.HTTP_200_OK
     return task
 
@@ -70,7 +80,10 @@ async def update_task(
     task_id: UUID, payload: TaskUpdate, db: Database, session: CurrentSession
 ) -> TaskRead:
     """Patch one visible task."""
-    task = await store.update(db, session, task_id, payload)
+    try:
+        task = await store.update(db, session, task_id, payload)
+    except PrivateWriteLocked as error:
+        raise _private_locked() from error
     if task is None:
         raise _not_found()
     return task

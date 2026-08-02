@@ -27,6 +27,15 @@ export type FixtureTask = {
 
 const past = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
 const future = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString()
+const privateWindow = () => new Date(Date.now() + 36 * 60_000).toISOString()
+
+function randomPin(): string {
+  return Array.from({ length: 6 }, () => Math.floor(Math.random() * 10)).join('')
+}
+
+export const fixturePrivatePin = randomPin()
+export let fixtureWrongPin = randomPin()
+while (fixtureWrongPin === fixturePrivatePin) fixtureWrongPin = randomPin()
 
 const adversarialNoBreak = 'A'.repeat(70)
 const adversarialVietnamese =
@@ -112,6 +121,11 @@ export const fixtureTasks: FixtureTask[] = [
 export type TaskApiState = {
   tasks: FixtureTask[]
   sessionStatus: number
+  privateUntil: string | null
+  privateLockedUntil: string | null
+  pinIsSet: boolean
+  pinIsBootstrap: boolean
+  wrongPinCount: number
   counts: Record<string, number>
   count(method: string, path: string): number
   resetCounts(): void
@@ -142,6 +156,11 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
     const state: TaskApiState = {
       tasks: cloneTasks(),
       sessionStatus: 200,
+      privateUntil: privateWindow(),
+      privateLockedUntil: null,
+      pinIsSet: true,
+      pinIsBootstrap: true,
+      wrongPinCount: 0,
       counts: {},
       count(method, path) {
         return this.counts[`${method}:${path}`] ?? 0
@@ -169,13 +188,92 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
             email: 'qa@example.test',
             signed_in_at: new Date().toISOString(),
             expires_at: future(30),
+            private_until: state.privateUntil,
+            private_locked_until: state.privateLockedUntil,
+            pin_is_set: state.pinIsSet,
+            pin_is_bootstrap: state.pinIsBootstrap,
           }),
         )
         return
       }
 
+      if (path === '/api/private/unlock' && method === 'POST') {
+        const now = Date.now()
+        const lockedUntil = state.privateLockedUntil
+          ? Date.parse(state.privateLockedUntil)
+          : 0
+        if (lockedUntil > now) {
+          const retryAfterSeconds = Math.max(1, Math.ceil((lockedUntil - now) / 1000))
+          await route.fulfill({
+            ...jsonResponse(
+              {
+                detail: 'Đang khoá tạm',
+                retry_after_seconds: retryAfterSeconds,
+              },
+              429,
+            ),
+            headers: { 'Retry-After': String(retryAfterSeconds) },
+          })
+          return
+        }
+
+        const payload = JSON.parse(request.postData() ?? '{}') as { pin?: string }
+        if (payload.pin !== fixturePrivatePin) {
+          state.wrongPinCount += 1
+          if (state.wrongPinCount === 10) {
+            state.privateLockedUntil = new Date(now + 5 * 60_000).toISOString()
+            await route.fulfill({
+              ...jsonResponse(
+                {
+                  detail: 'Đang khoá tạm',
+                  retry_after_seconds: 300,
+                },
+                429,
+              ),
+              headers: { 'Retry-After': '300' },
+            })
+            return
+          }
+          await route.fulfill(
+            jsonResponse(
+              { detail: 'Sai PIN', remaining: 10 - state.wrongPinCount },
+              401,
+            ),
+          )
+          return
+        }
+
+        state.wrongPinCount = 0
+        state.privateLockedUntil = null
+        state.privateUntil = privateWindow()
+        await route.fulfill(jsonResponse({ private_until: state.privateUntil }))
+        return
+      }
+
+      if (path === '/api/private/lock' && method === 'POST') {
+        state.privateUntil = null
+        await route.fulfill({ status: 204 })
+        return
+      }
+
+      if (path === '/api/private/pin' && method === 'POST') {
+        state.pinIsSet = true
+        state.pinIsBootstrap = false
+        state.wrongPinCount = 0
+        state.privateLockedUntil = null
+        await route.fulfill({ status: 204 })
+        return
+      }
+
       if (path === '/api/tasks' && method === 'GET') {
-        await route.fulfill(jsonResponse({ items: state.tasks }))
+        const privateOpen = Boolean(
+          state.privateUntil && Date.parse(state.privateUntil) > Date.now(),
+        )
+        await route.fulfill(
+          jsonResponse({
+            items: state.tasks.filter((entry) => !entry.is_private || privateOpen),
+          }),
+        )
         return
       }
 

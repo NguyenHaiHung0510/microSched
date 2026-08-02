@@ -22,7 +22,7 @@ from app.core.settings import Settings, get_settings
 from app.domain.auth import PostgresSessionStore
 from app.domain.models import AuthSession
 from app.main import create_app
-from app.web.deps import get_session_store, require_cron_token, require_session
+from app.web.deps import get_session, get_session_store, require_cron_token, require_session
 
 ALLOWED_EMAIL = "owner@example.com"
 BLOCKED_EMAIL = "stranger@example.com"
@@ -102,8 +102,23 @@ class _FakeOAuth:
 
 def build_client(store: InMemorySessionStore) -> TestClient:
     """Return a client whose session storage is the in-memory double."""
+
+    class EmptyResult:
+        def scalar_one_or_none(self):
+            return None
+
+    class NoSettingsSession:
+        async def execute(self, _statement):
+            return EmptyResult()
+
+    async def no_settings_session():
+        yield NoSettingsSession()
+
     app = create_app()
     app.dependency_overrides[get_session_store] = lambda: store
+    # /api/me now reports the private gate stored in app_setting. Existing auth
+    # tests remain database-free by supplying an empty settings view explicitly.
+    app.dependency_overrides[get_session] = no_settings_session
     return TestClient(app)
 
 
