@@ -203,6 +203,11 @@ flyctl ssh console -a microsched -C "python -X importtime -c 'import app.main'"
 
 **Phạm vi đề xuất:** đọc `-X importtime` · import đắt vs import rẻ, lazy import có đáng không · `.pyc` sống ở đâu và khi nào mất · vì sao `suspend` **bỏ qua hẳn** khúc này (và vì thế D2 chỉ còn quan trọng cho lần dậy sau deploy / sau khi mất snapshot). **Không** cần học: gunicorn worker tuning, uvloop micro-benchmark — 1 user, 1 process.
 
+> 📝 **2026-08-02 — D2 hạ ưu tiên sau khi trở lại always-on.** Python boot time nay chỉ nằm trên
+> đường deploy/restart/replacement, không còn nằm trên mỗi lần chủ mở app. Bài học và số đo 23/07 vẫn
+> đúng cho cấu hình thời đó; hàng đợi D2 hiện không còn là đòn bẩy UX thường ngày. Lệnh
+> `python -X importtime` phía trên vẫn là vòng đo đúng nếu sau này tối ưu deploy/recovery.
+
 ## 2026-07-24 — 008a + 008d qua Agent-Opus: điều phối + hai bài vận hành
 
 - **"Merge ≠ migration applied" — biến thể mới của gap-giữa-hai-thứ-đều-đúng.** CD deploy code lên Fly nhưng **không** chạy `alembic upgrade head`: không `release_command` trong `fly.toml`, không bước alembic trong `deploy.yml` — migration cố ý chạy tay qua `NEON_MIGRATOR_URL` (role không lên Fly). Merge PR migration xong, constraint **chưa** ở Neon cho tới khi có người chạy tay; không lỗi, không cảnh báo, PR đóng trông như xong. Cùng họ sự cố Neon: deploy đúng việc của deploy, migration đúng, lỗ nằm ở **khoảng trống giữa**. ⇒ Với mọi migration 009–012: áp tay lên Neon **rồi verify bằng query `pg_constraint` thật**, không dừng ở `alembic current = 0002` (current chỉ nói revision đã ghi, không nói constraint đúng nội dung).

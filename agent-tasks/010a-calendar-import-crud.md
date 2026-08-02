@@ -448,11 +448,15 @@ tab kia đang làm: `role="tab"` + `aria-selected` + `Button variant`, icon từ
    Chọn "nhập đè" ⇒ gọi `POST /sources/{existing_source_id}/import` (id lấy từ body 409, §4.2), tức
    đúng luồng thay-sạch ở §2 mục 2. Tự thêm hậu tố là cách chắc chắn để chủ tích luỹ 4 nguồn trùng
    nhau sau 4 lần import.
-5. **🆕 Import có thể chạm trần 20 giây của `apiRequest`.** `frontend/src/api.ts:19,52` áp
-   `AbortSignal.timeout(20_000)` cho **mọi** request; import 5000 buổi cộng cold start ~8 giây của
-   Fly có thể vượt. Cho riêng lời gọi import một timeout rộng hơn (60 giây). Quan trọng hơn: **nói
-   với người dùng rằng thử lại là an toàn** — import là thay-sạch nên chạy lại cho kết quả y hệt,
-   không nhân đôi. Không có câu đó thì một lần timeout sẽ khiến chủ tưởng dữ liệu hỏng (bắt bởi T2).
+5. **🆕 Import có thể chạm trần mặc định 20 giây của `apiRequest`.** `frontend/src/api.ts:19,57`
+   đặt timeout mặc định 20 giây cho request không override; parse và ghi 5000 buổi trên một shared
+   vCPU có thể tự nó vượt trần này dù Fly nay luôn thức. Shared helper phải có option tường minh
+   (`timeoutMs`, mặc định vẫn `20_000`) và lời gọi import dùng `60_000`. **Chỉ truyền
+   `AbortSignal.timeout(60_000)` từ caller là sai:** `requestSignal()` hiện ghép caller signal với
+   timer nội bộ 20 giây, nên timer ngắn hơn vẫn thắng. Caller signal vẫn phải được ghép để unmount có
+   thể huỷ request. Quan trọng hơn: **nói với người dùng rằng thử lại là an toàn** — import là
+   thay-sạch nên chạy lại cho kết quả y hệt, không nhân đôi. Không có câu đó thì một lần timeout sẽ
+   khiến chủ tưởng dữ liệu hỏng (bắt bởi T2).
 6. **🆕 Không render mô tả bằng HTML thô.** `description_md` là nội dung từ file bên ngoài. Cấm
    `dangerouslySetInnerHTML`; nếu render markdown thì phải qua renderer có sanitize. Lưu nguyên văn
    trong DB là đúng hợp đồng; *đổ nguyên văn vào DOM* thì không.

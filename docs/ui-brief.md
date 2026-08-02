@@ -138,4 +138,10 @@ Bốn mục dưới đây là **sửa/nói rõ luật đã có**, không phải 
 
 **(c) 🔒 Mọi lời gọi mạng phải có hạn — không có ngoại lệ.** `apiRequest` từng gọi `fetch` không timeout: request treo ⇒ promise không settle ⇒ mutation kẹt `isPending` **vĩnh viễn** ⇒ nút đứng ở "Đang thêm…", không lỗi, không retry, không đường thoát ngoài tải lại trang. Đã vá bằng `AbortSignal.timeout(20s)` + `TimeoutError`. Kèm một luật con dễ quên: **`onSuccess` của mutation đừng `await invalidateQueries`** — React Query giữ mutation ở `isPending` cho tới khi `onSuccess` resolve, nên await ở đó làm nút vẫn báo "đang lưu" *dù đã lưu xong*, và treo theo nếu lượt tải lại treo. Con số 20 giây neo vào thời gian đánh thức máy (~8s, hệ quả scale-to-zero): **đổi hạ tầng thì phải xem lại con số này.**
 
+> 📝 **2026-08-02 — đã xem lại sau khi Fly chuyển về always-on: giữ 20 giây.** Con số này nay neo
+> vào yêu cầu mọi thao tác phải có kết cục hữu hạn khi mạng di động, proxy hoặc server treo; nó rộng
+> hơn nhiều so với Neon wake-up đã đo (~1,7s) và request tương tác bình thường. Nó **không còn neo vào
+> Fly cold start**. Tác vụ nặng như import lịch dùng timeout override tường minh (`timeoutMs`) của
+> shared API helper; caller `signal` vẫn được ghép vào timeout đó để giữ cả hạn giờ lẫn huỷ khi unmount.
+
 **(d) 🔒 Nghiệm thu giao diện phải dùng dữ liệu ác ý, không dùng dữ liệu gọn gàng.** `Item 1`…`Item 5` thì layout nào cũng sống. Bộ tối thiểu phải thử ở mọi slice: chuỗi ~70 ký tự **không có dấu cách** (không có chỗ ngắt dòng), tiếng Việt ~150 ký tự dấu dày (kiểm dấu `ế ữ ộ ằ` có bị cắt theo chiều cao dòng), CHỮ HOA CÓ DẤU, emoji lẫn chữ, đúng 1 ký tự, thừa khoảng trắng hai đầu, và chuỗi **toàn khoảng trắng** (phải bị từ chối). Câu hỏi khi nghiệm thu là *"nó vỡ ở đâu"*, không phải *"nó có chạy không"* — và câu trả lời phải nói rõ: xuống dòng / cắt bằng dấu ba chấm / tràn ra ngoài thẻ / đẩy nút hành động ra khỏi màn / nuốt mất chữ.

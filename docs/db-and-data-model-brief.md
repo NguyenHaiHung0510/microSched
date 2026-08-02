@@ -46,6 +46,9 @@ Ngân sách mục tiêu <\$1/tháng cho managed Postgres ≈ **free tier** (flat
 ### 📝 2026-07-20 — cơ chế mã hóa dump + vị trí khóa ✅ CHỐT (đóng phiên encryption-review, `tracking-brief.md` §6)
 
 - **Công cụ: `age`** (keypair, không cần secret nào để *mã hóa* — public key nằm thẳng trong repo/script là an toàn theo thiết kế của `age`). Cron GitHub Actions chạy `age -r <public-key>` lên file `pg_dump -Fc` trước khi đẩy lên Drive; **private key chỉ cần lúc restore/verify**, không cần trong quy trình backup thường ngày → giảm bề mặt lộ khóa.
+  > 📝 **2026-08-02:** câu “Cron GitHub Actions” trên là kế hoạch tại thời điểm 20/07. Lịch cron
+  > production đã chuyển sang Google Cloud Scheduler (`devops-brief.md` §10); pipeline backup thật
+  > vẫn chưa được thi công, nên chưa gán provider hiện hành cho nó.
 - **Vị trí lưu private key `age`** (và master key AES-GCM mã hóa cột, `tracking-brief.md` §6): **cả ba nơi, phân vai** — password manager (bản chính, tra cứu nhanh khi cần restore/vá code) + note trên điện thoại (bản dự phòng tiện tay) + **USB offline = last-resort** (không cắm thường xuyên, chỉ rút ra khi cả hai kênh trên đều hỏng). Không nơi nào trùng domain với Google Drive (nơi giữ dump) — mất Drive không kéo theo mất khóa, và ngược lại.
 - Mất **toàn bộ ba** nơi trên mới mất khả năng giải mã dump/cột — lúc đó phần DB *chưa mã hóa* (đa số bảng, xem bảng phán quyết `tracking-brief.md` §6) vẫn phục hồi được bình thường từ dump; chỉ mất riêng phần cột mã hóa.
 
