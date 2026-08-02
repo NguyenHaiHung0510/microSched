@@ -1,15 +1,16 @@
-import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ListTodo, LogIn, LogOut, NotebookPen, RefreshCw } from 'lucide-react'
+import { CalendarDays, ListTodo, LogIn, LogOut, NotebookPen, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { CalendarScreen } from '@/CalendarScreen'
+import { NotesScreen } from '@/NotesScreen'
 import { PrivateGate } from '@/PrivateGate'
 import type { PrivateSessionState } from '@/private-gate'
-import { NotesScreen } from '@/NotesScreen'
 import { TasksScreen } from '@/TasksScreen'
 
 type SessionResponse = PrivateSessionState & {
@@ -67,7 +68,7 @@ function LoginScreen() {
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
-  const [activeScreen, setActiveScreen] = useState<'tasks' | 'notes'>('tasks')
+  const [activeScreen, setActiveScreen] = useState<'tasks' | 'notes' | 'calendar'>('tasks')
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -101,7 +102,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
-        <div className="mb-4 flex gap-1" role="tablist" aria-label="Chọn nội dung">
+        <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
             size="lg"
@@ -122,9 +123,21 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <NotebookPen data-icon="inline-start" />
             Ghi chú
           </Button>
+          <Button
+            role="tab"
+            size="lg"
+            variant={activeScreen === 'calendar' ? 'secondary' : 'ghost'}
+            aria-selected={activeScreen === 'calendar'}
+            onClick={() => setActiveScreen('calendar')}
+          >
+            <CalendarDays data-icon="inline-start" />
+            Lịch
+          </Button>
         </div>
         <div role="tabpanel">
-          {activeScreen === 'tasks' ? <TasksScreen /> : <NotesScreen />}
+          {activeScreen === 'tasks' ? <TasksScreen /> : null}
+          {activeScreen === 'notes' ? <NotesScreen /> : null}
+          {activeScreen === 'calendar' ? <CalendarScreen /> : null}
         </div>
         {logout.isError ? (
           <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>

@@ -21,6 +21,7 @@ export class TimeoutError extends Error {}
    để một lần đánh thức bình thường KHÔNG bị cắt oan, đủ hẹp để người dùng không
    ngồi nhìn một nút đứng im tới vô hạn. */
 const REQUEST_TIMEOUT_MS = 20_000
+type ApiRequestInit = RequestInit & { timeoutMs?: number }
 
 /* Hạn 20 giây là hạn của MỌI request, kể cả khi người gọi tự mang signal của mình.
    Viết `init.signal ?? timeout` thì signal của người gọi THAY THẾ hạn giờ — ai đó ở
@@ -30,8 +31,11 @@ const REQUEST_TIMEOUT_MS = 20_000
    Ghép tay chứ không dùng `AbortSignal.any`: hàm đó cần iOS 17.4, còn
    `AbortSignal.timeout` chỉ cần iOS 16. Thiết bị chính của chủ là iPhone nên đừng
    nâng sàn thiết bị chỉ để bớt bốn dòng code. */
-function requestSignal(callerSignal: AbortSignal | null | undefined): AbortSignal {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+function requestSignal(
+  callerSignal: AbortSignal | null | undefined,
+  timeoutMs: number,
+): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs)
   if (!callerSignal) return timeout
 
   const controller = new AbortController()
@@ -49,20 +53,21 @@ function requestSignal(callerSignal: AbortSignal | null | undefined): AbortSigna
   return controller.signal
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
   let response: Response
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...requestInit } = init ?? {}
   try {
     response = await fetch(path, {
-      ...init,
+      ...requestInit,
       credentials: 'same-origin',
       // Không có dòng này thì `fetch` KHÔNG bao giờ tự bỏ cuộc: request treo ⇒
       // promise không bao giờ settle ⇒ mutation kẹt `isPending` vĩnh viễn ⇒ nút
       // đứng ở "Đang thêm…" mà không lỗi, không retry, không đường thoát ngoài
       // tải lại trang. Đã gặp thật khi QA 2026-07-25.
-      signal: requestSignal(init?.signal),
+      signal: requestSignal(requestInit.signal, timeoutMs),
       headers: {
-        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-        ...init?.headers,
+        ...(requestInit.body ? { 'Content-Type': 'application/json' } : {}),
+        ...requestInit.headers,
       },
     })
   } catch (error) {
