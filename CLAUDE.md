@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Slice progress:** `003`–`007` (walking skeleton), `008` + all sub-tasks (`a/b/d/e/f/i/k/m/n/g`), `013` (DevSecOps), `014` (cron RSS watch), `015` (gitleaks history scan), `016` (private unlock), `018` (QA framework + Playwright harness), `009` (note slice) — **all done and live**. Open, not blocking: `008c` (cost-tracking feature, scope in `cost-brief.md` §7.4, do when free). Deferred to after `012` + a dedicated branding session with the owner + a copy rewrite (drop first-person voice): `008h` (landing page).
 
-**⚠️ Việc kế tiếp thật sự:** `010` (calendar slice) — spec chưa chi tiết hoá, làm từ đầu. Hàng đợi còn lại: `010 → 011 → 012 → 008h`. Chi tiết lịch sử vì sao thứ tự này đổi nhiều lần (018/016/015 chen trước 009): `docs/session-log.md`.
+**⚠️ Việc kế tiếp thật sự:** thi công `010a` (calendar tầng nền) — **spec đã xong và chủ đã duyệt**, sẵn sàng giao Codex. Hàng đợi: `010a → 010b → 011a → 011c → 011b → 020 → 012 → 008h`. Tình trạng spec (viết trước 2026-08-01 để hàng đợi chạy được cả khi T1 vắng): `010a`/`010b` đã duyệt · `011a`/`011b`/`011c` DRAFT chờ chủ duyệt · `020` (3 cột giữ dữ liệu app cũ) và `012` (cutover) **đã có spec DRAFT**, đã qua một vòng phản biện T2+T3 2026-08-02, **chưa qua vòng vá + chủ duyệt bản chi tiết**. `020` là phụ thuộc cứng của `012` (phải merge trước, xem `020` §1). **Đừng đảo thứ tự trong họ `011`:** `011b` nhắc cả thuốc lẫn sub nên phải sau `011c`. Bảng chi tiết từng lô: `agent-tasks/README.md`. Chi tiết lịch sử vì sao thứ tự này đổi nhiều lần (018/016/015 chen trước 009): `docs/session-log.md`.
 
 ## Read the decision records before proposing anything
 
