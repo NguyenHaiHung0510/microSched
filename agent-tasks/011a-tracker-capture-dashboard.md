@@ -461,6 +461,11 @@ bắp mà "ghi < 3 giây" dựa vào. Đây là hệ quả không ai viết ra k
   > tồn tại sau đó. Bài này phải đỏ được nếu gỡ đoạn chặn.
 - Ghi xong ⇒ toast **10 giây** có nút Hoàn tác (`sonner`, khuôn `task-undo.ts`); Hoàn tác gọi
   `DELETE /api/tracker/entries/{id}`.
+- 🔌 **Seam bắt buộc cho `017` (chủ duyệt 2026-08-02):** mọi write của màn tracker — tạo/sửa/xoá
+  group, tracker, entry; ghi một chạm; và Hoàn tác — phải đi qua **một helper mutation dùng chung**
+  bọc `useMutation`/`apiRequest`, không rải lời gọi `apiRequest` trực tiếp khắp component. `011a` chỉ
+  dựng seam online này; **không** thêm Dexie, IndexedDB hay hành vi offline (đó là `017`). Các lô
+  `010`/`011b`/`011c` nên chép cùng khuôn để `017` bọc một cửa thay vì đuổi theo hàng chục điểm gọi.
 - **Debounce (K9):** khoá nút của **chính tracker đó** từ lúc chạm tới khi mutation settle **+ 1,5
   giây**. ⚠️ K9 viết trong ngoặc là *"khoá nút khi toast hiện"* — hiểu đúng nghĩa đen là khoá đủ 10
   giây, và như thế thì ghi hai lon bia cách nhau nửa phút trở thành không làm được. Quyết định của
