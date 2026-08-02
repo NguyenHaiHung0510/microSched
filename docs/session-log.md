@@ -226,3 +226,37 @@ model tiếp theo. Không mặc định gọi hai T3 cho mọi PR.
 đời** vì file picker/FileReader trên iPhone chưa được QA tay. Việc kế tiếp thật sự: QA production `010a`,
 sau đó giao `010b` (spec đã duyệt; phụ thuộc cứng `010a` nay đã thoả). Hàng đợi sau đó giữ nguyên:
 `011a → 011c → 011b → 020 → 012 → 008h`.
+
+---
+
+## 2026-08-02 — Fly always-on trở lại nhờ invoice waiver, PR #88 + live production
+
+**Quyết định:** đảo `scale-to-zero suspend` về đúng một Fly Machine `shared-cpu-1x` 256MB always-on ở
+`sin` (`auto_stop_machines=false`, `min_machines_running=1`). Fly Support đã waive invoice của chủ khi
+finalized cost dưới $5; ghi đúng bản chất là **gross ~$2,47–2,55/tháng, net payable kỳ vọng $0 có điều
+kiện**, không phải free tier/$5 credit. Waiver chỉ áp khi original personal organization đủ điều kiện,
+tổng invoice toàn organization strictly below $5, và Fly còn duy trì hành vi này; budget là một cliff,
+không phải trả riêng phần vượt ngưỡng.
+
+**Cron không đổi:** theo cấu hình/decision hiện hành, Google Cloud Scheduler vẫn là provider của lịch production vì độc lập với deploy/restart và có
+retry/deadline. Always-on chỉ bỏ nhiệm vụ “đánh thức Fly”, không tự sinh lịch chạy. GitHub Actions còn
+`workflow_dispatch` làm nút chạy tay. `/api/healthz` tiếp tục DB-free để Neon autosuspend độc lập.
+Phiên này không re-query resource ngoài GCP, nên đây là xác nhận **provider không đổi**, không phải biên
+lai execution mới của Scheduler.
+
+**Biên lai:** PR #88 merge thành `e2187d4`; CI/CodeQL/e2e xanh, CD run `30745389569` deploy + smoke-test
+SHA-aware xanh. PR #87 merge sau thành `2108aaf`; CD run `30745629590` cũng xanh và deploy đúng SHA
+này. Fly receipt sau #87 thấy đúng **một** Machine ở `sin`, shared 1 vCPU/256MB,
+`autostop=false`, `min_machines_running=1`, service check passing; #88 là ancestor của SHA live.
+Sau một cửa sổ idle sạch 8 phút — dài hơn ngưỡng autostop cũ ~6,5 phút — Machine vẫn `started`, cùng
+instance/SHA/`updated_at`. Không có migration. Không query trực tiếp được resource Scheduler vì máy
+không có `gcloud`; PR không đụng resource ngoài repo.
+
+**Race lúc đóng phiên:** PR #87 (branch docs được chuẩn bị song song) merge **sau** #88 và đưa riêng dòng
+`CLAUDE.md Current state` về `scale-to-zero` cũ, trong khi `fly.toml`, decision brief và production đều
+đã always-on; CI của cả hai PR vẫn xanh. Bắt được nhờ close-session sweep so HEAD mới nhất với merge
+#88, không nhờ test. Follow-up closeout sửa lại current state và ghi bài học vào `learnings-applied.md`.
+
+**Việc kế tiếp:** không đổi hàng đợi sản phẩm của phiên 010a: QA file picker/FileReader trên iPhone,
+rồi thi công `010b`. Hai việc hạ tầng không chặn: xác nhận Cloud Scheduler trên Google Console khi tiện,
+và bảo đảm alert Fly gần $4 để còn khoảng phản ứng trước cliff $5.

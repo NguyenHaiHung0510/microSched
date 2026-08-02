@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **microSched** — a single-user personal task / note / calendar / tracker web app, **AI-first**, being built as a **clean rewrite** of an old desktop app (`VC_QuanLyThoiGian`). It is the "dự án trục" (spine project) of the owner's summer-2026 study plan; the parent planning/strategy workspace is at `../../hoc_he_2026` (read its `chien-luoc-he-2026.md` / `track_ai_eng_strategy.md` for the wider plan and the AI-engineering learning goals this project serves).
 
-**Current state (2026-08-02): real app in production.** `backend/` (FastAPI + SQLModel + Alembic, Python ≥3.14 via `uv`, ruff + pytest), `frontend/` (React 19 + TypeScript + Vite + Tailwind v4/shadcn-ui + TanStack Query v5, Playwright e2e in `frontend/e2e/`), one root `Dockerfile`, live at `microsched.fly.dev` on Neon PG18 (scale-to-zero `suspend`), production cron on Google Cloud Scheduler (not GitHub Actions — see `devops-brief.md` §10). **Build/lint/test commands are real — read them from `backend/pyproject.toml`, `frontend/package.json` and `.github/workflows/` instead of assuming or inventing them; migration count, table count, and test count all change often enough that this file does not track them — check `backend/alembic/versions/` and run the test suite instead of trusting a number written here.**
+**Current state (2026-08-02): real app in production.** `backend/` (FastAPI + SQLModel + Alembic, Python ≥3.14 via `uv`, ruff + pytest), `frontend/` (React 19 + TypeScript + Vite + Tailwind v4/shadcn-ui + TanStack Query v5, Playwright e2e in `frontend/e2e/`), one root `Dockerfile`, live at `microsched.fly.dev` on Neon PG18; Fly runs one `shared-cpu-1x` 256MB Machine continuously in `sin`. Production cron remains on Google Cloud Scheduler (not GitHub Actions — see `devops-brief.md` §10). **Build/lint/test commands are real — read them from `backend/pyproject.toml`, `frontend/package.json` and `.github/workflows/` instead of assuming or inventing them; migration count, table count, and test count all change often enough that this file does not track them — check `backend/alembic/versions/` and run the test suite instead of trusting a number written here.**
 
 **Design phase: fully closed.** All architecture/schema/frontend/auth/UI/QA-framework decisions are locked — see the doc list below. The only thing left to design is the **Bước-1 AI choices** (embedding provider, vector dimension, default LLM, hybrid retrieval details) — everything else in `docs/` is final, read it rather than re-deriving.
 
@@ -36,7 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `docs/migration-mapping-brief.md` — old data → new schema; where the real data lives.
 - `docs/v1-reference.md` — old-app domain logic worth porting (code-level; not strategy).
 - `docs/learnings-applied.md` — running log of concepts learned and applied.
-- `docs/session-log.md` — **archive of this file's session-by-session history through 2026-08-01.** Read it for *why* behind a past call; don't read it for current state.
+- `docs/session-log.md` — **archive lịch sử đến 2026-08-01 và nhật ký các phiên sau đó.** Đọc nó cho *why* và biên lai lịch sử; đừng đọc nó cho current state.
 - `scripts/inventory_old_stores.py` — read-only inventory of the OLD stores (needs the old app's venv python + `PGPW` env var). Reusable for cutover verification.
 
 ## Locked architecture (don't relitigate — see docs for the reasoning)
