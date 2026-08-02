@@ -2,10 +2,10 @@
 
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: Playwright (nghiệm thu §7 cần mô phỏng offline).**
-> **Trạng thái: DRAFT 2026-08-02 (T1 Opus 5 viết). Ba lựa chọn định cỡ ở §3 mục 1–3 **chủ đã duyệt
-> 2026-08-02**; phần còn lại chưa qua phản biện T2/T3 — đừng giao thi công trước khi có ít nhất một
-> vòng.**
-> **KHÔNG có migration. Backend gần như không đổi (§5).**
+> **Trạng thái: ✅ SPEC SẴN GIAO 2026-08-02 (T1 Opus 5 viết). Ba lựa chọn định cỡ ở §3 mục
+> 1–3 chủ đã duyệt; đã qua phản biện **T2 Codex** (4 P0 + 3 P1) và **T3 Gemini 3.1 Pro High**
+> (9 finding). T1 kiểm từng finding, vá mọi finding xác nhận đúng và ghi biên bản ở §10.**
+> **KHÔNG có migration. Backend có vá idempotency cho các POST create còn thiếu (§5).**
 > **Chạy SAU `011c`** — tức sau khi cả bốn họ thực thể (`task`/`note`/`calendar`/`tracker`) đã tồn tại.
 
 ## 0. Bối cảnh — vì sao lô này tồn tại, và vì sao nó là HAI nửa
@@ -42,7 +42,8 @@ tạo hai bản ghi, vì `id` chỉ sống trong bộ nhớ trang. Có `id` nằ
 | `dexie@4.4.4` trong `package.json` | ✅ đã cài — **0 lần import** trong `frontend/src/`. Dependency chết từ lúc scaffold. |
 | Package persist của TanStack Query | ❌ **chưa có**. Chỉ `@tanstack/react-query@5.101.2`. |
 | `vite-plugin-pwa@1.3.0` | ✅ đã cấu hình trong `vite.config.ts`, workbox precache **vỏ app** (html/js/css). Không precache dữ liệu. |
-| Seam ghi idempotent | ✅ sống ở `task` (`backend/app/domain/tasks.py:61`) **và** `note` (`notes.py:58`). `calendar`/`tracker` do `010a`/`011a` mang theo — **kiểm lại bằng mắt lúc thi công**, đừng tin dòng này. |
+| Seam ghi idempotent | ✅ sống ở `task` (`backend/app/domain/tasks.py:61`) **và** `note` (`notes.py:58`). `calendar_source`/tracker-group/tracker/subscription đã được spec trước yêu cầu; **child item + calendar event + mọi POST create còn thiếu phải được vá ở §5**. |
+| Session bootstrap offline | ❌ `/api/me` lỗi mạng ⇒ `App` hiện “Không kết nối được API”, không render màn domain dù cache đã bền. Xem §2.5. |
 | Điểm gọi mutation hôm nay | **38** trên 4 file: `NotesScreen.tsx` 15 · `TasksScreen.tsx` 13 · `PrivateGate.tsx` 7 · `App.tsx` 3. Sau `010`+`011` sẽ nhiều hơn đáng kể. |
 | Write route domain | 14 hôm nay (7 task + 7 note) → ~24 sau `010`+`011`. |
 | `PATCH` của task/note | ✅ **gán giá trị tuyệt đối** (`payload.model_dump(exclude_unset=True)` rồi `setattr`) — **không** phải toggle. Nghĩa là replay PATCH vốn đã an toàn. Đây là lý do §3 mục 1 chọn được phạm vi rộng mà gần như không tốn thêm. |
@@ -52,71 +53,99 @@ tạo hai bản ghi, vì `id` chỉ sống trong bộ nhớ trang. Có `id` nằ
 
 ## 2. Bốn chỗ sẽ SAI nếu làm theo trực giác — đọc kỹ nhất mục này
 
-### 2.1 🔴 Cache đọc bền sẽ **phá cổng riêng tư**, nếu persist tất cả
+### 2.1 🔴 Query-key allowlist **KHÔNG đủ** — một query có thể trộn public + private
 
-`auth-brief.md` §3 định nghĩa private unlock là **cổng hiển thị**: mở khoá ⇒ server trả nội dung
-riêng tư đã giải mã; khoá lại (hoặc hết TTL 36 phút) ⇒ server ngừng trả. Cả cơ chế dựa vào việc
-**client không giữ bản sao**.
+`auth-brief.md` §4 R6 khoá cứng: response chứa private **không persist vào IndexedDB**; private chỉ
+sống trong RAM tab đang mở. Nhưng `tasks`/`notes` dùng **cùng query key** lúc locked và unlocked. Khi
+unlocked, một response danh sách trộn cả dòng `is_private=false` lẫn `is_private=true`. Allowlist
+`['tasks']` theo key vẫn ghi nguyên plaintext private xuống đĩa — cổng `016` thủng sau một reload.
 
-Persist nguyên cache TanStack Query vào IndexedDB là đúng cái việc giữ bản sao đó: chủ mở khoá, xem
-ghi chú riêng tư, khoá lại — nội dung vẫn nằm trên đĩa; reload ⇒ persister rehydrate ⇒ **nội dung
-riêng tư hiện ra trong lúc cổng đang khoá**. Cổng một chiều mà `016` vừa đóng xong sẽ mở lại bằng
-cửa sau, và không có gì báo.
+**Bắt buộc, bốn lớp (làm cả bốn):**
+1. **Sanitize ở mức item trước khi serialize.** Query danh sách chỉ ghi snapshot đã lọc từng dòng
+   `is_private === false`; query chi tiết có `is_private === true` không được dehydrate. Mỗi query
+   key trong allowlist phải có một sanitizer typed riêng; query mới mặc định **không persist**. Cấm
+   transformer “đệ quy xoá mọi object có field `is_private`” — nó dễ sót cấu trúc envelope và dễ xoá
+   nhầm object không phải entity.
+2. **`purgePrivateSurface()` trung tâm.** Khi khoá tay, TTL hết hoặc privacy response ⇒ xoá private
+   khỏi RAM Query cache rồi **ghi đè persisted snapshot bằng bản public-only đã sanitize**; không xoá
+   public cache đang cần cho offline. Logout/`401` thì purge toàn bộ RAM + persisted Query snapshot
+   và session bootstrap. Hai nhánh đều không đụng outbox.
+3. **Hai namespace lưu trữ tách hẳn.** Query persister và Dexie outbox không cùng DB/store. Purge
+   cache **không bao giờ** được xoá outbox — outbox có thể chứa bản ghi private chưa tồn tại ở đâu
+   khác, xoá nó là mất dữ liệu thật.
+4. **Rehydrate không cấp quyền private.** Không persist `private_until`; offline bootstrap (§2.5)
+   luôn dựng cổng ở trạng thái **locked**. Private pending trong outbox vẫn nằm trên đĩa nhưng không
+   được overlay lên màn hình khi locked.
 
-**Bắt buộc, hai lớp (làm cả hai, không chọn một):**
-1. **Lọc lúc dehydrate.** `shouldDehydrateQuery` chỉ cho qua query đã biết chắc là công khai. Cơ chế
-   phải là **allowlist** (chỉ persist query key đã liệt kê), **không** phải blocklist — blocklist thì
-   mỗi query mới của mọi slice sau mặc định bị persist, và không ai nhớ kiểm.
-2. **Xoá sạch lúc khoá.** Khi cổng đóng (chủ bấm khoá, hoặc TTL hết, hoặc `403` private-locked từ
-   server) ⇒ **purge toàn bộ cache đã persist**, không chỉ phần riêng tư. Lý do purge tất: một danh
-   sách công khai vẫn có thể *tiết lộ sự tồn tại* của mục riêng tư qua số đếm/phân trang.
+> **Phân biệt với outbox:** hàng đợi ghi **được phép** chứa nội dung riêng tư đang chờ gửi vì
+> `tracking-brief.md`:150 đã chốt “ghi ngay vào IndexedDB kể cả offline”; đó là dữ liệu duy nhất.
+> Cache đọc là bản sao của dữ liệu đã ở server, nên áp R6 tuyệt đối: **outbox giữ · cache lọc + purge**.
 
-> **Phân biệt với outbox — hai thứ này KHÁC nhau, đừng áp cùng một luật.** Hàng đợi ghi **được phép**
-> chứa nội dung riêng tư đang chờ gửi: `tracking-brief.md`:150 đã chốt "ghi ngay vào IndexedDB kể cả
-> offline", đó là dữ liệu **chưa tồn tại ở đâu khác** — vứt đi là mất thật. Cache đọc thì ngược lại:
-> nó là bản sao của thứ đã an toàn trên server, giữ lại chỉ để tiện, và nó vô hiệu hoá cổng. ⇒
-> **outbox: giữ. Cache đọc: lọc + purge.**
+### 2.2 🔴 Classifier phải **route-aware**, không chỉ nhìn status code
 
-### 2.2 🔴 Bốn loại lỗi, không phải hai — gộp lại là hàng đợi tự kẹt hoặc tự báo động giả
+Cùng một `404` có bốn nghĩa: DELETE đã chạy ở lượt trước; id sai thật; parent private bị gate che;
+restore chưa thành công. Cùng một `409` có thể là trùng tên business hoặc create với id vô hình.
+Bảng “status → hành động” toàn cục sẽ âm thầm nuốt dữ liệu. Vì vậy mỗi row bắt buộc mang metadata
+typed: `operation_kind`, `resource`, `requires_private`, `idempotency_mode`,
+`dependency_operation_id`, `affected_query_keys` — **không parse URL bằng regex để đoán**.
 
-Đây là chỗ outbox tự viết hay mục rữa. Một `422` mà retry mãi sẽ **chặn cả hàng đợi phía sau** (FIFO).
-Nhưng gộp mọi 4xx thành "hỏng vĩnh viễn" thì hai loại dưới đây bị báo động giả. Phân đúng bốn nhóm:
-
-| Nhóm | Tín hiệu | Xử lý |
+| Nhóm | Tín hiệu đã phân theo route + metadata | Xử lý |
 |---|---|---|
-| **A. Tạm thời** | mất mạng, `TimeoutError`, `5xx` | Retry backoff (1s → 2 → 4 → 8 → 16 → 30, trần 30s). Không giới hạn số lần — mạng sẽ về. |
-| **B. Cổng đóng** | `403` + đúng envelope private-locked | **Giữ nguyên trong hàng đợi, KHÔNG retry, KHÔNG park.** Chờ cổng mở lại rồi flush tiếp. Ca thật: chủ ghi một entry riêng tư lúc cổng mở → mất mạng → 40 phút sau mạng về nhưng TTL đã hết. Bản ghi đó **không hỏng**, nó chỉ đang chờ. Park nó là bắt chủ xử lý một thứ không sai gì cả. |
-| **C. Đã xong rồi** | `200` cho `POST` create (008m) · `409` cho create (008m §2.3 mục 2) · `404` cho `DELETE`/`restore` | **Coi là THÀNH CÔNG**, gỡ khỏi hàng đợi, không báo lỗi. Xem §2.3. |
-| **D. Hỏng thật** | `422`, `400`, `4xx` còn lại | **Park**: chuyển sang trạng thái `failed`, **không** auto-retry nữa, **không** chặn các mục sau, hiện cho chủ xem + xoá tay. Kèm trần: một mục ở nhóm A quá **50** lần thử cũng rơi xuống đây (để một lỗi lạ không quay vòng vĩnh viễn). |
+| **A. Tạm thời** | lỗi mạng/timeout · `408` · `425` · `429` · `5xx` | Retry backoff 1→2→4→8→16→30s; `429` tôn trọng `Retry-After`. **Không park chỉ vì số lần thử** — số lần chỉ là telemetry; hết mạng nhiều ngày không biến payload đúng thành payload hỏng. |
+| **B. Chờ đăng nhập** | `401` / `UnauthenticatedError` | Giữ nguyên queue, dừng flush, hiện “Cần đăng nhập để gửi N mục”. Sau OAuth thành công tự flush. Không tăng retry, không park, không purge outbox. |
+| **C. Chờ private unlock** | exact private-locked response; **hoặc** `404`/`409` trên row `requires_private=true` khi client biết gate đang locked | Giữ row, không retry cho tới khi unlock. Unlock xong gửi lại: `2xx` ⇒ xong; còn `404`/`409` ⇒ park vì lúc này không còn gate để giải thích. Row private đang hold **không chặn** các row public độc lập phía sau (§2.4). |
+| **D. Đã đạt postcondition** | mọi `2xx`; thêm `404` **chỉ cho DELETE** row public/đang-unlocked (resource đã vắng đúng như mong muốn) | Gỡ queue. `404` restore **không** thuộc nhóm này. `409` create **không bao giờ** tự coi là success; idempotent replay đúng phải trả `200` từ backend. |
+| **E. Hỏng thật** | `400`/`409`/`422` business/validation đã xác định; `404` không thuộc C/D; 4xx còn lại | Park, không auto-retry, không chặn row độc lập. Hiện lỗi gốc; descendants bị suppress (§2.4). |
 
-🔒 **Nhóm D không được chặn hàng đợi.** Park là *nhấc ra khỏi dòng chảy*, không phải *dừng dòng chảy*.
-Test bắt buộc: xếp `[hỏng-422, tốt, tốt]` ⇒ hai mục tốt vẫn phải gửi được.
+🔒 **Hai luật chống nuốt lỗi:**
+- Success duplicate chỉ đến từ **hợp đồng route idempotent trả `200`**, không suy từ `409`.
+- `011b` và các router trước có thể dùng envelope private khác nhau; lúc thi công phải chuẩn hoá về
+  **một error code máy-đọc-được** (`PRIVATE_UNLOCK_REQUIRED`) trước khi classifier dựa vào nó. Không
+  so chuỗi tiếng Việt/Anh.
 
-### 2.3 🔴 `DELETE` gọi lần hai trả `404` — replay sẽ báo động giả
+### 2.3 🔴 `DELETE` replay 404 là success; `restore` 404 thì KHÔNG
 
-Đo được ở §1: `DELETE /api/tasks/{id}` lần hai trả **`404`**, vì `readable()` lọc mất dòng đã
-soft-delete. Ca thật rất thường gặp: outbox gửi `DELETE`, server xử lý xong, **trả lời bị mất trên
-đường** (mạng 3G chập chờn) ⇒ outbox retry ⇒ `404` ⇒ nếu áp luật "4xx = park" thì chủ thấy một mục
-báo hỏng cho một thao tác **đã thành công**.
+Đo được ở §1: `DELETE /api/tasks/{id}` lần hai trả `404`, vì dòng đã soft-delete bị `readable()` lọc.
+Ca thật: server xử lý DELETE, response mất trên 3G, retry nhận 404. Với row DELETE đã được app tạo từ
+một entity có thật, postcondition “resource vắng” đã đạt ⇒ nhóm D.
 
-**Quyết định: sửa ở CLIENT, không sửa backend.** Outbox coi `404` trên `DELETE`/`restore` là nhóm C
-(đã xong). **Không** đổi backend thành `204`-khi-không-thấy: người gọi tương tác (UI trực tiếp) cần
-`404` thật để phân biệt "id gõ sai" với "đã xoá" — chỉ **outbox** mới biết rằng đây là *replay của
-việc mình từng gửi*, và cái biết đó không truyền được sang server. Đúng chỗ để đặt luật là nơi có
-thông tin.
+Nhưng `restore` muốn postcondition ngược lại (“resource hiện lại”). `404` ở restore nghĩa là **chưa
+đạt**, nên phải đi C nếu private-gated, còn lại đi E. **Không sửa backend thành 204-khi-không-thấy**:
+UI trực tiếp vẫn cần 404 thật; outbox có `operation_kind` nên mới đủ thông tin phân biệt replay.
 
-### 2.4 🔴 Thứ tự: cha trước con, và con phải chết theo cha
+### 2.4 🔴 Dependency trỏ tới **operation row**, và FIFO không được chặn cả thế giới
 
-Offline chủ tạo task T rồi thêm 3 checklist item vào nó. Hàng đợi có 4 mục, mục 2–4 tham chiếu `id`
-của mục 1 qua URL (`/api/tasks/{T}/items`). Hai hệ quả:
+Offline tạo group G → tracker T → entry E là một chuỗi ba tầng. Entity UUID không nói được entity đó
+đã có trên server hay vừa được row nào tạo. `dependency_operation_id` phải trỏ tới **primary key của
+row outbox cha**, không trỏ entity id. Parent có trên server ⇒ `null`; parent cũng đang queue ⇒ id
+row tạo parent.
 
-1. **FIFO nghiêm, một request một lúc** (single-flight). Không chạy song song. Một user + hàng đợi
-   nhỏ ⇒ song song không mua được gì, mà FIFO cho *cha-trước-con* **miễn phí** thay vì phải dựng đồ
-   thị phụ thuộc.
-2. 🔒 **Mục bị park (nhóm D) phải kéo theo mọi mục phụ thuộc.** Nếu tạo T hỏng `422` mà 3 item vẫn
-   gửi, cả ba sẽ `404` liên tiếp và chủ thấy **bốn** báo lỗi cho **một** nguyên nhân. Luật: mỗi mục
-   ghi kèm `depends_on` (id của bản ghi cha nếu URL/payload có nhắc tới một id do outbox tạo ra);
-   cha bị park ⇒ con bị park im lặng, chỉ hiện **một** dòng lỗi gốc. Chủ xoá mục cha ⇒ xoá luôn con.
+- **Một request một lúc, ưu tiên thứ tự chèn**, nhưng được **skip** row `failed`/auth-held/
+  private-held và mọi descendant của nó để gửi row độc lập phía sau. “FIFO nghiêm” toàn cục sẽ làm
+  một private write chờ unlock chặn mọi public write vô hạn.
+- Parent failed ⇒ toàn bộ descendants thành `suppressed` và UI hiện **một lỗi gốc**. Discard parent
+  ⇒ discard descendants. Parent hold ⇒ descendants hold, không gửi vượt.
+- Tạo row + xác định dependency phải ở **một Dexie transaction**, không regex URL.
+
+### 2.5 🔴 Có cache domain vẫn chưa đủ — `/api/me` phải có offline bootstrap công khai
+
+`App.tsx` chỉ render `SignedIn` khi query `['session']` thành công. Mất mạng + reload hiện làm
+`/api/me` lỗi và app dừng ở “Không kết nối được API”; cache task/tracker có bền cũng không có màn để
+hiện. Vì chủ đã duyệt “offline đọc sau reload”, `017` bắt buộc persist một **session bootstrap tối
+thiểu**:
+
+- Chỉ giữ `email`, `signed_in_at`, `expires_at` và cờ “đã xác thực lần cuối”; **không persist
+  `private_until`** hay bất kỳ quyền private nào. Rehydrate luôn `private_unlocked=false`.
+- Chỉ render public shell offline khi `now < expires_at`; quá hạn ⇒ màn “Cần kết nối để xác thực
+  lại”, không đoán session còn sống.
+- Một `/api/me` online thành công thay snapshot. `401` hoặc logout chủ động ⇒ purge bootstrap + RAM/
+  persisted Query cache, **không purge outbox**; sau OAuth cùng account thì flush tiếp.
+- Offline shell không được có nút unlock (unlock phải online) và không render private pending từ
+  outbox (§2.1).
+- 🔴 **Sửa nhánh render thật trong `App.tsx`:** network error khi đã có `session.data` rehydrated
+  không được render cả alert lẫn `SignedIn`. Card “Không kết nối được API” chỉ hiện khi
+  `session.isError && !loggedOut && !session.data`; có cached bootstrap thì render đúng một public
+  shell + offline banner.
 
 ## 3. Đã khoá — chép ra code, không mở lại
 
@@ -129,124 +158,196 @@ của mục 1 qua URL (`/api/tasks/{T}/items`). Hai hệ quả:
    rẻ hơn **một DANH SÁCH NGOẠI LỆ** khi các slice sau phải nhớ.
 2. ✅ **Nửa đọc nằm trong lô này** (chủ duyệt 2026-08-02) — §4.4.
 3. ✅ **Chạy sau `011c`** (chủ duyệt 2026-08-02), kèm ràng buộc ngược cho `011a` ở §9.
-4. **Dexie giữ đúng MỘT bảng: hàng đợi ghi.** Không mirror thực thể, không bảng `tasks`/`notes` cục
-   bộ. Mirror toàn bộ = sync-engine trá hình, đúng cái `frontend-brief.md` §3 đã loại.
-5. **Không Background Sync.** Safari không hỗ trợ API đó ⇒ hàng đợi chỉ flush **khi app đang mở**.
-   Đây là giới hạn đã biết, ghi vào PR, **kiểm trên iPhone thật** (`frontend-brief.md` §5) — đừng tin
-   chay theo dòng này.
-6. **Chỉ số toàn cục "N đang chờ gửi"**, không đeo badge lên từng dòng. Đường happy chiếm 99% và
-   không đáng bị đánh thuế thị giác (`ui-brief.md` §6). Badge từng dòng **chỉ** xuất hiện cho mục đã
-   park (nhóm D).
-7. **`sonner` giữ nguyên vai trò**: toast 10 giây + Hoàn tác vẫn là UI của thao tác ghi, không đổi.
-   Hoàn tác một mục **chưa gửi** ⇒ gỡ khỏi hàng đợi (đúng `tracking-brief.md`:150). Hoàn tác một mục
-   **đã gửi** ⇒ xếp một `DELETE` vào hàng đợi. Cùng một nút — đó là điều seam `008m` mua về.
+4. **Dexie giữ đúng MỘT bảng domain: hàng đợi ghi.** Không mirror thực thể, không bảng `tasks`/
+   `notes` cục bộ. Query persister dùng **namespace/DB khác** (§2.1), không được chia store với outbox.
+5. **Command typed, không phải request mù.** Row là discriminated union theo `operation_kind` +
+   adapter registry tĩnh; method/path/body chỉ là phần vận chuyển. Adapter sở hữu optimistic apply,
+   reconcile, discard/rollback và affected query keys (§4.2).
+6. **Không Background Sync.** Safari không hỗ trợ API đó ⇒ hàng đợi chỉ flush **khi app đang mở**.
+   Đây là giới hạn đã biết, ghi vào PR, **kiểm trên iPhone thật** (`frontend-brief.md` §5).
+7. **Chỉ số toàn cục “N đang chờ gửi”**, không đeo badge lên từng dòng. Badge từng dòng chỉ xuất hiện
+   cho optimistic entity bị park, để trạng thái hỏng không giả làm dữ liệu đã sync (`ui-brief.md` §6).
+8. **`sonner` giữ nguyên vai trò:** toast 10 giây + Hoàn tác vẫn là UI của thao tác ghi. Hoàn tác
+   mục chưa gửi ⇒ coalesce/gỡ command create; đã gửi ⇒ enqueue DELETE. Cùng một nút.
+9. **Một flusher trên toàn origin, không chỉ một tab.** Dùng Web Locks API với lock
+   `microsched-outbox-flush`; cờ module chỉ là lớp phụ. Web Locks cần secure context: iPhone test qua
+   **production HTTPS** (hoặc local HTTPS proxy), không qua `http://192.168…`. Nếu `navigator.locks`
+   không tồn tại ở production, không âm thầm flush cạnh tranh: hiện cảnh báo “trình duyệt không hỗ
+   trợ đồng bộ offline” và giữ queue cho tới môi trường hỗ trợ.
 
 ## 4. Frontend — thi công
 
 ### 4.1 `frontend/src/lib/outbox-db.ts` — Dexie, một bảng
 
-Một bảng `outbox`, khoá chính tự tăng (thứ tự chèn **là** thứ tự FIFO — đừng sắp theo timestamp, hai
-mục cùng mili-giây sẽ hoà và mất tất định). Mỗi dòng mang: phương thức HTTP, đường dẫn, body, trạng
-thái (`pending` / `failed`), số lần đã thử, mốc thử kế tiếp, `depends_on` (§2.4), và mốc tạo.
+Một bảng `outbox`, khoá chính tự tăng = `operation_id` (thứ tự chèn là thứ tự ưu tiên; đừng sắp
+theo timestamp). Mỗi row là command typed và mang tối thiểu:
 
-**Không thêm dependency nào ngoài Dexie** (đã có sẵn, §1) và **một** package persist của TanStack
+- `operation_kind` / `resource` / method / path / JSON body;
+- `entity_id`, `parent_id`, `requires_private`, `idempotency_mode`;
+- `dependency_operation_id` (§2.4), `group_id` nếu một thao tác UI có nhiều bước;
+- `affected_query_keys`, trạng thái (`pending` / `auth_hold` / `private_hold` / `failed` /
+  `suppressed`), số lần thử, mốc thử tiếp theo, mốc tạo và lỗi cuối.
+
+`dependency_operation_id` tham chiếu row outbox, không tham chiếu entity UUID. Tạo command + nối
+dependency trong một Dexie transaction. Method/path không được dùng để suy ngược `operation_kind`.
+
+**Lazy-open:** không `new Dexie()` ở module top-level. Mở qua factory có `try/catch`; IndexedDB bị
+chặn ⇒ app vẫn chạy online, hiện cảnh báo offline unavailable, không crash toàn bundle.
+
+**Không thêm dependency nào ngoài Dexie** (đã có) và **một** package persist chính thức của TanStack
 Query cho §4.4. Quy ước supply-chain: `frontend-brief.md` §6.
 
-### 4.2 🔴 Seam ghi dùng chung — đây là phần quan trọng nhất của lô
+### 4.2 🔴 Seam ghi dùng chung + adapter typed theo domain
 
-Hôm nay có **38 điểm gọi mutation** rải trên 4 file (§1), mỗi chỗ tự gọi `apiRequest`. Bọc từng chỗ
-một là 38 lần cơ hội sót, và mỗi slice sau lại thêm điểm mới.
+Hôm nay có **38 điểm gọi mutation** rải trên 4 file (§1); sau 010/011 sẽ nhiều hơn. Dựng một cửa
+`queuedMutation`, nhưng **không** làm một hàm generic “nhét payload vào cache”. Payload create thiếu
+server defaults/timestamps; DELETE trả 204; dashboard là derived; import thay cả collection.
 
-**Dựng đúng một cửa** — ví dụ `frontend/src/lib/queued-mutation.ts`, xuất một hook mỏng bọc quanh
-`useMutation` của TanStack Query. Hợp đồng của nó:
+Mỗi `operation_kind` đăng ký một adapter tĩnh (functions **không** lưu vào Dexie):
 
-- Online ⇒ gọi thẳng `apiRequest` như hiện nay. **Đường happy không đổi một chút nào.**
-- Offline (hoặc `apiRequest` ném lỗi mạng/timeout) ⇒ ghi vào Dexie, trả về **thành công lạc quan**,
-  cập nhật cache TanStack Query bằng payload đang có.
-- `id` cho create **lấy từ payload** (đã có sẵn nhờ `008m`/`009`), **không** sinh lại — sinh lại
-  trong hàm này là tái lập đúng lỗi mà `008m` §2.5 đã vá.
+```text
+encodeCommand(input) → row serializable
+optimisticApply(queryClient, row)
+reconcileSuccess(queryClient, row, serverResponse)
+discardOrRollback(queryClient, row)
+affectedQueryKeys(row)
+```
 
-Rồi **chuyển cả 38 điểm gọi sang cửa đó**. Không chừa. Điểm nào cố tình không đi qua (auth, private —
-§3 mục 1) phải có **một dòng comment nói vì sao**, để lần soát sau không tưởng là sót.
+- Online ⇒ gọi `apiRequest` như hiện nay, rồi `reconcileSuccess`.
+- Offline/lỗi mạng/timeout ⇒ lưu command trước, sau đó optimistic apply. Trước `setQueryData`,
+  adapter phải `await queryClient.cancelQueries()` cho mọi affected key để response in-flight không
+  ghi đè state optimistic. Create dùng **client UUIDv7 đã nằm trong payload**, không sinh lại.
+- Reload offline ⇒ rehydrate public server snapshot, rồi replay `optimisticApply` của **public** rows
+  pending theo operation order. Private row không overlay khi gate locked (§2.1).
+- Server success ⇒ thay optimistic model bằng response thật; 204 chạy adapter tương ứng. Park ⇒ giữ
+  optimistic entity nhưng gắn trạng thái “Chưa gửi được”; chỉ khi chủ discard mới rollback/rebuild.
+  Không để dữ liệu hỏng trông như đã sync.
+- Chuỗi create→patch→delete chưa gửi phải **coalesce**: delete huỷ cả chuỗi; nhiều absolute PATCH có
+  thể giữ bản cuối. Không coalesce operation có side effect (`renew`, import).
 
-### 4.3 `frontend/src/lib/outbox-flush.ts` — máy chạy hàng đợi
+Rồi chuyển **mọi write domain** sang cửa này. Auth/private/web-push registration/cron cố tình bypass
+phải có comment. Không rải direct `apiRequest` trong component domain.
 
-Single-flight, FIFO, phân loại lỗi theo đúng bốn nhóm §2.2. Kích hoạt flush khi: app khởi động · sự
-kiện `online` · window focus · sau mỗi lần ghi thành công · cổng riêng tư vừa mở (để tháo nhóm B).
+🔴 **Thao tác nhiều request:** `NotesScreen.reorderItems` hiện gửi hai PATCH bằng `Promise.all`; một
+thành công, một fail sẽ để thứ tự nửa vời. `017` phải thay bằng một endpoint reorder **atomic** nhận
+danh sách `{item_id, position}` tuyệt đối trong một transaction; retry tự idempotent. Không queue hai
+PATCH như một “group” rồi giả vờ có atomicity.
 
-🔒 **Chống chạy chồng.** Hai kích hoạt gần nhau (ví dụ `online` và `focus` nổ cùng lúc khi rút máy
-bay) không được tạo hai vòng flush song song trên cùng hàng đợi — nếu không, cùng một mục gửi hai
-lần. Seam idempotent của `008m` che được ca create, nhưng **không** che `POST /items` (mỗi lần là một
-item mới). Dùng một cờ "đang chạy" trong module. Test phải chứng minh biết đỏ.
+### 4.3 `frontend/src/lib/outbox-flush.ts` — coordinator, không chỉ vòng retry
 
-### 4.4 Nửa đọc — persist cache, có cổng
+Lấy Web Lock (§3 mục 9), xử lý một request một lúc theo §2.2/§2.4. Kích hoạt khi app khởi động,
+`online`, focus, sau write online thành công, sau login, và sau private unlock.
 
-Thêm persister của TanStack Query ghi xuống IndexedDB, với **allowlist** `shouldDehydrateQuery` và
-**purge lúc khoá cổng** — cả hai bắt buộc, lý do ở §2.1. Đặt `maxAge` hợp lý (đề xuất 7 ngày) và
-buster theo phiên bản build, để đổi hình dạng dữ liệu không làm app hiển thị cache lệch schema.
+**Chặn refetch ghi đè optimistic state:** domain queries dùng một helper query chung với
+`refetchOnReconnect=false`; reconnect/focus đi qua sync coordinator. Khi có pending rows, coordinator
+cancel domain refetch liên quan → flush các row runnable → reconcile response → chỉ sau đó
+`invalidateQueries(affected_query_keys)`. Không pending ⇒ invalidate public queries ngay. Polling của
+domain query liên quan cũng pause khi có pending command. Query `['session']` vẫn được phép refetch
+để phát hiện `401`; nó không thuộc domain cache.
 
-Dữ liệu offline hiển thị **phải nói rõ là cũ**: một dải nhẹ ở đầu màn *"Đang ngoại tuyến · dữ liệu
-lúc HH:mm"*. Không có nó thì chủ nhìn số dashboard cũ mà tưởng là mới — sai lặng lẽ, đúng loại lỗi
-`forward-spec.md` gọi là vi phạm "nhìn thấy được".
+Hai tab cùng nhận `online` phải cạnh tranh Web Lock; tab thắng flush, tab kia chờ rồi reload queue.
+Test hai **page** thật, không chỉ gọi hai promise trong một module. Cờ module chỉ chống re-entry trong
+cùng tab; không được gọi nó là bảo vệ chính.
+
+### 4.4 Nửa đọc — public snapshot + offline bootstrap, private bằng 0 byte
+
+Thêm persister chính thức của TanStack Query vào IndexedDB **namespace riêng**, với allowlist query
+key **và sanitizer typed ở mức item** (§2.1). Đặt `maxAge=7 ngày`, buster theo build SHA. Snapshot
+session bootstrap theo §2.5 dùng `expires_at` thật làm trần riêng; buster không được kéo dài session.
+
+Dữ liệu offline phải nói rõ là cũ: dải đầu màn *“Đang ngoại tuyến · dữ liệu lúc HH:mm”*. Mở offline
+luôn private-locked. Persisted store phải qua test quét plaintext canary private ra **0 kết quả**;
+đồng thời outbox store vẫn giữ canary private pending — hai invariant ngược nhau, test cả hai.
+
+`purgePrivateSurface()` là seam dùng chung nhưng có hai nhánh: lock/TTL/privacy-response ⇒ xoá private
+khỏi RAM rồi reserialize public-only snapshot; logout/`401` ⇒ purge toàn bộ Query namespace +
+bootstrap. Cả hai **không** gọi `Dexie.delete()` trên outbox DB.
 
 ### 4.5 UI của hàng đợi
 
-Một chỉ số nhỏ ở khung app: *"N đang chờ gửi"* (ẩn khi `N = 0`), bấm vào mở danh sách. Mục park hiện
-lý do người-đọc-được + nút **Xoá bỏ** (kéo theo mục phụ thuộc, §2.4). Không nút "thử lại" cho nhóm D
-— nó đã hỏng vĩnh viễn, mời chủ bấm lại là mời thất vọng.
+Một chỉ số nhỏ ở khung app: *“N đang chờ gửi”* (ẩn khi `N = 0`), bấm mở danh sách. Phân biệt
+*chờ mạng · cần đăng nhập · cần mở khoá riêng tư · gửi thất bại*. Mục failed hiện lý do người-đọc-được
++ nút **Xoá bỏ**; xoá gọi adapter rollback và kéo descendants. Entity optimistic tương ứng cũng mang
+badge “Chưa gửi được”. Không nút retry cho validation/business failure; auth/private hold tự chạy lại
+khi điều kiện được đáp ứng.
 
 `data-testid`: `outbox-indicator` · `outbox-panel` · `outbox-item` · `outbox-item-discard` ·
 `offline-banner`.
 
-## 5. Backend — kiểm, gần như không sửa
+## 5. Backend — mở nốt idempotency seam, vẫn không migration
 
-Lô này **không** đổi hợp đồng API. Hai việc kiểm, vá chỉ khi đo thấy sai:
+Lời hứa offline chỉ đúng khi **mọi POST tạo bản ghi** retry cùng payload không tạo dòng thứ hai.
+Single-flight/Web Lock không che được ca server commit xong nhưng response mất. Do đó:
 
-1. **Seam idempotent create có mặt đủ bốn họ chưa** — `task`/`note` đã có (§1); kiểm `calendar`/
-   `tracker` do `010a`/`011a` mang vào. Thiếu chỗ nào ⇒ vá theo đúng khuôn `008m` §2.2 (`ON CONFLICT
-   … DO NOTHING` + validate `version == 7`), **không** phát minh khuôn mới.
-2. **`POST /{parent}/{id}/items` KHÔNG idempotent** và lô này không làm nó idempotent. Hệ quả được
-   che bằng §4.3 (chống chạy chồng) + FIFO. **Ghi thẳng giới hạn này vào PR** — đây là chỗ mỏng nhất
-   của thiết kế, người review sau phải biết nó nằm ở đâu.
+1. Kiểm toàn bộ POST user-domain sau khi 010/011 merge. Mọi create entity còn thiếu — tối thiểu
+   `task_item`, `note_item`, `calendar_event`; cộng bất kỳ group/tracker/entry/subscription/annotation
+   nào chưa nhận id client — phải nhận `id: UUIDv7 | None`, dùng khuôn `008m`: `ON CONFLICT DO
+   NOTHING`, `201` mới / `200` replay đọc được / `409` id vô hình. Parent + child insert chỉ chạy
+   khi parent/child thật sự mới; không biến create replay thành update.
+2. `calendar import` không tạo một outbox row cho từng event: queue nguyên `ImportRequest` JSON;
+   endpoint thay-sạch đã idempotent theo nội dung + transaction (`010a` §4.2). `renew` giữ nguyên
+   `entry_id` qua retry (`011c` §2.4). Restore/cancel/uncancel là absolute state command.
+3. Thêm endpoint reorder note-item atomic (§4.2):
+   `PATCH /api/notes/{note_id}/items/positions`, body
+   `{"items": [{"id": <UUID>, "position": <int>}, ...]}`; validate mọi item thuộc đúng note, từ
+   chối id trùng/position trùng, rồi cập nhật trong một transaction. Payload là absolute state nên
+   retry tự idempotent. Không migration.
+4. Chuẩn hoá privacy failure ở mọi router thành error code máy-đọc-được
+   `PRIVATE_UNLOCK_REQUIRED`; giữ HTTP status hiện tại nếu cần chống enumeration. Classifier dựa
+   `requires_private` + code, không dựa text.
+
+**Không dùng một bảng idempotency key phụ.** PK UUIDv7 của bản ghi vẫn là key của chính nó.
 
 ## 6. Không được làm
 
 - **Không** migration, **không** đổi schema, **không** thêm cột.
-- **Không** mirror thực thể vào Dexie (§3 mục 4). Dexie giữ đúng một bảng hàng đợi.
+- **Không** mirror thực thể vào Dexie (§3 mục 4). Dexie giữ một bảng outbox; Query cache ở namespace
+  khác và chỉ là public snapshot.
 - **Không** chuyển sang TanStack DB / PowerSync / ElectricSQL / Zero (`frontend-brief.md` §3) — xem
   ngưỡng dừng ở §8.
-- **Không** đưa `auth`/`private` vào hàng đợi (§3 mục 1).
-- **Không** persist query chứa dữ liệu riêng tư (§2.1). **Không** dùng blocklist.
-- **Không** sửa backend thành `204` cho `DELETE` không tìm thấy (§2.3).
-- **Không** dựng Background Sync / periodic sync trong service worker (§3 mục 5).
-- **Không** đổi `apiRequest` trong `frontend/src/api.ts` (hợp đồng đã vá ở `008i`) — bọc **quanh** nó.
+- **Không** đưa auth/private unlock, web-push registration hay cron vào hàng đợi (§3 mục 1).
+- **Không** persist private plaintext — kể cả nằm lẫn trong query public key (§2.1). Không blocklist.
+- **Không** sửa backend thành `204` cho DELETE không tìm thấy (§2.3).
+- **Không** coi single-tab flag là cross-tab lock; bắt buộc Web Locks (§3 mục 9).
+- **Không** dựng Background Sync / periodic sync trong service worker (§3 mục 6).
+- **Không** đổi timeout/error contract của `apiRequest`; bọc quanh nó. Có thể thêm export error-code
+  parser dùng chung nếu router đã chuẩn hoá §5 mục 4.
 - **Không** sinh lại `uuidv7()` bên trong seam ghi (§4.2).
+- **Không** parse URL để đoán cache/dependency/classifier; command typed sở hữu metadata.
 - **Không** đổi tên required check trong CI.
 
 ## 7. Nghiệm thu (Definition of Done)
 
 1. `npm run build` + `npm run lint` + `npm test` xanh; `uv run ruff check` + `uv run pytest` xanh.
-2. **Mỗi bài test dưới đây phải chứng minh biết đỏ** (gỡ luật ⇒ test đỏ), ghi trong PR đã phá gì:
-   - Ghi lúc offline ⇒ vào hàng đợi; online lại ⇒ tự gửi, hàng đợi rỗng.
-   - `[hỏng-422, tốt, tốt]` ⇒ hai mục tốt **vẫn gửi được** (§2.2 nhóm D không chặn dòng).
-   - `403` private-locked ⇒ mục **ở lại** hàng đợi, **không** bị park; mở cổng ⇒ gửi được (§2.2 B).
-   - `DELETE` trả `404` ⇒ coi là **thành công**, không hiện lỗi (§2.3).
-   - Cha bị park ⇒ con bị park im lặng, hiện **đúng một** dòng lỗi (§2.4).
-   - Hai kích hoạt flush đồng thời ⇒ mỗi mục gửi **đúng một lần** (§4.3).
-   - Tạo cha + 3 item offline ⇒ gửi đúng thứ tự, cha trước.
-3. 🔒 **Test cổng riêng tư × persist** (bài quan trọng nhất): mở khoá → đọc nội dung riêng tư → khoá →
-   **reload** ⇒ nội dung riêng tư **không** hiện. Kiểm thêm bằng cách soi thẳng IndexedDB: không có
-   bản ghi nào chứa nội dung đó.
-4. **Playwright, mạng thật giả lập** (`context.setOffline(true)`): mở app **rồi reload** lúc offline ⇒
-   vẫn thấy dữ liệu + dải "Đang ngoại tuyến"; chạm ghi ⇒ chỉ số "N đang chờ gửi" tăng; bật mạng ⇒ về 0.
-   Bài này là lý do lô cần MCP Playwright — nó là thứ **không** suy luận thay được
-   (`agent-tasks/README.md` §"Quy ước BÁO CÁO").
-5. **Ca `008m` để hở đã đóng:** ghi → reload giữa chừng → bấm lại ⇒ **một** bản ghi, không phải hai.
-6. Đường happy online **không đổi hành vi**: mọi test của `008`–`011` còn xanh, không sửa bài nào để
-   nó xanh.
-7. `gh pr checks <PR>` xanh toàn bộ.
-8. **Kiểm trên iPhone thật** (chủ hoặc T3): cài PWA, bật chế độ máy bay, ghi vài mục, tắt chế độ máy
-   bay ⇒ đồng bộ. Ghi rõ trong PR cái gì **đã chạy** và cái gì **chỉ suy luận**.
+2. **Classifier unit — mỗi bài biết đỏ:** network/timeout/408/425/429/5xx retry; 429 tôn trọng
+   `Retry-After`; 401 auth-hold; private 403/404/409 hold rồi unlock; DELETE-public 404 success;
+   restore 404 failed; business 409/422 failed. Không test “status đơn lẻ” — truyền đủ typed metadata.
+3. **Idempotency PG thật:** với **mọi POST create** được 017 phủ, gửi cùng UUIDv7 hai lần và mô phỏng
+   “commit xong mất response” ⇒ đúng một row, lần replay 200. Bắt buộc có task-item/note-item/
+   calendar-event; `renew` cùng `entry_id` chỉ tiến một kỳ. UUID khác nhưng trùng tên ⇒ 409 thật,
+   không bị nuốt.
+4. **Dependency + optimistic:** group→tracker→entry gửi đúng thứ tự; parent fail suppress descendants
+   nhưng public row độc lập phía sau vẫn gửi; park giữ optimistic entity + badge; discard rollback;
+   response server thay placeholder; create→patch→delete chưa gửi coalesce về 0 command.
+5. **Race refetch:** reconnect trong lúc có 3 optimistic writes ⇒ refetch không ghi đè; sau flush,
+   invalidate trả đúng state server. Test `NotesScreen` reorder qua endpoint atomic, không nửa-vời.
+6. 🔒 **Private × storage — bài quan trọng nhất:** query mixed public/private được persist thành public
+   only; query private detail = 0 byte; lock/TTL/logout/401 purge RAM + Query store; **outbox canary
+   private vẫn còn**. Reload offline không hiện private và gate luôn locked.
+7. **Offline session bootstrap:** online một lần → offline + reload ⇒ render public shell/cache;
+   `private_until` không tồn tại trên đĩa; snapshot quá `expires_at` ⇒ không render shell; 401/logout
+   purge bootstrap nhưng giữ outbox.
+8. **PWA Playwright lane riêng:** config hiện tại có `serviceWorkers:'block'`, nên thêm lane production
+   build/preview với `serviceWorkers:'allow'`. Chờ `navigator.serviceWorker.ready` **và controller**
+   trước `context.setOffline(true)` + reload. API write lúc offline phải bị abort thật, không
+   `route.fulfill()` giả. Kiểm: shell + public data hiện, banner offline, write tăng queue, online về 0.
+9. **Cross-tab:** hai page cùng origin, cùng IndexedDB, cùng nhận `online`; Web Lock bảo đảm mỗi command
+   gửi đúng một lần. Test này không được thay bằng hai promise trong một module.
+10. **Ca `008m` để hở:** create → response mất → reload → flush/bấm lại cùng payload ⇒ một bản ghi.
+11. Đường happy online của 008–011 còn xanh; `gh pr checks <PR>` xanh toàn bộ.
+12. **iPhone thật qua production HTTPS** (Web Locks cần secure context): PWA đã cài, máy bay →
+    reload → thấy public cache → ghi task/note/entry → tắt máy bay ⇒ queue về 0. Không nghiệm thu
+    qua `http://192.168…`. Ghi rõ cái **đã chạy** và cái chỉ suy luận.
 
 ## 8. Ngưỡng dừng — cửa nâng cấp hai chiều
 
@@ -254,9 +355,11 @@ Lô này **không** đổi hợp đồng API. Hai việc kiểm, vá chỉ khi �
 Ngưỡng đó cần một con số, nếu không nó không bao giờ kích hoạt. **Chạm bất kỳ điều nào dưới đây ⇒
 DỪNG, báo T1/chủ, không tự đi tiếp:**
 
-- Tổng `outbox-db.ts` + `outbox-flush.ts` + `queued-mutation.ts` vượt **400 dòng**.
-- Phải viết logic **merge/conflict resolution** (hai phiên bản của cùng một bản ghi cần hoà giải).
-- Phải dựng **đồ thị phụ thuộc** thật sự, tức FIFO + `depends_on` một tầng ở §2.4 không đủ.
+- Tổng **core generic** (`outbox-db.ts` + `outbox-flush.ts` + coordinator + queued-mutation, không tính
+  adapter domain/tests) vượt **400 dòng**.
+- Phải viết logic **merge/conflict resolution** giữa hai phiên bản server/client.
+- Dependency một-cha dạng chain ở §2.4 không đủ, cần nhiều cha/đồ thị topo tuỳ ý.
+- Optimistic adapter bắt đầu mirror cả entity store thay vì chỉ overlay command lên Query cache.
 
 Ba dấu hiệu đó nghĩa là bài toán đã đổi họ, và tự viết tiếp là đang xây một sync-engine mà không gọi
 tên nó.
@@ -267,3 +370,43 @@ tên nó.
 gọi mutation. Để `017` chỉ phải bọc **một** seam thay vì đuổi theo ~60 điểm gọi, `011a` §5.3 nhận một
 ràng buộc: **mọi write của màn tracker đi qua một helper mutation dùng chung**, không rải `apiRequest`
 khắp component. Các lô `010`/`011b`/`011c` chép theo. Bảo hiểm rẻ, trả bằng đúng một chỗ để sửa.
+
+## 10. Vòng phản biện T2 + T3 (2026-08-02) — đã vá, giữ để không lặp
+
+**T2:** Codex review code/spec thật, 4 P0 + 3 P1. **T3:** `gemini-3.1-pro-high`, 9 finding; một
+follow-up dùng để làm rõ R6/409. T1 kiểm từng finding với code + brief, không chép máy móc.
+
+### Finding xác nhận đúng và đã vá
+
+1. **P0 — query-key allowlist vẫn persist private** vì list query trộn public/private. Vá item-level
+   sanitizer + `purgePrivateSurface` + namespace tách (§2.1/§4.4). Bác remedy “persist
+   `private_until` tới TTL”: trái thẳng `auth-brief.md` R6, private plaintext phải 0 byte trên disk.
+2. **P0 — offline reload không qua được `/api/me`.** Vá public session bootstrap không mang quyền
+   private (§2.5).
+3. **P0 — child POST không idempotent.** Single-flight không che commit-xong-mất-response. Vá mọi
+   POST create theo UUIDv7/PK, thêm reorder atomic (§5).
+4. **P0 — classifier theo status sẽ nuốt lỗi.** Vá typed route metadata, 401/429/private 404/409,
+   DELETE-vs-restore và bỏ mâu thuẫn “retry vô hạn nhưng >50 park” (§2.2–2.3).
+5. **P1 — optimistic contract quá mơ hồ + refetch race.** Vá adapter typed, coalesce, server
+   reconciliation và sync coordinator (§4.2–4.3).
+6. **P1 — dependency theo entity id + cờ một tab không đủ.** Vá operation-id chain, skip hold,
+   descendant suppression và Web Locks cross-tab (§2.4/§3).
+7. **P1 — Playwright hiện chặn service worker.** Vá lane PWA production riêng, chờ SW controller,
+   abort mạng thật và test hai tab (§7).
+8. **Minor — Dexie top-level có thể crash khi IndexedDB bị chặn.** Vá lazy factory + visible online
+   fallback (§4.1).
+
+**T3 verification pass sau vá** bắt thêm 5 chỗ nối dây, đã vá một lượt rồi dừng: `App.tsx` render
+alert + shell cùng lúc; purge private xoá nhầm public offline cache; Web Locks cần HTTPS; optimistic
+apply chưa cancel in-flight query; endpoint reorder thiếu path/DTO (§2.1/§2.5/§3/§4.2/§5). Không mở
+vòng tự-vá thứ ba — executor phải chứng minh bằng acceptance §7.
+
+### Nghi ngờ đã kiểm và bác/thu hẹp
+
+- **PATCH replay:** task/note là absolute assignment, không phải blocker; vẫn cần adapter reconcile.
+- **DELETE 404:** đúng là success **chỉ cho DELETE đạt postcondition**; restore 404 không được nuốt.
+- **UUIDv7 collision 409:** không coi success. Private + locked thì hold rồi thử khi unlock; còn 409
+  thì park. Không làm yếu gate tồn tại.
+- **Autoincrement FIFO lệch do clock:** bác — operation id không dùng clock.
+- **Không Background Sync:** giới hạn Safari đã khoá, không phải defect.
+- **Không migration:** vẫn đúng; id đã là PK, chỉ mở DTO/store/router seam.
