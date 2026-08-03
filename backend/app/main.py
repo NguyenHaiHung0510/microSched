@@ -14,6 +14,7 @@ from starlette.types import Scope
 from app.core.settings import get_settings
 from app.web.deps import require_session
 from app.web.oauth import OAUTH_STATE_COOKIE, OAUTH_STATE_TTL_SECONDS
+from app.web.routers.annotations import router as annotations_router
 from app.web.routers.auth import router as auth_router
 from app.web.routers.calendar import router as calendar_router
 from app.web.routers.cron import router as cron_router
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(tasks_router)
     protected_api.include_router(notes_router)
     protected_api.include_router(calendar_router)
+    protected_api.include_router(annotations_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:

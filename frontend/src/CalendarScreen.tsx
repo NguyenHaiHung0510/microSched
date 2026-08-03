@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { FilePicker } from '@/components/ui/file-picker'
+import { CalendarScrollView } from '@/CalendarScrollView'
 import { SourceForm } from '@/SourceForm'
 
 type SourceEnvelope = { items: CalendarSource[] }
@@ -38,6 +39,8 @@ type ConfirmState =
   | { kind: 'source'; source: CalendarSource }
   | { kind: 'event'; event: CalendarEvent }
   | null
+
+const VIEW_KEY = 'microsched:calendar-view'
 
 async function getSources(): Promise<SourceEnvelope> {
   return apiRequest<SourceEnvelope>('/api/calendar/sources')
@@ -62,6 +65,13 @@ function validateFile(file: File): string | null {
 
 export function CalendarScreen() {
   const queryClient = useQueryClient()
+  const [view, setView] = useState<'grid' | 'list'>(() => {
+    try {
+      return window.localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'
+    } catch {
+      return 'grid'
+    }
+  })
   const [rangeStart, setRangeStart] = useState(todayInVietnam)
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
   const [sourceKind, setSourceKind] = useState<'ics' | 'manual'>('ics')
@@ -75,10 +85,16 @@ export function CalendarScreen() {
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | undefined>()
   const [eventError, setEventError] = useState<string | null>(null)
 
-  const sources = useQuery({ queryKey: ['calendar', 'sources'], queryFn: getSources })
+  const sources = useQuery({
+    queryKey: ['calendar', 'sources'],
+    queryFn: getSources,
+    // 010b §2.8: every calendar query opts out of the 1s global polling.
+    refetchInterval: false,
+  })
   const events = useQuery({
     queryKey: ['calendar', 'events', rangeStart],
     queryFn: () => getEvents(rangeStart),
+    refetchInterval: false,
   })
   const manualSources = useMemo(
     () => (sources.data?.items ?? []).filter((source) => source.kind === 'manual'),
@@ -89,8 +105,10 @@ export function CalendarScreen() {
     [sources.data?.items],
   )
 
-  const refreshSources = () => void queryClient.invalidateQueries({ queryKey: ['calendar', 'sources'] })
-  const refreshEvents = () => void queryClient.invalidateQueries({ queryKey: ['calendar', 'events'] })
+  /* 010b §2 mục 9: một buổi/dấu ngày có thể đổi sang tháng khác, nên mọi
+     mutation phải invalidate CẢ họ ["calendar"], không chỉ tháng đang mở. */
+  const refreshCalendar = () =>
+    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
 
   const importFile = useMutation({
     mutationFn: async ({ sourceId, file }: { sourceId: string; file: File }) => {
@@ -105,8 +123,7 @@ export function CalendarScreen() {
     onSuccess: (report) => {
       setImportReport(report)
       setSourceError(null)
-      refreshSources()
-      refreshEvents()
+      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -121,7 +138,7 @@ export function CalendarScreen() {
       setSourceDialogOpen(false)
       setSourceError(null)
       setSourceConflict(null)
-      refreshSources()
+      refreshCalendar()
       if (sourceKind === 'ics' && pickedFile) {
         importFile.mutate({ sourceId: source.id, file: pickedFile })
       }
@@ -140,8 +157,7 @@ export function CalendarScreen() {
         body: JSON.stringify({ is_visible: isVisible }),
       }),
     onSuccess: () => {
-      refreshSources()
-      refreshEvents()
+      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -151,8 +167,7 @@ export function CalendarScreen() {
       apiRequest<void>(`/api/calendar/sources/${sourceId}`, { method: 'DELETE' }),
     onSuccess: () => {
       setConfirm(null)
-      refreshSources()
-      refreshEvents()
+      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -165,8 +180,7 @@ export function CalendarScreen() {
       }),
     onSuccess: () => {
       setEventDialogOpen(false)
-      refreshSources()
-      refreshEvents()
+      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
@@ -180,8 +194,7 @@ export function CalendarScreen() {
     onSuccess: () => {
       setEventDialogOpen(false)
       setEditingEvent(undefined)
-      refreshSources()
-      refreshEvents()
+      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
@@ -191,8 +204,7 @@ export function CalendarScreen() {
       apiRequest<void>(`/api/calendar/events/${eventId}`, { method: 'DELETE' }),
     onSuccess: () => {
       setConfirm(null)
-      refreshSources()
-      refreshEvents()
+      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -252,37 +264,57 @@ export function CalendarScreen() {
     setEventDialogOpen(true)
   }
 
+  function chooseView(next: 'grid' | 'list') {
+    setView(next)
+    try {
+      window.localStorage.setItem(VIEW_KEY, next)
+    } catch {
+      // Storage bị chặn (private mode) không được làm hỏng việc chuyển view.
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-extrabold tracking-tight">Lịch</h2>
-          <p className="text-sm text-muted-foreground">Danh sách 30 ngày theo giờ Việt Nam.</p>
+          <p className="text-sm text-muted-foreground">
+            {view === 'grid'
+              ? 'Lịch cuộn theo tháng, tuần bắt đầu Thứ Hai.'
+              : 'Danh sách 30 ngày theo giờ Việt Nam.'}
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex gap-1 rounded-lg bg-muted p-1" role="group" aria-label="Chế độ xem lịch">
           <Button
-            data-testid="calendar-manual-source-button"
-            size="lg"
-            variant="outline"
-            onClick={() => openSourceDialog('manual')}
+            data-testid="calendar-view-toggle-grid"
+            size="sm"
+            variant={view === 'grid' ? 'secondary' : 'ghost'}
+            aria-pressed={view === 'grid'}
+            onClick={() => chooseView('grid')}
           >
-            <Plus data-icon="inline-start" />
-            Nguồn thủ công
+            Lịch
           </Button>
-          <Button size="lg" onClick={() => openSourceDialog('ics')}>
-            <CalendarDays data-icon="inline-start" />
-            Thêm nguồn lịch
+          <Button
+            data-testid="calendar-view-toggle-list"
+            size="sm"
+            variant={view === 'list' ? 'secondary' : 'ghost'}
+            aria-pressed={view === 'list'}
+            onClick={() => chooseView('list')}
+          >
+            Danh sách
           </Button>
         </div>
       </div>
 
-      {sourceError || mutationError ? (
+      {view === 'grid' ? <CalendarScrollView /> : (
+        <div className="space-y-5">
+          {sourceError || mutationError ? (
         <p className="text-sm text-bad" role="alert">
           {sourceError ?? importErrorMessage(mutationError)}
         </p>
-      ) : null}
+          ) : null}
 
-      {importReport ? (
+          {importReport ? (
         <Card data-testid="calendar-import-report" className="gap-2 bg-ok-bg p-4 shadow-1 ring-0">
           <p className="text-sm font-bold">
             Đã nhập {importReport.inserted} buổi · bỏ qua {importReport.skipped.length} · trùng{' '}
@@ -302,12 +334,29 @@ export function CalendarScreen() {
             </details>
           ) : null}
         </Card>
-      ) : null}
+          ) : null}
 
-      <section aria-labelledby="calendar-sources-heading" className="space-y-3">
-        <h3 id="calendar-sources-heading" className="text-base font-bold">
-          Nguồn lịch
-        </h3>
+          <section aria-labelledby="calendar-sources-heading" className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 id="calendar-sources-heading" className="text-base font-bold">
+                Nguồn lịch
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  data-testid="calendar-manual-source-button"
+                  size="lg"
+                  variant="outline"
+                  onClick={() => openSourceDialog('manual')}
+                >
+                  <Plus data-icon="inline-start" />
+                  Nguồn thủ công
+                </Button>
+                <Button size="lg" onClick={() => openSourceDialog('ics')}>
+                  <CalendarDays data-icon="inline-start" />
+                  Thêm nguồn lịch
+                </Button>
+              </div>
+            </div>
         {sources.isPending ? <p className="text-sm text-muted-foreground">Đang tải nguồn lịch…</p> : null}
         <div className="space-y-2">
           {(sources.data?.items ?? []).map((source) => (
@@ -363,9 +412,9 @@ export function CalendarScreen() {
             </Card>
           ))}
         </div>
-      </section>
+          </section>
 
-      <section aria-labelledby="calendar-events-heading" className="space-y-3">
+          <section aria-labelledby="calendar-events-heading" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 id="calendar-events-heading" className="text-base font-bold">
             Buổi trong khoảng này
@@ -466,7 +515,9 @@ export function CalendarScreen() {
             </div>
           ))}
         </div>
-      </section>
+          </section>
+        </div>
+      )}
 
       <Dialog open={sourceDialogOpen} onOpenChange={setSourceDialogOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
