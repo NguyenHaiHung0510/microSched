@@ -129,9 +129,9 @@ Bối cảnh: bước vào phase B (scaffold), chính chủ chốt bộ công c�
 
 | Tầng | Công cụ | Vai |
 |---|---|---|
-| **T1 — óc** | **Claude Pro \$20** (từ 21/07: Opus 4.8 chat + Sonnet 5 Claude Code; Fable hết trên Pro 20/07) | viết spec `agent-tasks/`, ADR khi có quyết định mới, **review diff cuối trước merge**, debug khi T2 bế tắc, và **code security-critical** (auth/session/crypto — dùng tiết chế vì chung quota với chat) |
-| **T2 — tay** | **Codex trên ChatGPT Plus \$20** (GPT-5.6; mua 07/2026) | thi công agent-tasks theo spec. Bậc trong Codex: **Sol** (cao) = việc khó đã có spec — auth/DDL/Docker/bug khó · **Terra** = workhorse mặc định — wiring/CRUD/UI/viết test · **Luna** (nhẹ, quota ~3–4×) = vòng lặp máy móc (test-fix-test, lint, rename). **Luật quota: Sol chỉ nhận việc đã có spec, không bao giờ nhận việc "thử xem sao"** — thứ giết limit là vòng lặp và test-spam, không phải task khó |
-| **T3 — máy chạy test** | **2× Google AI Pro** (sẵn có) | **duy nhất một vai: CHẠY TEST** (unit/smoke/Postman/Chrome-DevTools-MCP UI/Playwright) theo hướng dẫn của T1/T2 — *chạy và report, không thiết kế test* (test case do T1 viết trong spec, T2 cài đặt). Kinh nghiệm chính chủ: Gemini 3.1 Pro / 3.5 Flash không đủ tin cho việc khác — nhưng test-loop đốt quota khủng và là việc khối-lượng-lớn/phán-đoán-thấp, khớp đúng quota-nhiều của Google. ⚠️ 2026-06-18: **Gemini CLI ngừng phục vụ gói AI Pro** — đường dùng còn lại là Jules / Antigravity / web |
+| **T1 — óc** | **Codex Desktop (Main Thread)** (GPT-5.6 Sol/xhigh; PAYG: Antigravity Opus/Gemini 3.6 Flash) | Lập kế hoạch, viết spec `agent-tasks/`, ADR khi có quyết định mới, **review diff cuối trước merge**, debug khi T2 bế tắc, và chỉ đạo chiến lược |
+| **T2 — tay** | **Codex / OpenCodex Sub-agents** (`spawn_agent`) | Thi công agent-tasks theo spec trên `feat/NNN-<slug>`. **Sol** (high): Auth/DDL/Crypto/bug khó · **Terra** (medium): CRUD/UI/wiring · **Luna** (low/medium): sửa vặt/lint/test-loop · **PAYG**: `gemini-3.6-flash` hoặc `deepseek-v4-flash-latest` qua OpenRouter |
+| **T3 — máy chạy test & phản biện** | **OpenCodex Sub-agents** (`spawn_agent`) | **Phản biện 6 trục (§7.3i) & CHẠY TEST** (Playwright e2e/unit/smoke). **Gemini 3.6 Flash**: test runner chính & phản biện nhanh · **Gemini 3.1 Pro (high)**: soát lỗi chuyên sâu · **OpenRouter**: DeepSeek V4 Pro / Flash (bản trả phí) |
 
 **Flow một agent-task (code):** T1 viết spec → T2 thi công trên `feat/NNN-<slug>`, tự chạy test + pre-commit → PR nhỏ vào `develop` → T1 review diff theo 3 câu (*đúng spec? đúng brief? có tự phát minh kiến trúc không?*) → chính chủ merge. **Escalation:** T2 bí >2 vòng hoặc muốn làm khác điều đã ✅ CHỐT → dừng, ghi nhận, đẩy lên T1. `docs/` là luật — chỉ chính chủ + T1 sửa nội dung quyết định.
 
@@ -575,3 +575,13 @@ suspend Machine sau khi response trả về.
 
 ---
 *Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). **§9 đã đóng 2026-07-22**; mở lại nếu đổi hạ tầng deploy. **§10 chốt 2026-07-23**; mở lại nếu đổi nhà cung cấp cron hoặc khi 011 cần >3 job. §7.2 xem lại nếu đổi cách agent truy cập trình duyệt. Thêm note có ngày — không xóa kết luận cũ.*
+
+### j) 📝 2026-08-03 — Chuyển đổi Harness sang Codex Desktop + OpenCodex Sub-agents (✅ CHỐT)
+
+Bối cảnh: Claude Code dừng hoạt động, dự án chuyển sang **Codex Desktop App** làm harness điều phối chính.
+
+1. **T1 mới:** Môi trường Codex Desktop chính (Main Thread) đảm nhiệm vai T1. Model chính: `gpt-5.6-sol` (effort: `xhigh`/`high`); khi PAYG/cạn quota: `google-antigravity/claude-opus-4-6-thinking` hoặc `google-antigravity/gemini-3.6-flash`.
+2. **T2 & T3 mới:** Sử dụng tính năng `spawn_agent` tích hợp sẵn trong Codex Desktop để điều phối sub-agents.
+   - **T2 (Thi công):** Spawn sub-agent với `fork_context: true`. Định tuyến: Sol (high) / Terra (medium) / Luna (low) trên Codex; PAYG: `gemini-3.6-flash` hoặc `openrouter/~deepseek-deepseek-v4-flash-latest`.
+   - **T3 (Phản biện & Test):** Spawn sub-agent độc lập cho lượt review 6 trục (§7.3i) và e2e Playwright. Định tuyến: `gemini-3.6-flash`, `gemini-3.1-pro-high`, hoặc DeepSeek V4 Pro/Flash (OpenRouter trả phí).
+3. **Giữ nguyên:** Rubric 6 trục (§7.3i), Merge Gate by criticality, Luật biên lai máy kiểm được, và Luật Full-Access git/Docker theo từng lệnh.

@@ -12,9 +12,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Design phase: fully closed.** All architecture/schema/frontend/auth/UI/QA-framework decisions are locked — see the doc list below. The only thing left to design is the **Bước-1 AI choices** (embedding provider, vector dimension, default LLM, hybrid retrieval details) — everything else in `docs/` is final, read it rather than re-deriving.
 
-**Slice progress:** `003`–`007` (walking skeleton), `008` + all sub-tasks (`a/b/d/e/f/i/k/m/n/g`), `013` (DevSecOps), `014` (cron RSS watch), `015` (gitleaks history scan), `016` (private unlock), `018` (QA framework + Playwright harness), `009` (note slice) — **all done and live**. `010a` (calendar tầng nền) đã merge + live qua PR #86, migration `0005` đã áp/xác minh trên Neon; còn QA tay file picker trên iPhone nên chưa gọi là đóng trọn vòng đời. Open, not blocking: `008c` (cost-tracking feature, scope in `cost-brief.md` §7.4, do when free). Deferred to after `012` + a dedicated branding session with the owner + a copy rewrite (drop first-person voice): `008h` (landing page).
+**Slice progress:** `003`?`007` (walking skeleton), `008` + all sub-tasks (`a/b/d/e/f/i/k/m/n/g`), `013` (DevSecOps), `014` (cron RSS watch), `015` (gitleaks history scan), `016` (private unlock), `018` (QA framework + Playwright harness), `009` (note slice), `010a` (calendar import/CRUD) ? **all done and live**. Open, not blocking: `008c` (cost-tracking feature, scope in `cost-brief.md` ?7.4, do when free). Deferred to after `012` + a dedicated branding session with the owner + a copy rewrite (drop first-person voice): `008h` (landing page).
 
-**⚠️ Việc kế tiếp thật sự:** QA tay `010a` trên production (đặc biệt file picker/FileReader trên iPhone), rồi thi công `010b` — spec đã duyệt và phụ thuộc cứng `010a` nay đã thoả. Hàng đợi: `QA 010a → 010b → 011a → 011c → 011b → 020 → 012 → 008h`. Tình trạng spec (viết trước 2026-08-01 để hàng đợi chạy được cả khi T1 vắng): `010b` đã duyệt · `011a`/`011b`/`011c` DRAFT chờ chủ duyệt · `020` (3 cột giữ dữ liệu app cũ) và `012` (cutover) **đã có spec DRAFT**, đã qua một vòng phản biện T2+T3 2026-08-02, **chưa qua vòng vá + chủ duyệt bản chi tiết**. `020` là phụ thuộc cứng của `012` (phải merge trước, xem `020` §1). **Đừng đảo thứ tự trong họ `011`:** `011b` nhắc cả thuốc lẫn sub nên phải sau `011c`. Bảng chi tiết từng lô: `agent-tasks/README.md`. Chi tiết lịch sử vì sao thứ tự này đổi nhiều lần (018/016/015 chen trước 009): `docs/session-log.md`.
+**?? Vi?c k? ti?p th?t s?:** thi c?ng `010b` (calendar ph?n nh?n) ? **`010a` ?? merge & QA closeout t?i PR #86/#87**. H?ng ??i: `010b ? 011a ? 011c ? 011b ? 020 ? 012 ? 008h`. T?nh tr?ng spec (vi?t tr??c 2026-08-01 ?? h?ng ??i ch?y ???c c? khi T1 v?ng): `010b` ?? duy?t ? `011a`/`011b`/`011c` DRAFT ch? ch? duy?t ? `020` (3 c?t gi? d? li?u app c?) v? `012` (cutover) **?? c? spec DRAFT**, ?? qua m?t v?ng ph?n bi?n T2+T3 2026-08-02, **ch?a qua v?ng v? + ch? duy?t b?n chi ti?t**. `020` l? ph? thu?c c?ng c?a `012` (ph?i merge tr??c, xem `020` ?1). **??ng ??o th? t? trong h? `011`:** `011b` nh?c c? thu?c l?n sub n?n ph?i sau `011c`. B?ng chi ti?t t?ng l?: `agent-tasks/README.md`. Chi ti?t l?ch s? v? sao th? t? n?y ??i nhi?u l?n (018/016/015 chen tr??c 009): `docs/session-log.md`.
 
 ## Read the decision records before proposing anything
 
@@ -78,16 +78,11 @@ Data boundary for third-party tools (`devops-brief.md` §7): public code/docs = 
 - **pre-commit + gitleaks are active** (`.pre-commit-config.yaml`): every `git commit` runs a basic hygiene hook + gitleaks. Hook doesn't survive `git clone` — run `pip install pre-commit && pre-commit install` on a new machine.
 - **CLAUDE.md itself:** current-state facts get fixed in place; session-close notes go to `docs/session-log.md`, not appended here (see the maintenance note at the top of this file, and `feedback_session_close_checklist` in memory).
 
-## Delegation qua `agy-bridge` (T1 → T3) — ✅ chốt + đo tận tay 2026-07-24
+## Delegation qua sub-agent (Codex + OpenCodex) — ✅ Cập nhật 2026-08-03
 
-MCP server `agy-bridge` (cài `-s user`, gọi binary `agy` = Antigravity CLI) để **T1 đẩy việc đọc-nặng/cố-vấn sang Gemini mà không phình context T1** — chỉ *câu trả lời* quay về. Song song `codex-plugin-cc` (T1→T2); **KHÔNG đổi luật 3 tầng** — T3 vẫn là tầng bị điều hướng (`devops-brief.md §7`).
+Từ 2026-08-03, dự án chuyển sang **Codex Desktop App** làm harness chính (thay thế Claude Code). Việc điều phối sub-agents (T2 thi công, T3 phản biện/test) sử dụng cơ chế `spawn_agent` tích hợp sẵn trong Codex Desktop, kết hợp **OpenCodex** (gọi các model qua Antigravity và OpenRouter).
 
-**Hai lane:**
-1. **Phản biện khác-họ** (`adversarial_review`) — góc nhìn cố vấn NGOÀI T2; model khác họ bắt lỗi T1 sót. Dùng `follow_up` (kèm `session_id`) để hỏi tiếp — **chỉ hoạt động cho phiên chạy qua MCP, không dùng được để nối một phiên đã chạy qua CLI** (`agy -p`).
-2. **Tìm fact / đọc nhiều file** (`analyze_files`, `deep_search`, `web_lookup`) — offload để tiết kiệm token/context.
-
-**KHÔNG giao:** sửa 1 file nhỏ; việc trả lời được từ context đã nạp; việc cần tool chỉ T1 có; code/quyết định/secret/dữ liệu riêng.
-
-**⚠️ Bẫy chất lượng:** auto-routing rơi về "agy default" ⇒ **phải truyền `model:` tên THẬT từ `agy models`** (không phải tên đẹp trong schema). Model cứng + lane đo thật ở memory `agy-model-capabilities` (`agy models` đổi danh sách ⇒ dừng, báo chủ re-probe). Kết quả agy là **cố vấn**, KHÔNG phải biên lai code — T1 vẫn tự kiểm cái gì quan trọng (Gemini vẫn bịa).
-
-**Quota:** 2 account Google AI Pro — ưu tiên agy (hỗ trợ T1 + chạy test T3), không dồn vào Jules. Gemini hết quota giữa chừng ⇒ dừng, nhắc chủ log out → account 2 (tên account cố ý không ghi trong repo). **Máy mới:** cần `agy` trên `PATH` hoặc set `AGY_PATH`, rồi `claude mcp add-json -s user agy-bridge '{...}'`.
+**Ma trận phân vai & Định tuyến Model:**
+- **T1 (Óc — Main thread Codex Desktop):** Lập kế hoạch, spec, ADR, review diff cuối. Model: `gpt-5.6-sol` (effort: `xhigh`/`high`) khi có quota; PAYG/cạn quota: `google-antigravity/claude-opus-4-6-thinking` hoặc `google-antigravity/gemini-3.6-flash`.
+- **T2 (Tay thi công — `spawn_agent` sub-agent):** Thi công code trên branch `feat/NNN-<slug>`. Model: `gpt-5.6-sol` (high) cho việc khó/Auth/DDL/Crypto; `gpt-5.6-terra` (medium) cho CRUD/UI; `gpt-5.6-luna` (low/medium) cho sửa vặt/lint/test-loop; PAYG: `google-antigravity/gemini-3.6-flash` hoặc `openrouter/~deepseek-deepseek-v4-flash-latest`.
+- **T3 (Máy chạy test & Phản biện 6 trục — `spawn_agent` sub-agent):** Phản biện 6 trục (Rubric §7.3i), e2e Playwright, regression. Model: `google-antigravity/gemini-3.6-flash` (tốc độ/AI Pro quota); `google-antigravity/gemini-3.1-pro-high` (soát lỗi chuyên sâu); PAYG OpenRouter: `openrouter/~deepseek-deepseek-v4-flash-latest` hoặc `openrouter/deepseek/deepseek-v4-pro`.
