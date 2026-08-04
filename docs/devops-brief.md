@@ -580,8 +580,18 @@ suspend Machine sau khi response trả về.
 
 Bối cảnh: Claude Code dừng hoạt động, dự án chuyển sang **Codex Desktop App** làm harness điều phối chính.
 
-1. **T1 mới:** Môi trường Codex Desktop chính (Main Thread) đảm nhiệm vai T1. Model chính: `gpt-5.6-sol` (effort: `xhigh`/`high`); khi PAYG/cạn quota: `google-antigravity/claude-opus-4-6-thinking` hoặc `google-antigravity/gemini-3.6-flash`.
-2. **T2 & T3 mới:** Sử dụng tính năng `spawn_agent` tích hợp sẵn trong Codex Desktop để điều phối sub-agents.
-   - **T2 (Thi công):** Spawn sub-agent với `fork_context: true`. Định tuyến: Sol (high) / Terra (medium) / Luna (low) trên Codex; PAYG: `gemini-3.6-flash` hoặc `openrouter/~deepseek-deepseek-v4-flash-latest`.
-   - **T3 (Phản biện & Test):** Spawn sub-agent độc lập cho lượt review 6 trục (§7.3i) và e2e Playwright. Định tuyến: `gemini-3.6-flash`, `gemini-3.1-pro-high`, hoặc DeepSeek V4 Pro/Flash (OpenRouter trả phí).
+1. **T1 mới:** Môi trường Codex Desktop chính (Main Thread) đảm nhiệm vai T1. Model chính khi quay lại: `gpt-5.6-sol` (effort: `xhigh`/`high`). **Tạm thời từ 2026-08-04:** Terra đang giữ Main Thread; không tự đổi T1 giữa chừng chỉ vì một model khác vừa xuất hiện. Khi cần thêm một lượt reasoning/coding độc lập, dùng `openrouter/openai-gpt-5.6-luna` trước vì bảng tham chiếu hiện hành xếp Luna #1 ở intelligence, coding và agentic.
+2. **T2 & T3 mới:** Sử dụng tính năng `spawn_agent` tích hợp sẵn trong Codex Desktop để điều phối sub-agents. Danh sách route tạm đã được chủ lưu ngày 2026-08-04: `google-antigravity/gemini-3.6-flash`, `openrouter/~deepseek-deepseek-v4-flash-latest`, `openrouter/openai-gpt-5.6-luna`.
+   - **T2 (Thi công):** Spawn sub-agent với `fork_context: true`. Luna là lane mạnh nhất khi blast radius/lý luận khó đáng chi phí; **Gemini 3.6 Flash là mặc định vận hành trước DeepSeek Flash cho coding + intelligence theo chỉ thị trực tiếp của chủ**, dù bảng tham chiếu riêng lẻ xếp DeepSeek cao hơn Gemini ở cột coding. DeepSeek chỉ là fallback khi Gemini/Luna không gọi được; báo rõ route error, không âm thầm đổi model.
+   - **T3 (Phản biện & Test):** Spawn sub-agent độc lập cho lượt review 6 trục (§7.3i) và e2e Playwright. Gemini 3.6 Flash là lane QA/review nhanh mặc định; Luna là lane review sâu khi PR có migration, privacy/auth, hoặc diff lớn. DeepSeek là fallback. Không giả định `gemini-3.1-pro-high` đang callable nếu nó không có trong danh sách route hiện hành.
 3. **Giữ nguyên:** Rubric 6 trục (§7.3i), Merge Gate by criticality, Luật biên lai máy kiểm được, và Luật Full-Access git/Docker theo từng lệnh.
+
+**Bảng tham chiếu tạm do chủ cung cấp 2026-08-04 (không phải benchmark tự chạy trong repo):**
+
+| Model | Intelligence | Coding | Agentic |
+|---|---:|---:|---:|
+| GPT-5.6 Luna | #1 | #1 | #1 |
+| Gemini 3.6 Flash | #2 | #3 | #2 |
+| DeepSeek V4 Flash 0731 | #3 | #2 | #3 |
+
+**Điểm cần xem lại khi Sol quay lại làm T1:** đánh giá lại toàn bộ handoff Codex Desktop/OpenCodex — routing thực tế, skill/plugin có thể tự áp, rubric chất lượng T3, format receipt và độ tin cậy của từng lane. Đây là review mở có chủ ý; không mặc định hoá workflow tạm này thành policy vĩnh viễn.
