@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, ChevronLeft, ChevronRight, Edit3, Plus, Trash2 } from 'lucide-react'
 
@@ -62,6 +62,76 @@ function validateFile(file: File): string | null {
   if (file.size > 1_048_576) return 'File vượt quá 1 MB. Chọn file nhỏ hơn rồi thử lại.'
   return null
 }
+
+
+// ⚡ Bolt: Wrapped EventCard in React.memo to prevent unnecessary re-renders.
+// EventCard components are rendered in lists within CalendarScreen.
+// When parent state changes (like opening a dialog), we want to avoid re-rendering
+// all event cards. By extracting this component and memoizing the props (using useCallback
+// for functions passed as props), we ensure that unchanged event cards do not re-render.
+// Impact: Reduces re-renders significantly during parent state changes.
+const EventCard = memo(function EventCard({
+  event,
+  source,
+  openEditEvent,
+  setConfirm,
+}: {
+  event: CalendarEvent
+  source: CalendarSource | undefined
+  openEditEvent: (event: CalendarEvent) => void
+  setConfirm: (state: ConfirmState) => void
+}) {
+  return (
+    <Card
+      data-testid="calendar-event-card"
+      data-event-id={event.id}
+      className="gap-3 p-4 shadow-1 ring-0"
+    >
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden="true"
+          className="mt-1 size-3 shrink-0 rounded-full"
+          style={{ backgroundColor: sourceColorToken(source?.color ?? null) }}
+        />
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="break-words text-base font-bold">{event.title}</p>
+          <p className="text-sm text-muted-foreground">
+            {formatVietnamTime(event)} · {source?.name ?? 'Nguồn không còn'}
+          </p>
+          {event.location ? <p className="break-words text-sm">{event.location}</p> : null}
+          {event.description_md ? (
+            <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+              {event.description_md}
+            </p>
+          ) : null}
+          {source?.kind === 'ics' ? (
+            <p className="text-sm text-warn">
+              Buổi này thuộc nguồn nhập từ file — sửa tay sẽ mất khi nhập lại.
+            </p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 gap-1">
+          <Button
+            size="icon-lg"
+            variant="ghost"
+            aria-label={`Sửa buổi ${event.title}`}
+            onClick={() => openEditEvent(event)}
+          >
+            <Edit3 />
+          </Button>
+          <Button
+            size="icon-lg"
+            variant="ghost"
+            aria-label={`Xoá buổi ${event.title}`}
+            onClick={() => setConfirm({ kind: 'event', event })}
+          >
+            <Trash2 />
+          </Button>
+        </div>
+      </div>
+    </Card>
+  )
+})
 
 export function CalendarScreen() {
   const queryClient = useQueryClient()
@@ -252,17 +322,17 @@ export function CalendarScreen() {
     createSource.mutate({ name: value.name, color: value.color, kind: sourceKind })
   }
 
-  function openNewEvent() {
+  const openNewEvent = useCallback(() => {
     setEditingEvent(undefined)
     setEventError(null)
     setEventDialogOpen(true)
-  }
+  }, [])
 
-  function openEditEvent(event: CalendarEvent) {
+  const openEditEvent = useCallback((event: CalendarEvent) => {
     setEditingEvent(event)
     setEventError(null)
     setEventDialogOpen(true)
-  }
+  }, [])
 
   function chooseView(next: 'grid' | 'list') {
     setView(next)
@@ -458,60 +528,15 @@ export function CalendarScreen() {
               <h4 className="text-sm font-bold capitalize text-muted-foreground">
                 {formatVietnamDate(dayEvents[0].starts_at)}
               </h4>
-              {dayEvents.map((event) => {
-                const source = sourceById.get(event.source_id)
-                return (
-                  <Card
-                    data-testid="calendar-event-card"
-                    data-event-id={event.id}
-                    key={event.id}
-                    className="gap-3 p-4 shadow-1 ring-0"
-                  >
-                    <div className="flex items-start gap-3">
-                      <span
-                        aria-hidden="true"
-                        className="mt-1 size-3 shrink-0 rounded-full"
-                        style={{ backgroundColor: sourceColorToken(source?.color ?? null) }}
-                      />
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <p className="break-words text-base font-bold">{event.title}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {formatVietnamTime(event)} · {source?.name ?? 'Nguồn không còn'}
-                        </p>
-                        {event.location ? <p className="break-words text-sm">{event.location}</p> : null}
-                        {event.description_md ? (
-                          <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
-                            {event.description_md}
-                          </p>
-                        ) : null}
-                        {source?.kind === 'ics' ? (
-                          <p className="text-sm text-warn">
-                            Buổi này thuộc nguồn nhập từ file — sửa tay sẽ mất khi nhập lại.
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="flex shrink-0 gap-1">
-                        <Button
-                          size="icon-lg"
-                          variant="ghost"
-                          aria-label={`Sửa buổi ${event.title}`}
-                          onClick={() => openEditEvent(event)}
-                        >
-                          <Edit3 />
-                        </Button>
-                        <Button
-                          size="icon-lg"
-                          variant="ghost"
-                          aria-label={`Xoá buổi ${event.title}`}
-                          onClick={() => setConfirm({ kind: 'event', event })}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                )
-              })}
+              {dayEvents.map((event) => (
+                <EventCard
+                  key={event.id}
+                  event={event}
+                  source={sourceById.get(event.source_id)}
+                  openEditEvent={openEditEvent}
+                  setConfirm={setConfirm}
+                />
+              ))}
             </div>
           ))}
         </div>
