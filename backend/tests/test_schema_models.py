@@ -1,6 +1,7 @@
 """Regression tests for one-way physical-schema decisions."""
 
 import asyncio
+from pathlib import Path
 
 import asyncpg
 import pytest
@@ -262,3 +263,13 @@ def test_day_annotation_0006_shape_is_locked() -> None:
     index_columns = {index.name: [c.name for c in index.columns] for index in annotation.indexes}
     assert index_columns["ix_day_annotation_starts_on"] == ["starts_on"]
     assert index_columns["ix_day_annotation_ends_on"] == ["ends_on"]
+
+
+def test_migration_0006_uses_exact_day_range_constraint_name() -> None:
+    """Migration 0006 must use exact constraint name 'day_range' without op.f prefix."""
+    migration_path = (
+        Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0006_day_annotation.py"
+    )
+    content = migration_path.read_text(encoding="utf-8")
+    assert 'name="day_range"' in content
+    assert 'name=op.f("ck_day_annotation_day_range")' not in content

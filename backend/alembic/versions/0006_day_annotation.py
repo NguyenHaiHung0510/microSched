@@ -51,7 +51,7 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "ends_on >= starts_on",
-            name=op.f("ck_day_annotation_day_range"),
+            name="day_range",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_day_annotation")),
         schema="microsched",
