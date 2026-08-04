@@ -586,6 +586,10 @@ Bối cảnh: Claude Code dừng hoạt động, dự án chuyển sang **Codex 
    - **T3 (Phản biện & Test):** Spawn sub-agent độc lập cho lượt review 6 trục (§7.3i) và e2e Playwright. Gemini 3.6 Flash là lane QA/review nhanh mặc định; Luna là lane review sâu khi PR có migration, privacy/auth, hoặc diff lớn. DeepSeek là fallback. Không giả định `gemini-3.1-pro-high` đang callable nếu nó không có trong danh sách route hiện hành.
 3. **Giữ nguyên:** Rubric 6 trục (§7.3i), Merge Gate by criticality, Luật biên lai máy kiểm được, và Luật Full-Access git/Docker theo từng lệnh.
 
+**Ranh giới bảo mật & Tín nhiệm Sub-agent / Executor (✅ Cập nhật 2026-08-04):**
+- **Free OpenCode Sub-agents / Executors:** Áp dụng chính sách **Zero-Trust** đối với thông tin nhạy cảm. Tuyệt đối không cung cấp, đọc, echo hay chuyển giao file `.env`, API keys, credentials, tokens, hay dữ liệu cá nhân thật (real personal data). Chỉ cung cấp public code/docs và dữ liệu test giả lập/đã che chắn (`synthetic/redacted`).
+- **Native OpenAI / Antigravity / OpenAI key / OpenRouter (ZDR enabled):** Được xếp hạng tín nhiệm cao (High Trust) nhờ hạ tầng native/chính chủ hoặc đã kích hoạt Zero Data Retention (ZDR). Tuy nhiên, mức tín nhiệm này **không** đồng nghĩa với việc được phép làm lộ secrets: tuyệt đối không chèn secrets/credentials vào prompt, commit message, pull request, diff, log, hay tài liệu repo.
+
 **Bảng tham chiếu tạm do chủ cung cấp 2026-08-04 (không phải benchmark tự chạy trong repo):**
 
 | Model | Intelligence | Coding | Agentic |
