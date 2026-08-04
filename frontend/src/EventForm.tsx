@@ -10,6 +10,13 @@ import {
 } from '@/calendar-ui'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
@@ -20,6 +27,14 @@ export function EventForm({
   pending,
   onSubmit,
   onCancel,
+  open,
+  onOpenChange,
+  initialEvent,
+  defaultDate,
+  allowedSourceIds,
+  onSuccess,
+  icsWarning,
+  error,
 }: {
   initial?: CalendarEvent
   manualSources: CalendarSource[]
@@ -33,25 +48,45 @@ export function EventForm({
     location: string | null
     description_md: string | null
   }) => void
-  onCancel: () => void
+  onCancel?: () => void
+  /* Props 010b thêm (mở rộng tương thích-ngược, spec 010b §5.5): truyền
+     `open`/`onOpenChange` thì EventForm tự bọc Dialog; không truyền thì giữ
+     nguyên dạng form trần mà CalendarScreen 010a đang dùng. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  initialEvent?: CalendarEvent
+  defaultDate?: string
+  allowedSourceIds?: string[]
+  onSuccess?: () => void
+  icsWarning?: boolean
+  error?: string | null
 }) {
-  const defaultStart = `${todayInVietnam()}T08:00`
-  const [sourceId, setSourceId] = useState(initial?.source_id ?? manualSources[0]?.id ?? '')
-  const [title, setTitle] = useState(initial?.title ?? '')
-  const [startsAt, setStartsAt] = useState(toVietnamDateTimeInput(initial?.starts_at ?? '') || defaultStart)
-  const [endsAt, setEndsAt] = useState(
-    toVietnamDateTimeInput(initial?.ends_at ?? '') || `${todayInVietnam()}T09:00`,
+  const editTarget = initialEvent ?? initial
+  const defaultDay = defaultDate ?? todayInVietnam()
+  const defaultStart = `${defaultDay}T08:00`
+  const sourceOptions = allowedSourceIds
+    ? manualSources.filter((source) => allowedSourceIds.includes(source.id))
+    : manualSources
+  const [sourceId, setSourceId] = useState(
+    editTarget?.source_id ?? sourceOptions[0]?.id ?? '',
   )
-  const [allDay, setAllDay] = useState(initial?.all_day ?? false)
-  const [location, setLocation] = useState(initial?.location ?? '')
-  const [description, setDescription] = useState(initial?.description_md ?? '')
+  const [title, setTitle] = useState(editTarget?.title ?? '')
+  const [startsAt, setStartsAt] = useState(
+    toVietnamDateTimeInput(editTarget?.starts_at ?? '') || defaultStart,
+  )
+  const [endsAt, setEndsAt] = useState(
+    toVietnamDateTimeInput(editTarget?.ends_at ?? '') || `${defaultDay}T09:00`,
+  )
+  const [allDay, setAllDay] = useState(editTarget?.all_day ?? false)
+  const [location, setLocation] = useState(editTarget?.location ?? '')
+  const [description, setDescription] = useState(editTarget?.description_md ?? '')
 
   function submit(event: FormEvent) {
     event.preventDefault()
     const cleanTitle = title.trim()
     if (!cleanTitle || !sourceId || !startsAt || !endsAt || pending) return
     onSubmit({
-      source_id: initial ? undefined : sourceId,
+      source_id: editTarget ? undefined : sourceId,
       title: cleanTitle,
       starts_at: vietnamInputToIso(startsAt),
       ends_at: vietnamInputToIso(endsAt),
@@ -59,6 +94,7 @@ export function EventForm({
       location: location.trim() || null,
       description_md: description.trim() || null,
     })
+    onSuccess?.()
   }
 
   function toggleAllDay(checked: boolean) {
@@ -70,17 +106,17 @@ export function EventForm({
     }
   }
 
-  return (
+  const form = (
     <form data-testid="calendar-event-form" className="space-y-4" onSubmit={submit}>
-      {!initial ? (
+      {!editTarget ? (
         <label className="block space-y-1.5 text-sm font-semibold">
           <span>Nguồn thủ công</span>
           <Select value={sourceId} onValueChange={setSourceId}>
             <SelectTrigger className="h-11 w-full bg-card" aria-label="Nguồn thủ công">
-              <span>{manualSources.find((source) => source.id === sourceId)?.name ?? 'Chọn nguồn'}</span>
+              <span>{sourceOptions.find((source) => source.id === sourceId)?.name ?? 'Chọn nguồn'}</span>
             </SelectTrigger>
             <SelectContent>
-              {manualSources.map((source) => (
+              {sourceOptions.map((source) => (
                 <SelectItem key={source.id} value={source.id}>
                   {source.name}
                 </SelectItem>
@@ -139,12 +175,43 @@ export function EventForm({
       </label>
       <div className="flex flex-wrap gap-2">
         <Button size="lg" type="submit" disabled={!title.trim() || !sourceId || pending}>
-          {pending ? 'Đang lưu…' : initial ? 'Lưu buổi' : 'Tạo buổi'}
+          {pending ? 'Đang lưu…' : editTarget ? 'Lưu buổi' : 'Tạo buổi'}
         </Button>
-        <Button size="lg" variant="outline" type="button" onClick={onCancel}>
-          Huỷ
-        </Button>
+        {onCancel ? (
+          <Button size="lg" variant="outline" type="button" onClick={onCancel}>
+            Huỷ
+          </Button>
+        ) : null}
       </div>
     </form>
   )
+
+  if (open !== undefined && onOpenChange) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent
+          data-testid="calendar-event-dialog"
+          className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+        >
+          <DialogHeader>
+            <DialogTitle>{editTarget ? 'Sửa buổi' : 'Tạo buổi thủ công'}</DialogTitle>
+            <DialogDescription>Thời gian được hiểu theo giờ Việt Nam (+07:00).</DialogDescription>
+          </DialogHeader>
+          {icsWarning ? (
+            <p className="text-sm text-warn">
+              Buổi này thuộc nguồn nhập từ file — sửa tay sẽ mất khi nhập lại.
+            </p>
+          ) : null}
+          {error ? (
+            <p data-testid="calendar-event-error" className="text-sm text-bad" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {form}
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  return form
 }

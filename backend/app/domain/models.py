@@ -279,6 +279,34 @@ class CalendarEvent(UUIDTimestampModel, table=True):
     )
 
 
+class DayAnnotation(UUIDTimestampModel, table=True):
+    """A date-range marker with no clock time, kept apart from real events.
+
+    ``calendar_event`` carries CHECK ``ends_at > starts_at`` and a timezone-aware
+    clock, neither of which fits a plain calendar day ("về quê 20/08-25/08").
+    The privacy gate applies from the first migration (0006) exactly like
+    ``note``: a locked session must not see rows with ``is_private`` true.
+    """
+
+    __tablename__ = "day_annotation"
+    __privacy_gate__: ClassVar[Gate] = Gate.APPLIES
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        CheckConstraint("ends_on >= starts_on", name="day_range"),
+        {"schema": SCHEMA},
+    )
+
+    starts_on: date = Field(sa_column=Column(Date, nullable=False))
+    ends_on: date = Field(sa_column=Column(Date, nullable=False))
+    label: str = Field(sa_column=Column(Text, nullable=False))
+    note_md: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    color: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    is_private: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+    )
+
+
 class TrackerGroup(UUIDTimestampModel, table=True):
     """The optional single grouping layer for trackers."""
 
@@ -571,6 +599,8 @@ Index(
 )
 Index("ix_calendar_event_source_id", CalendarEvent.__table__.c.source_id)
 Index("ix_calendar_event_starts_at", CalendarEvent.__table__.c.starts_at)
+Index("ix_day_annotation_starts_on", DayAnnotation.__table__.c.starts_on)
+Index("ix_day_annotation_ends_on", DayAnnotation.__table__.c.ends_on)
 Index(
     "uq_tracker_group_name_lower",
     func.lower(TrackerGroup.__table__.c.name),

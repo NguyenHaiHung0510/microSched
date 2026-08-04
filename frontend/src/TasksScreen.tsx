@@ -22,6 +22,8 @@ import {
 import { toast } from 'sonner'
 
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
+import { endOfDayVietnam } from '@/calendar-scroll'
+import { addVietnamDays, todayInVietnam } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -146,7 +148,35 @@ const TaskCard = memo(function TaskCard({
      `onSuccess` resolve, mà `invalidateQueries` thì đợi luôn cả lượt tải lại.
      Await ở đây nghĩa là nút vẫn ghi "Đang thêm…" DÙ việc đã lưu xong — và nếu
      lượt tải lại treo thì nút treo theo vĩnh viễn. Ghi xong là ghi xong. */
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+  /* 010b §2 mục 9: dời hạn làm đổi chip task trên lịch, nên refresh cả họ
+     ["calendar"] bên cạnh ["tasks"] (lịch không mounted thì không tốn mạng). */
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+  }
+  const reschedule = useMutation({
+    mutationFn: (variables: { next: string | null; previous: string | null }) =>
+      apiRequest<Task>(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ due_at: variables.next }),
+      }),
+    onSuccess: (_data, variables) => {
+      refresh()
+      toast(
+        <span className="block min-w-0 max-w-full break-words">
+          Đã dời “{task.title}”
+        </span>,
+        {
+          duration: 8000,
+          action: {
+            label: 'Hoàn tác',
+            onClick: () =>
+              reschedule.mutate({ next: variables.previous, previous: null }),
+          },
+        },
+      )
+    },
+  })
   const update = useMutation({
     mutationFn: (
       payload: Partial<TaskPayload> & { status?: TaskStatus; pinned?: boolean },
@@ -255,6 +285,13 @@ const TaskCard = memo(function TaskCard({
     detailsReturnRef.current = event.currentTarget
     setEditing(true)
     setDetailsOpen(true)
+  }
+
+  function rescheduleTo(daysFromNow: number) {
+    reschedule.mutate({
+      next: endOfDayVietnam(addVietnamDays(todayInVietnam(), daysFromNow)),
+      previous: task.due_at,
+    })
   }
 
   return (
@@ -367,6 +404,38 @@ const TaskCard = memo(function TaskCard({
                 </span>
               ) : null}
             </div>
+
+            {isOverdue(task) ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  data-testid="task-reschedule-today"
+                  size="sm"
+                  variant="outline"
+                  disabled={reschedule.isPending || update.isPending}
+                  onClick={() => rescheduleTo(0)}
+                >
+                  Hôm nay
+                </Button>
+                <Button
+                  data-testid="task-reschedule-tomorrow"
+                  size="sm"
+                  variant="outline"
+                  disabled={reschedule.isPending || update.isPending}
+                  onClick={() => rescheduleTo(1)}
+                >
+                  Mai
+                </Button>
+                <Button
+                  data-testid="task-reschedule-day-after"
+                  size="sm"
+                  variant="outline"
+                  disabled={reschedule.isPending || update.isPending}
+                  onClick={() => rescheduleTo(2)}
+                >
+                  Ngày kia
+                </Button>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex shrink-0 flex-wrap justify-end gap-2">

@@ -29,6 +29,10 @@ test('manual source and event can be created, viewed, and deleted with confirmat
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: events }) })
       return
     }
+    if (url.pathname === '/api/calendar/annotations' && request.method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) })
+      return
+    }
     if (url.pathname === '/api/calendar/events' && request.method() === 'POST') {
       const payload = JSON.parse(request.postData() ?? '{}') as Record<string, unknown>
       const created = { id: 'event-manual', ...payload, created_at: null, updated_at: null }
@@ -49,6 +53,8 @@ test('manual source and event can be created, viewed, and deleted with confirmat
 
   await page.goto('/')
   await page.getByRole('tab', { name: 'Lịch' }).click()
+  // 010b: tab Lịch mở ở chế độ lưới mặc định; quản lý nguồn nằm ở "Danh sách".
+  await page.getByTestId('calendar-view-toggle-list').click()
   await page.getByTestId('calendar-manual-source-button').click()
   await page.getByLabel('Tên nguồn lịch').fill('Nguồn thủ công')
   await page.getByRole('button', { name: 'Tạo nguồn' }).click()
@@ -97,11 +103,16 @@ test('ICS import shows the inserted count and source deletion count', async ({ p
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: events }) })
       return
     }
+    if (url.pathname === '/api/calendar/annotations' && request.method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) })
+      return
+    }
     await route.fallback()
   })
 
   await page.goto('/')
   await page.getByRole('tab', { name: 'Lịch' }).click()
+  await page.getByTestId('calendar-view-toggle-list').click()
   await page.getByRole('button', { name: 'Thêm nguồn lịch' }).click()
   await page.locator('input[type="file"]').setInputFiles({
     name: 'fixture.ics',

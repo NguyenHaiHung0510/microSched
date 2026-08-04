@@ -16,6 +16,7 @@ EXPECTED_TABLES = {
     "audit_log",
     "calendar_event",
     "calendar_source",
+    "day_annotation",
     "entry",
     "message",
     "note",
@@ -235,3 +236,54 @@ def test_calendar_010a_columns_are_nullable_or_defaulted_as_locked() -> None:
     assert event.c.description_md.nullable is True
     assert event.c.all_day.nullable is False
     assert str(event.c.all_day.server_default.arg) == "false"
+
+
+def test_day_annotation_0006_shape_is_locked() -> None:
+    """The 010b table is a DATE-range marker with the privacy gate from day one."""
+    annotation = table("day_annotation")
+
+    assert annotation.c.starts_on.nullable is False
+    assert annotation.c.ends_on.nullable is False
+    assert annotation.c.label.nullable is False
+    assert annotation.c.is_private.nullable is False
+    assert str(annotation.c.is_private.server_default.arg) == "false"
+    assert annotation.c.note_md.nullable is True
+    assert annotation.c.color.nullable is True
+    assert not hasattr(annotation.c, "deleted_at")
+
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in annotation.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert "ck_day_annotation_day_range" in checks
+    assert "ends_on >= starts_on" in checks["ck_day_annotation_day_range"]
+
+    index_columns = {index.name: [c.name for c in index.columns] for index in annotation.indexes}
+    assert index_columns["ix_day_annotation_starts_on"] == ["starts_on"]
+    assert index_columns["ix_day_annotation_ends_on"] == ["ends_on"]
+
+
+@pytest.mark.pg
+def test_day_annotation_physical_constraint_name_is_day_range(pg_dsn: str) -> None:
+    """Migration 0006 yields exact physical pg_constraint conname 'day_range'."""
+
+    async def scenario() -> None:
+        connection = await asyncpg.connect(pg_dsn)
+        try:
+            rows = await connection.fetch(
+                """
+                SELECT conname, pg_get_constraintdef(oid) AS def
+                FROM pg_constraint
+                WHERE conrelid = 'microsched.day_annotation'::regclass
+                  AND contype = 'c'
+                """
+            )
+        finally:
+            await connection.close()
+
+        connames = {row["conname"] for row in rows}
+        assert "day_range" in connames
+        assert "ck_day_annotation_day_range" not in connames
+
+    asyncio.run(scenario())
