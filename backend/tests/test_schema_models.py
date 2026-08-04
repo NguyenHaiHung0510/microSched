@@ -1,7 +1,6 @@
 """Regression tests for one-way physical-schema decisions."""
 
 import asyncio
-from pathlib import Path
 
 import asyncpg
 import pytest
@@ -265,11 +264,26 @@ def test_day_annotation_0006_shape_is_locked() -> None:
     assert index_columns["ix_day_annotation_ends_on"] == ["ends_on"]
 
 
-def test_migration_0006_uses_exact_day_range_constraint_name() -> None:
-    """Migration 0006 must use exact constraint name 'day_range' without op.f prefix."""
-    migration_path = (
-        Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0006_day_annotation.py"
-    )
-    content = migration_path.read_text(encoding="utf-8")
-    assert 'name="day_range"' in content
-    assert 'name=op.f("ck_day_annotation_day_range")' not in content
+@pytest.mark.pg
+def test_day_annotation_physical_constraint_name_is_day_range(pg_dsn: str) -> None:
+    """Migration 0006 yields exact physical pg_constraint conname 'day_range'."""
+
+    async def scenario() -> None:
+        connection = await asyncpg.connect(pg_dsn)
+        try:
+            rows = await connection.fetch(
+                """
+                SELECT conname, pg_get_constraintdef(oid) AS def
+                FROM pg_constraint
+                WHERE conrelid = 'microsched.day_annotation'::regclass
+                  AND contype = 'c'
+                """
+            )
+        finally:
+            await connection.close()
+
+        connames = {row["conname"] for row in rows}
+        assert "day_range" in connames
+        assert "ck_day_annotation_day_range" not in connames
+
+    asyncio.run(scenario())
