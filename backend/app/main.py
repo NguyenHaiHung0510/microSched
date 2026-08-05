@@ -23,6 +23,7 @@ from app.web.routers.me import router as me_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
 from app.web.routers.tasks import router as tasks_router
+from app.web.routers.tracker import router as tracker_router
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(notes_router)
     protected_api.include_router(calendar_router)
     protected_api.include_router(annotations_router)
+    protected_api.include_router(tracker_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:
