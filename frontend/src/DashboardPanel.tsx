@@ -1,5 +1,6 @@
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { formatVnd, type DashboardResponse, type Tracker } from '@/tracker-ui'
 
 function moneyClass(value: number): string {
@@ -80,8 +81,10 @@ export function DashboardPanel({
           <span
             data-testid="dashboard-refreshing"
             aria-hidden="true"
-            className="inline-block size-2 rounded-full bg-muted-foreground opacity-0 transition-opacity"
-            style={{ opacity: refetching ? 1 : 0 }}
+            className={cn(
+              "inline-block size-2 rounded-full bg-muted-foreground transition-opacity",
+              refetching ? "opacity-100" : "opacity-0"
+            )}
           />
         </h2>
         <div className="space-y-3">
