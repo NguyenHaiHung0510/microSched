@@ -1,4 +1,4 @@
-import { expect, test as base } from './tasks'
+﻿import { expect, test as base } from './tasks'
 
 /**
  * Mock for the tracker slice (`/api/tracker/**`). It intentionally mirrors the
@@ -48,7 +48,7 @@ function tracker(overrides: Partial<FixtureTracker>): FixtureTracker {
     unit: null,
     color: null,
     is_private: false,
-    last_entry_at: new Date(Date.now() - 12 * 86_400_000).toISOString(),
+    last_entry_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
     entry_count_30d: 3,
     created_at: nowIso(),
     updated_at: nowIso(),
@@ -92,7 +92,7 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
             input_mode: 'event',
             group_id: 'group-001',
             entry_count_30d: 3,
-            last_entry_at: new Date(Date.now() - 12 * 86_400_000).toISOString(),
+            last_entry_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
           }),
           tracker({
             id: 'tracker-002',
