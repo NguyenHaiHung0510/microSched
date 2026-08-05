@@ -357,7 +357,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         trackers={trackers}
         loading={dashboardQuery.isPending}
         error={dashboardQuery.error}
-        refetching={dashboardQuery.isFetching}
+        lastSuccessAt={dashboardQuery.dataUpdatedAt ?? null}
+        queryStatus={dashboardQuery.status}
         onRetry={() => void refresh()}
       />
 
