@@ -29,6 +29,11 @@ def to_storage(value: Decimal) -> str:
     non-negative (0 is a valid trial amount — K5), and at most 14 digits (C2 ceiling).
     Money is always stored positive; the sign is a display concern of
     ``tracker.direction`` and must never be folded into the number (spec §3 item 6).
+
+    The value is normalized BEFORE the digit-count check and the canonical form is
+    verified against the storage regex: ``Decimal("1.0")`` / ``Decimal("0.0")`` /
+    ``Decimal("-0")`` and exponent shapes (``1E+13``) must all land on the same
+    canonical string their read path accepts (``from_storage`` round-trip — C6).
     """
     if not isinstance(value, Decimal):
         raise ValueError("Số tiền phải là một số thập phân.")
@@ -38,9 +43,19 @@ def to_storage(value: Decimal) -> str:
         raise ValueError("Số tiền không được âm.")
     if value != value.to_integral_value():
         raise ValueError("Số tiền phải là số nguyên (VND không có phần lẻ).")
-    if len(value.as_tuple().digits) > MAX_VND_DIGITS:
+    normalized = value.normalize()
+    if normalized == 0:
+        # normalize() keeps the sign of -0; canonical zero is always "0".
+        normalized = Decimal(0)
+    digits = normalized.as_tuple().digits
+    exponent = normalized.as_tuple().exponent
+    ndigits = len(digits) + max(exponent, 0)
+    if ndigits > MAX_VND_DIGITS:
         raise ValueError(f"Số tiền vượt quá {MAX_VND_DIGITS} chữ số.")
-    return format(value, "f")
+    canonical = format(normalized, "f")
+    if not _STORAGE_RE.fullmatch(canonical):
+        raise ValueError("Số tiền lưu trữ không hợp lệ.")
+    return canonical
 
 
 def from_storage(raw: str) -> Decimal:

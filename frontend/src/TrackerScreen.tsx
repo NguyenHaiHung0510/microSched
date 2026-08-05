@@ -33,6 +33,7 @@ import {
   backdateOptions,
   capturePayload,
   currentVietnamMonth,
+  formatQuantity,
   sortTrackersForGrid,
   trackerInvalidationKey,
   trackerQueryKey,
@@ -56,7 +57,7 @@ function monthLabel(month: string): string {
 
 function formatEntryLine(entry: Entry): string {
   if (entry.amount != null) return `${entry.amount.toLocaleString('vi-VN')} ₫`
-  if (entry.quantity != null) return String(entry.quantity)
+  if (entry.quantity != null) return formatQuantity(entry.quantity)
   return 'Đã ghi'
 }
 
@@ -65,6 +66,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const refresh = () => void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
   const writes = useTrackerWrites(refresh)
   const month = currentVietnamMonth()
+  const wasUnlocked = useRef(privateUnlocked)
 
   const groupsQuery = useQuery({
     queryKey: trackerQueryKey('groups'),
@@ -85,6 +87,23 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   const trackers = trackersQuery.data?.items ?? []
   const groups = groupsQuery.data?.items ?? []
+
+  // C1: the private gate lives in PrivateGate (shared with other screens); the
+  // tracker query family is this screen's own cache, so IT must react to the
+  // lock/unlock transition. On lock, cached tracker names / entries / dashboard
+  // numbers are erased BEFORE any refetch can paint the previous result while
+  // the request is pending (same R6 order PrivateGate uses for tasks). On
+  // unlock, the queries refetch so private rows come back.
+  useEffect(() => {
+    const previous = wasUnlocked.current
+    if (previous && !privateUnlocked) {
+      queryClient.removeQueries({ queryKey: trackerInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+    } else if (!previous && privateUnlocked) {
+      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+    }
+    wasUnlocked.current = privateUnlocked
+  }, [privateUnlocked, queryClient])
 
   // §5.2: order is computed once per membership change and then frozen — a capture
   // must never re-sort the grid under the finger.
@@ -171,7 +190,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
               duration: 10_000,
               action: {
                 label: 'Hoàn tác',
-                onClick: () => void writes.deleteEntry.mutate(entry.id),
+                onClick: () => undoDeleteEntry(entry.id),
               },
             },
           )
@@ -235,14 +254,51 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       onSuccess: () => {
         toast(<span>Đã xoá bản ghi</span>, {
           duration: 10_000,
-          action: { label: 'Hoàn tác', onClick: () => void writes.restoreEntry.mutate(entry.id) },
+          action: { label: 'Hoàn tác', onClick: () => undoRestoreEntry(entry.id) },
         })
       },
       onError: (error) => toast.error(errorMessage(error)),
     })
   }
 
-  const queryError = groupsQuery.error ?? trackersQuery.error ?? dashboardQuery.error ?? entriesQuery.error
+  // M4: an undo/restore failure must be visible and retryable — the toast action
+  // disappearing silently would make the user believe the delete was undone.
+  function undoDeleteEntry(entryId: string) {
+    writes.deleteEntry.mutate(entryId, {
+      onError: (error) => {
+        toast.error('Không hoàn tác được bản ghi', {
+          description: errorMessage(error),
+          action: { label: 'Thử lại', onClick: () => undoDeleteEntry(entryId) },
+        })
+      },
+    })
+  }
+
+  function undoRestoreEntry(entryId: string) {
+    writes.restoreEntry.mutate(entryId, {
+      onError: (error) => {
+        toast.error('Không khôi phục được bản ghi', {
+          description: errorMessage(error),
+          action: { label: 'Thử lại', onClick: () => undoRestoreEntry(entryId) },
+        })
+      },
+    })
+  }
+
+  function undoRestoreTracker(trackerId: string) {
+    writes.restoreTracker.mutate(trackerId, {
+      onError: (error) => {
+        toast.error('Không khôi phục được tracker', {
+          description: errorMessage(error),
+          action: { label: 'Thử lại', onClick: () => undoRestoreTracker(trackerId) },
+        })
+      },
+    })
+  }
+
+  // Tracker/dashboard errors render inside their own panels (M3); this card
+  // covers the remaining shared queries only.
+  const queryError = groupsQuery.error ?? entriesQuery.error
   const pendingForm = writes.createTracker.isPending || writes.updateTracker.isPending
   const pendingGroup = writes.createGroup.isPending || writes.updateGroup.isPending
   const entryTracker = editingEntry
@@ -259,11 +315,11 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button size="lg" variant="outline" onClick={() => setGroupOpen(true)}>
+          <Button size="lg" variant="outline" className="min-h-11" onClick={() => setGroupOpen(true)}>
             <Plus data-icon="inline-start" />
             Nhóm mới
           </Button>
-          <Button size="lg" onClick={() => setCreateOpen(true)}>
+          <Button size="lg" className="min-h-11" onClick={() => setCreateOpen(true)}>
             <Plus data-icon="inline-start" />
             Tracker mới
           </Button>
@@ -273,7 +329,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       {queryError ? (
         <Card className="gap-3 p-4 shadow-1 ring-0" role="alert">
           <p className="text-sm text-bad">Không tải được dữ liệu tracker.</p>
-          <Button variant="outline" size="lg" onClick={() => void refresh()}>
+          <Button variant="outline" size="lg" className="min-h-11" onClick={() => void refresh()}>
             <RefreshCw data-icon="inline-start" />
             Thử lại
           </Button>
@@ -284,6 +340,9 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         trackers={frozenOrder}
         locked={lockedIds}
         pendingTrackerId={capturingIds.size === 1 ? [...capturingIds][0] : null}
+        loading={trackersQuery.isPending}
+        error={trackersQuery.error}
+        onRetry={() => void refresh()}
         onCapture={capture}
         onBackdate={(tracker) => {
           setBackdateChoice('yesterday')
@@ -296,6 +355,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         dashboard={dashboardQuery.data ?? null}
         monthLabel={monthLabel(month)}
         trackers={trackers}
+        loading={dashboardQuery.isPending}
+        error={dashboardQuery.error}
+        refetching={dashboardQuery.isFetching}
+        onRetry={() => void refresh()}
       />
 
       <Card className="gap-3 p-4 shadow-1 ring-0">
@@ -338,7 +401,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                       data-testid="entry-edit"
                       data-entry-id={entry.id}
                       variant="ghost"
-                      size="icon-sm"
+                      size="icon-lg"
+                      className="size-11"
                       aria-label="Sửa bản ghi"
                       onClick={() => setEditingEntry(entry)}
                     >
@@ -348,7 +412,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                       data-testid="entry-undo"
                       data-entry-id={entry.id}
                       variant="ghost"
-                      size="icon-sm"
+                      size="icon-lg"
+                      className="size-11"
                       aria-label="Xoá bản ghi"
                       onClick={() => removeEntry(entry)}
                     >
@@ -405,7 +470,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   </label>
                   <Button
                     variant="ghost"
-                    size="icon-sm"
+                    size="icon-lg"
+                    className="size-11"
                     aria-label={`Sửa ${tracker.name}`}
                     onClick={() => setEditingTracker(tracker)}
                   >
@@ -415,7 +481,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                     data-testid="tracker-archive"
                     data-tracker-id={tracker.id}
                     variant="ghost"
-                    size="icon-sm"
+                    size="icon-lg"
+                    className="size-11"
                     aria-label={`Lưu trữ ${tracker.name}`}
                     onClick={() => setArchiveFor(tracker)}
                   >
@@ -436,6 +503,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           <Button
             variant="ghost"
             size="sm"
+            className="min-h-11"
             aria-label="Thêm nhóm"
             onClick={() => setGroupOpen(true)}
           >
@@ -460,7 +528,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                 <div className="flex items-center gap-2">
                   <Button
                     variant="ghost"
-                    size="icon-sm"
+                    size="icon-lg"
+                    className="size-11"
                     aria-label={`Sửa nhóm ${group.name}`}
                     onClick={() => setEditingGroup(group)}
                   >
@@ -468,7 +537,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   </Button>
                   <Button
                     variant="ghost"
-                    size="icon-sm"
+                    size="icon-lg"
+                    className="size-11"
                     aria-label={`Xoá nhóm ${group.name}`}
                     onClick={() => setDeletingGroup(group)}
                   >
@@ -582,6 +652,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             <Button
               variant="destructive"
               size="lg"
+              className="min-h-11"
               onClick={() => {
                 if (!deletingGroup) return
                 writes.deleteGroup.mutate(deletingGroup.id, {
@@ -594,7 +665,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             >
               Xoá nhóm
             </Button>
-            <Button size="lg" variant="outline" onClick={() => setDeletingGroup(null)}>
+            <Button size="lg" variant="outline" className="min-h-11" onClick={() => setDeletingGroup(null)}>
               Huỷ
             </Button>
           </div>
@@ -616,12 +687,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant={backdateChoice === 'yesterday' ? 'secondary' : 'ghost'}
+                className="min-h-11"
                 onClick={() => setBackdateChoice('yesterday')}
               >
                 Hôm qua
               </Button>
               <Button
                 variant={backdateChoice === '2h' ? 'secondary' : 'ghost'}
+                className="min-h-11"
                 onClick={() => setBackdateChoice('2h')}
               >
                 2 giờ trước
@@ -639,7 +712,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                 }}
               />
             </label>
-            <Button size="lg" className="w-full" onClick={submitBackdate}>
+            <Button size="lg" className="min-h-11 w-full" onClick={submitBackdate}>
               Ghi
             </Button>
           </div>
@@ -660,6 +733,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             <Button
               variant="destructive"
               size="lg"
+              className="min-h-11"
               onClick={() => {
                 if (!archiveFor) return
                 writes.archiveTracker.mutate(archiveFor.id, {
@@ -669,7 +743,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                       duration: 10_000,
                       action: {
                         label: 'Hoàn tác',
-                        onClick: () => void writes.restoreTracker.mutate(archiveFor.id),
+                        onClick: () => undoRestoreTracker(archiveFor.id),
                       },
                     })
                   },
@@ -679,7 +753,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             >
               Lưu trữ
             </Button>
-            <Button size="lg" variant="outline" onClick={() => setArchiveFor(null)}>
+            <Button size="lg" variant="outline" className="min-h-11" onClick={() => setArchiveFor(null)}>
               Huỷ
             </Button>
           </div>
@@ -692,7 +766,11 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           entry={editingEntry}
           tracker={entryTracker}
           pending={writes.updateEntry.isPending}
-          onClose={() => setEditingEntry(null)}
+          onClose={() => {
+            // M11: closing the dialog while the PATCH is in flight would discard
+            // the user's draft on failure — keep it mounted until it settles.
+            if (!writes.updateEntry.isPending) setEditingEntry(null)
+          }}
           onSubmit={submitEntry}
         />
       ) : null}

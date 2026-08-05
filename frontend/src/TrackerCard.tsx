@@ -7,9 +7,12 @@ import { Input } from '@/components/ui/input'
 import {
   amountToNumber,
   canSubmitAmount,
+  decimalInput,
   digitsOnly,
   formatLastSeen,
+  formatQuantity,
   formatVnd,
+  quantityToNumber,
   type Tracker,
 } from '@/tracker-ui'
 
@@ -76,13 +79,14 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
   function submit(event: FormEvent) {
     event.preventDefault()
     if (!canSubmitAmount(input) || locked || pending) return
-    onCapture(digitsOnly(input))
+    onCapture(tracker.input_mode === 'money' ? digitsOnly(input) : input)
     setInput('')
     setInputOpen(false)
   }
 
   const needsAmount = tracker.input_mode === 'money' || tracker.input_mode === 'quantity'
   const echoAmount = canSubmitAmount(input) ? amountToNumber(input) : null
+  const echoQuantity = canSubmitAmount(input) ? quantityToNumber(input) : null
 
   return (
     <Card
@@ -100,21 +104,38 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
               inputMode="numeric"
               autoFocus
               value={input}
-              onChange={(event) => setInput(digitsOnly(event.target.value))}
+              onChange={(event) =>
+                setInput(
+                  tracker.input_mode === 'money'
+                    ? digitsOnly(event.target.value)
+                    : decimalInput(event.target.value),
+                )
+              }
             />
           </label>
-          {echoAmount !== null ? (
+          {tracker.input_mode === 'money' && echoAmount !== null ? (
             <p className="text-lg font-extrabold text-primary tabular-nums">
               = {formatVnd(echoAmount)}
             </p>
           ) : null}
+          {tracker.input_mode === 'quantity' && echoQuantity !== null ? (
+            <p className="text-lg font-extrabold text-primary tabular-nums">
+              = {formatQuantity(echoQuantity)} {tracker.unit ?? 'đơn vị'}
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button size="lg" type="submit" disabled={!canSubmitAmount(input) || locked || pending}>
+            <Button
+              size="lg"
+              className="min-h-11"
+              type="submit"
+              disabled={!canSubmitAmount(input) || locked || pending}
+            >
               {pending ? 'Đang ghi…' : 'Ghi'}
             </Button>
             <Button
               size="lg"
               variant="ghost"
+              className="min-h-11"
               type="button"
               onClick={() => {
                 setInput('')
@@ -131,7 +152,7 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
             data-testid="tracker-button"
             data-tracker-id={tracker.id}
             variant="secondary"
-            className="h-auto min-h-11 min-w-0 flex-col items-start gap-0.5 px-3 py-2 text-left"
+            className="h-auto min-h-11 min-w-0 flex-col items-start gap-0.5 py-2 pr-12 pl-3 text-left"
             disabled={locked}
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
@@ -151,8 +172,8 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
             data-testid="tracker-backdate"
             data-tracker-id={tracker.id}
             variant="ghost"
-            size="icon-sm"
-            className="absolute top-1.5 right-1.5"
+            size="icon-lg"
+            className="absolute top-1.5 right-1.5 size-11"
             aria-label={`Ghi lùi giờ cho ${tracker.name}`}
             onClick={(event) => {
               event.stopPropagation()

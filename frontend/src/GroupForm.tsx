@@ -42,7 +42,7 @@ export function GroupForm({
         <Input
           className="h-10 bg-card"
           value={name}
-          maxLength={120}
+          maxLength={150}
           onChange={(event) => setName(event.target.value)}
         />
       </label>
@@ -63,11 +63,11 @@ export function GroupForm({
         </Select>
       </label>
       <div className="flex flex-wrap gap-2 pt-1">
-        <Button size="lg" type="submit" disabled={!canSubmit}>
+        <Button size="lg" className="min-h-11" type="submit" disabled={!canSubmit}>
           {pending ? 'Đang lưu…' : editing ? 'Lưu thay đổi' : 'Tạo nhóm'}
         </Button>
         {onCancel ? (
-          <Button size="lg" variant="outline" type="button" onClick={onCancel}>
+          <Button size="lg" variant="outline" className="min-h-11" type="button" onClick={onCancel}>
             Huỷ
           </Button>
         ) : null}

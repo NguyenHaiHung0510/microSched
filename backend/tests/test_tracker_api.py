@@ -561,3 +561,180 @@ def test_group_crud_idempotency_and_name_conflict(pg_dsn: str):
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_group_count_hides_private_trackers_while_locked(pg_dsn: str):
+    """tracker_count không lộ tracker riêng tư khi cổng khoá (C2)."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        group_ids: list[UUID] = []
+        tracker_ids: list[UUID] = []
+        try:
+            group = (
+                await client.post(
+                    "/api/tracker/groups", json={"name": "Nhóm hỗn hợp", "kind": "health"}
+                )
+            ).json()
+            group_id = UUID(group["id"])
+            group_ids.append(group_id)
+
+            public_t = await _create_tracker(
+                client, name="Công khai", kind="health", group_id=str(group_id)
+            )
+            tracker_ids.append(UUID(public_t["id"]))
+            private_t = await _create_tracker(
+                client,
+                name="Riêng tư",
+                kind="health",
+                group_id=str(group_id),
+                is_private=True,
+            )
+            tracker_ids.append(UUID(private_t["id"]))
+
+            groups = (await client.get("/api/tracker/groups")).json()["items"]
+            row = next(g for g in groups if UUID(g["id"]) == group_id)
+            assert row["tracker_count"] == 2
+
+            auth_state["value"] = _auth(unlocked=False)
+            groups = (await client.get("/api/tracker/groups")).json()["items"]
+            row = next(g for g in groups if UUID(g["id"]) == group_id)
+            assert row["tracker_count"] == 1
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", tracker_ids)
+            await _cleanup(pg_dsn, "tracker_group", group_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_archive_excluded_from_behavior_counts_but_kept_in_finance(pg_dsn: str):
+    """Archive: biến mất khỏi A3 (hành vi), entry vẫn vào F1 (C3)."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        entry_ids: list[UUID] = []
+        tracker_id = None
+        try:
+            tracker = await _create_tracker(
+                client, name="Tiền hôm nay", kind="finance", input_mode="money"
+            )
+            tracker_id = UUID(tracker["id"])
+            resp = await _create_entry(client, tracker_id, amount=25000)
+            assert resp.status_code == 201
+            entry_ids.append(UUID(resp.json()["id"]))
+
+            dash = (await client.get("/api/tracker/dashboard")).json()
+            assert dash["a3_counts"]["month"] == 1
+            assert dash["f1_total"] == 25000
+
+            assert (await client.delete(f"/api/tracker/trackers/{tracker_id}")).status_code == 204
+            dash = (await client.get("/api/tracker/dashboard")).json()
+            assert dash["a3_counts"]["month"] == 0
+            assert dash["f1_total"] == 25000
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "entry", entry_ids)
+            await _cleanup(pg_dsn, "tracker", [tracker_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_patch_null_required_fields_rejected(pg_dsn: str):
+    """PATCH null cho field bắt buộc ⇒ 422, không nuốt im (M5)."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_id = None
+        try:
+            tracker = await _create_tracker(client, name="Tracker", kind="health")
+            tracker_id = UUID(tracker["id"])
+            for field in ("name", "kind", "direction", "input_mode", "is_private"):
+                resp = await client.patch(f"/api/tracker/trackers/{tracker_id}", json={field: None})
+                assert resp.status_code == 422, (field, resp.text)
+
+            # Optional fields still accept an explicit null (that is how UI clears).
+            assert (
+                await client.patch(f"/api/tracker/trackers/{tracker_id}", json={"group_id": None})
+            ).status_code == 200
+
+            resp = await _create_entry(client, tracker_id)
+            assert resp.status_code == 201
+            entry_id = resp.json()["id"]
+            resp = await client.patch(
+                f"/api/tracker/entries/{entry_id}", json={"occurred_at": None}
+            )
+            assert resp.status_code == 422, resp.text
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", [tracker_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_quantity_nonpositive_rejected(pg_dsn: str):
+    """quantity <= 0 ⇒ 422 trước khi chạm DB CHECK (M12)."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_id = None
+        try:
+            tracker = await _create_tracker(client, name="Nước", input_mode="quantity", unit="lon")
+            tracker_id = UUID(tracker["id"])
+            assert (await _create_entry(client, tracker_id, quantity=0)).status_code == 422
+            assert (await _create_entry(client, tracker_id, quantity=-1)).status_code == 422
+            assert (await _create_entry(client, tracker_id, quantity=2.5)).status_code == 201
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", [tracker_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_f4_excludes_entries_after_now(pg_dsn: str):
+    """F4 chỉ lấy entry trước period_end, không lấy entry tương lai trong tháng (C5)."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        entry_ids: list[UUID] = []
+        tracker_id = None
+        try:
+            tracker = await _create_tracker(client, name="Tiền", kind="finance", input_mode="money")
+            tracker_id = UUID(tracker["id"])
+            now = datetime.now(UTC)
+            past = await _create_entry(
+                client,
+                tracker_id,
+                amount=1000,
+                occurred_at=(now - timedelta(hours=1)).isoformat(),
+            )
+            assert past.status_code == 201
+            entry_ids.append(UUID(past.json()["id"]))
+            future = await _create_entry(
+                client,
+                tracker_id,
+                amount=5000,
+                occurred_at=(now + timedelta(minutes=30)).isoformat(),
+            )
+            assert future.status_code == 201
+            entry_ids.append(UUID(future.json()["id"]))
+
+            dash = (await client.get("/api/tracker/dashboard")).json()
+            assert dash["f1_total"] == 1000
+            assert [line["amount"] for line in dash["f4_top"]] == [1000]
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "entry", entry_ids)
+            await _cleanup(pg_dsn, "tracker", [tracker_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())

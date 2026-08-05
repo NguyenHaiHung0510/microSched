@@ -11,6 +11,7 @@ and ``ZoneInfoNotFoundError`` would only fire in production. Weeks start on Mond
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -70,8 +71,9 @@ class A4Trend(BaseModel):
     trend: str
 
     @field_serializer("prev_avg")
-    def _prev_avg_as_number(self, value: Decimal) -> int:
-        return int(value)
+    def _prev_avg_as_number(self, value: Decimal) -> float:
+        """Serialize the count average as a number without truncating (C7)."""
+        return float(value.quantize(Decimal("0.01")))
 
 
 class DashboardResponse(BaseModel):
@@ -133,6 +135,60 @@ def _shift_months(start: datetime, count: int) -> datetime:
     return datetime(year, month, 1, tzinfo=VN_TZ)
 
 
+@dataclass
+class PeriodBounds:
+    """Pure boundary math for one dashboard month (unit-testable, no DB)."""
+
+    period_start: datetime
+    period_end: datetime
+    current_period_days: int
+    prev_start: datetime | None
+    prev_end: datetime | None
+    prev_period_days: int
+    prev_period_truncated: bool
+    is_future: bool
+
+
+def _periods(month: str, now: datetime) -> PeriodBounds:
+    """Compute every dashboard time boundary for ``month`` relative to ``now``.
+
+    Spec §4.3: ``period_end = min(now_vn, đầu tháng kế tiếp)``. F2 compares the
+    same elapsed duration of the PREVIOUS CALENDAR MONTH — the previous window
+    starts at the first day of the month before ``period_start`` and is cut at
+    ``period_start`` when it would overflow (31/3 vs February → 28 days,
+    ``prev_period_truncated=True`` — C4). A future month has
+    ``period_end <= period_start``: every finance metric is zero and no previous
+    period is fetched (no fake 1-day window).
+    """
+    month_start, month_end = _month_bounds(month)
+    period_start = month_start
+    period_end = min(now, month_end)
+    if period_end <= period_start:
+        return PeriodBounds(
+            period_start=period_start,
+            period_end=month_start,
+            current_period_days=0,
+            prev_start=None,
+            prev_end=None,
+            prev_period_days=0,
+            prev_period_truncated=False,
+            is_future=True,
+        )
+    current_days = (period_end - period_start).days
+    prev_start = _shift_months(period_start, 1)
+    prev_end = min(period_start, prev_start + timedelta(days=current_days))
+    return PeriodBounds(
+        period_start=period_start,
+        period_end=period_end,
+        current_period_days=current_days,
+        prev_start=prev_start,
+        prev_end=prev_end,
+        prev_period_days=(prev_end - prev_start).days,
+        prev_period_truncated=prev_end < prev_start + timedelta(days=current_days),
+        is_future=False,
+    )
+
+
 class DashboardService:
     """Stateless dashboard aggregation; joins the request transaction."""
 
@@ -157,36 +213,42 @@ class DashboardService:
             return None, True
 
     async def _fetch_month(
-        self, db: AsyncSession, auth: AuthSession, month_start: datetime, month_end: datetime
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        month_start: datetime,
+        month_end: datetime,
+        *,
+        include_archived: bool = True,
     ) -> list[tuple[Entry, Tracker]]:
         """Fetch entries of the requested month through their parent trackers.
 
         Applies the parent's privacy gate but NOT the parent's soft-delete gate: an
-        archived tracker's money history must still count (F1–F5). Privacy is never
-        exempted. Only the entry's own soft-delete is filtered.
+        archived tracker's money history must still count (F1–F5). A4's previous-
+        three-months count is behavior, so it passes ``include_archived=False``
+        (spec §4.3: archives disappear from A1–A4). Privacy is never exempted.
+        Only the entry's own soft-delete is filtered.
         """
         stmt = select(Entry, Tracker).join(Tracker, Entry.tracker_id == Tracker.id)
         stmt = with_privacy_gate(stmt, Tracker, auth)
+        if not include_archived:
+            stmt = not_deleted(stmt, Tracker)
         stmt = not_deleted(stmt, Entry)
         stmt = stmt.where(Entry.occurred_at >= month_start, Entry.occurred_at < month_end)
         result = await db.execute(stmt)
         return [(entry, tracker) for entry, tracker in result]
 
     async def _fetch_all(self, db: AsyncSession, auth: AuthSession) -> list[tuple[Entry, Tracker]]:
-        stmt = select(Entry, Tracker).join(Tracker, Entry.tracker_id == Tracker.id)
-        stmt = with_privacy_gate(stmt, Tracker, auth)
-        stmt = not_deleted(stmt, Entry)
-        result = await db.execute(stmt)
-        return [(entry, tracker) for entry, tracker in result]
+        """Fetch every visible entry for the behavior counts (A3/A4 only).
 
-    async def _fetch_90d(
-        self, db: AsyncSession, auth: AuthSession, tracker_id: UUID, since: datetime
-    ) -> list[tuple[Entry, Tracker]]:
+        Unlike the F1–F5 aggregation path, behavior metrics DO apply the parent's
+        soft-delete gate: an archived tracker disappears from "tuần/tháng/năm này"
+        (spec §4.3), while its money history stays in F1–F5.
+        """
         stmt = select(Entry, Tracker).join(Tracker, Entry.tracker_id == Tracker.id)
         stmt = with_privacy_gate(stmt, Tracker, auth)
+        stmt = not_deleted(stmt, Tracker)
         stmt = not_deleted(stmt, Entry)
-        stmt = stmt.where(Entry.tracker_id == tracker_id, Entry.occurred_at >= since)
-        stmt = stmt.order_by(Entry.occurred_at)
         result = await db.execute(stmt)
         return [(entry, tracker) for entry, tracker in result]
 
@@ -207,19 +269,32 @@ class DashboardService:
     ) -> list[dict]:
         """Gap (current vs average) for every visible tracker with enough data.
 
-        For each tracker we take the ``window_days`` most recent entries, compute the
-        gaps between consecutive ``occurred_at`` values, and average them in Python.
-        Fewer than ``min_entries`` ⇒ the tracker is reported with ``enough=False`` so
-        the UI writes "chưa đủ dữ liệu" instead of drawing "0 ngày".
+        One batched query fetches every visible tracker's entries in the
+        ``window_days`` window (no N+1 — M1); gaps between consecutive
+        ``occurred_at`` values are averaged in Python. Fewer than ``min_entries``
+        ⇒ the tracker is reported with ``enough=False`` so the UI writes
+        "chưa đủ dữ liệu" instead of drawing "0 ngày".
         """
         since = now - timedelta(days=window_days)
         trackers = await self._visible_trackers(db, auth)
+        if not trackers:
+            return []
+        tracker_ids = [tracker.id for tracker in trackers]
+        stmt = select(Entry, Tracker).join(Tracker, Entry.tracker_id == Tracker.id)
+        stmt = with_privacy_gate(stmt, Tracker, auth)
+        stmt = not_deleted(stmt, Entry)
+        stmt = stmt.where(Entry.tracker_id.in_(tracker_ids), Entry.occurred_at >= since)
+        stmt = stmt.order_by(Entry.tracker_id, Entry.occurred_at)
+        rows = await db.execute(stmt)
+
+        by_tracker: dict[UUID, list[datetime]] = {}
+        for entry, _tracker in rows:
+            if entry.occurred_at is not None:
+                by_tracker.setdefault(entry.tracker_id, []).append(entry.occurred_at)
+
         result: list[dict] = []
         for tracker in trackers:
-            rows = await self._fetch_90d(db, auth, tracker.id, since)
-            timestamps = sorted(
-                (entry.occurred_at for entry, _ in rows if entry.occurred_at is not None)
-            )
+            timestamps = sorted(by_tracker.get(tracker.id, []))
             if len(timestamps) < min_entries:
                 result.append(
                     {
@@ -257,32 +332,12 @@ class DashboardService:
     ) -> DashboardResponse:
         """Compute the whole dashboard for one requested month."""
         now = _relative_now()
-        month_start, month_end = _month_bounds(month)
-        period_end = min(now, month_end)
-        period_start = month_start
-        current_days = max(1, (period_end - period_start).days)
-
-        month_rows = await self._fetch_month(db, auth, month_start, month_end)
-
-        # F2 compares against the same-length previous period, which lies strictly
-        # before [month_start, month_end). Fetch those rows too, or f2_previous is
-        # silently zero even when the previous period has spending (§4.2 F2).
-        prev_start = period_start - timedelta(days=current_days)
-        prev_end = min(period_start, prev_start + timedelta(days=current_days))
-        prev_period_truncated = prev_end < prev_start + timedelta(days=current_days)
-        prev_rows = await self._fetch_month(db, auth, prev_start, prev_end)
-        fetch_rows = month_rows + prev_rows
-
-        a2_gap = await self._a2_gap(db, auth, now)
-        corrupted = 0
-        decoded: list[tuple[Entry, Tracker, Decimal | None, bool]] = []
-        for entry, tracker in fetch_rows:
-            amount, bad = self._safe_amount(entry)
-            if bad:
-                corrupted += 1
-            decoded.append((entry, tracker, amount, bad))
+        period = _periods(month, now)
+        period_start = period.period_start
+        period_end = period.period_end
 
         # ---------------- A3 / A4 (relative to today) ---------------------
+        a2_gap = await self._a2_gap(db, auth, now)
         all_rows = await self._fetch_all(db, auth)
         week_start = _monday_of(now).replace(tzinfo=VN_TZ)
         month_start_now = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -301,7 +356,9 @@ class DashboardService:
         # A4: current month entries vs avg of previous three full months.
         prev3_start = _shift_months(month_start_now, 3)
         prev3_end = month_start_now
-        prev3_rows = await self._fetch_month(db, auth, prev3_start, prev3_end)
+        prev3_rows = await self._fetch_month(
+            db, auth, prev3_start, prev3_end, include_archived=False
+        )
         prev3_count = sum(1 for entry, _ in prev3_rows if entry.occurred_at is not None)
         prev_avg = Decimal(prev3_count) / Decimal(3) if prev3_count else Decimal(0)
         if a3_month > prev_avg:
@@ -312,6 +369,43 @@ class DashboardService:
             trend = "flat"
         a4_trend = A4Trend(current_month=a3_month, prev_avg=prev_avg, trend=trend)
         a3_counts = A3Counts(week=a3_week, month=a3_month, year=a3_year)
+
+        # A future month has no finance data yet: every F metric is zero and no
+        # month/previous-period query runs (spec §4.3 — no fake 1-day period).
+        if period.is_future:
+            return DashboardResponse(
+                period_start=period_start,
+                period_end=period_end,
+                current_period_days=0,
+                prev_period_days=0,
+                prev_period_truncated=False,
+                corrupted_entry_count=0,
+                f1_total=Decimal(0),
+                f2_current=Decimal(0),
+                f2_previous=Decimal(0),
+                f3_groups=[],
+                f4_top=[],
+                f5_net=Decimal(0),
+                a2_gap=a2_gap,
+                a3_counts=a3_counts,
+                a4_trend=a4_trend,
+            )
+
+        month_start = period_start
+        month_end = _month_bounds(month)[1]
+        month_rows = await self._fetch_month(db, auth, month_start, month_end)
+        prev_start = period.prev_start
+        prev_end = period.prev_end
+        prev_rows = await self._fetch_month(db, auth, prev_start, prev_end)
+        fetch_rows = month_rows + prev_rows
+
+        corrupted = 0
+        decoded: list[tuple[Entry, Tracker, Decimal | None, bool]] = []
+        for entry, tracker in fetch_rows:
+            amount, bad = self._safe_amount(entry)
+            if bad:
+                corrupted += 1
+            decoded.append((entry, tracker, amount, bad))
 
         # ---------------- F1 / F5 (within the live period) -----------------
         f1_total = Decimal(0)
@@ -327,7 +421,6 @@ class DashboardService:
         f5_net = in_total - f1_total
 
         # ---------------- F2 (same-length previous period) -----------------
-        prev_days = (prev_end - prev_start).days
         f2_previous = Decimal(0)
         f2_current = Decimal(0)
         for entry, tracker, amount, bad in decoded:
@@ -397,7 +490,7 @@ class DashboardService:
             and amount is not None
             and tracker.direction == "out"
             and entry.occurred_at is not None
-            and month_start <= entry.occurred_at < month_end
+            and month_start <= entry.occurred_at < period_end
         ]
         f4_all.sort(key=lambda item: item[2] or Decimal(0), reverse=True)
         f4_top: list[F4Top] = []
@@ -416,9 +509,9 @@ class DashboardService:
         return DashboardResponse(
             period_start=period_start,
             period_end=period_end,
-            current_period_days=current_days,
-            prev_period_days=prev_days,
-            prev_period_truncated=prev_period_truncated,
+            current_period_days=period.current_period_days,
+            prev_period_days=period.prev_period_days,
+            prev_period_truncated=period.prev_period_truncated,
             corrupted_entry_count=corrupted,
             f1_total=f1_total,
             f2_current=f2_current,

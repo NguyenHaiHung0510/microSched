@@ -230,6 +230,7 @@ export function PrivateGate({ session }: Props) {
           type="button"
           variant="outline"
           size="sm"
+          className="min-h-11"
           data-testid="private-lock-now"
           disabled={lock.isPending}
           onClick={() => lock.mutate()}
@@ -241,6 +242,7 @@ export function PrivateGate({ session }: Props) {
           type="button"
           variant="outline"
           size="sm"
+          className="min-h-11"
           data-testid="private-unlock-open"
           disabled={isThrottled}
           onClick={() => setUnlockOpen(true)}
@@ -252,7 +254,8 @@ export function PrivateGate({ session }: Props) {
       <Button
         type="button"
         variant="ghost"
-        size="icon-sm"
+        size="icon-lg"
+        className="size-11"
         data-testid="private-pin-change-open"
         aria-label="Đổi PIN riêng tư"
         onClick={() => setChangeOpen(true)}

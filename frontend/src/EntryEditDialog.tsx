@@ -11,7 +11,13 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { digitsOnly, type Entry, type Tracker } from '@/tracker-ui'
+import {
+  decimalInput,
+  digitsOnly,
+  quantityToNumber,
+  type Entry,
+  type Tracker,
+} from '@/tracker-ui'
 
 export type EntryEditPayload = {
   occurred_at?: string
@@ -61,13 +67,13 @@ export function EntryEditDialog({
       payload.amount = amount ? Number(digitsOnly(amount)) : null
       payload.list_amount = listAmount ? Number(digitsOnly(listAmount)) : null
     }
-    if (isQuantity) payload.quantity = quantity ? Number(digitsOnly(quantity)) : null
+    if (isQuantity) payload.quantity = quantity ? quantityToNumber(quantity) : null
     payload.note_md = note.trim() || null
     onSubmit(entry.id, payload)
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent data-testid="entry-edit-dialog">
         <DialogHeader>
           <DialogTitle>Sửa bản ghi</DialogTitle>
@@ -110,13 +116,13 @@ export function EntryEditDialog({
           {isQuantity ? (
             <label className="block space-y-1.5 text-sm font-semibold">
               <span>Số lượng ({tracker?.unit ?? 'đơn vị'})</span>
-              <Input
-                className="h-10 bg-card"
-                inputMode="numeric"
-                value={quantity}
-                onChange={(event) => setQuantity(digitsOnly(event.target.value))}
-              />
-            </label>
+                <Input
+                  className="h-10 bg-card"
+                  inputMode="numeric"
+                  value={quantity}
+                  onChange={(event) => setQuantity(decimalInput(event.target.value))}
+                />
+              </label>
           ) : null}
           <label className="block space-y-1.5 text-sm font-semibold">
             <span>Ghi chú</span>
@@ -127,10 +133,17 @@ export function EntryEditDialog({
             />
           </label>
           <div className="flex flex-wrap gap-2 pt-1">
-            <Button size="lg" type="submit" disabled={!canSubmit}>
+            <Button size="lg" className="min-h-11" type="submit" disabled={!canSubmit}>
               {pending ? 'Đang lưu…' : 'Lưu'}
             </Button>
-            <Button size="lg" variant="outline" type="button" onClick={onClose}>
+            <Button
+              size="lg"
+              variant="outline"
+              className="min-h-11"
+              type="button"
+              disabled={pending}
+              onClick={onClose}
+            >
               Huỷ
             </Button>
           </div>

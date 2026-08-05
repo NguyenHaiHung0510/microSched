@@ -1,4 +1,5 @@
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { formatVnd, type DashboardResponse, type Tracker } from '@/tracker-ui'
 
 function moneyClass(value: number): string {
@@ -9,19 +10,44 @@ export function DashboardPanel({
   dashboard,
   monthLabel,
   trackers,
+  loading,
+  error,
+  refetching,
+  onRetry,
 }: {
   dashboard: DashboardResponse | null
   monthLabel: string
   trackers: Tracker[]
+  loading: boolean
+  error: unknown
+  refetching: boolean
+  onRetry: () => void
 }) {
   const trackerName = (id: string): string =>
     trackers.find((tracker) => tracker.id === id)?.name ?? 'Đã archive'
 
-  if (!dashboard) {
+  if (error) {
+    return (
+      <Card
+        data-testid="dashboard-error"
+        className="gap-3 p-4 shadow-1 ring-0"
+        role="alert"
+      >
+        <p className="text-sm text-bad">Không tải được dữ liệu tài chính.</p>
+        <Button variant="outline" size="lg" className="min-h-11" onClick={onRetry}>
+          Thử lại
+        </Button>
+      </Card>
+    )
+  }
+
+  if (loading || !dashboard) {
     return (
       <Card data-testid="dashboard-panel" className="gap-3 p-4 shadow-1 ring-0">
         <h2 className="text-base font-bold">Tài chính {monthLabel}</h2>
-        <p className="text-sm text-muted-foreground">Đang tải…</p>
+        <p data-testid="dashboard-loading" className="text-sm text-muted-foreground">
+          Đang tải…
+        </p>
       </Card>
     )
   }
@@ -37,6 +63,11 @@ export function DashboardPanel({
 
   return (
     <div data-testid="dashboard-panel" className="space-y-4">
+      {refetching ? (
+        <p data-testid="dashboard-refreshing" className="text-xs text-muted-foreground">
+          Đang cập nhật…
+        </p>
+      ) : null}
       {dashboard.corrupted_entry_count > 0 ? (
         <div className="space-y-1 rounded-lg bg-warn-bg p-4" role="alert">
           <p className="text-sm font-bold text-warn">

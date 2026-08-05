@@ -4,10 +4,14 @@ import {
   amountToNumber,
   backdateOptions,
   canSubmitAmount,
+  capturePayload,
   currentVietnamMonth,
+  decimalInput,
   digitsOnly,
   formatLastSeen,
+  formatQuantity,
   formatVnd,
+  quantityToNumber,
   sortTrackersForGrid,
   type Tracker,
 } from '@/tracker-ui'
@@ -62,6 +66,25 @@ describe('money input rules (§5.4)', () => {
     expect(formatVnd(amountToNumber('99999999999999'))).toBe('99.999.999.999.999 ₫')
   })
 
+  it('keeps one decimal separator for quantity input', () => {
+    expect(decimalInput('2,5')).toBe('2.5')
+    expect(decimalInput('2.5')).toBe('2.5')
+    expect(decimalInput('2,55')).toBe('2.55')
+    expect(decimalInput('12,5,5')).toBe('12.55')
+    expect(decimalInput('abc2.5')).toBe('2.5')
+    expect(decimalInput('')).toBe('')
+    expect(quantityToNumber('2,5')).toBe(2.5)
+    expect(formatQuantity(2.5)).toBe('2,5')
+    expect(formatQuantity(2)).toBe('2')
+  })
+
+  it('sends a parsed quantity number, not a stripped digit string', () => {
+    const qtyTracker = tracker({ id: 'qty-1', name: 'Nước', input_mode: 'quantity', unit: 'lon' })
+    expect(capturePayload(qtyTracker, '2,5').quantity).toBe(2.5)
+    expect(capturePayload(qtyTracker, '2.5').quantity).toBe(2.5)
+    expect(capturePayload(qtyTracker, '').quantity).toBeUndefined()
+  })
+
   it('disables submit on empty input', () => {
     expect(canSubmitAmount('')).toBe(false)
     expect(canSubmitAmount('0')).toBe(true)
@@ -76,6 +99,13 @@ describe('Vietnam-time helpers', () => {
     expect(formatLastSeen(new Date(now.getTime() - 5 * 60_000).toISOString(), now)).toBe('5 phút trước')
     expect(formatLastSeen(new Date(now.getTime() - 3 * 3_600_000).toISOString(), now)).toBe('3 giờ trước')
     expect(formatLastSeen(new Date(now.getTime() - 4 * 86_400_000).toISOString(), now)).toBe('4 ngày trước')
+    // A1 stays relative beyond a week ("12 ngày trước", spec §5.1 / M6).
+    expect(formatLastSeen(new Date(now.getTime() - 12 * 86_400_000).toISOString(), now)).toBe(
+      '12 ngày trước',
+    )
+    expect(formatLastSeen(new Date(now.getTime() - 200 * 86_400_000).toISOString(), now)).toBe(
+      '200 ngày trước',
+    )
   })
 
   it('builds backdate options with a +07:00 offset', () => {

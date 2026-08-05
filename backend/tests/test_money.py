@@ -12,6 +12,13 @@ from app.domain import money
     [
         (Decimal(0), "0"),
         (Decimal("1"), "1"),
+        (Decimal("1.0"), "1"),
+        (Decimal("0.0"), "0"),
+        (Decimal("-0"), "0"),
+        (Decimal("0E+5"), "0"),
+        (Decimal("100.00"), "100"),
+        (Decimal("1E+2"), "100"),
+        (Decimal("1E+13"), "10000000000000"),  # 14 digits via exponent
         (Decimal("600000"), "600000"),
         (Decimal("99999999999999"), "99999999999999"),  # 14 digits (C2 ceiling)
     ],
@@ -35,6 +42,10 @@ def test_to_storage_rejects_negative():
 def test_to_storage_rejects_over_14_digits():
     with pytest.raises(ValueError):
         money.to_storage(Decimal("100000000000000"))  # 15 digits
+    with pytest.raises(ValueError):
+        money.to_storage(Decimal("1E+14"))  # 15 digits via exponent
+    with pytest.raises(ValueError):
+        money.to_storage(Decimal("100000000000000.0"))  # 15 digits, integral
 
 
 def test_from_storage_rejects_garbage():

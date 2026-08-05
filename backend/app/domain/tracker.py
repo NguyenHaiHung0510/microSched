@@ -147,8 +147,12 @@ class TrackerUpdate(BaseModel):
             self.color = self.color.strip() or None
         if "unit" in self.model_fields_set and self.unit is not None:
             self.unit = self.unit.strip() or None
-        if "is_private" in self.model_fields_set and self.is_private is None:
-            raise ValueError("is_private cannot be null")
+        # Explicit null on a non-nullable patch field must 422 (M5), not silently
+        # fall back to "not in payload" semantics; only group_id/unit/color may be
+        # explicitly nulled (that is how the UI clears them).
+        for field in ("name", "kind", "direction", "input_mode", "is_private"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
         return self
 
 
@@ -206,6 +210,10 @@ class EntryUpdate(BaseModel):
 
     @model_validator(mode="after")
     def normalize(self) -> "EntryUpdate":
+        if "occurred_at" in self.model_fields_set and self.occurred_at is None:
+            # The physical column is NOT NULL (models.py): an explicit null must
+            # be a 422, not a silent no-op or a deferred IntegrityError (M5).
+            raise ValueError("occurred_at cannot be null")
         if (
             "occurred_at" in self.model_fields_set
             and self.occurred_at is not None
@@ -355,6 +363,15 @@ class TrackerStore:
     ) -> TrackerRead:
         """Build a TrackerRead, folding in last-entry and 30-day-count in one pass."""
         last, count = await self._last_entry_and_count(db, [tracker.id])
+        return self._tracker_read_from(tracker, last, count)
+
+    def _tracker_read_from(
+        self,
+        tracker: Tracker,
+        last: dict[UUID, datetime],
+        count: dict[UUID, int],
+    ) -> TrackerRead:
+        """Build a TrackerRead from precomputed batched metadata."""
         return TrackerRead(
             id=tracker.id,
             name=_clear(tracker.name),
@@ -370,6 +387,12 @@ class TrackerStore:
             created_at=tracker.created_at,
             updated_at=tracker.updated_at,
         )
+
+    async def _read_trackers(self, db: AsyncSession, trackers: list[Tracker]) -> list[TrackerRead]:
+        """Batch-build TrackerRead rows with ONE last-entry/count pass (M1)."""
+        ids = [tracker.id for tracker in trackers]
+        last, count = await self._last_entry_and_count(db, ids)
+        return [self._tracker_read_from(tracker, last, count) for tracker in trackers]
 
     async def _last_entry_and_count(
         self, db: AsyncSession, tracker_ids: list[UUID]
@@ -447,13 +470,13 @@ class TrackerStore:
 
     # ------------------------------------------------------------------ groups
 
-    async def list_groups(self, db: AsyncSession) -> list[GroupRead]:
-        """List every tracker group with a live tracker count (no pagination)."""
+    async def list_groups(self, db: AsyncSession, auth: AuthSession) -> list[GroupRead]:
+        """List every tracker group with a live, privacy-aware tracker count."""
         result = await db.execute(
             select(TrackerGroup).order_by(TrackerGroup.position, TrackerGroup.created_at)
         )
         groups = list(result.scalars())
-        counts = await self._group_counts(db)
+        counts = await self._group_counts(db, auth)
         return [self._group_read(group, counts) for group in groups]
 
     def _group_read(self, group: TrackerGroup, counts: dict[UUID, int] | None = None) -> GroupRead:
@@ -469,12 +492,19 @@ class TrackerStore:
             updated_at=group.updated_at,
         )
 
-    async def _group_counts(self, db: AsyncSession) -> dict[UUID, int]:
-        result = await db.execute(
-            select(Tracker.group_id, func.count(Tracker.id))
-            .where(Tracker.group_id.is_not(None), Tracker.deleted_at.is_(None))
-            .group_by(Tracker.group_id)
-        )
+    async def _group_counts(self, db: AsyncSession, auth: AuthSession) -> dict[UUID, int]:
+        """Count non-archived trackers per group, filtered by the session's gate.
+
+        ``tracker_count`` feeds the UI's delete confirmation and group rows;
+        counting private trackers while the gate is closed would leak their
+        existence (C2), so the count goes through the same privacy + soft-delete
+        gate as ``list_trackers``.
+        """
+        stmt = select(Tracker.group_id, func.count(Tracker.id)).where(Tracker.group_id.is_not(None))
+        stmt = with_privacy_gate(stmt, Tracker, auth)
+        stmt = not_deleted(stmt, Tracker)
+        stmt = stmt.group_by(Tracker.group_id)
+        result = await db.execute(stmt)
         return {group_id: value for group_id, value in result}
 
     async def create_group(self, db: AsyncSession, payload: GroupCreate) -> GroupRead:
@@ -494,7 +524,7 @@ class TrackerStore:
         return result
 
     async def update_group(
-        self, db: AsyncSession, group_id: UUID, payload: GroupUpdate
+        self, db: AsyncSession, auth: AuthSession, group_id: UUID, payload: GroupUpdate
     ) -> GroupRead | None:
         """Patch a group; the router turns a unique-name violation into a 409."""
         result = await db.execute(
@@ -507,7 +537,7 @@ class TrackerStore:
         for field, value in changes.items():
             setattr(group, field, value)
         await db.flush()
-        count = (await self._group_counts(db)).get(group.id, 0)
+        count = (await self._group_counts(db, auth)).get(group.id, 0)
         return self._group_read(group, {group.id: count})
 
     async def delete_group(self, db: AsyncSession, group_id: UUID) -> bool:
@@ -529,7 +559,7 @@ class TrackerStore:
         trackers = list(result.scalars())
         if not trackers:
             return []
-        return [await self._read_tracker(db, auth, tracker) for tracker in trackers]
+        return await self._read_trackers(db, trackers)
 
     async def get_tracker(
         self, db: AsyncSession, auth: AuthSession, tracker_id: UUID
@@ -740,6 +770,8 @@ class TrackerStore:
         elif input_mode == "quantity":
             if quantity is None:
                 raise EntryInvalid("Tracker kiểu 'quantity' bắt buộc có số lượng.")
+            if quantity <= 0:
+                raise EntryInvalid("Số lượng phải lớn hơn 0.")
             if amount is not None or list_amount is not None:
                 raise EntryInvalid("Tracker kiểu 'quantity' không nhận số tiền.")
 

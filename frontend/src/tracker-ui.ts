@@ -97,10 +97,35 @@ export function digitsOnly(value: string): string {
   return value.replace(/\D/g, '')
 }
 
+/** Accept digits with ONE decimal separator (`.` or `,`); used for quantity input.
+ *
+ * Money stays digit-only (VND has no fractional part), but quantity is
+ * ``NUMERIC(10,2)`` server-side — stripping the separator silently turned
+ * ``2,5`` into ``25`` (M8). A comma is normalized to a dot so the value is a
+ * valid JS number; everything after the first separator is dropped.
+ */
+export function decimalInput(value: string): string {
+  const cleaned = value.replace(/[^0-9.,]/g, '').replace(/,/g, '.')
+  const [head, ...rest] = cleaned.split('.')
+  return rest.length > 0 ? `${head}.${rest.join('')}` : head
+}
+
+/** Parse a decimal input (comma or dot separator) into the number sent to the server. */
+export function quantityToNumber(input: string): number {
+  const value = Number(decimalInput(input))
+  return Number.isFinite(value) ? value : 0
+}
+
 const vndFormatter = new Intl.NumberFormat('vi-VN')
+const quantityFormatter = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 })
 
 export function formatVnd(amount: number): string {
   return `${vndFormatter.format(amount)} ₫`
+}
+
+/** Display a quantity with the user's decimal comma (``2,5``) and up to 2 digits. */
+export function formatQuantity(value: number): string {
+  return quantityFormatter.format(value)
 }
 
 export function canSubmitAmount(input: string): boolean {
@@ -122,12 +147,9 @@ export function formatLastSeen(value: string | null, now = new Date()): string {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours} giờ trước`
   const days = Math.floor(hours / 24)
-  if (days < 7) return `${days} ngày trước`
-  return new Intl.DateTimeFormat('vi-VN', {
-    timeZone: VIETNAM_TIME_ZONE,
-    day: '2-digit',
-    month: '2-digit',
-  }).format(new Date(value))
+  // A1 stays relative for every gap ("12 ngày trước" — spec §5.1 / M6); the
+  // absolute dd/mm fallback leaked a different format exactly after day 7.
+  return `${days} ngày trước`
 }
 
 /** Two quick backdate choices plus a custom picker; all offsets are +07:00. */
@@ -195,7 +217,7 @@ export function capturePayload(
   if (tracker.input_mode === 'money' && input) {
     payload.amount = amountToNumber(input)
   } else if (tracker.input_mode === 'quantity' && input) {
-    payload.quantity = amountToNumber(input)
+    payload.quantity = quantityToNumber(input)
   }
   return payload
 }

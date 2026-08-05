@@ -88,7 +88,7 @@ def _tz_aware(value: datetime | None, name: str) -> None:
 @router.get("/tracker/groups", response_model=dict[str, list[GroupRead]])
 async def list_groups(db: Database, session: CurrentSession) -> dict[str, list[GroupRead]]:
     """List every tracker group with its live tracker count (no pagination)."""
-    return {"items": await store.list_groups(db)}
+    return {"items": await store.list_groups(db, session)}
 
 
 @router.post("/tracker/groups", response_model=GroupRead)
@@ -117,7 +117,7 @@ async def update_group(
 ) -> GroupRead:
     """Patch a group's name/color/position; 409 on a taken name."""
     try:
-        group = await store.update_group(db, group_id, payload)
+        group = await store.update_group(db, session, group_id, payload)
     except IntegrityError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Đã có nhóm cùng tên."
