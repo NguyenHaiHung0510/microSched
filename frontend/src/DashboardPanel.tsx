@@ -63,11 +63,6 @@ export function DashboardPanel({
 
   return (
     <div data-testid="dashboard-panel" className="space-y-4">
-      {refetching ? (
-        <p data-testid="dashboard-refreshing" className="text-xs text-muted-foreground">
-          Đang cập nhật…
-        </p>
-      ) : null}
       {dashboard.corrupted_entry_count > 0 ? (
         <div className="space-y-1 rounded-lg bg-warn-bg p-4" role="alert">
           <p className="text-sm font-bold text-warn">
@@ -80,7 +75,15 @@ export function DashboardPanel({
       ) : null}
 
       <Card className="gap-3 p-4 shadow-1 ring-0">
-        <h2 className="text-base font-bold">Tài chính {monthLabel}</h2>
+        <h2 className="flex items-center gap-2 text-base font-bold">
+          Tài chính {monthLabel}
+          <span
+            data-testid="dashboard-refreshing"
+            aria-hidden="true"
+            className="inline-block size-2 rounded-full bg-muted-foreground opacity-0 transition-opacity"
+            style={{ opacity: refetching ? 1 : 0 }}
+          />
+        </h2>
         <div className="space-y-3">
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-sm font-semibold">Đã chi tháng này</span>
