@@ -152,6 +152,23 @@ export function formatLastSeen(value: string | null, now = new Date()): string {
   return `${days} ngày trước`
 }
 
+/** Freshness window for the dashboard wire indicator (Option G). */
+export const STALE_MS = 15_000
+
+/** Human label for how long the dashboard has been quiet; ms = elapsed time. */
+export function quietAgo(ms: number | null): string {
+  if (ms === null || ms < 60_000) return 'less than 1m ago'
+  const min = Math.floor(ms / 60_000)
+  if (min < 60) return `${min}m ago`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d}d ago`
+  const mo = Math.floor(d / 30)
+  if (mo < 12) return `${mo}mo ago`
+  return `${Math.floor(mo / 12)}y ago`
+}
+
 /** Two quick backdate choices plus a custom picker; all offsets are +07:00. */
 export function backdateOptions(now = new Date()): Array<{ label: string; value: string }> {
   const options = [

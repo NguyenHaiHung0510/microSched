@@ -12,6 +12,7 @@ import {
   formatQuantity,
   formatVnd,
   quantityToNumber,
+  quietAgo,
   sortTrackersForGrid,
   type Tracker,
 } from '@/tracker-ui'
@@ -119,4 +120,15 @@ describe('Vietnam-time helpers', () => {
   it('formats the current month key as YYYY-MM', () => {
     expect(currentVietnamMonth(new Date('2026-08-05T12:00:00Z'))).toBe('2026-08')
   })
+})
+
+describe('quietAgo', () => {
+  it('returns "less than 1m ago" for null', () => expect(quietAgo(null)).toBe('less than 1m ago'))
+  it('returns "less than 1m ago" for < 60s', () => expect(quietAgo(59_999)).toBe('less than 1m ago'))
+  it('returns "1m ago" for exactly 60s', () => expect(quietAgo(60_000)).toBe('1m ago'))
+  it('returns "59m ago" for 59 min', () => expect(quietAgo(59 * 60_000)).toBe('59m ago'))
+  it('returns "1h ago" for 60 min', () => expect(quietAgo(60 * 60_000)).toBe('1h ago'))
+  it('returns "1d ago" for 24h', () => expect(quietAgo(24 * 60 * 60_000)).toBe('1d ago'))
+  it('returns "1mo ago" for 30d', () => expect(quietAgo(30 * 24 * 60 * 60_000)).toBe('1mo ago'))
+  it('returns "1y ago" for 12mo', () => expect(quietAgo(12 * 30 * 24 * 60 * 60_000)).toBe('1y ago'))
 })

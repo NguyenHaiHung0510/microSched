@@ -357,7 +357,11 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         trackers={trackers}
         loading={dashboardQuery.isPending}
         error={dashboardQuery.error}
-        refetching={dashboardQuery.isFetching}
+        // TanStack v5 returns 0 (not null) while the query has never
+        // succeeded; fold that into null so the chip reads "never fresh"
+        // instead of a ~57-year-old elapsed time.
+        lastSuccessAt={dashboardQuery.dataUpdatedAt || null}
+        queryStatus={dashboardQuery.status}
         onRetry={() => void refresh()}
       />
 

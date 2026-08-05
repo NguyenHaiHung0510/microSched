@@ -1,7 +1,27 @@
+import { useEffect, useState } from 'react'
+
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { formatVnd, type DashboardResponse, type Tracker } from '@/tracker-ui'
+import { STALE_MS, formatVnd, quietAgo, type DashboardResponse, type Tracker } from '@/tracker-ui'
+
+/** Display clock (same pattern as the private gate): Date.now() stays in the
+ *  effect, so the render pass stays pure and `react-hooks/purity` stays green. */
+function useNow(intervalMs: number): number {
+  // Lazy initializer: the first painted frame must already know the real
+  // clock, otherwise the chip flashes green for stale cached data.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    let timeout = 0
+    const tick = () => {
+      setNow(Date.now())
+      timeout = window.setTimeout(tick, intervalMs)
+    }
+    timeout = window.setTimeout(tick, 0)
+    return () => window.clearTimeout(timeout)
+  }, [intervalMs])
+  return now
+}
 
 function moneyClass(value: number): string {
   return value < 0 ? 'text-bad' : 'text-ok'
@@ -13,7 +33,8 @@ export function DashboardPanel({
   trackers,
   loading,
   error,
-  refetching,
+  lastSuccessAt,
+  queryStatus,
   onRetry,
 }: {
   dashboard: DashboardResponse | null
@@ -21,11 +42,19 @@ export function DashboardPanel({
   trackers: Tracker[]
   loading: boolean
   error: unknown
-  refetching: boolean
+  lastSuccessAt: number | null
+  queryStatus: 'success' | 'error' | 'pending'
   onRetry: () => void
 }) {
+  const now = useNow(1_000)
   const trackerName = (id: string): string =>
     trackers.find((tracker) => tracker.id === id)?.name ?? 'Đã archive'
+
+  const elapsed = lastSuccessAt === null ? null : now - lastSuccessAt
+  const live =
+    queryStatus === 'success' &&
+    elapsed !== null &&
+    elapsed < STALE_MS
 
   if (error) {
     return (
@@ -76,16 +105,21 @@ export function DashboardPanel({
       ) : null}
 
       <Card className="gap-3 p-4 shadow-1 ring-0">
-        <h2 className="flex items-center gap-2 text-base font-bold">
+        <h2 className="flex flex-wrap items-center gap-2 text-base font-bold">
           Tài chính {monthLabel}
           <span
-            data-testid="dashboard-refreshing"
-            aria-hidden="true"
             className={cn(
-              "inline-block size-2 rounded-full bg-muted-foreground transition-opacity",
-              refetching ? "opacity-100" : "opacity-0"
+              'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[13px]',
+              live ? 'text-ok' : 'text-bad',
             )}
-          />
+          >
+            <span
+              data-testid="dashboard-refreshing"
+              aria-hidden="true"
+              className={cn('inline-block size-2 shrink-0 rounded-full', live ? 'bg-ok' : 'bg-bad')}
+            />
+            {live ? 'live and fresh' : `The wire went quiet · ${quietAgo(elapsed)}`}
+          </span>
         </h2>
         <div className="space-y-3">
           <div className="flex items-baseline justify-between gap-3">
