@@ -260,3 +260,33 @@ không có `gcloud`; PR không đụng resource ngoài repo.
 **Việc kế tiếp:** không đổi hàng đợi sản phẩm của phiên 010a: QA file picker/FileReader trên iPhone,
 rồi thi công `010b`. Hai việc hạ tầng không chặn: xác nhận Cloud Scheduler trên Google Console khi tiện,
 và bảo đảm alert Fly gần $4 để còn khoảng phản ứng trước cliff $5.
+
+
+---
+
+## 2026-08-04 / 2026-08-05 — Chốt 010b, vá lỗ hổng DoS brace-expansion và dọn dẹp hàng đợi PR dependency
+
+**Tóm tắt:** Hoàn thành toàn bộ `010b` (calendar scroll view), xử lý lỗ hổng bảo mật Dependabot High alert (`brace-expansion@2.1.4` nested DoS fix), nâng cấp các dependency phụ thuộc (FastAPI 0.141.1, uvicorn 0.52.0, radix-ui 1.6.7, @types/node 26.1.2), tối ưu hóa React.memo cho EventCard (PR #90), và dọn dẹp toàn bộ branch rác trên local lẫn remote.
+
+**Mô hình & Quy trình điều phối:**
+- T1 (Terra/GPT-5.6 via API) điều phối chính.
+- T2/T3 adversarial review zero-trust: dùng `openrouter/~deepseek-deepseek-v4-flash-latest` (không cung cấp dữ liệu nhạy cảm như .env, credential; chỉ review public diff/code).
+- Coding/Intelligence: sử dụng `google-antigravity/gemini-3.6-flash`.
+- Quy trình merge cứng: Rebase lên HEAD mới nhất → CI 10/10 green → DeepSeek zero-trust review PASS → Kiểm tra gate (`MERGEABLE` + `CLEAN`) → `gh pr merge --merge`.
+
+**Danh sách PR đã merge vào `develop`:**
+- PR #98: `010b` Calendar scroll view (merge SHA `1985a2d`)
+- PR #99: Docs harness temporary model routing (merge SHA `72275d0f`)
+- PR #100: Fix `brace-expansion` nested DoS (merge SHA `1a4bdaf0`)
+- PR #101: Clean unused Babel devDeps (merge SHA `5cfcef51`)
+- PR #94: Bump Ruff 0.16.0 → 0.16.1 (merge SHA `49965ba3`)
+- PR #93: Bump `@types/node` 24 → 26 (merge SHA `061f1ef5`)
+- PR #96: Bump uvicorn 0.51.0 → 0.52.0 (merge SHA `24db8d23`)
+- PR #92: Bump FastAPI 0.139.2 → 0.141.1 (merge SHA `32fa9a00`)
+- PR #91: Bump radix-ui 1.6.4 → 1.6.7 (merge SHA `47b3dfc9`)
+- PR #90: EventCard React.memo optimization (merge SHA `d174aa1c`)
+- PR #95 (Babel runtime v8 standalone): Đã đóng/superseded do xung đột major version Babel.
+
+**Branch cleanup:** Đã dọn dẹp sạch toàn bộ branch local và remote. Chỉ giữ lại `main` và `develop`.
+
+**Việc kế tiếp:** Chuyển sang chuỗi slice `011` (Tracker): `011a → 011c → 011b → 020 → 012 → 008h`.
