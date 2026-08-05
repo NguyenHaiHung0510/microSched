@@ -8,7 +8,9 @@ import { STALE_MS, formatVnd, quietAgo, type DashboardResponse, type Tracker } f
 /** Display clock (same pattern as the private gate): Date.now() stays in the
  *  effect, so the render pass stays pure and `react-hooks/purity` stays green. */
 function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(0)
+  // Lazy initializer: the first painted frame must already know the real
+  // clock, otherwise the chip flashes green for stale cached data.
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     let timeout = 0
     const tick = () => {
