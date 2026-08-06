@@ -286,6 +286,67 @@ def test_login_always_forces_the_google_account_chooser(monkeypatch) -> None:
     assert captured["prompt"] == "select_account"
 
 
+class _ReturnToGoogle:
+    """Answers /auth/login without calling Google (spec 011b §1.3 tests)."""
+
+    async def authorize_redirect(self, request, redirect_uri: str, **params):
+        return RedirectResponse("https://accounts.google.com", status_code=302)
+
+
+def start_login(client: TestClient, monkeypatch, return_to: str | None = None) -> None:
+    """Start a login flow, optionally carrying return_to, without touching the network."""
+    monkeypatch.setattr(
+        "app.web.routers.auth.get_oauth",
+        lambda: type("_Registry", (), {"google": _ReturnToGoogle()})(),
+    )
+    url = "/auth/login" if return_to is None else f"/auth/login?return_to={return_to}"
+    client.get(url, follow_redirects=False)
+
+
+def test_return_to_with_external_scheme_falls_back_to_root(monkeypatch) -> None:
+    """https://evil.example must never become the post-login redirect target."""
+    client = build_client(InMemorySessionStore())
+    start_login(client, monkeypatch, "https://evil.example")
+
+    response = complete_login(client, monkeypatch, ALLOWED_EMAIL)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+def test_return_to_with_protocol_relative_url_falls_back_to_root(monkeypatch) -> None:
+    """//evil.example (browser-relative scheme) is an open redirect as well."""
+    client = build_client(InMemorySessionStore())
+    start_login(client, monkeypatch, "//evil.example")
+
+    response = complete_login(client, monkeypatch, ALLOWED_EMAIL)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+def test_return_to_is_applied_once_then_consumed(monkeypatch) -> None:
+    """A relative return_to survives the login for exactly one flow (spec 011b §1.3).
+
+    The reminder-confirm deep link must survive an expired session, but the value
+    is popped on use: a later login without return_to goes back to "/" instead of
+    reusing the stale target.
+    """
+    client = build_client(InMemorySessionStore())
+    start_login(client, monkeypatch, "/reminder-confirm?dispatch=abc")
+
+    first = complete_login(client, monkeypatch, ALLOWED_EMAIL)
+
+    assert first.status_code == 303
+    assert first.headers["location"] == "/reminder-confirm?dispatch=abc"
+
+    start_login(client, monkeypatch)
+    second = complete_login(client, monkeypatch, ALLOWED_EMAIL)
+
+    assert second.status_code == 303
+    assert second.headers["location"] == "/"
+
+
 def test_session_cookie_carries_the_expected_flags(monkeypatch) -> None:
     """HttpOnly and SameSite=Lax are set on the cookie itself, not just documented."""
     client = build_client(InMemorySessionStore())
