@@ -218,3 +218,4 @@ gl-files.txt
 **/gitleaks-report*.json
 **/*gitleaks*report*.json
 /harness-tools/
+/agent-tasks/screenshots
