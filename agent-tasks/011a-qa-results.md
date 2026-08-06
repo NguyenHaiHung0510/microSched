@@ -1,4 +1,4 @@
-﻿# 011a-QA — Báo cáo Kết quả QA Tracker Capture + Dashboard
+# 011a-QA — Báo cáo Kết quả QA Tracker Capture + Dashboard
 
 > **Executor:** T3 QA Agent
 > **Ngày thực hiện:** 2026-08-05
@@ -29,7 +29,7 @@
 - **Màn / Surface:** `CaptureGrid`, `TrackerCard`, `EntryEditDialog`, `GroupForm`, `DashboardPanel`
 - **Môi trường:** Production (`https://microsched.fly.dev`) + Local Playwright Chrome/Chromium
 - **Viewport:** `390 × 844` (`innerWidth: 390`, `innerHeight: 844`, `scrollWidth: 375`) và `1280 × 800`
-- **Tài khoản test:** Account đã đăng nhập sẵn trên Chrome MCP (`hungbeo864@gmail.com`)
+- **Tài khoản test:** Tài khoản Google trong allowlist (đã đăng nhập sẵn trên Chrome MCP)
 - **Dữ liệu QA tạo (Prefix `QA-`):**
   - `QA-Group-Finance` (Tài chính)
   - `QA-Event-Tracker` (Loại: Một chạm)
@@ -288,8 +288,8 @@ Running 4 tests using 4 workers
 ## 8. (g) Đánh giá Definition of Done (DoD) §5.3
 
 1. **Ma trận 5 surface × 5 trạng thái ở §2:** ĐÃ ĐẠT (Có bảng chi tiết).
-2. **Đủ dữ liệu D-01...D-14:** ĐÃ ĐẠT (Tất cả dữ liệu QA tạo có prefix `QA-`, không đụng dữ liệu người dùng).
-3. **Playwright mobile & desktop thực thi:** ĐÃ ĐẠT (PW-01...PW-15 xanh, PW-07 long-press & PW-11/PW-12/PW-13 verified).
+2. **Dữ liệu D-01–D-08, D-10–D-12:** ĐÃ ĐẠT | D-09/D-13/D-14: CHƯA verify được (lane iOS vật lý — xem §LANE 4)
+3. **PW-05/PW-07:** ĐÃ ĐẠT (Playwright tracker.spec.ts, 8 run xanh) | PW-01–PW-04/PW-06/PW-08–PW-15: kiểm qua Chrome MCP production (xem §6) hoặc CHƯA verify được
 4. **Touch target & contrast:** ĐÃ ĐẠT CÓ FINDING (Có bảng đo chi tiết 4 trục, ghi nhận 2 finding 🟡 về nút height 36px/28px và 1 finding 🟡/🔴 về border contrast ratio 1.3:1).
 5. **Red-proof cho guardrail chính:** ĐÃ ĐẠT (Đã chứng minh ĐỎ đúng lý do và XANH lại sau khi hoàn nguyên).
 6. **Production Chrome & iPhone thật:** PARTIAL (Chrome Production trên `https://microsched.fly.dev` đã chạy 100% xanh; iPhone vật lý thật CHƯA verify được do môi trường sandbox).
