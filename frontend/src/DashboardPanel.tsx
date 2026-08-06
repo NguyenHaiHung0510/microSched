@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { daysLeftLabel, formatShortDate } from '@/subscription-ui'
 import { STALE_MS, formatVnd, quietAgo, type DashboardResponse, type Tracker } from '@/tracker-ui'
 
 /** Display clock (same pattern as the private gate): Date.now() stays in the
@@ -160,6 +161,53 @@ export function DashboardPanel({
             </span>
           </div>
         </div>
+      </Card>
+
+      <Card className="gap-3 p-4 shadow-1 ring-0">
+        <h3 className="text-base font-bold">Khoản cố định</h3>
+        {dashboard.f6.corrupted_subscription_count > 0 ? (
+          <p className="text-sm text-warn" role="alert">
+            {dashboard.f6.corrupted_subscription_count} bản ghi không đọc được — số liệu có thể
+            thiếu
+          </p>
+        ) : null}
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-sm font-semibold">Mỗi tháng</span>
+          <span data-testid="dashboard-f6-burn" className="text-xl font-extrabold tabular-nums">
+            {dashboard.f6.monthly_burn > 0
+              ? `≈ ${formatVnd(dashboard.f6.monthly_burn)}`
+              : 'Chưa có khoản cố định nào'}
+          </span>
+        </div>
+        {dashboard.f6.subscription_count > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {dashboard.f6.subscription_count} khoản tự gia hạn
+          </p>
+        ) : null}
+        {dashboard.f6.upcoming.length > 0 ? (
+          <div data-testid="dashboard-f6-upcoming" className="space-y-2">
+            {dashboard.f6.upcoming.map((item) => (
+              <div
+                key={item.subscription_id}
+                className="flex items-baseline justify-between gap-3 rounded-lg bg-muted/50 p-3"
+              >
+                <div className="min-w-0">
+                  <p className="max-w-full break-words text-sm font-semibold">{item.name}</p>
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    {formatShortDate(item.expires_on)} · {daysLeftLabel(item.days_left)}
+                  </p>
+                </div>
+                <span className="text-sm font-bold tabular-nums">
+                  {item.corrupted
+                    ? 'không đọc được'
+                    : item.amount != null
+                      ? formatVnd(item.amount)
+                      : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </Card>
 
       {dashboard.f3_groups.length > 0 ? (

@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
 from app.domain import money
-from app.domain.models import AuthSession, Entry, Tracker, TrackerGroup
+from app.domain.models import AuthSession, Entry, Subscription, Tracker, TrackerGroup
 from app.domain.reading import can_see_private, not_deleted, readable, with_privacy_gate
 
 logger = logging.getLogger(__name__)
@@ -641,6 +641,28 @@ class TrackerStore:
         if wants_private and not can_see_private(auth):
             raise PrivateWriteLocked
 
+        # 011c §2.5: a tracker with live subscriptions cannot be switched away
+        # from finance+money, or every renewal would start failing K8 right at
+        # the worst moment. Only the effective change is guarded: patching
+        # name/color with an identical input_mode/kind stays allowed.
+        leaves_money = (
+            "input_mode" in changes and changes["input_mode"] != "money"
+        ) or ("kind" in changes and changes["kind"] != "finance")
+        if leaves_money:
+            sub_count = (
+                await db.execute(
+                    select(func.count(Subscription.id)).where(
+                        Subscription.tracker_id == tracker_id,
+                        Subscription.deleted_at.is_(None),
+                    )
+                )
+            ).scalar_one()
+            if sub_count:
+                raise TrackerInvalid(
+                    f"Tracker còn {sub_count} đăng ký đang gắn — "
+                    "không đổi được loại hay kiểu nhập của tracker này."
+                )
+
         new_kind = changes.get("kind", tracker.kind)
         # Validate the effective (group_id, kind) pair even when the PATCH only moves
         # group_id without touching kind: the composite FK fk_tracker_group_kind would
@@ -688,6 +710,18 @@ class TrackerStore:
         tracker = await self._tracker(db, auth, tracker_id)
         if tracker is None:
             return False
+        sub_count = (
+            await db.execute(
+                select(func.count(Subscription.id)).where(
+                    Subscription.tracker_id == tracker_id,
+                    Subscription.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+        if sub_count:
+            raise TrackerInvalid(
+                f"Còn {sub_count} đăng ký đang gắn — xoá hoặc chuyển chúng trước."
+            )
         tracker.deleted_at = datetime.now(UTC)
         await db.flush()
         return True
@@ -776,9 +810,20 @@ class TrackerStore:
                 raise EntryInvalid("Tracker kiểu 'quantity' không nhận số tiền.")
 
     async def create_entry(
-        self, db: AsyncSession, auth: AuthSession, payload: EntryCreate
-    ) -> EntryRead:
-        """Log one entry (one-tap capture) through its visible parent tracker."""
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        payload: EntryCreate,
+        *,
+        subscription_id: UUID | None = None,
+    ) -> tuple[UUID, bool]:
+        """Log one entry (one-tap capture) through its visible parent tracker.
+
+        Returns ``(entry_id, created)`` — the 011c renewal flow needs to know
+        whether the INSERT actually landed so it can push ``expires_on`` only
+        once (§2.4). ``subscription_id`` is an internal keyword used ONLY by
+        ``SubscriptionStore.renew``; the 011a router never sets it.
+        """
         tracker = await self._tracker(db, auth, payload.tracker_id, for_update=True)
         if tracker is None:
             raise EntryInvalid("Tracker không tồn tại.")
@@ -790,6 +835,7 @@ class TrackerStore:
         )
         values = {
             "tracker_id": payload.tracker_id,
+            "subscription_id": subscription_id,
             "occurred_at": payload.occurred_at or datetime.now(UTC),
             "quantity": payload.quantity,
             "amount": _amount_out(payload.amount),
@@ -800,9 +846,7 @@ class TrackerStore:
             entry = Entry(**values)
             db.add(entry)
             await db.flush()
-            result = self._entry_read(entry)
-            result.created = True
-            return result
+            return entry.id, True
 
         inserted_id = (
             await db.execute(
@@ -819,14 +863,8 @@ class TrackerStore:
                 if physical.scalar_one_or_none() is not None:
                     raise EntryIdConflict
                 raise RuntimeError("conflicting entry disappeared before it could be read")
-            result = self._entry_read(existing)
-            result.created = False
-            return result
-        inserted = await db.execute(select(Entry).where(Entry.id == inserted_id))
-        entry = inserted.scalar_one()
-        result = self._entry_read(entry)
-        result.created = True
-        return result
+            return existing.id, False
+        return inserted_id, True
 
     async def update_entry(
         self, db: AsyncSession, auth: AuthSession, entry_id: UUID, payload: EntryUpdate

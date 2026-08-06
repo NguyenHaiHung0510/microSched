@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
+import { navigate } from '@/lib/route'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -28,12 +29,18 @@ import { DashboardPanel } from '@/DashboardPanel'
 import { EntryEditDialog, type EntryEditPayload } from '@/EntryEditDialog'
 import { GroupForm } from '@/GroupForm'
 import { TrackerForm, type TrackerWritePayload } from '@/TrackerForm'
+import {
+  subscriptionQueryKey,
+  type SettingsItem,
+  type Subscription,
+} from '@/subscription-ui'
 import { errorMessage } from '@/tracker-undo'
 import {
   backdateOptions,
   capturePayload,
   currentVietnamMonth,
   formatQuantity,
+  formatVnd,
   sortTrackersForGrid,
   trackerInvalidationKey,
   trackerQueryKey,
@@ -83,6 +90,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const entriesQuery = useQuery({
     queryKey: trackerQueryKey('entries'),
     queryFn: () => apiRequest<{ items: Entry[] }>('/api/tracker/entries?limit=20'),
+  })
+  const subscriptionsQuery = useQuery({
+    queryKey: subscriptionQueryKey('subscriptions'),
+    queryFn: () => apiRequest<{ items: Subscription[] }>('/api/subscriptions'),
+  })
+  const settingsQuery = useQuery({
+    queryKey: subscriptionQueryKey('settings'),
+    queryFn: () => apiRequest<{ items: SettingsItem[] }>('/api/settings'),
   })
 
   const trackers = trackersQuery.data?.items ?? []
@@ -299,6 +314,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   // Tracker/dashboard errors render inside their own panels (M3); this card
   // covers the remaining shared queries only.
   const queryError = groupsQuery.error ?? entriesQuery.error
+  const showListPrice =
+    settingsQuery.data?.items.find((item) => item.key === 'show_list_price')?.value !== false
   const pendingForm = writes.createTracker.isPending || writes.updateTracker.isPending
   const pendingGroup = writes.createGroup.isPending || writes.updateGroup.isPending
   const entryTracker = editingEntry
@@ -335,6 +352,24 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           </Button>
         </Card>
       ) : null}
+
+      <Card className="gap-3 p-4 shadow-1 ring-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-base font-bold">Đăng ký định kỳ</h3>
+            <p className="text-sm text-muted-foreground">Theo dõi hạn và chi phí cố định.</p>
+          </div>
+          <Button
+            data-testid="subscription-entry"
+            size="lg"
+            variant="outline"
+            className="min-h-11"
+            onClick={() => navigate('/subscription')}
+          >
+            Đăng ký · {subscriptionsQuery.data?.items.length ?? 0} khoản
+          </Button>
+        </div>
+      </Card>
 
       <CaptureGrid
         trackers={frozenOrder}
@@ -399,6 +434,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold tabular-nums">
+                      {showListPrice &&
+                      entry.list_amount != null &&
+                      entry.amount != null &&
+                      entry.list_amount !== entry.amount ? (
+                        <span className="mr-2 text-xs font-normal text-muted-foreground line-through">
+                          {formatVnd(entry.list_amount)}
+                        </span>
+                      ) : null}
                       {formatEntryLine(entry)}
                     </span>
                     <Button

@@ -19,6 +19,8 @@ import { CalendarScreen } from '@/CalendarScreen'
 import { NotesScreen } from '@/NotesScreen'
 import { PrivateGate } from '@/PrivateGate'
 import type { PrivateSessionState } from '@/private-gate'
+import { useLocation } from '@/lib/route'
+import { SubscriptionScreen } from '@/SubscriptionScreen'
 import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
 
@@ -77,6 +79,9 @@ function LoginScreen() {
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
+  // 011c §5.1: exactly one deep-linked screen besides the tab block; every tab
+  // keeps the URL "/" and activeScreen stays a useState (tabs do NOT own URLs).
+  const location = useLocation()
   const [activeScreen, setActiveScreen] = useState<
     'tasks' | 'notes' | 'calendar' | 'tracker'
   >('tasks')
@@ -113,6 +118,10 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
+        {location.startsWith('/subscription') ? (
+          <SubscriptionScreen />
+        ) : (
+          <>
         <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
@@ -163,6 +172,8 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}
         </div>
+          </>
+        )}
         {logout.isError ? (
           <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>
         ) : null}

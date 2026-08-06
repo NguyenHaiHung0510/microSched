@@ -1,4 +1,4 @@
-﻿import { expect, test as base } from './tasks'
+import { expect, test as base } from './tasks'
 
 /**
  * Mock for the tracker slice (`/api/tracker/**`). It intentionally mirrors the
@@ -241,6 +241,12 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
               a2_gap: [],
               a3_counts: { week: 0, month: 0, year: 0 },
               a4_trend: { current_month: 0, prev_avg: 0, trend: 'flat' },
+              f6: {
+                monthly_burn: 0,
+                subscription_count: 0,
+                upcoming: [],
+                corrupted_subscription_count: 0,
+              },
             }),
           )
           return
@@ -249,6 +255,34 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         await route.fallback()
       })
 
+      await page.route('**/api/subscriptions**', async (route) => {
+        const request = route.request()
+        const method = request.method()
+        const path = new URL(request.url()).pathname
+        if (path === '/api/subscriptions' && method === 'GET') {
+          await route.fulfill(jsonResponse({ items: [] }))
+          return
+        }
+        await route.fulfill({ status: 404 })
+      })
+
+      await page.route('**/api/settings**', async (route) => {
+        const request = route.request()
+        const method = request.method()
+        const path = new URL(request.url()).pathname
+        if (path === '/api/settings' && method === 'GET') {
+          await route.fulfill(
+            jsonResponse({
+              items: [
+                { key: 'subscription_expiry_lead_days', value: 3 },
+                { key: 'show_list_price', value: true },
+              ],
+            }),
+          )
+          return
+        }
+        await route.fulfill({ status: 404 })
+      })
       await use(state)
     },
     { auto: true },
