@@ -313,7 +313,11 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   // Tracker/dashboard errors render inside their own panels (M3); this card
   // covers the remaining shared queries only.
-  const queryError = groupsQuery.error ?? entriesQuery.error
+  const queryError =
+    groupsQuery.error ??
+    entriesQuery.error ??
+    subscriptionsQuery.error ??
+    settingsQuery.error
   const showListPrice =
     settingsQuery.data?.items.find((item) => item.key === 'show_list_price')?.value !== false
   const pendingForm = writes.createTracker.isPending || writes.updateTracker.isPending

@@ -460,10 +460,22 @@ test('highlight really scrolls the card into the viewport (F9)', async ({ page }
   const viewport = page.viewportSize()
   expect(box).not.toBeNull()
   expect(viewport).not.toBeNull()
+  // scrollIntoView is `smooth`: the rect measured right after toBeInViewport
+  // can still be a mid-animation frame (taller 44px buttons moved the card
+  // further down, so the animation covers more distance). Poll until the
+  // FINAL position satisfies the acceptance — a genuinely clamped overflow
+  // still fails here, only transient frames are skipped.
+  await expect
+    .poll(async () => {
+      const current = await card.boundingBox()
+      return current ? Math.round(current.y + current.height) : Number.NaN
+    }, { timeout: 5000 })
+    .toBeLessThanOrEqual(viewport!.height + 2)
+  const settled = await card.boundingBox()
   // boundingBox() is viewport-relative, so a plain y-range check proves the
   // card sits on screen after the real scroll.
-  expect(box!.y).toBeGreaterThanOrEqual(-2)
-  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height + 2)
+  expect(settled!.y).toBeGreaterThanOrEqual(-2)
+  expect(settled!.y + settled!.height).toBeLessThanOrEqual(viewport!.height + 2)
 })
 
 export type { FixtureSubscription }
