@@ -561,6 +561,93 @@ class AuditLog(UUIDTimestampModel, table=True):
     )
 
 
+
+class PushSubscription(UUIDTimestampModel, table=True):
+    """A device registration for Web Push notifications."""
+
+    __tablename__ = "push_subscription"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        UniqueConstraint("endpoint", name="uq_push_subscription_endpoint"),
+        {"schema": SCHEMA},
+    )
+
+    endpoint: str = Field(sa_column=Column(Text, nullable=False))
+    p256dh: str = Field(sa_column=Column(Text, nullable=False))
+    auth: str = Field(sa_column=Column(Text, nullable=False))
+    user_agent: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    last_seen_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            server_default=func.now(),
+        ),
+    )
+
+
+class ReminderDispatch(UUIDTimestampModel, table=True):
+    """Execution and confirmation log for reminder occurrences."""
+
+    __tablename__ = "reminder_dispatch"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_type",
+            "subject_id",
+            "dispatched_on",
+            name="uq_reminder_dispatch_subject_date",
+        ),
+        UniqueConstraint(
+            "confirmed_entry_id",
+            name="uq_reminder_dispatch_confirmed_entry_id",
+        ),
+        ForeignKeyConstraint(
+            ["confirmed_entry_id"],
+            [f"{SCHEMA}.entry.id"],
+            name="fk_reminder_dispatch_confirmed_entry_id",
+        ),
+        CheckConstraint(
+            "subject_type IN ('tracker', 'subscription')",
+            name="ck_reminder_dispatch_subject_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'no_device')",
+            name="ck_reminder_dispatch_status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_reminder_dispatch_attempt_count",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    subject_type: str = Field(sa_column=Column(Text, nullable=False))
+    subject_id: UUID = Field(sa_column=Column(PGUUID, nullable=False))
+    dispatched_on: date = Field(sa_column=Column(Date, nullable=False))
+    status: str = Field(
+        default="pending",
+        sa_column=Column(Text, nullable=False, server_default=text("'pending'")),
+    )
+    attempt_count: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default=text("0")),
+    )
+    last_attempt_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    confirmed_entry_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID, nullable=True),
+    )
+    confirmed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
 class AuthSession(UUIDTimestampModel, table=True):
     """A server-side login session identified by an opaque-token hash."""
 
@@ -619,3 +706,11 @@ Index("ix_entry_subscription_id", Entry.__table__.c.subscription_id)
 Index("ix_message_trace_id", Message.__table__.c.trace_id)
 Index("ix_audit_log_trace_id", AuditLog.__table__.c.trace_id)
 Index("ix_audit_log_turn_id", AuditLog.__table__.c.turn_id)
+
+Index("ix_push_subscription_endpoint", PushSubscription.__table__.c.endpoint)
+Index(
+    "ix_reminder_dispatch_subject",
+    ReminderDispatch.__table__.c.subject_type,
+    ReminderDispatch.__table__.c.subject_id,
+)
+Index("ix_reminder_dispatch_status", ReminderDispatch.__table__.c.status)

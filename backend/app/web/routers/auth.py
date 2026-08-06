@@ -49,6 +49,20 @@ DENIED_HTML = """<!doctype html>
 </html>"""
 
 
+
+def sanitize_return_to(target: str | None) -> str:
+    """Validate that target is a safe relative path starting with a single slash."""
+    if not target or not isinstance(target, str):
+        return "/"
+    target = target.strip()
+    if not target.startswith("/") or target.startswith("//") or "\\" in target:
+        return "/"
+    first_segment = target[1:].split("/")[0]
+    if ":" in first_segment:
+        return "/"
+    return target
+
+
 def callback_url(request: Request) -> str:
     """Build the redirect URI exactly as registered in Google Cloud Console.
 
@@ -78,6 +92,9 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 @router.get("/login")
 async def login(request: Request) -> Response:
+    return_to = sanitize_return_to(request.query_params.get("return_to"))
+    if return_to != "/":
+        request.session["return_to"] = return_to
     """Send the browser to Google, carrying a signed state parameter.
 
     `prompt=select_account` forces the account chooser every time. Without it,
@@ -145,7 +162,8 @@ async def auth_callback(
             detail="Database is not configured",
         )
 
-    response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    safe_target = sanitize_return_to(request.session.get("return_to"))
+    response = RedirectResponse(url=safe_target, status_code=status.HTTP_303_SEE_OTHER)
     _set_session_cookie(response, await store.create(email))
     return response
 

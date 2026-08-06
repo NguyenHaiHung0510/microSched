@@ -1,3 +1,4 @@
+import { ReminderConfirmScreen } from '@/ReminderConfirmScreen'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Activity,
@@ -120,6 +121,8 @@ function SignedIn({ session }: { session: SessionResponse }) {
       <div className="px-5 pt-3 pb-6 sm:px-6">
         {location.startsWith('/subscription') ? (
           <SubscriptionScreen />
+        ) : location.startsWith('/reminder-confirm') ? (
+          <ReminderConfirmScreen />
         ) : (
           <>
         <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">

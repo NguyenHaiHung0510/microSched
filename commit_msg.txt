@@ -1,0 +1,29 @@
+﻿feat(cron): 011b + 011d — thi công Web Push dispatcher & in-process async timer
+
+Backend:
+- Migration 0008: tạo bảng push_subscription và reminder_dispatch chuẩn
+  UUIDv7, FK confirmed_entry_id, đầy đủ cột created_at, updated_at và DB trigger
+  set_updated_at; vượt qua toàn bộ Migration QA (drift empty, downgrade/upgrade).
+- Settings & App Wiring: thêm ENABLE_INPROCESS_CRON (default False, fail-fast
+  nếu production thiếu VAPID config); tích hợp lifespan duy nhất kích hoạt
+  cron_timer khi enabled; ContextVar reload tự động đẩy tín hiệu cập nhật RAM heap.
+- In-Process Async Timer (011d): min-heap heapq quản lý lịch trình trong RAM,
+  tự ngủ (zero-overhead) đến mốc due; nhắc thuốc đúng giờ cài đặt; nhắc gói Sub
+  vào 07:00 AM (mặc định trước 3 ngày); retry backoff (30s/2m/10m) tối đa 4 lần;
+  nạp lại pending recovery trong 24h qua restart.
+- Web Push & Dispatcher (011b): pywebpush gửi thông báo mã hóa với 20s timeout,
+  tự hủy subscription khi gặp 410/404; bảo mật payload (mục private chỉ hiện
+  nội dung chung); 1-touch confirmation idempotent tại
+  /api/reminder-dispatch/{id}/confirm tạo tối đa 1 Entry.
+
+Frontend:
+- Service Worker sw.ts với injectManifest (vite-plugin-pwa), xử lý push payload,
+  mở /reminder-confirm?dispatch= khi click.
+- ReminderConfirmScreen: xác nhận Lời nhắc 1-touch, hiển thị thông báo trực quan
+  hướng dẫn mở Chế độ Riêng tư (mã PIN) nếu chưa mở.
+
+Verification:
+- Backend: 209/209 tests PASSED (bao gồm 76/76 PG lane tests trên Docker PG18).
+- Frontend: 66/66 Vitest tests PASSED, ESLint PASSED, Vite build PASSED.
+
+Co-Authored-By: Gemini 3.1 Pro (T2 Executor)

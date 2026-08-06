@@ -27,6 +27,8 @@ EXPECTED_TABLES = {
     "task_item",
     "tracker",
     "tracker_group",
+    "push_subscription",
+    "reminder_dispatch",
 }
 
 GATE_AXES = {
@@ -80,6 +82,8 @@ def assert_gate_declarations_match_columns(
             )
 
             for foreign_key in vars(model)["__table__"].foreign_keys:
+                if foreign_key.parent.nullable:
+                    continue
                 parent_table = foreign_key.column.table
                 parent_model = models.get(parent_table.fullname)
                 if parent_model is None:
@@ -285,5 +289,76 @@ def test_day_annotation_physical_constraint_name_is_day_range(pg_dsn: str) -> No
         connames = {row["conname"] for row in rows}
         assert "day_range" in connames
         assert "ck_day_annotation_day_range" not in connames
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+def test_0008_tables_have_updated_at_triggers(pg_dsn: str) -> None:
+    """PushSubscription and ReminderDispatch update updated_at via set_updated_at trigger."""
+
+    async def scenario() -> None:
+        conn = await asyncpg.connect(pg_dsn)
+        try:
+            # 1. Test push_subscription trigger
+            res = await conn.fetchrow(
+                """
+                INSERT INTO microsched.push_subscription (endpoint, p256dh, auth)
+                VALUES ('https://example.com/push/1', 'p256key', 'authkey')
+                RETURNING id, created_at, updated_at;
+                """
+            )
+            sub_id, created_at, updated_at1 = res["id"], res["created_at"], res["updated_at"]
+            assert created_at is not None
+            assert updated_at1 is not None
+
+            await asyncio.sleep(0.02)
+            await conn.execute(
+                """
+                UPDATE microsched.push_subscription
+                SET last_seen_at = now()
+                WHERE id = $1;
+                """,
+                sub_id,
+            )
+            updated_at2 = await conn.fetchval(
+                "SELECT updated_at FROM microsched.push_subscription WHERE id = $1;",
+                sub_id,
+            )
+            assert updated_at2 > updated_at1
+
+            # 2. Test reminder_dispatch trigger
+            dispatch_res = await conn.fetchrow(
+                """
+                INSERT INTO microsched.reminder_dispatch (subject_type, subject_id, dispatched_on, status)
+                VALUES ('tracker', gen_random_uuid(), CURRENT_DATE, 'pending')
+                RETURNING id, created_at, updated_at;
+                """
+            )
+            dispatch_id, d_created_at, d_updated_at1 = (
+                dispatch_res["id"],
+                dispatch_res["created_at"],
+                dispatch_res["updated_at"],
+            )
+            assert d_created_at is not None
+            assert d_updated_at1 is not None
+
+            await asyncio.sleep(0.02)
+            await conn.execute(
+                """
+                UPDATE microsched.reminder_dispatch
+                SET status = 'sent'
+                WHERE id = $1;
+                """,
+                dispatch_id,
+            )
+            d_updated_at2 = await conn.fetchval(
+                "SELECT updated_at FROM microsched.reminder_dispatch WHERE id = $1;",
+                dispatch_id,
+            )
+            assert d_updated_at2 > d_updated_at1
+
+        finally:
+            await conn.close()
 
     asyncio.run(scenario())

@@ -13,19 +13,11 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       registerType: 'autoUpdate',
-      workbox: {
-        // Mặc định service worker trả index.html cho MỌI điều hướng, nên nó nuốt
-        // luôn /auth/login và /auth/callback: request không bao giờ tới FastAPI và
-        // nút đăng nhập im lặng không làm gì. Route nào do server xử lý phải được
-        // loại khỏi fallback để đi thẳng ra mạng.
-        navigateFallbackDenylist: [/^\/auth\//, /^\/api\//],
-        // Mặc định của plugin KHÔNG gồm woff2, nên font tự host không được
-        // precache và mở offline sẽ rơi về font hệ thống — đúng kịch bản PWA
-        // sinh ra để phục vụ. Bỏ cyrillic: unicode-range đã bảo đảm trình duyệt
-        // không bao giờ tải chúng, precache thì lại tải hết bất kể unicode-range.
-        // Cố ý KHÔNG kê `svg` và `webmanifest`: plugin đã tự thêm icon + manifest,
-        // kê lại là precache cùng một file hai lần (đã đo: 10 mục / 9 địa chỉ).
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,ico,png,woff2}'],
         globIgnores: ['**/*cyrillic*'],
       },

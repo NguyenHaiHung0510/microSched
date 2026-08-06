@@ -1,7 +1,7 @@
-"""FastAPI application factory."""
-
+import asyncio
 import logging
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -11,8 +11,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import Scope
 
+from app.core.cron_timer import ReloadSink, build_cron_timer_if_enabled
 from app.core.settings import get_settings
-from app.web.deps import require_session
+from app.web.deps import cron_reload_sink, require_session
 from app.web.oauth import OAUTH_STATE_COOKIE, OAUTH_STATE_TTL_SECONDS
 from app.web.routers.annotations import router as annotations_router
 from app.web.routers.auth import router as auth_router
@@ -21,14 +22,32 @@ from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
+from app.web.routers.push import router as push_router
 from app.web.routers.settings import router as settings_router
 from app.web.routers.subscription import router as subscription_router
 from app.web.routers.tasks import router as tasks_router
 from app.web.routers.tracker import router as tracker_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    timer = build_cron_timer_if_enabled()
+    app.state.cron_timer = timer
+    app.state.cron_timer_task = None
+    if timer is not None:
+        app.state.cron_timer_task = asyncio.create_task(
+            timer.run(), name="microsched-cron-timer"
+        )
+    try:
+        yield
+    finally:
+        if timer is not None:
+            await timer.stop()
+        task = app.state.cron_timer_task
+        if task is not None:
+            await task
+
 logger = logging.getLogger(__name__)
-
-
 class SPAStaticFiles(StaticFiles):
     """Serve the SPA entry point when a built frontend route is not a file."""
 
@@ -58,7 +77,7 @@ def create_app() -> FastAPI:
         )
         oauth_state_secret = secrets.token_urlsafe(32)
 
-    app = FastAPI(title=settings.app_name, version=settings.app_version)
+    app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
 
     # Signs the short-lived OAuth handshake cookie and NOTHING else. The login
     # session is an opaque token row in `session` (auth-brief §2) - never this
@@ -103,6 +122,18 @@ def create_app() -> FastAPI:
                 )
         return await call_next(request)
 
+
+    if settings.enable_inprocess_cron:
+        @app.middleware("http")
+        async def cron_reload_context(request: Request, call_next):
+            timer = getattr(request.app.state, "cron_timer", None)
+            sink = ReloadSink(timer) if timer is not None else None
+            token = cron_reload_sink.set(sink)
+            try:
+                return await call_next(request)
+            finally:
+                cron_reload_sink.reset(token)
+
     app.include_router(health_router)
     app.include_router(auth_router)
 
@@ -118,6 +149,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(tracker_router)
     protected_api.include_router(subscription_router)
     protected_api.include_router(settings_router)
+    protected_api.include_router(push_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:

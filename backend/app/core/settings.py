@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.database_urls import async_postgres_url
@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # App-held AES-256 key for the encrypted columns; crypto.py validates and uses it.
     encryption_master_key: str | None = None
 
+    enable_inprocess_cron: bool = False
+    vapid_private_key: str | None = None
+    vapid_public_key: str | None = None
+    vapid_claims_sub: str | None = None
+
     # auth-brief §2 allows 60-90 days; 90 chosen because the window is rolling, so it
     # only fires after 90 days of zero use. See the 007 PR for the full rationale.
     session_ttl_days: int = 90
@@ -46,6 +51,22 @@ class Settings(BaseSettings):
     # Left as its own switch on purpose: it answers "how are cookies transported",
     # not "where am I running". Ask `is_production` for the latter.
     session_cookie_secure: bool = True
+
+    @model_validator(mode="after")
+    def validate_cron_and_vapid_settings(self) -> "Settings":
+        if self.is_production and self.enable_inprocess_cron:
+            if not self.database_url:
+                raise ValueError(
+                    "database_url is required when enable_inprocess_cron is True in production"
+                )
+            if not self.vapid_private_key or not self.vapid_public_key or not self.vapid_claims_sub:
+                raise ValueError(
+                    (
+                    "VAPID keys and vapid_claims_sub are required "
+                    "when enable_inprocess_cron is True in production"
+                )
+                )
+        return self
 
     @property
     def is_production(self) -> bool:

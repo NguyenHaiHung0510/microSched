@@ -1,6 +1,9 @@
-"""Request-scoped guards and transaction dependencies for protected routes."""
+﻿"""Request-scoped guards and transaction dependencies for protected routes."""
 
+import asyncio
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +13,14 @@ from app.core.sessions import SESSION_COOKIE_NAME
 from app.core.settings import get_settings
 from app.domain.auth import PostgresSessionStore, SessionStore
 from app.domain.models import AuthSession
+
+if TYPE_CHECKING:
+    from app.core.cron_timer import ReloadSink
+
+CRON_TIMER_RELOAD_INFO_KEY = "cron_timer_reload_reason"
+cron_reload_sink: ContextVar["ReloadSink | None"] = ContextVar(
+    "microsched_cron_reload_sink", default=None
+)
 
 
 def _unauthenticated() -> HTTPException:
@@ -51,9 +62,19 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         try:
             yield db
             await db.commit()
+        except asyncio.CancelledError:
+            await db.rollback()
+            db.info.pop(CRON_TIMER_RELOAD_INFO_KEY, None)
+            raise
         except Exception:
             await db.rollback()
+            db.info.pop(CRON_TIMER_RELOAD_INFO_KEY, None)
             raise
+        else:
+            reason = db.info.pop(CRON_TIMER_RELOAD_INFO_KEY, None)
+            sink = cron_reload_sink.get()
+            if sink is not None and reason is not None:
+                sink.request_reload(reason)
 
 
 async def require_session(
