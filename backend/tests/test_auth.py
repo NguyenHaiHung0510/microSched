@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from authlib.integrations.base_client.errors import OAuthError
-from fastapi import HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -22,11 +21,10 @@ from app.core.settings import Settings, get_settings
 from app.domain.auth import PostgresSessionStore
 from app.domain.models import AuthSession
 from app.main import create_app
-from app.web.deps import get_session, get_session_store, require_cron_token, require_session
+from app.web.deps import get_session, get_session_store, require_session
 
 ALLOWED_EMAIL = "owner@example.com"
 BLOCKED_EMAIL = "stranger@example.com"
-CRON_TOKEN = "cron-token-used-only-by-tests"
 TTL_DAYS = 90
 
 
@@ -34,7 +32,6 @@ TTL_DAYS = 90
 def environment(monkeypatch):
     """Pin auth configuration so a developer's real .env never reaches the tests."""
     monkeypatch.setenv("ALLOWED_EMAILS", f"{ALLOWED_EMAIL}, Second@Example.COM ")
-    monkeypatch.setenv("CRON_TOKEN", CRON_TOKEN)
     monkeypatch.setenv("SESSION_TTL_DAYS", str(TTL_DAYS))
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
     monkeypatch.setenv("APP_ENV", "local")
@@ -476,71 +473,3 @@ def test_session_token_carries_256_bits_of_entropy() -> None:
 
     assert len(tokens) == 100
     assert all(len(token) >= 43 for token in tokens)
-
-
-def test_cron_endpoint_accepts_the_configured_bearer_token() -> None:
-    """The scheduled-job guard lets the real token through."""
-    assert asyncio.run(require_cron_token(f"Bearer {CRON_TOKEN}")) is None
-
-
-def test_cron_heartbeat_uses_bearer_auth_not_a_user_session(monkeypatch) -> None:
-    """The real route is independently guarded and never needs a login cookie."""
-    monkeypatch.setattr("app.web.routers.cron.read_rss_kb", lambda: 42_000)
-    monkeypatch.setattr("app.web.routers.cron.read_uptime_s", lambda: 3_600)
-    monkeypatch.setattr("app.web.routers.cron.read_mem_total_kb", lambda: 256_000)
-    client = build_client(InMemorySessionStore())
-
-    assert client.post("/api/cron/heartbeat").status_code == 401
-    assert (
-        client.post(
-            "/api/cron/heartbeat", headers={"Authorization": "Bearer wrong-token"}
-        ).status_code
-        == 401
-    )
-    response = client.post("/api/cron/heartbeat", headers={"Authorization": f"Bearer {CRON_TOKEN}"})
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "rss_kb": 42_000,
-        "uptime_s": 3_600,
-        "mem_total_kb": 256_000,
-        "rss_pct": 16.4,
-        "restart_advised": False,
-    }
-
-
-def test_cron_heartbeat_is_closed_and_noisy_when_unconfigured(monkeypatch) -> None:
-    """A missing shared secret is a 503 configuration fault, never an auth bypass."""
-    monkeypatch.setenv("CRON_TOKEN", "")
-    get_settings.cache_clear()
-    client = build_client(InMemorySessionStore())
-
-    response = client.post("/api/cron/heartbeat")
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": "Cron token is not configured"}
-
-
-@pytest.mark.parametrize(
-    "header",
-    [None, "", f"Basic {CRON_TOKEN}", "Bearer wrong-token", "Bearer "],
-)
-def test_cron_endpoint_rejects_anything_else(header) -> None:
-    """Wrong scheme, wrong value, or no header at all are all refused."""
-    with pytest.raises(HTTPException) as error:
-        asyncio.run(require_cron_token(header))
-
-    assert error.value.status_code == 401
-
-
-def test_cron_endpoint_rejects_non_ascii_bearer_with_401_not_500() -> None:
-    """A non-ASCII bearer is a clean 401, never a compare_digest TypeError (500).
-
-    secrets.compare_digest on str raises TypeError for non-ASCII input; before the
-    bytes fix this line escaped as an unhandled 500 on the one endpoint reachable
-    without a session. The guard must reject it the same way as any wrong token.
-    """
-    with pytest.raises(HTTPException) as error:
-        asyncio.run(require_cron_token("Bearer é"))
-
-    assert error.value.status_code == 401

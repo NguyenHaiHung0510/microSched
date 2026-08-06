@@ -17,11 +17,12 @@ from app.web.oauth import OAUTH_STATE_COOKIE, OAUTH_STATE_TTL_SECONDS
 from app.web.routers.annotations import router as annotations_router
 from app.web.routers.auth import router as auth_router
 from app.web.routers.calendar import router as calendar_router
-from app.web.routers.cron import router as cron_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
+from app.web.routers.settings import router as settings_router
+from app.web.routers.subscription import router as subscription_router
 from app.web.routers.tasks import router as tasks_router
 from app.web.routers.tracker import router as tracker_router
 
@@ -104,7 +105,6 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(auth_router)
-    app.include_router(cron_router)
 
     # Single mount point for authenticated API routes: including a router here is
     # what makes it reachable, so a new slice cannot ship without the guard.
@@ -116,6 +116,8 @@ def create_app() -> FastAPI:
     protected_api.include_router(calendar_router)
     protected_api.include_router(annotations_router)
     protected_api.include_router(tracker_router)
+    protected_api.include_router(subscription_router)
+    protected_api.include_router(settings_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:

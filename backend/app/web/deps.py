@@ -1,9 +1,8 @@
 """Request-scoped guards and transaction dependencies for protected routes."""
 
-import secrets
 from collections.abc import AsyncIterator
 
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_sessionmaker
@@ -77,22 +76,3 @@ async def require_session(
         raise _unauthenticated()
 
     return session
-
-
-async def require_cron_token(authorization: str | None = Header(default=None)) -> None:
-    """Authorize scheduled-job endpoints with a shared bearer secret (auth-brief §5)."""
-    expected = get_settings().cron_token
-    if not expected:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Cron token is not configured",
-        )
-
-    scheme, _, presented = (authorization or "").partition(" ")
-    # compare_digest keeps the check constant-time; a plain == leaks the prefix length.
-    # Compare on bytes: str compare_digest raises TypeError on non-ASCII input, which
-    # would turn a hostile "Bearer é" into a 500 instead of the clean 401 below.
-    if scheme.lower() != "bearer" or not secrets.compare_digest(
-        presented.encode(), expected.encode()
-    ):
-        raise _unauthenticated()

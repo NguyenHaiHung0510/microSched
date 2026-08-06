@@ -1,8 +1,8 @@
-# 011d — In-Process Async CRON Timer (Phương án A)
+# 011d — In-Process Async CRON Timer (Scheduler production duy nhất)
 
 > **Executor:** T2 Codex (`gpt-5.6-sol`) · **Bậc:** L2 — backend/infrastructure · **Effort:** high · **Skill gợi ý:** không cần · **MCP cần:** không cần.
 >
-> **Trạng thái: DRAFT — viết ngày 2026-08-05, bổ sung sau Dual-Engine Ad-Review, chưa được chủ duyệt.** Đây là decision/spec đề xuất cho một phương án mới; không được tự coi nó là quyết định đã ✅ CHỐT, và không được bật production trước khi chủ duyệt điểm chuyển scheduler ở §0.3.
+> **Trạng thái: DRAFT — viết ngày 2026-08-05, cập nhật theo owner direction 2026-08-06.** 011d là scheduler production duy nhất được chọn thay cho Google Cloud Scheduler. Đây vẫn là DRAFT triển khai: không được bật production trước khi decision record nhận dated note và các cổng cutover ở §0.3 được thỏa.
 
 ## Phạm vi giao
 
@@ -46,7 +46,7 @@ PR phải tách rõ:
 
 Một guardrail mới chỉ được tính là có bằng chứng khi đã cố ý làm nó **đỏ**, thấy đỏ đúng lý do, khôi phục code, rồi chạy **xanh** lại.
 
-## 0. Bối cảnh & Lý do chọn Phương án A
+## 0. Bối cảnh & Lý do chọn scheduler in-process
 
 ### 0.1 Bài toán vận hành
 
@@ -58,9 +58,9 @@ microSched chạy trên đúng một Fly.io Machine `shared-cpu-1x` với **256 
 
 Nhu cầu mới là nhắc theo giờ thật của từng tracker và nhắc subscription theo ngày hết hạn. Một scheduler bên ngoài theo ba khe cố định không cần thiết khi process đã always-on, và không thể ngủ chính xác tới `tracker.reminder_time` tuỳ ý.
 
-### 0.2 Vì sao chọn Phương án A
+### 0.2 Vì sao chọn scheduler in-process
 
-Phương án A giữ toàn bộ lịch trong RAM:
+Scheduler in-process giữ toàn bộ lịch trong RAM:
 
 1. Startup/redeploy đọc một lần các nguồn lịch từ DB và rehydrate các `reminder_dispatch` row đang `pending` còn hạn recovery.
 2. Timer dựng min-heap, lấy `due_at` nhỏ nhất.
@@ -72,59 +72,78 @@ Phương án A giữ toàn bộ lịch trong RAM:
 
 ### 0.3 Cổng quyết định trước khi bật
 
-Các decision record hiện hành vẫn mô tả Google Cloud Scheduler là scheduler production và từng loại trừ scheduler in-process (`docs/architecture-brief.md` §3/§5; `docs/devops-brief.md` §10), còn 011b DRAFT đang mô tả ba khe `08:00`/`15:00`/`19:00`. Phương án A **mở lại** quyết định đó; đây không phải thay đổi được phép suy ra từ việc app đang always-on:
+Owner đã chọn scheduler in-process là production target duy nhất và loại bỏ hoàn toàn Google Cloud Scheduler. Các decision record hiện hành vẫn nói ngược (`docs/architecture-brief.md` §3/§5; `docs/devops-brief.md` §10; `CLAUDE.md`), nên executor không được activate trước khi owner thêm dated note vào các record đó. 011b đã bỏ ba khe `08:00`/`15:00`/`19:00`; đây là thay đổi kiến trúc được owner chỉ đạo, không được suy ra chỉ từ việc app always-on:
 
-- A dùng `tracker.reminder_time` **chính xác**, không lượng tử hoá qua `assign_slot()`.
-- A vẫn giữ giờ `19:00` cho subscription expiry reminder, vì đó là nhắc theo ngày chứ không phải giờ thuốc.
-- VAPID, payload, `reminder_dispatch` và confirmation của 011b được tái sử dụng; chỉ thay scheduler/dispatch entrypoint.
-- Không được để Cloud Scheduler và timer cùng bắn một occurrence. DB idempotency chỉ là hàng rào cuối, không phải giấy phép chạy hai scheduler.
+- Timer dùng `tracker.reminder_time` **chính xác**, không lượng tử hoá qua `assign_slot()`.
+- Timer giữ giờ `19:00` cho subscription expiry reminder, vì đó là nhắc theo ngày chứ không phải giờ thuốc.
+- VAPID, payload, `reminder_dispatch` và confirmation của 011b được tái sử dụng; 011b sở hữu dispatcher, 011d sở hữu lịch/trigger.
+- Google Cloud Scheduler, external reminder endpoint và mọi scheduler thứ hai đều không được hỗ trợ. `reminder_dispatch` idempotency là hàng rào recovery/chống duplicate, không phải giấy phép dual-run.
 
-Đổi sang in-process làm mất các tính năng vận hành vốn có của Cloud Scheduler: external retry policy, attempt deadline và result reporting độc lập với process FastAPI. Phương án A thay thế một phần bằng retry bounded trong process + durable `pending` row recovery, nhưng **không tương đương hoàn toàn**: downtime dài hoặc process chết quá cửa sổ recovery vẫn cần alert/manual handling.
+Loại Google Cloud Scheduler làm mất external retry policy, attempt deadline và result reporting độc lập với process FastAPI. 011d thay phần cần cho reminder bằng một contract cụ thể: tối đa 4 delivery attempts bền qua restart; backoff `30s → 2m → 10m`; timeout Web Push 20 giây; `pending` row recovery 24 giờ; structured receipt/log và supervision khiến process restart nếu loop chết. Đây vẫn **không tương đương hoàn toàn** với một monitor chạy ngoài app: Fly/process chết suốt outage dài không thể tự gửi alert độc lập. Contract đúng là lỗi không được chết im lặng trong process, pending vượt ngưỡng/hết quota để lại biên lai manual handling, và không hứa guaranteed delivery.
 
 Trước khi bật `ENABLE_INPROCESS_CRON=true` trên Fly, chủ/T1 phải:
 
-1. duyệt thay đổi semantics “slot gần nhất” → “giờ `reminder_time` chính xác”;
-2. thêm **dated note** vào `docs/architecture-brief.md` (mục background scheduler/hosting) và `docs/devops-brief.md` §10, ghi rõ decision external được mở lại thành hai mode, lý do, mất external retry/attempt deadline/result reporting và cơ chế thay thế;
-3. cập nhật 011b thành một dispatcher dùng chung cho cả in-process và external mode;
-4. deploy với `ENABLE_INPROCESS_CRON=false` để xác nhận no-op trước;
-5. tắt hoặc đổi **cả ba** Cloud Scheduler reminder jobs trước deploy flag in-process;
-6. chỉ sau đó bật `ENABLE_INPROCESS_CRON=true` trong một deploy có kiểm soát.
+1. ghi **dated note** vào `docs/architecture-brief.md`, `docs/devops-brief.md` §10 và `CLAUDE.md`: Google Cloud Scheduler bị retirement hoàn toàn; 011d là owner duy nhất; nêu lý do, mất external retry/attempt deadline/result reporting và cơ chế thay thế;
+2. xác nhận 011c rồi 011b đã merge, gồm settings, VAPID, `push_subscription`, `reminder_dispatch`, dispatcher, payload và confirmation thật; không dùng stub;
+3. deploy với `ENABLE_INPROCESS_CRON=false` chỉ để xác nhận no-op/liveness. Đây **không** là mode external và không phát reminder;
+4. deploy một SHA reviewed với `ENABLE_INPROCESS_CRON=true`, đúng một Fly Machine/process, rồi chứng minh startup queue, mutation reload, controlled dispatch, terminal/pending receipt và không có duplicate Entry;
+5. sau receipt ở bước 4, xoá mọi Google Cloud Scheduler job còn tồn tại, gồm reminder và heartbeat, **và** xoá cron HTTP/token/workflow legacy theo §0.5; lưu biên lai vận hành rằng không còn external scheduler gọi app;
+6. nếu cần abort sau khi GCS đã retire: đặt `ENABLE_INPROCESS_CRON=false`, fix/deploy lại và ghi rõ khoảng downtime không phát reminder. **Không** recreate GCS, GitHub schedule, cron HTTP hay fallback external.
 
 Trong thời gian DRAFT, mặc định an toàn là `ENABLE_INPROCESS_CRON=false`; code không được tự bật timer chỉ vì module đã được import.
 
 **Mẫu dated note bắt buộc khi chủ duyệt và chuẩn bị activate** (ghi vào đúng decision record, không chỉ ghi trong PR):
 
-> **2026-08-05 — Mở lại quyết định scheduler cho 011d.** Google Cloud Scheduler vẫn là mode external được hỗ trợ, nhưng microSched nay có thêm mode `ENABLE_INPROCESS_CRON=true`: một `CronTimer` trong process FastAPI nạp lịch vào RAM, ngủ tới due time và recover `reminder_dispatch` pending từ Neon. Mode mặc định vẫn `false`; không chạy song song với ba reminder jobs external. Đánh đổi: mode in-process không có external retry policy, attempt deadline và result reporting độc lập của Cloud Scheduler; thay bằng bounded retry, durable pending-row recovery và structured process observability. Chỉ bật sau khi 011b merge và external jobs đã tắt.
+> **2026-08-06 — Thay thế hoàn toàn Google Cloud Scheduler bằng 011d.** microSched không còn mode external và không giữ Google Cloud Scheduler job, gồm reminder lẫn heartbeat. `ENABLE_INPROCESS_CRON=true` chạy một `CronTimer` trong process FastAPI: nạp lịch vào RAM, ngủ tới due time và recover `reminder_dispatch` pending từ Neon. Default vẫn `false` như safety gate trước activation, không phải fallback scheduler. Đánh đổi: không còn external retry policy, attempt deadline và result reporting độc lập; thay bằng tối đa 4 attempts bền qua restart, backoff `30s → 2m → 10m`, deadline network 20 giây, pending recovery 24 giờ và structured process observability/supervision. Chỉ retire GCS sau receipt của một deploy 011d running với một Fly process owner; rollback chỉ là flag false + fix/deploy, không dựng lại external scheduler.
 
-Executor không tự sửa dated note này trong lượt thi công 011d nếu chưa có chủ duyệt; phải dừng ở dependency/architecture gate và yêu cầu T1/owner áp dụng đúng record.
+Executor không tự sửa dated note này trong lượt thi công 011d; owner/T1 phải áp dụng đúng record trước production cutover.
 
 ### 0.4 Việc của CHỦ trước khi giao thi công
 
-- [ ] Duyệt điểm chuyển scheduler và exact-time semantics ở §0.3.
 - [ ] Xác nhận 011a, 011c, 011b đã merge và các implementation/schema thật của chúng đã có trên đĩa/DB; không dùng stub để giả vờ đủ phụ thuộc.
-- [ ] Thêm dated note vào `docs/architecture-brief.md` và `docs/devops-brief.md` trước khi đổi config production.
+- [ ] Thêm dated note vào `docs/architecture-brief.md`, `docs/devops-brief.md` và `CLAUDE.md` trước khi đổi config production.
 - [ ] Xác nhận external retry/attempt deadline/result reporting được thay bằng bounded retry + pending recovery/observability, và chấp nhận phần không tương đương.
+- [ ] Sau dispatch receipt của 011d, xoá mọi Google Cloud Scheduler job hiện có, gồm heartbeat, cùng cron HTTP/token/workflow legacy; không thay bằng scheduler external khác.
 - [ ] Nếu chạy PG integration test: bật Docker Desktop trước. Nếu quên, lỗi kiểu `permission denied while trying to connect to the Docker API at npipe:////./pipe/dockerDesktopLinuxEngine` là blocker môi trường, không được chuyển sang Neon hoặc host Postgres.
 - [ ] Chỉ dùng DB local throwaway cho test PG; không dùng Neon production, `microschedule_v2` hoặc DB chung của máy.
-- [ ] VAPID private key, `DATABASE_URL`, `CRON_TOKEN` và các secret khác chỉ ở `.env`/Fly secret; không đưa vào prompt, diff, log hay artifact.
-
+- [ ] VAPID private key, `DATABASE_URL` và các secret khác chỉ ở `.env`/Fly secret; không đưa vào prompt, diff, log hay artifact.
 ## 1. Quyết định kiến trúc & In-Memory Priority Queue
 
 ### 1.1 Một owner cho lịch reminder
 
 Trong process có đúng **một** `CronTimer` và đúng **một** `asyncio.Task` sở hữu vòng lặp timer. Không tạo một task cho mỗi tracker/subscription.
 
-`ENABLE_INPROCESS_CRON` là boolean, default `False` để một deploy quên cấu hình không âm thầm tạo double-dispatch:
+`ENABLE_INPROCESS_CRON` là boolean, default `False` để một deploy chưa qua cutover không âm thầm bật reminder:
 
-| `ENABLE_INPROCESS_CRON` | `CronTimer` | `POST /api/cron/reminder` của 011b | Nguồn reminder |
+| `ENABLE_INPROCESS_CRON` | `CronTimer` | Reminder emission | Nguồn reminder |
 |---|---|---|---|
-| `False` | không được khởi tạo | hoạt động với `CRON_TOKEN` theo hợp đồng 011b | Cloud Scheduler |
-| `True` | chạy đúng một task ở lifespan | bị từ chối trước DB/push bằng lỗi cấu hình rõ ràng | `CronTimer` |
+| `False` | không được khởi tạo | không phát reminder; chỉ dùng trước cutover/test liveness | không có |
+| `True` | chạy đúng một task ở lifespan | timer gọi dispatcher nội bộ 011b | `CronTimer` |
 
-`/api/cron/heartbeat` là observability job riêng; nếu vẫn cần RSS/uptime theo 014 thì có thể giữ nó vì heartbeat không query Neon. Không dùng heartbeat để đánh thức timer và không biến heartbeat thành reminder scheduler.
+011d không giữ Google Cloud Scheduler heartbeat job và không định nghĩa scheduler external thay thế. Observability của timer là structured log + snapshot RAM; không dùng heartbeat để đánh thức timer và không biến bất kỳ heartbeat nào thành reminder scheduler.
 
-Khi `ENABLE_INPROCESS_CRON=False`, đây là **no-op hoàn toàn**: không import/khởi tạo `CronTimer`, repository, dispatcher, `asyncio.Event`, background task, reload middleware/dependency override hay timer DB session; `get_session()` giữ nguyên contract hiện tại và external endpoint tiếp tục là đường duy nhất. Không log “timer started” ở mode này.
+Khi `ENABLE_INPROCESS_CRON=False`, đây là **no-op hoàn toàn**: không import/khởi tạo `CronTimer`, repository, dispatcher, `asyncio.Event`, background task, reload middleware/dependency override hay timer DB session; `get_session()` giữ nguyên contract hiện tại và **không có nguồn reminder khác**. Không log “timer started” ở mode này. Production không được coi trạng thái này là vận hành reminder.
 
+### 1.1a One-way retirement của cron HTTP cũ
+
+011d không kế thừa route `POST /api/cron/heartbeat`, `CRON_TOKEN`, Google Cloud Scheduler hay GitHub
+workflow `cron.yml`. Đây là artifact legacy đã từng kiểm dây điện, không phải monitoring hoặc fallback
+được phép giữ lại. Trong cùng release/cutover sau khi 011d đang chạy và có receipt §6.5, executor/owner
+phải hoàn tất toàn bộ:
+
+1. xoá router `/api/cron`, dependency `require_cron_token`, setting/env/example `CRON_TOKEN`, workflow
+   `.github/workflows/cron.yml`, test endpoint/auth tương ứng và GitHub/Fly secret cùng tên;
+2. giữ `app/core/process_stats.py` như helper nội bộ cho snapshot RSS/uptime của timer, chuyển test
+   thuần của nó sang `test_process_stats.py`; `restart_advised` chỉ là metadata/log signal, **không**
+   tự restart process;
+3. xoá mọi GCS job sau khi list đúng project/region/job name; lưu output không secret chứng minh không
+   còn job gọi app; không pause job để tạo fallback ẩn;
+4. kiểm toàn repo hiện hành không còn `CRON_TOKEN`, `/api/cron`, `cron_router`, `require_cron_token`
+   hoặc `cron.yml` ngoài record lịch sử được gắn nhãn legacy/superseded.
+
+Remote secret/job là thao tác khó hoàn tác: phải list/read-only đúng target trước rồi mới xoá. Không có
+trường hợp nào `ENABLE_INPROCESS_CRON=false` được phép bật lại cron cũ — trạng thái đó chỉ nói rõ
+reminder đang downtime chờ fix/deploy.
 ### 1.2 Hình dạng queue item
 
 Heap chỉ lưu dữ liệu tối thiểu để định thời; **không giữ SQLModel instance, tên đã giải mã, `reminder_text`, payload Web Push, VAPID key hay token**.
@@ -169,7 +188,7 @@ Nạp những tracker thỏa tất cả điều kiện:
 
 `reminder_time` là `TIME` lặp hằng ngày. Với `now_vn = datetime.now(VN_TZ)`, occurrence kế tiếp là ngày hôm nay nếu `reminder_time` còn ở tương lai, nếu không thì ngày mai. Ghép ngày + giờ thành aware `due_at` ở fixed offset `+07:00`.
 
-Timer A **không gọi `assign_slot()`**. `assign_slot()`/`REMINDER_SLOTS` chỉ còn là logic external-mode của 011b nếu chủ vẫn giữ mode đó; không được áp nhầm vào exact-time in-process mode.
+Timer **không gọi `assign_slot()`**. `assign_slot()`/`REMINDER_SLOTS` không thuộc 011b/011d và không được tái lập dưới tên khác; không được áp lượng tử hoá vào exact-time reminder.
 
 #### Subscription expiry reminder
 
@@ -199,8 +218,8 @@ Nếu `19:00` hôm nay đã qua thì candidate đầu tiên là ngày mai, miễ
 Luồng chính:
 
 1. Load schedule từ DB vào một heap cục bộ.
-2. Trong cùng một snapshot query/session, load thêm các row `reminder_dispatch` có `status='pending'` và `COALESCE(last_attempt_at, created_at) >= now - PENDING_RECOVERY_TIMEOUT`; chuyển mỗi row còn retry được thành `TimerItem` với **cùng** `subject_type`, `subject_id`, `dispatched_on` (map ngược thành `kind`, `subject_id`, `occurrence_on`), giữ nguyên `dispatch_id` và retry metadata. Không tạo dispatch ID mới. Pending-recovery item có `due_at = max(now_vn, last_attempt_at + bounded_backoff(attempt_count))`, không bị đặt vào quá khứ để bắn dồn.
-3. Với pending row không còn hợp lệ (subject đã bị xoá/huỷ, payload contract không còn phù hợp, hoặc vượt timeout), không gửi mù và **không tự xoá/đổi status** trong 011d: log structured `cron_timer_pending_recovery_skipped`, expose stale/pending-expired metric, rồi schedule occurrence tương lai nếu subject còn lịch. Nếu 011b cần chuyển row sang trạng thái terminal hoặc manual-recovery state, đó phải là contract có sẵn của 011b; 011d không tự phát minh status mới trong bảng của 011b.
+2. Trong cùng một snapshot query/session, load thêm các row `reminder_dispatch` có `status='pending'` và `COALESCE(last_attempt_at, created_at) >= now - PENDING_RECOVERY_TIMEOUT`; chỉ row `attempt_count < 4` được chuyển thành `TimerItem` với **cùng** `subject_type`, `subject_id`, `dispatched_on` (map ngược thành `kind`, `subject_id`, `occurrence_on`), giữ nguyên `dispatch_id` và retry metadata. Không tạo dispatch ID mới. Pending-recovery item có `due_at = max(now_vn, last_attempt_at + bounded_backoff(attempt_count))`, không bị đặt vào quá khứ để bắn dồn.
+3. Với pending row không còn hợp lệ (subject đã bị xoá/huỷ, payload contract không còn phù hợp, vượt 24 giờ hoặc `attempt_count >= 4`), không gửi mù và **không tự xoá/đổi status** trong 011d: log structured `cron_timer_pending_manual_required` (phân biệt `expired`/`exhausted`/`ineligible`), tăng counter, rồi schedule occurrence tương lai nếu subject còn lịch. Nếu 011b cần chuyển row sang trạng thái terminal hoặc manual-recovery state, đó phải là contract có sẵn của 011b; 011d không tự phát minh status mới trong bảng của 011b.
 4. Deduplicate pending recovery với item lịch cùng occurrence bằng khóa `(kind, subject_id, occurrence_on)`; pending item thắng item mới để tiếp tục cùng `dispatch_id`/row.
 5. Nếu load thành công, swap heap mới vào một lần; không để heap nửa cũ/nửa mới.
 6. Nếu heap rỗng, `await reload_event.wait()`; không có timeout tick.
@@ -239,22 +258,30 @@ DRAFT này chọn một grace window hữu hạn `MISSED_OCCURRENCE_GRACE = 15 p
 
 Đây là một judgment call có thể veto trước khi thi công. Nếu chủ bỏ grace, chỉ đổi một hằng số và test “restart sát giờ”; không phát minh cơ chế replay khác.
 
-Lỗi tạm thời của DB hoặc Web Push không được biến thành poller:
+Lỗi tạm thời của DB hoặc Web Push không được biến thành poller. Đây là contract exact, không phải
+“retry bounded” chung chung:
 
 - dispatcher giữ nguyên `reminder_dispatch.id`/row ở `pending` theo 011b;
-- timer có thể đưa đúng item đó vào heap retry với backoff hữu hạn `30s → 2m → 10m`, tối đa 3 retry trong process;
-- sau khi hết retry, log `cron_timer_dispatch_exhausted`, không query tiếp vô hạn; occurrence ngày sau vẫn là một key mới;
+- `attempt_count` là quota durable do 011b claim/increment: tối đa **4 delivery attempts tổng cộng**
+  (lần đầu + 3 retry), không reset qua heap/reload/redeploy;
+- retry sau attempt 1/2/3 dùng đúng row/id/occurrence với backoff **30 giây → 2 phút → 10 phút**;
+  sau attempt 4 tuyệt đối không enqueue/query retry nữa;
+- mỗi Web Push network attempt có deadline **20 giây**; timeout là `TEMPORARY_FAILURE`, giải phóng
+  DB transaction/lock trước khi schedule retry;
+- sau quota hết, log `cron_timer_dispatch_exhausted` kèm `dispatch_id`, kind, subject UUID,
+  occurrence, attempt count; tăng counter/manual-required signal. Không đổi/xoá status `pending`
+  chỉ để làm dashboard xanh; occurrence ngày sau vẫn là một key mới;
 - retry vượt nửa đêm vẫn giữ `occurrence_on` cũ và không được tạo row cho ngày mới.
 
 Backoff này chỉ tồn tại sau một dispatch/reload failure đã biết, không phải một nhịp poll khi hệ thống bình thường.
 
-`PENDING_RECOVERY_TIMEOUT` là một hằng số typed, mặc định đề xuất `timedelta(hours=24)`, có test biên và log tuổi row:
+`PENDING_RECOVERY_TIMEOUT` là một hằng số typed, **khóa `timedelta(hours=24)`**, có test biên và log tuổi row:
 
 ```python
 PENDING_RECOVERY_TIMEOUT: Final[timedelta] = timedelta(hours=24)
 ```
 
-Không dùng quy tắc “quá 15 phút thì bỏ” cho pending row: **grace window của occurrence và timeout recovery của dispatch là hai khái niệm khác nhau**. Một pending row trong cửa sổ recovery có thể được retry dù occurrence đã quá `MISSED_OCCURRENCE_GRACE`, vì notification đã được claim trước crash; ngược lại occurrence chưa từng claim vẫn tuân grace window. Pending row vượt timeout phải được đo/log để chủ biết có notification cần xử lý thủ công, không âm thầm biến mất.
+Không dùng quy tắc “quá 15 phút thì bỏ” cho pending row: **grace window của occurrence và timeout recovery của dispatch là hai khái niệm khác nhau**. Một pending row trong cửa sổ recovery và còn `attempt_count < 4` có thể được retry dù occurrence đã quá `MISSED_OCCURRENCE_GRACE`, vì notification đã được claim trước crash; ngược lại occurrence chưa từng claim vẫn tuân grace window. Pending row vượt 24 giờ hoặc đã hết quota phải được đo/log bằng `cron_timer_pending_manual_required`, giữ nguyên row và không âm thầm biến mất.
 
 ## 2. Chi tiết module backend
 
@@ -279,7 +306,7 @@ class ReminderDispatcher(Protocol):
     async def dispatch(self, item: TimerItem) -> DispatchOutcome: ...
 ```
 
-`ScheduleSnapshot` chỉ chứa các `TimerItem` + số liệu observability (`tracker_count`, `subscription_count`, `pending_recovered_count`, `pending_expired_count`, `lead_days`, `loaded_at`). Repository tạo session ngắn bằng `get_sessionmaker()`, chạy query projection cho tracker/subscription **và pending dispatch recovery** chỉ lấy ID/thời gian/ngày cần thiết, rồi đóng session trước khi timer ngủ.
+`ScheduleSnapshot` chỉ chứa các `TimerItem` + số liệu observability (`tracker_count`, `subscription_count`, `pending_recovered_count`, `pending_expired_count`, `pending_exhausted_count`, `pending_manual_required_count`, `lead_days`, `loaded_at`). Repository tạo session ngắn bằng `get_sessionmaker()`, chạy query projection cho tracker/subscription **và pending dispatch recovery** chỉ lấy ID/thời gian/ngày cần thiết, rồi đóng session trước khi timer ngủ.
 
 `CronTimer` nhận `clock`/`now_vn` injectable và `ScheduleRepository`/`ReminderDispatcher` injectable để unit test không cần Neon, không cần VAPID và không phải chờ đồng hồ thật.
 
@@ -303,12 +330,15 @@ cron_timer_dispatch_started kind=... subject_id=... occurrence_on=...
 cron_timer_dispatch_finished kind=... subject_id=... outcome=... retry_count=...
 cron_timer_reload_failed reason=... error_type=...
 cron_timer_dispatch_exhausted kind=... subject_id=... occurrence_on=...
+cron_timer_pending_manual_required reason=expired|exhausted|ineligible dispatch_id=... kind=... subject_id=... occurrence_on=... attempt_count=...
+cron_timer_stale reason=... queue_size=... next_due_at=... last_reload_at=... last_dispatch_at=...
+cron_timer_loop_failed phase=reload|dispatch|unexpected consecutive_failures=... error_type=...
 cron_timer_stopped
 ```
 
 Không log tên tracker/subscription, `reminder_text`, ciphertext, endpoint push, VAPID key, cookie hoặc bearer token.
 
-Vì Fly proxy không quan sát được công việc sinh ra sau response, các metric/log này là bắt buộc để biết background task còn sống: `cron_timer_running`/heartbeat process-local, `queue_size`, `next_due_at`, `last_reload_at`, `last_dispatch_at`, `last_dispatch_outcome`, `pending_recovered_count`, `pending_expired_count`, `consecutive_loop_failures`, `uptime_s` và RSS. Chỉ expose metadata không nhạy cảm; không tạo health probe query Neon. `/api/readyz` không được biến thành timer health check. Nếu timer loop chết hoặc quá ngưỡng stale, phải có log `cron_timer_stale`/`cron_timer_loop_failed` và alert/manual signal rõ ràng; không trả “healthy” giả.
+Vì Fly proxy không quan sát được công việc sinh ra sau response, các metric/log này là bắt buộc để biết background task còn sống: `cron_timer_running`/heartbeat process-local, `queue_size`, `next_due_at`, `last_reload_at`, `last_dispatch_at`, `last_dispatch_outcome`, `pending_recovered_count`, `pending_expired_count`, `pending_exhausted_count`, `pending_manual_required_count`, `consecutive_loop_failures`, `uptime_s` và RSS. `cron_timer_stale` chỉ hợp lệ khi (a) heap có due deadline đã qua mà chưa dispatch quá grace, hoặc (b) reload/retry loop đang failure; heap rỗng hay đang ngủ tới nhiều ngày **không** stale. Chỉ expose metadata không nhạy cảm; không tạo health probe query Neon. `/api/readyz` không được biến thành timer health check. Nếu timer loop chết hoặc stale, phải phát `cron_timer_stale`/`cron_timer_loop_failed` và manual signal rõ ràng; không trả “healthy” giả.
 
 ### 2.2 Repository nạp queue
 
@@ -324,7 +354,7 @@ Query phải:
 - không giải mã tên/tiền chỉ để dựng heap;
 - đóng session sau snapshot.
 
-Nếu query reload thất bại, giữ heap gần nhất còn hợp lệ, chuyển `DEGRADED`, log lỗi và dùng backoff hữu hạn của §1.5. Không được thay heap bằng rỗng rồi biến lỗi DB thành “không có reminder”. Sau khi hết backoff, chờ mutation event hoặc restart; không tự query mãi.
+Nếu query reload thất bại, giữ heap gần nhất còn hợp lệ, chuyển `DEGRADED`, log lỗi và retry **30 giây → 2 phút → 10 phút**. Không được thay heap bằng rỗng rồi biến lỗi DB thành “không có reminder”. Hết ba retry liên tiếp phải log `cron_timer_loop_failed phase=reload` rồi làm `timer.run()` thất bại để lifespan supervision fail process/Fly restart; startup recovery mới được chạy lại. Không chờ mutation event trong trạng thái phục vụ HTTP nhưng timer đã chết, và không tự query mãi.
 
 Reload phải recover pending rows **cả ở startup và ở mỗi reload event**, vì một mutation/redeploy có thể xảy ra sau crash. Nếu reload event liên tục dồn lại, coalesce thành một lần snapshot; không được bỏ qua pending recovery khi “chỉ có tracker/subscription thay đổi”.
 
@@ -351,7 +381,7 @@ Thêm setting typed vào `app/core/settings.py`:
 enable_inprocess_cron: bool = False
 ```
 
-Tên env tương ứng là `ENABLE_INPROCESS_CRON`. DRAFT/prod mặc định `False`. Production in-process phải fail-fast khi thiếu `DATABASE_URL`, 011b implementation/schema hoặc VAPID configuration bắt buộc; local không có DB có thể khởi động ở chế độ timer disabled để test các route liveness. Không giữ `CRON_SCHEDULER_MODE` làm config thứ hai có thể lệch nghĩa; nếu codebase đã có tên cũ từ một branch thử nghiệm thì executor phải deprecate/alias có thời hạn, nhưng acceptance chỉ công nhận `ENABLE_INPROCESS_CRON`.
+Tên env tương ứng là `ENABLE_INPROCESS_CRON`. DRAFT/prod mặc định `False`. Production in-process phải fail-fast khi thiếu `DATABASE_URL`, 011b implementation/schema hoặc VAPID configuration bắt buộc; local không có DB có thể khởi động ở chế độ timer disabled để test các route liveness. Không giữ `CRON_SCHEDULER_MODE`, alias lâu dài hay config nào diễn tả mode external; nếu branch thử nghiệm đã thêm tên cũ thì executor phải xoá/deprecate nó mà không tạo fallback scheduler.
 
 Đặt các object sau vào `app.state` để test/lifecycle nhìn thấy được:
 
@@ -364,7 +394,7 @@ Không dùng global singleton có task tự chạy lúc import module.
 
 Khi `enable_inprocess_cron` là `False`, `build_cron_timer_if_enabled()` phải trả `None` trước mọi import khởi tạo dependency, session factory, `asyncio.Event` hoặc metric task. Không sửa `get_session()` để phát event, không thêm middleware/contextvar và không thêm request overhead ở mode disabled.
 
-`CronTimer.health_snapshot()` phải là hàm đọc RAM, không query DB, trả tối thiểu `enabled`, `running`, `degraded`, `queue_size`, `next_due_at`, `last_reload_at`, `last_dispatch_at`, `last_dispatch_outcome`, `pending_recovered_count`, `pending_expired_count`, `consecutive_loop_failures`, `uptime_s` và `rss_kb`. Nếu cần đưa snapshot ra ngoài process, chỉ ghép nó vào endpoint heartbeat đã có auth `CRON_TOKEN`; **không** tạo public health endpoint mới và không trỏ Fly probe vào endpoint có DB.
+`CronTimer.health_snapshot()` phải là hàm đọc RAM, không query DB, trả tối thiểu `enabled`, `running`, `degraded`, `queue_size`, `next_due_at`, `last_reload_at`, `last_dispatch_at`, `last_dispatch_outcome`, `pending_recovered_count`, `pending_expired_count`, `pending_exhausted_count`, `pending_manual_required_count`, `consecutive_loop_failures`, `uptime_s` và `rss_kb`. 011d không thêm endpoint để expose snapshot; nếu sau này cần expose ngoài process, đó là task riêng có auth/audit rõ ràng. Không tạo public health endpoint mới và không trỏ Fly probe vào endpoint có DB.
 
 ## 3. Tương thích Web Push (011b) & Neon Idle Protection
 
@@ -381,7 +411,7 @@ Khi `enable_inprocess_cron` là `False`, `build_cron_timer_if_enabled()` phải 
 - `sent` hoặc `no_device` là terminal; retry không gửi lại terminal row;
 - hai thiết bị tap cùng notification vẫn chỉ có một `Entry` qua `confirmed_entry_id`.
 
-011b cần expose service dùng chung nhận `TimerItem`/`occurrence_on`. Tên/type thật của service phải được lấy từ implementation 011b sau khi merge; không tự tạo import path `ReminderDispatcher` nếu symbol đó chưa tồn tại. Endpoint external `?slot=` có thể giữ wrapper legacy khi `ENABLE_INPROCESS_CRON=False`, nhưng không được là code path thứ hai sao chép state machine. Khi `ENABLE_INPROCESS_CRON=True`, endpoint reminder external bị chặn trước khi query DB.
+011b cần expose service dùng chung nhận `TimerItem`/`occurrence_on`. Tên/type thật của service phải được lấy từ implementation 011b sau khi merge; không tự tạo import path `ReminderDispatcher` nếu symbol đó chưa tồn tại. Không giữ endpoint, wrapper legacy hay code path external cho reminder.
 
 ### 3.2 Chính sách query Neon
 
@@ -540,7 +570,7 @@ Không dùng `heap` cũ để suy ra payload. Heap chỉ trả lời “có th�
 ### 5.1 Security boundary
 
 - Timer không có user session và không nhận input HTTP trực tiếp.
-- `CRON_TOKEN` chỉ bảo vệ external endpoint; in-process call không tự chế bearer token.
+- Timer gọi service nội bộ, không gọi route reminder external và không tự chế bearer token.
 - `DATABASE_URL` là runtime least-privilege role; tuyệt đối không dùng migrator/owner.
 - VAPID private key chỉ đọc ở backend settings/secret store; không vào heap, queue log hoặc response.
 - Push endpoint được validate SSRF ở 011b lúc registration; timer không chấp nhận endpoint mới từ item.
@@ -578,7 +608,7 @@ Không dùng `heap` cũ để suy ra payload. Heap chỉ trả lời “có th�
 
 1. File implementation có `CronTimer` ở `backend/app/core/cron_timer.py` hoặc module được spec ghi rõ; heap dùng `heapq`/min-heap, không dùng thư viện scheduler mới.
 2. `app/main.py` có lifespan duy nhất cho timer; `app.state.cron_timer_task` là task được tạo và await trong cùng lifespan.
-3. Có `ENABLE_INPROCESS_CRON: bool = False`; khi false, no-op hoàn toàn và không có request overhead/extra DB query. Khi true, không chạy external reminder endpoint. Không có hai scheduler owner.
+3. Có `ENABLE_INPROCESS_CRON: bool = False`; khi false, no-op hoàn toàn, không có request overhead/extra DB query và không phát reminder. Khi true, chỉ `CronTimer` gọi dispatcher nội bộ 011b. Không có endpoint/scheduler external hay owner thứ hai.
 4. `get_session()` vẫn là async generator dependency không nhận `Request`; nếu dùng ContextVar/middleware thì contract, commit/rollback và unit tests hiện hữu không bị đổi. Test `update_tracker` chỉ reload khi `reminder_time` thực sự đổi.
 5. 011d không tạo migration/bảng queue/index mới. Nếu 011b chưa merge hoặc các implementation/schema thật chưa có trên đĩa, dừng theo dependency gate; không dùng stub.
 6. `git diff --check` sạch; không có secret thật, URL push thật, email thật hoặc dữ liệu cá nhân trong diff/log/test fixture.
@@ -588,7 +618,7 @@ Không dùng `heap` cũ để suy ra payload. Heap chỉ trả lời “có th�
 Mỗi bài sau phải có một red-proof: cố ý gỡ đúng guard/nhánh đang bảo vệ, chạy thấy fail đúng lý do, khôi phục, chạy xanh.
 
 - `reminder_time` 08:00/23:59 và ngày chuyển tiếp tạo đúng `due_at` aware +07:00; không có naive datetime.
-- Tracker exact-time không gọi `assign_slot()`; external slot logic không làm thay đổi in-process result.
+- Tracker dùng exact-time trực tiếp (không còn assign_slot trong repo).
 - Subscription với lead `3`, expiry hôm nay/+1/+3/+10 ngày tạo đúng candidate 19:00; canceled/deleted/expired bị loại; đổi `subscription_expiry_lead_days` rồi reload đổi lịch.
 - Tie cùng `due_at` có thứ tự deterministic; batch pop đủ các item đã due.
 - Heap rỗng chờ event vô thời hạn; fake repository query count không tăng trong thời gian chờ.
@@ -637,7 +667,7 @@ Nếu có PG test, ghi riêng lệnh/output của DB local throwaway. Không tic
 
 ### 6.5 Production/manual lane — không được suy ra từ local pass
 
-Sau merge/deploy, chỉ khi owner đã tắt external reminder jobs và bật mode in-process:
+Sau merge/deploy, chỉ khi owner đã ghi dated note, retire mọi Google Cloud Scheduler job và bật `ENABLE_INPROCESS_CRON=true`:
 
 - thấy log startup `cron_timer_started mode=inprocess` và `cron_timer_queue_loaded ...`;
 - tạo/sửa/xoá một reminder test, thấy reload xảy ra sau commit và item cũ không bắn;
@@ -669,20 +699,20 @@ Judgment calls:
 - backoff retry
 - `PENDING_RECOVERY_TIMEOUT` và pending-row rehydration sau crash
 - `ENABLE_INPROCESS_CRON` + mất external retry/attempt deadline/result reporting
-- mode transition / external job ownership
+- cutover một chiều + retirement toàn bộ Google Cloud Scheduler job
 ```
 
 ## 7. Mục KHÔNG ĐƯỢC LÀM
 
 - **Không** query Neon mỗi 1–5 phút, mỗi 60 giây hoặc mỗi vòng `while`; không `SELECT 1` để “giữ kết nối”; không dùng `readyz`/health probe làm tick.
 - **Không** giữ DB connection/transaction trong lúc `asyncio.sleep()` hoặc quanh toàn bộ network call Web Push.
-- **Không** chạy Cloud Scheduler reminder và in-process timer đồng thời; không xem `reminder_dispatch` idempotency là lý do hợp lệ để double-run.
-- **Không** tự bật `ENABLE_INPROCESS_CRON=true` khi decision record chưa được dated-note, 011b chưa merge, hoặc external jobs chưa được tắt.
-- **Không** gọi HTTP loopback tới `/api/cron/reminder`, không tự chế `CRON_TOKEN` cho call nội bộ, không dùng `BackgroundTasks`/fire-and-forget route để dispatch.
+- **Không** dùng Google Cloud Scheduler, cron endpoint external hay scheduler external khác cho reminder/heartbeat; không xem `reminder_dispatch` idempotency là lý do hợp lệ để dual-run.
+- **Không** tự bật `ENABLE_INPROCESS_CRON=true` khi decision record chưa được dated-note, 011b chưa merge, hoặc mọi Google Cloud Scheduler job chưa được retirement có biên lai.
+- **Không** gọi HTTP loopback tới route reminder, không tự chế bearer token cho call nội bộ, không dùng `BackgroundTasks`/fire-and-forget route để dispatch.
 - **Không** thêm Celery, RQ, Redis, APScheduler, Supercronic, broker, `LISTEN/NOTIFY` hoặc scheduler dependency khác cho v1.
 - **Không** tạo bảng persistent queue, cột `due_at` mới, migration hoặc index mới cho 011d.
 - **Không** cache full `Tracker`/`Subscription`, decrypted name, `reminder_text`, push payload, VAPID key, cookie hay bearer token trong heap/log.
-- **Không** dùng `assign_slot()`/ba khe external để làm sai exact `reminder_time` của mode A.
+- **Không** dùng `assign_slot()`/ba khe cố định hoặc lượng tử hoá tương đương để làm sai exact `reminder_time`.
 - **Không** dùng `zoneinfo` nếu image/runtime không bảo đảm tzdata; dùng quy ước fixed `+07:00` đã chốt cho lịch VN và luôn giữ timestamp aware.
 - **Không** replay vô hạn các occurrence quá khứ, không retry DB/Push vô hạn, không biến một failure đơn lẻ thành poll loop.
 - **Không** dùng fabricated unlocked session, bỏ qua privacy gate, fallback tên private ra lock-screen, hoặc coi timer background là quyền đọc private không giới hạn.

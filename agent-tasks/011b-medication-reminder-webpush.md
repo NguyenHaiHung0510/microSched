@@ -1,4 +1,4 @@
-# 011b — Nhắc thuốc + nhắc hết hạn sub: hạ tầng Web Push + cron 3-khe
+# 011b — Nhắc thuốc + nhắc hết hạn sub: hạ tầng Web Push + Dispatcher
 
 > **Trạng thái: DRAFT — viết bởi T1 (Opus 5) 2026-08-01, phối hợp trực tiếp với chủ (không tự quyết
 > một mình).** Đã qua phản biện **T3** (`gemini-3.1-pro-high`) + **T2 Codex**; T1 kiểm tay từng
@@ -29,122 +29,25 @@ trong repo, và hạ tầng cron hiện tại (`devops-brief.md` §10) chỉ có
 `011a` (CRUD tracker/entry + dashboard) và `011c` (subscription + F6 + `app_setting`) là phần
 **cơ học**: mirror `tasks.py`/`notes.py`, phần lớn quyết định đã nằm sẵn trong schema và trong chính
 `tracking-brief.md`. `011b` (file này) là phần **có phát sinh quyết định thiết kế mới** trong chính
-phiên này (khe cron, giới hạn iOS, bucket theo khe) — đúng loại việc đáng dùng nốt cửa sổ Opus còn
+phiên này (giới hạn iOS, notification, confirmation) — đúng loại việc đáng dùng nốt cửa sổ Opus còn
 lại. Viết trước, chấp nhận file tham chiếu vài đường ống của `011a` chưa tồn tại.
 
-**Phạm vi file này:** hạ tầng Web Push (VAPID, subscription, service worker) + cron 3-khe + nhắc
+**Phạm vi file này:** hạ tầng Web Push (VAPID, subscription, service worker) + nhắc
 thuốc (tracker có `reminder_time`) + nhắc sắp hết hạn subscription (`tracking-brief.md` §9, §11 —
 **cùng một đường ống**, không xây hai lần).
 
 ## 1. Quyết định đã chốt trong phiên này (2026-08-01, chủ + T1)
 
-### 1.1 Bỏ "một job mãi mãi" — nâng lên **3 job cố định**, KHÔNG scan-liên-tục
+### 1.1 LOẠI BỎ hoàn toàn Google Cloud Scheduler 3-khe & lượng tử hoá (Quyết định lại)
 
-`devops-brief.md` §10 (23/07) chốt "MỘT job duy nhất, mãi mãi" khi bài toán còn tưởng chỉ có **một**
-giờ nhắc (20:00, một loại thuốc). Nhu cầu thật của chủ đã đổi: toa tạm thời làm phát sinh **nhiều giờ
-nhắc khác nhau trong cùng ngày** (ví dụ chủ nêu: thuốc A 8h+16h, thuốc B 20h). Một job cố định ép mọi
-giờ dồn về một mốc — thuốc buổi sáng bị nhắc trễ 12 tiếng là hỏng đúng thứ tính năng này tồn tại để
-làm. **Đây là note-có-ngày sửa `devops-brief.md` §10, không phải xoá kết luận cũ** — kết luận cũ đúng
-với giả định lúc đó (đúng 1 giờ nhắc); giả định đó nay sai.
+Chủ đã chọn **011d (in-process async cron timer) là scheduler production duy nhất**. Google Cloud Scheduler đã bị loại bỏ hoàn toàn và không còn là fallback hay mode vận hành được hỗ trợ.
+Do đó, việc xây dựng cron HTTP endpoint và thuật toán gán khe (`assign_slot`) trong 011b là **throwaway scope** (công cốc) và không được thi công.
 
-**Chốt: 3 job Cloud Scheduler cố định, giờ = `08:00` / `15:00` / `19:00` (Asia/Ho_Chi_Minh)** — đúng
-đề xuất của chủ. Mỗi job gọi **cùng một endpoint**, khác nhau ở query string:
-
-```
-POST /api/cron/reminder?slot=08:00
-POST /api/cron/reminder?slot=15:00
-POST /api/cron/reminder?slot=19:00
-```
-
-Header `Authorization: Bearer <CRON_TOKEN>` giống hệt heartbeat hiện tại (`cron.py:14`,
-`require_cron_token`). Server không tự suy ra khe từ giờ hệ thống — khe là tham số tường minh trong
-URL, để một người đọc GCP console thấy ngay 3 URL khớp 3 khe mà không cần đọc code.
-
-**Chi phí — kiểm sống 2026-08-01:** Cloud Scheduler cho **3 job free/billing account**; billable job
-= **\$0.10/job/31 ngày**, tính theo *job đã định nghĩa*, không theo số lần chạy
-([Cloud Scheduler pricing](https://cloud.google.com/scheduler/pricing)). Billing account của chủ
-đang dùng đúng 1 job (heartbeat) — nâng lên 3 vẫn **\$0, đúng biên free-tier**, nhưng **hết sạch dư
-địa**: job thứ 4 bất kỳ (ở bất kỳ dự án nào trong cùng billing account) từ nay tính phí \$0.10/tháng.
-Số nhỏ, nhưng đây là lần đầu vượt qua ranh giới "mọi thứ đang free" — đáng một dòng trong
-`cost-brief.md` khi thi công.
-
-**⚠️ Rủi ro ghép cặp (cùng họ với sự cố "hai quyết định đúng không tham chiếu nhau" đã bị bắt nhiều
-lần trong dự án):** danh sách khe sống ở **hai nơi tách biệt** — hằng số trong code
-(`app/domain/reminder.py`, §3) và cấu hình 3 job trên **GCP console** (ngoài repo, không version
-control). Đổi khe (thêm/bớt/dời giờ) mà chỉ sửa một bên là hỏng âm thầm: sửa code mà quên sửa job thì
-job cũ vẫn gọi `slot=` cũ (không lỗi, chỉ sai giờ); sửa job mà quên sửa code thì `slot=` mới không
-khớp `REMINDER_SLOTS` nào ⇒ endpoint trả rỗng, không nhắc gì, cũng không lỗi. **Luật bắt buộc khi thi
-công:** endpoint `GET /api/cron/reminder/slots` trả về `REMINDER_SLOTS` hiện tại của code, để một lần
-soi tay đối chiếu với GCP console là đủ; ghi rõ trong runbook (`agent-tasks/README.md` hoặc chính PR)
-rằng đổi khe phải sửa **cả hai** trong cùng một phiên.
-
-> 📝 **Sửa 2026-08-01 sau phản biện T3.** Bản trước ghi endpoint này *"công khai, không cần
-> `require_cron_token`"*. **Sai và không tự thi hành được:** `cron.py:18-22` gắn
-> `dependencies=[Depends(require_cron_token)]` ở **cấp router**, nên mọi route đặt trong file đó tự
-> động bị gác — endpoint sẽ trả `401` cho đúng cái lần soi tay mà nó sinh ra để phục vụ. **Chốt: nó
-> đi chung `require_cron_token` với các job nó đối chiếu** (đối chiếu bằng `curl -H "Authorization:
-> Bearer $CRON_TOKEN"`). Đừng "sửa" bằng cách gỡ dependency cấp router hay tạo router thứ hai không
-> gác — lịch nhắc thuốc là dữ liệu sức khoẻ, không có lý do gì để trần.
-
-**Bắt buộc khi merge:** thêm **dated note vào `devops-brief.md` §10** ghi rằng "MỘT job duy nhất,
-mãi mãi" đã bị thay bởi 3 khe của `011b` và vì sao (giả định gốc là *đúng một giờ nhắc*, nay sai).
-Không làm bước này thì hai file cùng đang là "quyết định hiện hành" mà nói ngược nhau — đúng cái bẫy
-`CLAUDE.md` bắt phải tránh.
-
-### 1.2 Thuật toán gán khe — khoảng cách tuyệt đối gần nhất, không phải làm tròn xuống
-
-`tracker.reminder_time` là giờ tuỳ ý do chủ gõ (ví dụ 16:00), không nhất thiết trùng khe. Quy tắc gán:
-
-```python
-REMINDER_SLOTS = [time(8, 0), time(15, 0), time(19, 0)]
-
-def assign_slot(reminder_time: time) -> time:
-    return min(REMINDER_SLOTS, key=lambda slot: abs(
-        datetime.combine(date.min, reminder_time) - datetime.combine(date.min, slot)
-    ))
-```
-
-Khớp đúng ví dụ chủ nêu: 8h→8h (đúng khe), 16h→15h (lệch 1h, gần hơn khe 19h lệch 3h), 20h→19h (lệch
-1h). **Không wrap qua nửa đêm** — một `reminder_time` như 02:00 vẫn gán về khe 08:00 (lệch 6h), không
-so với khe 19:00 hôm trước; trường hợp này không có trong nhu cầu thật hiện tại, để đơn giản.
-**Hoà giải khi cách đều hai khe** (ví dụ 11:30 giữa 8h và 15h — lệch 3.5h cả hai): chọn khe **sớm
-hơn** — thà nhắc sớm còn hơn nhắc trễ cho một việc liên quan sức khoẻ. `assign_slot` là hàm thuần, đặt
-trong `app/domain/reminder.py`, test bằng bảng ví dụ ở trên — không cần DB để test.
-
-> 🔒 **Mô hình v1 cho thuốc uống nhiều lần/ngày — chốt 2026-08-01 sau phản biện T2.** T2 bắt đúng:
-> schema đã khoá chỉ có **một** `tracker.reminder_time`, nên một tracker tên "Thuốc A" không thể giữ
-> đồng thời 08:00 và 16:00. **Không thêm entity schedule con**: `tracking-brief.md` §12 đã chốt
-> *"KHÔNG entity mới"* + cadence daily-only. Mô hình v1 là **một tracker = một lần uống lặp hàng
-> ngày**, không phải một hoạt chất:
->
-> | Tracker | `reminder_time` | Khe thật |
-> |---|---:|---:|
-> | `Thuốc A — sáng` | 08:00 | 08:00 |
-> | `Thuốc A — chiều` | 16:00 | 15:00 |
-> | `Thuốc B — tối` | 20:00 | 19:00 |
->
-> Ba tracker có thể nằm trong cùng group `Toa hiện tại`; dashboard vẫn gom chúng cạnh nhau, còn mỗi
-> lần uống có lịch sử tuân thủ riêng — có ích hơn một chuỗi entry không biết thuộc liều sáng hay
-> chiều. Tên phải khác nhau (`011a` chống trùng tên), suffix theo buổi là chủ đích chứ không phải
-> workaround ngầm. Form đặt nhắc ghi helper: *"Uống nhiều lần/ngày? Tạo một tracker cho mỗi lần
-> uống, ví dụ ‘Thuốc A — sáng’ và ‘Thuốc A — chiều’."* Đây là giới hạn v1 chủ có thể veto; nếu sau
-> dùng thật thấy phiền mới mở lại schema thành `tracker_reminder`, không lén thêm nó trong lô này.
-
-> 📝 **Thêm 2026-08-01 sau phản biện T3 — lượng tử hoá khe phải NHÌN THẤY ĐƯỢC, đừng im lặng.**
-> T3 bắt đúng một ca xấu: `reminder_time = 23:00` gán về khe 19:00, tức **nhắc sớm 4 tiếng**, và với
-> thuốc thì nhắc sớm nguy hơn nhắc trễ (bấm ✓ rồi uống sớm, hoặc gạt đi rồi quên hẳn). Đổi thuật
-> toán không giải được: mọi luật khác ("khe kế tiếp ≥ giờ nhắc") đều làm **xấu đi** đúng toa thật của
-> chủ (16h sẽ thành 19h, trễ 3 tiếng thay vì sớm 1 tiếng). Vấn đề không nằm ở công thức mà ở chỗ chủ
-> **không biết là có lượng tử hoá**. ⇒ **Giữ nguyên nearest-slot, nhưng form đặt giờ nhắc phải hiện
-> ngay khe thật sẽ bắn, và cảnh báo khi lệch > 2 giờ**: *"Sẽ nhắc lúc **19:00** — lệch 4 tiếng so với
-> 23:00. Đặt giờ gần 08:00 / 15:00 / 19:00 hơn nếu cần đúng giờ."* Tính bằng chính `assign_slot`,
-> nên logic chỉ có một bản (hiện ở §4.3 bước 4).
-
-**Tại sao không chọn "quét mọi tracker có `reminder_time` ≤ giờ chạy, dồn late-list vào cuối ngày"**
-(phương án tôi từng đề xuất trước khi chủ mô tả toa tạm thời): nó chấp nhận trễ vô hạn cho khung sáng
-nếu chỉ có 1 job tối — đúng cái toa tạm thời của chủ (uống 2 lần cách nhau 8 tiếng) không chịu được.
-3-khe-gần-nhất tốn thêm đúng 2 job Cloud Scheduler (miễn phí, §1.1) để đổi lấy sai số tối đa **~3.5
-giờ** thay vì tối đa ~16 giờ.
+**Chốt:**
+- 011b **KHÔNG** làm external cron endpoint, **KHÔNG** làm lượng tử hoá `assign_slot`. Giờ nhắc (`reminder_time`) là exact time.
+- 011b chỉ tập trung xây dựng domain logic: `ReminderDispatcher.dispatch_item(subject_type, subject_id, scheduled_time)`.
+- Việc lập lịch và trigger hàm dispatch này sẽ do **011d** (in-process timer) đảm nhận.
+- Để 011b có thể nghiệm thu (QA) độc lập khi 011d chưa merge, có thể phơi `POST /api/dev/trigger-dispatch` **chỉ ở local/dev-test** để T3 kích hoạt thủ công. Route này phải vắng mặt hoặc từ chối ở production, không dùng `CRON_TOKEN`, không là fallback scheduler và không thay thế integration test gọi dispatcher nội bộ.
 
 ### 1.3 Giới hạn thật của iOS — noti KHÔNG thể có nút ✓ trên lock-screen
 
@@ -192,8 +95,7 @@ thực riêng cho hành động chạy trong service worker, vì hành động t
 
 ### 1.4 Idempotency — bảng `reminder_dispatch`
 
-Cloud Scheduler cấu hình được retry (`devops-brief.md` §10) — job có thể gọi lại đúng khe trong cùng
-ngày. Không được bắn push hai lần. Bảng mới, dùng chung cho cả nhắc thuốc lẫn nhắc sub:
+Timer 011d có bounded retry và recovery row `pending` sau restart; dev trigger chỉ phục vụ QA có thể gọi lại cùng occurrence. Không được bắn push hai lần. Bảng mới, dùng chung cho cả nhắc thuốc lẫn nhắc sub:
 
 | Cột | Kiểu | Ghi chú |
 |---|---|---|
@@ -202,7 +104,7 @@ ngày. Không được bắn push hai lần. Bảng mới, dùng chung cho cả 
 | `subject_id` | `UUID NOT NULL` | id của `tracker` hoặc `subscription`; không FK cứng (subject có thể bị xoá mềm, vẫn muốn giữ log) |
 | `dispatched_on` | `DATE NOT NULL` | ngày Việt Nam (`+07:00`), không phải UTC — cùng quy ước K14 (`subscription.started_on`/`expires_on`) |
 | `status` | `TEXT CHECK IN ('pending','sent','no_device')` | default `pending`; retry dùng lại chính row/id này |
-| `attempt_count` | `INTEGER NOT NULL DEFAULT 0 CHECK >= 0` | tăng sau mỗi lượt gửi thật |
+| `attempt_count` | `INTEGER NOT NULL DEFAULT 0 CHECK >= 0` | quota delivery bền: tăng một lần cho mỗi lượt dispatch có gửi Web Push, không reset qua restart |
 | `last_attempt_at` | `timestamptz NULL` | quan sát retry/stuck pending |
 | `confirmed_entry_id` | `UUID NULL UNIQUE FK entry(id)` | chỉ tracker-reminder dùng; stable link chống hai thiết bị/tap tạo hai Entry |
 | `confirmed_at` | `timestamptz NULL` | thời điểm server chốt confirmation; bất biến sau lần đầu |
@@ -219,20 +121,35 @@ vừa là log "đã nhắc ngày nào", vừa cấp **dispatch id ổn định**
 >
 > 1. `INSERT ... ON CONFLICT DO NOTHING` row `status='pending'`, rồi `SELECT ... FOR UPDATE` đúng unique
 >    key. Hai cron chồng nhau tuần tự trên cùng row; không có hai lượt gửi đồng thời.
-> 2. `status IN ('sent','no_device')` ⇒ đã terminal, bỏ qua. `pending` ⇒ gửi tới mọi subscription,
->    đếm ba `PushResult` (§3.3), tăng `attempt_count`, set `last_attempt_at`.
-> 3. **≥1 `SENT`** ⇒ `status='sent'`, commit, `2xx`.
+> 2. `status IN ('sent','no_device')` ⇒ đã terminal, bỏ qua. `pending` với `attempt_count < 4` ⇒
+>    claim **một delivery attempt**: trong transaction ngắn, tăng `attempt_count` đúng một lần và set
+>    `last_attempt_at`, rồi mới gửi tới mọi subscription. Crash sau claim nhưng trước network có thể
+>    tiêu hao một attempt thay vì reset quota sau restart — đây là đánh đổi cố ý để retry luôn bị chặn.
+>    `pending` có `attempt_count >= 4` ⇒ tuyệt đối không gửi nữa, trả `EXHAUSTED` cho 011d ghi biên lai
+>    manual handling.
+> 3. **≥1 `SENT`** ⇒ `status='sent'`, commit, trả outcome `SENT`.
 > 4. **0 `SENT` + ≥1 `TEMPORARY_FAILURE`** ⇒ **giữ `status='pending'` và cùng `id`**, commit rồi
->    endpoint trả `5xx` để Cloud Scheduler retry. Một response-lost có thể bắn push trùng, nhưng mọi
->    bản trùng mang **cùng dispatch id**, nên §3.6 vẫn chỉ tạo một Entry.
+>    trả outcome có cấu trúc `TEMPORARY_FAILURE` (kèm `dispatch_id`, `attempt_count`) cho timer 011d
+>    re-enqueue theo bounded backoff. Một response-lost có thể bắn push trùng, nhưng mọi bản trùng mang
+>    **cùng dispatch id**, nên §3.6 vẫn chỉ tạo một Entry.
 > 5. **0 `SENT` + chỉ `DEAD_SUBSCRIPTION`, hoặc không có subscription ngay từ đầu** ⇒
->    `status='no_device'`, commit, `2xx`; retry không cứu được.
+>    `status='no_device'`, commit, trả outcome `NO_DEVICE`; retry không cứu được.
 >
 > Crash trước commit để row `pending`; retry dùng lại cùng id. Crash sau push nhưng trước commit có thể
 > gửi trùng — chiều đánh đổi đã chọn: thà noti trùng còn hơn mất, và confirmation-idempotency làm phần
 > dữ liệu không trùng. **Không giữ transaction DB mở trong khi gọi mạng nếu implementation không thể
 > chịu lock dài:** được phép claim/commit `pending` trước rồi acquire advisory lock theo dispatch id
 > quanh lượt gửi; nhưng không được đổi id hay cho hai worker gửi song song.
+
+> **Hợp đồng reliability chung 011b → 011d — không để executor tự chọn số.** Một occurrence có tối đa
+> **4 delivery attempts tổng cộng**: lần đầu + 3 retry. `attempt_count` là nguồn sự thật durable và
+> không được reset theo process/heap/redeploy; 011d chỉ dùng nó để tính lần retry kế tiếp, 011b tự chặn
+> thêm như lớp phòng thủ thứ hai. Sau attempt thứ 1/2/3, 011d đặt lại cùng row theo **30 giây → 2 phút
+> → 10 phút**; attempt thứ 4 không có retry. Mỗi Web Push network attempt bị bọc trong
+> `asyncio.timeout(20)` (hoặc timeout có hiệu lực tương đương nếu SDK là synchronous); timeout map thành
+> `TEMPORARY_FAILURE`, không log response/payload và không giữ transaction/row lock trong lúc chờ mạng.
+> Đây thay retry/deadline của GCS cho reminder, nhưng **không hứa guaranteed delivery**: pending quá
+> recovery window hoặc hết 4 attempts phải để lại row/receipt cho manual handling, không âm thầm xoá.
 
 > 🔴 **Dispatch-id cũng là khoá idempotency của hành động XÁC NHẬN — thêm sau T2.** Chống cron gửi
 > lặp **không** tự chống Entry lặp: cùng notification có thể bị tap hai lần, hoặc cùng dispatch được
@@ -278,7 +195,7 @@ public không phải nội dung nhạy cảm theo posture B-hẹp (`tracking-bri
 ### 3.1 VAPID keys
 
 Sinh một lần bằng `py-vapid` (thêm vào `backend/pyproject.toml`): `public_key` + `private_key` (cả
-hai là **Fly secret / `.env` local**, không commit — cùng lớp `CRON_TOKEN`). Contact email bắt buộc
+hai là **Fly secret / `.env` local**, không commit). Contact email bắt buộc
 theo chuẩn VAPID (`mailto:`, để push service liên hệ nếu app bị lạm dụng gửi spam — không áp dụng
 thực tế cho app 1-người-dùng nhưng chuẩn đòi có).
 
@@ -290,38 +207,10 @@ xoay khoá thành một lần build lại + deploy lại thay vì đổi một s
 tĩnh nên giá trị cũ còn nằm trong service worker đã precache của thiết bị cũ. Khoá công khai gọi qua
 mạng mỗi lần bật nhắc là một request/đời-thiết-bị — rẻ hơn cả ba vấn đề trên.
 
-### 3.2 `app/domain/reminder.py` — thuần, không chạm DB
+### 3.2 `app/domain/reminder.py` — logic payload
 
-Chứa `REMINDER_SLOTS`, `assign_slot()` (§1.2), và hàm build payload noti:
-
-```python
-def build_medication_payload(
-    *, dispatch_id: UUID, tracker_name: str, reminder_text: str | None, is_private: bool
-) -> dict:
-    # URL = f"/reminder-confirm?dispatch={dispatch_id}".
-    # reminder_text là bề mặt công khai CÓ CHỦ ĐÍCH (tracking-brief §6/§12), dùng nếu chủ đã nhập.
-    # Fallback: private ⇒ generic "Mở microSched để xem lời nhắc"; public ⇒ tracker_name.
-    # TUYỆT ĐỐI không fallback tracker_name khi is_private=True.
-    ...
-
-def build_subscription_payload(
-    subscription_name: str, expires_on: date, subscription_id: UUID, is_private: bool
-) -> dict:
-    # URL CHÍNH XÁC: f"/subscription?highlight={subscription_id}" (hợp đồng 011c §9 mục 1).
-    # KHÔNG đi reminder-confirm và KHÔNG tự tạo Entry.
-    # Parent Tracker private ⇒ generic "Một đăng ký sắp hết hạn", KHÔNG có subscription_name.
-    # Public ⇒ "Sắp hết hạn: {name} — còn {n} ngày"; n tính từ VN-today.
-    ...
-```
-
-> 📝 **Kiểm tay finding riêng tư của T2:** kết luận *"không được fallback tên private ra lock-screen"*
-> là **đúng**; phần T2 đề nghị cấm luôn `reminder_text` là **sai với quyết định đã khoá**.
-> `tracking-brief.md:97` và §12 ghi `reminder_text` trần **có chủ đích**, chính là câu kín đáo chủ tự
-> chọn cho lock-screen (ví dụ `taken micardis?`). Vì vậy thứ tự đúng là:
-> `reminder_text` nếu có → nếu thiếu và private thì generic → nếu thiếu và public mới dùng
-> `tracker_name`. Subscription không có public `reminder_text`: join parent Tracker; private ⇒ generic,
-> public mới dùng `subscription_name`. Test payload phải phủ đủ hai họ và khẳng định
-> ciphertext/plain private name không xuất hiện trong JSON.
+(Thuật toán `assign_slot` đã bị loại bỏ vì dùng exact time theo `011d`).
+Chỉ giữ lại các hàm thuần tạo lock-screen text dựa trên `subject_type` (tracker/subscription).
 
 ### 3.3 `app/domain/push.py` — gửi push, dọn subscription chết
 
@@ -345,59 +234,24 @@ async def send_push(subscription: PushSubscription, payload: dict) -> PushResult
 - Thành công ⇒ cập nhật `last_seen_at = now()`, trả `SENT`.
 
 Dispatcher đếm ba enum riêng. **0 `SENT` + ≥1 `TEMPORARY_FAILURE`** ⇒ giữ row/id ở `pending` và trả
-5xx để Scheduler retry; **0 `SENT` + chỉ `DEAD_SUBSCRIPTION` hoặc danh sách ban đầu rỗng** ⇒ chuyển
+`TEMPORARY_FAILURE` có cấu trúc cho timer 011d retry bounded; **0 `SENT` + chỉ `DEAD_SUBSCRIPTION` hoặc danh sách ban đầu rỗng** ⇒ chuyển
 `no_device`. Không suy
 nguyên nhân từ việc bảng subscription rỗng *sau* khi gửi — lúc đó không phân biệt được "rỗng từ đầu"
 với "vừa dọn hết 410".
 
-### 3.4 `app/web/routers/cron.py` — thêm endpoint `reminder`
+### 3.4 `app/domain/dispatcher.py` — Hàm Gửi Notification Nội Bộ
 
-```
-POST /api/cron/reminder?slot={HH:MM}     require_cron_token, giống heartbeat
-GET  /api/cron/reminder/slots            require_cron_token (router-level) — §1.1 đối chiếu tay
-```
+Không tạo HTTP route cron (`/api/cron/reminder`).
+Tạo hàm nội bộ `async def dispatch_item(db: AsyncSession, subject_type: str, subject_id: UUID, scheduled_time: datetime)`:
 
-Luồng `POST /api/cron/reminder`:
-1. Parse `slot` **một lần** từ chuỗi `HH:MM` thành `datetime.time`, rồi validate giá trị đã parse thuộc
-   `REMINDER_SLOTS` — sai format hoặc không thuộc danh sách ⇒ `422`, không làm gì thêm. Từ đây trở đi
-   chỉ so `time == time`; **không** so `assign_slot(...)` với query string. (T2 bắt ambiguity này:
-   implement literal `time(8,0) == "08:00"` luôn `False` và mọi job vẫn `200` với 0 reminder.)
-2. Tính `today = VN hôm nay` (cùng ép `timezone(timedelta(hours=7))`, **không** `zoneinfo` — đúng lý
-   do đã ghi ở `agent-tasks/010a` §2 mục 6: image Python slim trên Fly không đảm bảo tzdata).
-3. **Nhắc thuốc:** `SELECT` mọi `tracker` còn sống (`deleted_at IS NULL`) có `reminder_time IS NOT
-   NULL`, `kind='health'`, `input_mode='event'`, **và** `assign_slot(reminder_time) == parsed_slot`.
-   Với mỗi tracker: **insert-if-absent rồi luôn load row theo unique key**
-   `(subject_type='tracker', subject_id, dispatched_on)`; `status='pending'` ⇒ acquire lock + gửi,
-   `sent/no_device` ⇒ skip. **Không được viết `có dòng INSERT mới ⇒ gửi`**: retry sau lỗi tạm gặp row
-   pending cũ, `ON CONFLICT DO NOTHING` trả 0 rows nhưng vẫn phải gửi lại (§1.4). Sau đó giải mã
-   `tracker.name` → build payload theo ba nhánh
-   riêng tư §3.2 (payload mang `dispatch_id`, **không** mang tracker id/name trong URL) → gửi tới mọi
-   `push_subscription`. Nếu DB có `reminder_time` trên tracker không phải health/event (dữ liệu cũ
-   hoặc ghi ngoài API), **skip + `logger.error` kèm tracker.id**, không gửi một notification mà route
-   confirm chắc chắn vi phạm K8. Khi `011b` mở rộng `TrackerUpdate`, setting `reminder_time` trên
-   tracker không phải health/event phải `422` nên đây chỉ là safety net.
-4. **Nhắc sub sắp hết hạn — chỉ chạy ở khe `19:00`** (một lần/ngày là đủ, tránh nhắc 3 lần/ngày cho
-   cùng một sub sắp hết hạn; chọn khe cuối ngày vì không gấp theo giờ như thuốc). `SELECT`
-   `subscription` còn sống, `canceled_at IS NULL`, `expires_on - today <= 3` (ngưỡng
-   `app_setting` — **key `subscription_expiry_lead_days`, mặc định 3, đọc qua
-   `expiry_lead_days(db)` của `011c` §4.4**: hàm đó trả mặc định + `logger.error` khi hàng JSON
-   hỏng, cố ý **không ném**, để một dòng cấu hình sai không giết luôn lượt nhắc thuốc buổi sáng
-   chạy cùng endpoint. Đừng đọc thẳng `AppSetting` ở đây, và đừng hard-code số 3 — nguồn gốc con
-   số: `tracking-brief.md` §11 S2) **và** `expires_on >= today` (đã hết hạn thì thôi, đừng
-   nhắc số âm), **JOIN parent Tracker** để biết `is_private` và build payload generic khi private
-   (§3.2); không lọc private ra khỏi cron vì lời nhắc generic vẫn là chức năng sức khoẻ/tài chính chủ
-   đã bật. Cùng cơ chế `reminder_dispatch` (`subject_type='subscription'`) chống lặp, **áp đúng
-   5 bước chiếm-chỗ-rồi-trả-lại ở §1.4** — không có biến thể riêng cho sub. Sub còn 3 ngày sẽ tự được
-   nhắc lại vào ngày mai với `dispatched_on` mới.
-5. Trả ít nhất `{"tracker_reminders_sent": n, "subscription_reminders_sent": m,
-   "temporary_push_failures": t, "dead_subscriptions_pruned": k, "dispatches_without_device": d}`
-   — số thật, không phải `{"status": "ok"}` trần; `t > 0` đồng thời phải làm endpoint trả **5xx**
-   sau khi transaction đã lưu row ở `pending` (§1.4), để Cloud Scheduler thật sự kích retry. Chỉ log warning mà
-   vẫn `200` thì cơ chế "retry kế tiếp" trong §1.4 không bao giờ xảy ra.
-6. **Giữ nguyên hành vi ghi RSS/uptime của heartbeat cũ ở CẢ BA khe** (không chỉ khe có nhắc) — rẻ,
-   và tăng tần suất mẫu canh rò rỉ bộ nhớ của tiến trình always-on từ 1 lần/ngày lên 3 lần/ngày.
-   `suspend` không còn là lý do, nhưng tiến trình 256MB sống dài giữa các lần deploy vẫn cần cùng mẫu
-   quan sát (`devops-brief.md` §10).
+1. `SELECT ... FOR UPDATE` check subject (còn sống không, reminder còn không).
+2. Tạo/Claim `reminder_dispatch` (idempotent key).
+3. `SELECT` mọi `push_subscription`.
+4. Bắn `send_push_notification` (§3.3) qua tất cả các sub.
+5. `UPDATE reminder_dispatch` với kết quả (sent, temporary_failure, no_device).
+6. Trả outcome có cấu trúc (`SENT`, `TEMPORARY_FAILURE`, `NO_DEVICE`, `SKIPPED`); dispatcher không định nghĩa HTTP status. Dev trigger (nếu có) chỉ là adapter test mapping outcome sang response.
+
+(Optional: `POST /api/dev/trigger-dispatch` chỉ có ở local/dev-test, vắng mặt hoặc từ chối ở production, để test riêng 011b; không dùng làm trigger scheduler.)
 
 ### 3.5 `app/web/routers/push.py` — CRUD subscription, sau `require_session`
 
@@ -621,27 +475,16 @@ riêng tracker** — nên gộp vào 011b xử lý một thể:
 Phạm vi gộp: chỉ 2 mục trên + regression tương ứng. Không kéo thêm finding QA khác vào lô này; mọi
 thứ khác từ `011a-qa-results.md` không chặn merge.
 
-## 5. Cấu hình GCP thủ công (runbook, chủ tự tay làm hoặc giao T2 có ảnh chụp từng bước)
+## 5. Loại bỏ Google Cloud Scheduler
 
-1. Sửa job hiện có (`0 20 * * *` → giữ nguyên làm job `19:00`? hay xoá tạo lại) — **khuyến nghị: xoá
-   job cũ, tạo mới 3 job** để tên job phản ánh đúng khe (`reminder-08`, `reminder-15`, `reminder-19`)
-   thay vì thừa kế tên/lịch sử của job heartbeat gốc — dễ đọc hơn khi có sự cố, không thay đổi ý
-   nghĩa chức năng.
-2. Mỗi job: **Target = HTTP** (không phải Pub/Sub — bẫy đã ghi ở `devops-brief.md` §10), URL đúng
-   §1.1 (kiểm khoảng trắng đuôi — bẫy đã gặp lúc tạo job đầu tiên), method `POST`, **HTTP headers**
-   custom `Authorization: Bearer <CRON_TOKEN>` (KHÔNG dùng mục "Auth header" của Scheduler — đè mất
-   header tự viết, bẫy đã ghi cùng chỗ).
-3. Timezone job = `Asia/Ho_Chi_Minh` cho cả 3 (không phải UTC rồi tự trừ giờ trong cron expression).
-4. Force-run thử cả 3 job, kiểm response body có `tracker_reminders_sent`/`subscription_reminders_sent`
-   hợp lý (0 nếu chưa có tracker nào đặt `reminder_time` — đúng, không phải lỗi).
-5. Đối chiếu `GET /api/cron/reminder/slots` với đúng 3 URL vừa tạo trên console (§1.1 luật bắt buộc).
+Không tạo, vận hành hoặc giữ bất kỳ Google Cloud Scheduler job nào cho microSched, gồm cả reminder lẫn heartbeat. Cơ chế GCS đã bị **xoá hoàn toàn** ở lô `011d`. Owner phải xác nhận không còn scheduler external nào gọi app trên GCP.
 
+Reminder chỉ do `011d` schedule in-process. Không có fallback external; khi `ENABLE_INPROCESS_CRON=false`, production không phát reminder cho tới khi cutover được thực hiện có kiểm soát.
 ## 6. Không được làm
 
 - Không quét DB theo chu kỳ ngắn hơn cửa sổ idle 5 phút của Neon (`cost-brief.md` §7 — bất biến toàn
   dự án, sự cố 22/07).
-- Không thêm job Cloud Scheduler thứ 4 trở lên mà không xét lại `cost-brief.md` (§1.1 — đã hết
-  free-tier).
+- Không tái sử dụng Google Cloud Scheduler, cron endpoint external hay scheduler external khác cho reminder/heartbeat; 011d là owner duy nhất của reminder schedule.
 - Không dùng mảng `actions` của Notification API làm đường chính — không chạy trên iOS (§1.3); có thể
   thêm như progressive enhancement cho Chrome/Android **sau**, không phải v1.
 - Không xây đường xác thực riêng cho `notificationclick` — nó chạy trong ngữ cảnh app đã đăng nhập
@@ -649,7 +492,7 @@ thứ khác từ `011a-qa-results.md` không chặn merge.
 - Không tạo bảng `push_subscription` gắn `user_id` — app một người dùng, phân biệt theo thiết bị.
 - Không xoá `push_subscription` khi push lỗi tạm thời (mạng, 5xx) — chỉ xoá khi push service xác nhận
   410/404 (§3.3).
-- Không nhắc sub hết hạn ở cả 3 khe — chỉ khe `19:00`, tránh trùng lặp vô ích (§3.4 điểm 4).
+- Không nhắc sub hết hạn ở mọi thời điểm — chỉ 19:00 (do `011d` gọi), tránh nhắc sai giờ.
 - Không dùng `tracker.name` làm fallback payload khi tracker private; `reminder_text` vẫn được phép vì
   đã khoá là bề mặt public do chủ tự viết (§3.2).
 - Không cho `/reminder-confirm` gọi generic create-entry trực tiếp; bắt buộc đi endpoint confirmation
@@ -661,7 +504,7 @@ thứ khác từ `011a-qa-results.md` không chặn merge.
 
 **Test bắt buộc, mỗi bài phải biết đỏ khi gỡ luật:**
 
-- `assign_slot`: ba khe, tie chọn sớm, `23:00→19:00`; router parse `"08:00"` thành `time(8,0)` và
+
   ba URL thật đều match ít nhất một tracker fixture.
 - `PushResult` + dispatch state: sent/temp/dead; hỗn hợp dead+temp giữ **cùng row/id** ở `pending` +
   endpoint 5xx; chỉ dead hoặc bảng rỗng chuyển `no_device`; ≥1 sent chuyển `sent`. Retry/crash phải
