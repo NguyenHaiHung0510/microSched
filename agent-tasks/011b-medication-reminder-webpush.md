@@ -5,6 +5,11 @@
 > finding, sửa các finding thật và ghi rõ chỗ T2 kết luận đúng nhưng lý do/phạm vi sai. Chưa được chủ
 > duyệt.
 >
+> **📝 2026-08-06 — chủ duyệt gộp 2 finding QA 011a vào lô này** (xem §4.4): hai vấn đề UI toàn app
+> (touch target tab nav + dialog, và non-text contrast của `border-input`) phát hiện ở QA 011a
+> (`agent-tasks/011a-qa-results.md`) được xử lý chung với 011b thay vì một PR riêng. Các acceptance
+> tương ứng được bổ sung vào §7.
+>
 > **📝 Cập nhật cùng ngày, sau khi `011a` được viết: `011` tách làm BA lô, không phải hai.**
 > `011a` = `tracker_group`/`tracker`/`entry` + lưới ghi + dashboard A1–A4/F1–F5
 > (`agent-tasks/011a-tracker-capture-dashboard.md`). `011c` = entity `subscription` + luồng gia hạn
@@ -597,6 +602,25 @@ form tối giản độc lập chỉ có `reminder_time`/`reminder_text`/toggle,
 /api/tracker/{id}` của domain tracker (giả định domain đã tồn tại dù chưa có UI CRUD đầy đủ) — không
 nên xảy ra nếu theo đúng thứ tự đề xuất ở §0.
 
+### 4.4 Findings QA 011a gộp vào lô này — UI toàn app (chủ duyệt 2026-08-06)
+
+Hai finding từ QA 011a (lane Chrome MCP production, viewport 390×844) là vấn đề **toàn app, không
+riêng tracker** — nên gộp vào 011b xử lý một thể:
+
+1. **Touch target dưới HIG 44px** — thanh tab điều hướng (`Task`/`Ghi chú`/`Lịch`/`Theo dõi`) cao
+   **36px** và nút `Đóng` dialog **28×28px**. Đạt WCAG 2.5.8 (≥24px) nhưng dưới target 44px của HIG
+   (thiết bị chính của chủ là iPhone — `ui-brief.md`). Yêu cầu: nâng **tab nav lên ≥44px** và nút
+   `Đóng` dialog lên **≥44×44px** (giữ hit area 44px, không nhất thiết phình visual). Tab nav nằm ở
+   app shell dùng chung mọi màn — phải verify không vỡ layout ở 390px (flex/scroll nếu cần).
+2. **Non-text contrast của `border-input`** — viền card + viền input (`#e5e7eb` trên nền `#ffffff`)
+   ratio **1.3:1**, dưới WCAG 1.4.11 (≥3:1). **Nợ tương tự đã ghi ở README mục 016** (viền input
+   1,32:1 và viền badge throttled 1,17:1, chưa fix) — xử lý **một lần cho cả hai**, đổi token border
+   sang màu đạt ≥3:1 trên nền trắng, rồi soát các surface dùng cùng token để không bỏ sót. Luật
+   `ui-brief.md` §6.2: **chỉ sửa token trong `index.css`, không hardcode màu ở component.**
+
+Phạm vi gộp: chỉ 2 mục trên + regression tương ứng. Không kéo thêm finding QA khác vào lô này; mọi
+thứ khác từ `011a-qa-results.md` không chặn merge.
+
 ## 5. Cấu hình GCP thủ công (runbook, chủ tự tay làm hoặc giao T2 có ảnh chụp từng bước)
 
 1. Sửa job hiện có (`0 20 * * *` → giữ nguyên làm job `19:00`? hay xoá tạo lại) — **khuyến nghị: xoá
@@ -651,6 +675,12 @@ nên xảy ra nếu theo đúng thứ tự đề xuất ở §0.
   cùng body ⇒ một Entry.
 - Tracker reminder không phải health/event ⇒ PATCH `422`; safety-net cron skip + log, không gửi.
 - Build `injectManifest` giữ `navigateFallbackDenylist`; push payload rỗng vẫn hiện fallback, không ném.
+- **§4.4-1 (touch target):** Playwright đo thật trên viewport 390×844 — tab nav height ≥44px, nút
+  `Đóng` dialog ≥44×44px hit area, `scrollWidth <= innerWidth` (0 overflow ngang); test biết đỏ khi
+  ai đó hạ kích thước xuống dưới ngưỡng.
+- **§4.4-2 (contrast):** test token — `border-input` (và token viền badge throttled của 016) đạt ≥3:1
+  với nền trắng; verify bằng đo giá trị token trong `index.css` + tính ratio (không chỉ "nhìn đậm
+  hơn"); các component dùng token cũ được soát hết.
 
 **Ba phép đo tay đã nói trước với chủ, không chặn khoá spec nhưng chặn merge:**
 
