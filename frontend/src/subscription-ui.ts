@@ -122,6 +122,22 @@ export function formatShortDate(value: string): string {
   }).format(new Date(`${value}T00:00:00Z`))
 }
 
+/** Today's calendar date in Vietnam (YYYY-MM-DD), mirroring backend ``_today_vn``.
+ *
+ * The renew dialog must not anchor a LAPSED subscription's new expiry to its
+ * stale milestone (§4.2 veto #8) — the client preview and the server agree on
+ * ``max(expires_on, today)`` even across the midnight boundary, because the
+ * server re-applies the veto when the client omits ``new_expires_on``.
+ */
+export function todayVn(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: VIETNAM_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+}
+
 const periodNames: Record<PeriodUnit, string> = {
   day: 'ngày',
   week: 'tuần',
@@ -242,11 +258,12 @@ export function settingsInvalidationKeys() {
 
 /** Build a fresh renew payload; entry_id is kept by the dialog, not regenerated. */
 export function renewPayload(subscription: Subscription): RenewPayload {
+  const anchor = subscription.expires_on > todayVn() ? subscription.expires_on : todayVn()
   return {
     entry_id: uuidv7(),
     amount: subscription.amount ?? undefined,
     new_expires_on: addPeriod(
-      subscription.expires_on,
+      anchor,
       subscription.period_count,
       subscription.period_unit,
       Number(subscription.started_on.slice(8, 10)),

@@ -5,17 +5,39 @@ anchor-day chain (31/01 → 28/02 → 31/03 → 30/04) and the Decimal-vs-float
 division trap on week/day conversions.
 """
 
+import base64
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
 
+from app.core import crypto
+from app.core.settings import get_settings
 from app.domain.subscription import (
+    SubscriptionInvalid,
     add_period,
     derive_status,
     monthly_amount,
+    renew_amount_or_raise,
+    renew_base,
     round_vnd,
 )
+from app.domain.tracker import _amount_out
+
+
+@pytest.fixture(autouse=True)
+def local_settings(monkeypatch):
+    """A stable master key so the corrupt-ciphertext tests can build one."""
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv(
+        "ENCRYPTION_MASTER_KEY",
+        base64.urlsafe_b64encode(b"x" * 32).decode("ascii"),
+    )
+    get_settings.cache_clear()
+    crypto._cipher.cache_clear()
+    yield
+    get_settings.cache_clear()
+    crypto._cipher.cache_clear()
 
 
 def test_add_period_day_and_week_use_timedelta():
@@ -99,3 +121,42 @@ def test_round_vnd_half_up():
     assert round_vnd(Decimal("1234.5")) == Decimal("1235")
     assert round_vnd(Decimal("1234.4")) == Decimal("1234")
     assert round_vnd(Decimal("1234.499")) == Decimal("1234")
+
+
+def test_renew_base_keeps_live_milestone():
+    """A live subscription is anchored to its own expires_on, not to today."""
+    today = date(2026, 8, 6)
+    assert renew_base(date(2026, 9, 6), today) == date(2026, 9, 6)
+    assert renew_base(date(2026, 8, 6), today) == date(2026, 8, 6)
+
+
+def test_renew_base_resumes_lapsed_from_today():
+    """§4.2 veto #8: a lapsed sub must NOT be anchored to its stale milestone.
+
+    Red-proof: replace ``max(expires_on, today)`` with ``expires_on`` and this
+    test goes red — that is exactly the failure mode the veto exists for.
+    """
+    today = date(2026, 8, 6)
+    assert renew_base(date(2026, 5, 6), today) == today
+
+
+def test_renew_amount_unreadable_plain_garbage_is_guided_422():
+    """A non-ciphertext value (base64/parse error) must become a guided 422."""
+    with pytest.raises(SubscriptionInvalid) as exc:
+        renew_amount_or_raise("not-an-encrypted-value")
+    assert "sửa số tiền" in str(exc.value)
+
+
+def test_renew_amount_unreadable_tampered_tag_is_guided_422():
+    """A tampered AES-GCM tag (InvalidTag) must NOT escape as a 500.
+
+    Red-proof: drop the try/except in ``renew_amount_or_raise`` and this test
+    fails with ``InvalidTag`` instead of the asserted ``SubscriptionInvalid``.
+    """
+    sealed = _amount_out(Decimal("300000"))
+    # Flip one char inside the base64 blob: valid base64, wrong tag.
+    flip_at = len(sealed) // 2
+    tampered = sealed[:flip_at] + ("A" if sealed[flip_at] != "A" else "B") + sealed[flip_at + 1 :]
+    with pytest.raises(SubscriptionInvalid) as exc:
+        renew_amount_or_raise(tampered)
+    assert "sửa số tiền" in str(exc.value)

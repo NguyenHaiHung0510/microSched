@@ -143,6 +143,17 @@ def round_vnd(value: Decimal) -> Decimal:
     return value.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
 
+def renew_base(expires_on: date, today: date) -> date:
+    """Anchor the next period: a lapsed subscription resumes from TODAY.
+
+    Spec §4.2 veto #8: renewing a subscription that expired months ago from the
+    stale milestone would land the new expiry in the past — the owner just paid
+    and the app still reports ``expired``. ``max()`` leaves a live subscription
+    untouched (the veto only fires when the old milestone is already past).
+    """
+    return max(expires_on, today)
+
+
 class SubscriptionCreate(BaseModel):
     """Fields accepted when creating a subscription."""
 
@@ -284,6 +295,30 @@ class SubscriptionInvalid(Exception):
 
 class SubscriptionParentMissing(Exception):
     """The parent tracker is not readable through the gate (→ 404, no leak)."""
+
+
+RENEW_AMOUNT_UNREADABLE_MESSAGE = (
+    "Không đọc được số tiền của đăng ký — sửa số tiền trước khi gia hạn."
+)
+
+
+def renew_amount_or_raise(raw_amount: str) -> Decimal:
+    """Decrypt/parse the stored amount for a renewal, failing LOUDLY as 422.
+
+    The physical column is NOT NULL, but a corrupt row still happens (bad
+    base64 → ``ValueError``; tampered tag → ``InvalidTag``). Renewal cannot
+    record a money entry without a real amount, so both forms must surface as
+    the guided 422 below — never a 500. The list/F6 paths stay tolerant (§4.3);
+    this is the one place where a corrupt amount BLOCKS the write.
+    """
+    try:
+        amount = _amount_in(raw_amount)
+    except Exception:
+        logger.error("Renew blocked: subscription amount unreadable")
+        raise SubscriptionInvalid(RENEW_AMOUNT_UNREADABLE_MESSAGE) from None
+    if amount is None:
+        raise SubscriptionInvalid(RENEW_AMOUNT_UNREADABLE_MESSAGE)
+    return amount
 
 
 class SubscriptionStore:
@@ -662,11 +697,7 @@ class SubscriptionStore:
         self._assert_tracker_kind(tracker)
 
         today = _today_vn()
-        current_amount = _amount_in(subscription.amount)
-        if current_amount is None:
-            raise SubscriptionInvalid(
-                "Không đọc được số tiền của đăng ký — sửa số tiền trước khi gia hạn."
-            )
+        current_amount = renew_amount_or_raise(subscription.amount)
         amount = payload.amount if payload.amount is not None else current_amount
         occurred_at = payload.occurred_at or datetime.now(UTC)
         entry_id = payload.entry_id or _uuid7()
@@ -680,9 +711,8 @@ class SubscriptionStore:
         else:
             # A lapsed subscription resumes from TODAY, not from the stale past
             # milestone (§4.2); for a live one max() is the current expires_on.
-            base = max(subscription.expires_on, today)
             new_expires_on = add_period(
-                base,
+                renew_base(subscription.expires_on, today),
                 subscription.period_count,
                 subscription.period_unit,
                 subscription.started_on.day,

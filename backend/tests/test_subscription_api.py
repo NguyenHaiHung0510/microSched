@@ -18,6 +18,7 @@ from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
+from app.domain.tracker import _amount_out
 from app.main import create_app
 from app.web.deps import get_session, require_session
 
@@ -687,6 +688,249 @@ def test_subscription_expired_and_canceled_not_in_burn(pg_dsn: str):
             listed = await client.get("/api/subscriptions")
             statuses = {item["status"] for item in listed.json()["items"]}
             assert statuses == {"active", "canceled"}
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(
+                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
+            )
+
+    asyncio.run(scenario())
+
+
+def test_renew_entry_id_conflict_is_409_not_retry(pg_dsn: str):
+    """Cùng entry_id nhưng thuộc bản ghi KHÁC ⇒ 409, không nuốt thành retry (§2.4).
+
+    Cùng tracker nhưng khác subscription, và khác tracker — cả hai đều là xung
+    đột thật, không phải lần gửi lại của chính mình. Khi gỡ guard so
+    ``tracker_id``/``subscription_id`` trong ``create_entry``, bài này đỏ.
+    """
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        subscription_ids = []
+        try:
+            tracker_a = await _create_tracker(client)
+            tracker_ids.append(UUID(tracker_a["id"]))
+            tracker_b = await _create_tracker(client)
+            tracker_ids.append(UUID(tracker_b["id"]))
+            today = datetime.now(VN_TZ).date()
+            starts = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+            starts_iso = starts.isoformat()
+            sub_a = await _create_subscription(
+                client, tracker_a["id"], name=f"Sub A {_uuid7()}",
+                started_on=starts_iso, expires_on=starts_iso,
+            )
+            sub_b_same_tracker = await _create_subscription(
+                client, tracker_a["id"], name=f"Sub B {_uuid7()}",
+                started_on=starts_iso, expires_on=starts_iso,
+            )
+            sub_c_other_tracker = await _create_subscription(
+                client, tracker_b["id"], name=f"Sub C {_uuid7()}",
+                started_on=starts_iso, expires_on=starts_iso,
+            )
+            subscription_ids = [
+                UUID(item["id"]) for item in [sub_a, sub_b_same_tracker, sub_c_other_tracker]
+            ]
+
+            entry_id = str(_uuid7())
+            first = await client.post(
+                f"/api/subscriptions/{sub_a['id']}/renew",
+                json={"entry_id": entry_id, "amount": "300000"},
+            )
+            assert first.status_code == 200, first.text
+            assert first.json()["created"] is True
+
+            same_tracker = await client.post(
+                f"/api/subscriptions/{sub_b_same_tracker['id']}/renew",
+                json={"entry_id": entry_id, "amount": "300000"},
+            )
+            assert same_tracker.status_code == 409, same_tracker.text
+
+            other_tracker = await client.post(
+                f"/api/subscriptions/{sub_c_other_tracker['id']}/renew",
+                json={"entry_id": entry_id, "amount": "300000"},
+            )
+            assert other_tracker.status_code == 409, other_tracker.text
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                count = await conn.fetchval(
+                    "SELECT count(*) FROM microsched.entry WHERE id = $1", entry_id
+                )
+                assert count == 1
+                # The rejected renewals must not have pushed their expiry.
+                for sub in (sub_b_same_tracker, sub_c_other_tracker):
+                    stored = await conn.fetchval(
+                        "SELECT expires_on FROM microsched.subscription WHERE id = $1",
+                        sub["id"],
+                    )
+                    assert str(stored) == starts_iso
+            finally:
+                await conn.close()
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(
+                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
+            )
+
+    asyncio.run(scenario())
+
+
+def test_renew_corrupt_amount_returns_422_guided(pg_dsn: str):
+    """Amount hỏng (parse lẫn tampered tag) ⇒ 422 tiếng Việt, không 500 (§4.2).
+
+    Gỡ ``renew_amount_or_raise`` (cho ``InvalidTag``/``ValueError`` bay ra) thì
+    bài này đỏ: tampered tag trở thành 500, plain garbage trở thành 422 với
+    message kỹ thuật tiếng Anh — cả hai đều sai hợp đồng.
+
+    Lưu ý tầng DB: CHECK ``amount LIKE 'enc:v1:%'`` khiến một giá trị KHÔNG có
+    prefix không bao giờ nằm được trong cột, nên dạng "parse lỗi" ở đây phải là
+    một blob có prefix nhưng không giải mã được (b64 hợp lệ về cú pháp CHECK,
+    vỡ ngay trong ``decrypt``) — không phải chuỗi thường như ở unit test.
+    """
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        subscription_ids = []
+        try:
+            tracker = await _create_tracker(client)
+            tracker_ids.append(UUID(tracker["id"]))
+            tomorrow = (datetime.now(VN_TZ).date() + timedelta(days=1)).isoformat()
+            parse_broken = await _create_subscription(
+                client, tracker["id"], name=f"Sub parse {_uuid7()}", expires_on=tomorrow
+            )
+            tag_broken = await _create_subscription(
+                client, tracker["id"], name=f"Sub tag {_uuid7()}", expires_on=tomorrow
+            )
+            subscription_ids = [UUID(parse_broken["id"]), UUID(tag_broken["id"])]
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                # Form 1: prefix hợp lệ nhưng không phải ciphertext thật — lọt
+                # qua CHECK rồi vỡ trong decrypt (ValueError), không phải 500.
+                await conn.execute(
+                    "UPDATE microsched.subscription SET amount = 'enc:v1:AAAA' "
+                    "WHERE id = $1",
+                    parse_broken["id"],
+                )
+                # Form 2: ciphertext hợp lệ nhưng tag bị sửa → InvalidTag.
+                sealed = _amount_out(Decimal("300000"))
+                flip_at = len(sealed) // 2
+                tampered = (
+                    sealed[:flip_at]
+                    + ("A" if sealed[flip_at] != "A" else "B")
+                    + sealed[flip_at + 1 :]
+                )
+                await conn.execute(
+                    "UPDATE microsched.subscription SET amount = $1 WHERE id = $2",
+                    tampered,
+                    tag_broken["id"],
+                )
+            finally:
+                await conn.close()
+
+            for sub in (parse_broken, tag_broken):
+                resp = await client.post(
+                    f"/api/subscriptions/{sub['id']}/renew",
+                    json={"entry_id": str(_uuid7()), "amount": "300000"},
+                )
+                assert resp.status_code == 422, resp.text
+                assert "sửa số tiền" in resp.json()["detail"]
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                count = await conn.fetchval(
+                    "SELECT count(*) FROM microsched.entry "
+                    "WHERE subscription_id = ANY($1::uuid[])",
+                    [UUID(sub["id"]) for sub in (parse_broken, tag_broken)],
+                )
+                assert count == 0
+            finally:
+                await conn.close()
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(
+                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
+            )
+
+    asyncio.run(scenario())
+
+
+def test_renew_two_tabs_same_entry_id_creates_one_entry(pg_dsn: str):
+    """Hai tab cùng bấm gia hạn với CÙNG entry_id ⇒ đúng một entry, một lần đẩy hạn.
+
+    ``SELECT … FOR UPDATE`` trên hàng sub + ``ON CONFLICT DO NOTHING`` trên entry
+    làm hai request chạy tuần tự hoá; kẻ thua trả ``created=False`` và không đụng
+    ``expires_on``. Chạy qua hai client độc lập = hai transaction thật.
+    """
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        subscription_ids = []
+        try:
+            tracker = await _create_tracker(client)
+            tracker_ids.append(UUID(tracker["id"]))
+            today = datetime.now(VN_TZ).date()
+            starts = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+            starts_iso = starts.isoformat()
+            sub = await _create_subscription(
+                client, tracker["id"], name=f"Sub {_uuid7()}",
+                started_on=starts_iso, expires_on=starts_iso, auto_renew=True,
+            )
+            subscription_ids.append(UUID(sub["id"]))
+            entry_id = str(_uuid7())
+            payload = {"entry_id": entry_id, "amount": "300000"}
+
+            client2, engine2 = _make_client(pg_dsn, auth_state)
+            try:
+                first, second = await asyncio.gather(
+                    client.post(f"/api/subscriptions/{sub['id']}/renew", json=payload),
+                    client2.post(f"/api/subscriptions/{sub['id']}/renew", json=payload),
+                )
+            finally:
+                await client2.aclose()
+                await engine2.dispose()
+
+            assert first.status_code == 200, first.text
+            assert second.status_code == 200, second.text
+            created_flags = sorted([first.json()["created"], second.json()["created"]])
+            assert created_flags == [False, True], (first.text, second.text)
+            assert (
+                first.json()["subscription"]["expires_on"]
+                == second.json()["subscription"]["expires_on"]
+            )
+
+            def next_month_anchored(day: str, anchor: int) -> str:
+                value = date.fromisoformat(day)
+                if value.month == 12:
+                    year, month = value.year + 1, 1
+                else:
+                    year, month = value.year, value.month + 1
+                return date(
+                    year, month, min(anchor, calendar.monthrange(year, month)[1])
+                ).isoformat()
+
+            assert first.json()["subscription"]["expires_on"] == next_month_anchored(
+                starts_iso, starts.day
+            )
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                count = await conn.fetchval(
+                    "SELECT count(*) FROM microsched.entry WHERE subscription_id = $1",
+                    sub["id"],
+                )
+                assert count == 1
+            finally:
+                await conn.close()
         finally:
             await client.aclose()
             await engine.dispose()

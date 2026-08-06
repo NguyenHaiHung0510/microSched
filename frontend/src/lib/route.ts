@@ -19,11 +19,34 @@ function snapshot(): string {
   return `${window.location.pathname}${window.location.search}`
 }
 
-/** Push a new URL and notify subscribers; back-end popstate is also caught. */
-export function navigate(path: string): void {
+const NAV_STATE = { microschedNav: true }
+
+/** Navigate and notify subscribers; popstate (browser Back/Forward) is caught too.
+ *
+ * ``replace`` swaps the CURRENT entry instead of pushing a new one — used by
+ * the subscription back button so browser-Back cannot loop back into
+ * ``/subscription`` (F6). Every app navigation stamps ``NAV_STATE`` on the
+ * entry so ``hasAppHistory()`` can tell an in-app push from a cold load.
+ */
+export function navigate(path: string, options: { replace?: boolean } = {}): void {
   if (snapshot() === path) return
-  window.history.pushState(null, '', path)
+  if (options.replace) {
+    window.history.replaceState(NAV_STATE, '', path)
+  } else {
+    window.history.pushState(NAV_STATE, '', path)
+  }
   window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+/** True when the current history entry was created by an in-app navigation.
+ *
+ * A cold-loaded ``/subscription`` has ``history.state === null``; only an
+ * app ``navigate()`` stamps the marker. The subscription back button uses this
+ * to choose replaceState (no Back-loop) over the spec's plain ``navigate('/')``
+ * (cold load, where replacing the initial entry would eat the user's history).
+ */
+export function hasAppHistory(): boolean {
+  return window.history.state?.microschedNav === true
 }
 
 /** Current ``pathname + search`` as one string (e.g. ``/subscription?highlight=id``). */

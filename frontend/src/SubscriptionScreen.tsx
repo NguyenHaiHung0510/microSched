@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { navigate, queryParams, useLocation } from '@/lib/route'
+import { hasAppHistory, navigate, queryParams, useLocation } from '@/lib/route'
 import { uuidv7 } from '@/lib/uuidv7'
 import {
   addPeriod,
@@ -37,6 +37,7 @@ import {
   subscriptionInvalidationKey,
   subscriptionQueryKey,
   subscriptionTrackers,
+  todayVn,
   useSubscriptionWrites,
   type PeriodUnit,
   type RenewPayload,
@@ -252,14 +253,17 @@ function RenewDialog({
 }) {
   const [amount, setAmount] = useState(subscription.amount != null ? String(subscription.amount) : '')
   const [occurredAt, setOccurredAt] = useState(toVietnamDateTimeInput(new Date().toISOString()))
+  // F1: a LAPSED subscription resumes from today (§4.2 veto #8) — anchoring the
+  // default to the stale expires_on would preview a new expiry in the past.
   const [newExpiresOn, setNewExpiresOn] = useState(() =>
     addPeriod(
-      subscription.expires_on,
+      subscription.expires_on > todayVn() ? subscription.expires_on : todayVn(),
       subscription.period_count,
       subscription.period_unit,
       Number(subscription.started_on.slice(8, 10)),
     ),
   )
+  const [expiryEdited, setExpiryEdited] = useState(false)
   const [note, setNote] = useState('')
   // §5.3: the entry_id is born once when the dialog opens and survives network
   // retries — generating a new id on retry would break the idempotency key.
@@ -277,7 +281,10 @@ function RenewDialog({
       entry_id: entryIdRef.current as string,
       amount: amountValue,
       occurred_at: vietnamInputToIso(occurredAt),
-      new_expires_on: newExpiresOn,
+      // Send the date only when the owner actually changed it; an untouched
+      // default must stay on the server's veto max(expires_on, today) so the
+      // client clock can never race the server into a stale expiry (F1).
+      ...(expiryEdited ? { new_expires_on: newExpiresOn } : {}),
       note_md: note.trim() || undefined,
     })
   }
@@ -321,7 +328,10 @@ function RenewDialog({
               className="h-10 bg-card"
               type="date"
               value={newExpiresOn}
-              onChange={(event) => setNewExpiresOn(event.target.value)}
+              onChange={(event) => {
+                setNewExpiresOn(event.target.value)
+                setExpiryEdited(true)
+              }}
             />
           </label>
           <label className="block space-y-1.5 text-sm font-semibold">
@@ -518,13 +528,19 @@ function SettingsBlock({
 }) {
   const showListPrice = items.find((item) => item.key === 'show_list_price')?.value !== false
   const storedLead = items.find((item) => item.key === 'subscription_expiry_lead_days')?.value
-  const [leadDays, setLeadDays] = useState(() => (typeof storedLead === 'number' ? storedLead : 3))
+  // F8: the field is 0–30 (backend clamps to the same bounds). Never SHOW an
+  // out-of-range value — a drifted server row or a typed 99 must not render as
+  // a value the API would reject; the display (and the PATCH) stay in bounds.
+  const clampLead = (value: number) => Math.min(30, Math.max(0, Math.round(value)))
+  const [leadDays, setLeadDays] = useState(() =>
+    typeof storedLead === 'number' ? clampLead(storedLead) : 3,
+  )
   const lastStoredLead = useRef(storedLead)
   // Official "adjust state when props change" pattern: render-phase compare,
   // no effect, no cascading render.
   if (lastStoredLead.current !== storedLead) {
     lastStoredLead.current = storedLead
-    if (typeof storedLead === 'number') setLeadDays(storedLead)
+    if (typeof storedLead === 'number') setLeadDays(clampLead(storedLead))
   }
 
   function changeLeadDays(value: string) {
@@ -534,8 +550,9 @@ function SettingsBlock({
     }
     const parsed = Number(value)
     if (!Number.isInteger(parsed)) return
-    setLeadDays(parsed)
-    if (parsed >= 0 && parsed <= 30) onLeadDays(parsed)
+    const clamped = clampLead(parsed)
+    setLeadDays(clamped)
+    onLeadDays(clamped)
   }
 
   return (
@@ -605,7 +622,13 @@ export function SubscriptionScreen() {
   const highlightId = queryParams(location).get('highlight')
   useEffect(() => {
     if (!highlightId || handledHighlight.current === highlightId) return
-    const card = document.querySelector(`[data-subscription-id="${highlightId}"]`)
+    // F5: never interpolate a URL value into a selector string — a hostile
+    // ``?highlight=`` is raw HTML/selector input. Trust only ids present in
+    // the loaded list, then match by attribute comparison over the DOM.
+    if (!subscriptions.some((subscription) => subscription.id === highlightId)) return
+    const card = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-subscription-id]'),
+    ).find((node) => node.getAttribute('data-subscription-id') === highlightId)
     if (!card) return
     handledHighlight.current = highlightId
     card.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -635,7 +658,11 @@ export function SubscriptionScreen() {
           duration: 10_000,
           action: {
             label: 'Hoàn tác',
-            onClick: () => writes.restoreSubscription.mutate(subscription.id),
+            onClick: () =>
+              writes.restoreSubscription.mutate(subscription.id, {
+                // F10: a failed restore must surface, not silently vanish.
+                onError: (error) => toast.error(errorMessage(error)),
+              }),
           },
         })
       },
@@ -662,7 +689,10 @@ export function SubscriptionScreen() {
             variant="ghost"
             className="size-11 shrink-0"
             aria-label="Quay lại"
-            onClick={() => navigate('/')}
+            // F6: an in-app entry is replaced so browser-Back cannot loop back
+            // into /subscription; a cold-loaded screen keeps the spec's plain
+            // navigate('/') so the initial entry is never eaten.
+            onClick={() => navigate('/', { replace: hasAppHistory() })}
           >
             <ArrowLeft />
           </Button>

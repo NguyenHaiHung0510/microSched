@@ -260,7 +260,13 @@ class TrackerIdConflict(Exception):
 
 
 class EntryIdConflict(Exception):
-    """A client-selected entry ID belongs to a row hidden by a reading gate."""
+    """A client-selected entry ID belongs to a DIFFERENT record (other tracker or
+    subscription) or to a row hidden by a reading gate.
+
+    Spec 011c §2.4: a real conflict must surface as 409 — never be coerced into
+    an idempotent ``created=False`` retry, which would silently swallow a
+    foreign writer's row.
+    """
 
 
 class PrivateWriteLocked(Exception):
@@ -863,6 +869,15 @@ class TrackerStore:
                 if physical.scalar_one_or_none() is not None:
                     raise EntryIdConflict
                 raise RuntimeError("conflicting entry disappeared before it could be read")
+            if (
+                existing.tracker_id != payload.tracker_id
+                or existing.subscription_id != subscription_id
+            ):
+                # The same client id already belongs to a different row: this is
+                # a REAL conflict, not a retry of our own write (§2.4). Swallowing
+                # it as created=False would make renew report success while
+                # expires_on never moves.
+                raise EntryIdConflict
             return existing.id, False
         return inserted_id, True
 
