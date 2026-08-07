@@ -38,6 +38,7 @@ from app.domain.tracker import (
     _clear,
     _sealed,
 )
+from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +507,13 @@ class SubscriptionStore:
         subscription = await self._subscription(db, auth, subscription_id)
         if subscription is None:
             return None
-        return self._subscription_read(subscription, _today_vn())
+        try:
+            return self._subscription_read(subscription, _today_vn())
+        except Exception as error:
+            logger.error("get_subscription unreadable row id=%s: %s", subscription_id, error)
+            raise SubscriptionInvalid(
+                "Dữ liệu đăng ký trong cơ sở dữ liệu không hợp lệ."
+            ) from error
 
     # ----------------------------------------------------------- write paths
 
@@ -542,6 +549,7 @@ class SubscriptionStore:
         if payload.id is None:
             subscription = Subscription(**values)
             db.add(subscription)
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "subscription:create"
             await db.flush()
         else:
             inserted_id = (
@@ -610,6 +618,7 @@ class SubscriptionStore:
         ):
             if field in changes:
                 setattr(subscription, field, changes[field])
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "subscription:update"
         await db.flush()
         return self._subscription_read(subscription, _today_vn())
 
@@ -621,6 +630,7 @@ class SubscriptionStore:
         if subscription is None:
             return None
         subscription.canceled_at = datetime.now(UTC)
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "subscription:cancel"
         await db.flush()
         return self._subscription_read(subscription, _today_vn())
 
@@ -631,6 +641,7 @@ class SubscriptionStore:
         if subscription is None:
             return None
         subscription.canceled_at = None
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "subscription:uncancel"
         await db.flush()
         return self._subscription_read(subscription, _today_vn())
 
@@ -641,6 +652,7 @@ class SubscriptionStore:
         if subscription is None:
             return False
         subscription.deleted_at = datetime.now(UTC)
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "subscription:soft_delete"
         await db.flush()
         return True
 
@@ -663,10 +675,14 @@ class SubscriptionStore:
         subscription = (await db.execute(stmt)).scalar_one_or_none()
         if subscription is None:
             return await self._subscription(db, auth, subscription_id)
-        tracker = await self._parent_tracker(db, auth, subscription.tracker_id)
-        if tracker is not None:
-            self._assert_tracker_kind(tracker)
+        parent_stmt = with_privacy_gate(
+            select(Tracker).where(Tracker.id == subscription.tracker_id), Tracker, auth
+        )
+        parent_tracker = (await db.execute(parent_stmt)).scalar_one_or_none()
+        if parent_tracker is not None:
+            self._assert_tracker_kind(parent_tracker)
         subscription.deleted_at = None
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "subscription:restore"
         await db.flush()
         return subscription
 
@@ -697,8 +713,10 @@ class SubscriptionStore:
         self._assert_tracker_kind(tracker)
 
         today = _today_vn()
-        current_amount = renew_amount_or_raise(subscription.amount)
-        amount = payload.amount if payload.amount is not None else current_amount
+        if payload.amount is not None:
+            amount = payload.amount
+        else:
+            amount = renew_amount_or_raise(subscription.amount)
         occurred_at = payload.occurred_at or datetime.now(UTC)
         entry_id = payload.entry_id or _uuid7()
 
@@ -731,7 +749,7 @@ class SubscriptionStore:
         if not created:
             # Retry of an already-recorded renewal: NEVER push expires_on twice.
             return RenewResult(
-                subscription=self._subscription_read(subscription, today),
+                subscription=self._subscription_read(subscription, today, tolerant=True),
                 entry_id=entry_id,
                 created=False,
             )
@@ -741,7 +759,7 @@ class SubscriptionStore:
             subscription.canceled_at = None
         await db.flush()
         return RenewResult(
-            subscription=self._subscription_read(subscription, today),
+            subscription=self._subscription_read(subscription, today, tolerant=True),
             entry_id=entry_id,
             created=True,
         )

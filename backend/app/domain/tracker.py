@@ -30,6 +30,7 @@ from app.core import crypto
 from app.domain import money
 from app.domain.models import AuthSession, Entry, Subscription, Tracker, TrackerGroup
 from app.domain.reading import can_see_private, not_deleted, readable, with_privacy_gate
+from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -609,6 +610,7 @@ class TrackerStore:
         if payload.id is None:
             tracker = Tracker(**values)
             db.add(tracker)
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:create"
             await db.flush()
         else:
             inserted_id = (
@@ -642,6 +644,7 @@ class TrackerStore:
         changes = payload.model_dump(exclude_unset=True)
         wants_private = "is_private" in changes and changes["is_private"]
         tracker = await self._tracker(db, auth, tracker_id, for_update=True)
+        old_reminder_time = tracker.reminder_time if tracker else None
         if tracker is None:
             return None
         if wants_private and not can_see_private(auth):
@@ -703,9 +706,21 @@ class TrackerStore:
                 raise TrackerNameTaken
             changes["name"] = _sealed(changes["name"])
 
-        for field in ("kind", "direction", "input_mode", "group_id", "unit", "color", "is_private"):
+        for field in (
+            "kind",
+            "direction",
+            "input_mode",
+            "group_id",
+            "unit",
+            "color",
+            "is_private",
+            "reminder_time",
+            "reminder_text",
+        ):
             if field in changes:
                 setattr(tracker, field, changes[field])
+        if "reminder_time" in changes and tracker.reminder_time != old_reminder_time:
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:reminder_time"
         await db.flush()
         return await self._read_tracker(db, auth, tracker)
 
@@ -729,6 +744,7 @@ class TrackerStore:
                 f"Còn {sub_count} đăng ký đang gắn — xoá hoặc chuyển chúng trước."
             )
         tracker.deleted_at = datetime.now(UTC)
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:soft_delete"
         await db.flush()
         return True
 
@@ -743,6 +759,7 @@ class TrackerStore:
         if tracker is None:
             return await self._tracker(db, auth, tracker_id)
         tracker.deleted_at = None
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:restore"
         await db.flush()
         return tracker
 

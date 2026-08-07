@@ -1,0 +1,23 @@
+﻿fix(backend): hoàn tất các bản vá F1-F19, Bacon-F2 và SUB-01-SUB-06 cho timer và subscription
+
+- F1: gọi TrackerStore.create_entry theo hợp đồng 011a (db, auth, payload, subscription_id=None), trả (entry, created). Thêm test PG 2 thiết bị confirm đồng thời 1 dispatch_id chỉ tạo đúng 1 Entry.
+- F2: dùng expiry_lead_days từ app.domain.settings.
+- F3: build CronTimer qua get_sessionmaker từ app.core.db khi ENABLE_INPROCESS_CRON=true.
+- F4: ghi reload marker db.info[CRON_TIMER_RELOAD_INFO_KEY] trên mọi write path (tracker, subscription, settings), trigger reload sink chỉ sau commit (mọi ngoại lệ/rollback hủy marker).
+- F6+F10: chuỗi subscription lập lịch từng ngày đến expires_on; lỗi terminal không chặn lập lịch ngày tiếp theo.
+- F11: xử lý pending rows quá 24h, vượt 4 lần thử, hoặc ineligible bằng biên lai log cron_timer_pending_manual_required và tăng counter.
+- F12: dùng PostgreSQL advisory lock (session-level) quanh dispatch round để serialize các worker.
+- F13: days_left nhận parameter today theo múi giờ VN (+07:00).
+- F16: bộ test suite cron_timer phủ §6.2/§6.3 (due_at boundary, lead change, recovery giữ dispatch_id, backoff, grace 15m, clean shutdown, reload marker, heap rỗng không query, exception không giết loop, EXHAUSTED).
+- Bacon-F2: bọc try-except top-level loop, cập nhật status degraded và backoff khi gặp exception không kỳ vọng.
+- SUB-01: restore_subscription kiểm tra loại parent tracker qua with_privacy_gate (không bỏ tracker archived).
+- SUB-02: xử lý tampered ciphertext/tag trả về 422 tiếng Việt thay vì 500.
+- SUB-03: renew chỉ giải mã subscription.amount khi payload.amount is None.
+- SUB-04: dashboard.py dùng derive_status từ app.domain.subscription.
+- SUB-05: dọn dẹp seed app_setting trong khối finally.
+- E501: sút dòng dài ở test_schema_models.py.
+- F18: bỏ index thừa ix_push_subscription_endpoint bên cạnh UNIQUE(endpoint).
+- F19: phơi health_snapshot() cho readyz với tín hiệu degraded/reloading khi loop lỗi.
+- SUB-06: dọn dẹp dead code và unused imports trong frontend/src/subscription-ui.ts.
+
+Co-Authored-By: gemini-3.6-flash-high <codex@openai.com>

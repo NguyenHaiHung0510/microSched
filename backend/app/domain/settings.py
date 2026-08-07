@@ -29,6 +29,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import AppSetting
+from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,8 @@ async def set_public_setting(
             set_={"value": {"value": validated}},
         )
     )
+    if key == "subscription_expiry_lead_days":
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "settings:subscription_expiry_lead_days"
     return {"key": key, "value": validated}
 
 
