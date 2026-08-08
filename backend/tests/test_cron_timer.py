@@ -1,4 +1,4 @@
-﻿"""Unit tests for the CronTimer heap, settings validation, and reload sink."""
+"""Unit tests for the CronTimer heap, settings validation, and reload sink."""
 
 from datetime import date, datetime
 from uuid import UUID

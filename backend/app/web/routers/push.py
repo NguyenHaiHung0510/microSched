@@ -1,4 +1,4 @@
-﻿"""Web Push subscription and confirmation endpoints."""
+"""Web Push subscription and confirmation endpoints."""
 
 from datetime import datetime, timezone
 from typing import Annotated

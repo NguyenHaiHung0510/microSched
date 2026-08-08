@@ -94,9 +94,7 @@ def _scalar(row: AppSetting) -> Any:
 
 async def list_public_settings(db: AsyncSession) -> list[dict[str, Any]]:
     """List every allowlisted key with its effective (default-applied) value."""
-    result = await db.execute(
-        select(AppSetting).where(AppSetting.key.in_(PUBLIC_SETTING_KEYS))
-    )
+    result = await db.execute(select(AppSetting).where(AppSetting.key.in_(PUBLIC_SETTING_KEYS)))
     rows = {row.key: row for row in result.scalars()}
     items: list[dict[str, Any]] = []
     for key, spec in PUBLIC_SETTING_SPECS.items():
@@ -126,9 +124,7 @@ async def get_public_setting(db: AsyncSession, key: str) -> dict[str, Any] | Non
         raise ValueError(f"Cài đặt '{key}' trong cơ sở dữ liệu không hợp lệ.") from error
 
 
-async def set_public_setting(
-    db: AsyncSession, key: str, value: Any
-) -> dict[str, Any] | None:
+async def set_public_setting(db: AsyncSession, key: str, value: Any) -> dict[str, Any] | None:
     """Upsert one allowlisted key; None when the key is outside the allowlist."""
     spec = public_spec(key)
     if spec is None:

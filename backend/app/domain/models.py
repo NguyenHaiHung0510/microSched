@@ -561,7 +561,6 @@ class AuditLog(UUIDTimestampModel, table=True):
     )
 
 
-
 class PushSubscription(UUIDTimestampModel, table=True):
     """A device registration for Web Push notifications."""
 
@@ -647,6 +646,7 @@ class ReminderDispatch(UUIDTimestampModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+
 
 class AuthSession(UUIDTimestampModel, table=True):
     """A server-side login session identified by an opaque-token hash."""

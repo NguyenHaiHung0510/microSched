@@ -98,8 +98,17 @@ def _today_vn() -> str:
 
 
 async def _create_subscription(
-    client, tracker_id, *, name=None, amount="300000", period_count=1, period_unit="month",
-    started_on=None, expires_on=None, auto_renew=False, **overrides,
+    client,
+    tracker_id,
+    *,
+    name=None,
+    amount="300000",
+    period_count=1,
+    period_unit="month",
+    started_on=None,
+    expires_on=None,
+    auto_renew=False,
+    **overrides,
 ):
     payload = {
         "name": name or f"Sub {_uuid7()}",
@@ -181,9 +190,7 @@ def test_create_subscription_is_idempotent_by_id(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -243,9 +250,7 @@ def test_tracker_type_guard_and_reverse_guard(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -309,7 +314,6 @@ def test_renew_is_idempotent_and_pushes_expiry_once(pg_dsn: str):
             finally:
                 await conn.close()
 
-
             # A chained renewal keeps the anchor day: 31/01 → 28/02 → 31/03 (§4.2).
             third = await client.post(
                 f"/api/subscriptions/{sub['id']}/renew",
@@ -324,9 +328,7 @@ def test_renew_is_idempotent_and_pushes_expiry_once(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -360,9 +362,7 @@ def test_renew_lapsed_subscription_resumes_from_today(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -394,9 +394,7 @@ def test_renew_client_expiry_validation(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -435,9 +433,7 @@ def test_clear_canceled_is_opt_in(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -492,11 +488,17 @@ def test_f6_burn_counts_and_conversions(pg_dsn: str):
                 expires_on=tomorrow,
             )
             expired = await _create_subscription(
-                client, tracker["id"], name="Hết hạn", auto_renew=True,
-                started_on=yesterday, expires_on=yesterday,
+                client,
+                tracker["id"],
+                name="Hết hạn",
+                auto_renew=True,
+                started_on=yesterday,
+                expires_on=yesterday,
             )
-            subscription_ids = [UUID(item["id"]) for item in
-                [month_sub, week_sub, year_sub, day_sub, no_auto, expired]]
+            subscription_ids = [
+                UUID(item["id"])
+                for item in [month_sub, week_sub, year_sub, day_sub, no_auto, expired]
+            ]
 
             resp = await client.get("/api/tracker/dashboard")
             assert resp.status_code == 200, resp.text
@@ -519,9 +521,7 @@ def test_f6_burn_counts_and_conversions(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -540,7 +540,11 @@ def test_f6_corrupted_amount_stays_in_upcoming(pg_dsn: str):
                 client, tracker["id"], amount="100000", auto_renew=True, expires_on=tomorrow
             )
             bad = await _create_subscription(
-                client, tracker["id"], name="Sắp trừ tiền", amount="200000", auto_renew=True,
+                client,
+                tracker["id"],
+                name="Sắp trừ tiền",
+                amount="200000",
+                auto_renew=True,
                 expires_on=tomorrow,
             )
             subscription_ids = [UUID(good["id"]), UUID(bad["id"])]
@@ -568,9 +572,7 @@ def test_f6_corrupted_amount_stays_in_upcoming(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -586,7 +588,10 @@ def test_private_tracker_hides_subscriptions_when_locked(pg_dsn: str):
             tracker_ids.append(UUID(private_tracker["id"]))
             tomorrow = (datetime.now(VN_TZ).date() + timedelta(days=1)).isoformat()
             sub = await _create_subscription(
-                client, private_tracker["id"], name="Sub riêng tư", auto_renew=True,
+                client,
+                private_tracker["id"],
+                name="Sub riêng tư",
+                auto_renew=True,
                 expires_on=tomorrow,
             )
             subscription_ids.append(UUID(sub["id"]))
@@ -612,9 +617,7 @@ def test_private_tracker_hides_subscriptions_when_locked(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -651,9 +654,7 @@ def test_subscription_update_validation_and_name_conflict(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -672,7 +673,11 @@ def test_subscription_expired_and_canceled_not_in_burn(pg_dsn: str):
                 client, tracker["id"], amount="150000", auto_renew=True, expires_on=tomorrow
             )
             canceled = await _create_subscription(
-                client, tracker["id"], name="Đã huỷ", amount="999000", auto_renew=True,
+                client,
+                tracker["id"],
+                name="Đã huỷ",
+                amount="999000",
+                auto_renew=True,
                 expires_on=tomorrow,
             )
             await client.post(f"/api/subscriptions/{canceled['id']}/cancel")
@@ -691,9 +696,7 @@ def test_subscription_expired_and_canceled_not_in_burn(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -720,16 +723,25 @@ def test_renew_entry_id_conflict_is_409_not_retry(pg_dsn: str):
             starts = today.replace(day=calendar.monthrange(today.year, today.month)[1])
             starts_iso = starts.isoformat()
             sub_a = await _create_subscription(
-                client, tracker_a["id"], name=f"Sub A {_uuid7()}",
-                started_on=starts_iso, expires_on=starts_iso,
+                client,
+                tracker_a["id"],
+                name=f"Sub A {_uuid7()}",
+                started_on=starts_iso,
+                expires_on=starts_iso,
             )
             sub_b_same_tracker = await _create_subscription(
-                client, tracker_a["id"], name=f"Sub B {_uuid7()}",
-                started_on=starts_iso, expires_on=starts_iso,
+                client,
+                tracker_a["id"],
+                name=f"Sub B {_uuid7()}",
+                started_on=starts_iso,
+                expires_on=starts_iso,
             )
             sub_c_other_tracker = await _create_subscription(
-                client, tracker_b["id"], name=f"Sub C {_uuid7()}",
-                started_on=starts_iso, expires_on=starts_iso,
+                client,
+                tracker_b["id"],
+                name=f"Sub C {_uuid7()}",
+                started_on=starts_iso,
+                expires_on=starts_iso,
             )
             subscription_ids = [
                 UUID(item["id"]) for item in [sub_a, sub_b_same_tracker, sub_c_other_tracker]
@@ -773,9 +785,7 @@ def test_renew_entry_id_conflict_is_409_not_retry(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -815,8 +825,7 @@ def test_renew_corrupt_amount_returns_422_guided(pg_dsn: str):
                 # Form 1: prefix hợp lệ nhưng không phải ciphertext thật — lọt
                 # qua CHECK rồi vỡ trong decrypt (ValueError), không phải 500.
                 await conn.execute(
-                    "UPDATE microsched.subscription SET amount = 'enc:v1:AAAA' "
-                    "WHERE id = $1",
+                    "UPDATE microsched.subscription SET amount = 'enc:v1:AAAA' WHERE id = $1",
                     parse_broken["id"],
                 )
                 # Form 2: ciphertext hợp lệ nhưng tag bị sửa → InvalidTag.
@@ -846,8 +855,7 @@ def test_renew_corrupt_amount_returns_422_guided(pg_dsn: str):
             conn = await asyncpg.connect(pg_dsn)
             try:
                 count = await conn.fetchval(
-                    "SELECT count(*) FROM microsched.entry "
-                    "WHERE subscription_id = ANY($1::uuid[])",
+                    "SELECT count(*) FROM microsched.entry WHERE subscription_id = ANY($1::uuid[])",
                     [UUID(sub["id"]) for sub in (parse_broken, tag_broken)],
                 )
                 assert count == 0
@@ -856,9 +864,7 @@ def test_renew_corrupt_amount_returns_422_guided(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())
 
@@ -883,8 +889,12 @@ def test_renew_two_tabs_same_entry_id_creates_one_entry(pg_dsn: str):
             starts = today.replace(day=calendar.monthrange(today.year, today.month)[1])
             starts_iso = starts.isoformat()
             sub = await _create_subscription(
-                client, tracker["id"], name=f"Sub {_uuid7()}",
-                started_on=starts_iso, expires_on=starts_iso, auto_renew=True,
+                client,
+                tracker["id"],
+                name=f"Sub {_uuid7()}",
+                started_on=starts_iso,
+                expires_on=starts_iso,
+                auto_renew=True,
             )
             subscription_ids.append(UUID(sub["id"]))
             entry_id = str(_uuid7())
@@ -934,8 +944,6 @@ def test_renew_two_tabs_same_entry_id_creates_one_entry(pg_dsn: str):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())

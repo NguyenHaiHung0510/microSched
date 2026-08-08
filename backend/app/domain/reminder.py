@@ -1,4 +1,4 @@
-﻿"""Domain logic for reminder payloads, dispatcher execution, and confirmation."""
+"""Domain logic for reminder payloads, dispatcher execution, and confirmation."""
 
 import logging
 from datetime import date, datetime, timezone
@@ -51,9 +51,8 @@ def build_subscription_expiry_payload(
     title = "Hạn đăng ký microSched"
     days_left = max(0, (subscription.expires_on - date.today()).days)
 
-    is_private = (
-        (parent_tracker is not None and parent_tracker.is_private)
-        or (subscription.name and subscription.name.startswith("enc:v1:"))
+    is_private = (parent_tracker is not None and parent_tracker.is_private) or (
+        subscription.name and subscription.name.startswith("enc:v1:")
     )
 
     if is_private:
@@ -120,9 +119,7 @@ class ReminderDispatcher:
         payload_builder: Callable[[UUID], dict],
     ) -> DispatchOutcome:
         """Execute dispatch for a single reminder item following the 011b state machine."""
-        dispatch = await self.claim_or_get_dispatch(
-            db, subject_type, subject_id, dispatched_on
-        )
+        dispatch = await self.claim_or_get_dispatch(db, subject_type, subject_id, dispatched_on)
 
         if dispatch.status in (DispatchOutcome.SENT, DispatchOutcome.NO_DEVICE):
             return DispatchOutcome(dispatch.status)
@@ -189,11 +186,7 @@ async def confirm_reminder_dispatch(
 ) -> tuple[object, bool]:
     """Confirm a medication reminder dispatch and idempotently record an Entry."""
     # Lock dispatch row
-    stmt = (
-        select(ReminderDispatch)
-        .where(ReminderDispatch.id == dispatch_id)
-        .with_for_update()
-    )
+    stmt = select(ReminderDispatch).where(ReminderDispatch.id == dispatch_id).with_for_update()
     res = await db.execute(stmt)
     dispatch = res.scalar_one_or_none()
 

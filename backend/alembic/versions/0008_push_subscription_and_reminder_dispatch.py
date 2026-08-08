@@ -1,4 +1,4 @@
-﻿"""Add push_subscription and reminder_dispatch tables for Web Push and Dispatcher.
+"""Add push_subscription and reminder_dispatch tables for Web Push and Dispatcher.
 
 Revision ID: 0008
 Revises: 0007

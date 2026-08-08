@@ -1,4 +1,4 @@
-﻿"""Pure unit tests for reminder payload generation and privacy rules."""
+"""Pure unit tests for reminder payload generation and privacy rules."""
 
 from datetime import date
 from uuid import UUID
