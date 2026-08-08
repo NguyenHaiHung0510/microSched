@@ -142,11 +142,12 @@ async def send_push(
             await db.commit()
             return PushResult.DEAD_SUBSCRIPTION
 
+        # WebPushException text includes provider response bodies in pywebpush;
+        # keep logs to the status and opaque subscription id only.
         logger.warning(
-            "WebPushException status %s for subscription %s: %s",
+            "WebPushException status %s for subscription %s",
             status_code,
             subscription.id,
-            getattr(exc, "message", str(exc)),
         )
         return PushResult.TEMPORARY_FAILURE
     except Exception as exc:

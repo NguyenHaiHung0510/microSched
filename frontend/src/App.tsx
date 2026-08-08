@@ -50,6 +50,13 @@ function todayLabel(): string {
 }
 
 function LoginScreen() {
+  const location = useLocation()
+  // F8: OAuth redirect phải quay về ĐÚNG chỗ người dùng định làm (nhắc thuốc,
+  // subscription…) — nếu không, prompt bị nuốt khi session hết hạn. Chỉ gửi
+  // pathname+search tương đối, không bao giờ origin (chống open-redirect).
+  const returnTo =
+    location.startsWith('/') && !location.startsWith('//') ? location : '/'
+  const loginHref = `/auth/login?return_to=${encodeURIComponent(returnTo)}`
   return (
     <div className="mx-auto max-w-lg space-y-5 pt-10 sm:pt-20">
       <div className="space-y-1 text-center">
@@ -69,7 +76,7 @@ function LoginScreen() {
         </div>
         {/* A real link, not fetch: the OAuth handshake needs a full page navigation. */}
         <Button asChild size="lg">
-          <a href="/auth/login">
+          <a href={loginHref} data-testid="login-link">
             <LogIn data-icon="inline-start" />
             Đăng nhập bằng Google
           </a>
@@ -109,6 +116,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             variant="secondary"
             size="icon-lg"
+            className="size-11"
             aria-label="Đăng xuất"
             disabled={logout.isPending}
             onClick={() => logout.mutate()}

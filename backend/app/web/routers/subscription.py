@@ -88,7 +88,12 @@ async def create_subscription(
 async def read_subscription(
     subscription_id: UUID, db: Database, session: CurrentSession
 ) -> SubscriptionRead:
-    subscription = await store.get_subscription(db, session, subscription_id)
+    try:
+        subscription = await store.get_subscription(db, session, subscription_id)
+    except SubscriptionInvalid as error:
+        raise _invalid(error) from error
+    except Exception as error:
+        raise _invalid(SubscriptionInvalid("Dữ liệu đăng ký không hợp lệ.")) from error
     if subscription is None:
         raise _not_found()
     return subscription

@@ -707,7 +707,6 @@ Index("ix_message_trace_id", Message.__table__.c.trace_id)
 Index("ix_audit_log_trace_id", AuditLog.__table__.c.trace_id)
 Index("ix_audit_log_turn_id", AuditLog.__table__.c.turn_id)
 
-Index("ix_push_subscription_endpoint", PushSubscription.__table__.c.endpoint)
 Index(
     "ix_reminder_dispatch_subject",
     ReminderDispatch.__table__.c.subject_type,

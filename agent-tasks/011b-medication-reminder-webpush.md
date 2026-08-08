@@ -418,6 +418,11 @@ không nhận `tracker`/`slot` từ URL — đó là bản nháp trước T2, t�
 - Offline ⇒ queue **endpoint confirmation này** trong Dexie, không queue generic create-entry. Đây là
   seam bắt buộc để idempotency nhiều thiết bị còn đúng sau reconnect.
 
+> 📝 **2026-08-06 — Ranh giới outbox:** phần offline confirm (queue endpoint confirmation trong
+> Dexie + flush sau reconnect) thuộc **`agent-tasks/017-offline-outbox.md`** (hàng đợi ghi toàn
+> app). Lô 011b hiện chỉ thi công **PrivateGate + retry** cho confirmation; không dựng Dexie queue
+> trong lô này.
+
 Push subscription-expiry dùng URL màn subscription (011c), không mount route này và không tự ghi
 Entry — chủ còn phải trả tiền ở ngoài theo S2.
 
@@ -492,7 +497,13 @@ Reminder chỉ do `011d` schedule in-process. Không có fallback external; khi 
 - Không tạo bảng `push_subscription` gắn `user_id` — app một người dùng, phân biệt theo thiết bị.
 - Không xoá `push_subscription` khi push lỗi tạm thời (mạng, 5xx) — chỉ xoá khi push service xác nhận
   410/404 (§3.3).
-- Không nhắc sub hết hạn ở mọi thời điểm — chỉ 19:00 (do `011d` gọi), tránh nhắc sai giờ.
+- Không nhắc sub hết hạn ở mọi thời điểm — chỉ 07:00 (+07:00) (do `011d` gọi), tránh nhắc sai giờ.
+
+> 📝 **2026-08-06 — CHỦ CHỐT: giờ nhắc sub = 07:00 (+07:00) (JC3), thay 19:00; xem
+> `agent-tasks/011d-inprocess-cron-timer.md`.**
+>
+> 📝 **2026-08-06 — JC docs:** JC2 (renew anchor) / JC3 (giờ nhắc sub 07:00) / JC4 (privacy
+> toast) sẽ được ghi chi tiết khi luồng UI (Kuhn) báo cáo — **placeholder: [chờ báo cáo Kuhn]**.
 - Không dùng `tracker.name` làm fallback payload khi tracker private; `reminder_text` vẫn được phép vì
   đã khoá là bề mặt public do chủ tự viết (§3.2).
 - Không cho `/reminder-confirm` gọi generic create-entry trực tiếp; bắt buộc đi endpoint confirmation

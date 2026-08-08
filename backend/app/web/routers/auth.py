@@ -141,7 +141,9 @@ async def auth_callback(
         logger.exception("Unexpected Google OAuth callback failure")
         token = None
 
-    # The handshake is finished either way, so the state cookie must not outlive it.
+    # `return_to` is single-use: pop it BEFORE clearing the handshake cookie. The
+    # handshake is finished either way, so the state cookie must not outlive it.
+    safe_target = sanitize_return_to(request.session.pop("return_to", "/"))
     request.session.clear()
 
     claims = (token or {}).get("userinfo") or {}
@@ -161,7 +163,6 @@ async def auth_callback(
             detail="Database is not configured",
         )
 
-    safe_target = sanitize_return_to(request.session.get("return_to"))
     response = RedirectResponse(url=safe_target, status_code=status.HTTP_303_SEE_OTHER)
     _set_session_cookie(response, await store.create(email))
     return response

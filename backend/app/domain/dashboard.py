@@ -25,7 +25,7 @@ from app.domain import money
 from app.domain import settings as settings_store
 from app.domain.models import AuthSession, Entry, Subscription, Tracker, TrackerGroup
 from app.domain.reading import not_deleted, readable, with_privacy_gate
-from app.domain.subscription import monthly_amount
+from app.domain.subscription import derive_status, monthly_amount
 
 logger = logging.getLogger(__name__)
 
@@ -393,7 +393,7 @@ class DashboardService:
         corrupted = 0
         upcoming: list[F6Upcoming] = []
         for subscription, _tracker in rows:
-            if subscription.canceled_at is not None or subscription.expires_on < today:
+            if derive_status(subscription.expires_on, subscription.canceled_at, today) != "active":
                 continue
             try:
                 name = crypto.decrypt(subscription.name)

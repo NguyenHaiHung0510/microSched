@@ -9,8 +9,7 @@ import { useMutation } from '@tanstack/react-query'
 
 import { apiRequest } from '@/api'
 import { VIETNAM_TIME_ZONE } from '@/calendar-ui'
-import { uuidv7 } from '@/lib/uuidv7'
-import { formatVnd, trackerQueryKey, type Tracker } from '@/tracker-ui'
+import { formatVnd, type Tracker } from '@/tracker-ui'
 
 export type SubscriptionStatus = 'active' | 'canceled' | 'expired'
 export type PeriodUnit = 'day' | 'week' | 'month' | 'year'
@@ -149,10 +148,6 @@ export function periodLabel(count: number, unit: PeriodUnit): string {
   return `${count} ${periodNames[unit]}`
 }
 
-export function amountPerPeriod(amount: number | null, count: number, unit: PeriodUnit): string {
-  return amount == null ? 'không đọc được' : `${formatVnd(amount)} / ${periodLabel(count, unit)}`
-}
-
 export function statusLabel(status: SubscriptionStatus): string {
   return status === 'active' ? 'Đang hoạt động' : status === 'canceled' ? 'Đã huỷ' : 'Hết hạn'
 }
@@ -248,25 +243,5 @@ export function useSubscriptionWrites(refresh: () => void) {
     deleteSubscription,
     restoreSubscription,
     setSetting,
-  }
-}
-
-/** Settings + dashboard share invalidation when a setting changes. */
-export function settingsInvalidationKeys() {
-  return [subscriptionQueryKey('settings'), trackerQueryKey('dashboard')]
-}
-
-/** Build a fresh renew payload; entry_id is kept by the dialog, not regenerated. */
-export function renewPayload(subscription: Subscription): RenewPayload {
-  const anchor = subscription.expires_on > todayVn() ? subscription.expires_on : todayVn()
-  return {
-    entry_id: uuidv7(),
-    amount: subscription.amount ?? undefined,
-    new_expires_on: addPeriod(
-      anchor,
-      subscription.period_count,
-      subscription.period_unit,
-      Number(subscription.started_on.slice(8, 10)),
-    ),
   }
 }

@@ -317,7 +317,7 @@ def test_renew_is_idempotent_and_pushes_expiry_once(pg_dsn: str):
             # A chained renewal keeps the anchor day: 31/01 → 28/02 → 31/03 (§4.2).
             third = await client.post(
                 f"/api/subscriptions/{sub['id']}/renew",
-                json={"entry_id": str(_uuid7()), "amount": "300000"},
+                json={"entry_id": str(_uuid7())},
             )
             assert third.status_code == 200, third.text
             assert third.json()["subscription"]["expires_on"] == next_month_anchored(
@@ -844,13 +844,23 @@ def test_renew_corrupt_amount_returns_422_guided(pg_dsn: str):
             finally:
                 await conn.close()
 
+            # 1. SUB-03: when amount is omitted in payload, corrupt stored amount returns 422 guided
+            for sub in (parse_broken, tag_broken):
+                resp = await client.post(
+                    f"/api/subscriptions/{sub['id']}/renew",
+                    json={"entry_id": str(_uuid7())},
+                )
+                assert resp.status_code == 422, resp.text
+                assert "sửa số tiền" in resp.json()["detail"]
+
+            # 2. SUB-03: when amount is provided in payload, renew succeeds
+            #    without decoding corrupt stored amount
             for sub in (parse_broken, tag_broken):
                 resp = await client.post(
                     f"/api/subscriptions/{sub['id']}/renew",
                     json={"entry_id": str(_uuid7()), "amount": "300000"},
                 )
-                assert resp.status_code == 422, resp.text
-                assert "sửa số tiền" in resp.json()["detail"]
+                assert resp.status_code == 200, resp.text
 
             conn = await asyncpg.connect(pg_dsn)
             try:
@@ -858,7 +868,7 @@ def test_renew_corrupt_amount_returns_422_guided(pg_dsn: str):
                     "SELECT count(*) FROM microsched.entry WHERE subscription_id = ANY($1::uuid[])",
                     [UUID(sub["id"]) for sub in (parse_broken, tag_broken)],
                 )
-                assert count == 0
+                assert count == 2
             finally:
                 await conn.close()
         finally:
@@ -941,6 +951,90 @@ def test_renew_two_tabs_same_entry_id_creates_one_entry(pg_dsn: str):
                 assert count == 1
             finally:
                 await conn.close()
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
+
+    asyncio.run(scenario())
+
+
+def test_get_subscription_tampered_tag_returns_422(pg_dsn: str):
+    """SUB-02: reading a single subscription with a tampered tag returns 422, non-500."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        subscription_ids = []
+        try:
+            tracker = await _create_tracker(client)
+            tracker_ids.append(UUID(tracker["id"]))
+            sub = await _create_subscription(client, tracker["id"])
+            subscription_ids.append(UUID(sub["id"]))
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                sealed = _amount_out(Decimal("500000"))
+                flip_at = len(sealed) // 2
+                tampered = (
+                    sealed[:flip_at]
+                    + ("A" if sealed[flip_at] != "A" else "B")
+                    + sealed[flip_at + 1 :]
+                )
+                await conn.execute(
+                    "UPDATE microsched.subscription SET amount = $1 WHERE id = $2",
+                    tampered,
+                    sub["id"],
+                )
+            finally:
+                await conn.close()
+
+            resp = await client.get(f"/api/subscriptions/{sub['id']}")
+            assert resp.status_code == 422, resp.text
+            assert resp.status_code != 500
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
+
+    asyncio.run(scenario())
+
+
+def test_restore_subscription_checks_kind_even_if_tracker_archived(pg_dsn: str):
+    """SUB-01: sequence archive tracker ? switch kind ? restore sub ? 422."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        subscription_ids = []
+        try:
+            tracker = await _create_tracker(client)
+            tracker_ids.append(UUID(tracker["id"]))
+            sub = await _create_subscription(client, tracker["id"])
+            subscription_ids.append(UUID(sub["id"]))
+
+            # 1. Soft-delete subscription
+            del_resp = await client.delete(f"/api/subscriptions/{sub['id']}")
+            assert del_resp.status_code == 204
+
+            # 2. Archive (soft-delete) parent tracker in DB
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute(
+                    "UPDATE microsched.tracker SET deleted_at = NOW(), "
+                    "input_mode = 'event', kind = 'health' WHERE id = $1",
+                    UUID(tracker["id"]),
+                )
+            finally:
+                await conn.close()
+
+            # 3. Restore subscription: must check parent tracker kind via
+            #    with_privacy_gate and raise 422
+            resp = await client.post(f"/api/subscriptions/{sub['id']}/restore")
+            assert resp.status_code == 422, resp.text
+            assert "t\u00e0i ch\u00ednh" in resp.json()["detail"]
         finally:
             await client.aclose()
             await engine.dispose()

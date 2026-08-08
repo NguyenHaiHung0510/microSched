@@ -75,9 +75,16 @@ Scheduler in-process giữ toàn bộ lịch trong RAM:
 Owner đã chọn scheduler in-process là production target duy nhất và loại bỏ hoàn toàn Google Cloud Scheduler. Các decision record hiện hành vẫn nói ngược (`docs/architecture-brief.md` §3/§5; `docs/devops-brief.md` §10; `CLAUDE.md`), nên executor không được activate trước khi owner thêm dated note vào các record đó. 011b đã bỏ ba khe `08:00`/`15:00`/`19:00`; đây là thay đổi kiến trúc được owner chỉ đạo, không được suy ra chỉ từ việc app always-on:
 
 - Timer dùng `tracker.reminder_time` **chính xác**, không lượng tử hoá qua `assign_slot()`.
-- Timer giữ giờ `19:00` cho subscription expiry reminder, vì đó là nhắc theo ngày chứ không phải giờ thuốc.
+- Timer giữ giờ `07:00` cho subscription expiry reminder, vì đó là nhắc theo ngày chứ không phải giờ thuốc.
 - VAPID, payload, `reminder_dispatch` và confirmation của 011b được tái sử dụng; 011b sở hữu dispatcher, 011d sở hữu lịch/trigger.
 - Google Cloud Scheduler, external reminder endpoint và mọi scheduler thứ hai đều không được hỗ trợ. `reminder_dispatch` idempotency là hàng rào recovery/chống duplicate, không phải giấy phép dual-run.
+
+> 📝 **2026-08-06 — CHỦ CHỐT: giờ nhắc sub = 07:00 (+07:00) (JC3), thay 19:00; xem
+> `agent-tasks/011d-inprocess-cron-timer.md`.** Bản trước của mục này ghi `19:00`; đã đổi đồng bộ
+> ở §1.3 (`SUBSCRIPTION_REMINDER_TIME`) và §6.2.
+>
+> 📝 **2026-08-06 — JC docs:** JC2 (renew anchor) / JC3 (giờ nhắc sub 07:00) / JC4 (privacy
+> toast) sẽ được ghi chi tiết khi luồng UI (Kuhn) báo cáo — **placeholder: [chờ báo cáo Kuhn]**.
 
 Loại Google Cloud Scheduler làm mất external retry policy, attempt deadline và result reporting độc lập với process FastAPI. 011d thay phần cần cho reminder bằng một contract cụ thể: tối đa 4 delivery attempts bền qua restart; backoff `30s → 2m → 10m`; timeout Web Push 20 giây; `pending` row recovery 24 giờ; structured receipt/log và supervision khiến process restart nếu loop chết. Đây vẫn **không tương đương hoàn toàn** với một monitor chạy ngoài app: Fly/process chết suốt outage dài không thể tự gửi alert độc lập. Contract đúng là lỗi không được chết im lặng trong process, pending vượt ngưỡng/hết quota để lại biên lai manual handling, và không hứa guaranteed delivery.
 
@@ -201,15 +208,18 @@ Nạp những subscription thỏa:
 
 Đọc ngưỡng bằng `expiry_lead_days(db)` của 011c, không đọc `AppSetting` tự do và không hard-code `3`. Gọi `L = subscription_expiry_lead_days`.
 
-Subscription chỉ có một reminder mỗi ngày lúc `SUBSCRIPTION_REMINDER_TIME = time(19, 0)`:
+Subscription chỉ có một reminder mỗi ngày lúc `SUBSCRIPTION_REMINDER_TIME = time(7, 0)`:
 
 ```text
 first_date = max(today_vn, expires_on - L ngày)
 candidate dates = first_date ... expires_on, mỗi ngày một occurrence
-due_at = candidate date 19:00 +07:00
+due_at = candidate date 07:00 +07:00
 ```
 
-Nếu `19:00` hôm nay đã qua thì candidate đầu tiên là ngày mai, miễn vẫn `<= expires_on`. Subscription đã hết hạn, đã huỷ, bị xoá mềm hoặc parent tracker không hợp lệ không được đưa vào heap. Điều kiện eligibility vẫn phải được kiểm lại tại dispatch để bảo vệ trước thay đổi ngoài đường API.
+Nếu `07:00` hôm nay đã qua thì candidate đầu tiên là ngày mai, miễn vẫn `<= expires_on`. Subscription đã hết hạn, đã huỷ, bị xoá mềm hoặc parent tracker không hợp lệ không được đưa vào heap. Điều kiện eligibility vẫn phải được kiểm lại tại dispatch để bảo vệ trước thay đổi ngoài đường API.
+
+> 📝 **2026-08-06 — CHỦ CHỐT (D1):** `SUBSCRIPTION_REMINDER_TIME` = **07:00 (+07:00)**, thay
+> `19:00`; xem dated note ở §0.3. Mọi dòng "candidate 19:00" trong acceptance (§6.2) đã đổi theo.
 
 ### 1.4 Vòng đời heap và khôi phục pending sau crash
 
@@ -619,7 +629,7 @@ Mỗi bài sau phải có một red-proof: cố ý gỡ đúng guard/nhánh đan
 
 - `reminder_time` 08:00/23:59 và ngày chuyển tiếp tạo đúng `due_at` aware +07:00; không có naive datetime.
 - Tracker dùng exact-time trực tiếp (không còn assign_slot trong repo).
-- Subscription với lead `3`, expiry hôm nay/+1/+3/+10 ngày tạo đúng candidate 19:00; canceled/deleted/expired bị loại; đổi `subscription_expiry_lead_days` rồi reload đổi lịch.
+- Subscription với lead `3`, expiry hôm nay/+1/+3/+10 ngày tạo đúng candidate 07:00; canceled/deleted/expired bị loại; đổi `subscription_expiry_lead_days` rồi reload đổi lịch.
 - Tie cùng `due_at` có thứ tự deterministic; batch pop đủ các item đã due.
 - Heap rỗng chờ event vô thời hạn; fake repository query count không tăng trong thời gian chờ.
 - Timer ngủ tới deadline và `request_reload()` đánh thức sớm; item cũ bị thay bằng snapshot mới, không dispatch subject đã xoá/tắt reminder.

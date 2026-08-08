@@ -14,6 +14,8 @@ export type FixtureTracker = {
   group_id: string | null
   unit: string | null
   color: string | null
+  reminder_time: string | null
+  reminder_text: string | null
   is_private: boolean
   last_entry_at: string | null
   entry_count_30d: number
@@ -47,6 +49,8 @@ function tracker(overrides: Partial<FixtureTracker>): FixtureTracker {
     group_id: null,
     unit: null,
     color: null,
+    reminder_time: null,
+    reminder_text: null,
     is_private: false,
     last_entry_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
     entry_count_30d: 3,

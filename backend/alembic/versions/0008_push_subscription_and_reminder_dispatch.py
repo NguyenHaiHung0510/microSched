@@ -48,13 +48,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("endpoint", name=op.f("uq_push_subscription_endpoint")),
         schema="microsched",
     )
-    op.create_index(
-        "ix_push_subscription_endpoint",
-        "push_subscription",
-        ["endpoint"],
-        unique=False,
-        schema="microsched",
-    )
 
     op.create_table(
         "reminder_dispatch",
@@ -161,9 +154,5 @@ def downgrade() -> None:
     op.drop_table("reminder_dispatch", schema="microsched")
 
     op.execute("DROP TRIGGER IF EXISTS set_updated_at ON microsched.push_subscription")
-    op.drop_index(
-        "ix_push_subscription_endpoint",
-        table_name="push_subscription",
-        schema="microsched",
-    )
+
     op.drop_table("push_subscription", schema="microsched")

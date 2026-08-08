@@ -34,16 +34,22 @@ async def lifespan(app: FastAPI):
     timer = build_cron_timer_if_enabled()
     app.state.cron_timer = timer
     app.state.cron_timer_task = None
-    if timer is not None:
-        app.state.cron_timer_task = asyncio.create_task(timer.run(), name="microsched-cron-timer")
-    try:
+    if timer is None:
         yield
-    finally:
-        if timer is not None:
+        return
+
+    # A detached create_task only exposes a fatal timer failure during shutdown,
+    # leaving HTTP healthy while reminders are dead. TaskGroup supervises the
+    # timer: exhausted bounded reload retries propagate through lifespan so Fly
+    # can restart and rehydrate from the durable dispatch rows.
+    async with asyncio.TaskGroup() as task_group:
+        app.state.cron_timer_task = task_group.create_task(
+            timer.run(), name="microsched-cron-timer"
+        )
+        try:
+            yield
+        finally:
             await timer.stop()
-        task = app.state.cron_timer_task
-        if task is not None:
-            await task
 
 
 logger = logging.getLogger(__name__)

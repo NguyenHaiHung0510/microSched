@@ -35,6 +35,7 @@ import {
   type Subscription,
 } from '@/subscription-ui'
 import { errorMessage } from '@/tracker-undo'
+import { ensurePushSubscription } from '@/push-subscription'
 import {
   backdateOptions,
   capturePayload,
@@ -239,13 +240,24 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   function submitTracker(payload: TrackerWritePayload) {
     if (editingTracker) {
-      writes.updateTracker.mutate(
-        { trackerId: editingTracker.id, payload },
-        {
-          onSuccess: () => setEditingTracker(null),
-          onError: (error) => toast.error(errorMessage(error)),
-        },
-      )
+      const { register_push: registerPush, ...trackerPayload } = payload
+      const saveTracker = () =>
+        writes.updateTracker.mutate(
+          { trackerId: editingTracker.id, payload: trackerPayload },
+          {
+            onSuccess: () => setEditingTracker(null),
+            onError: (error) => toast.error(errorMessage(error)),
+          },
+        )
+      if (registerPush) {
+        void ensurePushSubscription()
+          .then(saveTracker)
+          .catch((error: unknown) =>
+            toast.error(error instanceof Error ? error.message : errorMessage(error)),
+          )
+      } else {
+        saveTracker()
+      }
       return
     }
     writes.createTracker.mutate(payload, {
@@ -313,7 +325,11 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   // Tracker/dashboard errors render inside their own panels (M3); this card
   // covers the remaining shared queries only.
-  const queryError = groupsQuery.error ?? entriesQuery.error
+  const queryError =
+    groupsQuery.error ??
+    entriesQuery.error ??
+    subscriptionsQuery.error ??
+    settingsQuery.error
   const showListPrice =
     settingsQuery.data?.items.find((item) => item.key === 'show_list_price')?.value !== false
   const pendingForm = writes.createTracker.isPending || writes.updateTracker.isPending

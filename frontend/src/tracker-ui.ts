@@ -36,6 +36,8 @@ export type Tracker = {
   group_id: string | null
   unit: string | null
   color: string | null
+  reminder_time: string | null
+  reminder_text: string | null
   is_private: boolean
   last_entry_at: string | null
   entry_count_30d: number
@@ -293,6 +295,8 @@ export function useTrackerWrites(refresh: () => void) {
       input_mode?: TrackerInputMode
       group_id?: string | null
       unit?: string | null
+      reminder_time?: string | null
+      reminder_text?: string | null
       is_private?: boolean
     }) =>
       apiRequest<Tracker>('/api/tracker/trackers', {
@@ -307,7 +311,20 @@ export function useTrackerWrites(refresh: () => void) {
       payload,
     }: {
       trackerId: string
-      payload: Partial<Pick<Tracker, 'name' | 'kind' | 'direction' | 'input_mode' | 'group_id' | 'unit' | 'is_private'>>
+      payload: Partial<
+        Pick<
+          Tracker,
+          | 'name'
+          | 'kind'
+          | 'direction'
+          | 'input_mode'
+          | 'group_id'
+          | 'unit'
+          | 'is_private'
+          | 'reminder_time'
+          | 'reminder_text'
+        >
+      >
     }) =>
       apiRequest<Tracker>(`/api/tracker/trackers/${trackerId}`, {
         method: 'PATCH',

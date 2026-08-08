@@ -16,7 +16,7 @@ four structural differences that the 011a spec (§2) pins down:
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -30,6 +30,7 @@ from app.core import crypto
 from app.domain import money
 from app.domain.models import AuthSession, Entry, Subscription, Tracker, TrackerGroup
 from app.domain.reading import can_see_private, not_deleted, readable, with_privacy_gate
+from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,8 @@ class TrackerCreate(BaseModel):
     group_id: UUID | None = None
     unit: str | None = None
     color: str | None = None
+    reminder_time: time | None = None
+    reminder_text: str | None = None
     is_private: bool = False
 
     @model_validator(mode="after")
@@ -122,6 +125,10 @@ class TrackerCreate(BaseModel):
             self.color = self.color.strip() or None
         if self.unit is not None:
             self.unit = self.unit.strip() or None
+        if self.reminder_text is not None:
+            self.reminder_text = self.reminder_text.strip() or None
+        if self.reminder_time is not None and (self.kind != "health" or self.input_mode != "event"):
+            raise ValueError("reminder_time chỉ dùng cho tracker sức khoẻ một chạm.")
         if self.id is not None and self.id.version != 7:
             raise ValueError("id must be a UUIDv7")
         return self
@@ -137,6 +144,8 @@ class TrackerUpdate(BaseModel):
     group_id: UUID | None = None
     unit: str | None = None
     color: str | None = None
+    reminder_time: time | None = None
+    reminder_text: str | None = None
     is_private: bool | None = None
 
     @model_validator(mode="after")
@@ -147,6 +156,8 @@ class TrackerUpdate(BaseModel):
             self.color = self.color.strip() or None
         if "unit" in self.model_fields_set and self.unit is not None:
             self.unit = self.unit.strip() or None
+        if "reminder_text" in self.model_fields_set and self.reminder_text is not None:
+            self.reminder_text = self.reminder_text.strip() or None
         # Explicit null on a non-nullable patch field must 422 (M5), not silently
         # fall back to "not in payload" semantics; only group_id/unit/color may be
         # explicitly nulled (that is how the UI clears them).
@@ -167,6 +178,8 @@ class TrackerRead(BaseModel):
     group_id: UUID | None
     unit: str | None
     color: str | None
+    reminder_time: time | None
+    reminder_text: str | None
     is_private: bool
     last_entry_at: datetime | None
     entry_count_30d: int
@@ -387,6 +400,8 @@ class TrackerStore:
             group_id=tracker.group_id,
             unit=tracker.unit,
             color=tracker.color,
+            reminder_time=tracker.reminder_time,
+            reminder_text=tracker.reminder_text,
             is_private=tracker.is_private,
             last_entry_at=last.get(tracker.id),
             entry_count_30d=count.get(tracker.id, 0),
@@ -604,11 +619,16 @@ class TrackerStore:
             "group_id": payload.group_id,
             "unit": payload.unit,
             "color": payload.color,
+            # reminder_text is deliberately plaintext: it is the owner-chosen
+            # public lock-screen surface, not private tracker content.
+            "reminder_time": payload.reminder_time,
+            "reminder_text": payload.reminder_text,
             "is_private": payload.is_private,
         }
         if payload.id is None:
             tracker = Tracker(**values)
             db.add(tracker)
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:create"
             await db.flush()
         else:
             inserted_id = (
@@ -631,6 +651,7 @@ class TrackerStore:
                 return result
             inserted = await db.execute(select(Tracker).where(Tracker.id == inserted_id))
             tracker = inserted.scalar_one()
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:create"
         result = await self._read_tracker(db, auth, tracker)
         result.created = True
         return result
@@ -642,6 +663,7 @@ class TrackerStore:
         changes = payload.model_dump(exclude_unset=True)
         wants_private = "is_private" in changes and changes["is_private"]
         tracker = await self._tracker(db, auth, tracker_id, for_update=True)
+        old_reminder_time = tracker.reminder_time if tracker else None
         if tracker is None:
             return None
         if wants_private and not can_see_private(auth):
@@ -688,6 +710,7 @@ class TrackerStore:
 
         new_input_mode = changes.get("input_mode", tracker.input_mode)
         new_unit = changes.get("unit", tracker.unit)
+        new_reminder_time = changes.get("reminder_time", tracker.reminder_time)
         if new_input_mode != "quantity":
             if changes.get("unit") is not None:
                 raise TrackerInvalid("unit chỉ được dùng cho tracker kiểu 'quantity'.")
@@ -698,14 +721,29 @@ class TrackerStore:
             if new_unit is None:
                 raise TrackerInvalid("Tracker kiểu 'quantity' phải có đơn vị (unit).")
 
+        if new_reminder_time is not None and (new_kind != "health" or new_input_mode != "event"):
+            raise TrackerInvalid("reminder_time chỉ dùng cho tracker sức khoẻ một chạm.")
+
         if "name" in changes:
             if await self._tracker_name_taken(db, auth, changes["name"], exclude_id=tracker.id):
                 raise TrackerNameTaken
             changes["name"] = _sealed(changes["name"])
 
-        for field in ("kind", "direction", "input_mode", "group_id", "unit", "color", "is_private"):
+        for field in (
+            "kind",
+            "direction",
+            "input_mode",
+            "group_id",
+            "unit",
+            "color",
+            "is_private",
+            "reminder_time",
+            "reminder_text",
+        ):
             if field in changes:
                 setattr(tracker, field, changes[field])
+        if "reminder_time" in changes and tracker.reminder_time != old_reminder_time:
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:reminder_time"
         await db.flush()
         return await self._read_tracker(db, auth, tracker)
 
@@ -727,6 +765,7 @@ class TrackerStore:
         if sub_count:
             raise TrackerInvalid(f"Còn {sub_count} đăng ký đang gắn — xoá hoặc chuyển chúng trước.")
         tracker.deleted_at = datetime.now(UTC)
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:soft_delete"
         await db.flush()
         return True
 
@@ -741,6 +780,7 @@ class TrackerStore:
         if tracker is None:
             return await self._tracker(db, auth, tracker_id)
         tracker.deleted_at = None
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:restore"
         await db.flush()
         return tracker
 

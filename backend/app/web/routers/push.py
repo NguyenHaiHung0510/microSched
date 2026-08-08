@@ -15,7 +15,7 @@ from app.domain.push import validate_push_endpoint
 from app.domain.reminder import confirm_reminder_dispatch
 from app.web.deps import get_session, require_session
 
-router = APIRouter(prefix="/api", tags=["push"])
+router = APIRouter(tags=["push"])
 
 
 class PushSubscribeRequest(BaseModel):
