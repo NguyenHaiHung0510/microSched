@@ -412,9 +412,7 @@ class SubscriptionStore:
         except Exception:
             if not tolerant:
                 raise
-            logger.error(
-                "Subscription list skipped an unreadable name (id=%s)", subscription.id
-            )
+            logger.error("Subscription list skipped an unreadable name (id=%s)", subscription.id)
             return None
         amount = None
         corrupted = False
@@ -558,9 +556,7 @@ class SubscriptionStore:
                 )
                 if physical.scalar_one_or_none() is not None:
                     raise SubscriptionIdConflict
-                raise RuntimeError(
-                    "conflicting subscription disappeared before it could be read"
-                )
+                raise RuntimeError("conflicting subscription disappeared before it could be read")
             inserted = await db.execute(select(Subscription).where(Subscription.id == inserted_id))
             subscription = inserted.scalar_one()
         read = self._subscription_read(subscription, _today_vn())

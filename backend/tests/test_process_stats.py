@@ -1,4 +1,4 @@
-﻿import textwrap
+import textwrap
 from datetime import UTC, datetime, timedelta
 
 import app.core.process_stats as process_stats

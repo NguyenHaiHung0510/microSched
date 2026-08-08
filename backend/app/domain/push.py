@@ -1,4 +1,4 @@
-﻿"""Domain logic for Web Push notifications, subscription management, and pruning."""
+"""Domain logic for Web Push notifications, subscription management, and pruning."""
 
 import asyncio
 import json

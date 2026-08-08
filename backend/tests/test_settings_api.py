@@ -168,9 +168,7 @@ def test_settings_valid_keys_validate_values(pg_dsn: str):
                 "/api/settings/subscription_expiry_lead_days", json={"value": True}
             )
             assert resp.status_code == 422, resp.text
-            resp = await client.patch(
-                "/api/settings/show_list_price", json={"value": "yes"}
-            )
+            resp = await client.patch("/api/settings/show_list_price", json={"value": "yes"})
             assert resp.status_code == 422, resp.text
             # Out of bounds ⇒ 422.
             resp = await client.patch(
@@ -188,9 +186,7 @@ def test_settings_valid_keys_validate_values(pg_dsn: str):
             )
             assert resp.status_code == 200, resp.text
             assert resp.json() == {"key": "subscription_expiry_lead_days", "value": 7}
-            resp = await client.patch(
-                "/api/settings/show_list_price", json={"value": False}
-            )
+            resp = await client.patch("/api/settings/show_list_price", json={"value": False})
             assert resp.status_code == 200, resp.text
             resp = await client.get("/api/settings")
             assert resp.status_code == 200
@@ -216,16 +212,17 @@ def test_settings_valid_keys_validate_values(pg_dsn: str):
 
 def test_settings_corrupt_stored_value_is_loud_on_read_path(pg_dsn: str):
     """A corrupt allowlisted row 422s the settings API (loud), not a silent guess."""
+
     async def scenario():
         client, engine = _make_client(pg_dsn)
         try:
             conn = await asyncpg.connect(pg_dsn)
             try:
-                    await conn.execute(
-                        "INSERT INTO microsched.app_setting (key, value) VALUES "
-                        "('subscription_expiry_lead_days', $1::jsonb) ON CONFLICT (key) DO NOTHING",
-                        json.dumps({"value": "không phải số"}),
-                    )
+                await conn.execute(
+                    "INSERT INTO microsched.app_setting (key, value) VALUES "
+                    "('subscription_expiry_lead_days', $1::jsonb) ON CONFLICT (key) DO NOTHING",
+                    json.dumps({"value": "không phải số"}),
+                )
             finally:
                 await conn.close()
             resp = await client.get("/api/settings/subscription_expiry_lead_days")
@@ -236,8 +233,7 @@ def test_settings_corrupt_stored_value_is_loud_on_read_path(pg_dsn: str):
             conn = await asyncpg.connect(pg_dsn)
             try:
                 await conn.execute(
-                    "DELETE FROM microsched.app_setting WHERE key = "
-                    "'subscription_expiry_lead_days'"
+                    "DELETE FROM microsched.app_setting WHERE key = 'subscription_expiry_lead_days'"
                 )
             finally:
                 await conn.close()

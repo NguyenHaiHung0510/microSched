@@ -330,7 +330,8 @@ def test_0008_tables_have_updated_at_triggers(pg_dsn: str) -> None:
             # 2. Test reminder_dispatch trigger
             dispatch_res = await conn.fetchrow(
                 """
-                INSERT INTO microsched.reminder_dispatch (subject_type, subject_id, dispatched_on, status)
+                INSERT INTO microsched.reminder_dispatch
+                    (subject_type, subject_id, dispatched_on, status)
                 VALUES ('tracker', gen_random_uuid(), CURRENT_DATE, 'pending')
                 RETURNING id, created_at, updated_at;
                 """
