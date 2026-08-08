@@ -35,9 +35,7 @@ async def lifespan(app: FastAPI):
     app.state.cron_timer = timer
     app.state.cron_timer_task = None
     if timer is not None:
-        app.state.cron_timer_task = asyncio.create_task(
-            timer.run(), name="microsched-cron-timer"
-        )
+        app.state.cron_timer_task = asyncio.create_task(timer.run(), name="microsched-cron-timer")
     try:
         yield
     finally:
@@ -47,7 +45,10 @@ async def lifespan(app: FastAPI):
         if task is not None:
             await task
 
+
 logger = logging.getLogger(__name__)
+
+
 class SPAStaticFiles(StaticFiles):
     """Serve the SPA entry point when a built frontend route is not a file."""
 
@@ -122,8 +123,8 @@ def create_app() -> FastAPI:
                 )
         return await call_next(request)
 
-
     if settings.enable_inprocess_cron:
+
         @app.middleware("http")
         async def cron_reload_context(request: Request, call_next):
             timer = getattr(request.app.state, "cron_timer", None)

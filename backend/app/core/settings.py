@@ -62,9 +62,9 @@ class Settings(BaseSettings):
             if not self.vapid_private_key or not self.vapid_public_key or not self.vapid_claims_sub:
                 raise ValueError(
                     (
-                    "VAPID keys and vapid_claims_sub are required "
-                    "when enable_inprocess_cron is True in production"
-                )
+                        "VAPID keys and vapid_claims_sub are required "
+                        "when enable_inprocess_cron is True in production"
+                    )
                 )
         return self
 

@@ -1,4 +1,4 @@
-﻿"""In-process async CRON timer for medication and subscription expiry reminders."""
+"""In-process async CRON timer for medication and subscription expiry reminders."""
 
 import asyncio
 import heapq

@@ -1,4 +1,4 @@
-﻿"""Tests for Web Push subscription endpoints and endpoint validation."""
+"""Tests for Web Push subscription endpoints and endpoint validation."""
 
 import httpx
 import pytest

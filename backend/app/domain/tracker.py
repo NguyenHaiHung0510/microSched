@@ -651,9 +651,9 @@ class TrackerStore:
         # from finance+money, or every renewal would start failing K8 right at
         # the worst moment. Only the effective change is guarded: patching
         # name/color with an identical input_mode/kind stays allowed.
-        leaves_money = (
-            "input_mode" in changes and changes["input_mode"] != "money"
-        ) or ("kind" in changes and changes["kind"] != "finance")
+        leaves_money = ("input_mode" in changes and changes["input_mode"] != "money") or (
+            "kind" in changes and changes["kind"] != "finance"
+        )
         if leaves_money:
             sub_count = (
                 await db.execute(
@@ -725,9 +725,7 @@ class TrackerStore:
             )
         ).scalar_one()
         if sub_count:
-            raise TrackerInvalid(
-                f"Còn {sub_count} đăng ký đang gắn — xoá hoặc chuyển chúng trước."
-            )
+            raise TrackerInvalid(f"Còn {sub_count} đăng ký đang gắn — xoá hoặc chuyển chúng trước.")
         tracker.deleted_at = datetime.now(UTC)
         await db.flush()
         return True

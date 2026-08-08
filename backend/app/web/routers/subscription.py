@@ -38,9 +38,7 @@ def _invalid(error: Exception) -> HTTPException:
 
 
 def _subscription_response(response: Response, subscription: SubscriptionRead) -> SubscriptionRead:
-    response.status_code = (
-        status.HTTP_201_CREATED if subscription.created else status.HTTP_200_OK
-    )
+    response.status_code = status.HTTP_201_CREATED if subscription.created else status.HTTP_200_OK
     return subscription
 
 

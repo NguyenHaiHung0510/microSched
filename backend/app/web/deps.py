@@ -1,4 +1,4 @@
-﻿"""Request-scoped guards and transaction dependencies for protected routes."""
+"""Request-scoped guards and transaction dependencies for protected routes."""
 
 import asyncio
 from collections.abc import AsyncIterator
