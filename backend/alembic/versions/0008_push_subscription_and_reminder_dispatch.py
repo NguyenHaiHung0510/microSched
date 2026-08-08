@@ -1,4 +1,4 @@
-﻿"""Add push_subscription and reminder_dispatch tables for Web Push and Dispatcher.
+"""Add push_subscription and reminder_dispatch tables for Web Push and Dispatcher.
 
 Revision ID: 0008
 Revises: 0007
@@ -48,7 +48,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("endpoint", name=op.f("uq_push_subscription_endpoint")),
         schema="microsched",
     )
-
 
     op.create_table(
         "reminder_dispatch",

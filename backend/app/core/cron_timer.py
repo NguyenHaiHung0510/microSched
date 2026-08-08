@@ -1,4 +1,4 @@
-﻿"""In-process async CRON timer for medication and subscription expiry reminders."""
+"""In-process async CRON timer for medication and subscription expiry reminders."""
 
 import asyncio
 import heapq
@@ -359,14 +359,10 @@ class CronTimer:
                 self._last_dispatch_at = datetime.now(VN_TZ)
 
                 if outcome == DispatchOutcome.EXHAUSTED:
-                    self._log_pending_manual_required_exhausted(
-                        ScheduleKind.TRACKER, item
-                    )
+                    self._log_pending_manual_required_exhausted(ScheduleKind.TRACKER, item)
 
                 if outcome == DispatchOutcome.TEMPORARY_FAILURE and item.retry_count < 3:
-                    retry_due = now_vn + timedelta(
-                        seconds=_backoff_seconds(item.retry_count + 1)
-                    )
+                    retry_due = now_vn + timedelta(seconds=_backoff_seconds(item.retry_count + 1))
                     retry_item = TimerItem(
                         due_at=retry_due,
                         occurrence_on=item.occurrence_on,
@@ -415,9 +411,7 @@ class CronTimer:
                 lead_days = await expiry_lead_days(db)
 
                 def sub_payload_builder(d_id: UUID) -> dict:
-                    return build_subscription_expiry_payload(
-                        sub, tr, lead_days, today=today_vn
-                    )
+                    return build_subscription_expiry_payload(sub, tr, lead_days, today=today_vn)
 
                 outcome = await dispatcher.dispatch_item(
                     db, "subscription", sub.id, item.occurrence_on, sub_payload_builder
@@ -425,14 +419,10 @@ class CronTimer:
                 self._last_dispatch_at = datetime.now(VN_TZ)
 
                 if outcome == DispatchOutcome.EXHAUSTED:
-                    self._log_pending_manual_required_exhausted(
-                        ScheduleKind.SUBSCRIPTION, item
-                    )
+                    self._log_pending_manual_required_exhausted(ScheduleKind.SUBSCRIPTION, item)
 
                 if outcome == DispatchOutcome.TEMPORARY_FAILURE and item.retry_count < 3:
-                    retry_due = now_vn + timedelta(
-                        seconds=_backoff_seconds(item.retry_count + 1)
-                    )
+                    retry_due = now_vn + timedelta(seconds=_backoff_seconds(item.retry_count + 1))
                     retry_item = TimerItem(
                         due_at=retry_due,
                         occurrence_on=item.occurrence_on,
@@ -462,9 +452,7 @@ class CronTimer:
                         )
                         heapq.heappush(self._heap, next_item.heap_tuple())
 
-    def _log_pending_manual_required_exhausted(
-        self, kind: ScheduleKind, item: TimerItem
-    ) -> None:
+    def _log_pending_manual_required_exhausted(self, kind: ScheduleKind, item: TimerItem) -> None:
         """Receipt for an occurrence whose 4 delivery attempts are gone (F11)."""
         self._pending_manual_required["exhausted"] += 1
         logger.warning(

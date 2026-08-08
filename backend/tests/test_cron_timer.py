@@ -1,4 +1,4 @@
-﻿"""Unit tests for the CronTimer heap, settings validation, and reload sink."""
+"""Unit tests for the CronTimer heap, settings validation, and reload sink."""
 
 import asyncio
 import heapq
@@ -92,9 +92,7 @@ class StubDispatcher:
         self.outcome = outcome
         self.calls = []
 
-    async def dispatch_item(
-        self, db, subject_type, subject_id, dispatched_on, payload_builder
-    ):
+    async def dispatch_item(self, db, subject_type, subject_id, dispatched_on, payload_builder):
         self.calls.append((subject_type, subject_id, dispatched_on))
         return self.outcome
 
@@ -178,9 +176,7 @@ def test_build_cron_timer_uses_real_session_factory(monkeypatch):
     """F3: with the flag on, the timer must build from app.core.db, not a ghost module."""
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("APP_ENV", "local")
-    monkeypatch.setenv(
-        "DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/microsched"
-    )
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/microsched")
     get_settings.cache_clear()
     from app.core import db as db_module
 
@@ -487,6 +483,7 @@ async def test_exhausted_outcome_is_receipted_and_next_day_scheduled(monkeypatch
 @pytest.mark.anyio
 async def test_subscription_chain_schedules_next_day_and_retry_backoff(monkeypatch):
     """F6+F10: SENT schedules the next day; TEMPORARY_FAILURE retries with backoff."""
+
     async def fake_lead(db):
         return 3
 
@@ -634,6 +631,7 @@ async def test_unexpected_loop_failure_logs_and_recovers(monkeypatch):
     monkeypatch.setattr(cron, "LOOP_FAILURE_BACKOFF_SECONDS", 0.02)
     db = FakeDB(results=[[], [], []])
     timer = CronTimer(FakeFactory(db))
+
     class _FailingTZ(tzinfo):
         """Time zone whose first utcoffset() calls blow up, then behave."""
 

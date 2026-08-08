@@ -290,8 +290,6 @@ def test_dispatch_item_never_sends_concurrently(pg_dsn: str, monkeypatch):
         finally:
             await client.aclose()
             await engine.dispose()
-            await _cleanup(
-                pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids
-            )
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
 
     asyncio.run(scenario())

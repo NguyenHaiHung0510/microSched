@@ -69,7 +69,6 @@ def _tracker_response(response: Response, tracker: TrackerRead) -> TrackerRead:
     return tracker
 
 
-
 def _tz_aware(value: datetime | None, name: str) -> None:
     if value is not None and (value.tzinfo is None or value.utcoffset() is None):
         raise HTTPException(

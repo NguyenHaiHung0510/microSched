@@ -49,7 +49,6 @@ DENIED_HTML = """<!doctype html>
 </html>"""
 
 
-
 def sanitize_return_to(target: str | None) -> str:
     """Validate that target is a safe relative path starting with a single slash."""
     if not target or not isinstance(target, str):

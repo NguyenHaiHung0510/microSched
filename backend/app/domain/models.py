@@ -561,7 +561,6 @@ class AuditLog(UUIDTimestampModel, table=True):
     )
 
 
-
 class PushSubscription(UUIDTimestampModel, table=True):
     """A device registration for Web Push notifications."""
 
@@ -648,6 +647,7 @@ class ReminderDispatch(UUIDTimestampModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
 
+
 class AuthSession(UUIDTimestampModel, table=True):
     """A server-side login session identified by an opaque-token hash."""
 
@@ -707,7 +707,6 @@ Index("ix_message_trace_id", Message.__table__.c.trace_id)
 Index("ix_audit_log_trace_id", AuditLog.__table__.c.trace_id)
 Index("ix_audit_log_turn_id", AuditLog.__table__.c.turn_id)
 
-Index("ix_push_subscription_endpoint", PushSubscription.__table__.c.endpoint)
 Index(
     "ix_reminder_dispatch_subject",
     ReminderDispatch.__table__.c.subject_type,
