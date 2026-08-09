@@ -159,6 +159,88 @@ async def _cleanup(dsn: str, *, tracker_ids=None, subscription_ids=None, dispatc
 
 
 @pytest.mark.pg
+def test_push_subscription_create_update_and_unsubscribe(pg_dsn: str):
+    """POST is endpoint-idempotent and DELETE removes the persisted device subscription."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        endpoint = f"https://fcm.googleapis.com/fcm/send/push-api-{_uuid7()}"
+        try:
+            created = await client.post(
+                "/api/push/subscribe",
+                json={
+                    "endpoint": endpoint,
+                    "p256dh": "p256dh-created",
+                    "auth": "auth-created",
+                    "user_agent": "microSched-test-device-created",
+                },
+            )
+            assert created.status_code == 201, created.text
+            created_body = created.json()
+            assert created_body["status"] == "created"
+
+            updated = await client.post(
+                "/api/push/subscribe",
+                json={
+                    "endpoint": endpoint,
+                    "p256dh": "p256dh-updated",
+                    "auth": "auth-updated",
+                    "user_agent": "microSched-test-device-updated",
+                },
+            )
+            assert updated.status_code == 201, updated.text
+            updated_body = updated.json()
+            assert updated_body == {"id": created_body["id"], "status": "updated"}
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                rows = await conn.fetch(
+                    "SELECT id, p256dh, auth, user_agent "
+                    "FROM microsched.push_subscription WHERE endpoint = $1",
+                    endpoint,
+                )
+                assert len(rows) == 1
+                assert str(rows[0]["id"]) == created_body["id"]
+                assert dict(rows[0]) == {
+                    "id": rows[0]["id"],
+                    "p256dh": "p256dh-updated",
+                    "auth": "auth-updated",
+                    "user_agent": "microSched-test-device-updated",
+                }
+            finally:
+                await conn.close()
+
+            deleted = await client.request(
+                "DELETE", "/api/push/subscribe", json={"endpoint": endpoint}
+            )
+            assert deleted.status_code == 200, deleted.text
+            assert deleted.json() == {"status": "deleted"}
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                count = await conn.fetchval(
+                    "SELECT count(*) FROM microsched.push_subscription WHERE endpoint = $1",
+                    endpoint,
+                )
+                assert count == 0
+            finally:
+                await conn.close()
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute(
+                    "DELETE FROM microsched.push_subscription WHERE endpoint = $1", endpoint
+                )
+            finally:
+                await conn.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
 def test_two_devices_confirm_same_dispatch_create_one_entry(pg_dsn: str):
     """F1: two concurrent confirms (different entry ids) ⇒ exactly ONE Entry."""
 

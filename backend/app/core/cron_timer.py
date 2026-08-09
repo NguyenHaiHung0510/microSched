@@ -348,6 +348,43 @@ class CronTimer:
             dispatch.dispatched_on,
         )
 
+    def _schedule_next_after_stale_item(self, item: TimerItem, *, now: datetime) -> None:
+        """Keep a subject's future chain after dropping an overdue unclaimed occurrence."""
+        next_date = now.date()
+
+        if item.kind == ScheduleKind.TRACKER:
+            if item.reminder_time is None:
+                return
+            next_due = datetime.combine(next_date, item.reminder_time, tzinfo=VN_TZ)
+            if next_due < (now - GRACE_WINDOW):
+                next_date += timedelta(days=1)
+                next_due = datetime.combine(next_date, item.reminder_time, tzinfo=VN_TZ)
+            next_item = TimerItem(
+                due_at=next_due,
+                occurrence_on=next_date,
+                kind=ScheduleKind.TRACKER,
+                subject_id=item.subject_id,
+                reminder_time=item.reminder_time,
+            )
+        else:
+            if item.expires_on is None:
+                return
+            next_due = datetime.combine(next_date, SUBSCRIPTION_REMINDER_TIME, tzinfo=VN_TZ)
+            if next_due < (now - GRACE_WINDOW):
+                next_date += timedelta(days=1)
+                next_due = datetime.combine(next_date, SUBSCRIPTION_REMINDER_TIME, tzinfo=VN_TZ)
+            if next_date > item.expires_on:
+                return
+            next_item = TimerItem(
+                due_at=next_due,
+                occurrence_on=next_date,
+                kind=ScheduleKind.SUBSCRIPTION,
+                subject_id=item.subject_id,
+                expires_on=item.expires_on,
+            )
+
+        heapq.heappush(self._heap, next_item.heap_tuple())
+
     async def _process_due_item(self, item: TimerItem, *, now: datetime | None = None) -> None:
         """Execute a single due item from the heap."""
         now_vn = now or datetime.now(VN_TZ)
@@ -355,6 +392,7 @@ class CronTimer:
 
         # Check grace window for non-pending items
         if not item.is_pending_recovery and item.due_at < (now_vn - GRACE_WINDOW):
+            self._schedule_next_after_stale_item(item, now=now_vn)
             logger.warning(
                 "CronTimer skipping stale item beyond grace window: kind=%s id=%s due=%s",
                 item.kind,

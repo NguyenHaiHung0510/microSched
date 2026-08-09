@@ -581,17 +581,38 @@ async def test_subscription_chain_schedules_next_day_and_retry_backoff(monkeypat
 
 
 @pytest.mark.anyio
-async def test_stale_item_beyond_grace_window_is_skipped_without_queries():
-    """011d §6.2: occurrences older than the 15-minute grace window are not replayed."""
-    now = datetime(2026, 8, 6, 8, 0, tzinfo=VN_TZ)
-    tracker_id = UUID("01912345-6789-7000-8000-000000000701")
+@pytest.mark.parametrize(
+    ("item", "now", "expected_due"),
+    [
+        (
+            TimerItem(
+                due_at=datetime(2026, 8, 6, 7, 40, tzinfo=VN_TZ),
+                occurrence_on=date(2026, 8, 6),
+                kind=ScheduleKind.TRACKER,
+                subject_id=UUID("01912345-6789-7000-8000-000000000701"),
+                reminder_time=time(7, 40),
+            ),
+            datetime(2026, 8, 6, 8, 0, tzinfo=VN_TZ),
+            datetime(2026, 8, 7, 7, 40, tzinfo=VN_TZ),
+        ),
+        (
+            TimerItem(
+                due_at=datetime(2026, 8, 6, 7, 0, tzinfo=VN_TZ),
+                occurrence_on=date(2026, 8, 6),
+                kind=ScheduleKind.SUBSCRIPTION,
+                subject_id=UUID("01912345-6789-7000-8000-000000000702"),
+                expires_on=date(2026, 8, 7),
+            ),
+            datetime(2026, 8, 6, 7, 20, tzinfo=VN_TZ),
+            datetime(2026, 8, 7, 7, 0, tzinfo=VN_TZ),
+        ),
+    ],
+)
+async def test_stale_non_pending_item_skips_old_occurrence_and_schedules_next(
+    item, now, expected_due
+):
+    """011d §1.5: stale non-pending work skips delivery but preserves the future chain."""
     timer = CronTimer(dummy_factory)
-    item = TimerItem(
-        due_at=now - timedelta(minutes=20),
-        occurrence_on=date(2026, 8, 6),
-        kind=ScheduleKind.TRACKER,
-        subject_id=tracker_id,
-    )
 
     class ExplodingDB:
         async def execute(self, stmt):
@@ -599,7 +620,13 @@ async def test_stale_item_beyond_grace_window_is_skipped_without_queries():
 
     timer.session_factory = FakeFactory(ExplodingDB())
     await timer._process_due_item(item, now=now)
-    assert timer._heap == []
+    assert len(timer._heap) == 1
+    next_item = timer._heap[0][5]
+    assert next_item.kind == item.kind
+    assert next_item.subject_id == item.subject_id
+    assert next_item.occurrence_on == expected_due.date()
+    assert next_item.due_at == expected_due
+    assert next_item.is_pending_recovery is False
 
 
 @pytest.mark.anyio
