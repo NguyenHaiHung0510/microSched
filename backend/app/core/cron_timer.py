@@ -144,7 +144,7 @@ class CronTimer:
             effective_status = "stale"
 
         if is_stale and not self._stale_logged:
-            logger.warning("cron_timer_stale next_due=%s", next_due_iso)
+            logger.warning("cron_timer_stale next_due_at=%s", next_due_iso)
             self._stale_logged = True
         elif not is_stale:
             self._stale_logged = False
@@ -154,12 +154,14 @@ class CronTimer:
             "running": effective_status == "running",
             "status": effective_status,
             "queue_size": len(self._heap),
-            "next_due": next_due_iso,
-            "last_reload": self._last_reload_at.isoformat() if self._last_reload_at else None,
-            "last_dispatch": self._last_dispatch_at.isoformat() if self._last_dispatch_at else None,
+            "next_due_at": next_due_iso,
+            "last_reload_at": self._last_reload_at.isoformat() if self._last_reload_at else None,
+            "last_dispatch_at": (
+                self._last_dispatch_at.isoformat() if self._last_dispatch_at else None
+            ),
             "last_dispatch_outcome": self._last_dispatch_outcome,
             "mode": "inprocess",
-            "loop_failures": self._loop_failures,
+            "consecutive_loop_failures": self._loop_failures,
             "pending_recovered_count": self._pending_recovered_count,
             "pending_expired_count": self._pending_manual_required["expired"],
             "pending_exhausted_count": self._pending_manual_required["exhausted"],

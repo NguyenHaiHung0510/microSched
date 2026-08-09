@@ -2,9 +2,11 @@
 
 import asyncio
 import base64
+import ipaddress
 import os
 import time
 from datetime import UTC, date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import UUID
 
 import asyncpg
@@ -12,10 +14,11 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import app.domain.push as push_module
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
-from app.domain.models import AuthSession
+from app.domain.models import AuthSession, PushSubscription
 from app.domain.push import PushResult, validate_push_endpoint
 from app.domain.reminder import dispatcher
 from app.main import create_app
@@ -24,25 +27,104 @@ from app.web.deps import get_session, require_session
 VN_TZ = timezone(timedelta(hours=7))
 
 
-def test_validate_push_endpoint_ssrf_guard():
-    """Verify validate_push_endpoint rejects non-HTTPS and SSRF target URLs."""
-    # Valid HTTPS push service endpoints
-    assert validate_push_endpoint("https://fcm.googleapis.com/fcm/send/foo") is True
-    assert validate_push_endpoint("https://updates.push.services.mozilla.com/wpush/v2/bar") is True
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("resolved", "expected"),
+    [
+        (("8.8.8.8",), True),
+        (("10.0.0.1",), False),
+        (("8.8.8.8", "10.0.0.1"), False),
+    ],
+)
+async def test_validate_push_endpoint_resolves_every_answer(monkeypatch, resolved, expected):
+    """A hostname is valid only when every DNS answer is globally routable."""
 
-    # Invalid schemes
-    assert validate_push_endpoint("http://fcm.googleapis.com/fcm/send/foo") is False
-    assert validate_push_endpoint("ftp://example.com/push") is False
-    assert validate_push_endpoint("javascript:alert(1)") is False
+    def fake_getaddrinfo(host, port, *, type):
+        assert host == "push.example"
+        assert port == 443
+        assert type == push_module.socket.SOCK_STREAM
+        return [(0, 0, 0, "", (ip, 443)) for ip in resolved]
 
-    # Loopback / internal IPs
-    assert validate_push_endpoint("https://localhost/push") is False
-    assert validate_push_endpoint("https://localhost.localdomain/push") is False
-    assert validate_push_endpoint("https://127.0.0.1/push") is False
-    assert validate_push_endpoint("https://10.0.0.1/push") is False
-    assert validate_push_endpoint("https://192.168.1.1/push") is False
-    assert validate_push_endpoint("https://169.254.169.254/latest/meta-data") is False
-    assert validate_push_endpoint("https://::1/push") is False
+    monkeypatch.setattr(push_module.socket, "getaddrinfo", fake_getaddrinfo)
+
+    assert await validate_push_endpoint("https://push.example/send") is expected
+
+
+@pytest.mark.anyio
+async def test_validate_push_endpoint_rejects_internal_and_literal_private_targets(monkeypatch):
+    """Internal DNS names and literal private addresses never reach DNS/send."""
+
+    def unexpected_dns(*_args, **_kwargs):
+        raise AssertionError("pre-DNS SSRF guard should have rejected this host")
+
+    monkeypatch.setattr(push_module.socket, "getaddrinfo", unexpected_dns)
+
+    assert await validate_push_endpoint("https://api.internal/push") is False
+    assert await validate_push_endpoint("https://127.0.0.1/push") is False
+    assert await validate_push_endpoint("https://169.254.169.254/latest/meta-data") is False
+    assert await validate_push_endpoint("https://[::1]/push") is False
+    assert await validate_push_endpoint("http://push.example/send") is False
+
+
+def test_webpush_passes_the_delivery_timeout(monkeypatch):
+    """The socket-level timeout must match the timer's outer deadline."""
+    captured: dict[str, object] = {}
+
+    def fake_webpush(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(status_code=201)
+
+    monkeypatch.setattr(push_module, "webpush", fake_webpush)
+
+    status_code = push_module._do_webpush_sync(
+        "https://push.example/send",
+        "p256dh",
+        "auth",
+        "{}",
+        "vapid-private-key",
+        "mailto:owner@example.com",
+        17.5,
+    )
+
+    assert status_code == 201
+    assert captured["timeout"] == 17.5
+
+
+@pytest.mark.anyio
+async def test_send_push_revalidates_dns_before_webpush(monkeypatch, caplog):
+    """A DNS answer that turns private after save blocks delivery without leaking the URL."""
+    webpush_calls: list[dict[str, object]] = []
+
+    class NoCommitDB:
+        async def commit(self):
+            raise AssertionError("a rejected send must not write state")
+
+    monkeypatch.setattr(
+        push_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            vapid_private_key="test-vapid-private-key",
+            vapid_claims_sub="mailto:owner@example.com",
+        ),
+    )
+    monkeypatch.setattr(
+        push_module,
+        "_resolve_endpoint_ips",
+        lambda _hostname: {ipaddress.ip_address("10.0.0.1")},
+    )
+    monkeypatch.setattr(push_module, "webpush", lambda **kwargs: webpush_calls.append(kwargs))
+    subscription = PushSubscription(
+        id=_uuid7(),
+        endpoint="https://rebound.example/send",
+        p256dh="p256dh",
+        auth="auth",
+    )
+
+    result = await push_module.send_push(NoCommitDB(), subscription, {"title": "test"})
+
+    assert result == PushResult.TEMPORARY_FAILURE
+    assert webpush_calls == []
+    assert subscription.endpoint not in caplog.text
 
 
 @pytest.mark.anyio
@@ -54,6 +136,41 @@ async def test_vapid_public_key_unauthenticated():
     ) as client:
         res = await client.get("/api/push/vapid-public-key")
         assert res.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_confirm_router_passes_the_verified_auth_session(monkeypatch):
+    """The confirmation service must receive the real session, never a fabricated gate."""
+    auth = _auth(unlocked=True)
+    captured: dict[str, object] = {}
+    entry_id = _uuid7()
+
+    async def fake_confirm(*args, **kwargs):
+        captured["auth"] = kwargs["auth"]
+        return SimpleNamespace(id=entry_id), False
+
+    app = create_app()
+
+    async def request_session():
+        yield object()
+
+    async def current_session():
+        return auth
+
+    app.dependency_overrides[get_session] = request_session
+    app.dependency_overrides[require_session] = current_session
+    monkeypatch.setattr("app.web.routers.push.confirm_reminder_dispatch", fake_confirm)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            f"/api/reminder-dispatch/{_uuid7()}/confirm",
+            json={"entry_id": str(entry_id), "occurred_at": datetime.now(UTC).isoformat()},
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured["auth"] is auth
 
 
 def _uuid7() -> UUID:
@@ -159,8 +276,14 @@ async def _cleanup(dsn: str, *, tracker_ids=None, subscription_ids=None, dispatc
 
 
 @pytest.mark.pg
-def test_push_subscription_create_update_and_unsubscribe(pg_dsn: str):
+def test_push_subscription_create_update_and_unsubscribe(pg_dsn: str, monkeypatch):
     """POST is endpoint-idempotent and DELETE removes the persisted device subscription."""
+
+    monkeypatch.setattr(
+        push_module,
+        "_resolve_endpoint_ips",
+        lambda _hostname: {ipaddress.ip_address("8.8.8.8")},
+    )
 
     async def scenario():
         auth_state = {"value": _auth()}
@@ -305,8 +428,8 @@ def test_two_devices_confirm_same_dispatch_create_one_entry(pg_dsn: str):
 
 
 @pytest.mark.pg
-def test_confirmed_private_dispatch_still_requires_unlock(pg_dsn: str):
-    """The idempotent fast path must not disclose a private confirmed entry while locked."""
+def test_confirmed_dispatch_returns_its_soft_deleted_entry_before_tracker_lookup(pg_dsn: str):
+    """§3.6 fast path returns the original Entry after Entry and Tracker soft-delete."""
 
     async def scenario():
         auth_state = {"value": _auth(unlocked=True)}
@@ -343,13 +466,97 @@ def test_confirmed_private_dispatch_still_requires_unlock(pg_dsn: str):
             finally:
                 await conn.close()
 
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute(
+                    "UPDATE microsched.entry SET deleted_at = NOW() WHERE id = $1", entry_id
+                )
+                await conn.execute(
+                    "UPDATE microsched.tracker SET deleted_at = NOW() WHERE id = $1", tracker_id
+                )
+            finally:
+                await conn.close()
+
             auth_state["value"] = _auth(unlocked=False)
             response = await client.post(
                 f"/api/reminder-dispatch/{dispatch_id}/confirm",
                 json={"entry_id": str(_uuid7()), "occurred_at": datetime.now(UTC).isoformat()},
             )
-            assert response.status_code == 403, response.text
-            assert response.json()["detail"]["code"] == "PRIVATE_UNLOCK_REQUIRED"
+            assert response.status_code == 200, response.text
+            assert response.json() == {"confirmed_entry_id": str(entry_id), "created": False}
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                deleted = await conn.fetchrow(
+                    "SELECT "
+                    "(SELECT deleted_at IS NOT NULL FROM microsched.entry WHERE id = $1) "
+                    "AS entry_deleted, "
+                    "(SELECT deleted_at IS NOT NULL FROM microsched.tracker WHERE id = $2) "
+                    "AS tracker_deleted",
+                    entry_id,
+                    tracker_id,
+                )
+                assert dict(deleted) == {"entry_deleted": True, "tracker_deleted": True}
+            finally:
+                await conn.close()
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, dispatch_ids=dispatch_ids)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+def test_unconfirmed_dispatch_with_soft_deleted_tracker_is_generic_conflict(pg_dsn: str):
+    """An unconfirmed occurrence must not create an Entry after its subject is deleted."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        dispatch_ids = []
+        try:
+            tracker = await _create_tracker(client, kind="health", input_mode="event")
+            tracker_id = UUID(tracker["id"])
+            tracker_ids.append(tracker_id)
+            dispatch_id = _uuid7()
+            dispatch_ids.append(dispatch_id)
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute(
+                    "INSERT INTO microsched.reminder_dispatch "
+                    "(id, subject_type, subject_id, dispatched_on, status, attempt_count, "
+                    "created_at) "
+                    "VALUES ($1, 'tracker', $2, $3::date, 'pending', 0, NOW())",
+                    dispatch_id,
+                    tracker_id,
+                    datetime.now(VN_TZ).date(),
+                )
+                await conn.execute(
+                    "UPDATE microsched.tracker SET deleted_at = NOW() WHERE id = $1", tracker_id
+                )
+            finally:
+                await conn.close()
+
+            response = await client.post(
+                f"/api/reminder-dispatch/{dispatch_id}/confirm",
+                json={"entry_id": str(_uuid7()), "occurred_at": datetime.now(UTC).isoformat()},
+            )
+            assert response.status_code == 409, response.text
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                state = await conn.fetchrow(
+                    "SELECT confirmed_entry_id IS NULL AS unconfirmed, "
+                    "(SELECT count(*) FROM microsched.entry WHERE tracker_id = $1) AS entry_count "
+                    "FROM microsched.reminder_dispatch WHERE id = $2",
+                    tracker_id,
+                    dispatch_id,
+                )
+                assert dict(state) == {"unconfirmed": True, "entry_count": 0}
+            finally:
+                await conn.close()
         finally:
             await client.aclose()
             await engine.dispose()

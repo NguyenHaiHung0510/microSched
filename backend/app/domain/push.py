@@ -1,10 +1,13 @@
 """Domain logic for Web Push notifications, subscription management, and pruning."""
 
 import asyncio
+import ipaddress
 import json
 import logging
+import socket
 from datetime import datetime, timezone
 from enum import StrEnum
+from urllib.parse import urlparse
 
 from pywebpush import WebPushException, webpush
 from sqlalchemy import delete
@@ -24,13 +27,21 @@ class PushResult(StrEnum):
     DEAD_SUBSCRIPTION = "dead_subscription"
 
 
-def validate_push_endpoint(endpoint: str) -> bool:
-    """Validate that a Web Push endpoint is an HTTPS URL and not an internal/SSRF target."""
+def _resolve_endpoint_ips(hostname: str) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Resolve a hostname synchronously; callers must keep this off the event loop."""
+    answers = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+    return {ipaddress.ip_address(answer[4][0]) for answer in answers}
+
+
+async def validate_push_endpoint(endpoint: str) -> bool:
+    """Accept only HTTPS endpoints whose literal or resolved IPs are all public.
+
+    DNS resolution happens in a worker thread so subscription requests do not
+    block the ASGI event loop.  A hostname with even one non-public answer is
+    rejected to prevent split-horizon/DNS-rebinding SSRF.
+    """
     if not endpoint or not isinstance(endpoint, str):
         return False
-
-    import ipaddress
-    from urllib.parse import urlparse
 
     try:
         parsed = urlparse(endpoint)
@@ -45,24 +56,21 @@ def validate_push_endpoint(endpoint: str) -> bool:
         return False
 
     hostname_lower = hostname.lower()
-    if hostname_lower in ("localhost", "localhost.localdomain"):
+    if hostname_lower in ("localhost", "localhost.localdomain") or hostname_lower.endswith(
+        ".internal"
+    ):
         return False
 
     try:
         ip = ipaddress.ip_address(hostname_lower)
-        if (
-            ip.is_loopback
-            or ip.is_private
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            return False
+        return ip.is_global
     except ValueError:
-        pass
+        try:
+            resolved_ips = await asyncio.to_thread(_resolve_endpoint_ips, hostname_lower)
+        except (OSError, ValueError):
+            return False
 
-    return True
+    return bool(resolved_ips) and all(ip.is_global for ip in resolved_ips)
 
 
 def _do_webpush_sync(
@@ -72,6 +80,7 @@ def _do_webpush_sync(
     payload_str: str,
     vapid_private_key: str,
     vapid_claims_sub: str,
+    timeout_seconds: float,
 ) -> int:
     """Synchronous wrapper for pywebpush call."""
     sub_info = {
@@ -87,6 +96,7 @@ def _do_webpush_sync(
         data=payload_str,
         vapid_private_key=vapid_private_key,
         vapid_claims=vapid_claims,
+        timeout=timeout_seconds,
     )
     return response.status_code if response else 200
 
@@ -108,6 +118,15 @@ async def send_push(
 
     try:
         async with asyncio.timeout(timeout_seconds):
+            # Validate again immediately before a network send: a subscription
+            # can outlive its original DNS answer, so save-time validation alone
+            # cannot protect against DNS rebinding.
+            if not await validate_push_endpoint(subscription.endpoint):
+                logger.warning(
+                    "Rejected non-public Web Push endpoint before send for subscription %s",
+                    subscription.id,
+                )
+                return PushResult.TEMPORARY_FAILURE
             status_code = await asyncio.to_thread(
                 _do_webpush_sync,
                 subscription.endpoint,
@@ -116,6 +135,7 @@ async def send_push(
                 payload_str,
                 settings.vapid_private_key,
                 settings.vapid_claims_sub,
+                timeout_seconds,
             )
             if status_code in (200, 201, 202):
                 subscription.last_seen_at = datetime.now(timezone.utc)

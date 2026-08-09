@@ -271,7 +271,18 @@ async def confirm_reminder_dispatch(
             detail="Only tracker reminders can be confirmed",
         )
 
-    # Fetch parent tracker
+    # A confirmation is an occurrence-level idempotency key.  This fast path
+    # deliberately happens before reading the tracker: the entry remains the
+    # original (possibly soft-deleted) record even if the tracker was later
+    # changed or soft-deleted.  Do not use the normal readable() helper here.
+    if dispatch.confirmed_entry_id is not None:
+        entry_stmt = select(Entry).where(Entry.id == dispatch.confirmed_entry_id)
+        entry_res = await db.execute(entry_stmt)
+        existing_entry = entry_res.scalar_one_or_none()
+        if existing_entry is not None:
+            return existing_entry, False
+
+    # Fetch parent tracker for an unconfirmed occurrence.
     tracker_stmt = select(Tracker).where(
         Tracker.id == dispatch.subject_id, Tracker.deleted_at.is_(None)
     )
@@ -299,15 +310,6 @@ async def confirm_reminder_dispatch(
             status_code=status.HTTP_409_CONFLICT,
             detail="Tracker configuration is no longer eligible for one-tap reminder confirmation",
         )
-
-    # The privacy gate must run before the idempotent fast path: a previously
-    # confirmed private dispatch remains private when tapped again later.
-    if dispatch.confirmed_entry_id is not None:
-        entry_stmt = select(Entry).where(Entry.id == dispatch.confirmed_entry_id)
-        entry_res = await db.execute(entry_stmt)
-        existing_entry = entry_res.scalar_one_or_none()
-        if existing_entry is not None:
-            return existing_entry, False
 
     # Create the entry through the 011a helper with its real contract:
     # ``create_entry(db, auth, payload: EntryCreate, *, subscription_id=None)``

@@ -267,7 +267,14 @@ def test_health_snapshot():
     snapshot = timer.health_snapshot()
     assert snapshot["status"] == "starting"
     assert snapshot["queue_size"] == 0
-    assert snapshot["next_due"] is None
+    assert snapshot["next_due_at"] is None
+    assert snapshot["last_reload_at"] is None
+    assert snapshot["last_dispatch_at"] is None
+    assert snapshot["consecutive_loop_failures"] == 0
+    assert "next_due" not in snapshot
+    assert "last_reload" not in snapshot
+    assert "last_dispatch" not in snapshot
+    assert "loop_failures" not in snapshot
     assert snapshot["mode"] == "inprocess"
 
 

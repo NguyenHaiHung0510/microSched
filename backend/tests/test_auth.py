@@ -119,11 +119,17 @@ def build_client(store: InMemorySessionStore) -> TestClient:
     return TestClient(app)
 
 
-def complete_login(client: TestClient, monkeypatch, email: str, verified: bool = True):
+def complete_login(
+    client: TestClient,
+    monkeypatch,
+    email: str,
+    verified: bool = True,
+    state: str = "y",
+):
     """Drive the callback with a mocked Google response."""
     claims = {"email": email, "email_verified": verified}
     monkeypatch.setattr("app.web.routers.auth.get_oauth", lambda: _FakeOAuth(claims))
-    return client.get("/auth/callback?code=x&state=y", follow_redirects=False)
+    return client.get(f"/auth/callback?code=x&state={state}", follow_redirects=False)
 
 
 def test_allowlisted_email_gets_a_session_and_reaches_the_api(monkeypatch) -> None:
@@ -290,7 +296,12 @@ class _ReturnToGoogle:
     """Answers /auth/login without calling Google (spec 011b §1.3 tests)."""
 
     async def authorize_redirect(self, request, redirect_uri: str, **params):
-        return RedirectResponse("https://accounts.google.com", status_code=302)
+        state = "return-to-test-state"
+        request.session[f"_state_google_{state}"] = {
+            "data": {"redirect_uri": redirect_uri, "nonce": state},
+            "exp": 4_102_444_800,
+        }
+        return RedirectResponse(f"https://accounts.google.com?state={state}", status_code=302)
 
 
 def start_login(client: TestClient, monkeypatch, return_to: str | None = None) -> None:
@@ -308,7 +319,7 @@ def test_return_to_with_external_scheme_falls_back_to_root(monkeypatch) -> None:
     client = build_client(InMemorySessionStore())
     start_login(client, monkeypatch, "https://evil.example")
 
-    response = complete_login(client, monkeypatch, ALLOWED_EMAIL)
+    response = complete_login(client, monkeypatch, ALLOWED_EMAIL, state="return-to-test-state")
 
     assert response.status_code == 303
     assert response.headers["location"] == "/"
@@ -319,7 +330,7 @@ def test_return_to_with_protocol_relative_url_falls_back_to_root(monkeypatch) ->
     client = build_client(InMemorySessionStore())
     start_login(client, monkeypatch, "//evil.example")
 
-    response = complete_login(client, monkeypatch, ALLOWED_EMAIL)
+    response = complete_login(client, monkeypatch, ALLOWED_EMAIL, state="return-to-test-state")
 
     assert response.status_code == 303
     assert response.headers["location"] == "/"
@@ -335,16 +346,64 @@ def test_return_to_is_applied_once_then_consumed(monkeypatch) -> None:
     client = build_client(InMemorySessionStore())
     start_login(client, monkeypatch, "/reminder-confirm?dispatch=abc")
 
-    first = complete_login(client, monkeypatch, ALLOWED_EMAIL)
+    first = complete_login(client, monkeypatch, ALLOWED_EMAIL, state="return-to-test-state")
 
     assert first.status_code == 303
     assert first.headers["location"] == "/reminder-confirm?dispatch=abc"
 
     start_login(client, monkeypatch)
-    second = complete_login(client, monkeypatch, ALLOWED_EMAIL)
+    second = complete_login(client, monkeypatch, ALLOWED_EMAIL, state="return-to-test-state")
 
     assert second.status_code == 303
     assert second.headers["location"] == "/"
+
+
+class _TwoStateGoogle:
+    """Authlib-shaped double that drops old states before the route restores them."""
+
+    def __init__(self) -> None:
+        self._states = iter(("state-one", "state-two"))
+
+    async def authorize_redirect(self, request, redirect_uri: str, **params):
+        state = next(self._states)
+        for key in list(request.session):
+            if key.startswith("_state_google_"):
+                request.session.pop(key)
+        request.session[f"_state_google_{state}"] = {
+            "data": {"redirect_uri": redirect_uri, "nonce": state},
+            "exp": 4_102_444_800,
+        }
+        return RedirectResponse(f"https://accounts.google.com?state={state}", status_code=302)
+
+    async def authorize_access_token(self, request) -> dict:
+        state = request.query_params.get("state")
+        key = f"_state_google_{state}"
+        if key not in request.session:
+            raise OAuthError(error="mismatching_state")
+        request.session.pop(key)
+        return {"userinfo": {"email": ALLOWED_EMAIL, "email_verified": True}}
+
+
+def test_two_oauth_tabs_keep_return_to_bound_to_their_own_state(monkeypatch) -> None:
+    """Two concurrent logins must not cross-wire redirects or erase the other state."""
+    store = InMemorySessionStore()
+    client = build_client(store)
+    google = _TwoStateGoogle()
+    monkeypatch.setattr(
+        "app.web.routers.auth.get_oauth",
+        lambda: type("_Registry", (), {"google": google})(),
+    )
+
+    client.get("/auth/login?return_to=/reminder-confirm?dispatch=one", follow_redirects=False)
+    client.get("/auth/login?return_to=/reminder-confirm?dispatch=two", follow_redirects=False)
+
+    first = client.get("/auth/callback?code=x&state=state-one", follow_redirects=False)
+    assert first.headers["location"] == "/reminder-confirm?dispatch=one"
+    assert client.cookies.get("ms_oauth_state") is not None
+
+    second = client.get("/auth/callback?code=x&state=state-two", follow_redirects=False)
+    assert second.headers["location"] == "/reminder-confirm?dispatch=two"
+    assert client.cookies.get("ms_oauth_state") is None
 
 
 def test_session_cookie_carries_the_expected_flags(monkeypatch) -> None:

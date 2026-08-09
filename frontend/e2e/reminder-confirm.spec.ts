@@ -98,6 +98,10 @@ test('F9: network failure keeps the screen with guidance + retry, no navigate', 
 
   const retry = page.getByTestId('reminder-confirm-retry')
   await expect(retry).toBeVisible()
+  // iPhone primary action: HIG touch target must stay at least 44px even if
+  // the Button size variant changes later.
+  const retryBox = await retry.boundingBox()
+  expect(retryBox?.height).toBeGreaterThanOrEqual(44)
   await retry.click()
 
   await expect.poll(() => confirmApi.bodies.length).toBe(1)

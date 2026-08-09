@@ -1,6 +1,7 @@
 """Google login, logout, and the allowlist gate (auth-brief §1-§2)."""
 
 import logging
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from authlib.integrations.base_client.errors import OAuthError
@@ -17,6 +18,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
 
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1"})
+AUTHLIB_GOOGLE_STATE_PREFIX = "_state_google_"
 
 # Deliberately static: never reflect the submitted address back into the page, and
 # never offer a way to request access. There is no sign-up for a single-user app.
@@ -62,6 +64,45 @@ def sanitize_return_to(target: str | None) -> str:
     return target
 
 
+def _oauth_state_from_redirect(response: Response) -> str | None:
+    """Extract Authlib's generated state from its provider redirect response."""
+    location = response.headers.get("location")
+    if not location:
+        return None
+    states = parse_qs(urlparse(location).query).get("state", [])
+    return states[0] if len(states) == 1 and states[0] else None
+
+
+def _state_return_to(request: Request, state: str | None) -> str | None:
+    """Read the return target bound to one Authlib state record, if it exists."""
+    if not state:
+        return None
+    record = request.session.get(f"{AUTHLIB_GOOGLE_STATE_PREFIX}{state}")
+    if not isinstance(record, dict):
+        return None
+    data = record.get("data")
+    if not isinstance(data, dict):
+        return None
+    target = data.get("return_to")
+    return target if isinstance(target, str) else None
+
+
+def _remember_return_to(request: Request, state: str, return_to: str) -> None:
+    """Attach a safe target to Authlib's signed data for exactly this state."""
+    key = f"{AUTHLIB_GOOGLE_STATE_PREFIX}{state}"
+    record = request.session.get(key)
+    if not isinstance(record, dict):
+        return
+    data = record.get("data")
+    if not isinstance(data, dict):
+        return
+    updated_record = dict(record)
+    updated_data = dict(data)
+    updated_data["return_to"] = return_to
+    updated_record["data"] = updated_data
+    request.session[key] = updated_record
+
+
 def callback_url(request: Request) -> str:
     """Build the redirect URI exactly as registered in Google Cloud Console.
 
@@ -91,21 +132,32 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 @router.get("/login")
 async def login(request: Request) -> Response:
-    return_to = sanitize_return_to(request.query_params.get("return_to"))
-    if return_to != "/":
-        request.session["return_to"] = return_to
-    """Send the browser to Google, carrying a signed state parameter.
+    """Send the browser to Google and bind return_to to its signed OAuth state.
 
     `prompt=select_account` forces the account chooser every time. Without it,
     Google silently reuses its own session, so signing out of microSched and
     signing back in happens with no visible Google step at all - which makes the
     logout button feel like it did nothing.
     """
-    return await get_oauth().google.authorize_redirect(
+    return_to = sanitize_return_to(request.query_params.get("return_to"))
+    # Authlib 1.7.2 drops previous ``_state_google_*`` records when creating a
+    # new one. Keep those signed records so two tabs can finish independently;
+    # each callback still consumes only its own state through Authlib.
+    existing_states = {
+        key: value
+        for key, value in request.session.items()
+        if key.startswith(AUTHLIB_GOOGLE_STATE_PREFIX)
+    }
+    response = await get_oauth().google.authorize_redirect(
         request,
         callback_url(request),
         prompt="select_account",
     )
+    state = _oauth_state_from_redirect(response)
+    if state is not None:
+        _remember_return_to(request, state, return_to)
+    request.session.update(existing_states)
+    return response
 
 
 @router.get("/denied")
@@ -120,6 +172,10 @@ async def auth_callback(
     store: SessionStore | None = Depends(get_session_store),
 ) -> Response:
     """Verify Google's response, apply the allowlist, then open a session."""
+    callback_state = request.query_params.get("state")
+    # This value is only used after authorize_access_token succeeds. Authlib
+    # validates and consumes the same signed state record during that call.
+    state_return_to = _state_return_to(request, callback_state)
     try:
         token = await get_oauth().google.authorize_access_token(request)
     except OAuthError as error:
@@ -140,11 +196,16 @@ async def auth_callback(
         # keeping them visibly distinct from rejected callbacks and upstream outages.
         logger.exception("Unexpected Google OAuth callback failure")
         token = None
+    finally:
+        # Authlib clears this on a normal token exchange. Also clear the exact
+        # state on provider refusal/failure, but retain another tab's valid
+        # pending state instead of clearing the whole signed-session cookie.
+        if callback_state:
+            request.session.pop(f"{AUTHLIB_GOOGLE_STATE_PREFIX}{callback_state}", None)
 
-    # `return_to` is single-use: pop it BEFORE clearing the handshake cookie. The
-    # handshake is finished either way, so the state cookie must not outlive it.
-    safe_target = sanitize_return_to(request.session.pop("return_to", "/"))
-    request.session.clear()
+    # Protocol validation above is a precondition for ever using this target;
+    # sanitize again at the redirect boundary in case stored state is malformed.
+    safe_target = sanitize_return_to(state_return_to) if token is not None else "/"
 
     claims = (token or {}).get("userinfo") or {}
     email = str(claims.get("email") or "").strip().lower()

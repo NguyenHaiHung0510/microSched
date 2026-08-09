@@ -150,7 +150,12 @@ export function ReminderConfirmScreen() {
       <h1 className="text-xl font-extrabold tracking-tight text-primary">microSched</h1>
       <p className="text-sm text-muted-foreground">Đang xác nhận lời nhắc uống thuốc…</p>
       {confirmMutation.isError ? (
-        <Button data-testid="reminder-confirm-retry" onClick={() => confirmMutation.mutate()}>
+        <Button
+          data-testid="reminder-confirm-retry"
+          size="lg"
+          className="min-h-11"
+          onClick={() => confirmMutation.mutate()}
+        >
           Thử lại
         </Button>
       ) : null}

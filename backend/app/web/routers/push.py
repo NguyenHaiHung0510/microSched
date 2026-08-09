@@ -61,7 +61,7 @@ async def subscribe_push(
     _auth: Annotated[AuthSession, Depends(require_session)],
 ) -> dict[str, str]:
     """Register or update a device Web Push subscription."""
-    if not validate_push_endpoint(body.endpoint):
+    if not await validate_push_endpoint(body.endpoint):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Invalid push endpoint URL",
@@ -122,6 +122,7 @@ async def confirm_reminder(
         entry_id=body.entry_id,
         occurred_at=body.occurred_at,
         is_private_unlocked=unlocked,
+        auth=auth,
     )
     return {
         "confirmed_entry_id": str(getattr(entry, "id")),
