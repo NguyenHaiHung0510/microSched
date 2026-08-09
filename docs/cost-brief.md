@@ -1,30 +1,34 @@
 ﻿# Cost brief — chi phí vận hành microSched
 
-> Decision record **tự-chứa**. **Mốc thời gian: giá & chính sách tra ngày 2026-07-19.**
+> Decision record **tự-chứa**. **Mốc thời gian:** giá nền tra 2026-07-19; giá Fly + chính sách invoice re-check 2026-08-02.
 > ⚠️ Hạ tầng + dịch vụ AI đổi nhanh (Fly bỏ free tier 2024; Oracle giảm nửa ARM Always-Free 6/2026; giá LLM/Neon đổi liên tục) → **soi lại mỗi ~3 tháng và bắt buộc trước khi cutover.** Con số dưới là *ước tính theo kế hoạch tham chiếu*, không phải hoá đơn.
 
 ---
 
 ## TL;DR
 
-**~\$3.3–4/tháng (~\$40–48/năm)** cho phương án khuyến nghị. Mọi thứ khác **\$0** trong giai đoạn học nhờ free tier + credit sẵn có.
+**Gross resource cost hiện tại ~\$2,47–2,55/tháng; net payable kỳ vọng \$0 có điều kiện.**
 
-- Toàn bộ chi phí "cứng" hiện tại = **1 dòng duy nhất: hosting Fly.io**. Neon, backup, auth, CI/cron đều \$0.
-- Có **đường \$0 tuyệt đối** (Oracle Always-Free / Render-free) nhưng đánh đổi reliability / cold-start — xem §3.
-- Hai biến số cần canh: **LLM usage** (giờ ≈ \$0 nhờ credit) và **domain** (tuỳ chọn, ~\$12/năm).
+- Toàn bộ gross cost "cứng" hiện tại = 1× Fly `shared-cpu-1x` 256MB always-on ở `sin`.
+- Fly Support đã waive invoice khi finalized cost dưới \$5 cho original personal organization của chủ,
+  nhưng đây **không** phải free tier/credit được pricing docs bảo đảm; xem điều kiện và cliff ở §7.6.
+- Neon, backup, auth, GitHub Actions CI/CD và Google Cloud Scheduler hiện đều \$0.
+- Hai biến số cần canh: tổng invoice Fly của **cả organization** và LLM usage; domain vẫn tuỳ chọn
+  (~\$12/năm).
 - **2026-07-20:** thêm **§6 — stack công cụ AI cá nhân (~\$80/mo)**, hạch toán RIÊNG — đó là chi phí *học/xây*, không phải chi phí *vận hành app*.
 
 | Hạng mục | Dịch vụ (đã chọn) | Chi phí | Trạng thái |
 |---|---|---|---|
-| **Hosting** | Fly.io — 1× shared-cpu-1x always-on, region `sin`; **khởi đầu 256MB (~\$2), lên 512MB (~\$3.3) nếu OOM** | **~\$2–3.3/mo** | ✅ đã chọn |
+| **Hosting** | Fly.io — 1× shared-cpu-1x 256MB always-on, region `sin` | **gross ~\$2,47–2,55/mo; net kỳ vọng \$0 có điều kiện** | ✅ đã chọn |
 | Database | Neon Postgres + pgvector, free tier (dev/prod branching) | \$0 | ✅ chốt |
 | Auth | Google OAuth + allowlist cứng | \$0 | ⚠️ leaning (xem architecture) |
 | LLM | OpenRouter / API (credit sẵn: Google AI Studio, OpenAI, OpenRouter free) | ~\$0 giờ → usage | ⚠️ biến số |
 | Backup | Google Drive (sync) + dump laptop | \$0 | ✅ chốt |
-| CI / Cron | GitHub Actions free tier (deploy + backup/verify) | \$0 | ⚠️ leaning |
+| CI/CD + cron chạy tay | GitHub Actions, public-repo standard runners | \$0 | ✅ đang chạy |
+| Cron production | Google Cloud Scheduler (1/3 job free mỗi billing account) | \$0 | ✅ chốt |
 | Domain | `*.fly.dev` (mặc định) · hoặc custom ~\$12/năm | \$0 / ~\$12/năm | ⚠️ OPEN, tuỳ chọn |
 | CDN / Access | Cloudflare free (nếu dùng) | \$0 | DEFER, tuỳ chọn |
-| **TỔNG** | | **~\$40–48/năm** | |
+| **TỔNG runtime** | | **gross ~\$29,6–30,6/năm; net kỳ vọng \$0 khi đủ điều kiện §7.6** | |
 
 ---
 
@@ -36,10 +40,10 @@
 
 ## 2. Chi tiết dòng hosting (Fly.io)
 
-- **1 máy always-on:** 256MB = \$2.02, 512MB = \$3.32 (baseline Amsterdam; `sin` nhỉnh hơn chút). **Khởi đầu 256MB đúng ngân sách gốc \$2, theo dõi memory, `fly scale memory 512` chỉ khi OOM** — không cam kết \$4 trước. (Fly resize tức thì → không rủi ro.)
-- **Bẫy chi phí #1:** `fly launch` mặc định tạo **2 máy** (HA) → gấp đôi tiền. `fly scale count 1` → còn 1 máy.
+- **1 máy always-on, giá `sin` re-check 2026-08-02:** 256MB `shared-cpu-1x` ≈ **\$2,47/30 ngày · \$2,54/31 ngày** (sai số làm tròn tới khoảng \$2,55). Đây là **gross resource cost**, không phải số net sau waiver. Chỉ tăng memory khi số đo OOM buộc phải tăng — 512MB ≈ \$4,05–4,18 đã sát cliff invoice \$5.
+- **Bẫy chi phí #1:** `fly launch` mặc định có thể tạo **2 máy** (HA) → 2×256MB ≈ \$4,92/30 ngày nhưng **\$5,09/31 ngày**, đủ vượt cliff waiver. `min_machines_running = 1` không đặt trần; kiểm live count = 1 sau deploy.
 - **Không tốn thêm:** shared IPv4 = free (không cần dedicated \$2); TLS cert = free (Let's Encrypt qua `fly certs`); **không volume** (data ở Neon → \$0 lưu trữ; và volume snapshot tính phí từ 1/2026); bandwidth single-user ≈ \$0 (\$0.02/GB).
-- **Bắt buộc:** đặt **spending limit / budget alert** (Cost Management) — Fly pay-as-you-go, tính theo giây, **không có free allowance** → chặn hoá đơn bất ngờ.
+- **Bắt buộc:** đặt **spending / budget alert gần \$4** (trước cliff \$5) — Fly pay-as-you-go, tính theo giây. Waiver dưới \$5 là hành vi invoice có điều kiện, **không phải free allowance** để tiêu dần.
 
 ## 3. Các đường thay thế (đánh đổi — không chọn nhưng ghi lại)
 
@@ -157,6 +161,12 @@ Chính chủ yêu cầu tư vấn chi tiết hơn về mảng này **sau khi vá
 
 📝 **2026-07-23:** vế *"gộp vào 008b vì đúng lúc hạ tầng GH Actions cron ra đời"* **hết căn cứ** — §9 devops đã đẩy script sang **008c**, và giờ hạ tầng cron **không còn là GH Actions** (§10 devops). Script soi hoá đơn chạy ở đâu là câu hỏi mở lại: GH Actions vẫn dùng được cho việc **không phải production runtime** (chạy trễ 30 phút không sao), nhưng nếu đã có Cloud Scheduler thì cân nhắc gộp một mối.
 
+📝 **2026-07-31 — chủ nâng phạm vi `008c` từ "script in bảng" thành một tính năng thật trong app; CHƯA làm ngay, ghi ý tưởng lại chờ rảnh.** Không còn là script đứng ngoài — **tích hợp vào chính microSched**: fetch số liệu Fly GraphQL + Neon REST API cùng nhịp với các fetch khác của app (mỗi lần chủ dùng), **cộng thêm CRON riêng 3 ngày/lần trên Cloud Scheduler** để không phụ thuộc app có đang mở hay không, báo khi vượt ngưỡng hoặc số liệu bất thường.
+
+**Ý hay nhất, đáng giữ nguyên khi viết spec:** tự động phát hiện lúc gói cước *renew* mà không cần biết trước ngày renew chính xác — so **giá trị tuyệt đối** giữa hai lần đo liên tiếp: nếu chi phí tích luỹ đang đo (vd Fly ~\$2) mà lượt fetch kế tiếp ra **nhỏ hơn** hẳn (thường về 0 hoặc rất nhỏ) thì đó là dấu hiệu chu kỳ tính phí vừa tất toán — tự động chốt số cũ thành "đã dùng hết chu kỳ trước là X" rồi bắt đầu đếm lại từ số mới. Áp được cho cả Fly (không có ngày reset cố định, tính theo billing cycle riêng của tài khoản) lẫn Neon (có ngày reset cố định 20 hàng tháng, nhưng cách đo-bằng-hiệu-số này vẫn cho một cách kiểm chứng độc lập không phụ thuộc phải nhớ đúng ngày 20). Đây là cách né việc phải hard-code ngày renew — điều mà `cost-brief.md` §7.3 hiện đang phải tự tính tay ("chu kỳ hiện tại bắt đầu 20/07/2026, đợt sau 20/08/2026").
+
+**Khi nào làm:** không chặn gì, ưu tiên thấp. Khi có thời gian rảnh, viết thành spec `agent-tasks/008c-*.md` đúng khuôn (tự-chứa, acceptance kiểm chứng được), giao **T2 thiết kế toàn bộ** (không chỉ thi công theo spec có sẵn — phạm vi này đủ mới để T2 tự đề xuất DDL bảng lưu lịch sử số liệu + endpoint đọc + cách UI hiển thị, T1 review sau).
+
 ### 7.5 🆕 2026-07-23 — scale-to-zero: số mới, và một cảnh báo §6 đã hết hiệu lực
 
 **Fly — dòng chi phí đổi hẳn.** Trạng thái ổn định cũ = 86.400 units/ngày ⇒ **\$2,50/tháng** (§7.1 đo thật). Với `auto_stop_machines = 'suspend'` + `min_machines_running = 0`, chỉ còn trả tiền lúc máy thức + rootfs lúc ngủ:
@@ -181,6 +191,30 @@ Chính chủ yêu cầu tư vấn chi tiết hơn về mảng này **sau khi vá
 - **Gemini API ở paid tier thì Google KHÔNG train trên dữ liệu của mình** (free tier thì có). `auth-brief.md` R1–R7 bắt *private vào context ⇒ ép no-train cả cascade* — đường Gemini **đã sẵn thoả** nhờ Tier 1. Trước là ràng buộc phải đi tìm cách lách, giờ là chuyện đã rồi.
 
 **Budget alert 88k VNĐ giờ gác chung hai thứ không liên quan** — LLM spend (Bước 1, dòng **không có trần**, xem §7.2) và hạ tầng cron (\$0, có trần cứng). Alert kêu thì không biết ngay là do cái nào. Chưa cần xử lý khi Cloud Scheduler còn free, nhưng **ghi ra để lần soi sau không phải suy lại**.
+
+### 7.6 🆕 2026-08-02 — always-on trở lại, gross ≠ net payable
+
+**Quyết định hiện hành:** giữ đúng một Fly Machine `shared-cpu-1x` 256MB ở `sin` chạy liên tục.
+Baseline kỳ vọng trở lại **~86.400 units/ngày**; gross compute khoảng **\$2,47–2,55/tháng**. Các
+con số scale-to-zero ở §7.5 là hồ sơ của cấu hình 23/07–02/08, không còn là dự phóng hiện hành.
+
+**Dữ kiện invoice:** Fly Support xác nhận invoice của chủ đã được waive vì finalized cost dưới \$5.
+Số **net payable kỳ vọng = \$0** chỉ khi đồng thời:
+
+1. resource nằm trong **original personal organization** đủ điều kiện;
+2. **tổng** finalized invoice của toàn organization vẫn **strictly below \$5**;
+3. Fly còn duy trì hành vi waiver này.
+
+Đây **không phải** \$5 credit, compute allowance hay free tier được Fly pricing docs công khai bảo đảm.
+Nó là một **threshold cliff**: phải lập ngân sách như thể \$5,01 nghĩa là trả toàn invoice, không phải
+chỉ trả \$0,01. Vì scope là organization aggregate, Machine/workload khác trên cùng organization cũng
+ăn vào ngưỡng. Đặt alert gần **\$4** để còn khoảng phản ứng; không dùng 512MB hay Machine thứ hai nếu
+chưa tính lại cả tháng 31 ngày.
+
+**Hai dòng \$0 khác không đổi nhưng phải tách tên:** GitHub Actions làm CI/CD và giữ nút
+`workflow_dispatch` chạy cron bằng tay; Google Cloud Scheduler mới giữ lịch production và đang dùng
+1/3 job free của billing account. Always-on không tự thay Scheduler. Neon vẫn autosuspend vì
+`/api/healthz` không chạm DB.
 
 ---
 *Cập nhật khi: đổi host/DB/LLM provider, hết credit, đổi công cụ dev-stack (§6), hoặc tới mốc soi-lại 3 tháng (~10/2026). §7 cập nhật theo nhịp 3–7 ngày — đó là mục đích của nó. Thêm ghi chú có ngày — không xoá trắng con số cũ.*

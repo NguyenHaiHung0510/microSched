@@ -151,6 +151,47 @@ test('last card tooltip is portalled and fully inside the desktop viewport', asy
   await page.screenshot({ path: 'output/playwright/tooltip-last-card.png', fullPage: true })
 })
 
+test('task-012 tooltip shows three static numbered items and the remaining count', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Radix tooltip is a desktop shortcut')
+  await openTasksScreen(page)
+  const title = page.locator('[data-task-id="task-012"]').getByTestId('task-title')
+  await title.hover()
+
+  const tooltip = page.getByRole('tooltip')
+  await expect(tooltip).toBeVisible()
+  await expect(tooltip.getByText('Checklist (4)')).toBeVisible()
+  const items = tooltip.getByRole('listitem')
+  await expect(items).toHaveCount(3)
+  await expect(items.nth(0)).toContainText('1.')
+  await expect(items.nth(0)).toContainText('Mục đầu tiên')
+  await expect(items.nth(1)).toContainText('2.')
+  await expect(items.nth(1)).toContainText('Mục thứ hai')
+  await expect(items.nth(2)).toContainText('3.')
+  await expect(items.nth(2)).toContainText('Mục thứ ba')
+  await expect(tooltip.getByText(/và 1 mục nữa/)).toBeVisible()
+  await expect(tooltip.locator('button, [role="button"]')).toHaveCount(0)
+  await page.screenshot({ path: 'output/playwright/tooltip-task-012-desktop.png', fullPage: true })
+})
+
+test('add-details button has symmetric zero horizontal padding', async ({ page }, testInfo) => {
+  await openTasksScreen(page)
+  const button = page.getByRole('button', { name: /^Thêm chi tiết$/ })
+  await expect(button).toBeVisible()
+  const padding = await button.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return {
+      left: Number.parseFloat(style.paddingLeft),
+      right: Number.parseFloat(style.paddingRight),
+    }
+  })
+  expect(padding.left).toBe(padding.right)
+  expect(padding.left).toBe(0)
+  await page.screenshot({
+    path: `output/playwright/add-details-${testInfo.project.name}.png`,
+    fullPage: true,
+  })
+})
+
 test('healthy visible task query polls and hidden tab stops polling', async ({ page, taskApi }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Run timing measurement once')
   // Default Playwright test timeout is 30s; this test deliberately waits

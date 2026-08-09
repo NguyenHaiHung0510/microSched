@@ -129,9 +129,9 @@ Bối cảnh: bước vào phase B (scaffold), chính chủ chốt bộ công c�
 
 | Tầng | Công cụ | Vai |
 |---|---|---|
-| **T1 — óc** | **Claude Pro \$20** (từ 21/07: Opus 4.8 chat + Sonnet 5 Claude Code; Fable hết trên Pro 20/07) | viết spec `agent-tasks/`, ADR khi có quyết định mới, **review diff cuối trước merge**, debug khi T2 bế tắc, và **code security-critical** (auth/session/crypto — dùng tiết chế vì chung quota với chat) |
-| **T2 — tay** | **Codex trên ChatGPT Plus \$20** (GPT-5.6; mua 07/2026) | thi công agent-tasks theo spec. Bậc trong Codex: **Sol** (cao) = việc khó đã có spec — auth/DDL/Docker/bug khó · **Terra** = workhorse mặc định — wiring/CRUD/UI/viết test · **Luna** (nhẹ, quota ~3–4×) = vòng lặp máy móc (test-fix-test, lint, rename). **Luật quota: Sol chỉ nhận việc đã có spec, không bao giờ nhận việc "thử xem sao"** — thứ giết limit là vòng lặp và test-spam, không phải task khó |
-| **T3 — máy chạy test** | **2× Google AI Pro** (sẵn có) | **duy nhất một vai: CHẠY TEST** (unit/smoke/Postman/Chrome-DevTools-MCP UI/Playwright) theo hướng dẫn của T1/T2 — *chạy và report, không thiết kế test* (test case do T1 viết trong spec, T2 cài đặt). Kinh nghiệm chính chủ: Gemini 3.1 Pro / 3.5 Flash không đủ tin cho việc khác — nhưng test-loop đốt quota khủng và là việc khối-lượng-lớn/phán-đoán-thấp, khớp đúng quota-nhiều của Google. ⚠️ 2026-06-18: **Gemini CLI ngừng phục vụ gói AI Pro** — đường dùng còn lại là Jules / Antigravity / web |
+| **T1 — óc** | **Codex Desktop (Main Thread)** (GPT-5.6 Sol/xhigh; PAYG: Antigravity Opus/Gemini 3.6 Flash) | Lập kế hoạch, viết spec `agent-tasks/`, ADR khi có quyết định mới, **review diff cuối trước merge**, debug khi T2 bế tắc, và chỉ đạo chiến lược |
+| **T2 — tay** | **Codex / OpenCodex Sub-agents** (`spawn_agent`) | Thi công agent-tasks theo spec trên `feat/NNN-<slug>`. **Sol** (high): Auth/DDL/Crypto/bug khó · **Terra** (medium): CRUD/UI/wiring · **Luna** (low/medium): sửa vặt/lint/test-loop · **PAYG**: `gemini-3.6-flash` hoặc `deepseek-v4-flash-latest` qua OpenRouter |
+| **T3 — máy chạy test & phản biện** | **OpenCodex Sub-agents** (`spawn_agent`) | **Phản biện 6 trục (§7.3i) & CHẠY TEST** (Playwright e2e/unit/smoke). **Gemini 3.6 Flash**: test runner chính & phản biện nhanh · **Gemini 3.1 Pro (high)**: soát lỗi chuyên sâu · **OpenRouter**: DeepSeek V4 Pro / Flash (bản trả phí) |
 
 **Flow một agent-task (code):** T1 viết spec → T2 thi công trên `feat/NNN-<slug>`, tự chạy test + pre-commit → PR nhỏ vào `develop` → T1 review diff theo 3 câu (*đúng spec? đúng brief? có tự phát minh kiến trúc không?*) → chính chủ merge. **Escalation:** T2 bí >2 vòng hoặc muốn làm khác điều đã ✅ CHỐT → dừng, ghi nhận, đẩy lên T1. `docs/` là luật — chỉ chính chủ + T1 sửa nội dung quyết định.
 
@@ -285,6 +285,8 @@ Thang L1/L2/L3 **mở lại được cánh cửa §8 từng đóng**, vì §8 b�
 **⚠️ Bất đối xứng chi phí lọc:** lọc PR của Codex-do-Claude-brief thì **rẻ** (Claude có sẵn mô hình "đáng lẽ thế nào"); lọc PR Jules chạy tự do thì **đắt** — phải dựng lại ý định từ diff, gần bằng tự viết. Một bộ lọc chỉ tiết kiệm băng thông khi nó **từ chối được rẻ**.
 
 ⇒ **Mở bằng số, không bằng niềm tin:** thử **5 task** loại *"đúng/sai do CI quyết"* (viết test theo danh sách T1 đã đặc tả — bulk, phán đoán thấp, blast radius ≈ 0). Đo **tỉ lệ PR được nhận** + **thời gian Claude tốn mỗi PR để lọc**. Nhận <50% hoặc lọc tốn gần bằng tự viết ⇒ **đóng lane**. Chuỗi lọc mong muốn về sau `T2 → T1 → chủ`; **lần đầu chạy thẳng `Claude → chủ`** cho chắc, thêm tầng sau khi có lòng tin.
+
+> **📝 2026-07-31 — sửa danh tính + lịch Jules, chủ xác nhận trực tiếp.** PR/commit gắn nhãn *"⚡ Bolt: …"* và *"🛡️ Sentinel: …"* (vd #55, #56) **chính là hai tác vụ định kỳ của Jules** nói ở trên — "Bolt" = tác vụ performance, "Sentinel" = tác vụ security; không phải bot/dịch vụ ngoài nào khác. Vẫn đúng T3/Gemini 3.1 Pro trên nền Jules, không đổi vai trong thang 3 tầng. **Lịch đúng (đè lịch sai ghi ở note 29/07 phía trên — nightly 23h cho security là SAI):** **cả hai tác vụ chạy hàng tuần, Chủ Nhật 23:30**, tới **2026-09-30** (không phải 2026-08-15 như ghi nhầm trước đó). PR của hai tác vụ này **vẫn cần soát định kỳ và xử lý** như PR Jules thường — không tự động merge theo đề xuất của nó, theo đúng luật cố-vấn-không-phải-biên-lai đã chốt 29/07.
 
 ### g) Nơi để việc + báo cáo
 
@@ -555,5 +557,45 @@ git ls-tree --name-only origin/main .github/workflows/   →  chỉ có ci.yml
 
 **Bất biến §9 vẫn nguyên giá trị, nay cộng thêm một:** ① không job nền nào poll DB dày hơn cửa sổ idle 5 phút của Neon; ② 🔒 **endpoint cron phải làm xong việc bên trong request** — proxy Fly mù với việc sinh ra sau khi response đã trả, và không có cách nào để app nói "tôi đang bận". Với deadline 180s của Cloud Scheduler thì đây gần như không phải hy sinh gì.
 
+### 📝 2026-08-02 — Fly always-on không đảo quyết định Scheduler
+
+App nay giữ đúng một Machine 256MB chạy liên tục (`architecture-brief.md` §5), nên **cron không còn
+nhiệm vụ đánh thức Fly**. Phần so cold-start và các phương án bị loại vì va `suspend` ở trên là bằng
+chứng lịch sử của quyết định 23/07, không phải mô tả runtime hiện hành.
+
+Google Cloud Scheduler **vẫn được giữ**: lịch chạy độc lập với deploy/commit, retry cấu hình được và
+attempt deadline rõ ràng. APScheduler/Supercronic trong process trở lại khả thi về mặt kỹ thuật, nhưng
+vẫn bị loại vì buộc lịch nhắc vào uptime/restart của chính app và làm mất retry/result reporting của
+một scheduler ngoài.
+
+RSS + uptime ở các khe cron nay quan sát **rò rỉ của tiến trình 256MB sống dài**, không còn quan sát
+snapshot `suspend`. Endpoint vẫn phải hoàn tất đồng bộ trong request để Scheduler nhận đúng success
+hay failure và retry đúng; lý do hiện hành là biên lai kết quả chính xác, **không phải** lo Fly Proxy
+suspend Machine sau khi response trả về.
+
 ---
 *Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). **§9 đã đóng 2026-07-22**; mở lại nếu đổi hạ tầng deploy. **§10 chốt 2026-07-23**; mở lại nếu đổi nhà cung cấp cron hoặc khi 011 cần >3 job. §7.2 xem lại nếu đổi cách agent truy cập trình duyệt. Thêm note có ngày — không xóa kết luận cũ.*
+
+### j) 📝 2026-08-03 — Chuyển đổi Harness sang Codex Desktop + OpenCodex Sub-agents (✅ CHỐT)
+
+Bối cảnh: Claude Code dừng hoạt động, dự án chuyển sang **Codex Desktop App** làm harness điều phối chính.
+
+1. **T1 mới:** Môi trường Codex Desktop chính (Main Thread) đảm nhiệm vai T1. Model chính khi quay lại: `gpt-5.6-sol` (effort: `xhigh`/`high`). **Tạm thời từ 2026-08-04:** Terra đang giữ Main Thread; không tự đổi T1 giữa chừng chỉ vì một model khác vừa xuất hiện. Khi cần thêm một lượt reasoning/coding độc lập, dùng `openrouter/openai-gpt-5.6-luna` trước vì bảng tham chiếu hiện hành xếp Luna #1 ở intelligence, coding và agentic.
+2. **T2 & T3 mới:** Sử dụng tính năng `spawn_agent` tích hợp sẵn trong Codex Desktop để điều phối sub-agents. Danh sách route tạm đã được chủ lưu ngày 2026-08-04: `google-antigravity/gemini-3.6-flash`, `openrouter/~deepseek-deepseek-v4-flash-latest`, `openrouter/openai-gpt-5.6-luna`.
+   - **T2 (Thi công):** Spawn sub-agent với `fork_context: true`. Luna là lane mạnh nhất khi blast radius/lý luận khó đáng chi phí; **Gemini 3.6 Flash là mặc định vận hành trước DeepSeek Flash cho coding + intelligence theo chỉ thị trực tiếp của chủ**, dù bảng tham chiếu riêng lẻ xếp DeepSeek cao hơn Gemini ở cột coding. DeepSeek chỉ là fallback khi Gemini/Luna không gọi được; báo rõ route error, không âm thầm đổi model.
+   - **T3 (Phản biện & Test):** Spawn sub-agent độc lập cho lượt review 6 trục (§7.3i) và e2e Playwright. Gemini 3.6 Flash là lane QA/review nhanh mặc định; Luna là lane review sâu khi PR có migration, privacy/auth, hoặc diff lớn. DeepSeek là fallback. Không giả định `gemini-3.1-pro-high` đang callable nếu nó không có trong danh sách route hiện hành.
+3. **Giữ nguyên:** Rubric 6 trục (§7.3i), Merge Gate by criticality, Luật biên lai máy kiểm được, và Luật Full-Access git/Docker theo từng lệnh.
+
+**Ranh giới bảo mật & Tín nhiệm Sub-agent / Executor (✅ Cập nhật 2026-08-04):**
+- **Free OpenCode Sub-agents / Executors:** Áp dụng chính sách **Zero-Trust** đối với thông tin nhạy cảm. Tuyệt đối không cung cấp, đọc, echo hay chuyển giao file `.env`, API keys, credentials, tokens, hay dữ liệu cá nhân thật (real personal data). Chỉ cung cấp public code/docs và dữ liệu test giả lập/đã che chắn (`synthetic/redacted`).
+- **Native OpenAI / Antigravity / OpenAI key / OpenRouter (ZDR enabled):** Được xếp hạng tín nhiệm cao (High Trust) nhờ hạ tầng native/chính chủ hoặc đã kích hoạt Zero Data Retention (ZDR). Tuy nhiên, mức tín nhiệm này **không** đồng nghĩa với việc được phép làm lộ secrets: tuyệt đối không chèn secrets/credentials vào prompt, commit message, pull request, diff, log, hay tài liệu repo.
+
+**Bảng tham chiếu tạm do chủ cung cấp 2026-08-04 (không phải benchmark tự chạy trong repo):**
+
+| Model | Intelligence | Coding | Agentic |
+|---|---:|---:|---:|
+| GPT-5.6 Luna | #1 | #1 | #1 |
+| Gemini 3.6 Flash | #2 | #3 | #2 |
+| DeepSeek V4 Flash 0731 | #3 | #2 | #3 |
+
+**Điểm cần xem lại khi Sol quay lại làm T1:** đánh giá lại toàn bộ handoff Codex Desktop/OpenCodex — routing thực tế, skill/plugin có thể tự áp, rubric chất lượng T3, format receipt và độ tin cậy của từng lane. Đây là review mở có chủ ý; không mặc định hoá workflow tạm này thành policy vĩnh viễn.

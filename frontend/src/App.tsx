@@ -1,14 +1,28 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { LogIn, LogOut, RefreshCw } from 'lucide-react'
+import {
+  Activity,
+  CalendarDays,
+  ListTodo,
+  LogIn,
+  LogOut,
+  NotebookPen,
+  RefreshCw,
+} from 'lucide-react'
+import { useState } from 'react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { CalendarScreen } from '@/CalendarScreen'
+import { NotesScreen } from '@/NotesScreen'
+import { PrivateGate } from '@/PrivateGate'
+import type { PrivateSessionState } from '@/private-gate'
 import { TasksScreen } from '@/TasksScreen'
+import { TrackerScreen } from '@/TrackerScreen'
 
-type SessionResponse = {
+type SessionResponse = PrivateSessionState & {
   email: string
   signed_in_at: string | null
   expires_at: string
@@ -62,7 +76,10 @@ function LoginScreen() {
   )
 }
 
-function SignedIn() {
+function SignedIn({ session }: { session: SessionResponse }) {
+  const [activeScreen, setActiveScreen] = useState<
+    'tasks' | 'notes' | 'calendar' | 'tracker'
+  >('tasks')
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -81,19 +98,71 @@ function SignedIn() {
           </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
         </div>
-        <Button
-          variant="secondary"
-          size="icon-lg"
-          aria-label="Đăng xuất"
-          disabled={logout.isPending}
-          onClick={() => logout.mutate()}
-        >
-          <LogOut />
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <PrivateGate session={session} />
+          <Button
+            variant="secondary"
+            size="icon-lg"
+            aria-label="Đăng xuất"
+            disabled={logout.isPending}
+            onClick={() => logout.mutate()}
+          >
+            <LogOut />
+          </Button>
+        </div>
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
-        <TasksScreen />
+        <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">
+          <Button
+            role="tab"
+            size="lg"
+            variant={activeScreen === 'tasks' ? 'secondary' : 'ghost'}
+            aria-selected={activeScreen === 'tasks'}
+            onClick={() => setActiveScreen('tasks')}
+          >
+            <ListTodo data-icon="inline-start" />
+            Task
+          </Button>
+          <Button
+            role="tab"
+            size="lg"
+            variant={activeScreen === 'notes' ? 'secondary' : 'ghost'}
+            aria-selected={activeScreen === 'notes'}
+            onClick={() => setActiveScreen('notes')}
+          >
+            <NotebookPen data-icon="inline-start" />
+            Ghi chú
+          </Button>
+          <Button
+            role="tab"
+            size="lg"
+            variant={activeScreen === 'calendar' ? 'secondary' : 'ghost'}
+            aria-selected={activeScreen === 'calendar'}
+            onClick={() => setActiveScreen('calendar')}
+          >
+            <CalendarDays data-icon="inline-start" />
+            Lịch
+          </Button>
+          <Button
+            role="tab"
+            size="lg"
+            variant={activeScreen === 'tracker' ? 'secondary' : 'ghost'}
+            aria-selected={activeScreen === 'tracker'}
+            onClick={() => setActiveScreen('tracker')}
+          >
+            <Activity data-icon="inline-start" />
+            Theo dõi
+          </Button>
+        </div>
+        <div role="tabpanel">
+          {activeScreen === 'tasks' ? <TasksScreen /> : null}
+          {activeScreen === 'notes' ? <NotesScreen /> : null}
+          {activeScreen === 'calendar' ? <CalendarScreen /> : null}
+          {activeScreen === 'tracker' ? (
+            <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
+          ) : null}
+        </div>
         {logout.isError ? (
           <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>
         ) : null}
@@ -158,7 +227,7 @@ function App() {
           ) : null}
 
           {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
-          {session.data && !loggedOut ? <SignedIn /> : null}
+          {session.data && !loggedOut ? <SignedIn session={session.data} /> : null}
         </div>
         <Toaster />
       </main>

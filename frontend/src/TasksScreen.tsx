@@ -22,6 +22,8 @@ import {
 import { toast } from 'sonner'
 
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
+import { endOfDayVietnam } from '@/calendar-scroll'
+import { addVietnamDays, todayInVietnam } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -146,7 +148,35 @@ const TaskCard = memo(function TaskCard({
      `onSuccess` resolve, mà `invalidateQueries` thì đợi luôn cả lượt tải lại.
      Await ở đây nghĩa là nút vẫn ghi "Đang thêm…" DÙ việc đã lưu xong — và nếu
      lượt tải lại treo thì nút treo theo vĩnh viễn. Ghi xong là ghi xong. */
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+  /* 010b §2 mục 9: dời hạn làm đổi chip task trên lịch, nên refresh cả họ
+     ["calendar"] bên cạnh ["tasks"] (lịch không mounted thì không tốn mạng). */
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+  }
+  const reschedule = useMutation({
+    mutationFn: (variables: { next: string | null; previous: string | null }) =>
+      apiRequest<Task>(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ due_at: variables.next }),
+      }),
+    onSuccess: (_data, variables) => {
+      refresh()
+      toast(
+        <span className="block min-w-0 max-w-full break-words">
+          Đã dời “{task.title}”
+        </span>,
+        {
+          duration: 8000,
+          action: {
+            label: 'Hoàn tác',
+            onClick: () =>
+              reschedule.mutate({ next: variables.previous, previous: null }),
+          },
+        },
+      )
+    },
+  })
   const update = useMutation({
     mutationFn: (
       payload: Partial<TaskPayload> & { status?: TaskStatus; pinned?: boolean },
@@ -257,6 +287,13 @@ const TaskCard = memo(function TaskCard({
     setDetailsOpen(true)
   }
 
+  function rescheduleTo(daysFromNow: number) {
+    reschedule.mutate({
+      next: endOfDayVietnam(addVietnamDays(todayInVietnam(), daysFromNow)),
+      previous: task.due_at,
+    })
+  }
+
   return (
     <>
       <Card
@@ -313,16 +350,32 @@ const TaskCard = memo(function TaskCard({
                 {task.body_md || task.items.length > 0 ? (
                   <TooltipContent>
                     {task.items.length > 0 ? (
-                      <p>
-                        <span className="font-bold">Checklist · </span>
-                        {task.items.map((item) => item.content).join(' · ')}
-                      </p>
+                      <div>
+                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
+                          Checklist ({task.items.length})
+                        </span>
+                        <ol className="mt-1 space-y-0.5">
+                          {task.items.slice(0, 3).map((item, index) => (
+                            <li key={item.id} className="flex gap-1.5">
+                              <span className="opacity-60">{index + 1}.</span>
+                              {item.content}
+                            </li>
+                          ))}
+                        </ol>
+                        {task.items.length > 3 ? (
+                          <p className="mt-1 text-xs opacity-70 italic">
+                            … và {task.items.length - 3} mục nữa
+                          </p>
+                        ) : null}
+                      </div>
                     ) : null}
                     {task.body_md ? (
-                      <p className={task.items.length > 0 ? 'mt-2' : ''}>
-                        <span className="font-bold">Ghi chú · </span>
+                      <div className={task.items.length > 0 ? 'mt-2' : ''}>
+                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
+                          Ghi chú
+                        </span>
                         {task.body_md}
-                      </p>
+                      </div>
                     ) : null}
                   </TooltipContent>
                 ) : null}
@@ -351,6 +404,38 @@ const TaskCard = memo(function TaskCard({
                 </span>
               ) : null}
             </div>
+
+            {isOverdue(task) ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  data-testid="task-reschedule-today"
+                  size="sm"
+                  variant="outline"
+                  disabled={reschedule.isPending || update.isPending}
+                  onClick={() => rescheduleTo(0)}
+                >
+                  Hôm nay
+                </Button>
+                <Button
+                  data-testid="task-reschedule-tomorrow"
+                  size="sm"
+                  variant="outline"
+                  disabled={reschedule.isPending || update.isPending}
+                  onClick={() => rescheduleTo(1)}
+                >
+                  Mai
+                </Button>
+                <Button
+                  data-testid="task-reschedule-day-after"
+                  size="sm"
+                  variant="outline"
+                  disabled={reschedule.isPending || update.isPending}
+                  onClick={() => rescheduleTo(2)}
+                >
+                  Ngày kia
+                </Button>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
@@ -835,7 +920,7 @@ export function TasksScreen() {
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="h-auto px-0 py-1 text-xs" size="sm" variant="link">
+              <Button className="h-auto py-1 pl-0! pr-0! text-xs" size="sm" variant="link">
                 <Plus data-icon="inline-start" />
                 Thêm chi tiết
               </Button>

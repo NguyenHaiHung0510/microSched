@@ -39,6 +39,26 @@ So 2 phương án chủ đã ghi ở `tracking-brief.md` §5:
 - **Điểm khớp thiết bị chủ (iPhone — `frontend-brief.md` §5):** lưu passphrase vào iCloud Keychain/password manager → autofill bằng **FaceID** → *không gõ gì trước mặt người đang nhìn* — vá đúng chỗ threat model đau nhất, 0 dòng code thêm. **WebAuthn/passkey step-up = nâng cấp sau** (cửa 2 chiều), v1 không cần.
 - Nhắc lại ranh giới: unlock là **cổng hiển thị**; khóa mã hóa AES-GCM vẫn ở app (Fly secrets) — không đổi gì encryption review đã chốt. TTL hết hạn giữa chừng → UI (và AI, §4) mất quyền thấy private từ lượt sau, y hệt nhau.
 
+**📝 2026-07-31 — đảo: bí mật là PIN 6 chữ số, không phải passphrase.** Thi công thật (`016`, PR
+#67, live `de95d30`) đổi "passphrase riêng" ở trên thành **PIN đúng 6 chữ số** (nguyên tắc chủ nêu:
+*giá trị tài sản phải cân bằng với cách bảo vệ nó* — PIN chỉ gác cửa NHÌN, khoá AES-256-GCM vẫn ở
+Fly secrets, không nằm trong DB, nên crack PIN không mở thêm được gì; xem lý luận đầy đủ ở
+`agent-tasks/016-private-unlock.md` §1.1). Argon2id giữ nguyên, tham số cố định
+**m=19456 KiB, t=2, p=1** (không dùng profile `RFC_9106_LOW_MEMORY` — 64 MiB × 4 luồng là rủi ro
+OOM thật trên Fly 256 MB, và không cần thiết khi bí mật chỉ 10⁶ giá trị). Autofill iCloud
+Keychain/FaceID vẫn giữ nguyên ý định — ô PIN dùng `autoComplete="current-password"` + ô `username`
+ẩn để trình quản lý mật khẩu vẫn chào lưu/điền được, dù input giờ numeric thay vì text tự do.
+
+**📝 2026-07-31 — đảo: TTL 15 phút → 36 phút; throttle "5 lần sai → khoá 15 phút" → thang leo
+10/20/36.** Chủ chốt lại khi duyệt spec `016`. Throttle mới: sai lần thứ **10 → khoá 5 phút**, thứ
+**20 → 8 phút**, thứ **36 → 18 phút** (hết lock cuối thì bộ đếm về 0); giữa hai mốc thử tự do. Và
+**throttle này TOÀN CỤC** (một row `app_setting`), không theo từng session như câu "khóa thử 15
+phút" phía trên ngụ ý — lý do: `PostgresSessionStore.create()` tạo session row mới mỗi lần đăng
+nhập với mọi giá trị mặc định, nên bộ đếm theo session sẽ bị một cú đăng-xuất-đăng-nhập-lại reset
+sạch. TTL 36 phút giữ nguyên tính chất **cứng, không gia hạn theo hoạt động** — `session.expires_at`
+cuộn theo mỗi request nhưng `private_until` thì không, vì `018` đã bật polling danh sách task theo
+nhịp giây, một tab mở sẵn sẽ tự gia hạn vĩnh viễn nếu TTL này cũng cuộn.
+
 ## 4. AI × private — ✅ bộ luật R1–R7 "AI đi theo cổng session" (chủ chọn 2026-07-20)
 
 **Nguyên tắc gốc (lời chủ):** AI đã integrate vào hệ thống thì đi theo đúng chế độ public/private của session — *"khi bật private là toàn quyền"*; AI hỗ trợ riêng mình mà không sâu/đủ thì không đáng. Nhất quán với ràng buộc cứng "AI PHẢI đọc được" (§0). "Toàn quyền khi mở" chạm 7 bề mặt — mỗi bề mặt một luật:
@@ -57,7 +77,7 @@ So 2 phương án chủ đã ghi ở `tracking-brief.md` §5:
 
 ## 5. Notes phụ ✅
 
-- **Cron endpoints** (GitHub Actions gọi backup/embed/nhắc thuốc): auth bằng **bearer secret riêng** (Fly secret), không đi qua session user.
+- **Cron endpoints:** production do Google Cloud Scheduler gọi; GitHub Actions chỉ giữ `workflow_dispatch` làm nút chạy tay. Cả hai auth bằng **bearer secret riêng** (Fly secret + Scheduler HTTP header + GitHub repo secret), không đi qua session user.
 - **OAuth redirect trong PWA standalone iOS** = item test máy thật lúc build (bẫy kinh điển: flow văng sang Safari → cookie nằm storage Safari ≠ storage app đã cài → login loop) — đã ghi `frontend-brief.md` §5.
 
 ## 6. Delta schema từ phiên này (đúc DDL lúc scaffold)

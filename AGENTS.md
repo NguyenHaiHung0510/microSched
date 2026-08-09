@@ -1,6 +1,6 @@
 # AGENTS.md — hướng dẫn cho executor ngoài hệ Claude (Codex, OpenCode, …)
 
-Đọc **`CLAUDE.md`** trước tiên — đó là luật của repo này (trạng thái dự án, quyết định đã khóa, hard boundaries, working conventions). Mọi điều trong đó áp dụng cho bạn y như cho Claude Code.
+Đọc **`CLAUDE.md`** trước tiên — đó là tài liệu trạng thái dự án, quyết định đã khóa, hard boundaries, và quy ước làm việc của repo này. Mọi điều trong đó áp dụng cho bạn khi thi công trong Codex Desktop hay các harness ngoài hệ Claude.
 
 Nếu `CLAUDE.md` **tự mâu thuẫn** giữa phần current state và một dated update, hoặc mâu thuẫn với cây code đang thấy trên đĩa ⇒ **dừng và nêu đủ hai phía**; không tự chọn phần "có vẻ mới hơn". *(Đã xảy ra thật: đoạn đầu ghi "pre-code, no application code" trong khi cuối cùng đoạn đó ghi "003–007 all DONE" — sống 2 ngày, `harness-audit/02` mới bắt được.)*
 

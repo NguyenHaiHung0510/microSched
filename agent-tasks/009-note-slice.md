@@ -1,9 +1,10 @@
 # 009 — Note slice (task/checklist/riêng tư/undo, chép khuôn từ 008 + 008f + 008n + 008m)
 
-> **DRAFT — khung để chủ duyệt, CHƯA phải bản giao Codex.** Đã qua 1 lượt `adversarial_review`
-> (T3, `gemini-3.1-pro-high`, 2026-07-28, đọc code thật) — 6 finding đã fold vào bản này. Còn thiếu
-> bước "chi tiết hoá §2 thành dòng file/hàm chính xác" như `008m` đã làm trước khi đủ điều kiện
-> giao Codex.
+> **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
+> · Skill gợi ý: không cần · MCP cần: không cần.** Đã qua 1 lượt `adversarial_review` (T3,
+> `gemini-3.1-pro-high`, 2026-07-28, đọc code thật) — 6 finding đã fold. §2 đã chi tiết hoá
+> (2026-07-31, T1 đọc trực tiếp `tasks.py`/`routers/tasks.py`/`models.py` để đúc chữ ký chính xác)
+> — **sẵn sàng giao Codex**, không còn ở mức khung.
 
 ## 0. Bối cảnh — vì sao 009 chỉ còn là "chép khuôn"
 
@@ -72,37 +73,157 @@ không phải thiết kế lại.
    - Không có DB nào tự chặn thiếu khoá này (CHECK chỉ thấy trạng thái cuối cùng, không thấy đua) —
      thiếu nó là type lỗi *im lặng*, chỉ lộ dưới tải đồng thời thật.
 
-## 2. Phải làm (khung — chi tiết hoá khi hết DRAFT)
+## 2. Phải làm (chi tiết — mirror byte-for-byte trừ 3 delta ghi rõ dưới đây)
 
-### 2.1 Backend — `notes.py` (mirror `tasks.py`)
-- `NoteItemCreate` / `NoteItemUpdate` / `NoteItemRead` (mirror `TaskItemCreate/Update/Read`).
-- `NoteCreate` / `NoteUpdate` / `NoteRead` — **`id: UUID | None = None`** ngay từ đầu (áp §2.2–§2.3
-  của `008m` nguyên xi cho Note: idempotent write, chặn biến-tạo-thành-sửa, `409` thân rỗng cho
-  trùng id với bản ghi không đọc được, validator version==7). `NoteRead` **không khai field
-  `embedding`** (xem §0 mục 2).
-- `NoteStore` — CRUD + mã hoá/giải mã `title`/`body_md` khi `is_private`, dùng
-  `with_privacy_gate()`/`not_deleted()` (KHÔNG gọi `readable()` trực tiếp cho ghi, theo đúng lệ
-  008f đã tách).
+**Ba delta so với `Task`, không hơn không kém — mọi chỗ khác chép nguyên xi:**
+1. `Note.title` **nullable** — `NoteCreate.title: str | None = None` (Task bắt buộc `min_length=1`).
+2. `Note` **không có** `status`/`priority`/`due_at`/`pinned` — các DTO Note không khai 4 field này,
+   `NoteStore.list()` không sort theo `pinned`/`due_at`.
+3. `Note.embedding` tồn tại ở DB nhưng **không vào DTO nào** — slice này không đọc/ghi giá trị đó.
 
-### 2.2 Router — `backend/app/web/routers/notes.py`
-- Mirror `routers/tasks.py` đủ endpoint, đừng bỏ sót cái nào: `POST /api/notes`, `GET /api/notes`
-  (danh sách), `GET /api/notes/{id}` (một note), `PATCH /api/notes/{id}`, `DELETE /api/notes/{id}`
-  (soft-delete), `POST /api/notes/{id}/restore` (hoàn tác — bắt buộc, đây là endpoint toast 10s ở
-  §2.3 gọi tới), `POST/PATCH/DELETE /api/notes/{id}/items/{item_id}` (hoặc gộp items vào payload
-  note nếu `tasks.py` đang làm vậy — giữ đúng quy ước đã có, đừng bày quy ước mới).
-- `require_session` ở tầng router (luật đã khoá từ auth-brief — không có slice nào ship thiếu gác).
+### 2.1 Backend — `backend/app/domain/notes.py` (file mới, mirror `backend/app/domain/tasks.py`)
+
+DTOs — copy nguyên xi shape của `TaskItemCreate`/`TaskItemUpdate`/`TaskItemRead`
+(`tasks.py:23-56`) thành `NoteItemCreate`/`NoteItemUpdate`/`NoteItemRead`, đổi `task_id` →
+`note_id` trong `NoteItemUpdate.reject_null_required_fields`. Note chưa từng ship checklist nên
+không có nhánh cũ phải giữ tương thích.
+
+`NoteCreate` (mirror `TaskCreate`, `tasks.py:58-75`):
+```python
+class NoteCreate(BaseModel):
+    id: UUID | None = None
+    title: str | None = None          # delta 1 — Task bắt buộc, Note thì không
+    body_md: str | None = None
+    is_private: bool = False
+    items: list[NonEmptyText] = Field(default_factory=list)
+    # require_uuidv7 validator — copy nguyên xi từ TaskCreate (tasks.py:70-75)
+```
+
+`NoteUpdate` (mirror `TaskUpdate`, `tasks.py:78-95`) — **đây là chỗ dễ chép sai nhất trong cả
+spec:**
+```python
+class NoteUpdate(BaseModel):
+    title: str | None = Field(default=None)     # KHÔNG có min_length=1 (delta 1)
+    body_md: str | None = None
+    is_private: bool | None = None
+
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> "NoteUpdate":
+        # CHỈ "is_private" — "title" KHÔNG được liệt vào đây.
+        # TaskUpdate cấm null cho "title" vì Task.title NOT NULL ở DB; Note.title
+        # nullable, nên client gửi {"title": null} là yêu cầu HỢP LỆ để xoá tiêu đề,
+        # không phải lỗi. Copy nguyên xi list ("title", "status", "is_private",
+        # "pinned") từ TaskUpdate vào đây là BUG — nó chặn nhầm một thao tác hợp lệ,
+        # không có test CI nào tự bắt vì đây là quyết định thiết kế, không phải type
+        # error. Danh sách đúng cho Note: chỉ ("is_private",).
+        for field in ("is_private",):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
+```
+Nhờ `model_dump(exclude_unset=True)` đã phân biệt "không gửi field" khỏi "gửi field=null", logic
+mã hoá/patch ở `NoteStore.update()` (`if "title" in changes: note.title = changes["title"]`) chạy
+đúng luôn cả khi `changes["title"] is None` — `_sealed()`/`_clear()` (copy nguyên xi từ
+`tasks.py:119-130`) đã null-safe sẵn, không cần thêm nhánh nào.
+
+`NoteRead` (mirror `TaskRead`, `tasks.py:98-112`) — bỏ `status`/`priority`/`due_at`/`pinned`,
+**không khai `embedding`** (delta 3):
+```python
+class NoteRead(BaseModel):
+    id: UUID
+    title: str | None
+    body_md: str | None
+    is_private: bool
+    items: list[NoteItemRead]
+    created_at: datetime | None
+    updated_at: datetime | None
+    created: bool | None = Field(default=None, exclude=True)
+```
+
+`NoteIdConflict(Exception)` — mirror `TaskIdConflict` (`tasks.py:115-116`), dùng cho cùng một tình
+huống (id trùng một bản ghi không đọc được).
+
+`NoteStore` — mirror `TaskStore` (`tasks.py:133-445`) method-for-method, `Task`→`Note`,
+`TaskItem`→`NoteItem` khắp nơi, bỏ mọi dòng đụng `status`/`priority`/`due_at`/`pinned`:
+- `_parent()` — copy nguyên xi (`tasks.py:136-148`), dùng `readable()` (đã gồm cả
+  `with_privacy_gate()` + `not_deleted()` — đây là đường đi ĐÚNG cho mọi thao tác trừ `restore()`).
+- `_items()`, `_item_read()` — copy nguyên xi, đổi field.
+- `_note_read()` (mirror `_task_read()`, `tasks.py:168-181`) — bỏ 4 field theo delta 2.
+- `list()` (mirror `tasks.py:183-215`) — bỏ filter `status`, bỏ `.order_by(Task.pinned.desc(),
+  Task.due_at.asc()...)`. **Quyết định order cho Note (chưa có ở đâu khoá trước, T1 chọn ngay tại
+  đây thay vì để trống):** `.order_by(Note.created_at.desc())` — mới nhất trước, đúng kỳ vọng UX
+  thông thường của danh sách ghi chú (không có "hạn"/"ghim" để ưu tiên như task). Không có param
+  `status` trong `list()`/router (Note không có trạng thái open/completed).
+- `get()` — copy nguyên xi.
+- `create()` (mirror `tasks.py:224-278`) — copy nguyên xi luồng idempotent
+  (`insert(...).on_conflict_do_nothing(...)` → `NoteIdConflict` nếu id trùng bản ghi không đọc
+  được), bỏ field `status`/`priority`/`due_at` khỏi dict `values`.
+- `update()` (mirror `tasks.py:280-335`) — copy nguyên xi toàn bộ khối toggle `is_private`
+  (encrypt-trước-flip-true / flip-false-trước-decrypt, `tasks.py:296-323`) KHÔNG đổi gì — logic đó
+  không phụ thuộc field nào bị bỏ. Vòng `for field in (...)` cuối cùng (`tasks.py:331-333`) chỉ
+  còn rỗng (Note không có field nào khác để patch qua đó) — **xoá cả vòng lặp đó**, đừng để lại
+  `for field in ():` chết.
+- `soft_delete()`, `restore()` (mirror `tasks.py:337-364`) — copy nguyên xi, **giữ đúng chỗ
+  `restore()` dùng `with_privacy_gate()` + filter `deleted_at.is_not(None)` thay vì `readable()`**
+  (008f đã tách hai hàm chính vì lý do này — `readable()` sẽ tự loại các row đã xoá nên không bao
+  giờ tìm thấy gì để hoàn tác).
+- `list_items()`, `add_item()`, `update_item()`, `delete_item()` (mirror `tasks.py:366-445`) — copy
+  nguyên xi, mọi thao tác lên `note_item` giữ `for_update=True` khi khoá cha (§1 mục 5 đã nói lý
+  do — không lặp lại ở đây).
+
+### 2.2 Router — `backend/app/web/routers/notes.py` (file mới, mirror `backend/app/web/routers/tasks.py`)
+
+Copy nguyên xi cấu trúc `routers/tasks.py` (153 dòng) — `Database`/`CurrentSession` type alias,
+`_not_found()` (đổi message "Note not found"), và đủ 9 endpoint không thiếu cái nào:
+
+| Method | Path | Mirror của |
+|---|---|---|
+| GET | `/api/notes` | `list_tasks` — bỏ query param `status` (Note không có) |
+| POST | `/api/notes` | `create_task` — giữ nguyên logic `TaskIdConflict`→409/`response.status_code` 201-vs-200 theo `created`, đổi tên exception |
+| GET | `/api/notes/{note_id}` | `read_task` |
+| PATCH | `/api/notes/{note_id}` | `update_task` |
+| DELETE | `/api/notes/{note_id}` | `delete_task` |
+| POST | `/api/notes/{note_id}/restore` | `restore_task` |
+| GET | `/api/notes/{note_id}/items` | `list_task_items` |
+| POST | `/api/notes/{note_id}/items` | `create_task_item` |
+| PATCH | `/api/notes/{note_id}/items/{item_id}` | `update_task_item` |
+| DELETE | `/api/notes/{note_id}/items/{item_id}` | `delete_task_item` |
+
+`require_session` ở tầng router qua `CurrentSession = Annotated[AuthSession,
+Depends(require_session)]` — copy nguyên xi, không có slice nào ship thiếu gác (luật khoá từ
+`auth-brief.md`). Đăng ký `router` mới trong `backend/app/main.py` (tìm chỗ `tasks.router` đang
+được include, thêm `notes.router` cạnh đó — đọc file thật để biết tên biến/hàm chính xác, đừng
+đoán).
 
 ### 2.3 Frontend
-- `NotesScreen.tsx` + `NoteForm.tsx`: mirror `TasksScreen.tsx`/`TaskForm.tsx` — dùng component
-  shadcn đã dựng ở `008e`, không thẻ `<button>` thô (luật UI trong `AGENTS.md`).
-- `note-ui.ts`: type `NotePayload` (mirror `TaskPayload`/`TaskWritePayload` — tách write-payload
-  không id khỏi create-payload có `id: string`, đúng lý do `008m` đã tách cho Task).
-- `note-undo.ts`: mirror `task-undo.ts` (toast 10s, hoàn tác = soft-delete).
-- Áp luôn 2 bài học đã trả giá ở task, đừng lặp lại:
-  - `AbortSignal.timeout(20s)` cho mọi `apiRequest` (008i) — đã có sẵn trong `api.ts`, chỉ cần
-    dùng đúng, không tự chế lại.
-  - Contrast/touch-target theo `ui-brief.md` (008e/008i/008k) — đặc biệt icon ghim (nếu Note cũng
-    pin được) và viền input.
+
+**Phạm vi UI: chỉ CRUD + checklist + riêng tư + undo.** `TasksScreen.tsx` (925 dòng) đã tích luỹ
+nhiều tính năng riêng của Task từ `018`/`008g`/`008k` (ghim, banner trễ hạn, ô hạn/priority,
+drag-select) — **Note không có `pinned`/`due_at`/`priority` nên KHÔNG mirror các UI đó**, chỉ
+mirror khung list+form+checklist+privacy-toggle+undo-toast. Đọc `TasksScreen.tsx` để lấy đúng
+pattern (cách gọi `apiRequest`, cách dùng component shadcn, cách xử lý `AbortSignal.timeout`), rồi
+lược bỏ phần không áp dụng cho Note thay vì mirror nguyên khối rồi để dở dang.
+
+- `frontend/src/note-ui.ts` (mirror `task-ui.ts`, 49 dòng): `NoteFormState` (`title`, `body`,
+  `isPrivate` — bỏ `priority`/`dueAt`), `NoteWritePayload` (`title: string | null`, `body_md:
+  string | null`, `is_private: boolean` — `title` **nullable ở type**, khác `TaskWritePayload`),
+  `NotePayload = NoteWritePayload & { id: string }`, `noteInvalidationKey`, `noteQueryKey` (Note
+  không có filter trạng thái nên có thể chỉ là hằng số `['notes']`, không cần tham số `filter` như
+  `taskQueryKey`), `notePayload(state)`, `canSubmitNote` — **cân nhắc**: vì title nullable ở
+  backend, `canSubmitNote` không nhất thiết đòi `title.length > 0` như `canSubmitTask` — quyết định
+  UX (cho phép note trống tiêu đề) là hợp lệ theo schema; nếu muốn vẫn yêu cầu tiêu đề ở tầng UI thì
+  đó là lựa chọn UX được phép, không phải ràng buộc backend — ghi rõ lựa chọn nào được chọn trong
+  PR description.
+- `frontend/src/note-undo.ts` (mirror `task-undo.ts`, 23 dòng) — copy nguyên xi, đổi endpoint
+  `/api/tasks/${id}/restore` → `/api/notes/${id}/restore`, đổi tên hàm `restoreTask`→`restoreNote`.
+- `frontend/src/NoteForm.tsx` + `frontend/src/NotesScreen.tsx` (file mới) — dùng component shadcn
+  đã dựng ở `008e` (không thẻ `<button>` thô, luật UI `AGENTS.md`), gọi `apiRequest` với
+  `AbortSignal.timeout(20s)` đã có sẵn trong `api.ts` (008i — dùng đúng, không tự chế lại), tôn
+  trọng contrast/touch-target theo `ui-brief.md` (đặc biệt viền input — không có icon ghim vì Note
+  không pin được).
+- Đăng ký route/tab Note trong `frontend/src/App.tsx` (đọc file thật để biết cách Task đã đăng ký,
+  mirror đúng cách đó — điều hướng giữa Task/Note là quyết định UI nhỏ, chọn cách rẻ nhất khớp
+  pattern hiện có, ví dụ tab/route cạnh nhau).
 
 ## 3. Không được làm
 
@@ -131,5 +252,9 @@ không phải thiết kế lại.
       nullable, `embedding` không có ở Task, VIA_PARENT là app-layer thuần, thiếu khoá `for_update`,
       thiếu endpoint `GET /{id}` + `restore`, hedge 008m-chưa-merge đã lỗi thời.
 - [x] `008m` đã merge — không còn nhánh điều kiện nào cần quyết ở thời điểm giao.
-- [ ] Chi tiết hoá §2 thành các bước cụ thể như `008m` đã làm (dòng file, hàm chính xác) trước khi
-      đưa cho Codex — bản này còn ở mức khung.
+- [x] Chi tiết hoá §2 (2026-07-31) — T1 đọc trực tiếp `tasks.py`/`routers/tasks.py`/`models.py`,
+      đúc 3 delta thật (title nullable + validator, thiếu 4 field, embedding loại khỏi DTO), chọn
+      order mặc định cho `list()` (chưa từng quyết trước đó), và cắm cờ rủi ro chép-sai lớn nhất
+      (`NoteUpdate.reject_null_required_fields` không được copy nguyên `TaskUpdate`).
+- [ ] **Việc của CHỦ trước khi giao Codex:** không có công tắc môi trường nào cần bật riêng (không
+      Docker/VPN mới ngoài những gì `008`/`008m` đã cần) — sẵn sàng giao ngay.

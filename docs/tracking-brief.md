@@ -265,6 +265,15 @@ Chủ: tính năng **quan trọng nhất app** (sức khỏe trực tiếp) như
 - **Luồng:** cron (GitHub Actions — architecture đã chốt) → app → web-push đúng `reminder_time` → **bấm ✓ ngay trên noti = ghi entry 1 chạm**. Pattern *nhắc-rồi-xác-nhận* lần 2 — nhưng khác S2 đúng chỗ cần khác: thuốc không có gì phải "xem xét/trả tiền ngoài" nên ✓-1-chạm là đúng; sub thì không.
 - **K17 (kỹ thuật, cùng mandate §10):** `TIME` = wall-clock lặp-hằng-ngày, cùng họ ngoại lệ K14 (không phải *thời điểm sự kiện*; app quy sang UTC khi đặt lịch cron — single-user VN). Cơ chế generic cho **mọi** tracker, không riêng thuốc; cadence v1 = daily-only, mở rộng (theo thứ trong tuần…) = DEFER.
 
+### 📝 2026-08-01 — SUPERSEDE hai chi tiết của §12 (mô hình dữ liệu giữ nguyên)
+
+*Ghi lại vì cả hai đã đổi thật lúc thiết kế `011b`, và để hai file cùng là "quyết định hiện hành" mà nói ngược nhau là đúng cái bẫy `CLAUDE.md` cấm. Phát hiện lúc T2 phản biện chéo spec 011a/b/c.*
+
+1. **Cron: "GitHub Actions" → Google Cloud Scheduler, và MỘT job → BA job cố định** (`08:00`/`15:00`/`19:00` giờ VN, `agent-tasks/011b` §1.1). Hai lý do độc lập: hạ tầng cron của dự án đã chuyển sang Cloud Scheduler từ 2026-07-23 (`devops-brief.md` §10 — nhịp tối thiểu của GH Actions cron trùng đúng cửa sổ idle của Neon); và nhu cầu thật đổi từ *một* giờ nhắc sang *nhiều* giờ trong ngày (toa tạm thời), nên một mốc cố định là hỏng đúng thứ tính năng này sinh ra để làm. Vẫn **không** scan-liên-tục.
+2. **"Bấm ✓ ngay trên noti = ghi entry 1 chạm" → chạm vào thân noti mở route `/reminder-confirm?dispatch=<id>` rồi app ghi ngay** (`011b` §1.3, §4.2). Không phải đổi ý về UX mà là **giới hạn nền tảng đo được**: iOS không cho notification có nút hành động ở lock-screen cho web push, nên nút ✓ không tồn tại được. Tinh thần "một chạm, không hỏi lại" giữ nguyên — vẫn đúng một thao tác, và `reminder_dispatch` chống ghi trùng khi tap ở hai thiết bị.
+
+**Không đổi:** mô hình dữ liệu (không entity mới, hai cột `reminder_time`/`reminder_text` trên `tracker`), nguyên tắc kín đáo trên noti, không streak, cadence daily-only.
+
 ## 13. ✅ ĐÓNG PHIÊN 2026-07-19
 
 Mọi mục của phiên đã về trạng thái cuối — **0 mục ⚠️ còn treo**. Schema toàn dự án **khép tại đây**: C2/D1 hết DEFER; +`tracker_group`, +`subscription`; cột mới trên `tracker` (`direction`, `input_mode`, `group_id`, `reminder_time`, `reminder_text`, `unit` thu hẹp) và `entry` (`quantity`, `amount`, `list_amount`, `subscription_id`).

@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     allowed_emails: str = ""
     oauth_state_secret: str | None = None
     cron_token: str | None = None
+    private_pin_bootstrap: str | None = None
     # App-held AES-256 key for the encrypted columns; crypto.py validates and uses it.
     encryption_master_key: str | None = None
 

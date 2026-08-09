@@ -44,8 +44,8 @@ Fork thật sự sau khi loại Django (batteries/admin thừa cho single-user +
      (+pgvector)
 ```
 - **Ranh giới module = trong process** (Web/Domain/Retrieval/Agent/Jobs), không phải ranh giới mạng.
-- **Background/định kỳ (embed, import lịch, backup, nhắc thuốc):** **external cron (GitHub Actions)** gọi endpoint — không thêm hạ tầng, sống được kể cả khi app đang nghỉ. **Bỏ** Celery/RQ + Redis broker — thừa cho một user.
-- **Hệ quả quan trọng:** "nhắc uống thuốc" = cron bắn đúng giờ → đánh thức app → gửi web-push. Cold-start vài giây chấp nhận được cho *lời nhắc*, nhưng **không chấp nhận được cho thao tác tương tác trực tiếp** → xem §4 (offline-first) và §5 (always-on).
+- **Background/định kỳ (embed, import lịch, backup, nhắc thuốc):** **external cron (Google Cloud Scheduler)** gọi endpoint — độc lập với vòng đời deploy/restart của app. **Bỏ** Celery/RQ + Redis broker — thừa cho một user.
+- **Hệ quả quan trọng:** "nhắc uống thuốc" = Scheduler bắn đúng giờ → app đang chạy xử lý → gửi web-push. Scheduler vẫn ở ngoài để có retry/deadline và không gắn lịch nhắc vào hoạt động phát triển; always-on không tự sinh ra lịch chạy.
 
 ## 4. Frontend/PWA — ✅ offline-first cho capture, còn lại OPEN
 Yêu cầu cứng đã nêu: xem task hôm nay / ghi ý tưởng ngay **không được đợi**. Tách 2 đường theo đúng nơi nó cần giải:
@@ -70,7 +70,7 @@ Yêu cầu cứng đã nêu: xem task hôm nay / ghi ý tưởng ngay **không �
 - **Render free** — cold-start 30–60s — vi phạm điều kiện cứng.
 
 **Đã chọn Fly.io.** Cân nhắc trung thực cả điểm yếu: uptime thực đo ~92%/30 ngày (dưới SLA 99.9% họ công bố), phần lớn sự cố tới từ Fly Managed Postgres/Consul — **ta không dùng Fly-PG (dùng Neon)** nên né được lớp sự cố hay gặp nhất. Vài giờ downtime/năm chấp nhận được: docs đã chốt "five-nines vô nghĩa với 1 user", và 3-2-1 backup đã lo phần mất dữ liệu.
-- **Cấu hình:** 1× Machine `shared-cpu-1x`, always-on (`min_machines_running=1`, tắt autostop), region `sin`. **Khởi đầu 256MB (\$2.02, đúng ngân sách gốc), theo dõi memory, chỉ `fly scale memory 512` (\$3.3) nếu OOM** — không cam kết \$4 trước. **`fly scale count 1`** — `fly launch` mặc định tạo 2 máy (HA), single-user không cần → bẫy chi phí #1.
+- **Cấu hình hiện hành:** 1× Machine `shared-cpu-1x` 256MB, always-on (`auto_stop_machines = false`, `min_machines_running = 1`), region `sin`. Gross compute đo theo giá `sin` khoảng **$2,47–2,55/tháng**; net invoice kỳ vọng $0 chỉ theo waiver có điều kiện ghi ở `cost-brief.md` §7.6. **`fly scale count 1`** — `min_machines_running = 1` chỉ đặt sàn, không đặt trần; phải kiểm live count sau deploy.
 - **Dùng:** Shared IPv4 (free) + TLS free (Let's Encrypt qua `fly certs`); Secrets (mã hoá at-rest cho API key/DB url); `fly deploy` qua GitHub Actions.
 - **Không dùng:** Volumes (data ở Neon), Fly Managed Postgres, Tigris (backup đã có Google Drive).
 - **Cửa 2 chiều:** Docker image chuẩn → đổi sang Render/VPS trong vài giờ nếu cần.
@@ -121,6 +121,26 @@ Dự đoán cũ ("bỏ được ~5s khởi động Python") **hụt về hướn
 
 **Hệ quả buộc phải đọc kèm — hai quyết định này khoá nhau:** always-on + cron hỏng ⇒ app vẫn đang chạy. Scale-to-zero + cron hỏng ⇒ **app nằm im, không gì đánh thức**. Bật scale-to-zero **nâng cron từ "nên có" thành "hạ tầng bắt buộc"** — xem `devops-brief.md` §10, quyết cùng phiên vì đúng lý do này.
 
+### 📝 2026-08-02 — ✅ ĐẢO LẠI: scale-to-zero → **một Machine 256MB always-on**
+
+Fly Support xác nhận invoice của chủ được waive khi **finalized cost dưới $5**. Với đúng một
+`shared-cpu-1x` 256MB ở `sin`, gross compute hiện khoảng **$2,47–2,55/tháng**; net payable kỳ vọng
+**$0** khi waiver còn hiệu lực. Đây không phải free tier/compute allowance được Fly pricing cam kết:
+nó chỉ áp cho original personal organization đủ điều kiện, tính trên **tổng invoice của organization**,
+và là một cliff — chạm $5 hoặc hơn thì phải chuẩn bị trả toàn invoice. Chi tiết + ngưỡng canh ở
+`cost-brief.md` §7.6.
+
+**Cấu hình hiện hành:** `auto_stop_machines = false`, `auto_start_machines = true`,
+`min_machines_running = 1`; memory 256MB, shared CPU, region `sin`. Mục tiêu vận hành là **đúng một
+Machine**. `min_machines_running = 1` chỉ bảo đảm số tối thiểu, không chặn Machine thứ hai ⇒ sau deploy
+phải kiểm live count riêng. Các cấu hình `suspend`/`min_machines_running = 0` ở note 23–24/07 phía
+trên là hồ sơ quyết định cũ, không còn là chỉ dẫn hiện hành; giữ nguyên số đo vì chúng chứng minh đường
+đảo lại nếu waiver biến mất hoặc chi phí vượt ngưỡng.
+
+**Google Cloud Scheduler vẫn giữ nguyên.** Always-on chỉ bỏ nhu cầu “cron đánh thức app”; nó không thay
+thế lịch chạy, retry hay attempt deadline. `/api/healthz` tiếp tục không chạm DB để Neon vẫn
+autosuspend độc lập — Fly luôn thức không có nghĩa Neon phải luôn thức.
+
 ## 6. Truy cập & domain — ✅ `*.fly.dev` trước, domain riêng khi cần bền
 - Fly cấp sẵn `tên-app.fly.dev` + HTTPS tự động, **miễn phí, dùng ngay** — không cần mua gì, không đụng IP thô.
 - **Domain riêng = tuỳ chọn**, đáng mua *sớm* nếu định đổi host về sau: PWA-install + đăng ký web-push gắn với **origin** → đổi host mà giữ nguyên domain thì không phải cài lại PWA/re-subscribe push. Mua ở Cloudflare Registrar (giá gốc, không bẫy renewal). Chi tiết giá: `cost-brief.md`.
@@ -150,7 +170,7 @@ Một repo (backend + frontend), backend serve static PWA build cùng origin →
 | Framework | **FastAPI** (+ Pydantic v2; **ORM=SQLModel chốt Nhóm 2** → `schema-physical-brief.md`) | ✅ |
 | Kiến trúc | Modular monolith, cron ngoài cho jobs | ✅ |
 | Frontend | SPA/PWA **tĩnh** (offline-first), serve chung 1 origin; stack = React+TS+Vite 8+Tailwind/shadcn+TanStack Query+Dexie/outbox (chốt 2026-07-20 → `frontend-brief.md`) | ✅ |
-| Hosting | Fly.io, 1×512MB always-on, `sin` | ✅ |
+| Hosting | Fly.io, 1× shared-cpu-1x 256MB always-on, `sin` | ✅ |
 | Domain | `*.fly.dev` trước, custom khi cần bền | ✅ |
 | Auth | Google OAuth + allowlist (Authlib) + session DB + private unlock Argon2id + AI×private R1–R7 (chốt 2026-07-20 → `auth-brief.md`) | ✅ |
 | AI tool layer | Typed, MCP-ready, MCP bật khi có consumer 2 | ✅ |

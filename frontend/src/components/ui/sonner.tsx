@@ -10,7 +10,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme="light"
-      className="toaster group"
+      // Radix modal (qua react-remove-scroll) đặt `pointer-events: none` lên
+      // `body` khi có Dialog mở; toast là con của body nên kế thừa và không
+      // nhận chạm dù z-index cao hơn overlay. Cố định `pointer-events: auto`
+      // trên chính khung toast để nút action (vd Hoàn tác sau khi dời việc từ
+      // dialog lịch) vẫn bấm được khi dialog đang mở.
+      className="toaster group pointer-events-auto"
       icons={{
         success: (
           <CircleCheckIcon className="size-4" />
