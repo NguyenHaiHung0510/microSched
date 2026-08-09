@@ -18,9 +18,15 @@ if TYPE_CHECKING:
     from app.core.cron_timer import ReloadSink
 
 CRON_TIMER_RELOAD_INFO_KEY = "cron_timer_reload_reason"
-cron_reload_sink: ContextVar["ReloadSink | None"] = ContextVar(
-    "microsched_cron_reload_sink", default=None
-)
+cron_reload_sink: ContextVar["ReloadSink | None"] | None = None
+
+
+def get_cron_reload_sink() -> ContextVar["ReloadSink | None"]:
+    """Create the timer ContextVar only for an enabled in-process timer."""
+    global cron_reload_sink
+    if cron_reload_sink is None:
+        cron_reload_sink = ContextVar("microsched_cron_reload_sink", default=None)
+    return cron_reload_sink
 
 
 def _unauthenticated() -> HTTPException:
@@ -72,9 +78,14 @@ async def get_session() -> AsyncIterator[AsyncSession]:
             raise
         else:
             reason = db.info.pop(CRON_TIMER_RELOAD_INFO_KEY, None)
-            sink = cron_reload_sink.get()
-            if sink is not None and reason is not None:
-                sink.request_reload(reason)
+            # The disabled path does not create or read a ContextVar. Markers
+            # remain transaction-local metadata and are simply discarded.
+            if reason is not None and get_settings().enable_inprocess_cron:
+                sink_context = cron_reload_sink
+                if sink_context is not None:
+                    sink = sink_context.get()
+                    if sink is not None:
+                        sink.request_reload(reason)
 
 
 async def require_session(

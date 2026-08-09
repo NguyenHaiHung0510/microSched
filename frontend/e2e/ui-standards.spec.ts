@@ -72,7 +72,7 @@ test('F15: dialog Close hit target is >= 44px', async ({ page }) => {
   expect(box!.height).toBeGreaterThanOrEqual(44)
 })
 
-test('011b: registers this device before saving the first tracker reminder', async ({
+test('011b: registers this device before saving an existing tracker reminder', async ({
   page,
   trackerApi,
 }) => {
@@ -123,10 +123,10 @@ test('011b: registers this device before saving the first tracker reminder', asy
     await route.fallback()
   })
 
+  trackerApi.trackers[0].reminder_time = '08:00'
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
   await page.getByRole('button', { name: 'Sửa Hút thuốc' }).click()
-  await page.getByTestId('tracker-reminder-enabled').click()
   await page.getByTestId('tracker-reminder-time').fill('08:30')
   await page.getByRole('button', { name: 'Lưu thay đổi' }).click()
 

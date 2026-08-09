@@ -20,7 +20,7 @@ from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
 from app.domain.models import AuthSession, PushSubscription
 from app.domain.push import PushResult, validate_push_endpoint
-from app.domain.reminder import dispatcher
+from app.domain.reminder import ReminderDispatcher
 from app.main import create_app
 from app.web.deps import get_session, require_session
 
@@ -605,6 +605,8 @@ def test_dispatch_item_never_sends_concurrently(pg_dsn: str, monkeypatch):
             monkeypatch.setattr(reminder_module, "send_push", slow_send)
 
             maker = async_sessionmaker(engine, expire_on_commit=False)
+
+            dispatcher = ReminderDispatcher()
 
             async def worker() -> str:
                 async with maker() as db:

@@ -27,8 +27,9 @@ export function urlBase64ToUint8Array(value: string): Uint8Array<ArrayBuffer> {
 }
 
 /**
- * Register this device before a tracker is allowed to save its first reminder.
- * This ordering avoids the silent "has a time but no push device" state.
+ * Register the current device before saving any enabled tracker reminder.
+ * This ordering avoids the silent "has a time but no push device" state when
+ * an existing reminder is edited from a newly used device.
  */
 export async function ensurePushSubscription(): Promise<void> {
   if (!('Notification' in window) || !('serviceWorker' in navigator)) {

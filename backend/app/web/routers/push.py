@@ -6,7 +6,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
@@ -67,30 +68,38 @@ async def subscribe_push(
             detail="Invalid push endpoint URL",
         )
 
-    stmt = select(PushSubscription).where(PushSubscription.endpoint == body.endpoint)
-    res = await db.execute(stmt)
-    existing = res.scalar_one_or_none()
-
-    if existing is not None:
-        existing.p256dh = body.p256dh
-        existing.auth = body.auth
-        if body.user_agent is not None:
-            existing.user_agent = body.user_agent
-        existing.last_seen_at = datetime.now(timezone.utc)
-        await db.commit()
-        return {"id": str(existing.id), "status": "updated"}
-
-    new_sub = PushSubscription(
+    # The endpoint is the device's natural key.  Use the database unique key as
+    # the idempotency boundary so two saves from the same browser cannot race
+    # through separate SELECT-then-INSERT windows.
+    existing_id = await db.scalar(
+        select(PushSubscription.id).where(PushSubscription.endpoint == body.endpoint)
+    )
+    now_utc = datetime.now(timezone.utc)
+    insert_stmt = pg_insert(PushSubscription).values(
         endpoint=body.endpoint,
         p256dh=body.p256dh,
         auth=body.auth,
         user_agent=body.user_agent,
-        last_seen_at=datetime.now(timezone.utc),
+        last_seen_at=now_utc,
     )
-    db.add(new_sub)
+    upsert_stmt = insert_stmt.on_conflict_do_update(
+        index_elements=[PushSubscription.endpoint],
+        set_={
+            "p256dh": insert_stmt.excluded.p256dh,
+            "auth": insert_stmt.excluded.auth,
+            "user_agent": func.coalesce(
+                insert_stmt.excluded.user_agent,
+                PushSubscription.user_agent,
+            ),
+            "last_seen_at": now_utc,
+        },
+    ).returning(PushSubscription.id)
+    subscription_id = (await db.execute(upsert_stmt)).scalar_one()
     await db.commit()
-    await db.refresh(new_sub)
-    return {"id": str(new_sub.id), "status": "created"}
+    return {
+        "id": str(subscription_id),
+        "status": "updated" if existing_id is not None else "created",
+    }
 
 
 @router.delete("/push/subscribe")
@@ -114,14 +123,11 @@ async def confirm_reminder(
     auth: Annotated[AuthSession, Depends(require_session)],
 ) -> dict[str, object]:
     """Idempotently confirm a medication reminder dispatch and create an Entry."""
-    now_utc = datetime.now(timezone.utc)
-    unlocked = bool(auth.private_until and auth.private_until > now_utc)
     entry, created = await confirm_reminder_dispatch(
         db,
         dispatch_id=dispatch_id,
         entry_id=body.entry_id,
         occurred_at=body.occurred_at,
-        is_private_unlocked=unlocked,
         auth=auth,
     )
     return {

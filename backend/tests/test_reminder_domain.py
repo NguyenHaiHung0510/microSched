@@ -1,5 +1,6 @@
 """Pure unit tests for reminder payload generation and privacy rules."""
 
+import inspect
 from datetime import date
 from uuid import UUID
 
@@ -8,9 +9,18 @@ from app.domain.models import Subscription, Tracker
 from app.domain.reminder import (
     build_medication_payload,
     build_subscription_expiry_payload,
+    confirm_reminder_dispatch,
 )
 
 DISPATCH_ID = UUID("01912345-6789-7000-8000-000000000000")
+
+
+def test_confirmation_requires_the_verified_auth_session() -> None:
+    """Confirmation must not recreate a session from a boolean unlock hint."""
+    parameters = inspect.signature(confirm_reminder_dispatch).parameters
+
+    assert "is_private_unlocked" not in parameters
+    assert parameters["auth"].default is inspect.Parameter.empty
 
 
 def test_medication_payload_private_tracker_without_text():

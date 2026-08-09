@@ -28,7 +28,7 @@ export type TrackerWritePayload = {
   is_private: boolean
   reminder_time?: string | null
   reminder_text?: string | null
-  register_push?: boolean
+  ensure_push?: boolean
 }
 
 export function TrackerForm({
@@ -69,7 +69,9 @@ export function TrackerForm({
       ? {
           reminder_time: reminderEnabled ? reminderTime : null,
           reminder_text: reminderEnabled ? reminderText.trim() || null : null,
-          register_push: reminderEnabled && !initial?.reminder_time,
+          // A tracker reminder can be edited from a device that has never
+          // subscribed. Device state belongs to PushManager, not this tracker.
+          ensure_push: reminderEnabled,
         }
       : {}
     onSubmit({

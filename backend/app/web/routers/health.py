@@ -15,7 +15,7 @@ process actually reach what it depends on", and is therefore allowed to spend a
 query. Never point an automated probe at the readiness path.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 
 from app.core.db import check_database
 from app.core.settings import get_settings
@@ -34,7 +34,7 @@ async def healthz() -> dict[str, str]:
 
 
 @router.get("/readyz")
-async def readyz(request: Request) -> dict[str, object]:
+async def readyz() -> dict[str, object]:
     """Report dependency reachability, spending one query to do it.
 
     Returns 200 even when the database is unreachable, reporting the failure in the
@@ -50,7 +50,4 @@ async def readyz(request: Request) -> dict[str, object]:
         "db": database,
         "commit": settings.git_sha,
     }
-    timer = getattr(request.app.state, "cron_timer", None)
-    if timer is not None:
-        result["timer"] = timer.health_snapshot()
     return result

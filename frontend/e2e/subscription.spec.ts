@@ -376,6 +376,26 @@ test('renew form previews the amount and new expiry before confirm', async ({ pa
   await expect(page.getByTestId('subscription-renew-summary')).toContainText('300.000 ₫')
 })
 
+test('mobile auto-renew and list-price controls expose 44px hit areas', async ({ page }) => {
+  await page.goto('/subscription')
+  await expect(page.getByTestId('subscription-screen')).toBeVisible()
+  await page.getByRole('button', { name: 'Đăng ký mới' }).click()
+
+  const autoRenew = page.getByTestId('subscription-auto-renew-hit-area')
+  const listPrice = page.getByTestId('settings-list-price-hit-area')
+  await expect(autoRenew).toBeVisible()
+  await expect(listPrice).toBeVisible()
+
+  for (const [name, locator] of [
+    ['auto-renew', autoRenew],
+    ['list-price', listPrice],
+  ] as const) {
+    const box = await locator.boundingBox()
+    expect(box, `${name} hit area must be visible`).not.toBeNull()
+    expect(box!.height, `${name} hit area must be at least 44px`).toBeGreaterThanOrEqual(44)
+  }
+})
+
 test('lapsed subscription renews from today, not its stale expiry (F1)', async ({
   page,
   subscriptionApi,

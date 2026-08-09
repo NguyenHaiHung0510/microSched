@@ -67,7 +67,7 @@ async def validate_push_endpoint(endpoint: str) -> bool:
     except ValueError:
         try:
             resolved_ips = await asyncio.to_thread(_resolve_endpoint_ips, hostname_lower)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return False
 
     return bool(resolved_ips) and all(ip.is_global for ip in resolved_ips)

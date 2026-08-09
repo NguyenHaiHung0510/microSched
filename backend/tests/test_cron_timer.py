@@ -2,6 +2,7 @@
 
 import asyncio
 import heapq
+import logging
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
@@ -498,11 +499,10 @@ async def test_dead_pending_rows_are_receipted_not_dropped(monkeypatch):
 async def test_exhausted_outcome_is_receipted_and_next_day_scheduled(monkeypatch):
     """F10+F11: EXHAUSTED at dispatch logs a receipt and does not swallow tomorrow."""
     stub = StubDispatcher(DispatchOutcome.EXHAUSTED)
-    monkeypatch.setattr(cron, "dispatcher", stub)
     now = datetime(2026, 8, 6, 7, 0, tzinfo=VN_TZ)
     tracker_id = UUID("01912345-6789-7000-8000-000000000501")
     tracker = _tracker(tracker_id, reminder_time=time(8, 0))
-    timer = CronTimer(FakeFactory(FakeDB(results=[[tracker]])))
+    timer = CronTimer(FakeFactory(FakeDB(results=[[tracker]])), reminder_dispatcher=stub)
     item = TimerItem(
         due_at=now,
         occurrence_on=date(2026, 8, 6),
@@ -535,8 +535,7 @@ async def test_subscription_chain_schedules_next_day_and_retry_backoff(monkeypat
     parent = _tracker(parent_id, kind="finance", input_mode="money")
 
     stub = StubDispatcher(DispatchOutcome.SENT)
-    monkeypatch.setattr(cron, "dispatcher", stub)
-    timer = CronTimer(FakeFactory(FakeDB(results=[[(sub, parent)]])))
+    timer = CronTimer(FakeFactory(FakeDB(results=[[(sub, parent)]])), reminder_dispatcher=stub)
     item = TimerItem(
         due_at=now,
         occurrence_on=date(2026, 8, 6),
@@ -552,8 +551,7 @@ async def test_subscription_chain_schedules_next_day_and_retry_backoff(monkeypat
 
     # TEMPORARY_FAILURE on the FIRST attempt → retry in 30s, same occurrence.
     stub2 = StubDispatcher(DispatchOutcome.TEMPORARY_FAILURE)
-    monkeypatch.setattr(cron, "dispatcher", stub2)
-    timer2 = CronTimer(FakeFactory(FakeDB(results=[[(sub, parent)]])))
+    timer2 = CronTimer(FakeFactory(FakeDB(results=[[(sub, parent)]])), reminder_dispatcher=stub2)
     item2 = TimerItem(
         due_at=now,
         occurrence_on=date(2026, 8, 7),
@@ -570,8 +568,7 @@ async def test_subscription_chain_schedules_next_day_and_retry_backoff(monkeypat
 
     # TEMPORARY_FAILURE on the FINAL attempt (retry_count=3) → next day (F10).
     stub3 = StubDispatcher(DispatchOutcome.TEMPORARY_FAILURE)
-    monkeypatch.setattr(cron, "dispatcher", stub3)
-    timer3 = CronTimer(FakeFactory(FakeDB(results=[[(sub, parent)]])))
+    timer3 = CronTimer(FakeFactory(FakeDB(results=[[(sub, parent)]])), reminder_dispatcher=stub3)
     item3 = TimerItem(
         due_at=now,
         occurrence_on=date(2026, 8, 7),
@@ -667,6 +664,45 @@ async def test_item_exception_does_not_kill_loop(monkeypatch):
     assert loads >= 2, "failure must rebuild from durable pending/schedule sources"
     await timer.stop()
     await asyncio.wait_for(task, timeout=2)
+
+
+@pytest.mark.anyio
+async def test_timer_item_exception_log_excludes_exception_text(monkeypatch, caplog):
+    """A hostile exception message must never become a timer log payload."""
+    timer = CronTimer(FakeFactory(object()))
+    item = TimerItem(
+        due_at=datetime.now(VN_TZ) - timedelta(minutes=1),
+        occurrence_on=date(2026, 8, 6),
+        kind=ScheduleKind.TRACKER,
+        subject_id=UUID("01912345-6789-7000-8000-000000000802"),
+    )
+
+    loaded = False
+
+    async def fake_load_snapshot(db):
+        nonlocal loaded
+        if not loaded:
+            loaded = True
+            heapq.heappush(timer._heap, item.heap_tuple())
+
+    async def secret_failure(due_item):
+        assert due_item == item
+        raise RuntimeError("push endpoint secret-like-value")
+
+    monkeypatch.setattr(timer, "load_snapshot", fake_load_snapshot)
+    monkeypatch.setattr(timer, "_process_due_item", secret_failure)
+    caplog.set_level(logging.ERROR, logger=cron.__name__)
+
+    task = asyncio.create_task(timer.run())
+    await asyncio.sleep(0.05)
+    await timer.stop()
+    await asyncio.wait_for(task, timeout=2)
+
+    timer_messages = [
+        record.getMessage() for record in caplog.records if record.name == cron.__name__
+    ]
+    assert any("error_type=RuntimeError" in message for message in timer_messages)
+    assert all("secret-like-value" not in message for message in timer_messages)
 
 
 @pytest.mark.anyio
@@ -775,7 +811,11 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
 
             return Ctx(self.session)
 
-    token = deps.cron_reload_sink.set(FakeSink())
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
+    get_settings.cache_clear()
+    sink_context = deps.get_cron_reload_sink()
+    token = sink_context.set(FakeSink())
     try:
         session = FakeSession()
         monkeypatch.setattr(deps, "get_sessionmaker", lambda: FakeFactory(session))
@@ -805,4 +845,5 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
         assert calls == [], "rollback must never reach the reload sink"
         assert deps.CRON_TIMER_RELOAD_INFO_KEY not in session2.info
     finally:
-        deps.cron_reload_sink.reset(token)
+        sink_context.reset(token)
+        get_settings.cache_clear()

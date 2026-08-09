@@ -240,7 +240,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   function submitTracker(payload: TrackerWritePayload) {
     if (editingTracker) {
-      const { register_push: registerPush, ...trackerPayload } = payload
+      const { ensure_push: ensurePush, ...trackerPayload } = payload
       const saveTracker = () =>
         writes.updateTracker.mutate(
           { trackerId: editingTracker.id, payload: trackerPayload },
@@ -249,7 +249,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             onError: (error) => toast.error(errorMessage(error)),
           },
         )
-      if (registerPush) {
+      if (ensurePush) {
         void ensurePushSubscription()
           .then(saveTracker)
           .catch((error: unknown) =>

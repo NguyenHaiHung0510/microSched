@@ -225,34 +225,21 @@ class ReminderDispatcher:
             return DispatchOutcome.NO_DEVICE
 
 
-dispatcher = ReminderDispatcher()
-
-
 async def confirm_reminder_dispatch(
     db: AsyncSession,
     dispatch_id: UUID,
     entry_id: UUID,
     occurred_at: datetime,
-    is_private_unlocked: bool = False,
-    auth: AuthSession | None = None,
+    auth: AuthSession,
 ) -> tuple[object, bool]:
     """Confirm a medication reminder dispatch and idempotently record an Entry.
 
-    ``auth`` is the real verified session from the router. When a caller does
-    not pass it, a gate-only session is built from ``is_private_unlocked`` —
-    the same fact the router already verified — so the ``readable()`` call
-    inside ``TrackerStore.create_entry`` sees exactly the tracker rows the
-    session may write.
+    ``auth`` is always the real verified session from the router. The private
+    unlock fact is derived here, at the domain boundary, so no caller can
+    fabricate a gate-only session or proxy device state through a boolean.
     """
-    if auth is None:
-        now = datetime.now(UTC)
-        auth = AuthSession(
-            token_hash="",
-            user_email="",
-            last_seen_at=now,
-            expires_at=now + timedelta(minutes=5),
-            private_until=(now + timedelta(minutes=5)) if is_private_unlocked else None,
-        )
+    now_utc = datetime.now(UTC)
+    is_private_unlocked = bool(auth.private_until and auth.private_until > now_utc)
 
     # Lock dispatch row
     stmt = select(ReminderDispatch).where(ReminderDispatch.id == dispatch_id).with_for_update()

@@ -17,9 +17,9 @@ from app.core.settings import get_settings
 from app.domain.models import ReminderDispatch, Subscription, Tracker
 from app.domain.reminder import (
     DispatchOutcome,
+    ReminderDispatcher,
     build_medication_payload,
     build_subscription_expiry_payload,
-    dispatcher,
 )
 from app.domain.settings import expiry_lead_days
 
@@ -99,8 +99,11 @@ class ReloadSink:
 class CronTimer:
     """Single in-process async timer maintaining an in-memory priority queue."""
 
-    def __init__(self, session_factory: Any):
+    def __init__(self, session_factory: Any, reminder_dispatcher: Any | None = None):
         self.session_factory = session_factory
+        # The dispatcher owns process-local delivery locks, so it belongs to
+        # this enabled timer instance rather than module import state.
+        self._dispatcher = reminder_dispatcher or ReminderDispatcher()
         self._heap: list[tuple[datetime, int, int, date, int, TimerItem]] = []
         self.reload_event = asyncio.Event()
         self._reload_reason: str = "init"
@@ -421,7 +424,7 @@ class CronTimer:
                 def payload_builder(d_id: UUID) -> dict:
                     return build_medication_payload(tracker, d_id)
 
-                outcome = await dispatcher.dispatch_item(
+                outcome = await self._dispatcher.dispatch_item(
                     db, "tracker", tracker.id, item.occurrence_on, payload_builder
                 )
                 self._last_dispatch_at = datetime.now(VN_TZ)
@@ -482,7 +485,7 @@ class CronTimer:
                 def sub_payload_builder(d_id: UUID) -> dict:
                     return build_subscription_expiry_payload(sub, tr, lead_days, today=today_vn)
 
-                outcome = await dispatcher.dispatch_item(
+                outcome = await self._dispatcher.dispatch_item(
                     db, "subscription", sub.id, item.occurrence_on, sub_payload_builder
                 )
                 self._last_dispatch_at = datetime.now(VN_TZ)
@@ -609,10 +612,10 @@ class CronTimer:
                             raise
                         except Exception as exc:
                             logger.error(
-                                "Error processing CronTimer item kind=%s id=%s: %s",
+                                "cron_timer_dispatch_failed kind=%s subject_id=%s error_type=%s",
                                 item.kind,
                                 item.subject_id,
-                                exc,
+                                type(exc).__name__,
                             )
                             # A DB failure before a durable claim must not drop
                             # the occurrence. Reload immediately: a claimed row

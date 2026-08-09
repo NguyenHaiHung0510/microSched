@@ -210,7 +210,10 @@ function SubscriptionForm({
         </label>
       </div>
 
-      <label className="flex min-h-9 items-center gap-3 text-sm font-semibold">
+      <label
+        className="flex min-h-11 items-center gap-3 text-sm font-semibold"
+        data-testid="subscription-auto-renew-hit-area"
+      >
         <Checkbox
           className="size-5 rounded-md"
           checked={autoRenew}
@@ -558,7 +561,10 @@ function SettingsBlock({
   return (
     <Card className="gap-3 p-4 shadow-1 ring-0">
       <h3 className="text-base font-bold">Cài đặt</h3>
-      <label className="flex min-h-9 items-center gap-3 text-sm font-semibold">
+      <label
+        className="flex min-h-11 items-center gap-3 text-sm font-semibold"
+        data-testid="settings-list-price-hit-area"
+      >
         <Checkbox
           data-testid="settings-list-price-toggle"
           className="size-5 rounded-md"

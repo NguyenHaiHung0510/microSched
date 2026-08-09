@@ -11,9 +11,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import Scope
 
-from app.core.cron_timer import ReloadSink, build_cron_timer_if_enabled
 from app.core.settings import get_settings
-from app.web.deps import cron_reload_sink, require_session
+from app.web.deps import require_session
 from app.web.oauth import OAUTH_STATE_COOKIE, OAUTH_STATE_TTL_SECONDS
 from app.web.routers.annotations import router as annotations_router
 from app.web.routers.auth import router as auth_router
@@ -31,12 +30,20 @@ from app.web.routers.tracker import router as tracker_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not get_settings().enable_inprocess_cron:
+        yield
+        return
+
+    # Import the timer implementation only in the explicitly enabled mode.
+    # Disabled deployments must stay a literal no-op: no CronTimer, dispatcher,
+    # Event, app.state fields, or timer database setup exists in that path.
+    from app.core.cron_timer import build_cron_timer_if_enabled
+
     timer = build_cron_timer_if_enabled()
     app.state.cron_timer = timer
     app.state.cron_timer_task = None
-    if timer is None:
-        yield
-        return
+    if timer is None:  # pragma: no cover - settings gate above makes this unreachable.
+        raise RuntimeError("ENABLE_INPROCESS_CRON=true did not build a CronTimer")
 
     # A detached create_task only exposes a fatal timer failure during shutdown,
     # leaving HTTP healthy while reminders are dead. TaskGroup supervises the
@@ -130,6 +137,12 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     if settings.enable_inprocess_cron:
+        # Both the ContextVar and its timer types are feature-gated. Importing
+        # this app with the flag false must not construct cron runtime state.
+        from app.core.cron_timer import ReloadSink
+        from app.web.deps import get_cron_reload_sink
+
+        cron_reload_sink = get_cron_reload_sink()
 
         @app.middleware("http")
         async def cron_reload_context(request: Request, call_next):
