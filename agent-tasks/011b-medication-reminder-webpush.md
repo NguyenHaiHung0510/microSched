@@ -1,9 +1,7 @@
 # 011b — Nhắc thuốc + nhắc hết hạn sub: hạ tầng Web Push + cron 3-khe
 
-> **Trạng thái: DRAFT — viết bởi T1 (Opus 5) 2026-08-01, phối hợp trực tiếp với chủ (không tự quyết
-> một mình).** Đã qua phản biện **T3** (`gemini-3.1-pro-high`) + **T2 Codex**; T1 kiểm tay từng
-> finding, sửa các finding thật và ghi rõ chỗ T2 kết luận đúng nhưng lý do/phạm vi sai. Chưa được chủ
-> duyệt.
+> **Trạng thái: OWNER-APPROVED theo handoff 2026-08-09 — pilot/final acceptance và activation gates chưa đóng.**
+> Đã qua hai vòng adversarial review + fixes; T1 kiểm tay findings.
 >
 > **📝 2026-08-06 — chủ duyệt gộp 2 finding QA 011a vào lô này** (xem §4.4): hai vấn đề UI toàn app
 > (touch target tab nav + dialog, và non-text contrast của `border-input`) phát hiện ở QA 011a

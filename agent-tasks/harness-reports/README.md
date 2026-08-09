@@ -1,6 +1,6 @@
-# harness-reports/ — output của các phiên đối soát harness
+# harness-reports/ — RETIRED output của các phiên đối soát harness
 
-Thư mục này nhận **báo cáo do agent sinh ra về chính bộ máy làm việc** (Claude ↔ Codex ↔ Jules), không phải về sản phẩm microSched. Spec sinh ra chúng nằm ở `agent-tasks/harness-audit/`.
+Thư mục này giữ **receipt lịch sử** do agent sinh ra về các bộ máy làm việc trước đây, không phải về sản phẩm microSched và không phải policy/routing hiện hành. Spec nguồn nằm ở `agent-tasks/harness-audit/`.
 
 ## Luật git — đọc trước khi thêm gì
 

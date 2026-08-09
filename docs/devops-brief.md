@@ -111,7 +111,7 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 `agent-tasks/NNN-<slug>.md` = spec tự-chứa giao cho agent chạy độc lập. Mỗi spec bắt buộc có: bối cảnh đủ để đọc ở session 0-context · việc phải làm · **việc KHÔNG được làm** · acceptance kiểm chứng được · **model tier + effort đề xuất** (để không đốt token thừa). Chi tiết: `agent-tasks/README.md`.
 
-📝 **2026-07-20 (nâng cấp cho §2, có hiệu lực từ 003):** executor mặc định cho task **code** = **T2 Codex** (§7); code chạy trên branch **`feat/NNN-<slug>`** → **PR nhỏ vào `develop`** để T1 review diff từng task — *docs* vẫn commit thẳng `develop` như cũ.
+📝 **2026-07-20 — RETIRED receipt:** executor mặc định cho task **code** = **T2 Codex** (§7); code chạy trên branch **`feat/NNN-<slug>`** → **PR nhỏ vào `develop`** để T1 review diff từng task. Phần *"docs vẫn commit thẳng `develop`"* đã bị rule bảo vệ `develop` thay thế; không dùng câu cũ làm hướng dẫn hiện hành.
 
 ## 6. Chưa làm (không phải quên)
 - **CI nền GitHub Actions** — ✅ dựng 2026-07-20 qua `agent-tasks/003`: job backend khóa theo `uv.lock`, chạy Ruff (lint + format) và pytest; job hooks chạy toàn bộ pre-commit. `agent-tasks/006` sẽ nối thêm hàng rào QA Alembic đã chốt ở `schema-physical-brief.md` §2 (round-trip test, drift-check, chặn drop ngầm) + thử migration trên bản restore (`db-and-data-model-brief.md`).
@@ -123,7 +123,19 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 - ⏸ **MỞ (2026-07-21) — agent tự lái Chrome profile của chủ để test UI.** Ý tưởng của chủ, đúng hướng theo §7.1 (T3 + MCP Chrome-DevTools là tầng duy nhất thấy lớp lỗi trình duyệt). **Vướng thật:** profile đó chứa 4 tài khoản Google thật đang dùng hằng ngày → chạm luật ranh giới dữ liệu §7 luật 3 (*data thật chỉ tool local do chính chủ giám sát*). Cần quyết riêng: dùng profile Chrome **tách rời chỉ để test** (sạch về ranh giới nhưng phải tự đăng nhập lại), hay cấp quyền theo từng phiên có chủ ngồi cạnh. **Không nhét vào task nào đang chạy** — quyết trước, dùng sau.
   📌 **2026-07-21 — đã va vào hậu quả thật, nâng mức ưu tiên.** Sau khi merge 006, site thật **vẫn chạy image dựng từ 005** nên `/api/healthz` không có trường `db`; `fly secrets set` chỉ restart máy chứ **không build lại image**. Phải `flyctl deploy` tay mới lên sóng. → **Mỗi task merge xong, repo tiến còn site đứng yên** — đúng dạng lệch-trạng-thái mà dự án này sinh ra để tránh, chỉ ở tầng deploy thay vì tầng dữ liệu. Càng nhiều task thì cửa sổ "code đã merge nhưng chưa chạy" càng dễ bị quên. **Ứng viên số 1 cho task ngay sau 007.**
 
-## 7. Harness 3 tầng + công cụ AI cá nhân — ✅ CHỐT 2026-07-20 (soi lại ~10/2026)
+## 7. Harness operating policy — ACTIVE
+
+**T1 = Codex Desktop Main Thread.** T1 lập kế hoạch, viết/fold spec, xử lý escalation L1, đọc receipt và review diff trước merge. Chủ vẫn giữ quyền quyết định product/architecture và approval; T1 không tự nâng DRAFT thành approved.
+
+**OpenCodex = multi-provider fabric cho T2/T3.** T2 thi công đúng `agent-tasks/` trên worktree/branch được giao; T3 chạy test và phản biện độc lập. Chọn executor theo blast radius, capability cần thật và boundary của task, không theo một provider/model cố định trong tài liệu.
+
+**Runtime Catalog là source of truth duy nhất cho model availability và route tại thời điểm giao việc.** Không ghi model catalog, quota, ranking, fallback hay routing tạm trong policy/repo. Chọn model + reasoning effort khi giao task, ghi lại trong spec/receipt nếu nó ảnh hưởng acceptance; route không available thì báo rõ, không âm thầm đổi.
+
+**Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật.
+
+### Historical harness receipts — RETIRED
+
+Các mục tiếp theo của §7 là receipt lịch sử, giữ để truy nguyên quyết định và failure mode; không phải policy, runtime catalog hoặc routing hiện hành. ClaudeRelay đã RETIRED, không dành thêm maintenance/QA.
 
 Bối cảnh: bước vào phase B (scaffold), chính chủ chốt bộ công cụ thi công. Tra giá/thị trường **live 2026-07-20** (nguồn cuối mục — thị trường coding-plan đổi theo quý, đừng tin con số này quá 10/2026). Nguyên tắc phân vai: **theo blast-radius của lỗi, không theo độ to của việc** (cùng nguyên tắc sequencing AI của chính app).
 
@@ -151,7 +163,7 @@ Chi phí cả stack + bảng giá đối chiếu: `cost-brief.md` §6. Nguồn c
 
 ---
 
-## 7.1 📝 2026-07-21 — bằng chứng thực nghiệm cho vai T3: ba lỗi chỉ trình duyệt mới thấy
+### 7.1 📝 2026-07-21 — RETIRED receipt: ba lỗi chỉ trình duyệt mới thấy
 
 Ngày thi công 007 đẻ ra ba lỗi mà **không** công cụ nào của T1/T2 bắt được — kể cả security-review Opus MAX chạy riêng trên diff (nó soi *code*, ba lỗi này không nằm trong code):
 
@@ -169,7 +181,7 @@ Cái thứ ba do **chính chủ** phát hiện, bằng một thao tác mà khôn
 - Task nào đụng tới **bản build production** (Docker, PWA/service worker, cookie, redirect, OAuth) thì mục Acceptance **bắt buộc** có bước nhìn bằng mắt trên bản deploy thật — ghi rõ *nhìn cái gì*, không ghi "kiểm tra hoạt động".
 - Xanh CI ≠ chạy được. Ba lỗi trên đều xảy ra khi CI xanh 100%.
 
-## 7.2 ✅ ĐÓNG 2026-07-22 — "cho agent lái Chrome profile thật của chủ" (mục MỞ từ 007)
+### 7.2 ✅ ĐÓNG 2026-07-22 — RETIRED receipt: agent lái Chrome profile thật của chủ
 
 Kiểm chứng thật bằng Codex: **chạy tốt**, chuyển được giữa nhiều profile, đi trọn luồng OAuth trên `microsched.fly.dev` (tài khoản trong allowlist vào được; tài khoản ngoài allowlist bị chặn đúng, sang `/auth/denied`), và **không** chạm trực tiếp cookie/mật khẩu/profile store.
 
@@ -180,7 +192,7 @@ Kiểm chứng thật bằng Codex: **chạy tốt**, chuyển được giữa n
 - **Có một tài khoản chính chủ cấm đụng.** Tên tài khoản **không ghi vào repo** — chỉ nêu trong prompt giao việc.
 - **Không dán địa chỉ email thật vào PR/commit/docs.** Repo public + threat model = social engineering ⇒ danh sách tài khoản là vật liệu dựng pretext. Viết theo vai (*"tài khoản trong allowlist"*), không viết địa chỉ.
 
-## 7.3 ✅ CHỐT 2026-07-22 (muộn) — Claude **điều phối** Codex trực tiếp, thay cho chuyển tay
+### 7.3 ✅ CHỐT 2026-07-22 — RETIRED receipt: Claude điều phối Codex trực tiếp
 
 Bối cảnh: sau 003→008b, chính chủ đã đủ tin để bỏ khâu **copy prompt/báo cáo qua lại giữa hai harness**. Chính chủ nói rõ đây là đánh đổi có ý thức: *"chọn thêm risk 40% để đổi lấy hiệu suất, rồi tiến tới nâng cấp harness eng để giảm risk xuống như thủ công mà vẫn giữ hiệu suất."*
 
@@ -421,7 +433,7 @@ sống trong chính phiên này — Codex tự chẩn đoán đúng nguyên nhâ
 
 ---
 
-## 8. Chạy nhiều agent song song — ⚠️ GHI NHẬN 2026-07-21, chưa nghiên cứu đủ
+## 8. Chạy nhiều agent song song — RETIRED receipt (2026-07-21/23)
 
 Bối cảnh: Codex lẫn Claude Code đều mở được nhiều session cùng lúc, và máy chủ **thừa sức về phần cứng** — nên câu hỏi không phải "máy chịu nổi không" mà là **"cái gì hỏng khi hai agent cùng chạy"**. Ghi lại để nghiên cứu tiếp trước khi mở song song thật (dự kiến từ 009).
 
@@ -576,9 +588,9 @@ suspend Machine sau khi response trả về.
 ---
 *Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). **§9 đã đóng 2026-07-22**; mở lại nếu đổi hạ tầng deploy. **§10 chốt 2026-07-23**; mở lại nếu đổi nhà cung cấp cron hoặc khi 011 cần >3 job. §7.2 xem lại nếu đổi cách agent truy cập trình duyệt. Thêm note có ngày — không xóa kết luận cũ.*
 
-### j) 📝 2026-08-03 — Chuyển đổi Harness sang Codex Desktop + OpenCodex Sub-agents (✅ CHỐT)
+### j) 📝 2026-08-03 — RETIRED route snapshot: chuyển đổi Harness sang Codex Desktop + OpenCodex
 
-Bối cảnh: Claude Code dừng hoạt động, dự án chuyển sang **Codex Desktop App** làm harness điều phối chính.
+Bối cảnh: snapshot này ghi nhận thời điểm dự án chuyển sang **Codex Desktop App** làm harness điều phối chính. Danh sách model/route bên dưới là historical evidence, không phải catalog có hiệu lực; dùng Runtime Catalog ở §7 cho availability hiện tại.
 
 1. **T1 mới:** Môi trường Codex Desktop chính (Main Thread) đảm nhiệm vai T1. Model chính khi quay lại: `gpt-5.6-sol` (effort: `xhigh`/`high`). **Tạm thời từ 2026-08-04:** Terra đang giữ Main Thread; không tự đổi T1 giữa chừng chỉ vì một model khác vừa xuất hiện. Khi cần thêm một lượt reasoning/coding độc lập, dùng `openrouter/openai-gpt-5.6-luna` trước vì bảng tham chiếu hiện hành xếp Luna #1 ở intelligence, coding và agentic.
 2. **T2 & T3 mới:** Sử dụng tính năng `spawn_agent` tích hợp sẵn trong Codex Desktop để điều phối sub-agents. Danh sách route tạm đã được chủ lưu ngày 2026-08-04: `google-antigravity/gemini-3.6-flash`, `openrouter/~deepseek-deepseek-v4-flash-latest`, `openrouter/openai-gpt-5.6-luna`.
