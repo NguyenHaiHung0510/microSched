@@ -101,7 +101,7 @@ Trước khi bật `ENABLE_INPROCESS_CRON=true` trên Fly, chủ/T1 phải:
 5. sau receipt ở bước 4, xoá mọi Google Cloud Scheduler job còn tồn tại, gồm reminder và heartbeat, **và** xoá cron HTTP/token/workflow legacy theo §0.5; lưu biên lai vận hành rằng không còn external scheduler gọi app;
 6. nếu cần abort sau khi GCS đã retire: đặt `ENABLE_INPROCESS_CRON=false`, fix/deploy lại và ghi rõ khoảng downtime không phát reminder. **Không** recreate GCS, GitHub schedule, cron HTTP hay fallback external.
 
-Trong thời gian DRAFT, mặc định an toàn là `ENABLE_INPROCESS_CRON=false`; code không được tự bật timer chỉ vì module đã được import.
+Trước production cutover, mặc định an toàn là `ENABLE_INPROCESS_CRON=false`; code không được tự bật timer chỉ vì module đã được import.
 
 **Mẫu dated note bắt buộc khi chủ duyệt và chuẩn bị activate** (ghi vào đúng decision record, không chỉ ghi trong PR):
 
@@ -264,7 +264,7 @@ Không dùng `while True: sleep(60)` hoặc `SELECT ... WHERE due_at <= now()`.
 
 `occurrence_on` là ngày của **lần nhắc dự định**, không phải ngày timer tình cờ retry. Nó được truyền vào dispatcher để mọi retry dùng đúng cùng key `(subject_type, subject_id, occurrence_on)` của `reminder_dispatch`.
 
-DRAFT này chọn một grace window hữu hạn `MISSED_OCCURRENCE_GRACE = 15 phút`:
+Spec này chọn một grace window hữu hạn `MISSED_OCCURRENCE_GRACE = 15 phút`:
 
 - startup/reload có thể enqueue occurrence vừa quá giờ nhưng chưa quá 15 phút;
 - occurrence quá grace bị bỏ qua và chuyển sang occurrence kế tiếp;
@@ -395,7 +395,7 @@ Thêm setting typed vào `app/core/settings.py`:
 enable_inprocess_cron: bool = False
 ```
 
-Tên env tương ứng là `ENABLE_INPROCESS_CRON`. DRAFT/prod mặc định `False`. Production in-process phải fail-fast khi thiếu `DATABASE_URL`, 011b implementation/schema hoặc VAPID configuration bắt buộc; local không có DB có thể khởi động ở chế độ timer disabled để test các route liveness. Không giữ `CRON_SCHEDULER_MODE`, alias lâu dài hay config nào diễn tả mode external; nếu branch thử nghiệm đã thêm tên cũ thì executor phải xoá/deprecate nó mà không tạo fallback scheduler.
+Tên env tương ứng là `ENABLE_INPROCESS_CRON`. Giá trị mặc định là `False`, kể cả production cho tới đúng cutover runbook. Production in-process phải fail-fast khi thiếu `DATABASE_URL`, 011b implementation/schema hoặc VAPID configuration bắt buộc; local không có DB có thể khởi động ở chế độ timer disabled để test các route liveness. Không giữ `CRON_SCHEDULER_MODE`, alias lâu dài hay config nào diễn tả mode external; nếu branch thử nghiệm đã thêm tên cũ thì executor phải xoá/deprecate nó mà không tạo fallback scheduler.
 
 Đặt các object sau vào `app.state` để test/lifecycle nhìn thấy được:
 
