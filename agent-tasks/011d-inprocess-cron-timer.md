@@ -2,7 +2,7 @@
 
 > **Executor:** T2 Codex (`gpt-5.6-sol`) · **Bậc:** L2 — backend/infrastructure · **Effort:** high · **Skill gợi ý:** không cần · **MCP cần:** không cần.
 >
-> **Trạng thái: OWNER-APPROVED theo handoff 2026-08-09 — pilot/final acceptance và activation gates chưa đóng.** Đây là Phương án A; không bật production trước khi qua điểm chuyển scheduler ở §0.3.
+> **Trạng thái: OWNER-APPROVED; local acceptance PASS trên `b12bae6`.** Đây là Phương án A; migration/production/timer activation chưa verify và không bật production trước khi qua điểm chuyển scheduler ở §0.3.
 
 ## Phạm vi giao
 
