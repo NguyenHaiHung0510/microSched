@@ -86,6 +86,25 @@ def test_readyz_stays_200_when_database_is_down(monkeypatch) -> None:
     assert response.json()["db"] == "down"
 
 
+def test_readyz_never_exposes_timer_snapshot(monkeypatch) -> None:
+    """Readiness keeps its public contract to top-level dependency state only."""
+    _configure_test_app(monkeypatch)
+    monkeypatch.setattr("app.web.routers.health.check_database", AsyncMock(return_value="up"))
+
+    class Timer:
+        def health_snapshot(self) -> dict[str, str]:
+            return {"private_timer_state": "must-not-be-public"}
+
+    app = create_app()
+    app.state.cron_timer = Timer()
+    client = TestClient(app)
+
+    response = client.get("/api/readyz")
+
+    assert response.status_code == 200
+    assert "timer" not in response.json()
+
+
 def test_security_headers_applied(monkeypatch) -> None:
     """Ensure standard security headers are applied to responses."""
     _configure_test_app(monkeypatch)

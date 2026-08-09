@@ -1,9 +1,11 @@
 """Request-scoped guards and transaction dependencies for protected routes."""
 
-import secrets
+import asyncio
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_sessionmaker
@@ -11,6 +13,20 @@ from app.core.sessions import SESSION_COOKIE_NAME
 from app.core.settings import get_settings
 from app.domain.auth import PostgresSessionStore, SessionStore
 from app.domain.models import AuthSession
+
+if TYPE_CHECKING:
+    from app.core.cron_timer import ReloadSink
+
+CRON_TIMER_RELOAD_INFO_KEY = "cron_timer_reload_reason"
+cron_reload_sink: ContextVar["ReloadSink | None"] | None = None
+
+
+def get_cron_reload_sink() -> ContextVar["ReloadSink | None"]:
+    """Create the timer ContextVar only for an enabled in-process timer."""
+    global cron_reload_sink
+    if cron_reload_sink is None:
+        cron_reload_sink = ContextVar("microsched_cron_reload_sink", default=None)
+    return cron_reload_sink
 
 
 def _unauthenticated() -> HTTPException:
@@ -52,9 +68,24 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         try:
             yield db
             await db.commit()
+        except asyncio.CancelledError:
+            await db.rollback()
+            db.info.pop(CRON_TIMER_RELOAD_INFO_KEY, None)
+            raise
         except Exception:
             await db.rollback()
+            db.info.pop(CRON_TIMER_RELOAD_INFO_KEY, None)
             raise
+        else:
+            reason = db.info.pop(CRON_TIMER_RELOAD_INFO_KEY, None)
+            # The disabled path does not create or read a ContextVar. Markers
+            # remain transaction-local metadata and are simply discarded.
+            if reason is not None and get_settings().enable_inprocess_cron:
+                sink_context = cron_reload_sink
+                if sink_context is not None:
+                    sink = sink_context.get()
+                    if sink is not None:
+                        sink.request_reload(reason)
 
 
 async def require_session(
@@ -77,22 +108,3 @@ async def require_session(
         raise _unauthenticated()
 
     return session
-
-
-async def require_cron_token(authorization: str | None = Header(default=None)) -> None:
-    """Authorize scheduled-job endpoints with a shared bearer secret (auth-brief §5)."""
-    expected = get_settings().cron_token
-    if not expected:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Cron token is not configured",
-        )
-
-    scheme, _, presented = (authorization or "").partition(" ")
-    # compare_digest keeps the check constant-time; a plain == leaks the prefix length.
-    # Compare on bytes: str compare_digest raises TypeError on non-ASCII input, which
-    # would turn a hostile "Bearer é" into a 500 instead of the clean 401 below.
-    if scheme.lower() != "bearer" or not secrets.compare_digest(
-        presented.encode(), expected.encode()
-    ):
-        raise _unauthenticated()

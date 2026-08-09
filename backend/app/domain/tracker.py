@@ -16,7 +16,7 @@ four structural differences that the 011a spec (§2) pins down:
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -28,8 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
 from app.domain import money
-from app.domain.models import AuthSession, Entry, Tracker, TrackerGroup
+from app.domain.models import AuthSession, Entry, Subscription, Tracker, TrackerGroup
 from app.domain.reading import can_see_private, not_deleted, readable, with_privacy_gate
+from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,8 @@ class TrackerCreate(BaseModel):
     group_id: UUID | None = None
     unit: str | None = None
     color: str | None = None
+    reminder_time: time | None = None
+    reminder_text: str | None = None
     is_private: bool = False
 
     @model_validator(mode="after")
@@ -122,6 +125,10 @@ class TrackerCreate(BaseModel):
             self.color = self.color.strip() or None
         if self.unit is not None:
             self.unit = self.unit.strip() or None
+        if self.reminder_text is not None:
+            self.reminder_text = self.reminder_text.strip() or None
+        if self.reminder_time is not None and (self.kind != "health" or self.input_mode != "event"):
+            raise ValueError("reminder_time chỉ dùng cho tracker sức khoẻ một chạm.")
         if self.id is not None and self.id.version != 7:
             raise ValueError("id must be a UUIDv7")
         return self
@@ -137,6 +144,8 @@ class TrackerUpdate(BaseModel):
     group_id: UUID | None = None
     unit: str | None = None
     color: str | None = None
+    reminder_time: time | None = None
+    reminder_text: str | None = None
     is_private: bool | None = None
 
     @model_validator(mode="after")
@@ -147,6 +156,8 @@ class TrackerUpdate(BaseModel):
             self.color = self.color.strip() or None
         if "unit" in self.model_fields_set and self.unit is not None:
             self.unit = self.unit.strip() or None
+        if "reminder_text" in self.model_fields_set and self.reminder_text is not None:
+            self.reminder_text = self.reminder_text.strip() or None
         # Explicit null on a non-nullable patch field must 422 (M5), not silently
         # fall back to "not in payload" semantics; only group_id/unit/color may be
         # explicitly nulled (that is how the UI clears them).
@@ -167,6 +178,8 @@ class TrackerRead(BaseModel):
     group_id: UUID | None
     unit: str | None
     color: str | None
+    reminder_time: time | None
+    reminder_text: str | None
     is_private: bool
     last_entry_at: datetime | None
     entry_count_30d: int
@@ -260,7 +273,13 @@ class TrackerIdConflict(Exception):
 
 
 class EntryIdConflict(Exception):
-    """A client-selected entry ID belongs to a row hidden by a reading gate."""
+    """A client-selected entry ID belongs to a DIFFERENT record (other tracker or
+    subscription) or to a row hidden by a reading gate.
+
+    Spec 011c §2.4: a real conflict must surface as 409 — never be coerced into
+    an idempotent ``created=False`` retry, which would silently swallow a
+    foreign writer's row.
+    """
 
 
 class PrivateWriteLocked(Exception):
@@ -381,6 +400,8 @@ class TrackerStore:
             group_id=tracker.group_id,
             unit=tracker.unit,
             color=tracker.color,
+            reminder_time=tracker.reminder_time,
+            reminder_text=tracker.reminder_text,
             is_private=tracker.is_private,
             last_entry_at=last.get(tracker.id),
             entry_count_30d=count.get(tracker.id, 0),
@@ -598,11 +619,16 @@ class TrackerStore:
             "group_id": payload.group_id,
             "unit": payload.unit,
             "color": payload.color,
+            # reminder_text is deliberately plaintext: it is the owner-chosen
+            # public lock-screen surface, not private tracker content.
+            "reminder_time": payload.reminder_time,
+            "reminder_text": payload.reminder_text,
             "is_private": payload.is_private,
         }
         if payload.id is None:
             tracker = Tracker(**values)
             db.add(tracker)
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:create"
             await db.flush()
         else:
             inserted_id = (
@@ -625,6 +651,7 @@ class TrackerStore:
                 return result
             inserted = await db.execute(select(Tracker).where(Tracker.id == inserted_id))
             tracker = inserted.scalar_one()
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:create"
         result = await self._read_tracker(db, auth, tracker)
         result.created = True
         return result
@@ -636,10 +663,33 @@ class TrackerStore:
         changes = payload.model_dump(exclude_unset=True)
         wants_private = "is_private" in changes and changes["is_private"]
         tracker = await self._tracker(db, auth, tracker_id, for_update=True)
+        old_reminder_time = tracker.reminder_time if tracker else None
         if tracker is None:
             return None
         if wants_private and not can_see_private(auth):
             raise PrivateWriteLocked
+
+        # 011c §2.5: a tracker with live subscriptions cannot be switched away
+        # from finance+money, or every renewal would start failing K8 right at
+        # the worst moment. Only the effective change is guarded: patching
+        # name/color with an identical input_mode/kind stays allowed.
+        leaves_money = ("input_mode" in changes and changes["input_mode"] != "money") or (
+            "kind" in changes and changes["kind"] != "finance"
+        )
+        if leaves_money:
+            sub_count = (
+                await db.execute(
+                    select(func.count(Subscription.id)).where(
+                        Subscription.tracker_id == tracker_id,
+                        Subscription.deleted_at.is_(None),
+                    )
+                )
+            ).scalar_one()
+            if sub_count:
+                raise TrackerInvalid(
+                    f"Tracker còn {sub_count} đăng ký đang gắn — "
+                    "không đổi được loại hay kiểu nhập của tracker này."
+                )
 
         new_kind = changes.get("kind", tracker.kind)
         # Validate the effective (group_id, kind) pair even when the PATCH only moves
@@ -660,6 +710,7 @@ class TrackerStore:
 
         new_input_mode = changes.get("input_mode", tracker.input_mode)
         new_unit = changes.get("unit", tracker.unit)
+        new_reminder_time = changes.get("reminder_time", tracker.reminder_time)
         if new_input_mode != "quantity":
             if changes.get("unit") is not None:
                 raise TrackerInvalid("unit chỉ được dùng cho tracker kiểu 'quantity'.")
@@ -670,14 +721,29 @@ class TrackerStore:
             if new_unit is None:
                 raise TrackerInvalid("Tracker kiểu 'quantity' phải có đơn vị (unit).")
 
+        if new_reminder_time is not None and (new_kind != "health" or new_input_mode != "event"):
+            raise TrackerInvalid("reminder_time chỉ dùng cho tracker sức khoẻ một chạm.")
+
         if "name" in changes:
             if await self._tracker_name_taken(db, auth, changes["name"], exclude_id=tracker.id):
                 raise TrackerNameTaken
             changes["name"] = _sealed(changes["name"])
 
-        for field in ("kind", "direction", "input_mode", "group_id", "unit", "color", "is_private"):
+        for field in (
+            "kind",
+            "direction",
+            "input_mode",
+            "group_id",
+            "unit",
+            "color",
+            "is_private",
+            "reminder_time",
+            "reminder_text",
+        ):
             if field in changes:
                 setattr(tracker, field, changes[field])
+        if "reminder_time" in changes and tracker.reminder_time != old_reminder_time:
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:reminder_time"
         await db.flush()
         return await self._read_tracker(db, auth, tracker)
 
@@ -688,7 +754,18 @@ class TrackerStore:
         tracker = await self._tracker(db, auth, tracker_id)
         if tracker is None:
             return False
+        sub_count = (
+            await db.execute(
+                select(func.count(Subscription.id)).where(
+                    Subscription.tracker_id == tracker_id,
+                    Subscription.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+        if sub_count:
+            raise TrackerInvalid(f"Còn {sub_count} đăng ký đang gắn — xoá hoặc chuyển chúng trước.")
         tracker.deleted_at = datetime.now(UTC)
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:soft_delete"
         await db.flush()
         return True
 
@@ -703,6 +780,7 @@ class TrackerStore:
         if tracker is None:
             return await self._tracker(db, auth, tracker_id)
         tracker.deleted_at = None
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:restore"
         await db.flush()
         return tracker
 
@@ -776,9 +854,20 @@ class TrackerStore:
                 raise EntryInvalid("Tracker kiểu 'quantity' không nhận số tiền.")
 
     async def create_entry(
-        self, db: AsyncSession, auth: AuthSession, payload: EntryCreate
-    ) -> EntryRead:
-        """Log one entry (one-tap capture) through its visible parent tracker."""
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        payload: EntryCreate,
+        *,
+        subscription_id: UUID | None = None,
+    ) -> tuple[UUID, bool]:
+        """Log one entry (one-tap capture) through its visible parent tracker.
+
+        Returns ``(entry_id, created)`` — the 011c renewal flow needs to know
+        whether the INSERT actually landed so it can push ``expires_on`` only
+        once (§2.4). ``subscription_id`` is an internal keyword used ONLY by
+        ``SubscriptionStore.renew``; the 011a router never sets it.
+        """
         tracker = await self._tracker(db, auth, payload.tracker_id, for_update=True)
         if tracker is None:
             raise EntryInvalid("Tracker không tồn tại.")
@@ -790,6 +879,7 @@ class TrackerStore:
         )
         values = {
             "tracker_id": payload.tracker_id,
+            "subscription_id": subscription_id,
             "occurred_at": payload.occurred_at or datetime.now(UTC),
             "quantity": payload.quantity,
             "amount": _amount_out(payload.amount),
@@ -800,9 +890,7 @@ class TrackerStore:
             entry = Entry(**values)
             db.add(entry)
             await db.flush()
-            result = self._entry_read(entry)
-            result.created = True
-            return result
+            return entry.id, True
 
         inserted_id = (
             await db.execute(
@@ -819,14 +907,17 @@ class TrackerStore:
                 if physical.scalar_one_or_none() is not None:
                     raise EntryIdConflict
                 raise RuntimeError("conflicting entry disappeared before it could be read")
-            result = self._entry_read(existing)
-            result.created = False
-            return result
-        inserted = await db.execute(select(Entry).where(Entry.id == inserted_id))
-        entry = inserted.scalar_one()
-        result = self._entry_read(entry)
-        result.created = True
-        return result
+            if (
+                existing.tracker_id != payload.tracker_id
+                or existing.subscription_id != subscription_id
+            ):
+                # The same client id already belongs to a different row: this is
+                # a REAL conflict, not a retry of our own write (§2.4). Swallowing
+                # it as created=False would make renew report success while
+                # expires_on never moves.
+                raise EntryIdConflict
+            return existing.id, False
+        return inserted_id, True
 
     async def update_entry(
         self, db: AsyncSession, auth: AuthSession, entry_id: UUID, payload: EntryUpdate

@@ -1,3 +1,4 @@
+import { ReminderConfirmScreen } from '@/ReminderConfirmScreen'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Activity,
@@ -19,6 +20,8 @@ import { CalendarScreen } from '@/CalendarScreen'
 import { NotesScreen } from '@/NotesScreen'
 import { PrivateGate } from '@/PrivateGate'
 import type { PrivateSessionState } from '@/private-gate'
+import { queryParams, useLocation } from '@/lib/route'
+import { SubscriptionScreen } from '@/SubscriptionScreen'
 import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
 
@@ -47,6 +50,13 @@ function todayLabel(): string {
 }
 
 function LoginScreen() {
+  const location = useLocation()
+  // F8: OAuth redirect phải quay về ĐÚNG chỗ người dùng định làm (nhắc thuốc,
+  // subscription…) — nếu không, prompt bị nuốt khi session hết hạn. Chỉ gửi
+  // pathname+search tương đối, không bao giờ origin (chống open-redirect).
+  const returnTo =
+    location.startsWith('/') && !location.startsWith('//') ? location : '/'
+  const loginHref = `/auth/login?return_to=${encodeURIComponent(returnTo)}`
   return (
     <div className="mx-auto max-w-lg space-y-5 pt-10 sm:pt-20">
       <div className="space-y-1 text-center">
@@ -66,7 +76,7 @@ function LoginScreen() {
         </div>
         {/* A real link, not fetch: the OAuth handshake needs a full page navigation. */}
         <Button asChild size="lg">
-          <a href="/auth/login">
+          <a href={loginHref} data-testid="login-link">
             <LogIn data-icon="inline-start" />
             Đăng nhập bằng Google
           </a>
@@ -77,6 +87,10 @@ function LoginScreen() {
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
+  // 011c §5.1: exactly one deep-linked screen besides the tab block; every tab
+  // keeps the URL "/" and activeScreen stays a useState (tabs do NOT own URLs).
+  const location = useLocation()
+  const reminderDispatchKey = queryParams(location).get('dispatch') ?? ''
   const [activeScreen, setActiveScreen] = useState<
     'tasks' | 'notes' | 'calendar' | 'tracker'
   >('tasks')
@@ -103,6 +117,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             variant="secondary"
             size="icon-lg"
+            className="size-11"
             aria-label="Đăng xuất"
             disabled={logout.isPending}
             onClick={() => logout.mutate()}
@@ -113,6 +128,12 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
+        {location.startsWith('/subscription') ? (
+          <SubscriptionScreen />
+        ) : location.startsWith('/reminder-confirm') ? (
+          <ReminderConfirmScreen key={reminderDispatchKey} />
+        ) : (
+          <>
         <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
@@ -163,6 +184,8 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}
         </div>
+          </>
+        )}
         {logout.isError ? (
           <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>
         ) : null}

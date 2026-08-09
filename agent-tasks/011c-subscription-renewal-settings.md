@@ -512,6 +512,11 @@ mốc; cả hai phải đọc được trước khi bấm.
 
 - Tiền: **dùng lại nguyên xi** ô nhập tiền của `011a` §5.4 — kể cả **dòng vọng lại** *"= 260.000 ₫"*
   cập nhật theo từng phím. Đừng viết ô thứ hai.
+
+> 📝 **2026-08-06 — Errata (ad-review luồng C):** `MoneyInput` (component dùng chung) **không tồn
+> tại trong repo** (rg toàn `frontend/src` = 0). Cả `011a` (`EntryEditDialog.tsx`) lẫn màn sub
+> (`SubscriptionScreen.tsx`) dùng pattern `Input` + `digitsOnly` inline. Lô này bám theo pattern
+> đang có; việc trích component chung **chờ quyết định** — không tự dựng component mới ở đây.
 - Ngày: `<input type="date">` (không phải `datetime-local`) — `started_on`/`expires_on` là DATE, gửi
   `YYYY-MM-DD` trần, **không** nối `+07:00`, **không** `toISOString()`. Đây là chỗ khác `011a` và
   executor rất dễ chép nhầm luật.
@@ -566,6 +571,10 @@ Id riêng đi bằng `data-subscription-id`.
   | `TrackerScreen.tsx` | thêm đúng một đường vào màn sub (§5.2) |
   | danh sách entry của `011a` | áp `show_list_price` (§5.4) |
   | `MoneyInput` (component dùng chung của `011a`) | **chỉ import, không sửa** (§5.5) |
+
+> 📝 **2026-08-06 — Errata:** dòng `MoneyInput` ở bảng trên là tham chiếu tới component **không
+> tồn tại** trong repo (rg = 0); `011a` dùng `Input` + `digitsOnly` inline. Chờ quyết định trích
+> component chung — không tự tạo component mới trong lô này (xem §5.5).
 
 ## 7. Nghiệm thu (Definition of Done)
 

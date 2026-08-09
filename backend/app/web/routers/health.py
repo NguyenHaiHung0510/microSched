@@ -34,7 +34,7 @@ async def healthz() -> dict[str, str]:
 
 
 @router.get("/readyz")
-async def readyz() -> dict[str, str]:
+async def readyz() -> dict[str, object]:
     """Report dependency reachability, spending one query to do it.
 
     Returns 200 even when the database is unreachable, reporting the failure in the
@@ -44,9 +44,10 @@ async def readyz() -> dict[str, str]:
     """
     settings = get_settings()
     database = await check_database()
-    return {
+    result: dict[str, object] = {
         "status": "ok" if database == "up" else "degraded",
         "version": settings.app_version,
         "db": database,
         "commit": settings.git_sha,
     }
+    return result

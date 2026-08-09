@@ -139,6 +139,41 @@ def test_public_tracker_name_is_ciphertext_at_rest(pg_dsn: str):
     asyncio.run(scenario())
 
 
+def test_reminder_configuration_is_exposed_and_rejects_ineligible_tracker(pg_dsn: str):
+    """011b: only health/event trackers can configure a public reminder payload."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids: list[UUID] = []
+        try:
+            health = await _create_tracker(client, name="Thuốc cần nhắc")
+            tracker_ids.append(UUID(health["id"]))
+            enabled = await client.patch(
+                f"/api/tracker/trackers/{health['id']}",
+                json={"reminder_time": "08:30:00", "reminder_text": "Uống thuốc sau ăn"},
+            )
+            assert enabled.status_code == 200, enabled.text
+            assert enabled.json()["reminder_time"] == "08:30:00"
+            assert enabled.json()["reminder_text"] == "Uống thuốc sau ăn"
+
+            finance = await _create_tracker(
+                client, name="Không được nhắc", kind="finance", input_mode="money"
+            )
+            tracker_ids.append(UUID(finance["id"]))
+            rejected = await client.patch(
+                f"/api/tracker/trackers/{finance['id']}",
+                json={"reminder_time": "08:30:00"},
+            )
+            assert rejected.status_code == 422, rejected.text
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", tracker_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_toggle_private_keeps_name_ciphertext(pg_dsn: str):
     """Bật rồi tắt is_private ⇒ name vẫn ciphertext, giải mã ra đúng chuỗi cũ (§2.1 #2)."""
 

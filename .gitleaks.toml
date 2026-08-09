@@ -29,11 +29,16 @@ tags = ["database", "connection-string"]
 # lên Fly, backend/.env.example) chỉ còn rule connection-string che, mà rule đó
 # đòi mật khẩu chứa chữ số đúng vị trí ⇒ URL Neon có mật khẩu không-chữ-số lọt
 # cả hai. Bất đối xứng đúng chiều nguy hiểm. Thêm cả ENCRYPTION_MASTER_KEY (mất
-# = mất mọi cột 🔐), CRON_TOKEN, OAUTH_STATE_SECRET. GIỮ NGUYÊN điều kiện
+# = mất mọi cột 🔐), OAUTH_STATE_SECRET. GIỮ NGUYÊN điều kiện
 # "trông thật" (có chữ số) — nới ra sẽ báo nhầm .env.example và dạy bỏ qua hook.
+#
+# 📝 2026-08-06 (011b Web Push): thêm VAPID_PRIVATE_KEY — secret mới của lô
+# 011b/011d (ký Web Push). Giữ nguyên điều kiện "trông thật" (có chữ số):
+# placeholder trống trong backend/.env.example không dính, kiểm bằng
+# `gitleaks dir . --config .gitleaks.toml` exit 0.
 [[rules]]
 id = "microsched-db-env-var-value"
 description = "Secret env-var quyền cao (DB URL / master key / token) gán giá trị trông thật (không phải placeholder)"
-regex = '''(?i)(DATABASE_URL|PGPASSWORD|NEON_OWNER_URL|NEON_MIGRATOR_URL|ENCRYPTION_MASTER_KEY|CRON_TOKEN|OAUTH_STATE_SECRET)\s*=\s*['"]?[A-Za-z0-9_\-:/.@]{4,}[0-9][A-Za-z0-9_\-:/.@]{2,}['"]?'''
-keywords = ["DATABASE_URL", "PGPASSWORD", "NEON_OWNER_URL", "NEON_MIGRATOR_URL", "ENCRYPTION_MASTER_KEY", "CRON_TOKEN", "OAUTH_STATE_SECRET"]
+regex = '''(?i)(DATABASE_URL|PGPASSWORD|NEON_OWNER_URL|NEON_MIGRATOR_URL|ENCRYPTION_MASTER_KEY|OAUTH_STATE_SECRET|VAPID_PRIVATE_KEY)\s*=\s*['"]?[A-Za-z0-9_\-:/.@]{4,}[0-9][A-Za-z0-9_\-:/.@]{2,}['"]?'''
+keywords = ["DATABASE_URL", "PGPASSWORD", "NEON_OWNER_URL", "NEON_MIGRATOR_URL", "ENCRYPTION_MASTER_KEY", "OAUTH_STATE_SECRET", "VAPID_PRIVATE_KEY"]
 tags = ["database", "env-var"]

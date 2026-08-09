@@ -27,6 +27,8 @@ function tracker(overrides: Partial<Tracker> = {}): Tracker {
     group_id: null,
     unit: null,
     color: null,
+    reminder_time: null,
+    reminder_text: null,
     is_private: false,
     last_entry_at: null,
     entry_count_30d: 0,

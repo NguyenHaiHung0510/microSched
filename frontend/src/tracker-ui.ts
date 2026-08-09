@@ -36,6 +36,8 @@ export type Tracker = {
   group_id: string | null
   unit: string | null
   color: string | null
+  reminder_time: string | null
+  reminder_text: string | null
   is_private: boolean
   last_entry_at: string | null
   entry_count_30d: number
@@ -55,6 +57,21 @@ export type Entry = {
   updated_at: string | null
 }
 
+export type DashboardF6 = {
+  monthly_burn: number
+  subscription_count: number
+  upcoming: Array<{
+    subscription_id: string
+    name: string
+    amount: number | null
+    monthly_amount: number | null
+    expires_on: string
+    days_left: number
+    corrupted: boolean
+  }>
+  corrupted_subscription_count: number
+}
+
 export type DashboardResponse = {
   period_start: string
   period_end: string
@@ -71,6 +88,7 @@ export type DashboardResponse = {
   a2_gap: Array<{ tracker_id: string; current_days: number | null; avg_days: number | null; enough: boolean }>
   a3_counts: { week: number; month: number; year: number }
   a4_trend: { current_month: number; prev_avg: number; trend: 'up' | 'down' | 'flat' }
+  f6: DashboardF6
 }
 
 export const trackerInvalidationKey = ['tracker'] as const
@@ -277,6 +295,8 @@ export function useTrackerWrites(refresh: () => void) {
       input_mode?: TrackerInputMode
       group_id?: string | null
       unit?: string | null
+      reminder_time?: string | null
+      reminder_text?: string | null
       is_private?: boolean
     }) =>
       apiRequest<Tracker>('/api/tracker/trackers', {
@@ -291,7 +311,20 @@ export function useTrackerWrites(refresh: () => void) {
       payload,
     }: {
       trackerId: string
-      payload: Partial<Pick<Tracker, 'name' | 'kind' | 'direction' | 'input_mode' | 'group_id' | 'unit' | 'is_private'>>
+      payload: Partial<
+        Pick<
+          Tracker,
+          | 'name'
+          | 'kind'
+          | 'direction'
+          | 'input_mode'
+          | 'group_id'
+          | 'unit'
+          | 'is_private'
+          | 'reminder_time'
+          | 'reminder_text'
+        >
+      >
     }) =>
       apiRequest<Tracker>(`/api/tracker/trackers/${trackerId}`, {
         method: 'PATCH',

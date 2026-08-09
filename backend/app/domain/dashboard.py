@@ -12,8 +12,8 @@ and ``ZoneInfoNotFoundError`` would only fire in production. Weeks start on Mond
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import date, datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_serializer
@@ -22,8 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
 from app.domain import money
-from app.domain.models import AuthSession, Entry, Tracker, TrackerGroup
-from app.domain.reading import not_deleted, with_privacy_gate
+from app.domain import settings as settings_store
+from app.domain.models import AuthSession, Entry, Subscription, Tracker, TrackerGroup
+from app.domain.reading import not_deleted, readable, with_privacy_gate
+from app.domain.subscription import derive_status, monthly_amount
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,37 @@ class A4Trend(BaseModel):
         return float(value.quantize(Decimal("0.01")))
 
 
+class F6Upcoming(BaseModel):
+    """One subscription about to renew within the lead window (max 5, by expiry)."""
+
+    subscription_id: UUID
+    name: str
+    amount: Decimal | None
+    monthly_amount: Decimal | None
+    expires_on: date
+    days_left: int
+    corrupted: bool
+
+    @field_serializer("amount", "monthly_amount")
+    def _money_as_number(self, value: Decimal | None) -> int | None:
+        if value is None:
+            return None
+        return int(value)
+
+
+class F6Summary(BaseModel):
+    """Fixed monthly burn (auto-renew only) + the upcoming-renewal shortlist."""
+
+    monthly_burn: Decimal
+    subscription_count: int
+    upcoming: list[F6Upcoming] = Field(default_factory=list)
+    corrupted_subscription_count: int
+
+    @field_serializer("monthly_burn")
+    def _burn_as_number(self, value: Decimal) -> int:
+        return int(value)
+
+
 class DashboardResponse(BaseModel):
     """Aggregated dashboard payload returned by ``GET /api/tracker/dashboard``."""
 
@@ -95,6 +128,11 @@ class DashboardResponse(BaseModel):
     a3_counts: A3Counts = Field(default_factory=lambda: A3Counts(week=0, month=0, year=0))
     a4_trend: A4Trend = Field(
         default_factory=lambda: A4Trend(current_month=0, prev_avg=Decimal(0), trend="flat")
+    )
+    f6: F6Summary = Field(
+        default_factory=lambda: F6Summary(
+            monthly_burn=Decimal(0), subscription_count=0, corrupted_subscription_count=0
+        )
     )
 
     @field_serializer("f1_total", "f2_current", "f2_previous", "f5_net")
@@ -327,6 +365,91 @@ class DashboardService:
             return ""
         return crypto.decrypt(tracker.name)
 
+    async def _f6(self, db: AsyncSession, auth: AuthSession) -> F6Summary:
+        """Monthly fixed burn + upcoming renewals — a snapshot of TODAY (§4.3).
+
+        F6 deliberately ignores ``?month=``: F1–F5 look backward at a chosen
+        month, while F6 answers "how much am I committed to every month from
+        now on". A subscription counts when ALL hold: ``auto_renew``, not
+        canceled, ``expires_on >= today_vn``, and readable through the
+        parent-tracker gate (§2.2 — archived or locked-private parents hide
+        their subscriptions with no "some items hidden" note).
+
+        Amounts are summed as unrounded Decimals; the total is rounded once
+        with ROUND_HALF_UP. A corrupted AMOUNT keeps the row in ``upcoming``
+        (``amount: null`` + ``corrupted: true``) when the NAME is still
+        readable — hiding a charge that is about to hit is worse than showing
+        a hole in the number. A corrupted name drops the row entirely.
+        """
+        today = _relative_now().date()
+        stmt = select(Subscription, Tracker).join(Tracker, Subscription.tracker_id == Tracker.id)
+        stmt = readable(stmt, Tracker, auth)  # privacy + soft-delete of the PARENT
+        stmt = not_deleted(stmt, Subscription)  # soft-delete of the subscription itself
+        rows = await db.execute(stmt)
+
+        lead_days = await settings_store.expiry_lead_days(db)
+        burn = Decimal(0)
+        count = 0
+        corrupted = 0
+        upcoming: list[F6Upcoming] = []
+        for subscription, _tracker in rows:
+            if derive_status(subscription.expires_on, subscription.canceled_at, today) != "active":
+                continue
+            try:
+                name = crypto.decrypt(subscription.name)
+            except Exception:
+                logger.error(
+                    "F6 skipped a subscription with an unreadable name (id=%s); "
+                    "results may be incomplete",
+                    subscription.id,
+                )
+                corrupted += 1
+                continue
+            amount: Decimal | None = None
+            bad = False
+            try:
+                amount = money.from_storage(crypto.decrypt(subscription.amount))
+            except Exception:
+                logger.error(
+                    "F6 skipped an unreadable subscription.amount (id=%s); "
+                    "results may be incomplete",
+                    subscription.id,
+                )
+                bad = True
+                corrupted += 1
+            monthly: Decimal | None = None
+            if not bad:
+                monthly = monthly_amount(
+                    amount, subscription.period_count, subscription.period_unit
+                )
+                if subscription.auto_renew:
+                    burn += monthly
+                    count += 1
+            days_left = (subscription.expires_on - today).days
+            if days_left <= lead_days:
+                upcoming.append(
+                    F6Upcoming(
+                        subscription_id=subscription.id,
+                        name=name,
+                        amount=amount,
+                        monthly_amount=(
+                            monthly.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                            if monthly is not None
+                            else None
+                        ),
+                        expires_on=subscription.expires_on,
+                        days_left=days_left,
+                        corrupted=bad,
+                    )
+                )
+        upcoming.sort(key=lambda item: item.expires_on)
+        return F6Summary(
+            monthly_burn=burn.quantize(Decimal("1"), rounding=ROUND_HALF_UP),
+            subscription_count=count,
+            upcoming=upcoming[:5],
+            corrupted_subscription_count=corrupted,
+        )
+
     async def compute(
         self, db: AsyncSession, auth: AuthSession, *, month: str
     ) -> DashboardResponse:
@@ -335,6 +458,7 @@ class DashboardService:
         period = _periods(month, now)
         period_start = period.period_start
         period_end = period.period_end
+        f6 = await self._f6(db, auth)
 
         # ---------------- A3 / A4 (relative to today) ---------------------
         a2_gap = await self._a2_gap(db, auth, now)
@@ -389,6 +513,7 @@ class DashboardService:
                 a2_gap=a2_gap,
                 a3_counts=a3_counts,
                 a4_trend=a4_trend,
+                f6=f6,
             )
 
         month_start = period_start
@@ -522,4 +647,5 @@ class DashboardService:
             a2_gap=a2_gap,
             a3_counts=a3_counts,
             a4_trend=a4_trend,
+            f6=f6,
         )

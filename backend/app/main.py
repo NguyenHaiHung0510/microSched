@@ -1,7 +1,7 @@
-"""FastAPI application factory."""
-
+import asyncio
 import logging
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -17,13 +17,47 @@ from app.web.oauth import OAUTH_STATE_COOKIE, OAUTH_STATE_TTL_SECONDS
 from app.web.routers.annotations import router as annotations_router
 from app.web.routers.auth import router as auth_router
 from app.web.routers.calendar import router as calendar_router
-from app.web.routers.cron import router as cron_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
+from app.web.routers.push import router as push_router
+from app.web.routers.settings import router as settings_router
+from app.web.routers.subscription import router as subscription_router
 from app.web.routers.tasks import router as tasks_router
 from app.web.routers.tracker import router as tracker_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not getattr(app.state, "cron_runtime_enabled", False):
+        yield
+        return
+
+    # Import the timer implementation only in the explicitly enabled mode.
+    # Disabled deployments must stay a literal no-op: no CronTimer, dispatcher,
+    # Event, app.state fields, or timer database setup exists in that path.
+    from app.core.cron_timer import build_cron_timer_if_enabled
+
+    timer = build_cron_timer_if_enabled()
+    app.state.cron_timer = timer
+    app.state.cron_timer_task = None
+    if timer is None:  # pragma: no cover - settings gate above makes this unreachable.
+        raise RuntimeError("ENABLE_INPROCESS_CRON=true did not build a CronTimer")
+
+    # A detached create_task only exposes a fatal timer failure during shutdown,
+    # leaving HTTP healthy while reminders are dead. TaskGroup supervises the
+    # timer: exhausted bounded reload retries propagate through lifespan so Fly
+    # can restart and rehydrate from the durable dispatch rows.
+    async with asyncio.TaskGroup() as task_group:
+        app.state.cron_timer_task = task_group.create_task(
+            timer.run(), name="microsched-cron-timer"
+        )
+        try:
+            yield
+        finally:
+            await timer.stop()
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +77,14 @@ class SPAStaticFiles(StaticFiles):
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = get_settings()
+    cron_runtime_enabled = settings.enable_inprocess_cron
+    if cron_runtime_enabled and not settings.database_url:
+        # Production is rejected by Settings before reaching here. Local mode
+        # remains intentionally zero-config and must not construct timer state.
+        logger.warning(
+            "cron_timer_disabled mode=inprocess reason=database_not_configured environment=local"
+        )
+        cron_runtime_enabled = False
     oauth_state_secret = settings.oauth_state_secret
     if not oauth_state_secret:
         # Gated on APP_ENV rather than on a nearby setting like SESSION_COOKIE_SECURE.
@@ -57,7 +99,9 @@ def create_app() -> FastAPI:
         )
         oauth_state_secret = secrets.token_urlsafe(32)
 
-    app = FastAPI(title=settings.app_name, version=settings.app_version)
+    app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
+    if cron_runtime_enabled:
+        app.state.cron_runtime_enabled = True
 
     # Signs the short-lived OAuth handshake cookie and NOTHING else. The login
     # session is an opaque token row in `session` (auth-brief §2) - never this
@@ -102,9 +146,26 @@ def create_app() -> FastAPI:
                 )
         return await call_next(request)
 
+    if cron_runtime_enabled:
+        # Both the ContextVar and its timer types are feature-gated. Importing
+        # this app with the flag false must not construct cron runtime state.
+        from app.core.cron_timer import ReloadSink
+        from app.web.deps import get_cron_reload_sink
+
+        cron_reload_sink = get_cron_reload_sink()
+
+        @app.middleware("http")
+        async def cron_reload_context(request: Request, call_next):
+            timer = getattr(request.app.state, "cron_timer", None)
+            sink = ReloadSink(timer) if timer is not None else None
+            token = cron_reload_sink.set(sink)
+            try:
+                return await call_next(request)
+            finally:
+                cron_reload_sink.reset(token)
+
     app.include_router(health_router)
     app.include_router(auth_router)
-    app.include_router(cron_router)
 
     # Single mount point for authenticated API routes: including a router here is
     # what makes it reachable, so a new slice cannot ship without the guard.
@@ -116,6 +177,9 @@ def create_app() -> FastAPI:
     protected_api.include_router(calendar_router)
     protected_api.include_router(annotations_router)
     protected_api.include_router(tracker_router)
+    protected_api.include_router(subscription_router)
+    protected_api.include_router(settings_router)
+    protected_api.include_router(push_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:

@@ -269,7 +269,7 @@ Chủ: tính năng **quan trọng nhất app** (sức khỏe trực tiếp) như
 
 *Ghi lại vì cả hai đã đổi thật lúc thiết kế `011b`, và để hai file cùng là "quyết định hiện hành" mà nói ngược nhau là đúng cái bẫy `CLAUDE.md` cấm. Phát hiện lúc T2 phản biện chéo spec 011a/b/c.*
 
-1. **Cron: "GitHub Actions" → Google Cloud Scheduler, và MỘT job → BA job cố định** (`08:00`/`15:00`/`19:00` giờ VN, `agent-tasks/011b` §1.1). Hai lý do độc lập: hạ tầng cron của dự án đã chuyển sang Cloud Scheduler từ 2026-07-23 (`devops-brief.md` §10 — nhịp tối thiểu của GH Actions cron trùng đúng cửa sổ idle của Neon); và nhu cầu thật đổi từ *một* giờ nhắc sang *nhiều* giờ trong ngày (toa tạm thời), nên một mốc cố định là hỏng đúng thứ tính năng này sinh ra để làm. Vẫn **không** scan-liên-tục.
+1. **Cron: "Google Cloud Scheduler, 3 job cố định" → "In-process Timer, exact time"** (`011d`). Google Cloud Scheduler và cơ chế external endpoint đã bị bỏ hẳn. Thay vào đó, app chạy một async timer trong RAM để đánh thức nhắc nhở chính xác theo giờ phút của tracker mà không bị giới hạn lượng tử hoá 3 khe.
 2. **"Bấm ✓ ngay trên noti = ghi entry 1 chạm" → chạm vào thân noti mở route `/reminder-confirm?dispatch=<id>` rồi app ghi ngay** (`011b` §1.3, §4.2). Không phải đổi ý về UX mà là **giới hạn nền tảng đo được**: iOS không cho notification có nút hành động ở lock-screen cho web push, nên nút ✓ không tồn tại được. Tinh thần "một chạm, không hỏi lại" giữ nguyên — vẫn đúng một thao tác, và `reminder_dispatch` chống ghi trùng khi tap ở hai thiết bị.
 
 **Không đổi:** mô hình dữ liệu (không entity mới, hai cột `reminder_time`/`reminder_text` trên `tracker`), nguyên tắc kín đáo trên noti, không streak, cadence daily-only.

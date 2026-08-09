@@ -77,7 +77,7 @@ nhịp giây, một tab mở sẵn sẽ tự gia hạn vĩnh viễn nếu TTL n�
 
 ## 5. Notes phụ ✅
 
-- **Cron endpoints:** production do Google Cloud Scheduler gọi; GitHub Actions chỉ giữ `workflow_dispatch` làm nút chạy tay. Cả hai auth bằng **bearer secret riêng** (Fly secret + Scheduler HTTP header + GitHub repo secret), không đi qua session user.
+- **Cron endpoints:** Đã xoá toàn bộ external API cho cron (kể cả heartbeat và webhook). Thay vào đó, app chạy một in-process async timer (`011d`) không phơi bề mặt mạng ra ngoài nên không cần authen API.
 - **OAuth redirect trong PWA standalone iOS** = item test máy thật lúc build (bẫy kinh điển: flow văng sang Safari → cookie nằm storage Safari ≠ storage app đã cài → login loop) — đã ghi `frontend-brief.md` §5.
 
 ## 6. Delta schema từ phiên này (đúc DDL lúc scaffold)

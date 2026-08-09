@@ -69,11 +69,6 @@ def _tracker_response(response: Response, tracker: TrackerRead) -> TrackerRead:
     return tracker
 
 
-def _entry_response(response: Response, entry: EntryRead) -> EntryRead:
-    response.status_code = status.HTTP_201_CREATED if entry.created else status.HTTP_200_OK
-    return entry
-
-
 def _tz_aware(value: datetime | None, name: str) -> None:
     if value is not None and (value.tzinfo is None or value.utcoffset() is None):
         raise HTTPException(
@@ -197,8 +192,12 @@ async def update_tracker(
 
 @router.delete("/tracker/trackers/{tracker_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tracker(tracker_id: UUID, db: Database, session: CurrentSession) -> Response:
-    """Archive a tracker (soft-delete); history stays for F1–F5."""
-    if not await store.soft_delete_tracker(db, session, tracker_id):
+    """Archive a tracker (soft-delete); 422 while live subscriptions are attached."""
+    try:
+        deleted = await store.soft_delete_tracker(db, session, tracker_id)
+    except TrackerInvalid as error:
+        raise _tracker_invalid(error) from error
+    if not deleted:
         raise _not_found()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -247,7 +246,7 @@ async def create_entry(
 ) -> EntryRead:
     """Log one entry (one-tap capture); 422 on K8 input_mode violations."""
     try:
-        entry = await store.create_entry(db, session, payload)
+        entry_id, created = await store.create_entry(db, session, payload)
     except EntryInvalid as error:
         raise _tracker_invalid(error) from error
     except EntryIdConflict:
@@ -256,7 +255,11 @@ async def create_entry(
         if isinstance(error, ValueError):
             raise HTTPException(status_code=422, detail=str(error)) from error
         raise
-    return _entry_response(response, entry)
+    entry = await store.get_entry(db, session, entry_id)
+    if entry is None:
+        raise _not_found("Entry")
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return entry
 
 
 @router.get("/tracker/entries/{entry_id}", response_model=EntryRead)
