@@ -10,14 +10,14 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 
 | Nhãn | Trạng thái hiện hành |
 |---|---|
-| **LAST VERIFIED** | T1 receipt 2026-08-09: Luna full acceptance **PASS** trên product commit `b12bae6`; Wave A R1/R2 vẫn **PASS WITH FIXES**, không blocker. |
+| **LAST VERIFIED** | T1 receipt 2026-08-09: procedural full acceptance **PASS** trên product commit `b12bae6`; prior independent reviews vẫn **PASS WITH FIXES**, không blocker. |
 | **LIVE** | `011a` **DONE + LIVE** qua PR #103; Lane 4 trên iPhone vật lý còn QA debt. Production receipt hiện có vẫn là `221d222…`; Wave B và security patch local chưa deploy. |
 | **LOCAL ACCEPTANCE** | `b12bae6`: non-PG **156 passed / 83 deselected**; PG **83 passed / 156 deselected**; migration drift empty trước và sau downgrade-upgrade; frontend unit **12 files / 66 tests**; E2E **98 passed / 16 skipped**; pre-commit và history gitleaks clean. |
-| **IN FLIGHT** | Local integration acceptance đã đóng; chưa push/open PR. Ba worktree phải được xác nhận clean trước delivery. |
-| **BLOCKED** | **Không có blocker từ R1/R2 hay local acceptance**, nhưng **chưa ship-ready**: GitHub CI, final reviews, merge/deploy, migration Neon, timer/VAPID activation và iPhone/Web Push vẫn chưa verify. |
+| **IN FLIGHT** | Draft PRs **#113 / #114 / #115** đang open, `mergeStateStatus: CLEAN`, mỗi PR có **10 checks green**; independent reviews đang chạy. |
+| **BLOCKED** | **Không có blocker từ prior reviews, local acceptance hay CI**, nhưng **chưa ship-ready**: final reviews, merge/deploy, migration Neon, timer/VAPID activation và iPhone/Web Push vẫn chưa verify. |
 | **SECURITY CAVEAT** | Product branch vẫn resolve `cryptography 49.0.0`, `fast-uri 3.1.4`, `postcss 8.5.20` cho tới khi security PR từ patch local `9259f98` lands. Local acceptance không đóng caveat này. |
-| **NEXT** | Xác nhận cả 3 worktree clean → push/open đúng 3 PR → chờ CI → chạy 3 final reviews song song bằng **Gemini 3.6 Flash / high**. |
-| **PILOT RECEIPT** | Flat-orchestration pilot **PASS cho procedural lanes**; parent vẫn bắt buộc cleanup và đọc diff/output. Nested Terra→Luna vẫn unavailable vì child không có `spawn_agent`; T1 trực tiếp orchestration flat. Luna security verifier pass các check áp dụng; T1 đã restore E2E-generated screenshot. Standalone gitleaks working-tree scan vẫn đỏ do ignored `.venv` như handoff đã biết; pre-commit và history scan sạch. |
+| **NEXT** | Hoàn tất independent reviews trên cả 3 draft PR, xử lý accepted findings rồi mới đi tiếp merge gates. Final-review route lấy từ **current task prompt + Runtime Catalog**; owner decision hiện hành đã supersede route Wave A, public status không hardcode model tạm. |
+| **PILOT RECEIPT** | Flat-orchestration pilot **PASS cho procedural lanes**; parent vẫn bắt buộc cleanup và đọc diff/output. Nested delegation vẫn unavailable vì child không có `spawn_agent`; T1 trực tiếp orchestration flat. Procedural security verifier pass các check áp dụng; T1 đã restore E2E-generated screenshot. Standalone gitleaks working-tree scan vẫn đỏ do ignored `.venv` như handoff đã biết; pre-commit và history scan sạch. |
 | **OPEN QA DEBT** | `010a`: iPhone file picker / FileReader. `011a`: Lane 4 iPhone vật lý. `011b`: Web Push trên thiết bị thật, VAPID/timer activation. `016`: còn 2 non-text contrast dưới WCAG 1.4.11. |
 
 ## Cách dùng

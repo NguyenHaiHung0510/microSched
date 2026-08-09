@@ -133,6 +133,8 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 **Delegation không mở rộng authority.** Mỗi lane giữ nguyên scope/quyền của task cha; không có hai writer cùng sửa một worktree. Deploy, migration, secret-bearing flow và thao tác irreversible vẫn do T1 hoặc T2 mạnh thực hiện dưới đúng merge/approval gate. Khi chờ agent, cadence mặc định khoảng 10 phút; không spam polling trừ khi có blocker, critical finding, conflict hoặc owner decision.
 
+**Independent second review theo criticality.** Với PR critical/high-blast-radius, T1 có thể chỉ định thêm một reviewer độc lập từ model family khác khi thấy cần. Giới hạn concurrency có thể khiến các lượt review chạy staged thay vì song song; điều đó không làm giảm gate. Reviewer luôn read-only, chỉ đưa finding/receipt, không được sửa branch và không được mở rộng authority của task.
+
 **Runtime Catalog là source of truth duy nhất cho model availability và route tại thời điểm giao việc.** Không ghi model catalog, quota, ranking, fallback hay routing tạm trong policy/repo. Chọn model + reasoning effort khi giao task, ghi lại trong spec/receipt nếu nó ảnh hưởng acceptance; route không available thì báo rõ, không âm thầm đổi.
 
 **Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật.
