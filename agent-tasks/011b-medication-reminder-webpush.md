@@ -1,6 +1,6 @@
-# 011b — Nhắc thuốc + nhắc hết hạn sub: hạ tầng Web Push + cron 3-khe
+# 011b — Nhắc thuốc + nhắc hết hạn sub: Web Push, dispatch và confirmation
 
-> **Trạng thái: OWNER-APPROVED theo handoff 2026-08-09 — pilot/final acceptance và activation gates chưa đóng.**
+> **Trạng thái: OWNER-APPROVED theo handoff 2026-08-09 — final acceptance và activation gates chưa đóng.** Scheduler target là `011d` in-process timer.
 > Đã qua hai vòng adversarial review + fixes; T1 kiểm tay findings.
 >
 > **📝 2026-08-06 — chủ duyệt gộp 2 finding QA 011a vào lô này** (xem §4.4): hai vấn đề UI toàn app

@@ -2,7 +2,7 @@
 
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: không cần.**
-> **Trạng thái: OWNER-APPROVED theo handoff 2026-08-09 — pilot/final acceptance chưa đóng.** Đã qua phản biện **T3** (`gemini-3.1-pro-high`,
+> **Trạng thái: OWNER-APPROVED theo handoff 2026-08-09 — final acceptance chưa đóng.** Đã qua phản biện **T3** (`gemini-3.1-pro-high`,
 > 9 finding) + **T2 Codex** (18 finding); T1 kiểm tay từng finding rồi vá, và ghi rõ chỗ nào kết luận
 > đúng nhưng lý do sai (§8).
 

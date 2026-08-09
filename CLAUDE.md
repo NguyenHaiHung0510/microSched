@@ -80,6 +80,8 @@ Data boundary for third-party tools (`devops-brief.md` §7): public code/docs = 
 
 **OpenCodex = multi-provider fabric cho T2/T3.** T2 thi công đúng `agent-tasks/` trên worktree/branch được giao; T3 chạy test và phản biện độc lập. Chọn executor theo blast radius, capability cần thật và boundary của task, không theo một provider/model cố định trong tài liệu.
 
+**Orchestration pointer:** T1 tách judgment khỏi procedural receipt, trực tiếp spawn flat vì child không được giả định có nested `spawn_agent`, và luôn đọc diff/output của lane con. Quy tắc đầy đủ về authority, writer isolation, irreversible lanes và wait cadence nằm ở [`docs/devops-brief.md`](docs/devops-brief.md) §7.
+
 **Runtime Catalog là source of truth duy nhất cho model availability và route tại thời điểm giao việc.** Không ghi model catalog, quota, ranking, fallback hay routing tạm trong policy/repo. Chọn model + reasoning effort khi giao task, ghi lại trong spec/receipt nếu nó ảnh hưởng acceptance; route không available thì báo rõ, không âm thầm đổi.
 
 **Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật.

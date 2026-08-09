@@ -129,6 +129,10 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 **OpenCodex = multi-provider fabric cho T2/T3.** T2 thi công đúng `agent-tasks/` trên worktree/branch được giao; T3 chạy test và phản biện độc lập. Chọn executor theo blast radius, capability cần thật và boundary của task, không theo một provider/model cố định trong tài liệu.
 
+**Flat orchestration + tách lane.** T1 tách **judgment lane** khỏi **procedural receipt lane**. Runtime hiện không cấp nested `spawn_agent` cho subagent, nên child không được dựa vào nested delegation: T1 trực tiếp spawn các lane ngang hàng (flat) và giữ reconciliation ở parent. Judgment/high-blast-radius giao model mạnh; model nhẹ chỉ nhận acceptance deterministic có command, expected output và điểm dừng rõ. Parent bắt buộc đọc diff/output thay vì chỉ tin lời khai của child.
+
+**Delegation không mở rộng authority.** Mỗi lane giữ nguyên scope/quyền của task cha; không có hai writer cùng sửa một worktree. Deploy, migration, secret-bearing flow và thao tác irreversible vẫn do T1 hoặc T2 mạnh thực hiện dưới đúng merge/approval gate. Khi chờ agent, cadence mặc định khoảng 10 phút; không spam polling trừ khi có blocker, critical finding, conflict hoặc owner decision.
+
 **Runtime Catalog là source of truth duy nhất cho model availability và route tại thời điểm giao việc.** Không ghi model catalog, quota, ranking, fallback hay routing tạm trong policy/repo. Chọn model + reasoning effort khi giao task, ghi lại trong spec/receipt nếu nó ảnh hưởng acceptance; route không available thì báo rõ, không âm thầm đổi.
 
 **Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật.
