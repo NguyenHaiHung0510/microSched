@@ -1,6 +1,6 @@
 # 011b — Nhắc thuốc + nhắc hết hạn sub: Web Push, dispatch và confirmation
 
-> **Trạng thái: OWNER-APPROVED; local acceptance PASS trên `b12bae6`.** Scheduler target là `011d` in-process timer; GitHub/production/Web Push activation chưa verify.
+> **Trạng thái: OWNER-APPROVED; local acceptance PASS trên `b12bae6`.** Owner approved explicitly **2026-08-09** trong handoff/current harness session; PR **#114** là receipt truy hồi được cho status dated này. Approval cho implementation/merge gate không tự authorize production activation; activation vẫn theo cutover runbook. Scheduler target là `011d` in-process timer; GitHub/production/Web Push activation chưa verify.
 > Đã qua hai vòng adversarial review + fixes; T1 kiểm tay findings.
 >
 > **📝 2026-08-06 — chủ duyệt gộp 2 finding QA 011a vào lô này** (xem §4.4): hai vấn đề UI toàn app

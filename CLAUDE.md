@@ -56,11 +56,11 @@
 
 ## Repo & workflow (see `devops-brief.md`)
 
-GitHub repo is **public by deliberate choice**; work happens on `develop` → PR into `main`. **Merging into `develop` deploys to production** (`devops-brief.md` §2.1). `develop` = what is running on Fly and where the owner/T3 verify. **`main` never deploys** — it is a deliberately-lagging **release label**, tagged `v0.x` when a slice is worth a rollback point. Rollback = **roll-forward** (`git revert` on `develop`).
+GitHub repo is **public by deliberate choice**; every change, including docs, works on a separate branch → PR into `develop`. **Merging into `develop` deploys to production** (`devops-brief.md` §2.1). `develop` = what is running on Fly and where the owner/T3 verify. **`main` never deploys** — it receives only a release-label PR after production acceptance, then is tagged `v0.x` when a slice is worth a rollback point. Rollback = **roll-forward** (`git revert` on `develop`).
 
 **Everything GitHub reads from the default branch only reads from `main`** — workflow `schedule:`, `dependabot.yml` (both read *and* `target-branch` write), `CODEOWNERS`, community health files. Since `main` is intentionally stale, anything of this kind merged only into `develop` is silently inert — check this every time you touch `.github/`. Full incident history: `docs/session-log.md`.
 
-**`develop` requires a PR for everything, including docs** — `protect-develop` has required status checks (incl. `Secret scan`), so a bare push without a passing check is rejected (`GH013`). One commit per decision session, Vietnamese message explaining *why*. Delegated work goes in `agent-tasks/NNN-<slug>.md` as self-contained specs; code tasks run on a `feat/NNN-<slug>` branch with a PR into `develop`.
+**`develop` requires a PR for everything, including docs** — `protect-develop` has required status checks (incl. `Secret scan`), so a bare push without a passing check is rejected (`GH013`). One commit per decision session, Vietnamese message explaining *why*. Delegated work goes in `agent-tasks/NNN-<slug>.md` as self-contained specs; all task branches, including docs-only work, use a separate branch with a PR into `develop`.
 
 **Merge gate by criticality** (`pr-merge-gate-by-criticality` memory): non-critical PRs need one adversarial-review pass (T2 or T3) + green CI, then merge (owner has pre-authorized this, no need to ask). Critical/ops-irreversible work still gets the full T1 receipt trail (PR# + `gh pr checks` green + diff read + live SHA).
 
