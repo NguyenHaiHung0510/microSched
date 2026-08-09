@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+> **Tên file được giữ vì tương thích.** Đây là chỉ dẫn dự án cho mọi executor; policy harness hiện hành ở [`docs/devops-brief.md`](docs/devops-brief.md) §7.
 
 **Bảo trì file này (đọc trước khi sửa):** file này bị giới hạn ~40k ký tự vì nó nạp vào context của MỌI phiên. Nó chỉ chứa **luật/trạng thái hiện hành**, sửa tại chỗ (không thêm dated note tích luỹ). Lịch sử từng phiên, lý do đằng sau các quyết định, và các bài học chi tiết nằm ở [`docs/session-log.md`](docs/session-log.md) (nhật ký theo phiên) và [`docs/learnings-applied.md`](docs/learnings-applied.md) — trỏ tới đó thay vì dán lại nội dung. Nếu một mục ở đây cần ghi "vì sao đổi", viết 1 dòng trỏ `docs/session-log.md#<ngày>` chứ đừng chép nguyên đoạn.
 
@@ -8,13 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **microSched** — a single-user personal task / note / calendar / tracker web app, **AI-first**, being built as a **clean rewrite** of an old desktop app (`VC_QuanLyThoiGian`). It is the "dự án trục" (spine project) of the owner's summer-2026 study plan; the parent planning/strategy workspace is at `../../hoc_he_2026` (read its `chien-luoc-he-2026.md` / `track_ai_eng_strategy.md` for the wider plan and the AI-engineering learning goals this project serves).
 
-**Current state (2026-08-06): real app in production.** `backend/` (FastAPI + SQLModel + Alembic, Python ≥3.14 via `uv`, ruff + pytest), `frontend/` (React 19 + TypeScript + Vite + Tailwind v4/shadcn-ui + TanStack Query v5, Playwright e2e in `frontend/e2e/`), one root `Dockerfile`, live at `microsched.fly.dev` on Neon PG18; Fly runs one `shared-cpu-1x` 256MB Machine continuously in `sin`. Mọi Google Cloud Scheduler job bị loại bỏ; timer in-process là scheduler duy nhất (xem `devops-brief.md` §10). **Build/lint/test commands are real — read them from `backend/pyproject.toml`, `frontend/package.json` and `.github/workflows/` instead of assuming or inventing them; migration count, table count, and test count all change often enough that this file does not track them — check `backend/alembic/versions/` and run the test suite instead of trusting a number written here.**
+**Nguồn trạng thái, hàng đợi và approval:** xem status board ở [`agent-tasks/README.md`](agent-tasks/README.md). Status của từng lô chỉ đáng tin khi đối chiếu header spec, biên lai GitHub/production và các cổng acceptance của chính spec; không ghi queue, số test hay model routing tạm ở đây.
 
-**Design phase: fully closed.** All architecture/schema/frontend/auth/UI/QA-framework decisions are locked — see the doc list below. The only thing left to design is the **Bước-1 AI choices** (embedding provider, vector dimension, default LLM, hybrid retrieval details) — everything else in `docs/` is final, read it rather than re-deriving.
-
-**Slice progress:** `003`–`007` (walking skeleton), `008` + all sub-tasks (`a/b/d/e/f/i/k/m/n/g`), `013` (DevSecOps), `014` (cron RSS watch), `015` (gitleaks history scan), `016` (private unlock), `018` (QA framework + Playwright harness), `009` (note slice), `010a` (calendar import/CRUD), `010b` (calendar scroll view) → **all done and live**. Open, not blocking: `008c` (cost-tracking feature, scope in `cost-brief.md` §7.4, do when free). Deferred to after `012` + a dedicated branding session with the owner + a copy rewrite (drop first-person voice): `008h` (landing page).
-
-**Việc kế tiếp thật sự:** thi công `011a` (tracker specs / tracker slice A) — **`010b` đã merge & QA closeout tại PR #98**. Hàng đợi: `011a → 011c → 011b → 020 → 012 → 008h`. Tình trạng spec (viết trước 2026-08-01 để hàng đợi chạy được cả khi T1 vắng): `011a`/`011b`/`011c` DRAFT chờ chủ duyệt; `020` (3 cột giữ dữ liệu app cũ) và `012` (cutover) **đã có spec DRAFT**, đã qua một vòng phản biện T2+T3 2026-08-02, **chưa qua vòng vẽ + chờ duyệt bản chi tiết**. `020` là phụ thuộc cứng của `012` (phải merge trước, xem `020` §1). **Đừng đảo thứ tự trong hệ `011`:** `011b` nhắc cơ thuốc lẫn sub nên phải sau `011c`. Bảng chi tiết từng lô: `agent-tasks/README.md`. Chi tiết lịch sử vì sao thứ tự này đổi nhiều lần (018/016/015 chen trước 009): `docs/session-log.md`.
+**Lệnh build/lint/test là hiện vật sống:** đọc `backend/pyproject.toml`, `frontend/package.json` và `.github/workflows/` thay vì suy đoán. Migration/table/test count thay đổi theo code: kiểm `backend/alembic/versions/` và chạy đúng lane cần thiết.
 
 ## Read the decision records before proposing anything
 
@@ -60,11 +56,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repo & workflow (see `devops-brief.md`)
 
-GitHub repo is **public by deliberate choice**; work happens on `develop` → PR into `main`. **Merging into `develop` deploys to production** (`devops-brief.md` §2.1). `develop` = what is running on Fly and where the owner/T3 verify. **`main` never deploys** — it is a deliberately-lagging **release label**, tagged `v0.x` when a slice is worth a rollback point. Rollback = **roll-forward** (`git revert` on `develop`).
+GitHub repo is **public by deliberate choice**; every change, including docs, works on a separate branch → PR into `develop`. **Merging into `develop` deploys to production** (`devops-brief.md` §2.1). `develop` = what is running on Fly and where the owner/T3 verify. **`main` never deploys** — it receives only a release-label PR after production acceptance, then is tagged `v0.x` when a slice is worth a rollback point. Rollback = **roll-forward** (`git revert` on `develop`).
 
 **Everything GitHub reads from the default branch only reads from `main`** — workflow `schedule:`, `dependabot.yml` (both read *and* `target-branch` write), `CODEOWNERS`, community health files. Since `main` is intentionally stale, anything of this kind merged only into `develop` is silently inert — check this every time you touch `.github/`. Full incident history: `docs/session-log.md`.
 
-**`develop` requires a PR for everything, including docs** — `protect-develop` has required status checks (incl. `Secret scan`), so a bare push without a passing check is rejected (`GH013`). One commit per decision session, Vietnamese message explaining *why*. Delegated work goes in `agent-tasks/NNN-<slug>.md` as self-contained specs; code tasks run on a `feat/NNN-<slug>` branch with a PR into `develop`.
+**`develop` requires a PR for everything, including docs** — `protect-develop` has required status checks (incl. `Secret scan`), so a bare push without a passing check is rejected (`GH013`). One commit per decision session, Vietnamese message explaining *why*. Delegated work goes in `agent-tasks/NNN-<slug>.md` as self-contained specs; all task branches, including docs-only work, use a separate branch with a PR into `develop`.
 
 **Merge gate by criticality** (`pr-merge-gate-by-criticality` memory): non-critical PRs need one adversarial-review pass (T2 or T3) + green CI, then merge (owner has pre-authorized this, no need to ask). Critical/ops-irreversible work still gets the full T1 receipt trail (PR# + `gh pr checks` green + diff read + live SHA).
 
@@ -73,16 +69,23 @@ Data boundary for third-party tools (`devops-brief.md` §7): public code/docs = 
 ## Working conventions
 
 - Docs are **decision records**: self-contained, Vietnamese prose with English technical terms kept inline, status-flagged (`✅ CHỐT` / `⚠️ OPEN` / `DEFER`). When a decision **changes**, add a dated note in the *relevant brief* (e.g. `auth-brief.md` §3) — don't silently rewrite prior conclusions. When something is merely **current state** (a fact that just became outdated, not a decision reversal), fix it in place — don't let a stale fact and its correction coexist in the same paragraph (see `docs/session-log.md` 2026-07-23 "mâu thuẫn D1" for why this distinction matters).
-- **Role split:** the owner decides architecture/product and reviews; Claude executes. Present options at the **strategy/product level**, not as low-level backend claims.
+- **Role split:** the owner decides architecture/product and reviews; T1 coordinates work through the active harness policy. Present options at the **strategy/product level**, not as low-level backend claims.
 - Where a decision in `docs/` conflicts with the parent strategy docs in `../../hoc_he_2026`, the newer decision here wins.
 - **pre-commit + gitleaks are active** (`.pre-commit-config.yaml`): every `git commit` runs a basic hygiene hook + gitleaks. Hook doesn't survive `git clone` — run `pip install pre-commit && pre-commit install` on a new machine.
 - **CLAUDE.md itself:** current-state facts get fixed in place; session-close notes go to `docs/session-log.md`, not appended here (see the maintenance note at the top of this file, and `feedback_session_close_checklist` in memory).
 
-## Delegation qua sub-agent (Codex + OpenCodex) — ✅ Cập nhật 2026-08-03
+## Harness operating policy — ACTIVE
 
-Từ 2026-08-03, dự án chuyển sang **Codex Desktop App** làm harness chính (thay thế Claude Code). Việc điều phối sub-agents (T2 thi công, T3 phản biện/test) sử dụng cơ chế `spawn_agent` tích hợp sẵn trong Codex Desktop, kết hợp **OpenCodex** (gọi các model qua Antigravity và OpenRouter).
+**T1 = Codex Desktop Main Thread.** T1 lập kế hoạch, viết/fold spec, xử lý escalation L1, đọc receipt và review diff trước merge. Chủ vẫn giữ quyền quyết định product/architecture và approval; T1 không tự nâng DRAFT thành approved.
 
-**Ma trận phân vai & Định tuyến Model:**
-- **T1 (Óc — Main thread Codex Desktop):** Lập kế hoạch, spec, ADR, review diff cuối. Model: `gpt-5.6-sol` (effort: `xhigh`/`high`) khi có quota; PAYG/cạn quota: `google-antigravity/claude-opus-4-6-thinking` hoặc `google-antigravity/gemini-3.6-flash`.
-- **T2 (Tay thi công — `spawn_agent` sub-agent):** Thi công code trên branch `feat/NNN-<slug>`. Model: `gpt-5.6-sol` (high) cho việc khó/Auth/DDL/Crypto; `gpt-5.6-terra` (medium) cho CRUD/UI; `gpt-5.6-luna` (low/medium) cho sửa vặt/lint/test-loop; PAYG: `google-antigravity/gemini-3.6-flash` hoặc `openrouter/~deepseek-deepseek-v4-flash-latest`.
-- **T3 (Máy chạy test & Phản biện 6 trục — `spawn_agent` sub-agent):** Phản biện 6 trục (Rubric §7.3i), e2e Playwright, regression. Model: `google-antigravity/gemini-3.6-flash` (tốc độ/AI Pro quota); `google-antigravity/gemini-3.1-pro-high` (soát lỗi chuyên sâu); PAYG OpenRouter: `openrouter/~deepseek-deepseek-v4-flash-latest` hoặc `openrouter/deepseek/deepseek-v4-pro`.
+**OpenCodex = multi-provider fabric cho T2/T3.** T2 thi công đúng `agent-tasks/` trên worktree/branch được giao; T3 chạy test và phản biện độc lập. Chọn executor theo blast radius, capability cần thật và boundary của task, không theo một provider/model cố định trong tài liệu.
+
+**Orchestration pointer:** T1 tách judgment khỏi procedural receipt, trực tiếp spawn flat vì child không được giả định có nested `spawn_agent`, và luôn đọc diff/output của lane con. Quy tắc đầy đủ về authority, writer isolation, irreversible lanes và wait cadence nằm ở [`docs/devops-brief.md`](docs/devops-brief.md) §7.
+
+**Runtime Catalog là source of truth duy nhất cho model availability và route tại thời điểm giao việc.** Không ghi model catalog, quota, ranking, fallback hay routing tạm trong policy/repo. Chọn model + reasoning effort khi giao task, ghi lại trong spec/receipt nếu nó ảnh hưởng acceptance; route không available thì báo rõ, không âm thầm đổi.
+
+**Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật.
+
+### Historical harness receipts — RETIRED
+
+ClaudeRelay và các route/model snapshots cũ chỉ còn là receipt lịch sử, không phải policy, runtime catalog hoặc lệnh vận hành hiện hành. Không dành thêm maintenance/QA cho ClaudeRelay.
