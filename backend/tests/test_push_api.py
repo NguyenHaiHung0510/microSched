@@ -428,6 +428,86 @@ def test_two_devices_confirm_same_dispatch_create_one_entry(pg_dsn: str):
 
 
 @pytest.mark.pg
+def test_private_dispatch_requires_unlock_then_accepts_same_body(pg_dsn: str):
+    """011b §6: locked private confirm writes nothing; same unlocked retry confirms once."""
+
+    async def scenario():
+        auth = _auth(unlocked=True)
+        auth_state = {"value": auth}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        dispatch_ids = []
+        try:
+            tracker = await _create_tracker(
+                client, kind="health", input_mode="event", is_private=True
+            )
+            tracker_id = UUID(tracker["id"])
+            tracker_ids.append(tracker_id)
+            dispatch_id = _uuid7()
+            dispatch_ids.append(dispatch_id)
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute(
+                    "INSERT INTO microsched.reminder_dispatch "
+                    "(id, subject_type, subject_id, dispatched_on, status, attempt_count, "
+                    "created_at) "
+                    "VALUES ($1, 'tracker', $2, $3::date, 'pending', 0, NOW())",
+                    dispatch_id,
+                    tracker_id,
+                    datetime.now(VN_TZ).date(),
+                )
+            finally:
+                await conn.close()
+
+            body = {"entry_id": str(_uuid7()), "occurred_at": datetime.now(UTC).isoformat()}
+            auth.private_until = None
+            locked = await client.post(f"/api/reminder-dispatch/{dispatch_id}/confirm", json=body)
+            assert locked.status_code == 403, locked.text
+            assert locked.json()["detail"]["code"] == "PRIVATE_UNLOCK_REQUIRED"
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                locked_state = await conn.fetchrow(
+                    "SELECT confirmed_entry_id IS NULL AS unconfirmed, "
+                    "(SELECT count(*) FROM microsched.entry WHERE tracker_id = $1) AS entry_count "
+                    "FROM microsched.reminder_dispatch WHERE id = $2",
+                    tracker_id,
+                    dispatch_id,
+                )
+                assert dict(locked_state) == {"unconfirmed": True, "entry_count": 0}
+            finally:
+                await conn.close()
+
+            auth.private_until = datetime.now(UTC) + timedelta(minutes=15)
+            unlocked = await client.post(f"/api/reminder-dispatch/{dispatch_id}/confirm", json=body)
+            assert unlocked.status_code == 200, unlocked.text
+            assert unlocked.json() == {
+                "confirmed_entry_id": body["entry_id"],
+                "created": True,
+            }
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                unlocked_state = await conn.fetchrow(
+                    "SELECT confirmed_entry_id, "
+                    "(SELECT count(*) FROM microsched.entry WHERE tracker_id = $1) AS entry_count "
+                    "FROM microsched.reminder_dispatch WHERE id = $2",
+                    tracker_id,
+                    dispatch_id,
+                )
+                assert str(unlocked_state["confirmed_entry_id"]) == body["entry_id"]
+                assert unlocked_state["entry_count"] == 1
+            finally:
+                await conn.close()
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, dispatch_ids=dispatch_ids)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
 def test_confirmed_dispatch_returns_its_soft_deleted_entry_before_tracker_lookup(pg_dsn: str):
     """§3.6 fast path returns the original Entry after Entry and Tracker soft-delete."""
 

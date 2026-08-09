@@ -30,7 +30,7 @@ from app.web.routers.tracker import router as tracker_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not get_settings().enable_inprocess_cron:
+    if not getattr(app.state, "cron_runtime_enabled", False):
         yield
         return
 
@@ -77,6 +77,14 @@ class SPAStaticFiles(StaticFiles):
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = get_settings()
+    cron_runtime_enabled = settings.enable_inprocess_cron
+    if cron_runtime_enabled and not settings.database_url:
+        # Production is rejected by Settings before reaching here. Local mode
+        # remains intentionally zero-config and must not construct timer state.
+        logger.warning(
+            "cron_timer_disabled mode=inprocess reason=database_not_configured environment=local"
+        )
+        cron_runtime_enabled = False
     oauth_state_secret = settings.oauth_state_secret
     if not oauth_state_secret:
         # Gated on APP_ENV rather than on a nearby setting like SESSION_COOKIE_SECURE.
@@ -92,6 +100,8 @@ def create_app() -> FastAPI:
         oauth_state_secret = secrets.token_urlsafe(32)
 
     app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
+    if cron_runtime_enabled:
+        app.state.cron_runtime_enabled = True
 
     # Signs the short-lived OAuth handshake cookie and NOTHING else. The login
     # session is an opaque token row in `session` (auth-brief §2) - never this
@@ -136,7 +146,7 @@ def create_app() -> FastAPI:
                 )
         return await call_next(request)
 
-    if settings.enable_inprocess_cron:
+    if cron_runtime_enabled:
         # Both the ContextVar and its timer types are feature-gated. Importing
         # this app with the flag false must not construct cron runtime state.
         from app.core.cron_timer import ReloadSink

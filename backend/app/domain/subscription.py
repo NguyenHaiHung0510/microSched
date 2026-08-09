@@ -754,6 +754,7 @@ class SubscriptionStore:
         if payload.clear_canceled:
             # Only an explicit owner decision clears the canceled mark (§4.1).
             subscription.canceled_at = None
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "subscription:renew"
         await db.flush()
         return RenewResult(
             subscription=self._subscription_read(subscription, today, tolerant=True),

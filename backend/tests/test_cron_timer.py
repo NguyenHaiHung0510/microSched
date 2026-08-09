@@ -613,7 +613,7 @@ async def test_subscription_chain_schedules_next_day_and_retry_backoff(monkeypat
     ],
 )
 async def test_stale_non_pending_item_skips_old_occurrence_and_schedules_next(
-    item, now, expected_due
+    item, now, expected_due, caplog
 ):
     """011d §1.5: stale non-pending work skips delivery but preserves the future chain."""
     timer = CronTimer(dummy_factory)
@@ -623,6 +623,7 @@ async def test_stale_non_pending_item_skips_old_occurrence_and_schedules_next(
             raise AssertionError("grace-skipped item must not touch the database")
 
     timer.session_factory = FakeFactory(ExplodingDB())
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
     await timer._process_due_item(item, now=now)
     assert len(timer._heap) == 1
     next_item = timer._heap[0][5]
@@ -631,6 +632,18 @@ async def test_stale_non_pending_item_skips_old_occurrence_and_schedules_next(
     assert next_item.occurrence_on == expected_due.date()
     assert next_item.due_at == expected_due
     assert next_item.is_pending_recovery is False
+    stale_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == cron.__name__ and "cron_timer_stale" in record.getMessage()
+    ]
+    assert len(stale_messages) == 1
+    assert "reason=overdue_item" in stale_messages[0]
+    assert f"kind={item.kind.value}" in stale_messages[0]
+    assert f"subject_id={item.subject_id}" in stale_messages[0]
+    assert f"occurrence_on={item.occurrence_on}" in stale_messages[0]
+    assert "payload" not in stale_messages[0]
+    assert "endpoint" not in stale_messages[0]
 
 
 @pytest.mark.anyio
@@ -771,6 +784,59 @@ async def test_snapshot_reload_fails_after_three_retries(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_stop_interrupts_long_snapshot_retry_backoff(monkeypatch):
+    """Shutdown must not wait for the 30/120/600-second recovery sleeps."""
+    monkeypatch.setattr(cron, "SNAPSHOT_RETRY_BACKOFF_SECONDS", (3600, 3600, 3600))
+    timer = CronTimer(FakeFactory(object()))
+    attempted = asyncio.Event()
+
+    async def broken_load_snapshot(db):
+        attempted.set()
+        raise RuntimeError("synthetic snapshot failure")
+
+    monkeypatch.setattr(timer, "load_snapshot", broken_load_snapshot)
+    task = asyncio.create_task(timer.run())
+    await asyncio.wait_for(attempted.wait(), timeout=1)
+
+    await timer.stop()
+    await asyncio.wait_for(task, timeout=0.25)
+    assert task.done()
+
+
+@pytest.mark.anyio
+async def test_stop_interrupts_long_top_level_failure_backoff(monkeypatch):
+    """Unexpected-loop backoff is bounded during runtime and interruptible on shutdown."""
+    monkeypatch.setattr(cron, "LOOP_FAILURE_BACKOFF_SECONDS", 3600)
+    timer = CronTimer(FakeFactory(object()))
+    loop_failed = asyncio.Event()
+
+    async def empty_snapshot(db):
+        return None
+
+    class BrokenReloadEvent:
+        def is_set(self):
+            return False
+
+        def set(self):
+            return None
+
+        async def wait(self):
+            loop_failed.set()
+            raise RuntimeError("synthetic top-level failure")
+
+    monkeypatch.setattr(timer, "load_snapshot", empty_snapshot)
+    timer.reload_event = BrokenReloadEvent()
+    task = asyncio.create_task(timer.run())
+    await asyncio.wait_for(loop_failed.wait(), timeout=1)
+    while timer.status != "degraded":
+        await asyncio.sleep(0)
+
+    await timer.stop()
+    await asyncio.wait_for(task, timeout=0.25)
+    assert task.done()
+
+
+@pytest.mark.anyio
 async def test_get_session_reload_marker_only_after_commit(monkeypatch):
     """F4: the marker triggers a reload only on commit; rollback must not."""
     calls = []
@@ -822,11 +888,11 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
 
         async def consume_ok():
             async for _db in deps.get_session():
-                _db.info[deps.CRON_TIMER_RELOAD_INFO_KEY] = "tracker:reminder_time"
+                _db.info[deps.CRON_TIMER_RELOAD_INFO_KEY] = "subscription:renew"
 
         await consume_ok()
         assert session.committed is True
-        assert calls == ["tracker:reminder_time"]
+        assert calls == ["subscription:renew"]
         assert deps.CRON_TIMER_RELOAD_INFO_KEY not in session.info
 
         # A commit failure after the request wrote its marker must roll back and
@@ -837,7 +903,7 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
 
         try:
             async for _db in deps.get_session():
-                _db.info[deps.CRON_TIMER_RELOAD_INFO_KEY] = "tracker:reminder_time"
+                _db.info[deps.CRON_TIMER_RELOAD_INFO_KEY] = "subscription:renew"
         except RuntimeError:
             pass
 

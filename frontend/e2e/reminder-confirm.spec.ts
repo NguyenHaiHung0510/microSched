@@ -14,6 +14,8 @@ type ConfirmState = {
   statuses: number[]
   /** Request bodies captured in arrival order. */
   bodies: Array<Record<string, unknown>>
+  /** Dispatch IDs captured in arrival order. */
+  dispatches: string[]
   /** When true, the next confirm POST is aborted like a network loss. */
   abortNext: boolean
 }
@@ -21,7 +23,12 @@ type ConfirmState = {
 const test = tasksTest.extend<{ confirmApi: ConfirmState }>({
   confirmApi: [
     async ({ page }, use) => {
-      const state: ConfirmState = { statuses: [200], bodies: [], abortNext: false }
+      const state: ConfirmState = {
+        statuses: [200],
+        bodies: [],
+        dispatches: [],
+        abortNext: false,
+      }
       await page.route('**/api/reminder-dispatch/**', async (route) => {
         const request = route.request()
         if (request.method() !== 'POST') {
@@ -34,6 +41,7 @@ const test = tasksTest.extend<{ confirmApi: ConfirmState }>({
           return
         }
         state.bodies.push(JSON.parse(request.postData() ?? '{}'))
+        state.dispatches.push(new URL(request.url()).pathname.split('/')[3] ?? '')
         const status = state.statuses.shift() ?? 200
         if (status === 403) {
           await route.fulfill({
@@ -126,4 +134,23 @@ test('F8: login link carries a relative return_to so the reminder prompt is not 
   expect(returnTo.startsWith('http')).toBe(false)
   expect(returnTo.startsWith('//')).toBe(false)
   expect(returnTo.startsWith('://')).toBe(false)
+})
+
+test('F9: changing dispatch in place captures a fresh body and automatically confirms B', async ({
+  page,
+  confirmApi,
+}) => {
+  confirmApi.statuses = [403, 403]
+  await page.goto('/reminder-confirm?dispatch=dispatch-A')
+  await expect.poll(() => confirmApi.dispatches).toEqual(['dispatch-A'])
+
+  await page.waitForTimeout(20)
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '/reminder-confirm?dispatch=dispatch-B')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+
+  await expect.poll(() => confirmApi.dispatches).toEqual(['dispatch-A', 'dispatch-B'])
+  expect(confirmApi.bodies[0].entry_id).not.toBe(confirmApi.bodies[1].entry_id)
+  expect(confirmApi.bodies[0].occurred_at).not.toBe(confirmApi.bodies[1].occurred_at)
 })

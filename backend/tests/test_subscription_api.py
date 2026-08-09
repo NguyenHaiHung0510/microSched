@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core import crypto
+from app.core import db as db_module
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
@@ -329,6 +330,78 @@ def test_renew_is_idempotent_and_pushes_expiry_once(pg_dsn: str):
             await client.aclose()
             await engine.dispose()
             await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
+
+    asyncio.run(scenario())
+
+
+def test_renew_requests_reload_only_after_created_commit(pg_dsn: str, monkeypatch):
+    """Created renewal reloads post-commit; idempotent retry and rollback do not."""
+
+    async def scenario():
+        monkeypatch.setenv("DATABASE_URL", async_postgres_url(pg_dsn))
+        monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
+        get_settings.cache_clear()
+        db_module.get_engine.cache_clear()
+        db_module.get_sessionmaker.cache_clear()
+
+        class RecordingTimer:
+            def __init__(self):
+                self.reasons = []
+
+            def request_reload(self, reason: str) -> None:
+                self.reasons.append(reason)
+
+        timer = RecordingTimer()
+        auth = _auth()
+        app = create_app()
+        app.state.cron_timer = timer
+
+        async def current_session() -> AuthSession:
+            return auth
+
+        app.dependency_overrides[require_session] = current_session
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        )
+        tracker_ids = []
+        subscription_ids = []
+        try:
+            tracker = await _create_tracker(client)
+            tracker_ids.append(UUID(tracker["id"]))
+            sub = await _create_subscription(client, tracker["id"], auto_renew=True)
+            subscription_ids.append(UUID(sub["id"]))
+            timer.reasons.clear()
+
+            payload = {"entry_id": str(_uuid7())}
+            created = await client.post(f"/api/subscriptions/{sub['id']}/renew", json=payload)
+            assert created.status_code == 200, created.text
+            assert created.json()["created"] is True
+            assert timer.reasons == ["subscription:renew"]
+
+            retried = await client.post(f"/api/subscriptions/{sub['id']}/renew", json=payload)
+            assert retried.status_code == 200, retried.text
+            assert retried.json()["created"] is False
+            assert timer.reasons == ["subscription:renew"]
+
+            rejected = await client.post(
+                f"/api/subscriptions/{sub['id']}/renew",
+                json={
+                    "entry_id": str(_uuid7()),
+                    "new_expires_on": created.json()["subscription"]["expires_on"],
+                },
+            )
+            assert rejected.status_code == 422, rejected.text
+            assert timer.reasons == ["subscription:renew"]
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
+            engine = db_module.get_engine()
+            if engine is not None:
+                await engine.dispose()
+            db_module.get_sessionmaker.cache_clear()
+            db_module.get_engine.cache_clear()
+            get_settings.cache_clear()
 
     asyncio.run(scenario())
 

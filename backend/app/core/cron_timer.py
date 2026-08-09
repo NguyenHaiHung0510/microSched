@@ -106,6 +106,7 @@ class CronTimer:
         self._dispatcher = reminder_dispatcher or ReminderDispatcher()
         self._heap: list[tuple[datetime, int, int, date, int, TimerItem]] = []
         self.reload_event = asyncio.Event()
+        self._stop_event = asyncio.Event()
         self._reload_reason: str = "init"
         self._status: str = "starting"
         self._last_reload_at: datetime | None = None
@@ -399,10 +400,12 @@ class CronTimer:
         if not item.is_pending_recovery and item.due_at < (now_vn - GRACE_WINDOW):
             self._schedule_next_after_stale_item(item, now=now_vn)
             logger.warning(
-                "CronTimer skipping stale item beyond grace window: kind=%s id=%s due=%s",
-                item.kind,
+                "cron_timer_stale reason=overdue_item kind=%s subject_id=%s "
+                "occurrence_on=%s due_at=%s",
+                item.kind.value,
                 item.subject_id,
-                item.due_at,
+                item.occurrence_on,
+                item.due_at.isoformat(),
             )
             return
 
@@ -536,7 +539,17 @@ class CronTimer:
             item.occurrence_on,
         )
 
-    async def _load_snapshot_with_retries(self, phase: str) -> None:
+    async def _wait_for_stop(self, timeout: float) -> bool:
+        """Wait for a bounded backoff, returning early when shutdown starts."""
+        if self._is_stopped:
+            return True
+        try:
+            await asyncio.wait_for(self._stop_event.wait(), timeout=timeout)
+        except TimeoutError:
+            return False
+        return True
+
+    async def _load_snapshot_with_retries(self, phase: str) -> bool:
         """Rebuild the heap with the exact bounded recovery contract.
 
         A normal empty queue never polls. This retry sequence only exists after
@@ -560,11 +573,17 @@ class CronTimer:
                     delay,
                     type(exc).__name__,
                 )
-                await asyncio.sleep(delay)
+                if await self._wait_for_stop(delay):
+                    self._status = "stopped"
+                    return False
             else:
                 self._status = "running"
                 self._loop_failures = 0
-                return
+                return True
+
+        if self._is_stopped:
+            self._status = "stopped"
+            return False
 
         try:
             async with self.session_factory() as db:
@@ -583,18 +602,21 @@ class CronTimer:
         else:
             self._status = "running"
             self._loop_failures = 0
+            return True
 
     async def run(self) -> None:
         """Main timer loop."""
         self._status = "running"
         logger.info("CronTimer loop started")
-        await self._load_snapshot_with_retries("startup")
+        if not await self._load_snapshot_with_retries("startup"):
+            return
 
         while not self._is_stopped:
             try:
                 if self.reload_event.is_set():
                     self.reload_event.clear()
-                    await self._load_snapshot_with_retries("reload")
+                    if not await self._load_snapshot_with_retries("reload"):
+                        break
 
                 now_vn = datetime.now(VN_TZ)
 
@@ -651,12 +673,14 @@ class CronTimer:
                     self._loop_failures,
                     type(exc).__name__,
                 )
-                await asyncio.sleep(LOOP_FAILURE_BACKOFF_SECONDS)
+                if await self._wait_for_stop(LOOP_FAILURE_BACKOFF_SECONDS):
+                    break
 
     async def stop(self) -> None:
         """Clean shutdown for the timer loop."""
         self._is_stopped = True
         self.reload_event.set()
+        self._stop_event.set()
         self._status = "stopped"
 
 
