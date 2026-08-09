@@ -1,6 +1,6 @@
 # 02 — Codex đối soát bộ nhớ hai bên và tự học
 
-**Trạng thái:** ⏳ CHƯA CHẠY (chờ `01-codex-self-audit.md`)
+**Trạng thái:** ✅ **XONG — RETIRED receipt.** `01` đã hoàn tất trước đó; kết quả và phần áp dụng được ghi trong hồ sơ harness. Không rerun audit này để suy ra policy hiện hành.
 
 > Executor: **T2 Codex** · Bậc: **Sol** · Effort: **xhigh** · **Skill gợi ý:** không · **MCP cần:** KHÔNG — *bắt buộc tắt*, xem §"Không được làm"
 

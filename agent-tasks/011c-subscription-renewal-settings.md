@@ -2,9 +2,9 @@
 
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: không cần.**
-> **Trạng thái: DRAFT 2026-08-01 (T1 Opus 5 viết) — đã qua phản biện **T3** (`gemini-3.1-pro-high`,
+> **Trạng thái: OWNER-APPROVED; local acceptance PASS trên `b12bae6`.** Owner approved explicitly **2026-08-09** trong handoff/current harness session; PR **#114** là receipt truy hồi được cho status dated này. Approval cho implementation/merge gate không tự authorize production activation; activation vẫn theo cutover runbook. GitHub/final-review/production gates chưa đóng. Đã qua phản biện **T3** (`gemini-3.1-pro-high`,
 > 9 finding) + **T2 Codex** (18 finding); T1 kiểm tay từng finding rồi vá, và ghi rõ chỗ nào kết luận
-> đúng nhưng lý do sai (§8). **CHƯA được chủ duyệt — đừng giao thi công trước khi chủ duyệt.**
+> đúng nhưng lý do sai (§8).
 
 ## 0. Bối cảnh — lô này nằm GIỮA, không phải cuối
 

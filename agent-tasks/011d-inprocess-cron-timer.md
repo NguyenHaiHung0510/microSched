@@ -2,7 +2,7 @@
 
 > **Executor:** T2 Codex (`gpt-5.6-sol`) · **Bậc:** L2 — backend/infrastructure · **Effort:** high · **Skill gợi ý:** không cần · **MCP cần:** không cần.
 >
-> **Trạng thái: DRAFT — viết ngày 2026-08-05, bổ sung sau Dual-Engine Ad-Review, chưa được chủ duyệt.** Đây là decision/spec đề xuất cho một phương án mới; không được tự coi nó là quyết định đã ✅ CHỐT, và không được bật production trước khi chủ duyệt điểm chuyển scheduler ở §0.3.
+> **Trạng thái: OWNER-APPROVED; local acceptance PASS trên `b12bae6`.** Owner approved explicitly **2026-08-09** trong handoff/current harness session; PR **#114** là receipt truy hồi được cho status dated này. Approval cho implementation/merge gate không tự authorize production activation; activation vẫn theo cutover runbook. Đây là Phương án A; migration/production/timer activation chưa verify và không bật production trước khi qua điểm chuyển scheduler ở §0.3.
 
 ## Phạm vi giao
 
@@ -72,7 +72,7 @@ Phương án A giữ toàn bộ lịch trong RAM:
 
 ### 0.3 Cổng quyết định trước khi bật
 
-Các decision record hiện hành vẫn mô tả Google Cloud Scheduler là scheduler production và từng loại trừ scheduler in-process (`docs/architecture-brief.md` §3/§5; `docs/devops-brief.md` §10), còn 011b DRAFT đang mô tả ba khe `08:00`/`15:00`/`19:00`. Phương án A **mở lại** quyết định đó; đây không phải thay đổi được phép suy ra từ việc app đang always-on:
+Các decision record hiện hành vẫn mô tả Google Cloud Scheduler là scheduler production và từng loại trừ scheduler in-process (`docs/architecture-brief.md` §3/§5; `docs/devops-brief.md` §10), còn spec 011b mô tả ba khe `08:00`/`15:00`/`19:00`. Phương án A **mở lại** quyết định đó; đây không phải thay đổi được phép suy ra từ việc app đang always-on:
 
 - A dùng `tracker.reminder_time` **chính xác**, không lượng tử hoá qua `assign_slot()`.
 - A vẫn giữ giờ `19:00` cho subscription expiry reminder, vì đó là nhắc theo ngày chứ không phải giờ thuốc.
@@ -90,7 +90,7 @@ Trước khi bật `ENABLE_INPROCESS_CRON=true` trên Fly, chủ/T1 phải:
 5. tắt hoặc đổi **cả ba** Cloud Scheduler reminder jobs trước deploy flag in-process;
 6. chỉ sau đó bật `ENABLE_INPROCESS_CRON=true` trong một deploy có kiểm soát.
 
-Trong thời gian DRAFT, mặc định an toàn là `ENABLE_INPROCESS_CRON=false`; code không được tự bật timer chỉ vì module đã được import.
+Trong pilot chưa activate, mặc định an toàn là `ENABLE_INPROCESS_CRON=false`; code không được tự bật timer chỉ vì module đã được import.
 
 **Mẫu dated note bắt buộc khi chủ duyệt và chuẩn bị activate** (ghi vào đúng decision record, không chỉ ghi trong PR):
 
@@ -231,7 +231,7 @@ Không dùng `while True: sleep(60)` hoặc `SELECT ... WHERE due_at <= now()`.
 
 `occurrence_on` là ngày của **lần nhắc dự định**, không phải ngày timer tình cờ retry. Nó được truyền vào dispatcher để mọi retry dùng đúng cùng key `(subject_type, subject_id, occurrence_on)` của `reminder_dispatch`.
 
-DRAFT này chọn một grace window hữu hạn `MISSED_OCCURRENCE_GRACE = 15 phút`:
+Spec này chọn một grace window hữu hạn `MISSED_OCCURRENCE_GRACE = 15 phút`:
 
 - startup/reload có thể enqueue occurrence vừa quá giờ nhưng chưa quá 15 phút;
 - occurrence quá grace bị bỏ qua và chuyển sang occurrence kế tiếp;
@@ -351,7 +351,7 @@ Thêm setting typed vào `app/core/settings.py`:
 enable_inprocess_cron: bool = False
 ```
 
-Tên env tương ứng là `ENABLE_INPROCESS_CRON`. DRAFT/prod mặc định `False`. Production in-process phải fail-fast khi thiếu `DATABASE_URL`, 011b implementation/schema hoặc VAPID configuration bắt buộc; local không có DB có thể khởi động ở chế độ timer disabled để test các route liveness. Không giữ `CRON_SCHEDULER_MODE` làm config thứ hai có thể lệch nghĩa; nếu codebase đã có tên cũ từ một branch thử nghiệm thì executor phải deprecate/alias có thời hạn, nhưng acceptance chỉ công nhận `ENABLE_INPROCESS_CRON`.
+Tên env tương ứng là `ENABLE_INPROCESS_CRON`. Pilot/prod mặc định `False`. Production in-process phải fail-fast khi thiếu `DATABASE_URL`, 011b implementation/schema hoặc VAPID configuration bắt buộc; local không có DB có thể khởi động ở chế độ timer disabled để test các route liveness. Không giữ `CRON_SCHEDULER_MODE` làm config thứ hai có thể lệch nghĩa; nếu codebase đã có tên cũ từ một branch thử nghiệm thì executor phải deprecate/alias có thời hạn, nhưng acceptance chỉ công nhận `ENABLE_INPROCESS_CRON`.
 
 Đặt các object sau vào `app.state` để test/lifecycle nhìn thấy được:
 

@@ -47,4 +47,4 @@ Kiến trúc đã khép, **không relitigate**: Python + FastAPI, modular monoli
 
 ## Bàn giao
 
-Branch **`feat/003-scaffold-backend`** → **PR nhỏ vào `develop`** (quy ước code mới, devops-brief §7 — docs mới được commit thẳng develop, code thì không). PR mô tả: đã làm gì, lệnh verify đã chạy + output, quyết định 2-chiều nào đã chọn và vì sao. Người merge = chủ, sau khi T1 review diff. Commit message tiếng Việt, giải thích *tại sao*, kèm `Co-Authored-By:` của agent thực thi.
+Branch **`feat/003-scaffold-backend`** → **PR nhỏ vào `develop`** (quy ước mọi thay đổi, kể cả docs, devops-brief §7). PR mô tả: đã làm gì, lệnh verify đã chạy + output, quyết định 2-chiều nào đã chọn và vì sao. Người merge = chủ, sau khi T1 review diff. Commit message tiếng Việt, giải thích *tại sao*, kèm `Co-Authored-By:` của agent thực thi.
