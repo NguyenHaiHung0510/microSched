@@ -916,33 +916,8 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_cron_timer_started_receipt_emitted(caplog):
-    """011e: verify cron_timer_started mode=inprocess is emitted when timer loop starts."""
-    timer = CronTimer(FakeFactory(object()))
-
-    async def fake_load_retries(phase: str) -> bool:
-        return True
-
-    timer._load_snapshot_with_retries = fake_load_retries
-    caplog.set_level(logging.WARNING, logger=cron.__name__)
-
-    task = asyncio.create_task(timer.run())
-    await asyncio.sleep(0.01)
-    await timer.stop()
-    await asyncio.wait_for(task, timeout=1)
-
-    started_messages = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == cron.__name__ and "cron_timer_started" in record.getMessage()
-    ]
-    assert len(started_messages) == 1
-    assert started_messages[0] == "cron_timer_started mode=inprocess"
-
-
-@pytest.mark.anyio
-async def test_cron_timer_queue_loaded_receipt_emitted(monkeypatch, caplog):
-    """011e: verify structured cron_timer_queue_loaded metadata receipt on load_snapshot."""
+async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monkeypatch, caplog):
+    """011e: the real startup path emits only the locked, safe receipts."""
 
     async def fake_lead(db):
         return 3
@@ -951,34 +926,76 @@ async def test_cron_timer_queue_loaded_receipt_emitted(monkeypatch, caplog):
     tracker_id = UUID("01912345-6789-7000-8000-000000000901")
     parent_id = UUID("01912345-6789-7000-8000-000000000902")
     sub_id = UUID("01912345-6789-7000-8000-000000000903")
+    sentinel_tracker_name = "enc:v1:safe-tracker-name-sentinel"
+    sentinel_reminder_text = "safe-reminder-text-sentinel"
+    sentinel_subscription_name = "enc:v1:safe-subscription-name-sentinel"
+    sentinel_subscription_note = "safe-subscription-note-sentinel"
 
-    tracker = _tracker(tracker_id, reminder_time=time(8, 0))
-    sub = _subscription(sub_id, parent_id, expires_on=date(2026, 8, 10))
+    tracker = _tracker(tracker_id, reminder_time=time(23, 59))
+    tracker.name = sentinel_tracker_name
+    tracker.reminder_text = sentinel_reminder_text
+    sub = _subscription(
+        sub_id,
+        parent_id,
+        expires_on=datetime.now(VN_TZ).date() + timedelta(days=2),
+    )
+    sub.name = sentinel_subscription_name
+    sub.note_md = sentinel_subscription_note
     parent = _tracker(parent_id, kind="finance", input_mode="money")
-
-    timer = CronTimer(dummy_factory)
     db = FakeDB(results=[[], [tracker], [(sub, parent)]])
+    timer = CronTimer(FakeFactory(db))
 
     caplog.set_level(logging.WARNING, logger=cron.__name__)
-    now = datetime(2026, 8, 6, 7, 0, tzinfo=VN_TZ)
-    await timer.load_snapshot(db, now=now)
+    task = asyncio.create_task(timer.run())
+    try:
+        for _ in range(100):
+            if any(
+                record.name == cron.__name__
+                and "cron_timer_queue_loaded" in record.getMessage()
+                for record in caplog.records
+            ):
+                break
+            await asyncio.sleep(0)
+        else:
+            pytest.fail("CronTimer.run() did not finish its startup snapshot")
+    finally:
+        await timer.stop()
+        await asyncio.wait_for(task, timeout=1)
 
-    loaded_messages = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == cron.__name__ and "cron_timer_queue_loaded" in record.getMessage()
+    timer_records = [record for record in caplog.records if record.name == cron.__name__]
+    started_records = [
+        record for record in timer_records if record.getMessage().startswith("cron_timer_started")
     ]
-    assert len(loaded_messages) == 1
-    msg = loaded_messages[0]
-    assert "reason=init" in msg
-    assert "tracker_count=1" in msg
-    assert "subscription_count=1" in msg
-    assert "lead_days=3" in msg
-    assert "queue_size=2" in msg
-    assert "pending_recovered_count=0" in msg
-    assert "pending_manual_required_count=0" in msg
+    queue_records = [
+        record
+        for record in timer_records
+        if record.getMessage().startswith("cron_timer_queue_loaded")
+    ]
 
-    # Safe metadata assertion: ensure no raw item payloads or sensitive names leak
-    assert "enc:v1:name" not in msg
-    assert "enc:v1:sub" not in msg
-    assert "reminder_time" not in msg
+    assert len(started_records) == 1
+    assert started_records[0].levelno == logging.WARNING
+    assert started_records[0].getMessage() == "cron_timer_started mode=inprocess"
+
+    assert len(queue_records) == 1
+    assert queue_records[0].levelno == logging.WARNING
+    queue_message = queue_records[0].getMessage()
+    event_name, *field_tokens = queue_message.split()
+    queue_fields = dict(token.split("=", maxsplit=1) for token in field_tokens)
+    assert event_name == "cron_timer_queue_loaded"
+    assert queue_fields == {
+        "reason": "startup",
+        "tracker_count": "1",
+        "subscription_count": "1",
+        "lead_days": "3",
+        "queue_size": "2",
+        "pending_recovered_count": "0",
+        "pending_manual_required_count": "0",
+    }
+
+    for sentinel in (
+        sentinel_tracker_name,
+        sentinel_reminder_text,
+        sentinel_subscription_name,
+        sentinel_subscription_note,
+    ):
+        assert sentinel not in queue_message
