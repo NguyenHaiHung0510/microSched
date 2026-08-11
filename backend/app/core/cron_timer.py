@@ -335,10 +335,15 @@ class CronTimer:
 
         self._heap = new_heap
         self._last_reload_at = now_vn
-        logger.info(
-            "CronTimer loaded snapshot (reason=%s): %d items queued",
+        logger.warning(
+            "cron_timer_queue_loaded reason=%s tracker_count=%d subscription_count=%d lead_days=%d queue_size=%d pending_recovered_count=%d pending_manual_required_count=%d",
             self._reload_reason,
+            len(trackers),
+            len(sub_tuples),
+            lead_days,
             len(self._heap),
+            self._pending_recovered_count,
+            sum(self._pending_manual_required.values()),
         )
 
     def _log_pending_manual_required(
@@ -607,7 +612,7 @@ class CronTimer:
     async def run(self) -> None:
         """Main timer loop."""
         self._status = "running"
-        logger.info("CronTimer loop started")
+        logger.warning("cron_timer_started mode=inprocess")
         if not await self._load_snapshot_with_retries("startup"):
             return
 

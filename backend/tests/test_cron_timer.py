@@ -913,3 +913,72 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
     finally:
         sink_context.reset(token)
         get_settings.cache_clear()
+
+
+@pytest.mark.anyio
+async def test_cron_timer_started_receipt_emitted(caplog):
+    """011e: verify cron_timer_started mode=inprocess is emitted when timer loop starts."""
+    timer = CronTimer(FakeFactory(object()))
+
+    async def fake_load_retries(phase: str) -> bool:
+        return True
+
+    timer._load_snapshot_with_retries = fake_load_retries
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
+
+    task = asyncio.create_task(timer.run())
+    await asyncio.sleep(0.01)
+    await timer.stop()
+    await asyncio.wait_for(task, timeout=1)
+
+    started_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == cron.__name__ and "cron_timer_started" in record.getMessage()
+    ]
+    assert len(started_messages) == 1
+    assert started_messages[0] == "cron_timer_started mode=inprocess"
+
+
+@pytest.mark.anyio
+async def test_cron_timer_queue_loaded_receipt_emitted(monkeypatch, caplog):
+    """011e: verify structured cron_timer_queue_loaded metadata receipt on load_snapshot."""
+
+    async def fake_lead(db):
+        return 3
+
+    monkeypatch.setattr(cron, "expiry_lead_days", fake_lead)
+    tracker_id = UUID("01912345-6789-7000-8000-000000000901")
+    parent_id = UUID("01912345-6789-7000-8000-000000000902")
+    sub_id = UUID("01912345-6789-7000-8000-000000000903")
+
+    tracker = _tracker(tracker_id, reminder_time=time(8, 0))
+    sub = _subscription(sub_id, parent_id, expires_on=date(2026, 8, 10))
+    parent = _tracker(parent_id, kind="finance", input_mode="money")
+
+    timer = CronTimer(dummy_factory)
+    db = FakeDB(results=[[], [tracker], [(sub, parent)]])
+
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
+    now = datetime(2026, 8, 6, 7, 0, tzinfo=VN_TZ)
+    await timer.load_snapshot(db, now=now)
+
+    loaded_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == cron.__name__ and "cron_timer_queue_loaded" in record.getMessage()
+    ]
+    assert len(loaded_messages) == 1
+    msg = loaded_messages[0]
+    assert "reason=init" in msg
+    assert "tracker_count=1" in msg
+    assert "subscription_count=1" in msg
+    assert "lead_days=3" in msg
+    assert "queue_size=2" in msg
+    assert "pending_recovered_count=0" in msg
+    assert "pending_manual_required_count=0" in msg
+
+    # Safe metadata assertion: ensure no raw item payloads or sensitive names leak
+    assert "enc:v1:name" not in msg
+    assert "enc:v1:sub" not in msg
+    assert "reminder_time" not in msg
