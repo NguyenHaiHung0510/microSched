@@ -290,3 +290,13 @@ và bảo đảm alert Fly gần $4 để còn khoảng phản ứng trước cl
 **Branch cleanup:** Đã dọn dẹp sạch toàn bộ branch local và remote. Chỉ giữ lại `main` và `develop`.
 
 **Việc kế tiếp:** Chuyển sang chuỗi slice `011` (Tracker): `011a → 011c → 011b → 020 → 012 → 008h`.
+
+---
+
+## 2026-08-11 — closeout 011, dependency reconciliation và repo hygiene
+
+**Đã chạy và đã có production receipt:** PR #126 chốt cadence harness, PR #127 reconcile metadata CHECK trước Alembic 1.19, PR #122 nâng Alembic 1.18.5 → 1.19.0, và PR #128 cập nhật status board. Các PR đều qua CI/review gate và deploy từ `develop`. Receipt cuối của PR #128 là deploy run `31459650862`, `/api/readyz` trả `commit=400c1b51bd6de6eec6356948f45208192b96ac68`, DB `up`, Fly có một Machine `sin` healthy.
+
+**Đã đóng:** PR #118 CSP đóng theo quyết định của chủ. Không có PR mở sau closeout. Branch/worktree cleanup đã đối chiếu diff trước khi bỏ các nhánh legacy còn patch độc nhất; không commit/cherry-pick thêm code. Local và origin sau cleanup chỉ còn `main` và `develop`, cùng SHA `develop=400c1b51bd6de6eec6356948f45208192b96ac68`. Root chỉ còn `?? test-results/`, được giữ nguyên vì là file của chủ.
+
+**Chưa hoàn tất:** Task 020 vẫn là DRAFT và phải refresh dependency migration theo head `0008`, được chủ duyệt trước khi thi công; đây là hard prerequisite của Task 012. QA thực tế còn nợ gồm 011 mutation reload/controlled dispatch/Web Push iPhone/Neon idle, 010a file picker/FileReader trên iPhone, và hai non-text contrast issue của 016. Việc đưa `develop` vào `main` là release decision riêng, không tự suy ra từ cleanup.
