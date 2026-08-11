@@ -950,8 +950,7 @@ async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monk
     try:
         for _ in range(100):
             if any(
-                record.name == cron.__name__
-                and "cron_timer_queue_loaded" in record.getMessage()
+                record.name == cron.__name__ and "cron_timer_queue_loaded" in record.getMessage()
                 for record in caplog.records
             ):
                 break
