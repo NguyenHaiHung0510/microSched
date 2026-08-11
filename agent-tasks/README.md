@@ -10,13 +10,13 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 
 | Nhãn | Trạng thái hiện hành |
 |---|---|
-| **LAST VERIFIED** | T1 receipt **2026-08-11**: `develop` production ở `73c411381a841b63473b9bfc2d6d76ba099cb1d3`; `/api/readyz` khớp exact SHA, DB `up`; Fly có đúng một Machine `sin` healthy. Không còn PR product/security/dependency OPEN. |
+| **LAST VERIFIED** | T1 receipt **2026-08-11**: `develop` production ở `400c1b51bd6de6eec6356948f45208192b96ac68`; `/api/readyz` khớp exact SHA, DB `up`; Fly có đúng một Machine `sin` healthy. Không còn PR product/security/dependency OPEN. |
 | **LIVE** | 011 integration/activation/observability đã merge qua **#115 / #117 / #125**; T1 production receipt ghi in-process timer enabled cùng startup/queue receipt. Security #113 đã release `v0.4` qua #116. Dependency #119–#124 và Alembic 1.19 (#122, sau reconciliation #127) đã merge/deploy. |
 | **LOCAL + CI ACCEPTANCE** | #127: metadata chỉ đổi tên; [Neon catalog read-only receipt](https://github.com/NguyenHaiHung0510/microSched/pull/127#issuecomment-5248899434) khớp 4 CHECK canonical names. #122: Alembic 1.19 `Migration QA` green với `migration_drift=empty` sau `upgrade head` lẫn `downgrade base → upgrade head`; CI 10/10 green trước merge. |
-| **IN FLIGHT** | Status board và branch/worktree cleanup đang được hoàn tất; ngoài docs/status work, không có PR product/security/dependency OPEN. Không suy ra product acceptance từ việc queue trống. |
+| **IN FLIGHT** | Không còn PR product/security/dependency OPEN. Branch/worktree cleanup đã hoàn tất **2026-08-11**: local và origin chỉ còn `main` + `develop`; root giữ `?? test-results/` của chủ. Không suy ra product acceptance từ việc queue trống. |
 | **BLOCKED / OWNER DECISION** | #118 CSP đã đóng theo quyết định chủ — chưa có CSP replacement. Task 020 vẫn DRAFT nhưng là hard prerequisite của 012; phải refresh migration dependency (head hiện 0008) và được chủ duyệt trước thi công. |
 | **SECURITY CAVEAT** | Không merge CSP “restrictive” mà vẫn có `unsafe-inline`/`unsafe-eval`. Nếu làm lại, cần task riêng: threat-model scope, UI/OAuth/PWA compatibility inventory và browser acceptance. |
-| **NEXT** | Dọn branch/worktree sau khi đối chiếu two-tree/unique patches; sau đó ưu tiên owner decision cho 020 và QA thực tế còn lại của 011 trước khi mở 012. |
+| **NEXT** | Ưu tiên owner decision cho 020 và QA thực tế còn lại của 011 trước khi mở 012; release `develop → main` là quyết định riêng sau production acceptance. |
 | **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase; policy live ở `docs/devops-brief.md` §7 buộc scheduled follow-up, mốc agent 1/3/5/10/15/20 rồi 10 phút, và PR/deploy khoảng 2 phút. |
 | **OPEN QA DEBT** | `010a`: iPhone file picker / FileReader. `011a`: Lane 4 iPhone vật lý. `011`: mutation reload, controlled dispatch/không duplicate, Web Push iPhone và quan sát Neon idle. `016`: còn 2 non-text contrast dưới WCAG 1.4.11. |
 
