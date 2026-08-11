@@ -26,6 +26,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.schema import conv
 from sqlmodel import Field, SQLModel
 
 SCHEMA = "microsched"
@@ -292,7 +293,7 @@ class DayAnnotation(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.APPLIES
     __delete_gate__: ClassVar[Gate] = Gate.NONE
     __table_args__ = (
-        CheckConstraint("ends_on >= starts_on", name="day_range"),
+        CheckConstraint("ends_on >= starts_on", name=conv("day_range")),
         {"schema": SCHEMA},
     )
 
@@ -610,15 +611,15 @@ class ReminderDispatch(UUIDTimestampModel, table=True):
         ),
         CheckConstraint(
             "subject_type IN ('tracker', 'subscription')",
-            name="ck_reminder_dispatch_subject_type",
+            name="subject_type",
         ),
         CheckConstraint(
             "status IN ('pending', 'sent', 'no_device')",
-            name="ck_reminder_dispatch_status",
+            name="status",
         ),
         CheckConstraint(
             "attempt_count >= 0",
-            name="ck_reminder_dispatch_attempt_count",
+            name="attempt_count",
         ),
         {"schema": SCHEMA},
     )

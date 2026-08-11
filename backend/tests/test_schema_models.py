@@ -260,12 +260,30 @@ def test_day_annotation_0006_shape_is_locked() -> None:
         for constraint in annotation.constraints
         if isinstance(constraint, CheckConstraint)
     }
-    assert "ck_day_annotation_day_range" in checks
-    assert "ends_on >= starts_on" in checks["ck_day_annotation_day_range"]
+    assert "day_range" in checks
+    assert "ck_day_annotation_day_range" not in checks
+    assert "ends_on >= starts_on" in checks["day_range"]
 
     index_columns = {index.name: [c.name for c in index.columns] for index in annotation.indexes}
     assert index_columns["ix_day_annotation_starts_on"] == ["starts_on"]
     assert index_columns["ix_day_annotation_ends_on"] == ["ends_on"]
+
+
+def test_reminder_dispatch_check_constraint_metadata_names_match_migration() -> None:
+    """Keep named-CHECK metadata aligned with the physical 0008 constraints."""
+    dispatch = table("reminder_dispatch")
+
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in dispatch.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert checks == {
+        "ck_reminder_dispatch_subject_type": "subject_type IN ('tracker', 'subscription')",
+        "ck_reminder_dispatch_status": "status IN ('pending', 'sent', 'no_device')",
+        "ck_reminder_dispatch_attempt_count": "attempt_count >= 0",
+    }
 
 
 @pytest.mark.pg
