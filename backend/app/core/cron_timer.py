@@ -336,7 +336,9 @@ class CronTimer:
         self._heap = new_heap
         self._last_reload_at = now_vn
         logger.warning(
-            "cron_timer_queue_loaded reason=%s tracker_count=%d subscription_count=%d lead_days=%d queue_size=%d pending_recovered_count=%d pending_manual_required_count=%d",
+            "cron_timer_queue_loaded reason=%s tracker_count=%d subscription_count=%d "
+            "lead_days=%d queue_size=%d pending_recovered_count=%d "
+            "pending_manual_required_count=%d",
             self._reload_reason,
             len(trackers),
             len(sub_tuples),
