@@ -177,6 +177,7 @@ def test_task_crud_and_nested_items_through_http(pg_dsn):
                 assert created_response.status_code == 201
                 created = created_response.json()
                 assert created["pinned"] is False
+                assert created["completed_at"] is None
                 task_id = UUID(created["id"])
                 created_ids.append(task_id)
                 first_item_id = created["items"][0]["id"]
@@ -236,6 +237,8 @@ def test_task_crud_and_nested_items_through_http(pg_dsn):
                     f"/api/tasks/{task_id}", json={"status": "completed"}
                 )
                 assert completed.status_code == 200
+                completed_at = completed.json()["completed_at"]
+                assert completed_at is not None
                 open_ids = {
                     UUID(task["id"])
                     for task in (await client.get("/api/tasks?status=open")).json()["items"]
@@ -246,6 +249,30 @@ def test_task_crud_and_nested_items_through_http(pg_dsn):
                 }
                 assert task_id not in open_ids
                 assert task_id in completed_ids
+
+                same_status = await client.patch(
+                    f"/api/tasks/{task_id}", json={"status": "completed"}
+                )
+                assert same_status.status_code == 200
+                assert same_status.json()["completed_at"] == completed_at
+
+                renamed = await client.patch(
+                    f"/api/tasks/{task_id}", json={"title": "Giữ nguyên mốc hoàn thành"}
+                )
+                assert renamed.status_code == 200
+                assert renamed.json()["completed_at"] == completed_at
+
+                reopened = await client.patch(f"/api/tasks/{task_id}", json={"status": "open"})
+                assert reopened.status_code == 200
+                assert reopened.json()["completed_at"] is None
+
+                initially_completed = await client.post(
+                    "/api/tasks",
+                    json={"title": "Tạo ở trạng thái đã xong", "status": "completed"},
+                )
+                assert initially_completed.status_code == 201
+                assert initially_completed.json()["completed_at"] is not None
+                created_ids.append(UUID(initially_completed.json()["id"]))
 
                 deleted = await client.delete(f"/api/tasks/{task_id}")
                 assert deleted.status_code == 204

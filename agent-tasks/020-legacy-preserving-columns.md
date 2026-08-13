@@ -2,7 +2,8 @@
 
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: không cần.**
-> **Trạng thái: DRAFT — viết bởi T1 (Opus 5) 2026-08-01, chủ đã chốt hướng, chưa duyệt bản chi tiết.**
+> **Trạng thái: OWNER-APPROVED — chủ duyệt triển khai 2026-08-13; migration đã refresh theo head
+> thật `0008` trước khi thi công. Chưa authorize áp migration lên Neon hoặc merge.**
 > Phản biện: đã chạy chung một vòng với `012` 2026-08-02 (không tách riêng 1 lượt như dự tính ban đầu,
 > vì `012` viết trước làm lộ ra `020` không chỉ "migration thuần cộng cột" — cột `completed_at` có
 > logic nối dây thật). T1 đã vá mọi finding xác nhận đúng (xem §6 cuối file).
@@ -37,16 +38,18 @@ mới từ chối) — đó là **thêm trạng thái**, không phải thêm c�
 
 ## 1. Phụ thuộc cứng — đọc trước khi gõ số revision
 
-**Migration này là `0006`, KHÔNG phải `0005`.** `agent-tasks/010a-calendar-import-crud.md` §3 đã giữ
-chỗ `0005` (`0005_calendar_description_and_visibility.py`) và nhắc số đó ở nhiều mục.
+**Migration này là `0009`, `down_revision = "0008"`.** Kiểm cây migration trên `develop` ngày
+2026-08-13 thấy `0005_calendar_description_and_visibility.py`, `0006_day_annotation.py`,
+`0007_reconcile_day_annotation_constraint.py` và `0008_push_subscription_and_reminder_dispatch.py`
+đã chiếm các revision trước đó.
 
-⇒ **Chỉ bắt đầu task này sau khi `010a` đã merge vào `develop`.** Nếu `backend/alembic/versions/`
-chưa có file `0005_*`, **dừng lại và báo** — đặt `down_revision = "0005"` khi revision đó chưa tồn tại
-sẽ làm `alembic upgrade head` gãy ngay trên CI.
+⇒ **Chỉ bắt đầu task này khi `0008_*` đã có trong `backend/alembic/versions/`.** Nếu head thật đổi
+thêm trước lúc branch được dựng/rebase, dừng và refresh lại revision/down-revision; không tạo nhánh
+migration song song từ một head cũ.
 
-## 2. Migration `0006`
+## 2. Migration `0009`
 
-File mới `backend/alembic/versions/0006_legacy_preserving_columns.py`, theo đúng khuôn `0004_task_pinned.py`.
+File mới `backend/alembic/versions/0009_legacy_preserving_columns.py`, theo đúng khuôn `0004_task_pinned.py`.
 
 | Cột | Bảng | Kiểu | Ghi chú |
 |---|---|---|---|
