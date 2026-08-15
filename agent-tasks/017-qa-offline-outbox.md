@@ -193,16 +193,21 @@ docker info
 $qaStartLocation = Get-Location
 $qaPgName = 'microsched-017-qa-pg'
 $qaPgPort = 55432
-$qaPgUser = 'postgres'
+$qaPgOwnerUser = 'postgres'
 $qaPgPassword = [guid]::NewGuid().ToString('N')
 $qaPgDatabase = 'microsched_ci'
+$qaMigratorUser = 'microsched_migrator'
+$qaMigratorPassword = [guid]::NewGuid().ToString('N')
+$qaAppUser = 'microsched_app'
+$qaAppPassword = [guid]::NewGuid().ToString('N')
 $qaPgCreated = $false
 $qaPgSucceeded = $false
 $qaProxy = $null
 $qaProxyPid = $null
 $qaEnvNames = @(
   'NEON_MIGRATOR_URL', 'DATABASE_URL', 'APP_ENV', 'OAUTH_STATE_SECRET',
-  'SESSION_COOKIE_SECURE', 'ENABLE_INPROCESS_CRON', 'ALLOW_REMOTE_PG_TESTS'
+  'ENCRYPTION_MASTER_KEY', 'SESSION_COOKIE_SECURE', 'ENABLE_INPROCESS_CRON',
+  'ALLOW_REMOTE_PG_TESTS'
 )
 $qaEnvSnapshot = @{}
 foreach ($qaEnvName in $qaEnvNames) {
@@ -223,9 +228,9 @@ try {
   if ($qaExisting) { throw "Container $qaPgName đã tồn tại; dừng để xác định chủ sở hữu" }
 
   docker run --name $qaPgName --rm -d `
-    --health-cmd "pg_isready -U $qaPgUser -d $qaPgDatabase" `
+    --health-cmd "pg_isready -U $qaPgOwnerUser -d $qaPgDatabase" `
     --health-interval 5s --health-timeout 5s --health-retries 10 `
-    -e "POSTGRES_USER=$qaPgUser" `
+    -e "POSTGRES_USER=$qaPgOwnerUser" `
     -e "POSTGRES_PASSWORD=$qaPgPassword" `
     -e "POSTGRES_DB=$qaPgDatabase" `
     -p "127.0.0.1:${qaPgPort}:5432" `
@@ -240,20 +245,90 @@ try {
   }
   if (-not $qaPgHealthy) { throw 'QA017 Postgres unhealthy' }
 
-  $qaLocalDatabaseUrl = "postgresql://${qaPgUser}:${qaPgPassword}@127.0.0.1:${qaPgPort}/${qaPgDatabase}"
-  $env:NEON_MIGRATOR_URL = $qaLocalDatabaseUrl
-  $env:DATABASE_URL = $qaLocalDatabaseUrl
+  $qaRoleSql = @'
+\set ON_ERROR_STOP on
+\getenv migrator_password QA_MIGRATOR_PASSWORD
+\getenv app_password QA_APP_PASSWORD
+SELECT format(
+  'CREATE ROLE microsched_migrator WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+  :'migrator_password'
+) \gexec
+SELECT format(
+  'CREATE ROLE microsched_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+  :'app_password'
+) \gexec
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
+CREATE SCHEMA microsched AUTHORIZATION microsched_migrator;
+REVOKE ALL ON SCHEMA microsched FROM PUBLIC;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA microsched TO microsched_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE microsched_migrator IN SCHEMA microsched
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO microsched_app;
+ALTER ROLE microsched_app SET search_path = microsched, public;
+ALTER ROLE microsched_migrator SET search_path = public;
+'@
+  $qaRoleSql | docker exec -i `
+    -e "PGPASSWORD=$qaPgPassword" `
+    -e "QA_MIGRATOR_PASSWORD=$qaMigratorPassword" `
+    -e "QA_APP_PASSWORD=$qaAppPassword" `
+    $qaPgName psql -v ON_ERROR_STOP=1 -U $qaPgOwnerUser -d $qaPgDatabase
+
+  $qaPrerequisites = docker exec -e "PGPASSWORD=$qaPgPassword" $qaPgName psql -At `
+    -U $qaPgOwnerUser -d $qaPgDatabase -c @"
+SELECT
+  EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')
+  AND EXISTS (
+    SELECT 1
+    FROM pg_namespace n
+    JOIN pg_roles r ON r.oid = n.nspowner
+    WHERE n.nspname = 'microsched' AND r.rolname = 'microsched_migrator'
+  )
+  AND has_schema_privilege('microsched_app', 'microsched', 'USAGE')
+  AND NOT has_schema_privilege('microsched_app', 'microsched', 'CREATE');
+"@
+  if ($qaPrerequisites.Trim() -ne 't') { throw 'QA017 migration prerequisites invalid' }
+  Write-Output 'migration_prerequisites=ok'
+
+  $env:NEON_MIGRATOR_URL = "postgresql://${qaMigratorUser}:${qaMigratorPassword}@127.0.0.1:${qaPgPort}/${qaPgDatabase}"
+  $env:DATABASE_URL = "postgresql://${qaAppUser}:${qaAppPassword}@127.0.0.1:${qaPgPort}/${qaPgDatabase}"
   $env:APP_ENV = 'local'
   $env:OAUTH_STATE_SECRET = ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
+  $qaEncryptionKeyBytes = [byte[]]::new(32)
+  [System.Security.Cryptography.RandomNumberGenerator]::Fill($qaEncryptionKeyBytes)
+  $env:ENCRYPTION_MASTER_KEY = [Convert]::ToBase64String($qaEncryptionKeyBytes).Replace('+', '-').Replace('/', '_')
   $env:SESSION_COOKIE_SECURE = 'false'
   $env:ENABLE_INPROCESS_CRON = 'false'
   Remove-Item Env:ALLOW_REMOTE_PG_TESTS -ErrorAction SilentlyContinue
 
   Set-Location backend
-  uv run python -m scripts.prepare_ci_database
   uv run python -m scripts.check_migration_drops
   uv run alembic upgrade head
   uv run alembic current
+
+  docker exec -e "PGPASSWORD=$qaMigratorPassword" $qaPgName psql -At `
+    -U $qaMigratorUser -d $qaPgDatabase -c "SELECT 'migrator_identity=' || current_user"
+  $qaAppPrivilegeSql = @'
+\set ON_ERROR_STOP on
+SELECT 'app_identity=' || current_user;
+SELECT 'app_crud_all_tables=' || COALESCE(bool_and(
+  has_table_privilege(current_user, schemaname || '.' || tablename,
+                      'SELECT,INSERT,UPDATE,DELETE')
+), false)
+FROM pg_tables
+WHERE schemaname = 'microsched' AND tablename <> 'alembic_version';
+DO $qa$
+BEGIN
+  BEGIN
+    EXECUTE 'CREATE TABLE microsched.qa017_should_not_exist(id integer)';
+    RAISE EXCEPTION 'app_ddl_unexpectedly_allowed';
+  EXCEPTION
+    WHEN insufficient_privilege THEN RAISE NOTICE 'app_ddl=blocked';
+  END;
+END
+$qa$;
+'@
+  $qaAppPrivilegeSql | docker exec -i -e "PGPASSWORD=$qaAppPassword" `
+    $qaPgName psql -At -U $qaAppUser -d $qaPgDatabase
   $qa017PgNodes = @(
     'tests/test_offline_outbox_pg.py::test_operation_matrix_covers_registry_exactly'
     'tests/test_offline_outbox_pg.py::test_operation_matrix'
@@ -302,16 +377,31 @@ try {
 finally {
   try {
     Set-Location $qaStartLocation
-    if ($qaProxyPid -and (Get-Process -Id $qaProxyPid -ErrorAction SilentlyContinue)) {
-      taskkill /PID $qaProxyPid /T /F
-      Wait-Process -Id $qaProxyPid -Timeout 10 -ErrorAction SilentlyContinue
+    $qaTaskkillError = $null
+    try {
+      if ($qaProxyPid -and (Get-Process -Id $qaProxyPid -ErrorAction SilentlyContinue)) {
+        taskkill /PID $qaProxyPid /T /F
+      }
     }
-    if ($qaProxyPid -and (Get-Process -Id $qaProxyPid -ErrorAction SilentlyContinue)) {
-      throw "response-lost proxy parent PID $qaProxyPid vẫn còn"
+    catch { $qaTaskkillError = $_ }
+    finally {
+      if ($qaProxyPid) {
+        Wait-Process -Id $qaProxyPid -Timeout 10 -ErrorAction SilentlyContinue
+      }
+      $qaProxyParentRemaining = if ($qaProxyPid) {
+        Get-Process -Id $qaProxyPid -ErrorAction SilentlyContinue
+      } else { $null }
+      $qaRemainingListener = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 4180 `
+        -State Listen -ErrorAction SilentlyContinue
     }
-    $qaRemainingListener = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 4180 `
-      -State Listen -ErrorAction SilentlyContinue
-    if ($qaRemainingListener) { throw 'response-lost proxy child/port 4180 vẫn còn' }
+    if ($qaProxyParentRemaining -or $qaRemainingListener) {
+      if ($qaTaskkillError) {
+        throw 'taskkill lỗi và response-lost proxy parent/port 4180 vẫn còn'
+      }
+      throw 'response-lost proxy parent/port 4180 vẫn còn'
+    }
+    if ($qaTaskkillError) { Write-Output 'proxy_cleanup=taskkill_race_but_pid_and_port_gone' }
+    else { Write-Output 'proxy_cleanup=stopped_and_port_free' }
   }
   finally {
     try {
@@ -336,12 +426,20 @@ finally {
 }
 ```
 
-Receipt L1 phải có `docker info`, health=`healthy`, `migration_prerequisites=ok`, Alembic head, raw
+Receipt L1 phải có `docker info`, health=`healthy`, hai identity
+`migrator=microsched_migrator`/`app=microsched_app` và app bị chặn DDL nhưng CRUD được,
+`migration_prerequisites=ok`, Alembic head, raw
 collect list và run summary; thêm API status/client UUID/SQL count đã redacted thành
 `resource + qa_id + count`, không dán payload/DB URL. **Bất kỳ skip, deselected-all, `0 collected`,
 exit 5 hoặc targeted cases còn thiếu đều là `[CHƯA VERIFY]`**, dù `pytest` thường xanh. Nếu command
 timeout, kiểm `docker inspect/logs` và migration state trước khi kết luận. Cleanup chỉ stop đúng
 `microsched-017-qa-pg` sau khi đã kiểm tên; tuyệt đối không dùng Neon để tái hiện lane này.
+
+L1 cố ý **không** gọi `scripts.prepare_ci_database`: script CI hiện hành tự `CREATE SCHEMA` và do đó
+cần identity bootstrap cao hơn migrator. Trong lane này, owner của đúng container throwaway chỉ tạo
+extension/roles/schema rồi query bốn prerequisite; mọi Alembic DDL sau đó chạy bằng
+`microsched_migrator`, còn app/proxy chỉ nhận `microsched_app`. Không được gán URL owner/superuser vào
+`NEON_MIGRATOR_URL` để làm command “chạy được”.
 
 #### OpenAPI route manifest → adapter registry → exact PG node
 
@@ -461,10 +559,12 @@ rồi đóng downstream socket không gửi status/body. Browser phải quan sá
 (`net::ERR_EMPTY_RESPONSE`/`TypeError` tương đương), không `route.abort()` hoặc fulfillment.
 
 Lifecycle chuẩn nằm trong **cùng outer `try/finally` của L1 ở trên**: PG còn sống, cả
-`NEON_MIGRATOR_URL` và app `DATABASE_URL` cùng trỏ URL local synthetic, `APP_ENV=local`, OAuth secret
-synthetic, cookie local và cron tắt trước khi spawn proxy. Browser chạy xong mới `taskkill /T` exact
-proxy PID, chờ parent biến mất, assert port 4180 không còn listener, rồi mới stop PG và restore toàn bộ
-env/location/preferences. Không được tách proxy/Playwright thành command chạy sau cleanup L1.
+`NEON_MIGRATOR_URL` và app `DATABASE_URL` cùng trỏ PG local nhưng dùng **hai login role khác nhau**,
+`APP_ENV=local`, OAuth secret và AES-256 `ENCRYPTION_MASTER_KEY` đều synthetic, cookie local và cron
+tắt trước khi spawn proxy. Browser chạy xong mới `taskkill /T` exact proxy PID; dù `taskkill` race/non-zero,
+`finally` vẫn chờ và assert parent + port 4180 đã biến mất. Chỉ sau đó mới stop PG và restore toàn bộ
+env/location/preferences. Không được tách proxy/Playwright thành command chạy sau cleanup L1, không
+được để proxy đọc key hay DB URL thật từ `.env`.
 
 Dedicated Playwright config phải `baseURL=http://127.0.0.1:4180`, không reuse server/port, và fail
 nếu port đã bị chiếm. Proxy chỉ nhận synthetic fixture; DB URL qua env local không được truyền trong
