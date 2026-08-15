@@ -25,32 +25,88 @@ function contrastRatio(a: string, b: string): number {
   return (lighter + 0.05) / (darker + 0.05)
 }
 
-function rgbToHex(rgb: string): string {
-  const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
-  if (!match) return rgb
-  return `#${[1, 2, 3]
-    .map((index) => Number(match[index]).toString(16).padStart(2, '0'))
+type Rgba = { red: number; green: number; blue: number; alpha: number }
+
+function composite(foreground: Rgba, background: Rgba): Rgba {
+  const alpha = foreground.alpha + background.alpha * (1 - foreground.alpha)
+  if (alpha === 0) return { red: 0, green: 0, blue: 0, alpha: 0 }
+  const channel = (front: number, back: number) =>
+    (front * foreground.alpha + back * background.alpha * (1 - foreground.alpha)) / alpha
+  return {
+    red: channel(foreground.red, background.red),
+    green: channel(foreground.green, background.green),
+    blue: channel(foreground.blue, background.blue),
+    alpha,
+  }
+}
+
+function opaqueHex(color: Rgba): string {
+  if (color.alpha < 1) throw new Error(`Expected opaque rendered color, got alpha ${color.alpha}`)
+  return `#${[color.red, color.green, color.blue]
+    .map((channel) => Math.round(channel).toString(16).padStart(2, '0'))
     .join('')}`
 }
 
 async function renderedControlContrast(
   locator: Locator,
-): Promise<{ border: string; surface: string; ratio: number }> {
+): Promise<{
+  border: string
+  surface: string
+  backdrop: string
+  ratio: number
+  backdropRatio: number
+  rawSurface: string
+}> {
   const colors = await locator.evaluate((element) => {
-    const border = getComputedStyle(element).borderTopColor
-    let ancestor = element.parentElement
+    const canvas = document.createElement('canvas')
+    canvas.width = 1
+    canvas.height = 1
+    const context = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true })
+    if (!context) throw new Error('Unable to create sRGB canvas for contrast measurement')
+    const renderedRgba = (color: string) => {
+      context.clearRect(0, 0, 1, 1)
+      context.fillStyle = color
+      context.fillRect(0, 0, 1, 1)
+      const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data
+      return { red, green, blue, alpha: alpha / 255 }
+    }
+    const style = getComputedStyle(element)
+    const backgrounds = [style.backgroundColor]
+    let ancestor: Element | null = element.parentElement
     while (ancestor) {
-      const background = getComputedStyle(ancestor).backgroundColor
-      if (background !== 'transparent' && background !== 'rgba(0, 0, 0, 0)') {
-        return { border, surface: background }
-      }
+      backgrounds.push(getComputedStyle(ancestor).backgroundColor)
       ancestor = ancestor.parentElement
     }
-    return { border, surface: getComputedStyle(document.body).backgroundColor }
+    return {
+      border: renderedRgba(style.borderTopColor),
+      backgrounds: backgrounds.map(renderedRgba),
+      rawSurface: style.backgroundColor,
+    }
   })
-  const border = rgbToHex(colors.border)
-  const surface = rgbToHex(colors.surface)
-  return { border, surface, ratio: contrastRatio(border, surface) }
+
+  // Tailwind v4's computed alpha color is `oklab(...)`, not necessarily
+  // `rgba(...)`. The in-browser sRGB canvas above normalizes each CSS color
+  // before this source-over composite from the outermost ancestor inward.
+  const white: Rgba = { red: 255, green: 255, blue: 255, alpha: 1 }
+  const backdrop = colors.backgrounds
+    .slice(1)
+    .reverse()
+    .reduce((result, color) => composite(color, result), white)
+  const surfaceColor = composite(colors.backgrounds[0], backdrop)
+  // CSS backgrounds extend under borders by default, so an alpha border is
+  // rendered over the same effective fill. Current controls use opaque borders.
+  const borderColor = composite(colors.border, surfaceColor)
+  const border = opaqueHex(borderColor)
+  const surface = opaqueHex(surfaceColor)
+  const backdropHex = opaqueHex(backdrop)
+  return {
+    border,
+    surface,
+    backdrop: backdropHex,
+    ratio: contrastRatio(border, surface),
+    backdropRatio: contrastRatio(border, backdropHex),
+    rawSurface: colors.rawSurface,
+  }
 }
 
 test('correct PIN opens private tasks and changes the badge', async ({ page, taskApi }) => {
@@ -96,7 +152,7 @@ test('ten wrong PIN attempts produce throttle countdown and disable unlock', asy
   const badgeContrast = await renderedControlContrast(page.getByTestId('private-badge'))
   expect(
     badgeContrast.ratio,
-    `throttled private badge border ${badgeContrast.border} vs page surface ${badgeContrast.surface}`,
+    `throttled private badge border ${badgeContrast.border} vs rendered fill ${badgeContrast.surface} (${badgeContrast.rawSurface} over ${badgeContrast.backdrop}; backdrop ratio ${badgeContrast.backdropRatio.toFixed(2)})`,
   ).toBeGreaterThanOrEqual(3)
 })
 
