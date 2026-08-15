@@ -305,30 +305,57 @@ SELECT
   uv run alembic upgrade head
   uv run alembic current
 
-  docker exec -e "PGPASSWORD=$qaMigratorPassword" $qaPgName psql -At `
-    -U $qaMigratorUser -d $qaPgDatabase -c "SELECT 'migrator_identity=' || current_user"
+  $qaMigratorIdentity = (docker exec -e "PGPASSWORD=$qaMigratorPassword" `
+    $qaPgName psql -At -U $qaMigratorUser -d $qaPgDatabase `
+    -c "SELECT 'migrator_identity=' || current_user" | Out-String).Trim()
+  if ($qaMigratorIdentity -ne 'migrator_identity=microsched_migrator') {
+    throw "Unexpected migrator identity: $qaMigratorIdentity"
+  }
+  Write-Output $qaMigratorIdentity
   $qaAppPrivilegeSql = @'
 \set ON_ERROR_STOP on
-SELECT 'app_identity=' || current_user;
-SELECT 'app_crud_all_tables=' || COALESCE(bool_and(
-  has_table_privilege(current_user, schemaname || '.' || tablename,
-                      'SELECT,INSERT,UPDATE,DELETE')
-), false)
-FROM pg_tables
-WHERE schemaname = 'microsched' AND tablename <> 'alembic_version';
 DO $qa$
+DECLARE
+  qa_crud_all boolean;
 BEGIN
+  IF current_user <> 'microsched_app' THEN
+    RAISE EXCEPTION 'unexpected_app_identity=%', current_user;
+  END IF;
+  SELECT COALESCE(bool_and(
+    has_table_privilege(current_user, schemaname || '.' || tablename,
+                        'SELECT,INSERT,UPDATE,DELETE')
+  ), false)
+  INTO qa_crud_all
+  FROM pg_tables
+  WHERE schemaname = 'microsched' AND tablename <> 'alembic_version';
+  IF NOT qa_crud_all THEN RAISE EXCEPTION 'app_crud_all_tables=false'; END IF;
+  IF has_schema_privilege(current_user, 'microsched', 'CREATE')
+     OR has_schema_privilege(current_user, 'public', 'CREATE') THEN
+    RAISE EXCEPTION 'app_schema_create_privilege_unexpectedly_allowed';
+  END IF;
   BEGIN
     EXECUTE 'CREATE TABLE microsched.qa017_should_not_exist(id integer)';
-    RAISE EXCEPTION 'app_ddl_unexpectedly_allowed';
+    RAISE EXCEPTION 'app_ddl_microsched_unexpectedly_allowed';
   EXCEPTION
-    WHEN insufficient_privilege THEN RAISE NOTICE 'app_ddl=blocked';
+    WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    EXECUTE 'CREATE TABLE public.qa017_should_not_exist(id integer)';
+    RAISE EXCEPTION 'app_ddl_public_unexpectedly_allowed';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
   END;
 END
 $qa$;
+SELECT 'qa_app_privileges=ok';
 '@
-  $qaAppPrivilegeSql | docker exec -i -e "PGPASSWORD=$qaAppPassword" `
-    $qaPgName psql -At -U $qaAppUser -d $qaPgDatabase
+  $qaAppPrivilegeReceipt = ($qaAppPrivilegeSql | docker exec -i `
+    -e "PGPASSWORD=$qaAppPassword" $qaPgName psql -At `
+    -U $qaAppUser -d $qaPgDatabase | Out-String).Trim()
+  if ($qaAppPrivilegeReceipt -notmatch '(?m)^qa_app_privileges=ok\r?$') {
+    throw 'QA017 app privilege receipt missing'
+  }
+  Write-Output 'qa_app_privileges=ok'
   $qa017PgNodes = @(
     'tests/test_offline_outbox_pg.py::test_operation_matrix_covers_registry_exactly'
     'tests/test_offline_outbox_pg.py::test_operation_matrix'
@@ -404,32 +431,70 @@ finally {
     else { Write-Output 'proxy_cleanup=stopped_and_port_free' }
   }
   finally {
+    $qaPgDiagnosticError = $null
+    $qaPgStopError = $null
+    $qaPgPostcheckError = $null
+    $qaPgStillExists = $false
+    $qaPgPortListener = $null
     try {
       if ($qaPgCreated) {
-        if (-not $qaPgSucceeded) { docker logs --tail 100 $qaPgName }
-        $qaActualName = docker inspect --format '{{.Name}}' $qaPgName
-        if ($qaActualName -ne "/$qaPgName") { throw "Refuse cleanup: unexpected container $qaActualName" }
-        docker stop $qaPgName
+        if (-not $qaPgSucceeded) {
+          try { docker logs --tail 100 $qaPgName }
+          catch { $qaPgDiagnosticError = $_ }
+        }
+        try {
+          $qaActualName = docker inspect --format '{{.Name}}' $qaPgName
+          if ($qaActualName -ne "/$qaPgName") {
+            throw "Refuse cleanup: unexpected container $qaActualName"
+          }
+          docker stop $qaPgName | Out-Null
+        }
+        catch { $qaPgStopError = $_ }
       }
     }
     finally {
-      foreach ($qaEnvName in $qaEnvNames) {
-        if ($qaEnvSnapshot[$qaEnvName].Exists) {
-          Set-Item "Env:$qaEnvName" $qaEnvSnapshot[$qaEnvName].Value
+      try {
+        if ($qaPgCreated) {
+          try {
+            $qaRemainingNames = @(docker ps -a --filter "name=$qaPgName" --format '{{.Names}}')
+            $qaPgStillExists = $qaRemainingNames -contains $qaPgName
+          }
+          catch { $qaPgPostcheckError = $_ }
+          $qaPgPortListener = Get-NetTCPConnection -LocalAddress 127.0.0.1 `
+            -LocalPort $qaPgPort -State Listen -ErrorAction SilentlyContinue
         }
-        else { Remove-Item "Env:$qaEnvName" -ErrorAction SilentlyContinue }
       }
-      $PSNativeCommandUseErrorActionPreference = $qaOldNativePreference
-      $ErrorActionPreference = $qaOldErrorPreference
+      finally {
+        foreach ($qaEnvName in $qaEnvNames) {
+          if ($qaEnvSnapshot[$qaEnvName].Exists) {
+            Set-Item "Env:$qaEnvName" $qaEnvSnapshot[$qaEnvName].Value
+          }
+          else { Remove-Item "Env:$qaEnvName" -ErrorAction SilentlyContinue }
+        }
+        $PSNativeCommandUseErrorActionPreference = $qaOldNativePreference
+        $ErrorActionPreference = $qaOldErrorPreference
+      }
+    }
+    if ($qaPgCreated) {
+      if ($qaPgPostcheckError) { throw 'QA017 PG cleanup postcheck failed' }
+      if ($qaPgStillExists -or $qaPgPortListener) {
+        if ($qaPgStopError) { throw 'QA017 PG stop failed; container/port still active' }
+        throw 'QA017 PG cleanup incomplete; container/port still active'
+      }
+      if ($qaPgStopError) { Write-Output 'pg_cleanup=stop_race_but_container_and_port_gone' }
+      elseif ($qaPgDiagnosticError) { Write-Output 'pg_cleanup=stopped_port_free_logs_unavailable' }
+      else { Write-Output 'pg_cleanup=stopped_container_gone_port_free' }
     }
   }
 }
 ```
 
 Receipt L1 phải có `docker info`, health=`healthy`, hai identity
-`migrator=microsched_migrator`/`app=microsched_app` và app bị chặn DDL nhưng CRUD được,
+`migrator_identity=microsched_migrator`, `qa_app_privileges=ok` (identity đúng, CRUD đủ, DDL bị
+chặn ở cả `microsched` và `public`),
 `migration_prerequisites=ok`, Alembic head, raw
-collect list và run summary; thêm API status/client UUID/SQL count đã redacted thành
+collect list và run summary; cleanup phải in `proxy_cleanup=...` và `pg_cleanup=...` sau khi
+machine-assert PID/container/port đều biến mất; thêm API status/client UUID/SQL count đã redacted thành
 `resource + qa_id + count`, không dán payload/DB URL. **Bất kỳ skip, deselected-all, `0 collected`,
 exit 5 hoặc targeted cases còn thiếu đều là `[CHƯA VERIFY]`**, dù `pytest` thường xanh. Nếu command
 timeout, kiểm `docker inspect/logs` và migration state trước khi kết luận. Cleanup chỉ stop đúng
