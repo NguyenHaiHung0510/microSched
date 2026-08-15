@@ -115,6 +115,21 @@ Với private outbox payload, oracle log **SHA-256 digest của canonical serial
 length**, không log plaintext. Digest/length phải đủ để chứng minh payload không bị reset/purge làm
 đổi trước khi flush; sau success thì chứng minh row đã biến mất thay vì dump nội dung.
 
+**Canonical payload contract:** dùng RFC 8785 JSON Canonicalization Scheme (JCS), implement local
+không thêm dependency. Adapter chỉ nhận JSON values; reject `undefined`, `BigInt`, `NaN`, `Infinity`
+và object `Date`. Datetime phải được adapter đổi trước thành UTC ISO-8601 có milliseconds + `Z`;
+date-only giữ `YYYY-MM-DD`. JCS sort object key theo UTF-16 code units, giữ array order, dùng JSON
+number/string escaping chuẩn ECMAScript, không whitespace. Unicode code points giữ nguyên, **không**
+tự NFC/NFD; bytes cuối là UTF-8 (`TextEncoder`). SHA-256 ghi lowercase hex.
+
+`payload_sha256`/`payload_byte_length` được tính đúng một lần khi enqueue và là field immutable của
+row. Trước mọi destructive reset, test tự tính cùng digest từ fixture input và giữ baseline trong
+run manifest của Playwright/test process **ngoài IndexedDB/outbox row**. Mỗi checkpoint so ba phía:
+external baseline = immutable row fields = digest recompute từ row payload; không được tính baseline
+lại sau purge/reset. Golden tests bắt buộc có object đảo key order (digest bằng nhau), array đổi thứ
+tự (digest khác), Unicode composed/decomposed (digest khác vì không normalize), datetime UTC exact,
+và reject bốn non-JSON values trên. Không log canonical bytes/plaintext.
+
 Các invariant gốc:
 
 - persisted Query namespace và Dexie outbox là **hai namespace/DB riêng**;
@@ -183,6 +198,10 @@ $qaPgPassword = [guid]::NewGuid().ToString('N')
 $qaPgDatabase = 'microsched_ci'
 $qaPgCreated = $false
 $qaPgSucceeded = $false
+$qaHadMigratorUrl = Test-Path Env:NEON_MIGRATOR_URL
+$qaOldMigratorUrl = if ($qaHadMigratorUrl) { $env:NEON_MIGRATOR_URL } else { $null }
+$qaHadRemoteFlag = Test-Path Env:ALLOW_REMOTE_PG_TESTS
+$qaOldRemoteFlag = if ($qaHadRemoteFlag) { $env:ALLOW_REMOTE_PG_TESTS } else { $null }
 $qaOldNativePreference = $PSNativeCommandUseErrorActionPreference
 $qaOldErrorPreference = $ErrorActionPreference
 $PSNativeCommandUseErrorActionPreference = $true
@@ -238,17 +257,23 @@ try {
   $qaPgSucceeded = $true
 }
 finally {
-  Remove-Item Env:NEON_MIGRATOR_URL -ErrorAction SilentlyContinue
-  Remove-Item Env:ALLOW_REMOTE_PG_TESTS -ErrorAction SilentlyContinue
-  Set-Location $qaStartLocation
-  if ($qaPgCreated) {
-    if (-not $qaPgSucceeded) { docker logs --tail 100 $qaPgName }
-    $qaActualName = docker inspect --format '{{.Name}}' $qaPgName
-    if ($qaActualName -ne "/$qaPgName") { throw "Refuse cleanup: unexpected container $qaActualName" }
-    docker stop $qaPgName
+  try {
+    Set-Location $qaStartLocation
+    if ($qaPgCreated) {
+      if (-not $qaPgSucceeded) { docker logs --tail 100 $qaPgName }
+      $qaActualName = docker inspect --format '{{.Name}}' $qaPgName
+      if ($qaActualName -ne "/$qaPgName") { throw "Refuse cleanup: unexpected container $qaActualName" }
+      docker stop $qaPgName
+    }
   }
-  $PSNativeCommandUseErrorActionPreference = $qaOldNativePreference
-  $ErrorActionPreference = $qaOldErrorPreference
+  finally {
+    if ($qaHadMigratorUrl) { $env:NEON_MIGRATOR_URL = $qaOldMigratorUrl }
+    else { Remove-Item Env:NEON_MIGRATOR_URL -ErrorAction SilentlyContinue }
+    if ($qaHadRemoteFlag) { $env:ALLOW_REMOTE_PG_TESTS = $qaOldRemoteFlag }
+    else { Remove-Item Env:ALLOW_REMOTE_PG_TESTS -ErrorAction SilentlyContinue }
+    $PSNativeCommandUseErrorActionPreference = $qaOldNativePreference
+    $ErrorActionPreference = $qaOldErrorPreference
+  }
 }
 ```
 
@@ -273,12 +298,40 @@ trả về, theo khoá `METHOD + path template`. Mỗi row phải thuộc đúng
   `subscription_expiry_lead_days`; `private_pin`, `private_unlock_throttle`,
   `private_unlock_ttl_minutes` là bypass và không được đi qua generic seam.
 
-`tests/test_offline_outbox_manifest.py::test_mutating_openapi_routes_match_write_manifest` phải gọi
-`create_app().openapi()`, lấy toàn bộ `POST/PATCH/DELETE`, rồi assert set-equality với manifest.
-Route mới chưa được phân loại phải làm test đỏ, kể cả khi nó chưa có trong adapter registry/matrix.
-Vitest `outbox-write-manifest` phải assert tập `operation_kind` loại `outbox` bằng chính xác tập key
-của typed adapter registry và loại `bypass` không có adapter. Cuối cùng meta-test PG bên dưới assert
-registry bằng matrix. Receipt phải dán cả ba tập/count và exact diff khi lệch.
+`tests/test_offline_outbox_manifest.py` phải có fixture tự chứa, không đọc environment/secret thật:
+
+```python
+import secrets
+
+monkeypatch.setenv("APP_ENV", "local")
+monkeypatch.setenv("OAUTH_STATE_SECRET", secrets.token_urlsafe(32))
+get_settings.cache_clear()
+try:
+    schema = create_app().openapi()
+finally:
+    get_settings.cache_clear()
+```
+
+Không có fixture này, default fail-closed `APP_ENV=production` làm bare `create_app()` dừng vì thiếu
+`OAUTH_STATE_SECRET`; không được chữa bằng đọc `.env` hoặc in secret. Từ schema, test lấy toàn bộ
+`POST/PATCH/DELETE` rồi assert set-equality exact `(METHOD, path template)` với manifest. Route mới
+chưa phân loại phải làm test đỏ, kể cả khi nó chưa có trong adapter registry/matrix.
+
+Set route thôi chưa đủ. Mỗi row `outbox` phải machine-assert exact tuple
+`(METHOD, path template, operation_kind)` bằng metadata của typed adapter **và** param row PG matrix;
+không cho `/api/tasks` bị map sang một adapter hiện hữu khác mà ba set vẫn xanh. Bypass test phải
+assert exact method/path set chỉ gồm `POST /auth/logout`, ba private routes và push
+subscribe/unsubscribe. Với `PATCH /api/settings/{key}`, manifest bắt buộc có hai field:
+
+```text
+allowed_keys = keys(PUBLIC_SETTING_SPECS)
+bypass_keys = {PIN_SETTING_KEY, THROTTLE_SETTING_KEY, TTL_SETTING_KEY}
+```
+
+Python test import các constant thật để assert exact hai set; Vitest assert hai allowed key map đúng
+hai `setting.*.update` adapter và ba bypass key không có adapter. Cuối cùng meta-test PG consume exact
+route→operation rows từ manifest, không chỉ compare operation-name set. Receipt phải dán route count,
+exact tuple diff và allowed/bypass-key diff khi lệch.
 
 Ngoài manifest, static guard phải quét mọi transport (`apiRequest`, direct `fetch`,
 `XMLHttpRequest`, `sendBeacon`, `axios`, `ky`) và fail nếu một write domain đi vòng seam. Direct
@@ -324,11 +377,12 @@ xanh.
 
 #### Harness response-lost chạy API/PG thật
 
-`tests/support/response_lost.py` phải cung cấp transport/proxy dùng được bởi bốn test
-`test_response_lost_*` ở trên:
+`tests/support/response_lost.py` phải cung cấp core harness dùng được bởi bốn test
+`test_response_lost_*` ở trên. L1 Python được dùng `httpx.ASGITransport`; lane đó chỉ chứng minh
+server/PG, không được dùng làm browser/outbox receipt:
 
-1. forward nguyên method/path/body vào **real FastAPI app** qua `httpx.ASGITransport` (hoặc reverse
-   proxy TCP tương đương), với dependency DB trỏ container PG thật;
+1. forward nguyên method/path/body vào **real FastAPI app** qua `httpx.ASGITransport`, với dependency
+   DB trỏ container PG thật;
 2. chờ upstream endpoint trả về và `await response.aread()`; bằng connection PG độc lập, poll có
    hạn tới khi commit probe thấy đúng row/dispatch/postcondition;
 3. đóng upstream response rồi ném `httpx.ReadError`/abort downstream để client **không nhận status
@@ -338,6 +392,47 @@ xanh.
 Receipt bắt buộc: request digest/UUID, upstream-completed marker, commit probe + row count, client
 abort exception, retry status/body contract và final row count. Cấm `route.fulfill()`, fake service,
 mock DB hoặc “ném network error” trước khi real API commit; các cách đó không chứng minh response-lost.
+
+Browser không gọi được `ASGITransport`. Vì vậy A10 bắt buộc thêm test-only HTTP/TCP reverse proxy
+`backend/tests/support/response_lost_proxy.py` (tên khác phải ghi path thật) làm **chính browser
+origin**: serve `frontend/dist`, forward `/api/*` vào real FastAPI + throwaway PG, và có control route
+`/__qa__/response-lost/arm` chỉ trong test process. Control row arm đúng một
+`METHOD + path + client UUID/payload digest`; proxy chờ upstream response + independent commit probe,
+rồi đóng downstream socket không gửi status/body. Browser phải quan sát fetch abort thật
+(`net::ERR_EMPTY_RESPONSE`/`TypeError` tương đương), không `route.abort()` hoặc fulfillment.
+
+Lifecycle chuẩn, chạy sau `npm run build` và khi PG L1 còn sống:
+
+```powershell
+$qaStartLocation = Get-Location
+$qaProxy = Start-Process uv `
+  -ArgumentList @('run','python','-m','tests.support.response_lost_proxy',
+                  '--host','127.0.0.1','--port','4180','--static','../frontend/dist') `
+  -WorkingDirectory (Resolve-Path 'backend') -WindowStyle Hidden -PassThru
+try {
+  $qaProxyReady = $false
+  foreach ($attempt in 1..20) {
+    try {
+      $health = Invoke-RestMethod 'http://127.0.0.1:4180/__qa__/health' -TimeoutSec 2
+      if ($health.status -eq 'ok') { $qaProxyReady = $true; break }
+    }
+    catch { Start-Sleep -Seconds 1 }
+  }
+  if (-not $qaProxyReady) { throw 'response-lost proxy unhealthy' }
+  Set-Location frontend
+  npx playwright test --config=playwright.response-lost.config.ts e2e/offline-outbox-response-lost.spec.ts
+}
+finally {
+  Set-Location $qaStartLocation
+  if ($qaProxy -and -not $qaProxy.HasExited) { Stop-Process -Id $qaProxy.Id }
+}
+```
+
+Dedicated Playwright config phải `baseURL=http://127.0.0.1:4180`, không reuse server/port, và fail
+nếu port đã bị chiếm. Proxy chỉ nhận synthetic fixture; DB URL qua env local không được truyền trong
+argument/stdout. Receipt gồm PID/origin/health, arm tuple đã redacted thành digest, upstream+commit
+markers, browser abort category và process/port đã dừng. ASGI-only ⇒ L1 có thể pass nhưng A10 vẫn
+`[CHƯA VERIFY]`.
 
 ### 2.4 L2 — hai browser config riêng
 
@@ -596,14 +691,18 @@ này là `[CHƯA VERIFY]`.
 
 **Setup/steps:** offline tạo chain group G → tracker T → entry E trong một Dexie transaction; parent
 đã có server có dependency `null`; parent queued thì child trỏ đúng primary key outbox của create
-parent, không trỏ entity UUID.
+parent, không trỏ entity UUID. Chạy thêm response-lost case: G đã dispatch/commit nhưng row G đang
+`outcome_unknown`, T/E còn `pending`; đặt một public row P độc lập phía sau.
 
 **PASS state:** flush G→T→E đúng order; child không gửi vượt parent hold; parent failed làm
 descendants `suppressed` và UI chỉ hiện một lỗi gốc; discard parent discard descendants; independent
-row vẫn runnable.
+row vẫn runnable. Khi G=`outcome_unknown`, request count T/E bằng `0` nhưng P vẫn gửi; replay **G
+trước** cùng UUID/payload. G replay `200` mới release T rồi E; nếu replay G thành failure thật thì
+T/E mới `suppressed`.
 
 **Raw receipt:** operation IDs/entity IDs/dependency IDs, transaction boundary, request order và
-state cascade. **FAIL:** dependency suy từ URL/parent UUID, descendant gửi khi parent chưa đạt, hoặc
+state cascade gồm `outcome_unknown → replay → release/suppress`. **FAIL:** dependency suy từ URL/
+parent UUID, descendant gửi khi parent outcome chưa biết, outcome-unknown chặn public độc lập, hoặc
 discard để orphan row.
 
 ### A09 — Private-held không chặn public độc lập
@@ -626,9 +725,10 @@ flusher gửi private khi locked.
 ### A10 — Response-lost idempotency trên mọi POST create được phủ
 
 Mọi case dùng harness response-lost §2.3 và có **hai receipt nối nhau**: L1 chứng minh real API + PG
-commit/replay contract; browser/outbox lane gọi chính proxy đó để chứng minh state client. Ngay trước
-dispatch ghi `operation_id`, `attempts=A`, client UUID/path và payload digest. Proxy chỉ abort sau
-upstream-completed + commit-probe. Ngay sau client nhận network abort phải assert cùng row:
+commit/replay contract; browser/outbox lane gọi HTTP/TCP proxy cùng section để chứng minh state
+client. Ngay trước dispatch ghi `operation_id`, `attempts=A`, client UUID/path và payload digest.
+Proxy chỉ abort sau upstream-completed + commit-probe. Ngay sau client nhận network abort phải assert
+cùng row:
 
 ```text
 state = outcome_unknown

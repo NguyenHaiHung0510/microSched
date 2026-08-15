@@ -125,6 +125,9 @@ row tạo parent.
   một private write chờ unlock chặn mọi public write vô hạn.
 - Parent failed ⇒ toàn bộ descendants thành `suppressed` và UI hiện **một lỗi gốc**. Discard parent
   ⇒ discard descendants. Parent hold ⇒ descendants hold, không gửi vượt.
+- Parent `outcome_unknown` ⇒ descendants vẫn `pending` nhưng không được dispatch; row public độc lập
+  phía sau vẫn runnable. Flusher phải replay parent cùng UUID/payload trước: `2xx` mới release child,
+  còn failure thật mới suppress descendants.
 - Tạo row + xác định dependency phải ở **một Dexie transaction**, không regex URL.
 
 ### 2.5 🔴 Có cache domain vẫn chưa đủ — `/api/me` phải có offline bootstrap công khai
@@ -185,6 +188,7 @@ theo timestamp). Mỗi row là command typed và mang tối thiểu:
 - `operation_kind` / `resource` / method / path / JSON body;
 - `entity_id`, `parent_id`, `requires_private`, `idempotency_mode`;
 - `dependency_operation_id` (§2.4), `group_id` nếu một thao tác UI có nhiều bước;
+- `payload_sha256` + `payload_byte_length` immutable, tính một lần khi enqueue từ canonical bytes;
 - `affected_query_keys`, trạng thái (`pending` / `auth_hold` / `private_hold` /
   `outcome_unknown` / `failed` / `suppressed`), số lần thử, mốc thử tiếp theo, mốc tạo và lỗi cuối.
 
