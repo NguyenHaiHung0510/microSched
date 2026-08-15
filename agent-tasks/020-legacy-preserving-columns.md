@@ -3,7 +3,8 @@
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: không cần.**
 > **Trạng thái: OWNER-APPROVED — chủ duyệt triển khai 2026-08-13; migration đã refresh theo head
-> thật `0008` trước khi thi công. Chưa authorize áp migration lên Neon hoặc merge.**
+> thật `0008` trước khi thi công. Ngày 2026-08-15, chủ authorize áp migration `0009` lên Neon sau
+> khi mọi preflight gate đạt, rồi merge sau catalog receipt read-only.**
 > Phản biện: đã chạy chung một vòng với `012` 2026-08-02 (không tách riêng 1 lượt như dự tính ban đầu,
 > vì `012` viết trước làm lộ ra `020` không chỉ "migration thuần cộng cột" — cột `completed_at` có
 > logic nối dây thật). T1 đã vá mọi finding xác nhận đúng (xem §6 cuối file).
