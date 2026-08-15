@@ -17,7 +17,7 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 | **BLOCKED / OWNER DECISION** | #118 CSP đã đóng theo quyết định chủ — chưa có CSP replacement. Không còn owner decision mở cho Task 020. |
 | **SECURITY CAVEAT** | Không merge CSP “restrictive” mà vẫn có `unsafe-inline`/`unsafe-eval`. Nếu làm lại, cần task riêng: threat-model scope, UI/OAuth/PWA compatibility inventory và browser acceptance. |
 | **NEXT** | Đóng PR #133 trước để khóa QA contract 017; sau đó đóng exact-head CI/review/deploy cho #131 và #134, reconcile WIP 017 lên `develop` mới rồi tiếp tục implementation. **Không mở 012 trong nhịp này.** QA thực tế còn lại của 010/011 và release `develop → main` vẫn là các gate riêng. |
-| **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase; policy live ở `docs/devops-brief.md` §7 buộc scheduled follow-up, mốc agent 1/3/5/10/15/20 rồi 10 phút, và PR/deploy khoảng 2 phút. |
+| **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase; policy live ở `docs/devops-brief.md` §7 buộc scheduled follow-up, mốc agent 3/6/10/15/20 rồi 10 phút. Mọi poll timer, kể cả PR/deploy, tối thiểu 3 phút; terminal/blocker notification vẫn wake ngay. |
 | **OPEN QA DEBT** | `010a`: iPhone file picker / FileReader. `011a`: Lane 4 iPhone vật lý. `011`: mutation reload, controlled dispatch/không duplicate, Web Push iPhone và quan sát Neon idle. `016`: local browser contrast PASS; production và iPhone thật chưa verify. |
 
 ## Cách dùng
