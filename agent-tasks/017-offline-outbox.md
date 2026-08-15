@@ -185,11 +185,14 @@ theo timestamp). Mỗi row là command typed và mang tối thiểu:
 - `operation_kind` / `resource` / method / path / JSON body;
 - `entity_id`, `parent_id`, `requires_private`, `idempotency_mode`;
 - `dependency_operation_id` (§2.4), `group_id` nếu một thao tác UI có nhiều bước;
-- `affected_query_keys`, trạng thái (`pending` / `auth_hold` / `private_hold` / `failed` /
-  `suppressed`), số lần thử, mốc thử tiếp theo, mốc tạo và lỗi cuối.
+- `affected_query_keys`, trạng thái (`pending` / `auth_hold` / `private_hold` /
+  `outcome_unknown` / `failed` / `suppressed`), số lần thử, mốc thử tiếp theo, mốc tạo và lỗi cuối.
 
 `dependency_operation_id` tham chiếu row outbox, không tham chiếu entity UUID. Tạo command + nối
 dependency trong một Dexie transaction. Method/path không được dùng để suy ngược `operation_kind`.
+Transport lỗi sau khi request đã dispatch phải chuyển row sang `outcome_unknown`; retry giữ nguyên
+operation/client UUID và payload. Lỗi trước dispatch (`not_attempted`) chỉ là telemetry, row vẫn
+`pending` và không tăng attempts — hai nhánh không được gộp.
 
 **Lazy-open:** không `new Dexie()` ở module top-level. Mở qua factory có `try/catch`; IndexedDB bị
 chặn ⇒ app vẫn chạy online, hiện cảnh báo offline unavailable, không crash toàn bundle.
@@ -324,8 +327,10 @@ Single-flight/Web Lock không che được ca server commit xong nhưng response
    restore 404 failed; business 409/422 failed. Không test “status đơn lẻ” — truyền đủ typed metadata.
 3. **Idempotency PG thật:** với **mọi POST create** được 017 phủ, gửi cùng UUIDv7 hai lần và mô phỏng
    “commit xong mất response” ⇒ đúng một row, lần replay 200. Bắt buộc có task-item/note-item/
-   calendar-event; `renew` cùng `entry_id` chỉ tiến một kỳ. UUID khác nhưng trùng tên ⇒ 409 thật,
-   không bị nuốt.
+   calendar-event; `renew` cùng `entry_id` chỉ tiến một kỳ. UUID khác nhưng trùng business name chỉ
+   trả 409 ở resource có contract tên duy nhất thật: `calendar_source`, `tracker_group`, `tracker`,
+   `subscription`. Task/note/event/annotation/entry và item được phép trùng title/label/content;
+   classifier không được phát minh 409 cho các resource đó.
 4. **Dependency + optimistic:** group→tracker→entry gửi đúng thứ tự; parent fail suppress descendants
    nhưng public row độc lập phía sau vẫn gửi; park giữ optimistic entity + badge; discard rollback;
    response server thay placeholder; create→patch→delete chưa gửi coalesce về 0 command.

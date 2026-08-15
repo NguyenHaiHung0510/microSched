@@ -137,7 +137,7 @@ git rev-parse HEAD
 git rev-parse origin/develop
 rg -n "serviceWorkers|webServer|baseURL" frontend -g "playwright*.config.ts"
 rg -n "@router\.(post|patch|delete)" backend/app
-rg -n "apiRequest<|apiRequest\(" frontend/src -g "*.ts" -g "*.tsx"
+rg -n "apiRequest<|apiRequest\(|fetch\(|XMLHttpRequest|sendBeacon|axios|ky" frontend/src -g "*.ts" -g "*.tsx"
 rg --files frontend/tests frontend/e2e backend/tests
 ```
 
@@ -152,10 +152,12 @@ Set-Location frontend
 npm run lint
 npm run build
 npm test
+npm test -- outbox-write-manifest
 npm run e2e -- --list
 Set-Location ..\backend
 uv run ruff check
 uv run pytest
+uv run pytest -vv tests/test_offline_outbox_manifest.py
 Set-Location ..
 ```
 
@@ -173,60 +175,81 @@ Chạy ở root worktree; tên container/port cố định giúp kiểm target t
 
 ```powershell
 docker info
+$qaStartLocation = Get-Location
 $qaPgName = 'microsched-017-qa-pg'
 $qaPgPort = 55432
 $qaPgUser = 'postgres'
 $qaPgPassword = [guid]::NewGuid().ToString('N')
 $qaPgDatabase = 'microsched_ci'
+$qaPgCreated = $false
+$qaPgSucceeded = $false
+$qaOldNativePreference = $PSNativeCommandUseErrorActionPreference
+$qaOldErrorPreference = $ErrorActionPreference
+$PSNativeCommandUseErrorActionPreference = $true
+$ErrorActionPreference = 'Stop'
 
-$qaExisting = docker container inspect --format '{{.Id}}' $qaPgName 2>$null
-if ($LASTEXITCODE -eq 0) { throw "Container $qaPgName đã tồn tại; dừng để xác định chủ sở hữu" }
+try {
+  try { $qaExisting = docker container inspect --format '{{.Id}}' $qaPgName 2>$null }
+  catch { $qaExisting = $null }
+  if ($qaExisting) { throw "Container $qaPgName đã tồn tại; dừng để xác định chủ sở hữu" }
 
-docker run --name $qaPgName --rm -d `
-  --health-cmd "pg_isready -U $qaPgUser -d $qaPgDatabase" `
-  --health-interval 5s --health-timeout 5s --health-retries 10 `
-  -e "POSTGRES_USER=$qaPgUser" `
-  -e "POSTGRES_PASSWORD=$qaPgPassword" `
-  -e "POSTGRES_DB=$qaPgDatabase" `
-  -p "127.0.0.1:${qaPgPort}:5432" `
-  pgvector/pgvector:pg18
+  docker run --name $qaPgName --rm -d `
+    --health-cmd "pg_isready -U $qaPgUser -d $qaPgDatabase" `
+    --health-interval 5s --health-timeout 5s --health-retries 10 `
+    -e "POSTGRES_USER=$qaPgUser" `
+    -e "POSTGRES_PASSWORD=$qaPgPassword" `
+    -e "POSTGRES_DB=$qaPgDatabase" `
+    -p "127.0.0.1:${qaPgPort}:5432" `
+    pgvector/pgvector:pg18
+  $qaPgCreated = $true
 
-$qaPgHealthy = $false
-foreach ($attempt in 1..20) {
-  $qaPgState = docker inspect --format '{{.State.Health.Status}}' $qaPgName
-  if ($qaPgState -eq 'healthy') { $qaPgHealthy = $true; break }
-  Start-Sleep -Seconds 1
+  $qaPgHealthy = $false
+  foreach ($attempt in 1..20) {
+    $qaPgState = docker inspect --format '{{.State.Health.Status}}' $qaPgName
+    if ($qaPgState -eq 'healthy') { $qaPgHealthy = $true; break }
+    Start-Sleep -Seconds 1
+  }
+  if (-not $qaPgHealthy) { throw 'QA017 Postgres unhealthy' }
+
+  $env:NEON_MIGRATOR_URL = "postgresql://${qaPgUser}:${qaPgPassword}@127.0.0.1:${qaPgPort}/${qaPgDatabase}"
+  Remove-Item Env:ALLOW_REMOTE_PG_TESTS -ErrorAction SilentlyContinue
+
+  Set-Location backend
+  uv run python -m scripts.prepare_ci_database
+  uv run python -m scripts.check_migration_drops
+  uv run alembic upgrade head
+  uv run alembic current
+  $qa017PgNodes = @(
+    'tests/test_offline_outbox_pg.py::test_operation_matrix_covers_registry_exactly'
+    'tests/test_offline_outbox_pg.py::test_operation_matrix'
+    'tests/test_offline_outbox_pg.py::test_response_lost_entity_create_matrix'
+    'tests/test_offline_outbox_pg.py::test_response_lost_calendar_import_atomic_replace'
+    'tests/test_offline_outbox_pg.py::test_response_lost_subscription_renew'
+    'tests/test_offline_outbox_pg.py::test_response_lost_reminder_confirm'
+    'tests/test_tasks_api.py::test_task_crud_and_nested_items_through_http'
+    'tests/test_notes_api.py::test_note_crud_nullable_title_checklist_restore_and_dto_boundary'
+    'tests/test_settings_api.py::test_settings_allowlist_never_leaks_or_touches_secret_keys'
+    'tests/test_settings_api.py::test_settings_valid_keys_validate_values'
+    'tests/test_push_api.py::test_two_devices_confirm_same_dispatch_create_one_entry'
+    'tests/test_push_api.py::test_private_dispatch_requires_unlock_then_accepts_same_body'
+  )
+  uv run pytest -m pg --collect-only -q $qa017PgNodes
+  uv run pytest -m pg -vv $qa017PgNodes
+  $qaPgSucceeded = $true
 }
-if (-not $qaPgHealthy) { docker logs --tail 100 $qaPgName; throw 'QA017 Postgres unhealthy' }
-
-$env:NEON_MIGRATOR_URL = "postgresql://${qaPgUser}:${qaPgPassword}@127.0.0.1:${qaPgPort}/${qaPgDatabase}"
-Remove-Item Env:ALLOW_REMOTE_PG_TESTS -ErrorAction SilentlyContinue
-
-Set-Location backend
-uv run python -m scripts.prepare_ci_database
-uv run python -m scripts.check_migration_drops
-uv run alembic upgrade head
-uv run alembic current
-$qa017PgNodes = @(
-  'tests/test_offline_outbox_pg.py::test_operation_matrix_covers_registry_exactly'
-  'tests/test_offline_outbox_pg.py::test_operation_matrix'
-  'tests/test_offline_outbox_pg.py::test_response_lost_entity_create_matrix'
-  'tests/test_offline_outbox_pg.py::test_response_lost_calendar_import_atomic_replace'
-  'tests/test_offline_outbox_pg.py::test_response_lost_subscription_renew'
-  'tests/test_offline_outbox_pg.py::test_response_lost_reminder_confirm'
-  'tests/test_tasks_api.py::test_task_crud_and_nested_items_through_http'
-  'tests/test_notes_api.py::test_note_crud_nullable_title_checklist_restore_and_dto_boundary'
-  'tests/test_settings_api.py::test_settings_allowlist_never_leaks_or_touches_secret_keys'
-  'tests/test_settings_api.py::test_settings_valid_keys_validate_values'
-  'tests/test_push_api.py::test_two_devices_confirm_same_dispatch_create_one_entry'
-  'tests/test_push_api.py::test_private_dispatch_requires_unlock_then_accepts_same_body'
-)
-uv run pytest -m pg --collect-only -q $qa017PgNodes
-uv run pytest -m pg -vv $qa017PgNodes
-Set-Location ..
-
-Remove-Item Env:NEON_MIGRATOR_URL -ErrorAction SilentlyContinue
-docker stop $qaPgName
+finally {
+  Remove-Item Env:NEON_MIGRATOR_URL -ErrorAction SilentlyContinue
+  Remove-Item Env:ALLOW_REMOTE_PG_TESTS -ErrorAction SilentlyContinue
+  Set-Location $qaStartLocation
+  if ($qaPgCreated) {
+    if (-not $qaPgSucceeded) { docker logs --tail 100 $qaPgName }
+    $qaActualName = docker inspect --format '{{.Name}}' $qaPgName
+    if ($qaActualName -ne "/$qaPgName") { throw "Refuse cleanup: unexpected container $qaActualName" }
+    docker stop $qaPgName
+  }
+  $PSNativeCommandUseErrorActionPreference = $qaOldNativePreference
+  $ErrorActionPreference = $qaOldErrorPreference
+}
 ```
 
 Receipt L1 phải có `docker info`, health=`healthy`, `migration_prerequisites=ok`, Alembic head, raw
@@ -235,6 +258,32 @@ collect list và run summary; thêm API status/client UUID/SQL count đã redact
 exit 5 hoặc targeted cases còn thiếu đều là `[CHƯA VERIFY]`**, dù `pytest` thường xanh. Nếu command
 timeout, kiểm `docker inspect/logs` và migration state trước khi kết luận. Cleanup chỉ stop đúng
 `microsched-017-qa-pg` sau khi đã kiểm tên; tuyệt đối không dùng Neon để tái hiện lane này.
+
+#### OpenAPI route manifest → adapter registry → exact PG node
+
+Set-equality giữa registry và PG matrix chưa đủ: một route bị bỏ khỏi **cả hai** vẫn làm meta-test
+xanh. Implementation phải có một manifest language-neutral (chuẩn là
+`frontend/src/lib/outbox-write-manifest.json`) chứa mọi route mutating do FastAPI OpenAPI runtime
+trả về, theo khoá `METHOD + path template`. Mỗi row phải thuộc đúng một loại:
+
+- `outbox`: có exact `operation_kind` và adapter typed;
+- `bypass`: có lý do hard-boundary, chỉ gồm auth logout, private unlock/lock/PIN và push
+  subscribe/unsubscribe;
+- `key-gated`: riêng `PATCH /api/settings/{key}`, outbox chỉ cho `show_list_price` và
+  `subscription_expiry_lead_days`; `private_pin`, `private_unlock_throttle`,
+  `private_unlock_ttl_minutes` là bypass và không được đi qua generic seam.
+
+`tests/test_offline_outbox_manifest.py::test_mutating_openapi_routes_match_write_manifest` phải gọi
+`create_app().openapi()`, lấy toàn bộ `POST/PATCH/DELETE`, rồi assert set-equality với manifest.
+Route mới chưa được phân loại phải làm test đỏ, kể cả khi nó chưa có trong adapter registry/matrix.
+Vitest `outbox-write-manifest` phải assert tập `operation_kind` loại `outbox` bằng chính xác tập key
+của typed adapter registry và loại `bypass` không có adapter. Cuối cùng meta-test PG bên dưới assert
+registry bằng matrix. Receipt phải dán cả ba tập/count và exact diff khi lệch.
+
+Ngoài manifest, static guard phải quét mọi transport (`apiRequest`, direct `fetch`,
+`XMLHttpRequest`, `sendBeacon`, `axios`, `ky`) và fail nếu một write domain đi vòng seam. Direct
+transport chỉ được tồn tại ở boundary đã allowlist có lý do; grep review bằng mắt đơn lẻ không thay
+test manifest runtime.
 
 #### Matrix route → `operation_kind` → exact PG node
 
@@ -384,24 +433,56 @@ shell; không request mock giả thành công.
 query timestamp. **FAIL/stop:** chỉ client-side toggle `navigator.onLine`, không reload, shell đến từ
 RAM chưa persist, hoặc route fulfillment che request thật.
 
+#### Manifest Query persisted bắt buộc cho A03/A04
+
+QA không được chọn tuỳ ý “một list đại diện”. `PERSISTED_QUERY_MANIFEST` phải phân loại exact mọi
+query family thực sự mount trong fixture đi qua Tasks, Notes, Calendar, Tracker, Subscription và
+Reminder Confirm. Baseline hiện tại phải có tối thiểu:
+
+| Query key/family | Chính sách persisted bắt buộc |
+|---|---|
+| `['tasks', *]`, `['notes']` | lọc item `is_private=true`; sanitizer typed giữ nested public items |
+| `['calendar','tasks',*]` | dùng cùng task sanitizer, không tạo bản sao logic khác |
+| `['calendar','annotations',*]` | lọc annotation `is_private=true` |
+| `['calendar','sources']`, `['calendar','events',*]` | public-only; persist và chứng minh canary còn |
+| `['tracker','trackers']` | lọc tracker private; đây là tập public tracker ID nguồn cho các row VIA_PARENT |
+| `['tracker','groups']` | giữ group public nhưng tính lại `tracker_count` chỉ từ tập public tracker ID |
+| `['tracker','entries']` | chỉ giữ entry có `tracker_id` thuộc tập public tracker ID |
+| `['subscription','subscriptions']` | chỉ giữ subscription có `tracker_id` thuộc tập public tracker ID |
+| `['subscription','settings']` | chỉ giữ hai key public `show_list_price`, `subscription_expiry_lead_days` |
+| `['tracker','dashboard',*]` | `never_persist`: aggregate hiện không đủ provenance để trừ phần private an toàn |
+| `['session']` | không dehydrate như domain query; chỉ đi bootstrap tối thiểu riêng, không `private_until` |
+
+Browser test phải harvest raw QueryCache keys sau khi đã mở đủ các màn, assert mỗi key khớp đúng
+một row manifest và không có family ngoài manifest. Query mới mặc định `never_persist`, nhưng nếu nó
+là public surface cần sống offline thì acceptance phải thêm sanitizer/row rõ ràng thay vì âm thầm
+mất dữ liệu. Reminder Confirm hiện chỉ dùng `['session']`; nếu implementation thêm read query riêng,
+harvest sẽ làm test đỏ tới khi phân loại.
+
 ### A03 — Mixed query persist thành public-only
 
-**Setup/steps:** lúc unlocked, fetch một list cùng query key chứa cả public và private synthetic
-items; force persistence; đọc đúng Query persister namespace; reload offline/locked.
+**Setup/steps:** lúc unlocked, chạy từng row của manifest trên. Với mọi family private-bearing, seed
+mixed public/private synthetic items; với row VIA_PARENT seed public + private tracker và child của
+cả hai. Force persistence; đọc đúng Query persister namespace; reload offline/locked. Với row
+public-only, seed public canary và chứng minh nó thật sự được persist. Với `never_persist`, seed một
+canary rồi chứng minh query hash/value không nằm trên đĩa.
 
-**PASS state:** serialized list chứa public canary đúng một lần, private cache canary `0` lần;
-rehydrated UI chỉ có public. Sanitizer phải typed theo query key/item, query mới mặc định không
-persist; không dùng recursive generic blocklist.
+**PASS state:** mỗi serialized family được phép chứa public canary đúng một lần, private cache
+canary `0` lần; group count khớp public trackers; entry/subscription chỉ còn parent public;
+dashboard/session không lọt Query snapshot; rehydrated UI chỉ có public. Sanitizer phải typed theo
+query key/item, query mới mặc định không persist; không dùng recursive generic blocklist.
 
-**Raw receipt:** query key, before item counts `{public:1, private:1}`, after persisted counts
-`{public:1, private:0}`, UI locator counts. **FAIL:** chỉ chứng minh private row bị CSS ẩn, hoặc quét
-nhầm outbox namespace.
+**Raw receipt:** toàn bộ harvested key + manifest policy, before/after item counts, public-parent ID
+set, persisted/never-persist result và UI locator counts. **FAIL:** thiếu một key đang mount, chỉ
+chứng minh private row bị CSS ẩn, sanitizer VIA_PARENT không neo public tracker set, hoặc quét nhầm
+outbox namespace.
 
 ### A04 — IndexedDB private plaintext = 0 occurrence/0 byte match
 
-**Setup/steps:** persist private detail, mixed list, nested item/envelope cases trong local QA
-profile; quét byte/string toàn bộ **read-cache namespace** bằng unique private canary sau flush-to-
-disk. Quét tên store/key/value, không chỉ một object đã biết.
+**Setup/steps:** persist private detail và từng private-bearing family trong manifest (task, note,
+annotation, calendar-task, tracker, entry, subscription, group count/dashboard aggregate); quét
+byte/string toàn bộ **read-cache namespace** bằng unique private canary sau flush-to-disk. Quét tên
+store/key/value, không chỉ một object đã biết.
 
 **PASS state:** `TextEncoder`/string scan trả `occurrences=0`, `matching_bytes=0` trong read cache;
 private detail không dehydrate. Outbox namespace được báo riêng, không cộng nó vào invariant này.
@@ -527,25 +608,48 @@ discard để orphan row.
 
 ### A09 — Private-held không chặn public độc lập
 
-**Setup/steps:** khi gate locked, enqueue private row trước, descendant private, rồi public row độc
-lập phía sau; kích flush.
+**Setup/steps:** chạy ba case tách biệt với fresh context: (a) gate locked, enqueue private parent +
+descendant rồi public row độc lập; (b) session hết hạn tạo `auth_hold` + descendant rồi public row;
+(c) business 422 làm parent `failed`. Kích flush, sau đó unlock/login/discard theo đúng case.
 
-**PASS state:** private parent=`private_hold`, descendant hold/suppressed đúng contract; public row
-vẫn gửi thành công và bị remove. Sau unlock, private chain chạy; nếu server còn 404/409 thì park đúng
-thay vì nuốt.
+**PASS state:** (a) parent và descendants đều exact `private_hold`, public row vẫn gửi/remove; unlock
+đưa cùng chain về runnable và gửi theo dependency; (b) parent + descendants exact `auth_hold`, login
+đưa chúng về runnable; (c) chỉ parent exact `failed`, descendants exact `suppressed`. Discard parent
+xoá toàn bộ descendants trong cả ba case, nhưng không xoá public độc lập. Sau unlock, nếu server còn
+404/409 thì parent thành `failed` và descendants thành `suppressed`, không coi success.
 
-**Raw receipt:** insertion order, state transitions và request order chứng minh public đi qua row
-private đang hold. **FAIL:** FIFO toàn cục đứng vô hạn, hoặc flusher gửi private khi locked.
+**Raw receipt:** insertion order, exact state từng operation ID trước/sau điều kiện được giải,
+request order và cascade sau fail/discard. **FAIL:** dùng chung chữ “hold/suppressed”, descendant
+private/auth bị suppress vĩnh viễn, descendant failed còn runnable, FIFO toàn cục đứng vô hạn, hoặc
+flusher gửi private khi locked.
 
 ### A10 — Response-lost idempotency trên mọi POST create được phủ
 
-Mọi case dùng harness response-lost §2.3: real API + PG commit xảy ra, client nhận abort, rồi retry
-cùng bytes. Tách bốn contract, không ép mọi POST vào cùng khuôn:
+Mọi case dùng harness response-lost §2.3 và có **hai receipt nối nhau**: L1 chứng minh real API + PG
+commit/replay contract; browser/outbox lane gọi chính proxy đó để chứng minh state client. Ngay trước
+dispatch ghi `operation_id`, `attempts=A`, client UUID/path và payload digest. Proxy chỉ abort sau
+upstream-completed + commit-probe. Ngay sau client nhận network abort phải assert cùng row:
+
+```text
+state = outcome_unknown
+operation_id/client UUID/path/payload digest = không đổi
+attempts = A + 1
+next_attempt_at = mốc backoff hữu hạn đã inject clock
+```
+
+Chỉ sau assertion này mới tiến clock và retry cùng bytes; server `200` replay mới được remove row.
+Case đối chứng cắt mạng/Web Lock trước dispatch phải ghi `not_attempted`, attempts vẫn `A`, không có
+upstream marker và không được đổi thành `outcome_unknown`. Route fulfillment, fake DB hoặc unit
+classifier object không thay hai receipt trên. Tách bốn contract, không ép mọi POST vào cùng khuôn:
 
 1. **Entity UUID create:** inventory toàn bộ create sau 010/011; gửi cùng client UUIDv7/payload,
    mô phỏng commit rồi response mất, retry đúng command. Tối thiểu task-item, note-item,
    calendar-event và mọi entity create còn lại: first `201`, replay `200`, SQL count `1`; replay
-   không update payload cũ. UUID khác nhưng business name trùng vẫn `409` thật.
+   không update payload cũ. UUID khác nhưng business name trùng chỉ `409` cho
+   `calendar_source`, `tracker_group`, `tracker`, `subscription` theo contract hiện hữu. Task,
+   note, calendar-event, day-annotation, entry và item phải chứng minh cùng title/label/content vẫn
+   được phép tạo row khác; 409 ở các resource đó là lỗi test hoặc conflict UUID thật, không phải
+   duplicate-name success.
 2. **Calendar import:** queue đúng một normalized `ImportRequest`, không một row/event. Mất response
    rồi replay **cùng normalized request**; replace-all chạy atomic, response theo contract, final
    normalized event set/count giống hệt và không duplicate/partial old+new set.
@@ -561,9 +665,11 @@ cùng bytes. Tách bốn contract, không ép mọi POST vào cùng khuôn:
    idempotency: first committed Entry thắng, response sau `created=false` + ID của winner; không tạo
    Entry thứ hai và `occurred_at` của loser không được ghi đè.
 
-**Raw receipt:** route inventory, QA UUID/normalized-request digest/dispatch_id/entry_id/occurred_at,
-upstream-completed + commit-probe + client-abort, retry status + `created`, per-table/event-set count,
-expiry/status before/after và side-effect counter. **FAIL/stop:** route
+**Raw receipt:** route inventory, operation state timeline trước dispatch → `outcome_unknown` →
+remove, QA UUID/normalized-request digest/dispatch_id/entry_id/occurred_at, upstream-completed +
+commit-probe + client-abort, retry status + `created`, per-table/event-set count,
+expiry/status before/after và side-effect counter. **FAIL/stop:** row ở `pending`/`not_attempted` sau
+abort đã dispatch, attempts/digest/UUID không khớp timeline, route
 entity create chưa nhận client UUID, retry sinh UUID mới, import tạo per-event commands hoặc partial
 replace, renew tăng hai kỳ/`created=true` lần hai, confirm làm rơi/đổi ba field hoặc tạo Entry thứ
 hai, duplicate count >1, hoặc test dùng route fulfillment/mock DB/abort trước commit.
@@ -657,8 +763,9 @@ cuối màn.
 24×24, gap ≥8px, input font ≥16px; panel/popover portal không bị `overflow-hidden` cắt; focus ring/
 status icon non-text contrast ≥3:1; text contrast đúng WCAG; keyboard order không trap.
 
-**Raw receipt:** JSON selector + rect + gap + font + computed colors/ratio + scrollWidth. **FAIL:**
-ước lượng bằng screenshot, target dưới 24px, text/action tràn, hoặc input bị Safari zoom do <16px.
+**Raw receipt:** JSON selector + rect + gap + font + computed colors/ratio + scrollWidth; kèm ảnh
+390×844 của panel ≥30 rows theo checkpoint bắt buộc bên dưới. **FAIL:** dùng screenshot thay số đo,
+target dưới 24px, text/action tràn, hoặc input bị Safari zoom do <16px.
 
 ### A16 — Desktop 1280 × 800 và đường thay thế không-hover
 
@@ -668,8 +775,26 @@ lock/login hold affordance; kiểm hover chỉ là shortcut.
 **PASS state:** mọi thông tin/hành động vẫn tới được bằng click/tap/keyboard; focus visible, không
 trap; panel/dialog không cắt và trả focus về opener; layout không giãn vô lý hoặc ẩn trạng thái.
 
-**Raw receipt:** `innerWidth=1280`, tab order/focused selector sequence, rect/overflow, screenshot
-hash nếu dùng taste. **FAIL:** hover là đường duy nhất hoặc mobile pass được dùng thay desktop.
+**Raw receipt:** `innerWidth=1280`, tab order/focused selector sequence, rect/overflow và ảnh
+1280×800 của cùng panel ≥30 rows. **FAIL:** hover là đường duy nhất, thiếu ảnh checkpoint, hoặc mobile
+pass được dùng thay desktop.
+
+#### Ảnh + taste bắt buộc, không phải proof số đo
+
+Theo `docs/qa-framework.md` §3.E, lane L2 phải lưu ảnh synthetic vào
+`output/playwright/017-taste/` ở tối thiểu năm checkpoint **phân biệt**:
+
+1. outbox panel ≥30 rows ở 390×844, có banner/trạng thái đầu trang;
+2. cùng dataset/state ở 1280×800;
+3. `note-detail-dialog` với checklist dài để bắt regression UI chung;
+4. private gate locked, private row ở hold nhưng không lộ entity name;
+5. private gate vừa unlock, cùng chain đang/rồi flush.
+
+Mỗi ảnh phải có viewport/state/run ID, 2–4 câu taste, và một câu literal mô tả heading/banner đang
+hiện. Chạy `Get-FileHash -Algorithm MD5 output/playwright/017-taste/*` trước khi đọc nhận xét; hash
+phải khác nhau cho năm checkpoint. Ảnh chỉ chứa fixture synthetic, đã crop vào app; không avatar,
+bookmark, email, PIN hoặc tab khác. Thiếu ảnh/hash/banner description ⇒ A15/A16/A20
+`[CHƯA VERIFY]`; ảnh không thay computed geometry/contrast.
 
 ### A17 — Production HTTPS, revision và secure-context capability
 
@@ -740,8 +865,9 @@ Report cuối phải có đúng 20 dòng A01–A20, mỗi dòng gắn lane và m
 - **BLOCKED:** conflict/stop condition, hai vòng thử raw nếu là block môi trường.
 
 **PASS state:** không acceptance nào bị đổi từ unverified thành pass; local/CI không được viết thành
-production/iPhone; screenshot có hash + mô tả; CI của PR code xanh đúng các check hiện hành và diff
-được đọc. **FAIL:** “all tests pass” không kèm raw summary, output bị tóm tắt, test skip không nói,
+production/iPhone; đủ năm screenshot checkpoint phân biệt có raw MD5 + heading/banner description +
+taste; CI của PR code xanh đúng các check hiện hành và diff được đọc. **FAIL:** “all tests pass”
+không kèm raw summary, output bị tóm tắt, test skip không nói, thiếu/trùng ảnh checkpoint,
 production commit không khớp, hoặc personal data/secret lọt artifact.
 
 ## 5. CI, PR và Definition of Done
