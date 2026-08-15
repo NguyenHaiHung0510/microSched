@@ -149,6 +149,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [lockedIds, setLockedIds] = useState<ReadonlySet<string>>(new Set())
   const [capturingIds, setCapturingIds] = useState<ReadonlySet<string>>(new Set())
+  const createReturnRef = useRef<HTMLButtonElement | null>(null)
   const unlockTimers = useRef<Map<string, number>>(new Map())
 
   useEffect(() => {
@@ -352,7 +353,13 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             <Plus data-icon="inline-start" />
             Nhóm mới
           </Button>
-          <Button size="lg" className="min-h-11" onClick={() => setCreateOpen(true)}>
+          <Button
+            ref={createReturnRef}
+            size="lg"
+            className="min-h-11"
+            data-testid="tracker-create"
+            onClick={() => setCreateOpen(true)}
+          >
             <Plus data-icon="inline-start" />
             Tracker mới
           </Button>
@@ -617,7 +624,15 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       </Card>
 
       <Dialog open={createOpen} onOpenChange={(open) => !open && setCreateOpen(false)}>
-        <DialogContent data-testid="tracker-dialog">
+        <DialogContent
+          data-testid="tracker-dialog"
+          onCloseAutoFocus={(event) => {
+            const opener = createReturnRef.current
+            if (!opener?.isConnected) return
+            event.preventDefault()
+            opener.focus()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Tracker mới</DialogTitle>
             <DialogDescription>Tạo một nút ghi một chạm mới.</DialogDescription>

@@ -91,6 +91,7 @@ export function TrackerForm({
       <label className="block space-y-1.5 text-sm font-semibold">
         <span>Tên tracker</span>
         <Input
+          data-testid="tracker-name-input"
           className="h-10 bg-card"
           value={name}
           maxLength={150}
