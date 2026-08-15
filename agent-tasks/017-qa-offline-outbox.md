@@ -198,10 +198,20 @@ $qaPgPassword = [guid]::NewGuid().ToString('N')
 $qaPgDatabase = 'microsched_ci'
 $qaPgCreated = $false
 $qaPgSucceeded = $false
-$qaHadMigratorUrl = Test-Path Env:NEON_MIGRATOR_URL
-$qaOldMigratorUrl = if ($qaHadMigratorUrl) { $env:NEON_MIGRATOR_URL } else { $null }
-$qaHadRemoteFlag = Test-Path Env:ALLOW_REMOTE_PG_TESTS
-$qaOldRemoteFlag = if ($qaHadRemoteFlag) { $env:ALLOW_REMOTE_PG_TESTS } else { $null }
+$qaProxy = $null
+$qaProxyPid = $null
+$qaEnvNames = @(
+  'NEON_MIGRATOR_URL', 'DATABASE_URL', 'APP_ENV', 'OAUTH_STATE_SECRET',
+  'SESSION_COOKIE_SECURE', 'ENABLE_INPROCESS_CRON', 'ALLOW_REMOTE_PG_TESTS'
+)
+$qaEnvSnapshot = @{}
+foreach ($qaEnvName in $qaEnvNames) {
+  $qaExists = Test-Path "Env:$qaEnvName"
+  $qaEnvSnapshot[$qaEnvName] = @{
+    Exists = $qaExists
+    Value = if ($qaExists) { (Get-Item "Env:$qaEnvName").Value } else { $null }
+  }
+}
 $qaOldNativePreference = $PSNativeCommandUseErrorActionPreference
 $qaOldErrorPreference = $ErrorActionPreference
 $PSNativeCommandUseErrorActionPreference = $true
@@ -230,7 +240,13 @@ try {
   }
   if (-not $qaPgHealthy) { throw 'QA017 Postgres unhealthy' }
 
-  $env:NEON_MIGRATOR_URL = "postgresql://${qaPgUser}:${qaPgPassword}@127.0.0.1:${qaPgPort}/${qaPgDatabase}"
+  $qaLocalDatabaseUrl = "postgresql://${qaPgUser}:${qaPgPassword}@127.0.0.1:${qaPgPort}/${qaPgDatabase}"
+  $env:NEON_MIGRATOR_URL = $qaLocalDatabaseUrl
+  $env:DATABASE_URL = $qaLocalDatabaseUrl
+  $env:APP_ENV = 'local'
+  $env:OAUTH_STATE_SECRET = ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
+  $env:SESSION_COOKIE_SECURE = 'false'
+  $env:ENABLE_INPROCESS_CRON = 'false'
   Remove-Item Env:ALLOW_REMOTE_PG_TESTS -ErrorAction SilentlyContinue
 
   Set-Location backend
@@ -254,25 +270,68 @@ try {
   )
   uv run pytest -m pg --collect-only -q $qa017PgNodes
   uv run pytest -m pg -vv $qa017PgNodes
+
+  Set-Location $qaStartLocation
+  Set-Location frontend
+  npm run build
+  Set-Location $qaStartLocation
+
+  $qaExistingListener = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 4180 `
+    -State Listen -ErrorAction SilentlyContinue
+  if ($qaExistingListener) { throw 'Port 4180 đã bị chiếm; dừng để xác định chủ sở hữu' }
+
+  $qaProxy = Start-Process uv `
+    -ArgumentList @('run','python','-m','tests.support.response_lost_proxy',
+                    '--host','127.0.0.1','--port','4180','--static','../frontend/dist') `
+    -WorkingDirectory (Resolve-Path 'backend') -WindowStyle Hidden -PassThru
+  $qaProxyPid = $qaProxy.Id
+  $qaProxyReady = $false
+  foreach ($attempt in 1..20) {
+    try {
+      $health = Invoke-RestMethod 'http://127.0.0.1:4180/__qa__/health' -TimeoutSec 2
+      if ($health.status -eq 'ok') { $qaProxyReady = $true; break }
+    }
+    catch { Start-Sleep -Seconds 1 }
+  }
+  if (-not $qaProxyReady) { throw 'response-lost proxy unhealthy' }
+
+  Set-Location frontend
+  npx playwright test --config=playwright.response-lost.config.ts e2e/offline-outbox-response-lost.spec.ts
   $qaPgSucceeded = $true
 }
 finally {
   try {
     Set-Location $qaStartLocation
-    if ($qaPgCreated) {
-      if (-not $qaPgSucceeded) { docker logs --tail 100 $qaPgName }
-      $qaActualName = docker inspect --format '{{.Name}}' $qaPgName
-      if ($qaActualName -ne "/$qaPgName") { throw "Refuse cleanup: unexpected container $qaActualName" }
-      docker stop $qaPgName
+    if ($qaProxyPid -and (Get-Process -Id $qaProxyPid -ErrorAction SilentlyContinue)) {
+      taskkill /PID $qaProxyPid /T /F
+      Wait-Process -Id $qaProxyPid -Timeout 10 -ErrorAction SilentlyContinue
     }
+    if ($qaProxyPid -and (Get-Process -Id $qaProxyPid -ErrorAction SilentlyContinue)) {
+      throw "response-lost proxy parent PID $qaProxyPid vẫn còn"
+    }
+    $qaRemainingListener = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 4180 `
+      -State Listen -ErrorAction SilentlyContinue
+    if ($qaRemainingListener) { throw 'response-lost proxy child/port 4180 vẫn còn' }
   }
   finally {
-    if ($qaHadMigratorUrl) { $env:NEON_MIGRATOR_URL = $qaOldMigratorUrl }
-    else { Remove-Item Env:NEON_MIGRATOR_URL -ErrorAction SilentlyContinue }
-    if ($qaHadRemoteFlag) { $env:ALLOW_REMOTE_PG_TESTS = $qaOldRemoteFlag }
-    else { Remove-Item Env:ALLOW_REMOTE_PG_TESTS -ErrorAction SilentlyContinue }
-    $PSNativeCommandUseErrorActionPreference = $qaOldNativePreference
-    $ErrorActionPreference = $qaOldErrorPreference
+    try {
+      if ($qaPgCreated) {
+        if (-not $qaPgSucceeded) { docker logs --tail 100 $qaPgName }
+        $qaActualName = docker inspect --format '{{.Name}}' $qaPgName
+        if ($qaActualName -ne "/$qaPgName") { throw "Refuse cleanup: unexpected container $qaActualName" }
+        docker stop $qaPgName
+      }
+    }
+    finally {
+      foreach ($qaEnvName in $qaEnvNames) {
+        if ($qaEnvSnapshot[$qaEnvName].Exists) {
+          Set-Item "Env:$qaEnvName" $qaEnvSnapshot[$qaEnvName].Value
+        }
+        else { Remove-Item "Env:$qaEnvName" -ErrorAction SilentlyContinue }
+      }
+      $PSNativeCommandUseErrorActionPreference = $qaOldNativePreference
+      $ErrorActionPreference = $qaOldErrorPreference
+    }
   }
 }
 ```
@@ -401,32 +460,11 @@ origin**: serve `frontend/dist`, forward `/api/*` vào real FastAPI + throwaway 
 rồi đóng downstream socket không gửi status/body. Browser phải quan sát fetch abort thật
 (`net::ERR_EMPTY_RESPONSE`/`TypeError` tương đương), không `route.abort()` hoặc fulfillment.
 
-Lifecycle chuẩn, chạy sau `npm run build` và khi PG L1 còn sống:
-
-```powershell
-$qaStartLocation = Get-Location
-$qaProxy = Start-Process uv `
-  -ArgumentList @('run','python','-m','tests.support.response_lost_proxy',
-                  '--host','127.0.0.1','--port','4180','--static','../frontend/dist') `
-  -WorkingDirectory (Resolve-Path 'backend') -WindowStyle Hidden -PassThru
-try {
-  $qaProxyReady = $false
-  foreach ($attempt in 1..20) {
-    try {
-      $health = Invoke-RestMethod 'http://127.0.0.1:4180/__qa__/health' -TimeoutSec 2
-      if ($health.status -eq 'ok') { $qaProxyReady = $true; break }
-    }
-    catch { Start-Sleep -Seconds 1 }
-  }
-  if (-not $qaProxyReady) { throw 'response-lost proxy unhealthy' }
-  Set-Location frontend
-  npx playwright test --config=playwright.response-lost.config.ts e2e/offline-outbox-response-lost.spec.ts
-}
-finally {
-  Set-Location $qaStartLocation
-  if ($qaProxy -and -not $qaProxy.HasExited) { Stop-Process -Id $qaProxy.Id }
-}
-```
+Lifecycle chuẩn nằm trong **cùng outer `try/finally` của L1 ở trên**: PG còn sống, cả
+`NEON_MIGRATOR_URL` và app `DATABASE_URL` cùng trỏ URL local synthetic, `APP_ENV=local`, OAuth secret
+synthetic, cookie local và cron tắt trước khi spawn proxy. Browser chạy xong mới `taskkill /T` exact
+proxy PID, chờ parent biến mất, assert port 4180 không còn listener, rồi mới stop PG và restore toàn bộ
+env/location/preferences. Không được tách proxy/Playwright thành command chạy sau cleanup L1.
 
 Dedicated Playwright config phải `baseURL=http://127.0.0.1:4180`, không reuse server/port, và fail
 nếu port đã bị chiếm. Proxy chỉ nhận synthetic fixture; DB URL qua env local không được truyền trong
