@@ -104,6 +104,7 @@ class TaskRead(BaseModel):
     status: TaskStatus
     priority: TaskPriority | None
     due_at: datetime | None
+    completed_at: datetime | None
     is_private: bool
     pinned: bool
     items: list[TaskItemRead]
@@ -177,6 +178,7 @@ class TaskStore:
             status=task.status,
             priority=task.priority,
             due_at=task.due_at,
+            completed_at=task.completed_at,
             is_private=task.is_private,
             pinned=task.pinned,
             items=[self._item_read(item) for item in items],
@@ -233,6 +235,7 @@ class TaskStore:
             "title": _sealed(payload.title) if payload.is_private else payload.title,
             "body_md": _sealed(payload.body_md) if payload.is_private else payload.body_md,
             "status": payload.status,
+            "completed_at": datetime.now(UTC) if payload.status == "completed" else None,
             "priority": payload.priority,
             "due_at": payload.due_at,
             "is_private": payload.is_private,
@@ -293,7 +296,7 @@ class TaskStore:
         """Patch a task, preserving the trigger-required toggle ordering."""
         changes = payload.model_dump(exclude_unset=True)
         wants_toggle = "is_private" in changes
-        task = await self._parent(db, auth, task_id, for_update=wants_toggle)
+        task = await self._parent(db, auth, task_id, for_update=wants_toggle or "status" in changes)
         if task is None:
             return None
         items = await self._items(db, task_id)
@@ -335,6 +338,10 @@ class TaskStore:
             if "body_md" in changes:
                 body_md = changes["body_md"]
                 task.body_md = _sealed(body_md) if task.is_private else body_md
+
+        old_status = task.status
+        if "status" in changes and changes["status"] != old_status:
+            task.completed_at = datetime.now(UTC) if changes["status"] == "completed" else None
 
         for field in ("status", "priority", "due_at", "pinned"):
             if field in changes:

@@ -129,6 +129,10 @@ class Task(UUIDTimestampModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+    completed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     is_private: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),
@@ -177,6 +181,10 @@ class Note(UUIDTimestampModel, table=True):
     __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
         CheckConstraint(
+            "priority IS NULL OR priority IN ('p1', 'p2', 'p3')",
+            name="priority_values",
+        ),
+        CheckConstraint(
             "NOT is_private OR ("
             "(title IS NULL OR title LIKE 'enc:v1:%') "
             "AND (body_md IS NULL OR body_md LIKE 'enc:v1:%'))",
@@ -191,6 +199,11 @@ class Note(UUIDTimestampModel, table=True):
         default=None,
         sa_column=Column(Vector(), nullable=True),
     )
+    pinned: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+    )
+    priority: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     is_private: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),
