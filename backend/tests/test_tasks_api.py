@@ -138,6 +138,158 @@ def test_store_serializes_toggle_and_item_write_on_the_parent_row(pg_dsn):
     asyncio.run(scenario())
 
 
+def test_store_serializes_concurrent_status_changes_before_reading_completed_at(pg_dsn):
+    """A later completion reads the opener's committed status, never a stale one."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        monitor = await asyncpg.connect(pg_dsn)
+        store = TaskStore()
+        auth = _auth()
+        task_id = None
+        writer = None
+        initial_completed_at = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
+        try:
+            async with maker() as setup:
+                created = await store.create(
+                    setup, auth, TaskCreate(title="Chuyển trạng thái tuần tự", status="completed")
+                )
+                task_id = created.id
+                await setup.execute(
+                    text(
+                        "UPDATE microsched.task "
+                        "SET completed_at = :completed_at "
+                        "WHERE id = :task_id"
+                    ),
+                    {"completed_at": initial_completed_at, "task_id": task_id},
+                )
+                await setup.commit()
+
+            async with maker() as opener, maker() as completer:
+                completer_pid = (
+                    await completer.execute(text("SELECT pg_backend_pid()"))
+                ).scalar_one()
+                opened = await store.update(opener, auth, task_id, TaskUpdate(status="open"))
+                assert opened is not None
+                assert opened.completed_at is None
+
+                async def complete_after_lock():
+                    completed = await store.update(
+                        completer,
+                        auth,
+                        task_id,
+                        TaskUpdate(status="completed", title="Hoàn thành sau khi mở lại"),
+                    )
+                    await completer.commit()
+                    return completed
+
+                writer = asyncio.create_task(complete_after_lock())
+                await _wait_until_blocked(monitor, completer_pid)
+                await opener.commit()
+                completed = await asyncio.wait_for(writer, timeout=10.0)
+                assert completed is not None
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                stored = await conn.fetchrow(
+                    "SELECT status, completed_at, title FROM microsched.task WHERE id = $1",
+                    task_id,
+                )
+                assert stored["status"] == "completed"
+                assert stored["completed_at"] is not None
+                assert stored["completed_at"] != initial_completed_at
+                assert stored["title"] == "Hoàn thành sau khi mở lại"
+            finally:
+                await conn.close()
+        finally:
+            if writer is not None and not writer.done():
+                writer.cancel()
+                with contextlib.suppress(BaseException):
+                    await writer
+            await _cleanup(pg_dsn, [task_id] if task_id is not None else [])
+            await monitor.close()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_task_uuidv7_completed_create_replay_keeps_the_original_data(pg_dsn):
+    """A replay keeps the first completed payload and returns the existing HTTP semantics."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        app = create_app()
+        auth_state = {"value": _auth()}
+        task_id = UUID("0190a0b0-c0d0-7e00-8000-000000000020")
+
+        async def current_session() -> AuthSession:
+            return auth_state["value"]
+
+        async def request_session():
+            async with maker() as db:
+                try:
+                    yield db
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+        app.dependency_overrides[require_session] = current_session
+        app.dependency_overrides[get_session] = request_session
+        transport = httpx.ASGITransport(app=app)
+        initial_payload = {
+            "id": str(task_id),
+            "title": "Bản gốc đã hoàn thành",
+            "body_md": "Nội dung gốc phải được giữ nguyên.",
+            "status": "completed",
+            "priority": "p1",
+            "items": ["Mục gốc"],
+        }
+        replay_payload = {
+            "id": str(task_id),
+            "title": "Không được ghi đè",
+            "body_md": "Nội dung replay khác.",
+            "status": "open",
+            "priority": "p3",
+            "items": ["Mục replay"],
+        }
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = await client.post("/api/tasks", json=initial_payload)
+                assert created.status_code == 201
+                completed_at = created.json()["completed_at"]
+                assert completed_at is not None
+
+                replayed = await client.post("/api/tasks", json=replay_payload)
+                assert replayed.status_code == 200
+                replay = replayed.json()
+                assert replay["id"] == str(task_id)
+                assert replay["status"] == "completed"
+                assert replay["completed_at"] == completed_at
+                assert replay["title"] == initial_payload["title"]
+                assert replay["body_md"] == initial_payload["body_md"]
+                assert replay["priority"] == initial_payload["priority"]
+                assert [item["content"] for item in replay["items"]] == initial_payload["items"]
+
+                persisted = await client.get(f"/api/tasks/{task_id}")
+                assert persisted.status_code == 200
+                assert persisted.json()["status"] == "completed"
+                assert persisted.json()["completed_at"] == completed_at
+                assert persisted.json()["title"] == initial_payload["title"]
+                assert persisted.json()["body_md"] == initial_payload["body_md"]
+                assert persisted.json()["priority"] == initial_payload["priority"]
+                assert [item["content"] for item in persisted.json()["items"]] == initial_payload[
+                    "items"
+                ]
+        finally:
+            await _cleanup(pg_dsn, [task_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_task_crud_and_nested_items_through_http(pg_dsn):
     """Happy path covers the list envelope, updates, filters, children, and deletes."""
 

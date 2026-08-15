@@ -3,8 +3,9 @@
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: không cần.**
 > **Trạng thái: OWNER-APPROVED — chủ duyệt triển khai 2026-08-13; migration đã refresh theo head
-> thật `0008` trước khi thi công. Ngày 2026-08-15, chủ authorize áp migration `0009` lên Neon sau
-> khi mọi preflight gate đạt, rồi merge sau catalog receipt read-only.**
+> thật `0008` trước khi thi công. Ngày 2026-08-15, chủ authorize **chạy tay** migration `0009` lên
+> Neon sau khi mọi preflight gate đạt; không tự áp migration hay deploy. Merge vẫn sau catalog receipt
+> read-only.**
 > Phản biện: đã chạy chung một vòng với `012` 2026-08-02 (không tách riêng 1 lượt như dự tính ban đầu,
 > vì `012` viết trước làm lộ ra `020` không chỉ "migration thuần cộng cột" — cột `completed_at` có
 > logic nối dây thật). T1 đã vá mọi finding xác nhận đúng (xem §6 cuối file).
@@ -112,9 +113,10 @@ Một cột không ai ghi là một cột chết. Trong task store (`backend/app
   cột sau khi đã cutover thì phải backfill. Nếu chủ muốn UI, mở task riêng (`021`) sau khi nhìn thấy
   dữ liệu thật đã về.
 - **Không** đụng `task.status` CHECK. Việc `archived` thuộc `012` §3, đang hoãn.
-- **Không** tự áp migration lên Neon nếu chưa được chủ bật đèn — theo luật `CLAUDE.md`
-  ("migrations are never auto-applied on deploy"). `010a` §581 có tiền lệ chủ cho Codex tự chạy;
-  **task này chưa có tiền lệ đó**, phải hỏi.
+- **Không** tự áp migration hoặc deploy. Ngày **2026-08-15**, chủ authorize **chạy tay** `0009` lên
+  Neon **chỉ sau khi mọi preflight gate đạt**; đây không phải quyền thêm `release_command`, tự chạy
+  trong deploy, hay bỏ qua receipt. Luật `CLAUDE.md` ("migrations are never auto-applied on deploy")
+  vẫn giữ nguyên.
 - **Không** chạy `alembic downgrade` nhắm vào Neon, kể cả để test. `backend/alembic/env.py:19,27,34-36`
   đọc thẳng `neon_migrator_url` từ `backend/.env` mà **không có guard chặn remote host** — không có gì
   ở tầng Alembic tự ngăn một `downgrade -1` gõ nhầm chạy lên Neon thật. Round-trip test ở §5 mục 1

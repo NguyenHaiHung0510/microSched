@@ -296,7 +296,7 @@ class TaskStore:
         """Patch a task, preserving the trigger-required toggle ordering."""
         changes = payload.model_dump(exclude_unset=True)
         wants_toggle = "is_private" in changes
-        task = await self._parent(db, auth, task_id, for_update=wants_toggle)
+        task = await self._parent(db, auth, task_id, for_update=wants_toggle or "status" in changes)
         if task is None:
             return None
         items = await self._items(db, task_id)
