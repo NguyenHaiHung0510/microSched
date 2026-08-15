@@ -10,15 +10,15 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 
 | Nhãn | Trạng thái hiện hành |
 |---|---|
-| **LAST VERIFIED** | T1 receipt **2026-08-11**: `develop` production ở `400c1b51bd6de6eec6356948f45208192b96ac68`; `/api/readyz` khớp exact SHA, DB `up`; Fly có đúng một Machine `sin` healthy. Không còn PR product/security/dependency OPEN. |
-| **LIVE** | 011 integration/activation/observability đã merge qua **#115 / #117 / #125**; T1 production receipt ghi in-process timer enabled cùng startup/queue receipt. Security #113 đã release `v0.4` qua #116. Dependency #119–#124 và Alembic 1.19 (#122, sau reconciliation #127) đã merge/deploy. |
+| **LAST VERIFIED** | T1 receipt **2026-08-15**: `develop` production ở `ff11dd3cf9224d16842225aeda0aa6cb880044e5`; `/api/readyz.commit` khớp exact SHA, DB `up`; Fly có đúng một Machine `sin` health passing. |
+| **LIVE** | Task 020 đã merge/deploy qua **#132**; migration `0009` đã áp tay và raw catalog xác nhận trước merge. 011 integration/activation/observability đã merge qua **#115 / #117 / #125**. Security #113 đã release `v0.4` qua #116. Dependency #119–#124 và Alembic 1.19 (#122, sau reconciliation #127) đã merge/deploy. |
 | **LOCAL + CI ACCEPTANCE** | #127: metadata chỉ đổi tên; [Neon catalog read-only receipt](https://github.com/NguyenHaiHung0510/microSched/pull/127#issuecomment-5248899434) khớp 4 CHECK canonical names. #122: Alembic 1.19 `Migration QA` green với `migration_drift=empty` sau `upgrade head` lẫn `downgrade base → upgrade head`; CI 10/10 green trước merge. |
-| **IN FLIGHT** | PR **#132** triển khai Task 020 đang OPEN trên `feat/020-legacy-preserving-columns`; CI xanh tại `c1a8e565bc288df7e81607a4c60f7d36440a7223`. Task đã **OWNER-APPROVED** và migration đã refresh: `0009`, `down_revision = "0008"`. Cổng còn lại là adversarial review, catalog receipt read-only, preflight và merge; không suy ra production acceptance từ CI. |
-| **BLOCKED / OWNER DECISION** | #118 CSP đã đóng theo quyết định chủ — chưa có CSP replacement. Task 020 không còn chờ owner decision; chủ đã authorize **chạy tay** `0009` lên Neon **chỉ sau preflight**, không tự áp migration hay deploy. |
+| **IN FLIGHT** | PR **#133** hoàn thiện QA execution spec cho 017; PR **#131** reconcile contrast guardrail; PR **#134** sửa focus-return dialog Tracker mới. Mỗi PR vẫn cần exact-head review + CI trước merge; local receipt không phải production acceptance. |
+| **BLOCKED / OWNER DECISION** | #118 CSP đã đóng theo quyết định chủ — chưa có CSP replacement. Không còn owner decision mở cho Task 020. |
 | **SECURITY CAVEAT** | Không merge CSP “restrictive” mà vẫn có `unsafe-inline`/`unsafe-eval`. Nếu làm lại, cần task riêng: threat-model scope, UI/OAuth/PWA compatibility inventory và browser acceptance. |
-| **NEXT** | Đóng gate PR #132 theo thứ tự: adversarial review → catalog receipt read-only + mọi preflight → chạy tay `0009` trên Neon và query `information_schema.columns`/`pg_constraint` → merge. Không tự áp migration hay deploy; chỉ sau đó mới mở 012. QA thực tế còn lại của 011 và release `develop → main` vẫn là các gate riêng. |
+| **NEXT** | Đóng PR #133 trước để khóa QA contract 017; sau đó đóng exact-head CI/review/deploy cho #131 và #134, reconcile WIP 017 lên `develop` mới rồi tiếp tục implementation. **Không mở 012 trong nhịp này.** QA thực tế còn lại của 010/011 và release `develop → main` vẫn là các gate riêng. |
 | **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase; policy live ở `docs/devops-brief.md` §7 buộc scheduled follow-up, mốc agent 1/3/5/10/15/20 rồi 10 phút, và PR/deploy khoảng 2 phút. |
-| **OPEN QA DEBT** | `010a`: iPhone file picker / FileReader. `011a`: Lane 4 iPhone vật lý. `011`: mutation reload, controlled dispatch/không duplicate, Web Push iPhone và quan sát Neon idle. |
+| **OPEN QA DEBT** | `010a`: iPhone file picker / FileReader. `011a`: Lane 4 iPhone vật lý. `011`: mutation reload, controlled dispatch/không duplicate, Web Push iPhone và quan sát Neon idle. `016`: local browser contrast PASS; production và iPhone thật chưa verify. |
 
 ## Cách dùng
 1. Mở một task Codex Desktop mới trong repo này.
