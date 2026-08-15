@@ -82,9 +82,11 @@ Mỗi mục dưới đây phải có receipt raw, trạng thái `PASS`, `FAIL`, 
 1. Gửi dev-only mock PIN hợp lệ tới `/api/private/unlock`; response có
    `private_until` aware, xấp xỉ 36 phút kể từ server clock, và chỉ session hiện
    tại được mở.
-2. Reload hoặc mở tab thứ hai với session locked không được kế thừa private gate
-   ngoài contract của session đó. Không có private data trong URL/query/local
-   storage/cookie.
+2. Hai tab dùng cùng auth session/cookie phải cùng thấy `private_until`: đây là
+   contract server-side, không phải lỗi chia sẻ. Một auth session khác phải vẫn
+   locked. Test distinct-session phải tạo row/session cookie/context riêng, không
+   dùng lại cùng cookie rồi kỳ vọng tab thứ hai locked. Không có private data trong
+   URL/query/local storage/cookie.
 3. Sau `/api/private/lock` (`204`), UI xoá data private đang hiển thị trong cùng
    tab, mọi read private tiếp theo lại locked, còn public marker vẫn có.
 4. Unlock lại hiển thị đúng private marker; không tạo bản sao row và không đổi
@@ -102,8 +104,10 @@ Mỗi mục dưới đây phải có receipt raw, trạng thái `PASS`, `FAIL`, 
 
 ### P-04 — Global throttle và đổi PIN
 
-1. Trên DB throwaway, wrong PIN lần thứ 10, 20, 36 lần lượt mở các lock 5, 8,
-   18 phút; response locked là `429`, có `Retry-After` và không gọi verify PIN
+1. Trên DB throwaway, dùng fake clock hoặc helper synthetic reset/expire_throttle
+   của fixture để không bao giờ chờ thật 31 phút. Các lần sai thứ 10, 20, 36 lần
+   lượt mở các lock 5, 8, 18 phút; response locked là `429`, có `Retry-After` và
+   không gọi verify PIN
    khi đang locked. Xác nhận bằng raw `app_setting`, không chỉ UI.
 2. Sau lock cuối, counter reset theo contract; PIN đúng vẫn không bị ghi vào log.
 3. `POST /api/private/pin` dùng cùng throttle; current PIN sai không đổi hash,
@@ -116,16 +120,23 @@ Mỗi mục dưới đây phải có receipt raw, trạng thái `PASS`, `FAIL`, 
 ### P-05 — Privacy boundary khi transition
 
 Đo sau từng transition: locked → unlock, unlock → lock-now, TTL expiry, logout,
-401/session expiry và tab focus trở lại.
+401/session expiry và tab focus trở lại. Sau unlock được phép và phải thấy
+`QA016_PRIVATE_MARKER`; marker chỉ phải biến mất sau lock-now, TTL expiry, logout
+hoặc 401/session expiry.
 
-- Không còn `QA016_PRIVATE_MARKER` trong DOM visible, React/query cache, local
-  storage/session storage, URL, console, network response capture hoặc ảnh.
+- Sau lock-now/TTL/logout/401, không còn `QA016_PRIVATE_MARKER` trong DOM visible,
+  React/query cache, local storage/session storage, URL hoặc các response mới.
+  Network history trước transition có thể đã chứa marker; không yêu cầu xoá lịch sử
+  không thể xoá đó, mà phải redact artifact trước khi lưu và chứng minh request/
+  response sau transition không chứa marker.
 - Không hiện private title/body/name ở error, toast, dialog description, badge,
   page title, accessibility tree hoặc lock-screen text.
 - Không dùng “số lượng row = 0” hoặc thời điểm request để suy ra private
   existence trong UI.
-- Nếu browser devtools/Playwright capture được request body/response thì redact
-  artifact; không lưu artifact chứa mock private content ngoài run directory
+- Kiểm cả task, note, tracker, calendar/annotation và mọi surface private hiện có;
+  nếu surface chưa có fixture thì ghi `CHƯA VERIFY ĐƯỢC`, không suy ra từ surface
+  khác. Nếu browser devtools/Playwright capture được request body/response thì
+  redact artifact; không lưu artifact chứa mock private content ngoài run directory
   được owner chỉ định.
 
 ### P-06 — Contrast, focus, keyboard và touch
@@ -138,6 +149,9 @@ style/rendered color, không chỉ nhìn bằng mắt:
   non-text boundary cần nhận biết đạt ít nhất 3:1 với surface kề bên;
 - primary action, tab, dialog close và retry có hit area tối thiểu 44×44 CSS px
   theo HIG của thiết bị chính; không overflow ngang ở 390px;
+- PIN input có vùng thao tác hữu dụng tối thiểu 44×44 CSS px và rendered font-size
+  tối thiểu 16px; nếu rect production hiện là 32px thì lane là `FAIL`, không waive
+  theo kích thước visual hoặc kết quả Chromium khác;
 - keyboard Tab có focus visible, thứ tự hợp lý, dialog không trap ngoài chủ ý,
   Escape/close trả focus về trigger; không có hành vi chỉ sống bằng hover;
 - input PIN không zoom ngoài ý muốn trên iPhone, `inputmode`/maxlength đúng,
@@ -170,13 +184,31 @@ không thể thực hiện vì môi trường thì `CHƯA VERIFY ĐƯỢC`, khô
 | L2 browser | `cd frontend; npx playwright test e2e/private.spec.ts` ở mobile 390×844 và desktop 1280×800, production build/preview | UI gate, contrast, keyboard/touch, transitions | route mock không chứng minh API/production |
 | L3 CI | required `Backend checks`, `Frontend checks`, `Frontend e2e`, `Migration QA`, `Production dependency check`, `Repository hooks` theo workflow hiện hành | commit/CI reproducibility | CI xanh không chứng minh production acceptance |
 | L4 production read-only | gọi `GET /api/readyz`, assert JSON `commit` đúng SHA dự kiến và `db=up`; browser trên `https://microsched.fly.dev` bằng account allowlist; chỉ synthetic/mock scope được owner cho phép | deploy/HTTPS/cookie/locked privacy surface | không bật flag, không nhập credential thật vào artifact, không claim private unlock nếu chưa được owner cho phép |
-| L5 iPhone | owner handoff trên iPhone vật lý, Safari/PWA Home Screen, 390×844 tương đương; crop ảnh trước khi lưu | focus, keyboard, dialog, safe-area, lock/expiry visual thật | Chromium mobile emulation không thay iPhone |
+| L5 iPhone | owner handoff trên iPhone vật lý, Safari/PWA Home Screen; đọc và ghi `window.innerWidth`/`window.innerHeight` thật của thiết bị trước mỗi viewport assertion; crop ảnh trước khi lưu | focus, keyboard, dialog, safe-area, lock/expiry visual thật | 390×844 chỉ là browser lane; Chromium mobile emulation không thay iPhone |
 
 L1 phải restore toàn bộ env, cache settings và DB fixture trong `finally`; nếu
 container/process chết giữa chừng vẫn chạy cleanup rồi xác nhận `docker ps` không
 còn container test. Không dùng quyền migrator/owner trong runtime app.
 
-## 3. Production gate và explicit no-activation
+## 3. Mapping acceptance → test/fixture/receipt
+
+Tên bắt đầu bằng **required-new** là contract phải tạo khi thi công; không phải
+file/test đã tồn tại và không được báo PASS trước khi có receipt. Tên không có
+prefix đó là test/fixture hiện có ở base.
+
+| ID | Existing hoặc required-new test/fixture | Command/lane | Expected receipt |
+|---|---|---|---|
+| P-01 | Existing `backend/tests/test_private_api.py::test_locked_task_writes_return_403_without_echoing_private_content`, `::test_private_endpoints_are_all_guarded_without_a_cookie`, `frontend/e2e/private.spec.ts::correct PIN opens private tasks and changes the badge`; **required-new** `backend/tests/test_qa_016_product.py::test_all_private_surfaces_are_filtered_without_existence_oracle`, `frontend/e2e/private-product.spec.ts::test_locked_state_hides_all_private_surfaces` | `cd backend; uv run pytest -m pg tests/test_private_api.py tests/test_qa_016_product.py`; `cd frontend; npx playwright test e2e/private-product.spec.ts` with existing `frontend/playwright.config.ts` | locked read/write contract, zero private marker/count oracle, public surface remains usable; required-new test is not PASS until implemented |
+| P-02 | Existing `backend/tests/test_private_gate.py::test_unlock_and_lock_now_reload_the_real_session_row`, `::test_authenticated_reads_never_roll_private_until`, `frontend/e2e/private.spec.ts::correct PIN opens private tasks and changes the badge`, `::lock now removes private task responses before the locked refetch`; **required-new** `backend/tests/test_qa_016_product.py::test_same_cookie_tabs_share_until_and_distinct_session_stays_locked`, `frontend/e2e/private-product.spec.ts::test_lock_api_failure_does_not_claim_locked` | PG + browser L1/L2; fixture creates two distinct session rows/cookie contexts, not two tabs with same cookie | same auth session tabs share `private_until`; distinct session locked; lock-now `204` clears; lock API failure leaves truthful unlocked UI |
+| P-03 | Existing `backend/tests/test_private_gate.py::test_authenticated_reads_never_roll_private_until`; existing `frontend/src/PrivateGate.tsx` timer/visibility path is implementation input, not receipt; **required-new** `frontend/e2e/private-product.spec.ts::test_hard_ttl_rechecks_after_visibility_and_focus_without_rolling`, `backend/tests/test_qa_016_product.py::test_private_until_is_not_extended_by_reads` | Browser L2 with fake clock/page visibility seam; PG L1 with injected time or direct row check; never wait 36 real minutes | deadline auto-locks without reload; background→foreground rechecks; repeated reads do not extend server deadline; post-deadline write blocked |
+| P-04 | Existing `backend/tests/test_private_gate.py::test_throttle_locks_exactly_at_10_20_36_and_resets_after_final_lock`, `::test_set_pin_shares_throttle_and_serializes_with_lazy_bootstrap`; existing helper `isolated_settings` and `expire_throttle` in same file; **required-new** `backend/tests/test_qa_016_product.py::test_throttle_scenario_uses_fake_clock_or_expire_helper`, `frontend/e2e/private-product.spec.ts::test_pin_rotation_preserves_gate_and_never_echoes_pin` | `cd backend; uv run pytest -m pg tests/test_private_gate.py tests/test_qa_016_product.py`; use fake clock or synthetic reset/`expire_throttle`, never sleep 31m; browser L2 | exact 10/20/36→5/8/18, `429`/`Retry-After`, no verify while locked, hash unchanged on wrong current PIN, rotation does not unlock/extend, no PIN artifact |
+| P-05 | Existing `backend/tests/test_private_gate.py::test_unlock_and_lock_now_reload_the_real_session_row`; **required-new** `backend/tests/test_qa_016_product.py::test_all_private_surfaces_clear_after_lock_ttl_logout_and_401`, `frontend/e2e/private-product.spec.ts::test_storage_cache_and_post_transition_network_are_redacted` | PG/browser L1/L2; inspect task/note/tracker/calendar/annotation fixtures where available; report pre-transition network only after redaction | marker visible after authorized unlock; absent after lock/TTL/logout/401 from DOM/query/local/session storage and future responses; historical captures not falsely claimed deleted; no errors/toasts/existence oracle |
+| P-06 | Existing `frontend/e2e/private.spec.ts::correct PIN opens private tasks and changes the badge` measures normal/focus contrast; **required-new** `frontend/e2e/private-product.spec.ts::test_pin_input_rect_font_and_actions_meet_mobile_contract`, `frontend/e2e/private-product.spec.ts::test_transition_contrast_is_measured_after_settle` | `cd frontend; npx playwright test e2e/private.spec.ts e2e/private-product.spec.ts` with existing `frontend/playwright.config.ts` at 390×844/1280×800; L5 reads actual iPhone dimensions | text/non-text ratios, action and PIN input usable rect ≥44×44, PIN rendered font ≥16px, focus/keyboard/dialog/overflow; current 32px rect is `FAIL`, never waived |
+| P-07 | Existing browser contrast tests are guard inputs only; **required-new** `backend/tests/test_qa_016_product.py::test_locked_write_red_proof`, `frontend/e2e/private-product.spec.ts::test_ttl_and_lock_red_proofs`, `::test_contrast_threshold_red_proof` | throwaway RED→GREEN run in L1/L2; temporary patch restored before commit | each removed gate produces expected red output, restoration returns green; lock API failure cannot be shown as locked; no broken guard committed |
+
+L4/L5 mapping: **required-new** `frontend/e2e/private-product.spec.ts::test_production_locked_surface` runs read-only after `GET /api/readyz` JSON `commit`/`db` receipt; **required-new** owner iPhone handoff records actual `window.innerWidth`/`window.innerHeight`, OS/Safari/PWA mode and cropped screenshot. It must not call 390×844 an iPhone-equivalent size.
+
+## 4. Production gate và explicit no-activation
 
 Trước L4/L5, người chạy phải ghi receipt current:
 
@@ -189,7 +221,7 @@ Trước L4/L5, người chạy phải ghi receipt current:
 production acceptance. Nếu thiếu authorization hoặc không có synthetic fixture
 được owner duyệt, L4/L5 ghi `CHƯA VERIFY ĐƯỢC`; không bịa tài khoản/credential.
 
-## 4. Report và artifact policy
+## 5. Report và artifact policy
 
 Report append-only phải có:
 
@@ -205,7 +237,7 @@ Report append-only phải có:
 Không sửa `agent-tasks/README.md` để biến receipt cũ thành PASS. Không gọi
 `/api/healthz` là readyz; không gọi CI/docs là production proof.
 
-## 5. Quan hệ với spec hiện có
+## 6. Quan hệ với spec hiện có
 
 - `agent-tasks/016-private-unlock.md`: implementation/security contract và unit/PG
   DoD; file này thêm product matrix, rendered contrast, production/iPhone và

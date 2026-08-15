@@ -71,9 +71,12 @@ Với cùng `dispatch_id` ổn định, kiểm cả tracker public/private và s
   contract; subscription gắn parent private cũng generic;
 - `event.data` null/JSON hỏng trong service worker vẫn hiện fallback notification,
   không throw silently;
-- log, DB row, response, screenshot và notification không chứa endpoint, VAPID
-  private key, cookie, auth token hay synthetic private marker ngoài fixture cần
-  kiểm; report chỉ ghi digest/ID đã redact.
+- synthetic endpoint được phép tồn tại trong DB fixture throwaway để kiểm natural
+  key/upsert/delete; không được echo endpoint đó vào log, report, screenshot,
+  response ngoài field contract, hoặc notification payload. VAPID private key,
+  cookie và auth token luôn bị cấm ở mọi nơi. Synthetic private marker chỉ được
+  xuất hiện trong fixture/response nội bộ cần kiểm, không xuất hiện trong log,
+  report, screenshot hay notification; report chỉ ghi digest/ID đã redact.
 
 ### W-03 — Durable dispatch và response-lost
 
@@ -176,10 +179,42 @@ read-only/locked surface và ghi `CHƯA VERIFY ĐƯỢC`; không tự đặt
 
 ## 3. Service worker, UI và iPhone
 
-### 3.1 Bản build thật
+### 3.1 Bản build thật — dedicated real-SW lane
 
-Chạy `npm run build`, inspect `dist/sw.js` và serve preview/production build với
-service workers **allow**. Không dùng `serviceWorkers: 'block'` để tick PWA behavior.
+Required-new test contract: `frontend/e2e/reminder-pwa-real-sw.spec.ts` và
+`frontend/playwright.qa.config.ts`. Config này phải chạy production build/preview
+riêng trên port `4174`, ví dụ web server command
+`npm run build && npm run preview -- --host 127.0.0.1 --port 4174`, `baseURL`
+`http://127.0.0.1:4174`, `serviceWorkers: 'allow'`, không reuse dev server, và
+giữ hai project mobile/desktop. Đây là lane riêng với config hiện hành ở đó
+`serviceWorkers: 'block'`; không sửa config CI chung để giả PWA xanh.
+
+Test phải:
+
+1. `GET /` trên bản preview, chờ `navigator.serviceWorker.ready`, assert
+   `registration.active` và `navigator.serviceWorker.controller` khác null; nếu
+   controller chưa sẵn sàng thì fail/`CHƯA VERIFY ĐƯỢC`, không bỏ qua.
+2. Dùng Chromium CDP `ServiceWorker.enable`, capture `registrationId` from
+   `ServiceWorker.workerVersionUpdated`, rồi gọi `ServiceWorker.deliverPushMessage`
+   cho đúng origin/registration ID với JSON synthetic. Không dùng `page.route`,
+   `route.fulfill`, abort giả, mock fetch hay fake `Notification` cho push/delivery.
+3. Đọc `registration.getNotifications()` để assert title/body fallback và
+   `notification.data.url` đúng dispatch/subscription deep link; ghi receipt
+   `push delivered by CDP -> notification observed`.
+4. Assert built `dist/sw.js` giữ NavigationRoute denylist: `/auth/login` và
+   `/api/*` đi tới server, còn `/reminder-confirm?dispatch=...` và
+   `/subscription?highlight=...` trả app shell rồi gọi API. Đây là browser
+   request thật trên preview, không fulfill từ test.
+5. `notificationclick` phải được kiểm bằng click notification thật trong physical
+   iPhone handoff (hoặc browser OS notification nếu runner expose được); Playwright
+   không được tự gọi `navigate()` để giả click. Nếu CDP chỉ chứng minh notification
+   data mà không expose OS click, receipt phải ghi `CHƯA VERIFY ĐƯỢC` cho click,
+   chờ L5; không claim deep-link click chỉ từ `getNotifications()`.
+
+Sau mỗi run, đóng context/browser, unregister service worker trong context,
+terminate preview process và assert port `4174` không còn listener. Lỗi cleanup
+không được xoá receipt.
+
 Kiểm bốn URL:
 
 - `/auth/login` và `/api/*` đi tới server, không bị SPA fallback nuốt;
@@ -188,8 +223,8 @@ Kiểm bốn URL:
 
 InjectManifest phải giữ `NavigationRoute` denylist auth/api, listener `push`
 fallback khi data null/hỏng và `notificationclick` focus/navigate/openWindow.
-Browser `page.route`/`route.fulfill` chỉ là unit/UI harness; không được coi là
-real service-worker or delivery acceptance.
+Browser `page.route`/`route.fulfill` chỉ dùng cho existing unit/UI harness, không
+được coi là real service-worker hoặc delivery acceptance của lane trên.
 
 ### 3.2 Viewport and accessibility matrix
 
@@ -212,8 +247,10 @@ Owner/T3 phải chạy trên iPhone vật lý được cho phép:
 3. nhận đúng một push synthetic, mở thân notification (không tìm action button),
    xác minh route dispatch, private-safe text và confirm outcome;
 4. reload/focus/network loss theo khả năng thiết bị, retry không nuốt dispatch;
-5. chụp ảnh crop nội dung, không để lộ bookmark/tab/avatar/account/notification
-   của app khác. Ghi OS/Safari/PWA mode, không ghi email/PIN.
+5. đọc và ghi `window.innerWidth`/`window.innerHeight` thật trên iPhone tại mỗi
+   phép đo; không gọi đây là `390×844 equivalent` (390×844 chỉ thuộc browser
+   emulation lane). Chụp ảnh crop nội dung, không để lộ bookmark/tab/avatar/
+   account/notification của app khác. Ghi OS/Safari/PWA mode, không ghi email/PIN.
 
 Không nhận được push trên iPhone là `CHƯA VERIFY ĐƯỢC` hoặc `FAIL` theo triệu
 chứng đã quan sát, không thay bằng Chromium emulation và không suy ra từ CI.
@@ -234,9 +271,28 @@ fixture/container/process, rồi mới restore env/cache và kết luận. Nếu
 lỗi, vẫn phải log lỗi đó và chạy postcheck exact container/process/port; không được
 để cleanup error skip privacy or idempotency verdict.
 
-## 5. Observability, rollback và privacy evidence
+## 5. Mapping acceptance → test/fixture/receipt
 
-### 5.1 Safe receipts
+Tên bắt đầu bằng **required-new** là contract phải tạo khi thi công; không phải
+file/test đã tồn tại và không được báo PASS trước khi có receipt. Tên không có
+prefix đó là test/fixture hiện có đã kiểm được ở base.
+
+| ID | Existing hoặc required-new test/fixture | Command/lane | Expected receipt |
+|---|---|---|---|
+| W-01 | Existing `backend/tests/test_push_api.py::test_validate_push_endpoint_resolves_every_answer`, `::test_validate_push_endpoint_rejects_internal_and_literal_private_targets`, `::test_push_subscription_create_update_and_unsubscribe`; **required-new** `frontend/e2e/reminder-push-product.spec.ts::test_permission_denied_does_not_retry_or_patch_tracker`, `::test_granted_waits_for_controller_and_upserts_endpoint`; **required-new fixture** `frontend/e2e/fixtures/qa011b-push.ts` | `cd backend; uv run pytest -m "not pg" tests/test_push_api.py`; PG test ở L1; `cd frontend; npx playwright test -c playwright.qa.config.ts e2e/reminder-push-product.spec.ts` ở L2 | denied có hướng dẫn và 0 PATCH; granted có controller→VAPID GET→subscribe POST; invalid endpoint `422`; cùng endpoint upsert 1 row; response không echo endpoint |
+| W-02 | Existing `backend/tests/test_reminder_domain.py::test_medication_payload_private_tracker_without_text`, `::test_medication_payload_private_tracker_with_text`, `::test_subscription_expiry_payload_private`, `::test_medication_payload_public_tracker`; **required-new** `backend/tests/test_qa_011b_product.py::test_payload_artifact_boundary_allows_fixture_endpoint_only`, `::test_private_payload_has_no_name_or_ciphertext`; **required-new fixture** `backend/tests/fixtures/qa011b_payloads.py` | `cd backend; uv run pytest tests/test_reminder_domain.py tests/test_qa_011b_product.py` ở L0; inspect `caplog`, responses, fake provider payload và fixture DB ở L1 | private/generic body đúng; endpoint chỉ tồn tại trong fixture DB, không log/report/response/notification; VAPID private/cookie/token 0 occurrence; null/malformed push data fallback |
+| W-03 | Existing `backend/tests/test_push_api.py::test_dispatch_item_never_sends_concurrently`, `backend/tests/test_cron_timer.py::test_pending_recovery_keeps_dispatch_id_and_backoff`, `::test_dead_pending_rows_are_receipted_not_dropped`, `::test_exhausted_outcome_is_receipted_and_next_day_scheduled`; **required-new** `backend/tests/test_qa_011b_product.py::test_mixed_dead_and_temporary_keeps_pending_same_id`, `::test_response_lost_reuses_dispatch_id`, `::test_attempt_four_emits_manual_required_without_send` | `cd backend; uv run pytest -m pg tests/test_push_api.py tests/test_qa_011b_product.py` ở L1; timer unit ở L0 | one unique row/id; mixed dead+temp pending; response-lost same id; 404/410 delete only dead; attempt 4 no network call + manual receipt |
+| W-04 | Existing `frontend/e2e/reminder-confirm.spec.ts` tests F9 same-body retry/network loss and dispatch change; existing PG `backend/tests/test_push_api.py::test_two_devices_confirm_same_dispatch_create_one_entry`, `::test_private_dispatch_requires_unlock_then_accepts_same_body`; existing non-PG `backend/tests/test_auth.py` return-to tests; **required-new** `frontend/e2e/reminder-confirm-product.spec.ts::test_service_worker_click_keeps_dispatch_and_deep_links` | `cd backend; uv run pytest -m pg tests/test_push_api.py`; `uv run pytest -m "not pg" tests/test_auth.py`; existing mocked e2e in L2; real-SW click only L5 if OS notification is observable | 404/409/403 codes exact; two devices one Entry; same body after unlock/retry; relative signed return_to; no generic create; click deep-link receipt separate from route mock |
+| W-05 | Existing `backend/tests/test_reminder_domain.py::test_subscription_expiry_payload_private`, `::test_subscription_expiry_payload_days_left_uses_vn_today`, `backend/tests/test_cron_timer.py::test_subscription_candidates_and_lead_change`, `::test_subscription_chain_schedules_next_day_and_retry_backoff`; existing 011c QA owns renewal UI; **required-new** `backend/tests/test_qa_011b_product.py::test_rollback_stops_timer_without_external_scheduler`, `::test_subscription_expiry_never_creates_entry` | `cd backend; uv run pytest tests/test_reminder_domain.py tests/test_cron_timer.py tests/test_qa_011b_product.py`; rollback/manual receipt in L0/L4 rehearsal | allowlisted setting only; active eligible subscriptions only; private generic/public VN label; no auto Entry; rollback leaves pending/manual state and creates no external scheduler |
+| S-01 | Existing `backend/tests/test_cron_disabled_mode.py::test_disabled_create_app_does_not_load_or_construct_cron_runtime`, `::test_local_enabled_without_database_starts_as_disabled_noop`, `::test_production_enabled_without_database_still_fails_fast`, `::test_enabled_lifespan_builds_one_timer_task`; existing `backend/tests/test_cron_timer.py::test_empty_heap_waits_without_queries`, `::test_get_session_reload_marker_only_after_commit`; **required-new** `backend/tests/test_qa_011b_product.py::test_one_app_instance_has_one_timer_and_no_external_trigger`; **required-new production receipt command** `fly machines list --app microsched --json` | L0/L1 unit + `fly machines list --app microsched --json` in L4; harness polls at 3/6/10/15/20→10m | one live machine/process; false flag no timer; true missing dependency fail-fast; exact +07:00 times; empty heap no DB polling; reload only post-commit; no second scheduler |
+| S-02 | Existing `backend/tests/test_cron_timer.py::test_tracker_due_at_0800_and_2359_boundaries`, `::test_load_snapshot_keeps_occurrences_inside_15_minute_grace`, `::test_pending_recovery_keeps_dispatch_id_and_backoff`, `::test_dead_pending_rows_are_receipted_not_dropped`, `::test_exhausted_outcome_is_receipted_and_next_day_scheduled`, `::test_subscription_chain_schedules_next_day_and_retry_backoff`; **required-new** `backend/tests/test_qa_011b_product.py::test_retry_backoff_is_30s_2m_10m_and_attempt4_terminal` | `cd backend; uv run pytest tests/test_cron_timer.py tests/test_qa_011b_product.py` ở L0/L1 với injected clock, không sleep thật | 15m grace, 24h recovery, same row/id, four total attempts, 20s network timeout; pending/exhausted manual receipt; next day survives failure |
+| S-03 | Existing `backend/tests/test_cron_timer.py::test_reload_sink_request_reload`; **required-new** `backend/tests/test_qa_011b_product.py::test_manual_trigger_is_local_only_and_rejected_in_production`; **required-new fixture** `backend/tests/fixtures/qa011b_runtime.py` | `cd backend; uv run pytest tests/test_qa_011b_product.py`; local test-only dispatcher call; production `GET/POST` probe must be read-only and owner-authorized | local trigger calls internal dispatcher only; production route absent/403; no `CRON_TOKEN`, no browser delivery, no external scheduler; no activation without dated owner receipt |
+
+Real-SW mapping: **required-new** `frontend/e2e/reminder-pwa-real-sw.spec.ts::test_push_via_cdp_and_notification_data`, `::test_navigation_denylist_and_deep_link_shell` with **required-new** `frontend/playwright.qa.config.ts` and existing `frontend/src/sw.ts` as built input. Command: `cd frontend; npx playwright test -c playwright.qa.config.ts e2e/reminder-pwa-real-sw.spec.ts`. Lane L2 proves controller, CDP push, `getNotifications()` data, denylist and deep-link shell; OS notification click is L5 unless the runner exposes a real click event. It must never use `page.route`/`route.fulfill`; cleanup must assert preview port `4174` is closed.
+
+## 6. Observability, rollback và privacy evidence
+
+### 6.1 Safe receipts
 
 Kiểm structured metadata ở timer/dispatcher, không payload:
 
@@ -248,7 +304,7 @@ Kiểm structured metadata ở timer/dispatcher, không payload:
   VAPID key, cookie, bearer/PIN hoặc full provider response;
 - healthz chỉ liveness; readyz commit/db receipt không chứng minh timer delivery.
 
-### 5.2 Rollback
+### 6.2 Rollback
 
 Runbook rehearsal ở local/CI phải chứng minh: tắt flag/deploy rollback dừng timer
 không tạo scheduler thứ hai; pending rows vẫn còn và manual state rõ; restore
@@ -256,7 +312,7 @@ config/env/service-worker fixture; notification/DB cleanup không bỏ qua postc
 Production rollback/activation chỉ do owner theo dated note; không viết secret hay
 PIN vào rollback file.
 
-### 5.3 Artifact rules
+### 6.3 Artifact rules
 
 Report append-only có exact HEAD/status, browser/OS/build SHA, lane, command/URL,
 raw output và nhãn `OBSERVED`/`INFERRED`. Mỗi W-01…W-05 và S-01…S-03 phải có
@@ -269,7 +325,7 @@ Mỗi guard quan trọng có RED→GREEN proof: tạm gỡ idempotency unique pa
 privacy fallback, same-dispatch retry, SW denylist hoặc timer disabled gate trong
 throwaway; thấy test đỏ đúng lý do; restore và chạy xanh. Không commit phá guard.
 
-## 6. Không trùng coverage đã có
+## 7. Không trùng coverage đã có
 
 - `agent-tasks/011b-medication-reminder-webpush.md` là implementation/domain
   contract; file này là user-visible product matrix, executable local/CI/
