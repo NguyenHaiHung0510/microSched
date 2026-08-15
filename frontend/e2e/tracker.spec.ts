@@ -18,6 +18,34 @@ test('smoke renders the capture grid with last-seen labels', async ({ page }) =>
   ).toContainText('giờ trước')
 })
 
+test('create dialog returns keyboard focus to its stable opener', async ({ page }) => {
+  await openTrackerScreen(page)
+  const opener = page.getByTestId('tracker-create')
+  const cases = [
+    { openKey: 'Enter', closeKey: 'Enter' },
+    { openKey: 'Space', closeKey: 'Space' },
+    { openKey: 'Enter', closeKey: 'Escape' },
+  ] as const
+
+  for (const { openKey, closeKey } of cases) {
+    await opener.focus()
+    await page.keyboard.press(openKey)
+    const dialog = page.getByTestId('tracker-dialog')
+    await expect(dialog).toBeVisible()
+
+    if (closeKey === 'Escape') {
+      await page.getByTestId('tracker-name-input').focus()
+      await page.keyboard.press(closeKey)
+    } else {
+      await dialog.getByRole('button', { name: 'Đóng' }).focus()
+      await page.keyboard.press(closeKey)
+    }
+
+    await expect(dialog).toBeHidden()
+    await expect(opener).toBeFocused()
+  }
+})
+
 test('one-tap capture creates one entry and offers a 10s undo', async ({
   page,
   trackerApi,
