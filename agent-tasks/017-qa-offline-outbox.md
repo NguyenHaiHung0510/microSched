@@ -27,6 +27,11 @@ QA phải chứng minh hai nửa cùng sống:
 - Không đổi sang sync-engine, mirror entity vào Dexie, thêm Background Sync, hoặc coi cờ module là
   cross-tab lock.
 - Không queue auth login/logout, private lock/unlock, web-push registration hoặc cron.
+- `POST /api/push/subscribe` và `DELETE /api/push/subscribe` vẫn bypass; nhưng
+  `POST /api/reminder-dispatch/{dispatch_id}/confirm` là write domain phải queue. Với `app_setting`,
+  chỉ `show_list_price` và `subscription_expiry_lead_days` thuộc seam; `private_pin`,
+  `private_unlock_throttle`, `private_unlock_ttl_minutes` phải bypass và **không bao giờ** được seam
+  generic read/queue/write.
 - Không sửa backend thành `204` khi DELETE không tìm thấy; classifier phải hiểu DELETE-vs-restore.
 - Không lấy lane Playwright mặc định đang `serviceWorkers: 'block'` làm proof PWA.
 - Không dùng `page.route(... route.fulfill())` cho request write ở khoảnh khắc đang chứng minh mạng
@@ -202,9 +207,22 @@ uv run python -m scripts.prepare_ci_database
 uv run python -m scripts.check_migration_drops
 uv run alembic upgrade head
 uv run alembic current
-rg -n "idempot|UUIDv7|reorder|calendar_event|task_item|note_item|renew" tests
-uv run pytest -m pg -k "offline_outbox or idempot or reorder or import or renew" --collect-only -q
-uv run pytest -m pg -k "offline_outbox or idempot or reorder or import or renew" -q
+$qa017PgNodes = @(
+  'tests/test_offline_outbox_pg.py::test_operation_matrix_covers_registry_exactly'
+  'tests/test_offline_outbox_pg.py::test_operation_matrix'
+  'tests/test_offline_outbox_pg.py::test_response_lost_entity_create_matrix'
+  'tests/test_offline_outbox_pg.py::test_response_lost_calendar_import_atomic_replace'
+  'tests/test_offline_outbox_pg.py::test_response_lost_subscription_renew'
+  'tests/test_offline_outbox_pg.py::test_response_lost_reminder_confirm'
+  'tests/test_tasks_api.py::test_task_crud_and_nested_items_through_http'
+  'tests/test_notes_api.py::test_note_crud_nullable_title_checklist_restore_and_dto_boundary'
+  'tests/test_settings_api.py::test_settings_allowlist_never_leaks_or_touches_secret_keys'
+  'tests/test_settings_api.py::test_settings_valid_keys_validate_values'
+  'tests/test_push_api.py::test_two_devices_confirm_same_dispatch_create_one_entry'
+  'tests/test_push_api.py::test_private_dispatch_requires_unlock_then_accepts_same_body'
+)
+uv run pytest -m pg --collect-only -q $qa017PgNodes
+uv run pytest -m pg -vv $qa017PgNodes
 Set-Location ..
 
 Remove-Item Env:NEON_MIGRATOR_URL -ErrorAction SilentlyContinue
@@ -217,6 +235,60 @@ collect list và run summary; thêm API status/client UUID/SQL count đã redact
 exit 5 hoặc targeted cases còn thiếu đều là `[CHƯA VERIFY]`**, dù `pytest` thường xanh. Nếu command
 timeout, kiểm `docker inspect/logs` và migration state trước khi kết luận. Cleanup chỉ stop đúng
 `microsched-017-qa-pg` sau khi đã kiểm tên; tuyệt đối không dùng Neon để tái hiện lane này.
+
+#### Matrix route → `operation_kind` → exact PG node
+
+`tests/test_offline_outbox_pg.py::test_operation_matrix` phải dùng param `ids=` đúng tên dưới đây;
+meta-test `test_operation_matrix_covers_registry_exactly` assert **set-equality** giữa typed adapter
+registry và toàn bộ ID trong matrix: không thiếu, không dư, không trùng. Nếu implementation thêm một
+`operation_kind`, phải thêm exact row/node trước khi QA; không quay lại `-k`, regex hoặc “chạy cả file
+chắc là có”.
+
+| Route | Exact `operation_kind` → exact node suffix của `test_operation_matrix[...]` |
+|---|---|
+| `/api/tasks` · `/api/tasks/{id}` · `/restore` | `task.create` · `task.update` · `task.delete` · `task.restore` |
+| `/api/tasks/{id}/items` · `/{item_id}` | `task_item.create` · `task_item.update` · `task_item.delete` |
+| `/api/notes` · `/api/notes/{id}` · `/restore` | `note.create` · `note.update` · `note.delete` · `note.restore` |
+| `/api/notes/{id}/items` · `/{item_id}` · `/positions` | `note_item.create` · `note_item.update` · `note_item.delete` · `note_item.reorder` |
+| `/api/calendar/sources` · `/{id}` · `/import` | `calendar_source.create` · `calendar_source.update` · `calendar_source.delete` · `calendar.import` |
+| `/api/calendar/events` · `/{id}` | `calendar_event.create` · `calendar_event.update` · `calendar_event.delete` |
+| `/api/calendar/annotations` · `/{id}` | `day_annotation.create` · `day_annotation.update` · `day_annotation.delete` |
+| `/api/tracker/groups` · `/{id}` | `tracker_group.create` · `tracker_group.update` · `tracker_group.delete` |
+| `/api/tracker/trackers` · `/{id}` · `/restore` | `tracker.create` · `tracker.update` · `tracker.archive` · `tracker.restore`; node `tracker.update` phải có payload reminder config riêng |
+| `/api/tracker/entries` · `/{id}` · `/restore` | `entry.create` · `entry.update` · `entry.delete` · `entry.restore` |
+| `/api/subscriptions` · `/{id}` + actions | `subscription.create` · `subscription.update` · `subscription.cancel` · `subscription.uncancel` · `subscription.renew` · `subscription.delete` · `subscription.restore` |
+| `PATCH /api/settings/show_list_price` | `setting.show_list_price.update` |
+| `PATCH /api/settings/subscription_expiry_lead_days` | `setting.subscription_expiry_lead_days.update` |
+| `POST /api/reminder-dispatch/{dispatch_id}/confirm` | `reminder.confirm` |
+
+Mỗi value `kind` trong cột phải xuất hiện raw dưới node đầy đủ
+`tests/test_offline_outbox_pg.py::test_operation_matrix[kind]` ở collect **và** execution output.
+Hai test settings hiện hữu chứng minh ba key private không bị đọc/chạm; hai test task/note hiện hữu
+neo task-item/note-item; hai test push hiện hữu neo same-dispatch và private hold. Một node skip,
+missing, duplicate hoặc không execute ⇒ lane `[CHƯA VERIFY]`.
+
+`test_response_lost_entity_create_matrix` cũng phải dùng exact param IDs và collect/run đủ:
+`task.create`, `task_item.create`, `note.create`, `note_item.create`, `calendar_source.create`,
+`calendar_event.create`, `day_annotation.create`, `tracker_group.create`, `tracker.create`,
+`entry.create`, `subscription.create`. Task-item/note-item không được coi đã phủ chỉ vì parent create
+xanh.
+
+#### Harness response-lost chạy API/PG thật
+
+`tests/support/response_lost.py` phải cung cấp transport/proxy dùng được bởi bốn test
+`test_response_lost_*` ở trên:
+
+1. forward nguyên method/path/body vào **real FastAPI app** qua `httpx.ASGITransport` (hoặc reverse
+   proxy TCP tương đương), với dependency DB trỏ container PG thật;
+2. chờ upstream endpoint trả về và `await response.aread()`; bằng connection PG độc lập, poll có
+   hạn tới khi commit probe thấy đúng row/dispatch/postcondition;
+3. đóng upstream response rồi ném `httpx.ReadError`/abort downstream để client **không nhận status
+   hay body**, nhưng server commit vẫn còn;
+4. retry bằng transport bình thường, **cùng path + UUID/body bytes**; query PG lại.
+
+Receipt bắt buộc: request digest/UUID, upstream-completed marker, commit probe + row count, client
+abort exception, retry status/body contract và final row count. Cấm `route.fulfill()`, fake service,
+mock DB hoặc “ném network error” trước khi real API commit; các cách đó không chứng minh response-lost.
 
 ### 2.4 L2 — hai browser config riêng
 
@@ -281,17 +353,21 @@ Spec này không bị ghi đè bởi kết quả. Khi thực thi, append từng 
 **Setup/steps:** online, ghi baseline queue; inventory mọi route create/patch/soft-delete/restore,
 `*_item` và write đặc thù của **task, note, calendar, tracker, subscription, `app_setting` và cấu
 hình reminder** (`reminder_time`/`reminder_text`). Calendar inventory gồm source/event/annotation/
-import; tracker gồm group/tracker/entry/subscription/settings. Thực hiện ít nhất một write mỗi
-`operation_kind`; auth, private unlock/lock, web-push registration và cron phải bypass có chủ đích.
-Test atomic note-item reorder bằng một request.
+import; tracker gồm group/tracker/entry/subscription/settings. Thêm đích danh
+`POST /api/reminder-dispatch/{dispatch_id}/confirm` với metadata giữ `dispatch_id`, `entry_id`,
+`occurred_at`. Thực hiện ít nhất một write mỗi `operation_kind`; auth, private unlock/lock,
+push subscribe/unsubscribe và cron bypass có chủ đích. Settings seam chỉ inventory/queue hai key
+allowlist; ba key private không được generic seam đọc/queue/write. Test atomic note-item reorder bằng
+một request.
 
-**PASS state:** API success được reconcile vào Query cache; queue trở lại `0`; không direct domain
+**PASS state:** API success được reconcile vào Query cache; queue trở lại baseline; không direct domain
 write nào bypass typed seam; reorder hoặc thành công toàn bộ hoặc thất bại toàn bộ, không nửa-vời.
 Online happy paths 008–011 vẫn xanh.
 
 **Raw receipt:** route inventory trước/sau, request/status counter theo operation kind, queue
 `baseline -> delta -> baseline`, test name/pass count. **FAIL/stop:** route domain chưa inventory,
-subscription/setting/reminder config bị bỏ sót, một direct
+subscription/setting/reminder config/reminder-confirm bị bỏ sót, private setting key lọt registry,
+một direct
 `apiRequest` không có comment bypass, placeholder không được thay bằng server response, hoặc reorder
 gửi hai PATCH rời.
 
@@ -342,7 +418,7 @@ online request/status và queue unavailable state. Nếu chỉ monkeypatch sau k
 
 ### A05 — Purge lock/TTL/logout/401 giữ private outbox canary
 
-Chạy bốn case độc lập, mỗi case có fresh BrowserContext/profile, `run_id` và reset manifest riêng.
+Chạy các case độc lập, mỗi case có fresh BrowserContext/profile, `run_id` và reset manifest riêng.
 Trước boot cài Playwright fake clock (`page.clock.install`) hoặc injected `now()` seam; không dùng
 sleep 36 phút. Với case TTL, mốc là **`private_until` 36 phút** của private gate, không phải
 `session.expires_at` của login session. Setup tạo private outbox row rồi ghi
@@ -353,11 +429,15 @@ sleep 36 phút. Với case TTL, mốc là **`private_until` 36 phút** của pri
 | lock tay | private bị purge, public snapshot còn | còn đúng 1 |
 | `private_until` 36 phút hết | private bị purge, public snapshot còn | còn đúng 1 |
 | logout | toàn bộ Query namespace + bootstrap bị purge | còn đúng 1 |
-| response `401` | toàn bộ Query namespace + bootstrap bị purge | còn đúng 1, state `auth_hold` |
+| **canary flush request** nhận `401` | classifier không tự xoá payload | đúng row đó `auth_hold`, digest/length nguyên |
+| session query/global auth handler nhận `401` | purge RAM + toàn bộ Query namespace + bootstrap | outbox vẫn còn; auth-held rows không đổi payload |
 
 Privacy response exact cũng phải đi qua central `purgePrivateSurface()`, không rải logic theo màn.
 
-Sau login/unlock lại, flush chính canary đó: digest/byte length ở request canonical phải bằng before;
+Hai case `401` là hai oracle riêng: việc row chuyển `auth_hold` thuộc flusher/classifier; purge
+session/query thuộc central unauthenticated handler. Có thể cùng một response kích cả hai, nhưng test
+phải assert riêng và không suy “purge thành công” từ mỗi state row. Sau login/unlock lại, flush chính
+canary đó: digest/byte length ở request canonical phải bằng before;
 server có đúng một row; outbox row mới được remove sau success. Không log plaintext payload.
 
 **Raw receipt:** injected clock/timeline, context/run manifest, before/after counts cho RAM, read DB,
@@ -369,12 +449,19 @@ disk.
 ### A06 — Offline bootstrap luôn locked và không có `private_until`
 
 **Setup/steps:** cài fake clock/injected `now()` **trước app boot**, online tạo bootstrap + public
-Query snapshot tại `t0`, inspect serialized keys/bytes; offline reload ở các boundary dưới. Mỗi
-boundary dùng fresh context nhận cùng persisted fixture snapshot, không chạy nối tiếp bằng wall-clock:
+Query snapshot tại `t0`, inspect serialized keys/bytes. Tách hai loại test, vì `private_until` chỉ
+sống trong RAM còn ba boundary kia kiểm persisted snapshot:
+
+- **Private TTL:** dùng **cùng một online BrowserContext/page/RAM state**, không reload/new context.
+  Nhận `/api/me` unlocked tại `t0`, advance cùng fake clock tới `t0+35:59`, rồi `t0+36:01`; lần sau
+  phải purge/relock. Fresh context ở đây chỉ chứng minh bootstrap locked sẵn, không chứng minh timer
+  TTL đã chạy.
+- **Persisted boundaries:** `session.expires_at`, Query `maxAge` và build-SHA buster mỗi case dùng
+  fresh context nhận một bản persisted fixture snapshot riêng; không chạy nối tiếp bằng wall-clock.
 
 | Clock/boundary | Expected |
 |---|---|
-| `private_until`: `t0+35:59` / `t0+36:01` | trước còn grant RAM online; sau purge/relock; key này không có trên disk |
+| `private_until`: `t0+35:59` / `t0+36:01` trong cùng online context | trước còn grant RAM; sau purge/relock; key này không có trên disk |
 | `session.expires_at`: `-1ms` / `+1ms` | trước public shell eligible; sau “Cần kết nối để xác thực lại” |
 | Query `maxAge`: `7d-1ms` / `7d+1ms` | trước public snapshot hydrate; sau snapshot bị loại, không tự kéo dài session |
 | build-SHA buster đổi trong `maxAge` | Query snapshot cũ bị loại deterministic; session validity vẫn chỉ theo `expires_at` |
@@ -387,8 +474,9 @@ không lấy cache còn hạn làm bằng chứng session còn hạn, và buster
 
 **Raw receipt:** fake-clock install time + injected times, key list, `private_until occurrences=0`,
 gate state, query hydrate/evict counts, buster before/after và từng render assertion. **FAIL:** dùng
-sleep/wall-clock flake, nhầm `private_until` với `session.expires_at`, cached session rehydrate thành
-unlocked, hoặc expiry/maxAge được tính lại từ reload/build time.
+sleep/wall-clock flake, dùng fresh context để claim TTL timer, nhầm `private_until` với
+`session.expires_at`, cached session rehydrate thành unlocked, hoặc expiry/maxAge được tính lại từ
+reload/build time.
 
 ### A07 — Route-aware classifier, retry và `outcome_unknown`
 
@@ -414,9 +502,11 @@ nuốt payload. **Raw receipt:** mỗi row có input metadata, prior state, next
 message, `Retry-After` bị bỏ, hoặc >50 attempts tự park.
 
 Trước classifier phải có **một central HTTP error normalizer**. Test API/fixture thật phải thu raw
-`status + JSON envelope/detail` synthetic từ ít nhất task, note, tracker, calendar và subscription,
+`status + JSON envelope/detail` synthetic từ ít nhất task, note, tracker, calendar, subscription và
+`POST /api/reminder-dispatch/{dispatch_id}/confirm`,
 sau đó ghi normalized machine code/kind mà typed classifier nhận. Bao phủ privacy response khác
-status (`403/404/409`) và business/validation (`400/409/422`) của năm họ; không cho từng screen tự
+status (`403/404/409`) và business/validation (`400/409/422`); riêng confirm phải có raw 403
+`detail.code=PRIVATE_UNLOCK_REQUIRED`, dispatch 404 và business/config 409. Không cho từng screen tự
 parse text. Raw receipt được phép giữ error code/detail synthetic nhưng không private payload. Nếu
 classifier được gọi trực tiếp bằng object tự chế mà không chứng minh envelope→normalizer, subcase
 này là `[CHƯA VERIFY]`.
@@ -449,7 +539,8 @@ private đang hold. **FAIL:** FIFO toàn cục đứng vô hạn, hoặc flusher
 
 ### A10 — Response-lost idempotency trên mọi POST create được phủ
 
-Tách ba contract, không ép mọi POST vào cùng khuôn:
+Mọi case dùng harness response-lost §2.3: real API + PG commit xảy ra, client nhận abort, rồi retry
+cùng bytes. Tách bốn contract, không ép mọi POST vào cùng khuôn:
 
 1. **Entity UUID create:** inventory toàn bộ create sau 010/011; gửi cùng client UUIDv7/payload,
    mô phỏng commit rồi response mất, retry đúng command. Tối thiểu task-item, note-item,
@@ -462,11 +553,20 @@ Tách ba contract, không ép mọi POST vào cùng khuôn:
    contract `200`, lượt replay `created=false`, subscription `expires_on` và `status` không tiến
    thêm/đổi sai (fixture active phải vẫn `active`), SQL chỉ một entry và post-commit side effect
    không phát lại.
+4. **Reminder confirm:** queue giữ nguyên path `dispatch_id` và body `entry_id + occurred_at`. Sau
+   commit-response-lost, retry đúng path/body trả `200`, `created=false`,
+   `confirmed_entry_id` bằng Entry đã commit và SQL có đúng một Entry. Private dispatch lúc locked
+   trả 403 exact code, không tạo Entry, row `private_hold`; unlock rồi retry cùng body tạo đúng một.
+   Cùng `dispatch_id` nhưng retry/body cạnh tranh dùng `entry_id` khác vẫn là occurrence-level
+   idempotency: first committed Entry thắng, response sau `created=false` + ID của winner; không tạo
+   Entry thứ hai và `occurred_at` của loser không được ghi đè.
 
-**Raw receipt:** route inventory, QA UUID/normalized-request digest/entry_id, status + `created`,
-per-table/event-set count, expiry/status before/after và side-effect counter. **FAIL/stop:** route
+**Raw receipt:** route inventory, QA UUID/normalized-request digest/dispatch_id/entry_id/occurred_at,
+upstream-completed + commit-probe + client-abort, retry status + `created`, per-table/event-set count,
+expiry/status before/after và side-effect counter. **FAIL/stop:** route
 entity create chưa nhận client UUID, retry sinh UUID mới, import tạo per-event commands hoặc partial
-replace, renew tăng hai kỳ/`created=true` lần hai, duplicate count >1, hoặc test chỉ dùng mock DB.
+replace, renew tăng hai kỳ/`created=true` lần hai, confirm làm rơi/đổi ba field hoặc tạo Entry thứ
+hai, duplicate count >1, hoặc test dùng route fulfillment/mock DB/abort trước commit.
 Không sửa schema để cứu lane.
 
 ### A11 — Web Locks với hai tab thật
@@ -507,11 +607,15 @@ Chạy hai flow trong fresh contexts/fixture namespaces; gọi baseline queue l�
    optimistic UI; reload offline lần nữa; bật online. Expected queue
    `B -> B+3 -> B+3 after reload -> B`; coordinator cancel refetch liên quan, flush, reconcile rồi
    mới invalidate.
-2. **Private synthetic browser E2E:** online unlock bằng credential fixture giả; chuyển offline;
-   tạo một private write; ghi canonical `payload_sha256 + byte_length` trong outbox nhưng không log
-   plaintext; reload fresh page trong cùng storage khi offline ⇒ bootstrap/gate locked, private row
-   không overlay/không lộ trong read cache/UI, outbox digest vẫn nguyên. Reconnect khi còn locked ⇒
-   row `private_hold`; unlock online ⇒ gửi đúng payload digest, server đúng một row, queue về `B`.
+2. **Private reminder-confirm synthetic E2E:** fixture tạo private tracker + dispatch; online unlock,
+   mở confirm route, chuyển offline rồi submit. Outbox row giữ `operation_kind=reminder.confirm`,
+   path `dispatch_id`, body `entry_id + occurred_at` và canonical `payload_sha256 + byte_length`
+   nhưng không log plaintext. Reload fresh page trong cùng storage khi offline ⇒ bootstrap/gate
+   locked, private Entry không overlay/không lộ trong read cache/UI, outbox digest vẫn nguyên.
+   Expected queue `B -> B+1`; reload giữ `B+1`. Reconnect khi còn locked ⇒ raw confirm 403 được
+   normalize thành `private_hold`, server Entry count vẫn 0 và queue còn `B+1`; unlock online ⇒ gửi
+   cùng `dispatch_id + entry_id + occurred_at`, server đúng một Entry, response created đúng contract
+   và queue về `B`.
 
 **PASS state:** optimistic public entities không bị refetch ghi đè; server response thay placeholder;
 server có đúng một row mỗi QA UUID; public cache sau invalidate khớp server. Chuỗi unsent
@@ -519,10 +623,12 @@ create→absolute-patch→delete coalesce về baseline; side-effect operations 
 flow chứng minh đồng thời “outbox giữ” và “locked UI/read cache không lộ”.
 
 **Raw receipt:** context/run manifest, baseline/delta queue timeline, payload digest/byte length,
-request order/status, gate/hold states, private locator/read-cache occurrence `0`, UI entity state
-trước/sau reload, server/API count và final invalidate. **FAIL:** hardcode queue `0/3` khi fixture có
+request order/status, dispatch/entry/occurred identity, gate/hold states, private locator/read-cache
+occurrence `0`, UI entity state trước/sau reload, server/API count và final invalidate. **FAIL:**
+hardcode queue `0/3` khi fixture có
 canary, queue indicator ẩn trong khi rows còn, reset xoá outbox, private overlay khi locked, digest
-đổi, UI hiện synced trước server success, polling/refetch xoá optimistic row, duplicate server row,
+đổi/confirm fields đổi, UI hiện synced trước server success, polling/refetch xoá optimistic row,
+duplicate server row,
 hoặc online+unlock nhưng queue không về baseline.
 
 ### A14 — UI state, microcopy và khả năng thoát lỗi
@@ -584,16 +690,21 @@ Locks tồn tại. Chạy một synthetic public queue round-trip và xác nhậ
 Lane này do chủ trực tiếp chạy hoặc giám sát; executor không tự chọn account/PIN. Dùng đúng PWA đã
 cài Home Screen trên production HTTPS:
 
-1. online mở app, xác nhận public canaries đã cache và gate locked;
+1. online mở app, ghi manifest các pending IDs đã tồn tại và baseline queue `B`; không xoá/chỉnh các
+   row đó; xác nhận public canaries đã cache và gate locked;
 2. bật airplane mode, đóng/mở lại PWA rồi reload;
-3. thấy public cache, không thấy private, ghi synthetic task + note + entry;
-4. kiểm indicator tăng, bàn phím/safe area/touch không che action;
-5. tắt airplane mode, giữ app mở, chờ queue về `0`, rồi đọc lại server state;
-6. logout khỏi app/đóng bề mặt QA theo hướng dẫn của chủ.
+3. thấy public cache, không thấy private; tạo đúng ba synthetic IDs mới: task + note + entry;
+4. kiểm queue `B -> B+3`, indicator tăng, bàn phím/safe area/touch không che action;
+5. tắt airplane mode, giữ app mở, chờ ba synthetic rows gửi xong và queue trở lại đúng `B`; đọc lại
+   server state theo ba IDs, không dùng bulk delete/reset để ép baseline;
+6. cleanup chỉ ba synthetic server IDs nếu chủ cho phép; không xoá row/payload đã tồn tại trước;
+   logout khỏi app/đóng bề mặt QA theo hướng dẫn của chủ.
 
 **PASS state:** offline reload sống, private plaintext/UI không lộ, ba writes queue, reconnect đúng
-một bản ghi mỗi ID và queue `0`. **Raw receipt:** owner-visible checklist theo vai, thời điểm/trạng
-thái/count, iOS/PWA version đủ để tái lập; không ghi email/PIN/cookie/screenshot có avatar/bookmark.
+một bản ghi mỗi synthetic ID và queue `B -> B+3 -> B`; before/after set của pre-existing outbox IDs
+không đổi. **Raw receipt:** owner-visible checklist theo vai, manifest synthetic/pre-existing ID
+counts, thời điểm/trạng thái/count, iOS/PWA version đủ để tái lập; không ghi email/PIN/cookie/
+screenshot có avatar/bookmark.
 **CHƯA VERIFY:** simulator/desktop emulation không thay lane này.
 
 ### A19 — RED → GREEN cho guardrail an toàn
