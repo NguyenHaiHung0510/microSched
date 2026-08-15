@@ -29,7 +29,7 @@ production; cộng với nghi thức chạy + verify quanh nó.
 |---|---|---|
 | 1 | `010a` + `010b` đã live, chủ import được lịch thật | mở `microsched.fly.dev`, thấy lịch |
 | 2 | `011` đã live | dùng thử một lần capture. **Không phải phụ thuộc dữ liệu** — `tracker`/`entry`/`subscription` tạo rỗng, không có gì để migrate. Nó chỉ là một phần của cổng 4. |
-| 3 | **`020` đã merge và migration `0006` đã áp lên Neon** | query `information_schema.columns` thấy `task.completed_at`, `note.pinned`, `note.priority` |
+| 3 | **`020` đã merge và migration `0009` đã áp lên Neon** | query `information_schema.columns` thấy `task.completed_at`, `note.pinned`, `note.priority` |
 | 4 | App mới **dùng được hằng ngày thay app cũ** | chủ tự đánh giá — đây là cổng chủ quan, và nó là cổng thật: đổ dữ liệu vào một app chưa xem/sửa được là tự mất daily driver |
 | 5 | **Đã soi lại giá** | `docs/cost-brief.md` ghi rõ *"bắt buộc trước khi cutover"*; ghi ngày soi + số đo vào brief đó |
 

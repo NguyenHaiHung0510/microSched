@@ -242,6 +242,41 @@ def test_calendar_010a_columns_are_nullable_or_defaulted_as_locked() -> None:
     assert str(event.c.all_day.server_default.arg) == "false"
 
 
+def test_legacy_preserving_0009_columns_match_the_migration_contract() -> None:
+    """The ORM exposes all three cutover destinations with matching defaults and CHECK."""
+    task = table("task")
+    note = table("note")
+
+    assert task.c.completed_at.nullable is True
+    assert note.c.pinned.nullable is False
+    assert str(note.c.pinned.server_default.arg) == "false"
+    assert note.c.priority.nullable is True
+
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in note.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert checks["ck_note_priority_values"] == (
+        "priority IS NULL OR priority IN ('p1', 'p2', 'p3')"
+    )
+
+
+@pytest.mark.pg
+def test_note_priority_rejects_values_outside_p1_to_p3(pg_dsn: str) -> None:
+    """The physical 0009 CHECK rejects a legacy priority outside the mapped domain."""
+
+    async def scenario() -> None:
+        connection = await asyncpg.connect(pg_dsn)
+        try:
+            with pytest.raises(asyncpg.CheckViolationError):
+                await connection.execute("INSERT INTO microsched.note (priority) VALUES ('p4')")
+        finally:
+            await connection.close()
+
+    asyncio.run(scenario())
+
+
 def test_day_annotation_0006_shape_is_locked() -> None:
     """The 010b table is a DATE-range marker with the privacy gate from day one."""
     annotation = table("day_annotation")
