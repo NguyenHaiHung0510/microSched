@@ -175,8 +175,10 @@ Thêm/cập nhật unit test ở `frontend/tests/` để chứng minh:
 4. Query dùng app default mà không khai interval có **0 interval call** sau ít nhất 60s fake time.
 5. Calendar list/grid, App session và reminder-confirm session đều có explicit policy **0 interval**.
    `CALENDAR_QUERY_SPECS` vẫn phủ query động, nhưng comment/test phải mô tả default mới đúng sự thật.
-6. `focusManager` inactive/hidden ⇒ 0 interval; active/visible trở lại ⇒ đúng **một refetch cho mỗi
-   query observer stale đang active** trong wave đó, không tự nhân đôi observer.
+6. `focusManager` inactive/hidden ⇒ 0 interval; active/visible trở lại ⇒ đúng **một network fetch
+   cho mỗi unique query key stale đang active** trong wave đó. `App` và `ReminderConfirmScreen` có
+   thể đồng thời giữ hai observer của cùng key `['session']`; TanStack phải dedupe thành **một**
+   fetch, test không được đòi hai chỉ vì có hai observer.
 7. Unsubscribe/unmount observer ⇒ 0 call về sau.
 
 Test phải restore fake timers và trạng thái `focusManager` sau mỗi case để không làm bẩn suite.
@@ -191,8 +193,9 @@ Dùng fixture API giả lập hiện có; không auth bypass, không backend th�
 - Tracker visible không có query nào chạy 1s; trong một cửa sổ 15s chỉ có tối đa một interval call
   cho mỗi trong 6 query active.
 - Subscription route tương tự, tối đa một interval call/query trong cửa sổ 15s.
-- Calendar, App session, reminder-confirm session và một query dùng default mới: sau initial fetch,
-  0 interval call trong cửa sổ đo.
+- Calendar, App session và reminder-confirm session: sau initial fetch, 0 interval call trong cửa
+  sổ đo. Browser chỉ đo query sản phẩm thật; **không** thêm component/query test-only vào app để tạo
+  một product observer dùng default.
 - Chuyển trang sang hidden bằng Page Visibility ⇒ 0 interval call; quay lại visible ⇒ một focus wave.
 - Chuyển khỏi screen/unmount ⇒ endpoint của screen cũ không còn interval call.
 - Một mutation trên màn 15s làm GET invalidation hạ cánh ngay, trước biên 15s; không đợi timer.
@@ -201,6 +204,8 @@ Dùng fixture API giả lập hiện có; không auth bypass, không backend th�
 Không bắt mọi test browser phải chờ đủ 60 giây: cadence chính xác đã do fake timers chứng minh. Lane
 timing thật có thể dùng cửa sổ ngắn vừa đủ vượt 15s để giữ CI hữu hạn. Giữ hai project mobile
 390×844 + desktop 1280×800 và `serviceWorkers: 'block'` của harness hiện tại.
+Default-no-poll của query mới được chứng minh tập trung bằng Vitest/helper ở §4.1 mục 4, không phải
+bằng dead/test-only product code trong Playwright.
 
 ### 4.3 RED → GREEN guard proof
 
