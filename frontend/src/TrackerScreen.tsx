@@ -36,6 +36,7 @@ import {
 } from '@/subscription-ui'
 import { errorMessage } from '@/tracker-undo'
 import { ensurePushSubscription } from '@/push-subscription'
+import { standardRefetchInterval } from '@/query-polling'
 import {
   backdateOptions,
   capturePayload,
@@ -79,26 +80,32 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const groupsQuery = useQuery({
     queryKey: trackerQueryKey('groups'),
     queryFn: () => apiRequest<{ items: TrackerGroup[] }>('/api/tracker/groups'),
+    refetchInterval: standardRefetchInterval,
   })
   const trackersQuery = useQuery({
     queryKey: trackerQueryKey('trackers'),
     queryFn: () => apiRequest<{ items: Tracker[] }>('/api/tracker/trackers'),
+    refetchInterval: standardRefetchInterval,
   })
   const dashboardQuery = useQuery({
     queryKey: [...trackerQueryKey('dashboard'), month],
     queryFn: () => apiRequest<DashboardResponse>(`/api/tracker/dashboard?month=${month}`),
+    refetchInterval: standardRefetchInterval,
   })
   const entriesQuery = useQuery({
     queryKey: trackerQueryKey('entries'),
     queryFn: () => apiRequest<{ items: Entry[] }>('/api/tracker/entries?limit=20'),
+    refetchInterval: standardRefetchInterval,
   })
   const subscriptionsQuery = useQuery({
     queryKey: subscriptionQueryKey('subscriptions'),
     queryFn: () => apiRequest<{ items: Subscription[] }>('/api/subscriptions'),
+    refetchInterval: standardRefetchInterval,
   })
   const settingsQuery = useQuery({
     queryKey: subscriptionQueryKey('settings'),
     queryFn: () => apiRequest<{ items: SettingsItem[] }>('/api/settings'),
+    refetchInterval: standardRefetchInterval,
   })
 
   const trackers = trackersQuery.data?.items ?? []

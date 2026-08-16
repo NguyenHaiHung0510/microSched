@@ -43,6 +43,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { uuidv7 } from '@/lib/uuidv7'
+import { taskRefetchInterval } from '@/query-polling'
 import { TaskForm } from '@/TaskForm'
 import {
   type TaskFilter,
@@ -717,6 +718,7 @@ export function TasksScreen() {
     queryKey: taskQueryKey('all'),
     queryFn: () =>
       apiRequest<{ items: Task[] }>('/api/tasks?status=all&limit=100&offset=0'),
+    refetchInterval: taskRefetchInterval,
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })

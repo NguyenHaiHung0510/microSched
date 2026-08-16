@@ -27,6 +27,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { hasAppHistory, navigate, queryParams, useLocation } from '@/lib/route'
 import { uuidv7 } from '@/lib/uuidv7'
+import { standardRefetchInterval } from '@/query-polling'
 import {
   addPeriod,
   daysLeftLabel,
@@ -605,14 +606,17 @@ export function SubscriptionScreen() {
   const subscriptionsQuery = useQuery({
     queryKey: subscriptionQueryKey('subscriptions'),
     queryFn: () => apiRequest<{ items: Subscription[] }>('/api/subscriptions'),
+    refetchInterval: standardRefetchInterval,
   })
   const settingsQuery = useQuery({
     queryKey: subscriptionQueryKey('settings'),
     queryFn: () => apiRequest<{ items: SettingsItem[] }>('/api/settings'),
+    refetchInterval: standardRefetchInterval,
   })
   const trackersQuery = useQuery({
     queryKey: trackerQueryKey('trackers'),
     queryFn: () => apiRequest<{ items: Tracker[] }>('/api/tracker/trackers'),
+    refetchInterval: standardRefetchInterval,
   })
 
   const subscriptions = useMemo(() => subscriptionsQuery.data?.items ?? [], [subscriptionsQuery.data])

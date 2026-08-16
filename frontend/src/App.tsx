@@ -21,6 +21,7 @@ import { NotesScreen } from '@/NotesScreen'
 import { PrivateGate } from '@/PrivateGate'
 import type { PrivateSessionState } from '@/private-gate'
 import { queryParams, useLocation } from '@/lib/route'
+import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { SubscriptionScreen } from '@/SubscriptionScreen'
 import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
@@ -198,9 +199,9 @@ function App() {
   const session = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
-    // The session has a long TTL. Window focus already checks it when returning
-    // to the tab, so it must opt out of the live task polling default.
-    refetchInterval: false,
+    // The session has a long TTL. Window focus checks it when returning to the
+    // tab; keeping no-poll explicit prevents future defaults from changing it.
+    ...NO_POLLING_QUERY_OPTIONS,
     // Being logged out is an answer, not a failure worth retrying.
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,

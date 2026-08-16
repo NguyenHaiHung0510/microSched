@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dialog'
 import { FilePicker } from '@/components/ui/file-picker'
 import { CalendarScrollView } from '@/CalendarScrollView'
+import { CALENDAR_QUERY_OPTIONS } from '@/calendar-queries'
 import { SourceForm } from '@/SourceForm'
 
 type SourceEnvelope = { items: CalendarSource[] }
@@ -158,13 +159,12 @@ export function CalendarScreen() {
   const sources = useQuery({
     queryKey: ['calendar', 'sources'],
     queryFn: getSources,
-    // 010b §2.8: every calendar query opts out of the 1s global polling.
-    refetchInterval: false,
+    ...CALENDAR_QUERY_OPTIONS,
   })
   const events = useQuery({
     queryKey: ['calendar', 'events', rangeStart],
     queryFn: () => getEvents(rangeStart),
-    refetchInterval: false,
+    ...CALENDAR_QUERY_OPTIONS,
   })
   const manualSources = useMemo(
     () => (sources.data?.items ?? []).filter((source) => source.kind === 'manual'),
