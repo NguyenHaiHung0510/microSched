@@ -1,12 +1,13 @@
 """In-process async CRON timer for medication and subscription expiry reminders."""
 
 import asyncio
+import hashlib
 import heapq
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -17,6 +18,7 @@ from app.core.settings import get_settings
 from app.domain.models import ReminderDispatch, Subscription, Tracker
 from app.domain.reminder import (
     DispatchOutcome,
+    DispatchTelemetry,
     ReminderDispatcher,
     build_medication_payload,
     build_subscription_expiry_payload,
@@ -50,6 +52,12 @@ def _backoff_seconds(attempt_count: int) -> int:
     if attempt_count == 3:
         return 600
     return 0
+
+
+def _occurrence_ref(kind: "ScheduleKind", subject_id: UUID, occurrence_on: date) -> str:
+    """Return a stable, non-reversible correlation token for one occurrence."""
+    canonical = f"{kind.value}:{subject_id}:{occurrence_on.isoformat()}"
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()[:16]
 
 
 class ScheduleKind(StrEnum):
@@ -335,15 +343,17 @@ class CronTimer:
 
         self._heap = new_heap
         self._last_reload_at = now_vn
+        next_due_at = self._heap[0][0].isoformat() if self._heap else "none"
         logger.warning(
             "cron_timer_queue_loaded reason=%s tracker_count=%d subscription_count=%d "
-            "lead_days=%d queue_size=%d pending_recovered_count=%d "
+            "lead_days=%d queue_size=%d next_due_at=%s pending_recovered_count=%d "
             "pending_manual_required_count=%d",
             self._reload_reason,
             len(trackers),
             len(sub_tuples),
             lead_days,
             len(self._heap),
+            next_due_at,
             self._pending_recovered_count,
             sum(self._pending_manual_required.values()),
         )
@@ -354,12 +364,43 @@ class CronTimer:
         """Structured receipt for a pending row the timer will never deliver (F11)."""
         self._pending_manual_required[reason] = self._pending_manual_required.get(reason, 0) + 1
         logger.warning(
-            "cron_timer_pending_manual_required reason=%s kind=%s subject_id=%s dispatched_on=%s",
+            "cron_timer_pending_manual_required reason=%s kind=%s occurrence_on=%s "
+            "occurrence_ref=%s",
             reason,
             kind.value,
-            dispatch.subject_id,
             dispatch.dispatched_on,
+            _occurrence_ref(kind, dispatch.subject_id, dispatch.dispatched_on),
         )
+
+    def _dispatch_telemetry(self, item: TimerItem) -> Callable[[DispatchTelemetry], None]:
+        """Build the sole logger for one dispatcher invocation."""
+        occurrence_ref = _occurrence_ref(item.kind, item.subject_id, item.occurrence_on)
+
+        def emit(event: DispatchTelemetry) -> None:
+            if event.outcome is None:
+                logger.warning(
+                    "cron_timer_dispatch_started kind=%s due_at=%s occurrence_on=%s "
+                    "attempt_count=%d occurrence_ref=%s",
+                    item.kind.value,
+                    item.due_at.isoformat(),
+                    item.occurrence_on,
+                    event.attempt_count,
+                    occurrence_ref,
+                )
+                return
+
+            logger.warning(
+                "cron_timer_dispatch_finished kind=%s due_at=%s occurrence_on=%s "
+                "outcome=%s attempt_count=%d occurrence_ref=%s",
+                item.kind.value,
+                item.due_at.isoformat(),
+                item.occurrence_on,
+                event.outcome.value,
+                event.attempt_count,
+                occurrence_ref,
+            )
+
+        return emit
 
     def _schedule_next_after_stale_item(self, item: TimerItem, *, now: datetime) -> None:
         """Keep a subject's future chain after dropping an overdue unclaimed occurrence."""
@@ -407,12 +448,12 @@ class CronTimer:
         if not item.is_pending_recovery and item.due_at < (now_vn - GRACE_WINDOW):
             self._schedule_next_after_stale_item(item, now=now_vn)
             logger.warning(
-                "cron_timer_stale reason=overdue_item kind=%s subject_id=%s "
-                "occurrence_on=%s due_at=%s",
+                "cron_timer_stale reason=overdue_item kind=%s occurrence_on=%s due_at=%s "
+                "occurrence_ref=%s",
                 item.kind.value,
-                item.subject_id,
                 item.occurrence_on,
                 item.due_at.isoformat(),
+                _occurrence_ref(item.kind, item.subject_id, item.occurrence_on),
             )
             return
 
@@ -435,7 +476,12 @@ class CronTimer:
                     return build_medication_payload(tracker, d_id)
 
                 outcome = await self._dispatcher.dispatch_item(
-                    db, "tracker", tracker.id, item.occurrence_on, payload_builder
+                    db,
+                    "tracker",
+                    tracker.id,
+                    item.occurrence_on,
+                    payload_builder,
+                    telemetry=self._dispatch_telemetry(item),
                 )
                 self._last_dispatch_at = datetime.now(VN_TZ)
                 self._last_dispatch_outcome = outcome.value
@@ -496,7 +542,12 @@ class CronTimer:
                     return build_subscription_expiry_payload(sub, tr, lead_days, today=today_vn)
 
                 outcome = await self._dispatcher.dispatch_item(
-                    db, "subscription", sub.id, item.occurrence_on, sub_payload_builder
+                    db,
+                    "subscription",
+                    sub.id,
+                    item.occurrence_on,
+                    sub_payload_builder,
+                    telemetry=self._dispatch_telemetry(item),
                 )
                 self._last_dispatch_at = datetime.now(VN_TZ)
                 self._last_dispatch_outcome = outcome.value
@@ -540,10 +591,10 @@ class CronTimer:
         self._pending_manual_required["exhausted"] += 1
         logger.warning(
             "cron_timer_pending_manual_required reason=exhausted kind=%s "
-            "subject_id=%s dispatched_on=%s",
+            "occurrence_on=%s occurrence_ref=%s",
             kind.value,
-            item.subject_id,
             item.occurrence_on,
+            _occurrence_ref(kind, item.subject_id, item.occurrence_on),
         )
 
     async def _wait_for_stop(self, timeout: float) -> bool:
@@ -641,9 +692,11 @@ class CronTimer:
                             raise
                         except Exception as exc:
                             logger.error(
-                                "cron_timer_dispatch_failed kind=%s subject_id=%s error_type=%s",
-                                item.kind,
-                                item.subject_id,
+                                "cron_timer_dispatch_failed kind=%s occurrence_on=%s "
+                                "occurrence_ref=%s error_type=%s",
+                                item.kind.value,
+                                item.occurrence_on,
+                                _occurrence_ref(item.kind, item.subject_id, item.occurrence_on),
                                 type(exc).__name__,
                             )
                             # A DB failure before a durable claim must not drop

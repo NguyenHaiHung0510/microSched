@@ -15,12 +15,13 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.domain.push as push_module
+import app.domain.reminder as reminder_module
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
 from app.domain.models import AuthSession, PushSubscription
 from app.domain.push import PushResult, validate_push_endpoint
-from app.domain.reminder import ReminderDispatcher
+from app.domain.reminder import DispatchOutcome, ReminderDispatcher
 from app.main import create_app
 from app.web.deps import get_session, require_session
 
@@ -716,5 +717,294 @@ def test_dispatch_item_never_sends_concurrently(pg_dsn: str, monkeypatch):
             await client.aclose()
             await engine.dispose()
             await _cleanup(pg_dsn, tracker_ids=tracker_ids, subscription_ids=subscription_ids)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+@pytest.mark.parametrize(
+    ("expected_outcome", "seed_attempts", "push_result", "expected_status"),
+    [
+        (DispatchOutcome.SENT, 0, PushResult.SENT, "sent"),
+        (DispatchOutcome.NO_DEVICE, 0, None, "no_device"),
+        (DispatchOutcome.TEMPORARY_FAILURE, 0, PushResult.TEMPORARY_FAILURE, "pending"),
+        (DispatchOutcome.EXHAUSTED, 4, None, "pending"),
+    ],
+)
+def test_dispatch_receipts_cover_durable_outcomes(
+    pg_dsn: str,
+    monkeypatch,
+    expected_outcome: DispatchOutcome,
+    seed_attempts: int,
+    push_result: PushResult | None,
+    expected_status: str,
+):
+    """O-02: telemetry carries the committed attempt count for every outcome."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids: list[UUID] = []
+        subscription_ids: list[UUID] = []
+        occurrence_on = date(2026, 8, 16)
+        try:
+            tracker = await _create_tracker(client)
+            tracker_id = UUID(tracker["id"])
+            tracker_ids.append(tracker_id)
+            if seed_attempts:
+                conn = await asyncpg.connect(pg_dsn)
+                try:
+                    await conn.execute(
+                        "INSERT INTO microsched.reminder_dispatch "
+                        "(id, subject_type, subject_id, dispatched_on, status, attempt_count, "
+                        "last_attempt_at, created_at) "
+                        "VALUES ($1, 'tracker', $2, $3, 'pending', $4, NOW(), NOW())",
+                        _uuid7(),
+                        tracker_id,
+                        occurrence_on,
+                        seed_attempts,
+                    )
+                finally:
+                    await conn.close()
+
+            if push_result is not None:
+                subscription_id = _uuid7()
+                subscription_ids.append(subscription_id)
+                conn = await asyncpg.connect(pg_dsn)
+                try:
+                    await conn.execute(
+                        "INSERT INTO microsched.push_subscription "
+                        "(id, endpoint, p256dh, auth, last_seen_at) "
+                        "VALUES ($1, $2, 'dGVzdA', 'dGVzdA', NOW())",
+                        subscription_id,
+                        f"https://push.example.test/send/{subscription_id}",
+                    )
+                finally:
+                    await conn.close()
+
+                async def fake_send(db, subscription, payload, timeout_seconds=20.0):
+                    return push_result
+
+                monkeypatch.setattr(reminder_module, "send_push", fake_send)
+
+            telemetry = []
+            maker = async_sessionmaker(engine, expire_on_commit=False)
+            async with maker() as db:
+                outcome = await ReminderDispatcher().dispatch_item(
+                    db,
+                    "tracker",
+                    tracker_id,
+                    occurrence_on,
+                    lambda dispatch_id: {"title": "test"},
+                    telemetry=telemetry.append,
+                )
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                row = await conn.fetchrow(
+                    "SELECT status, attempt_count FROM microsched.reminder_dispatch "
+                    "WHERE subject_type = 'tracker' AND subject_id = $1 AND dispatched_on = $2",
+                    tracker_id,
+                    occurrence_on,
+                )
+            finally:
+                await conn.close()
+
+            expected_attempts = 4 if expected_outcome == DispatchOutcome.EXHAUSTED else 1
+            assert outcome is expected_outcome
+            assert dict(row) == {
+                "status": expected_status,
+                "attempt_count": expected_attempts,
+            }
+            assert len(telemetry) == 2
+            assert telemetry[0].attempt_count == expected_attempts
+            assert telemetry[0].outcome is None
+            assert telemetry[1].attempt_count == expected_attempts
+            assert telemetry[1].outcome is expected_outcome
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(
+                pg_dsn,
+                tracker_ids=tracker_ids,
+                subscription_ids=subscription_ids,
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+def test_dispatch_item_without_telemetry_keeps_dispatch_outcome_return(pg_dsn: str):
+    """The optional observer does not change existing direct callers."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids: list[UUID] = []
+        try:
+            tracker = await _create_tracker(client)
+            tracker_id = UUID(tracker["id"])
+            tracker_ids.append(tracker_id)
+            maker = async_sessionmaker(engine, expire_on_commit=False)
+            async with maker() as db:
+                outcome = await ReminderDispatcher().dispatch_item(
+                    db,
+                    "tracker",
+                    tracker_id,
+                    date(2026, 8, 16),
+                    lambda dispatch_id: {"title": "test"},
+                )
+            assert outcome is DispatchOutcome.NO_DEVICE
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+def test_terminal_dispatch_reentry_receipts_without_attempt_or_network(pg_dsn: str, monkeypatch):
+    """Terminal re-entry emits no-op receipts without another attempt or send."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids: list[UUID] = []
+        occurrence_on = date(2026, 8, 16)
+        try:
+            tracker = await _create_tracker(client)
+            tracker_id = UUID(tracker["id"])
+            tracker_ids.append(tracker_id)
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute(
+                    "INSERT INTO microsched.reminder_dispatch "
+                    "(id, subject_type, subject_id, dispatched_on, status, attempt_count, "
+                    "last_attempt_at, created_at) "
+                    "VALUES ($1, 'tracker', $2, $3, 'sent', 2, NOW(), NOW())",
+                    _uuid7(),
+                    tracker_id,
+                    occurrence_on,
+                )
+            finally:
+                await conn.close()
+
+            network_calls = 0
+
+            async def unexpected_send(db, subscription, payload, timeout_seconds=20.0):
+                nonlocal network_calls
+                network_calls += 1
+                return PushResult.SENT
+
+            monkeypatch.setattr(reminder_module, "send_push", unexpected_send)
+            telemetry = []
+            dispatcher = ReminderDispatcher()
+            maker = async_sessionmaker(engine, expire_on_commit=False)
+            for _ in range(2):
+                async with maker() as db:
+                    outcome = await dispatcher.dispatch_item(
+                        db,
+                        "tracker",
+                        tracker_id,
+                        occurrence_on,
+                        lambda dispatch_id: {"title": "test"},
+                        telemetry=telemetry.append,
+                    )
+                    assert outcome is DispatchOutcome.SENT
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                attempt_count = await conn.fetchval(
+                    "SELECT attempt_count FROM microsched.reminder_dispatch "
+                    "WHERE subject_type = 'tracker' AND subject_id = $1 AND dispatched_on = $2",
+                    tracker_id,
+                    occurrence_on,
+                )
+            finally:
+                await conn.close()
+
+            assert attempt_count == 2
+            assert network_calls == 0
+            assert [(event.attempt_count, event.outcome) for event in telemetry] == [
+                (2, None),
+                (2, DispatchOutcome.SENT),
+                (2, None),
+                (2, DispatchOutcome.SENT),
+            ]
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+def test_dispatch_exception_keeps_started_without_fake_finished(pg_dsn: str, monkeypatch):
+    """A network exception leaves the truthful started-only investigation receipt."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids: list[UUID] = []
+        subscription_ids: list[UUID] = []
+        occurrence_on = date(2026, 8, 16)
+        try:
+            tracker = await _create_tracker(client)
+            tracker_id = UUID(tracker["id"])
+            tracker_ids.append(tracker_id)
+            subscription_id = _uuid7()
+            subscription_ids.append(subscription_id)
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute(
+                    "INSERT INTO microsched.push_subscription "
+                    "(id, endpoint, p256dh, auth, last_seen_at) "
+                    "VALUES ($1, $2, 'dGVzdA', 'dGVzdA', NOW())",
+                    subscription_id,
+                    f"https://push.example.test/error/{subscription_id}",
+                )
+            finally:
+                await conn.close()
+
+            async def failing_send(db, subscription, payload, timeout_seconds=20.0):
+                raise RuntimeError("provider-response-private-sentinel")
+
+            monkeypatch.setattr(reminder_module, "send_push", failing_send)
+            telemetry = []
+            maker = async_sessionmaker(engine, expire_on_commit=False)
+            with pytest.raises(RuntimeError, match="provider-response-private-sentinel"):
+                async with maker() as db:
+                    await ReminderDispatcher().dispatch_item(
+                        db,
+                        "tracker",
+                        tracker_id,
+                        occurrence_on,
+                        lambda dispatch_id: {"title": "test"},
+                        telemetry=telemetry.append,
+                    )
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                row = await conn.fetchrow(
+                    "SELECT status, attempt_count FROM microsched.reminder_dispatch "
+                    "WHERE subject_type = 'tracker' AND subject_id = $1 AND dispatched_on = $2",
+                    tracker_id,
+                    occurrence_on,
+                )
+            finally:
+                await conn.close()
+
+            assert dict(row) == {"status": "pending", "attempt_count": 1}
+            assert [(event.attempt_count, event.outcome) for event in telemetry] == [(1, None)]
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(
+                pg_dsn,
+                tracker_ids=tracker_ids,
+                subscription_ids=subscription_ids,
+            )
 
     asyncio.run(scenario())

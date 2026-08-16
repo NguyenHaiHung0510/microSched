@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Callable
@@ -35,6 +36,14 @@ class DispatchOutcome(StrEnum):
     TEMPORARY_FAILURE = "temporary_failure"
     NO_DEVICE = "no_device"
     EXHAUSTED = "exhausted"
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchTelemetry:
+    """Durable dispatcher state exposed to an optional in-process observer."""
+
+    attempt_count: int
+    outcome: DispatchOutcome | None = None
 
 
 def build_medication_payload(tracker: Tracker, dispatch_id: UUID) -> dict:
@@ -162,6 +171,8 @@ class ReminderDispatcher:
         subject_id: UUID,
         dispatched_on: date,
         payload_builder: Callable[[UUID], dict],
+        *,
+        telemetry: Callable[[DispatchTelemetry], None] | None = None,
     ) -> DispatchOutcome:
         """Execute one occurrence without keeping a database lock over network I/O."""
         key = (subject_type, subject_id, dispatched_on)
@@ -170,15 +181,31 @@ class ReminderDispatcher:
             dispatch = await self.claim_or_get_dispatch(db, subject_type, subject_id, dispatched_on)
 
             if dispatch.status in (DispatchOutcome.SENT, DispatchOutcome.NO_DEVICE):
-                return DispatchOutcome(dispatch.status)
+                outcome = DispatchOutcome(dispatch.status)
+                if telemetry is not None:
+                    telemetry(DispatchTelemetry(attempt_count=dispatch.attempt_count))
+                    telemetry(
+                        DispatchTelemetry(attempt_count=dispatch.attempt_count, outcome=outcome)
+                    )
+                return outcome
 
             if dispatch.attempt_count >= 4:
+                if telemetry is not None:
+                    telemetry(DispatchTelemetry(attempt_count=dispatch.attempt_count))
+                    telemetry(
+                        DispatchTelemetry(
+                            attempt_count=dispatch.attempt_count,
+                            outcome=DispatchOutcome.EXHAUSTED,
+                        )
+                    )
                 return DispatchOutcome.EXHAUSTED
 
             # Claim delivery attempt
             dispatch.attempt_count += 1
             dispatch.last_attempt_at = datetime.now(UTC)
             await db.commit()
+            if telemetry is not None:
+                telemetry(DispatchTelemetry(attempt_count=dispatch.attempt_count))
 
             # Build payload with stable dispatch ID
             payload = payload_builder(dispatch.id)
@@ -197,6 +224,13 @@ class ReminderDispatcher:
             if not subscriptions:
                 dispatch.status = DispatchOutcome.NO_DEVICE
                 await db.commit()
+                if telemetry is not None:
+                    telemetry(
+                        DispatchTelemetry(
+                            attempt_count=dispatch.attempt_count,
+                            outcome=DispatchOutcome.NO_DEVICE,
+                        )
+                    )
                 return DispatchOutcome.NO_DEVICE
 
             sent_count = 0
@@ -212,16 +246,37 @@ class ReminderDispatcher:
             if sent_count >= 1:
                 dispatch.status = DispatchOutcome.SENT
                 await db.commit()
+                if telemetry is not None:
+                    telemetry(
+                        DispatchTelemetry(
+                            attempt_count=dispatch.attempt_count,
+                            outcome=DispatchOutcome.SENT,
+                        )
+                    )
                 return DispatchOutcome.SENT
 
             if temp_fail_count >= 1:
                 # Remain pending for retry with same dispatch ID
                 await db.commit()
+                if telemetry is not None:
+                    telemetry(
+                        DispatchTelemetry(
+                            attempt_count=dispatch.attempt_count,
+                            outcome=DispatchOutcome.TEMPORARY_FAILURE,
+                        )
+                    )
                 return DispatchOutcome.TEMPORARY_FAILURE
 
             # Only dead subscriptions or list emptied
             dispatch.status = DispatchOutcome.NO_DEVICE
             await db.commit()
+            if telemetry is not None:
+                telemetry(
+                    DispatchTelemetry(
+                        attempt_count=dispatch.attempt_count,
+                        outcome=DispatchOutcome.NO_DEVICE,
+                    )
+                )
             return DispatchOutcome.NO_DEVICE
 
 

@@ -19,7 +19,7 @@ from app.core.cron_timer import (
 )
 from app.core.settings import get_settings
 from app.domain.models import ReminderDispatch, Subscription, Tracker
-from app.domain.reminder import DispatchOutcome
+from app.domain.reminder import DispatchOutcome, DispatchTelemetry
 from app.web import deps
 
 
@@ -89,12 +89,25 @@ class FakeFactory:
 class StubDispatcher:
     """Dispatcher double recording calls and returning a fixed outcome."""
 
-    def __init__(self, outcome: DispatchOutcome):
+    def __init__(self, outcome: DispatchOutcome, *, attempt_count: int | None = None):
         self.outcome = outcome
+        self.attempt_count = attempt_count or (4 if outcome == DispatchOutcome.EXHAUSTED else 1)
         self.calls = []
 
-    async def dispatch_item(self, db, subject_type, subject_id, dispatched_on, payload_builder):
+    async def dispatch_item(
+        self,
+        db,
+        subject_type,
+        subject_id,
+        dispatched_on,
+        payload_builder,
+        *,
+        telemetry=None,
+    ):
         self.calls.append((subject_type, subject_id, dispatched_on))
+        if telemetry is not None:
+            telemetry(DispatchTelemetry(attempt_count=self.attempt_count))
+            telemetry(DispatchTelemetry(attempt_count=self.attempt_count, outcome=self.outcome))
         return self.outcome
 
 
@@ -226,6 +239,42 @@ async def test_load_snapshot_calls_expiry_lead_days(monkeypatch):
     db = FakeDB(results=[[], [], []])
     await timer.load_snapshot(db, now=datetime(2026, 8, 6, 5, 0, tzinfo=VN_TZ))
     assert len(calls) == 1
+
+
+@pytest.mark.anyio
+async def test_queue_loaded_receipt_uses_none_for_empty_heap(monkeypatch, caplog):
+    """O-01: an empty snapshot emits one parseable literal deadline."""
+
+    async def fake_lead(db):
+        return 3
+
+    monkeypatch.setattr(cron, "expiry_lead_days", fake_lead)
+    db = FakeDB(results=[[], [], []])
+    timer = CronTimer(dummy_factory)
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
+
+    await timer.load_snapshot(db, now=datetime(2026, 8, 16, 8, 0, tzinfo=VN_TZ))
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == cron.__name__
+        and record.getMessage().startswith("cron_timer_queue_loaded")
+    ]
+    assert len(messages) == 1
+    event_name, *field_tokens = messages[0].split()
+    assert event_name == "cron_timer_queue_loaded"
+    assert dict(token.split("=", 1) for token in field_tokens) == {
+        "reason": "init",
+        "tracker_count": "0",
+        "subscription_count": "0",
+        "lead_days": "3",
+        "queue_size": "0",
+        "next_due_at": "none",
+        "pending_recovered_count": "0",
+        "pending_manual_required_count": "0",
+    }
+    assert db.executions == 3
 
 
 def test_timer_item_heap_ordering():
@@ -445,7 +494,7 @@ async def test_pending_recovery_keeps_dispatch_id_and_backoff(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_dead_pending_rows_are_receipted_not_dropped(monkeypatch):
+async def test_dead_pending_rows_are_receipted_not_dropped(monkeypatch, caplog):
     """F11: exhausted/expired/ineligible pending rows log + counter, never silently vanish."""
 
     async def fake_lead(db):
@@ -484,6 +533,7 @@ async def test_dead_pending_rows_are_receipted_not_dropped(monkeypatch):
     tracker = _tracker(tracker_id, reminder_time=time(8, 0))
     timer = CronTimer(dummy_factory)
     db = FakeDB(results=[pending, [tracker], []])
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
     await timer.load_snapshot(db, now=now)
     assert timer._pending_manual_required == {"expired": 1, "exhausted": 1, "ineligible": 1}
     queued = [it[5] for it in timer._heap]
@@ -493,10 +543,21 @@ async def test_dead_pending_rows_are_receipted_not_dropped(monkeypatch):
         UUID("01912345-6789-7000-8000-000000000413"),
     ):
         assert all(item.dispatch_id != dead_id for item in queued)
+    manual_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == cron.__name__
+        and record.getMessage().startswith("cron_timer_pending_manual_required")
+    ]
+    assert len(manual_messages) == 3
+    assert all("occurrence_ref=" in message for message in manual_messages)
+    joined = "\n".join(manual_messages)
+    assert all(str(pending_row.subject_id) not in joined for pending_row in pending)
+    assert all(str(pending_row.id) not in joined for pending_row in pending)
 
 
 @pytest.mark.anyio
-async def test_exhausted_outcome_is_receipted_and_next_day_scheduled(monkeypatch):
+async def test_exhausted_outcome_is_receipted_and_next_day_scheduled(monkeypatch, caplog):
     """F10+F11: EXHAUSTED at dispatch logs a receipt and does not swallow tomorrow."""
     stub = StubDispatcher(DispatchOutcome.EXHAUSTED)
     now = datetime(2026, 8, 6, 7, 0, tzinfo=VN_TZ)
@@ -512,12 +573,21 @@ async def test_exhausted_outcome_is_receipted_and_next_day_scheduled(monkeypatch
         retry_count=3,
         is_pending_recovery=True,
     )
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
     await timer._process_due_item(item, now=now)
     assert timer._pending_manual_required["exhausted"] == 1
     assert len(stub.calls) == 1
     next_item = timer._heap[0][5]
     assert next_item.occurrence_on == date(2026, 8, 7)
     assert next_item.due_at == datetime(2026, 8, 7, 8, 0, tzinfo=VN_TZ)
+    manual_message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == cron.__name__
+        and record.getMessage().startswith("cron_timer_pending_manual_required")
+    )
+    assert str(tracker_id) not in manual_message
+    assert "occurrence_ref=" in manual_message
 
 
 @pytest.mark.anyio
@@ -640,7 +710,8 @@ async def test_stale_non_pending_item_skips_old_occurrence_and_schedules_next(
     assert len(stale_messages) == 1
     assert "reason=overdue_item" in stale_messages[0]
     assert f"kind={item.kind.value}" in stale_messages[0]
-    assert f"subject_id={item.subject_id}" in stale_messages[0]
+    assert str(item.subject_id) not in stale_messages[0]
+    assert "occurrence_ref=" in stale_messages[0]
     assert f"occurrence_on={item.occurrence_on}" in stale_messages[0]
     assert "payload" not in stale_messages[0]
     assert "endpoint" not in stale_messages[0]
@@ -716,6 +787,7 @@ async def test_timer_item_exception_log_excludes_exception_text(monkeypatch, cap
     ]
     assert any("error_type=RuntimeError" in message for message in timer_messages)
     assert all("secret-like-value" not in message for message in timer_messages)
+    assert all(str(item.subject_id) not in message for message in timer_messages)
 
 
 @pytest.mark.anyio
@@ -987,6 +1059,7 @@ async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monk
         "subscription_count": "1",
         "lead_days": "3",
         "queue_size": "2",
+        "next_due_at": timer._heap[0][0].isoformat(),
         "pending_recovered_count": "0",
         "pending_manual_required_count": "0",
     }
@@ -998,3 +1071,108 @@ async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monk
         sentinel_subscription_note,
     ):
         assert sentinel not in queue_message
+
+
+@pytest.mark.anyio
+async def test_cron_timer_dispatch_receipt_ordering(caplog):
+    """O-02/O-03: one invocation emits one safe, ordered pair."""
+    tracker_id = UUID("01912345-6789-7000-8000-000000000a01")
+    tracker = _tracker(tracker_id, reminder_time=time(8, 0))
+    tracker.name = "enc:v1:receipt-name-sentinel"
+    tracker.reminder_text = "receipt-text-sentinel"
+    due_at = datetime(2026, 8, 16, 8, 0, tzinfo=VN_TZ)
+    stub = StubDispatcher(DispatchOutcome.SENT, attempt_count=2)
+    timer = CronTimer(FakeFactory(FakeDB(results=[[tracker]])), reminder_dispatcher=stub)
+    item = TimerItem(
+        due_at=due_at,
+        occurrence_on=due_at.date(),
+        kind=ScheduleKind.TRACKER,
+        subject_id=tracker_id,
+        reminder_time=time(8, 0),
+    )
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
+
+    await timer._process_due_item(item, now=due_at)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == cron.__name__ and "cron_timer_dispatch_" in record.getMessage()
+    ]
+    assert len(messages) == 2
+    joined = "\n".join(messages)
+    for forbidden in (
+        str(tracker_id),
+        tracker.name,
+        tracker.reminder_text,
+        "https://receipt-endpoint.invalid/sentinel",
+        "p256dh-receipt-sentinel",
+        "cookie-receipt-sentinel",
+        "token-receipt-sentinel",
+        "credential-receipt-sentinel",
+        "provider-response-receipt-sentinel",
+    ):
+        assert forbidden not in joined
+
+    started_tokens = messages[0].split()
+    finished_tokens = messages[1].split()
+    assert started_tokens[0] == "cron_timer_dispatch_started"
+    assert finished_tokens[0] == "cron_timer_dispatch_finished"
+    started = dict(token.split("=", 1) for token in started_tokens[1:])
+    finished = dict(token.split("=", 1) for token in finished_tokens[1:])
+    assert started == {
+        "kind": "tracker",
+        "due_at": due_at.isoformat(),
+        "occurrence_on": due_at.date().isoformat(),
+        "attempt_count": "2",
+        "occurrence_ref": started["occurrence_ref"],
+    }
+    assert len(started["occurrence_ref"]) == 16
+    assert all(character in "0123456789abcdef" for character in started["occurrence_ref"])
+    assert finished == {
+        "kind": "tracker",
+        "due_at": due_at.isoformat(),
+        "occurrence_on": due_at.date().isoformat(),
+        "outcome": "sent",
+        "attempt_count": "2",
+        "occurrence_ref": started["occurrence_ref"],
+    }
+
+
+@pytest.mark.anyio
+async def test_reload_within_grace_terminal_reentry_keeps_same_occurrence_ref(caplog):
+    """A terminal reload may repeat the safe pair without another network attempt."""
+    tracker_id = UUID("01912345-6789-7000-8000-000000000a02")
+    tracker = _tracker(tracker_id, reminder_time=time(8, 0))
+    due_at = datetime(2026, 8, 16, 8, 0, tzinfo=VN_TZ)
+    stub = StubDispatcher(DispatchOutcome.SENT, attempt_count=1)
+    timer = CronTimer(FakeFactory(FakeDB(results=[[tracker], [tracker]])), reminder_dispatcher=stub)
+    item = TimerItem(
+        due_at=due_at,
+        occurrence_on=due_at.date(),
+        kind=ScheduleKind.TRACKER,
+        subject_id=tracker_id,
+        reminder_time=time(8, 0),
+    )
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
+
+    await timer._process_due_item(item, now=due_at)
+    await timer._process_due_item(item, now=due_at)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == cron.__name__ and "cron_timer_dispatch_" in record.getMessage()
+    ]
+    assert [message.split()[0] for message in messages] == [
+        "cron_timer_dispatch_started",
+        "cron_timer_dispatch_finished",
+        "cron_timer_dispatch_started",
+        "cron_timer_dispatch_finished",
+    ]
+    refs = [
+        dict(token.split("=", 1) for token in message.split()[1:])["occurrence_ref"]
+        for message in messages
+    ]
+    assert len(set(refs)) == 1
+    assert len(stub.calls) == 2
