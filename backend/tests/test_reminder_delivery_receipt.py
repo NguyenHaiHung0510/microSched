@@ -203,6 +203,17 @@ def test_cli_config_error_prints_only_safe_error_type(monkeypatch, capsys):
     assert captured.err == "error_type=RuntimeError\n"
 
 
+def test_cli_argument_error_prints_only_safe_error_type(capsys):
+    sentinel = "diagnostic-input-sentinel"
+    exit_code = receipt_module.main(["--window-minutes", sentinel])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err == "error_type=ValueError\n"
+    assert sentinel not in captured.err
+
+
 def test_cli_success_prints_exactly_one_json_object(monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:password@localhost/test")
     monkeypatch.setenv("GIT_SHA", "cli-test-sha")

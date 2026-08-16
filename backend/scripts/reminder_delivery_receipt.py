@@ -128,8 +128,15 @@ async def collect_receipt(
     }
 
 
+class _SafeArgumentParser(argparse.ArgumentParser):
+    """Reject invalid CLI input without echoing the original argv to stderr."""
+
+    def error(self, message: str) -> None:
+        raise ValueError("invalid command arguments")
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _SafeArgumentParser(description=__doc__)
     window = parser.add_mutually_exclusive_group(required=True)
     window.add_argument("--window-minutes", type=int)
     window.add_argument("--since")
@@ -137,9 +144,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    observed_at = datetime.now(UTC)
     try:
+        args = _parser().parse_args(argv)
+        observed_at = datetime.now(UTC)
         window_started_at, window_minutes = resolve_window(
             window_minutes=args.window_minutes,
             since=args.since,
