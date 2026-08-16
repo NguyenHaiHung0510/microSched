@@ -79,6 +79,7 @@ export function PrivateGate({ session }: Props) {
     setPrivateOverride(null)
     invalidateStatus()
     void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
     return true
   }, [invalidateStatus, privateUntil, queryClient])
 
@@ -147,6 +148,7 @@ export function PrivateGate({ session }: Props) {
       setUnlockOpen(false)
       invalidateStatus()
       void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: ['calendar'] })
     },
     onError: reportError,
   })
@@ -157,6 +159,7 @@ export function PrivateGate({ session }: Props) {
       // R6 order is load-bearing: erase private responses before any refetch can
       // leave the previous result rendered while the network request is pending.
       queryClient.removeQueries({ queryKey: taskInvalidationKey })
+      queryClient.removeQueries({ queryKey: ['calendar'] })
       setPrivateOverride(null)
       setErrorText(null)
       invalidateStatus()

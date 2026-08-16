@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueries } from '@tanstack/react-query'
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 
 import { apiRequest } from '@/api'
 import { todayInVietnam, type CalendarEvent, type CalendarSource } from '@/calendar-ui'
@@ -64,16 +64,27 @@ async function fetchSession(): Promise<SessionLite> {
   return apiRequest<SessionLite>('/api/me')
 }
 
-/** At most 5 pages x 100 tasks (spec §4.2); a full fifth page stops and warns. */
-async function fetchTaskPages(status: 'all' | 'open'): Promise<CalendarTask[]> {
+/** Cursor pages are bounded and stop only at the server's explicit end marker. */
+async function fetchTaskPages(
+  status: 'all' | 'open',
+  range?: { from: string; to: string },
+): Promise<CalendarTask[]> {
   const items: CalendarTask[] = []
-  for (let offset = 0; offset < 500; offset += 100) {
-    const page = await apiRequest<Envelope<CalendarTask>>(
-      `/api/tasks?status=${status}&limit=100&offset=${offset}`,
+  let cursor: string | null = null
+  do {
+    const params = new URLSearchParams({ status, limit: '100' })
+    if (range) {
+      params.set('from', range.from)
+      params.set('to', range.to)
+      params.set('bucket', 'dated')
+    }
+    if (cursor) params.set('cursor', cursor)
+    const page = await apiRequest<Envelope<CalendarTask> & { next_cursor?: string | null }>(
+      `/api/tasks?${params.toString()}`,
     )
     items.push(...page.items)
-    if (page.items.length < 100) break
-  }
+    cursor = page.next_cursor ?? null
+  } while (cursor)
   return items
 }
 
@@ -92,6 +103,7 @@ function useIsDesktop(): boolean {
 }
 
 export function CalendarScrollView() {
+  const queryClient = useQueryClient()
   const today = todayInVietnam()
   const todayMonthKey = today.slice(0, 7)
   const isDesktop = useIsDesktop()
@@ -138,12 +150,26 @@ export function CalendarScrollView() {
   })
   const allTasksQuery = useQuery({
     ...calendarTasksQuerySpec('all'),
-    queryFn: () => fetchTaskPages('all'),
+    queryFn: () => {
+      const first = months[0]
+      const last = months[months.length - 1]
+      return fetchTaskPages('all', {
+        from: monthFetchRange(first.year, first.month).from,
+        to: monthFetchRange(last.year, last.month).to,
+      })
+    },
   })
   const openTasksQuery = useQuery({
     ...calendarTasksQuerySpec('open'),
     queryFn: () => fetchTaskPages('open'),
+    enabled: selectedDay !== null,
   })
+
+  useEffect(() => {
+    if (selectedDay === null) {
+      queryClient.removeQueries({ queryKey: ['calendar', 'tasks', 'open'] })
+    }
+  }, [queryClient, selectedDay])
 
   const allEvents = useMemo(
     () => dedupeById(monthEventQueries.flatMap((query) => query.data?.items ?? [])),
@@ -185,7 +211,7 @@ export function CalendarScrollView() {
     monthEventQueries.some((query) => query.isError && (query.data?.items.length ?? 0) > 0) ||
     (annotationsQuery.isError && (annotationsQuery.data?.items.length ?? 0) > 0) ||
     (allTasksQuery.isError && (allTasksQuery.data?.length ?? 0) > 0)
-  const tasksTruncated = allTasksQuery.data?.length === 500
+  const tasksTruncated = false
 
   /* IntersectionObserver on every week row, root = the scroll container. The
      callback only reports entries that CHANGED, so state is kept in a Map and

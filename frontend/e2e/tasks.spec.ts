@@ -2,13 +2,6 @@ import { type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { expect, fixtureTasks, test } from './fixtures/tasks'
 
-const openTasks = fixtureTasks.filter((entry) => entry.status === 'open')
-const overdueTasks = fixtureTasks.filter(
-  (entry) =>
-    entry.status === 'open' &&
-    entry.due_at !== null &&
-    new Date(entry.due_at).getTime() < Date.now(),
-)
 const MEASUREMENT_MS = 60_000
 
 mkdirSync('output/playwright', { recursive: true })
@@ -18,9 +11,32 @@ async function openTasksScreen(page: Page) {
   await expect(page.getByTestId('task-list')).toBeVisible()
 }
 
-test('smoke renders every open task from the fixture', async ({ page }) => {
+test('smoke renders the seven-day timeline and bounded continuation', async ({ page }) => {
   await openTasksScreen(page)
-  await expect(page.getByTestId('task-card')).toHaveCount(openTasks.length)
+  await expect(page.getByTestId('task-day-group')).toHaveCount(7)
+  await expect(page.getByTestId('task-load-more-in-day')).toBeVisible()
+})
+
+test('date navigation advances contiguous seven-day blocks without duplicate headers', async ({ page }) => {
+  await openTasksScreen(page)
+  const first = await page.getByTestId('task-day-group').evaluateAll((groups) => groups.map((group) => group.getAttribute('data-day')))
+  await page.getByTestId('task-load-earlier').click()
+  await expect(page.getByTestId('task-day-group')).toHaveCount(14)
+  const all = await page.getByTestId('task-day-group').evaluateAll((groups) => groups.map((group) => group.getAttribute('data-day')))
+  expect(new Set(all).size).toBe(all.length)
+  expect(all.slice(0, 7)).not.toEqual(first)
+})
+
+test('same-day cursor continuation reaches synthetic rows beyond the first bounded page', async ({ page }) => {
+  await openTasksScreen(page)
+  await expect(page.locator('[data-task-id="synthetic-205"]')).toHaveCount(0)
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const continuation = page.getByTestId('task-load-more-in-day')
+    if (!(await continuation.isVisible())) break
+    await continuation.click()
+    await expect(continuation).toBeVisible().catch(() => undefined)
+  }
+  await expect(page.locator('[data-task-id="synthetic-205"]')).toBeVisible()
 })
 
 test('clicking card whitespace opens the detail dialog', async ({ page }) => {
@@ -62,41 +78,26 @@ test('drag-selecting task text does not open the dialog', async ({ page }) => {
   await expect(page.getByTestId('task-detail-dialog')).toBeHidden()
 })
 
-test('overdue banner selects overdue view and shows an active escape chip', async ({ page }) => {
+test('overdue banner focuses the earlier overdue group without changing filter', async ({ page }) => {
   await openTasksScreen(page)
   await page.getByTestId('overdue-banner').click()
-  await expect(page.getByTestId('filter-overdue')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('task-card')).toHaveCount(overdueTasks.length)
-  for (const entry of overdueTasks) {
-    await expect(page.locator(`[data-task-id="${entry.id}"]`)).toBeVisible()
-  }
+  await expect(page.getByTestId('filter-open')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('task-overdue-earlier-group')).toBeVisible()
 })
 
 test('pinned completed tasks do not leak into open or overdue views', async ({ page }) => {
   await openTasksScreen(page)
   await expect(page.getByTestId('filter-open')).toHaveAttribute('aria-pressed', 'true')
   await expect(page.locator('[data-task-id="task-002"]')).toHaveCount(0)
-  await page.getByTestId('overdue-banner').click()
   await expect(page.locator('[data-task-id="task-002"]')).toHaveCount(0)
 })
 
-test('completing the final overdue task returns to open view', async ({ page }) => {
+test('completing an overdue task updates its timeline group', async ({ page }) => {
   await openTasksScreen(page)
-  await page.getByTestId('overdue-banner').click()
-  const overdueCards = page.getByTestId('task-card')
-  while ((await overdueCards.count()) > 1) {
-    const before = await overdueCards.count()
-    await overdueCards.first().getByTestId('task-checkbox').click()
-    await expect(overdueCards).toHaveCount(before - 1)
-  }
-  await expect(overdueCards).toHaveCount(1)
-  const finalOverdueId = await overdueCards.first().getAttribute('data-task-id')
-  expect(finalOverdueId).not.toBeNull()
-  if (!finalOverdueId) return
-  await overdueCards.first().getByTestId('task-checkbox').click()
-  await expect(page.getByTestId('filter-open')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('filter-overdue')).toBeHidden()
-  await expect(page.locator(`[data-task-id="${finalOverdueId}"]`)).toHaveCount(0)
+  const overdueCard = page.getByTestId('task-overdue-earlier-group').getByTestId('task-card').first()
+  const taskId = await overdueCard.getAttribute('data-task-id')
+  await overdueCard.getByTestId('task-checkbox').click()
+  await expect(page.locator(`[data-task-id="${taskId}"]`)).toHaveCount(0)
 })
 
 test('quick add posts once and clears the input', async ({ page, taskApi }) => {
@@ -201,8 +202,8 @@ test('healthy visible task query polls and hidden tab stops polling', async ({ p
   await openTasksScreen(page)
   taskApi.resetCounts()
   await page.waitForTimeout(MEASUREMENT_MS)
-  const focusedCount = taskApi.count('GET', '/api/tasks')
-  console.log(`refetchInterval focused: ${focusedCount} GET /api/tasks in ${MEASUREMENT_MS}ms`)
+  const focusedCount = taskApi.count('GET', '/api/tasks/timeline')
+  console.log(`refetchInterval focused: ${focusedCount} GET /api/tasks/timeline in ${MEASUREMENT_MS}ms`)
   expect(focusedCount).toBeGreaterThanOrEqual(50)
   expect(focusedCount).toBeLessThanOrEqual(70)
 
@@ -213,8 +214,8 @@ test('healthy visible task query polls and hidden tab stops polling', async ({ p
   })
   taskApi.resetCounts()
   await page.waitForTimeout(MEASUREMENT_MS)
-  console.log(`refetchInterval hidden: ${taskApi.count('GET', '/api/tasks')} GET /api/tasks in ${MEASUREMENT_MS}ms`)
-  expect(taskApi.count('GET', '/api/tasks')).toBe(0)
+  console.log(`refetchInterval hidden: ${taskApi.count('GET', '/api/tasks/timeline')} GET /api/tasks/timeline in ${MEASUREMENT_MS}ms`)
+  expect(taskApi.count('GET', '/api/tasks/timeline')).toBe(0)
 })
 
 test('session error performs no repeated /api/me polling', async ({ page, taskApi }, testInfo) => {

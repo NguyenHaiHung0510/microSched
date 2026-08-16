@@ -118,6 +118,21 @@ export const fixtureTasks: FixtureTask[] = [
   }),
 ]
 
+// Cursor QA needs more than the historical 191-row snapshot. These are
+// synthetic-only rows, deliberately spread over the visible window and with
+// one dense Vietnam date to exercise same-day continuation.
+fixtureTasks.push(
+  ...Array.from({ length: 205 }, (_, index) =>
+    task(`synthetic-${String(index + 1).padStart(3, '0')}`, `Việc kiểm cursor ${index + 1}`, {
+      due_at: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+      created_at: new Date(Date.now() - index * 1_000).toISOString(),
+      updated_at: new Date(Date.now() - index * 1_000).toISOString(),
+      pinned: index % 67 === 0,
+      status: index % 29 === 0 ? 'completed' : 'open',
+    }),
+  ),
+)
+
 export type TaskApiState = {
   tasks: FixtureTask[]
   sessionStatus: number
@@ -143,6 +158,45 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     contentType: 'application/json',
     body: JSON.stringify(body),
+  }
+}
+
+function taskDateKey(value: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(value))
+  const fields = Object.fromEntries(
+    parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]),
+  )
+  return `${fields.year}-${fields.month}-${fields.day}`
+}
+
+function compareTasks(left: FixtureTask, right: FixtureTask): number {
+  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
+  if (left.due_at && right.due_at) {
+    const due = Date.parse(left.due_at) - Date.parse(right.due_at)
+    if (due !== 0) return due
+  } else if (left.due_at) return -1
+  else if (right.due_at) return 1
+  return Date.parse(right.created_at) - Date.parse(left.created_at) || left.id.localeCompare(right.id)
+}
+
+function fixturePage(
+  entries: FixtureTask[],
+  url: URL,
+): { items: FixtureTask[]; next_cursor: string | null; has_previous: boolean; has_next: boolean } {
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 50)))
+  const start = Math.max(0, Number(url.searchParams.get('cursor') ?? 0))
+  const items = entries.slice(start, start + limit)
+  const next = start + limit < entries.length ? String(start + limit) : null
+  return {
+    items,
+    next_cursor: next,
+    has_previous: start > 0,
+    has_next: next !== null,
   }
 }
 
@@ -265,15 +319,66 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
         return
       }
 
+      if (path === '/api/tasks/timeline' && method === 'GET') {
+        const privateOpen = Boolean(
+          state.privateUntil && Date.parse(state.privateUntil) > Date.now(),
+        )
+        const status = url.searchParams.get('status') ?? 'open'
+        const from = url.searchParams.get('from')
+        const to = url.searchParams.get('to')
+        const visible = state.tasks
+          .filter((entry) => !entry.is_private || privateOpen)
+          .filter((entry) => status === 'all' || entry.status === status)
+        const inRange = (entry: FixtureTask) =>
+          entry.due_at !== null &&
+          (!from || Date.parse(entry.due_at) >= Date.parse(from)) &&
+          (!to || Date.parse(entry.due_at) < Date.parse(to))
+        const dated = visible.filter(inRange).sort(compareTasks)
+        const earliest = from ? Date.parse(from) : Number.NEGATIVE_INFINITY
+        const overdue = visible
+          .filter((entry) => entry.status === 'open' && entry.due_at !== null && Date.parse(entry.due_at) < earliest)
+          .sort(compareTasks)
+        const undated = visible.filter((entry) => entry.due_at === null).sort(compareTasks)
+        const datedPage = fixturePage(dated, url)
+        const overduePage = fixturePage(overdue, new URL(url.toString()))
+        const undatedPage = fixturePage(undated, new URL(url.toString()))
+        return route.fulfill(
+          jsonResponse({
+            items: [...overduePage.items, ...datedPage.items, ...undatedPage.items],
+            next_cursor: datedPage.next_cursor,
+            bucket_cursors: {
+              overdue: overduePage.next_cursor,
+              dated: datedPage.next_cursor,
+              undated: undatedPage.next_cursor,
+            },
+            has_previous: datedPage.has_previous,
+            has_next: overduePage.has_next || datedPage.has_next || undatedPage.has_next,
+            loaded_range_start: from?.slice(0, 10) ?? taskDateKey(new Date().toISOString()),
+            loaded_range_end: to ? taskDateKey(new Date(Date.parse(to) - 86_400_000).toISOString()) : taskDateKey(new Date().toISOString()),
+            counts: { overdue: overdue.length, dated: dated.length, undated: undated.length },
+          }),
+        )
+      }
+
       if (path === '/api/tasks' && method === 'GET') {
         const privateOpen = Boolean(
           state.privateUntil && Date.parse(state.privateUntil) > Date.now(),
         )
-        await route.fulfill(
-          jsonResponse({
-            items: state.tasks.filter((entry) => !entry.is_private || privateOpen),
-          }),
-        )
+        const status = url.searchParams.get('status') ?? 'open'
+        const from = url.searchParams.get('from')
+        const to = url.searchParams.get('to')
+        const bucket = url.searchParams.get('bucket') ?? 'dated'
+        const visible = state.tasks
+          .filter((entry) => !entry.is_private || privateOpen)
+          .filter((entry) => status === 'all' || entry.status === status)
+          .filter((entry) => {
+            if (bucket === 'undated') return entry.due_at === null
+            if (!entry.due_at) return bucket !== 'dated' && !from && !to
+            if (bucket === 'overdue') return Boolean(from) && Date.parse(entry.due_at) < Date.parse(from as string)
+            return (!from || Date.parse(entry.due_at) >= Date.parse(from)) && (!to || Date.parse(entry.due_at) < Date.parse(to))
+          })
+          .sort(compareTasks)
+        await route.fulfill(jsonResponse(fixturePage(visible, url)))
         return
       }
 

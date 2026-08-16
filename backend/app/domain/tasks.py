@@ -1,21 +1,27 @@
 """Task DTOs and the request-scoped Postgres store for the pattern-setting slice."""
 
+import base64
+import hashlib
+import hmac
+import json
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import delete, select
+from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy import and_, delete, false, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
+from app.core.settings import get_settings
 from app.domain.models import AuthSession, Task, TaskItem
 from app.domain.reading import can_see_private, readable, with_privacy_gate
 
 TaskStatus = Literal["open", "completed"]
 TaskListStatus = Literal["open", "completed", "all"]
+TaskBucket = Literal["dated", "overdue", "undated"]
 TaskPriority = Literal["p1", "p2", "p3"]
 NonEmptyText = Annotated[str, Field(min_length=1)]
 
@@ -74,6 +80,13 @@ class TaskCreate(BaseModel):
             raise ValueError("id must be a UUIDv7")
         return self
 
+    @field_validator("due_at")
+    @classmethod
+    def require_aware_due_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("due_at must include a timezone offset")
+        return value
+
 
 class TaskUpdate(BaseModel):
     """Patch semantics for a task; only explicitly supplied fields are changed."""
@@ -94,6 +107,13 @@ class TaskUpdate(BaseModel):
                 raise ValueError(f"{field} cannot be null")
         return self
 
+    @field_validator("due_at")
+    @classmethod
+    def require_aware_due_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("due_at must include a timezone offset")
+        return value
+
 
 class TaskRead(BaseModel):
     """Decrypted task returned at the API boundary."""
@@ -111,6 +131,124 @@ class TaskRead(BaseModel):
     created_at: datetime | None
     updated_at: datetime | None
     created: bool | None = Field(default=None, exclude=True)
+
+
+class TaskPage(BaseModel):
+    """Bounded keyset page shared by the task timeline and Calendar."""
+
+    items: list[TaskRead]
+    next_cursor: str | None = None
+    has_previous: bool = False
+    has_next: bool = False
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class TaskTimeline(BaseModel):
+    """One bounded aggregate wave for the primary Task screen."""
+
+    items: list[TaskRead]
+    next_cursor: str | None = None
+    bucket_cursors: dict[str, str | None] = Field(default_factory=dict)
+    has_previous: bool = False
+    has_next: bool = False
+    loaded_range_start: date
+    loaded_range_end: date
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class InvalidTaskCursor(ValueError):
+    """An opaque cursor was malformed, tampered, expired, or mis-scoped."""
+
+
+_CURSOR_VERSION = 1
+_CURSOR_TTL = timedelta(minutes=15)
+
+
+def _cursor_secret() -> bytes:
+    configured = get_settings().oauth_state_secret
+    # Local tests and development can use the app name; production should set the
+    # existing OAuth state secret, avoiding a new secret surface for this read token.
+    return (configured or get_settings().app_name).encode("utf-8")
+
+
+def _cursor_encode(payload: dict[str, object]) -> str:
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(body).rstrip(b"=")
+    signature = hmac.new(_cursor_secret(), encoded, hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    return f"{encoded.decode('ascii')}.{encoded_signature}"
+
+
+def _cursor_decode(
+    token: str,
+    *,
+    status: TaskListStatus,
+    from_instant: datetime | None,
+    to_instant: datetime | None,
+    bucket: TaskBucket,
+    can_see_private: bool,
+) -> dict[str, object]:
+    try:
+        encoded, supplied = token.split(".", 1)
+        expected = hmac.new(_cursor_secret(), encoded.encode("ascii"), hashlib.sha256).digest()
+        actual = base64.urlsafe_b64decode(supplied + "=" * (-len(supplied) % 4))
+        if not hmac.compare_digest(expected, actual):
+            raise InvalidTaskCursor("invalid cursor signature")
+        payload = json.loads(
+            base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("utf-8")
+        )
+        if not isinstance(payload, dict):
+            raise InvalidTaskCursor("invalid cursor payload")
+        expires = float(payload.get("expires", 0))
+        if payload.get("v") != _CURSOR_VERSION or expires < datetime.now(UTC).timestamp():
+            raise InvalidTaskCursor("expired cursor")
+        scope = {
+            "status": status,
+            "from": from_instant.isoformat() if from_instant else None,
+            "to": to_instant.isoformat() if to_instant else None,
+            "bucket": bucket,
+            "private": can_see_private,
+            "direction": "forward",
+        }
+        if any(payload.get(key) != value for key, value in scope.items()):
+            raise InvalidTaskCursor("cursor scope mismatch")
+        last = payload.get("last")
+        if not isinstance(last, dict) or not isinstance(last.get("id"), str):
+            raise InvalidTaskCursor("invalid cursor position")
+        return payload
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+        if isinstance(error, InvalidTaskCursor):
+            raise
+        raise InvalidTaskCursor("invalid cursor") from error
+
+
+def _cursor_for(
+    task: Task,
+    *,
+    status: TaskListStatus,
+    from_instant: datetime | None,
+    to_instant: datetime | None,
+    bucket: TaskBucket,
+    can_see_private: bool,
+) -> str:
+    return _cursor_encode(
+        {
+            "v": _CURSOR_VERSION,
+            "status": status,
+            "from": from_instant.isoformat() if from_instant else None,
+            "to": to_instant.isoformat() if to_instant else None,
+            "bucket": bucket,
+            "private": can_see_private,
+            "direction": "forward",
+            "expires": (datetime.now(UTC) + _CURSOR_TTL).timestamp(),
+            "last": {
+                "pinned": task.pinned,
+                "due_at": task.due_at.isoformat() if task.due_at else None,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "id": str(task.id),
+            },
+        }
+    )
 
 
 class TaskIdConflict(Exception):
@@ -219,6 +357,213 @@ class TaskStore:
         for item in child_result.scalars():
             grouped[item.task_id].append(item)
         return [self._task_read(task, grouped[task.id]) for task in parents]
+
+    @staticmethod
+    def _keyset_after(task_cls: type[Task], last: dict[str, object]):
+        """Build the forward predicate for pinned/due/created/id ordering."""
+        pinned = bool(last["pinned"])
+        due_raw = last.get("due_at")
+        created_raw = last.get("created_at")
+        due_at = datetime.fromisoformat(str(due_raw)) if due_raw else None
+        created_at = datetime.fromisoformat(str(created_raw)) if created_raw else None
+        task_id = UUID(str(last["id"]))
+        same_due = task_cls.due_at.is_(None) if due_at is None else task_cls.due_at == due_at
+        later_due = task_cls.due_at > due_at if due_at is not None else false()
+        same_created = (
+            task_cls.created_at.is_(None)
+            if created_at is None
+            else task_cls.created_at == created_at
+        )
+        later_created = (
+            task_cls.created_at.is_not(None)
+            if created_at is None
+            else task_cls.created_at < created_at
+        )
+        later_pinned = task_cls.pinned.is_(False) if pinned else false()
+        return or_(
+            later_pinned,
+            and_(
+                task_cls.pinned == pinned,
+                or_(
+                    later_due,
+                    and_(same_due, later_created),
+                    and_(same_due, same_created, task_cls.id > task_id),
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _keyset_before(task_cls: type[Task], last: dict[str, object]):
+        """Build the inverse predicate used only for honest has_previous metadata."""
+        pinned = bool(last["pinned"])
+        due_raw = last.get("due_at")
+        created_raw = last.get("created_at")
+        due_at = datetime.fromisoformat(str(due_raw)) if due_raw else None
+        created_at = datetime.fromisoformat(str(created_raw)) if created_raw else None
+        task_id = UUID(str(last["id"]))
+        same_due = task_cls.due_at.is_(None) if due_at is None else task_cls.due_at == due_at
+        earlier_due = task_cls.due_at.is_not(None) if due_at is None else task_cls.due_at < due_at
+        same_created = (
+            task_cls.created_at.is_(None)
+            if created_at is None
+            else task_cls.created_at == created_at
+        )
+        earlier_created = (
+            task_cls.created_at.is_not(None)
+            if created_at is None
+            else task_cls.created_at > created_at
+        )
+        earlier_pinned = task_cls.pinned.is_(True) if not pinned else false()
+        return or_(
+            earlier_pinned,
+            and_(
+                task_cls.pinned == pinned,
+                or_(
+                    earlier_due,
+                    and_(same_due, earlier_created),
+                    and_(same_due, same_created, task_cls.id < task_id),
+                ),
+            ),
+        )
+
+    async def list_cursor(
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        *,
+        status: TaskListStatus = "open",
+        from_instant: datetime | None = None,
+        to_instant: datetime | None = None,
+        bucket: TaskBucket = "dated",
+        limit: int = 50,
+        cursor: str | None = None,
+        now: datetime | None = None,
+    ) -> TaskPage:
+        """Return a bounded page using signed keyset cursors.
+
+        ``readable`` and deleted filtering are applied before the cursor and limit;
+        this is the privacy boundary that the old offset endpoint could not express.
+        """
+        if not 1 <= limit <= 100:
+            raise InvalidTaskCursor("limit out of range")
+        if from_instant and from_instant.tzinfo is None:
+            raise InvalidTaskCursor("from must be timezone-aware")
+        if to_instant and to_instant.tzinfo is None:
+            raise InvalidTaskCursor("to must be timezone-aware")
+        visible_private = can_see_private(auth)
+        last: dict[str, object] | None = None
+        if cursor:
+            last = _cursor_decode(
+                cursor,
+                status=status,
+                from_instant=from_instant,
+                to_instant=to_instant,
+                bucket=bucket,
+                can_see_private=visible_private,
+            )["last"]  # type: ignore[assignment]
+
+        stmt = readable(select(Task), Task, auth)
+        if status != "all":
+            stmt = stmt.where(Task.status == status)
+        if bucket == "undated":
+            stmt = stmt.where(Task.due_at.is_(None))
+        elif bucket == "overdue":
+            if from_instant is None:
+                raise InvalidTaskCursor("overdue bucket requires range start")
+            stmt = stmt.where(Task.due_at < (now or datetime.now(UTC)), Task.due_at < from_instant)
+        else:
+            if from_instant is not None:
+                stmt = stmt.where(Task.due_at >= from_instant)
+            if to_instant is not None:
+                stmt = stmt.where(Task.due_at < to_instant)
+        total = int(
+            await db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+        )
+        if last:
+            stmt = stmt.where(self._keyset_after(Task, last))
+        ordered = stmt.order_by(
+            Task.pinned.desc(),
+            Task.due_at.asc().nulls_last(),
+            Task.created_at.desc(),
+            Task.id.asc(),
+        )
+        result = await db.execute(ordered.limit(limit + 1))
+        parents = list(result.scalars())
+        has_next = len(parents) > limit
+        parents = parents[:limit]
+        if not parents:
+            return TaskPage(
+                items=[], has_previous=bool(cursor), has_next=False, counts={bucket: total}
+            )
+        task_ids = [task.id for task in parents]
+        child_result = await db.execute(
+            select(TaskItem)
+            .where(TaskItem.task_id.in_(task_ids))
+            .order_by(TaskItem.position, TaskItem.created_at)
+        )
+        grouped: dict[UUID, list[TaskItem]] = defaultdict(list)
+        for item in child_result.scalars():
+            grouped[item.task_id].append(item)
+        items = [self._task_read(task, grouped[task.id]) for task in parents]
+        next_cursor = (
+            _cursor_for(
+                parents[-1],
+                status=status,
+                from_instant=from_instant,
+                to_instant=to_instant,
+                bucket=bucket,
+                can_see_private=visible_private,
+            )
+            if has_next
+            else None
+        )
+        # A cursor establishes a previous page. On the initial page, a bounded
+        # range has a previous page only when an older matching row exists.
+        has_previous = bool(cursor)
+        return TaskPage(
+            items=items,
+            next_cursor=next_cursor,
+            has_previous=has_previous,
+            has_next=has_next,
+            counts={bucket: total},
+        )
+
+    async def timeline(
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        *,
+        status: TaskListStatus,
+        from_instant: datetime,
+        to_instant: datetime,
+        limit: int,
+        cursors: dict[TaskBucket, str | None] | None = None,
+    ) -> TaskTimeline:
+        """Fetch dated, overdue and undated buckets in one bounded request wave."""
+        cursors = cursors or {}
+        pages: dict[TaskBucket, TaskPage] = {}
+        for bucket in ("overdue", "dated", "undated"):
+            pages[bucket] = await self.list_cursor(
+                db,
+                auth,
+                status=status,
+                from_instant=from_instant,
+                to_instant=to_instant,
+                bucket=bucket,
+                limit=limit,
+                cursor=cursors.get(bucket),
+            )
+        items = [item for bucket in ("overdue", "dated", "undated") for item in pages[bucket].items]
+        bucket_cursors = {bucket: pages[bucket].next_cursor for bucket in pages}
+        return TaskTimeline(
+            items=items,
+            bucket_cursors=bucket_cursors,
+            has_previous=any(page.has_previous for page in pages.values()),
+            has_next=any(page.has_next for page in pages.values()),
+            loaded_range_start=from_instant.date(),
+            loaded_range_end=(to_instant - timedelta(days=1)).date(),
+            counts={bucket: next(iter(page.counts.values()), 0) for bucket, page in pages.items()},
+        )
 
     async def get(self, db: AsyncSession, auth: AuthSession, task_id: UUID) -> TaskRead | None:
         """Return one visible task, or None without disclosing why it is hidden."""
