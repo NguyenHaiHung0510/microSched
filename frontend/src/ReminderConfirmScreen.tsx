@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input'
 import { navigate, queryParams, useLocation } from '@/lib/route'
 import { uuidv7 } from '@/lib/uuidv7'
 import { privateError, unlockPrivate, type PrivateSessionState } from '@/private-gate'
+import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 interface ConfirmResponse {
   confirmed_entry_id: string
@@ -57,6 +58,7 @@ export function ReminderConfirmScreen() {
   const { data: session } = useQuery<PrivateSessionState>({
     queryKey: ['session'],
     queryFn: () => apiRequest<PrivateSessionState>('/api/me'),
+    ...NO_POLLING_QUERY_OPTIONS,
   })
 
   const confirmMutation = useMutation({

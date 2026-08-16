@@ -81,6 +81,7 @@ export type TrackerApiState = {
   entries: FixtureEntry[]
   counts: Record<string, number>
   count(method: string, path: string): number
+  resetCounts(): void
 }
 
 export const test = base.extend<{ trackerApi: TrackerApiState }>({
@@ -121,6 +122,9 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         counts: {},
         count(method, path) {
           return this.counts[`${method}:${path}`] ?? 0
+        },
+        resetCounts() {
+          this.counts = {}
         },
       }
 
@@ -263,6 +267,8 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         const request = route.request()
         const method = request.method()
         const path = new URL(request.url()).pathname
+        const key = `${method}:${path}`
+        state.counts[key] = (state.counts[key] ?? 0) + 1
         if (path === '/api/subscriptions' && method === 'GET') {
           await route.fulfill(jsonResponse({ items: [] }))
           return
@@ -274,6 +280,8 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         const request = route.request()
         const method = request.method()
         const path = new URL(request.url()).pathname
+        const key = `${method}:${path}`
+        state.counts[key] = (state.counts[key] ?? 0) + 1
         if (path === '/api/settings' && method === 'GET') {
           await route.fulfill(
             jsonResponse({

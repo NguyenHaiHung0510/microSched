@@ -34,6 +34,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { uuidv7 } from '@/lib/uuidv7'
 import { NoteForm } from '@/NoteForm'
+import { standardRefetchInterval } from '@/query-polling'
 import {
   type NotePayload,
   type NoteWritePayload,
@@ -557,6 +558,7 @@ export function NotesScreen() {
   const notes = useQuery({
     queryKey: noteQueryKey,
     queryFn: () => apiRequest<{ items: Note[] }>('/api/notes?limit=100&offset=0'),
+    refetchInterval: standardRefetchInterval,
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
