@@ -182,6 +182,13 @@ thứ phục vụ hai đối tượng khác nhau.
 
 ### 2.6 Đồng bộ đa thiết bị — `refetchInterval`
 
+> 📝 **2026-08-16 — SUPERSEDED bởi `021`.** Chủ đã chốt policy cân bằng mới: Task 1s;
+> Notes/Tracker/Subscription 15s; Calendar + session + reminder-confirm không interval; query mới
+> mặc định không poll. Mọi interval chỉ chạy khi query khoẻ và browser đang active, dừng ở hidden/
+> background; focus/foreground return và mutation vẫn refetch. Phần còn lại của §2.6 dưới đây là
+> decision/receipt lịch sử của 018, **không còn là policy để implementation mới chép theo**. Tại
+> thời điểm note này, 021 mới là spec approved; code chỉ đổi ở PR implementation riêng của 021.
+
 **Vấn đề:** chủ dùng app trên iPhone và máy tính. Sửa ở máy này thì máy kia đứng im tới khi tải lại
 trang. TanStack Query **không** đẩy dữ liệu server→client; nó chỉ tự làm mới khi **chính nó** vừa
 mutate.
