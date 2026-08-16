@@ -86,9 +86,9 @@ cron_timer_queue_loaded ... queue_size=<n> next_due_at=<RFC3339-with-offset|none
 - Heap rỗng: literal `next_due_at=none` để log vẫn parse theo token `key=value`.
 - Không query thêm DB và không tạo log tick. Mỗi snapshot thành công vẫn chỉ một receipt.
 
-### O-02 — start/finish cho từng due occurrence
+### O-02 — start/finish cho từng dispatcher invocation
 
-Mỗi item thật sự đi vào dispatcher phát tối đa một cặp:
+Mỗi lần một item thật sự gọi dispatcher phát tối đa một cặp:
 
 ```text
 cron_timer_dispatch_started kind=<tracker|subscription> due_at=<RFC3339> \
@@ -103,6 +103,11 @@ cron_timer_dispatch_finished kind=<tracker|subscription> due_at=<RFC3339> \
 - `finished` chỉ emit sau khi dispatcher có outcome thật; `attempt_count` lấy từ cùng row/result và
   hai event dùng cùng `occurrence_ref`. Các đường terminal đã tồn tại (`sent`, `no_device`,
   `exhausted`) vẫn phải có cặp receipt dù không gửi network lần nữa.
+- Một committed reload trong grace window có thể dựng lại cùng occurrence vì snapshot chỉ suppress
+  key của row `pending`; do đó **một occurrence có thể có nhiều cặp start/finish hợp lệ** với cùng
+  `occurrence_ref`. Mỗi invocation vẫn tối đa một cặp. Terminal re-entry phải trả cùng terminal
+  outcome/attempt count, không tăng `attempt_count` và không gọi network; đây là receipt no-op, không
+  phải duplicate delivery. Không sửa state machine để ép một cặp/occurrence.
 - Được phép thêm telemetry callback/context **keyword-only, optional và backward-compatible** trong
   `app/domain/reminder.py` để dispatcher báo durable `attempt_count` về logger đang giữ `due_at`.
   Existing direct caller không truyền context vẫn giữ return type `DispatchOutcome`; phải có ít nhất
@@ -133,29 +138,35 @@ ghi literal credential/account thật vào fixture, output, PR hoặc report.
 
 ### D-01 — internal read-only aggregate diagnostic
 
-Tạo CLI one-shot `python -m scripts.reminder_delivery_receipt --window-minutes <N>` chạy **bên trong
-Fly Machine** với runtime `DATABASE_URL`. Không thêm route hay secret flag.
+Tạo CLI one-shot `python -m scripts.reminder_delivery_receipt (--window-minutes <N> | --since
+<RFC3339-UTC>)` chạy **bên trong Fly Machine** với runtime `DATABASE_URL`. Không thêm route hay secret
+flag. Baseline dùng `--window-minutes`; final delta dùng đúng `window_started_at` baseline qua
+`--since`, để moving window không làm row cũ rơi khỏi mẫu giữa hai lần đo.
 
 Contract output: đúng một JSON object, stable keys, chỉ gồm:
 
-- `commit`, `observed_at`, `window_minutes`;
+- `commit`, `observed_at`, `window_started_at`, `window_minutes` (`null` khi dùng `--since`);
 - `push_subscription_count`;
 - `dispatch_groups`: group theo `kind`, `occurrence_on`, `status`, `attempt_count`, kèm
   `dispatch_count`, `earliest_created_at`, `latest_created_at`, `earliest_last_attempt_at`,
   `latest_last_attempt_at`, `confirmed_count`.
 
 CLI chỉ `SELECT`, đóng connection trong `finally`, exit non-zero khi config/query lỗi và chỉ in
-`error_type` an toàn ra stderr. `1 <= N <= 1440`; filter theo `created_at` hoặc `last_attempt_at` nằm
-trong window. Không nhận ID/endpoint/name làm argument; không SELECT/print raw ID, endpoint, key,
-user-agent, name, text, ciphertext, email, session, provider response hay DSN. Timestamps RFC3339 UTC;
-group/order deterministic. `push_subscription_count > 0` chỉ chứng minh có row, không chứng minh
-endpoint còn sống hoặc đúng thiết bị đang quan sát.
+`error_type` an toàn ra stderr. Hai window option loại trừ nhau; `1 <= N <= 1440`, còn `--since`
+phải là UTC, không ở tương lai và không quá 24 giờ trước lúc chạy. Filter theo `created_at` hoặc
+`last_attempt_at` nằm từ `window_started_at` tới `observed_at`. Không nhận ID/endpoint/name làm
+argument; không SELECT/print raw ID, endpoint, key, user-agent, name, text, ciphertext, email,
+session, provider response hay DSN. Timestamps RFC3339 UTC; group/order deterministic.
+`push_subscription_count > 0` chỉ chứng minh có row, không chứng minh endpoint còn sống hoặc đúng
+thiết bị đang quan sát.
 
 Production invocation mẫu (shell trong Machine, không ghi env):
 
 ```text
 cd /app/backend
 python -m scripts.reminder_delivery_receipt --window-minutes 15
+# final: dùng timestamp `window_started_at` an toàn từ baseline
+python -m scripts.reminder_delivery_receipt --since '<baseline-window-started-at>'
 ```
 
 ## 4. Đăng ký thiết bị và production T+2 QA
@@ -182,29 +193,36 @@ Precondition bắt buộc:
 1. CI của exact merge SHA xanh; `GET /api/readyz` có `commit` đúng SHA và `db=up`; Fly chỉ một
    Machine/process passing; `ENABLE_INPROCESS_CRON=true`; không có external scheduler owner thứ hai.
 2. R-01 đạt. Mở một bounded log stream trước mutation hoặc dùng event notification; không query log
-   lặp. Lấy baseline D-01 một lần và lưu count của mọi group
+   lặp. Lấy baseline D-01 một lần, giữ `window_started_at` an toàn và lưu count của mọi group
    `(kind=tracker, occurrence_on=<ngày VN>, status, attempt_count)`; group chưa có được tính là
    `dispatch_count=0`, `confirmed_count=0`. Sau `dispatch_finished`, target group là group
    `status=sent` có `attempt_count` đúng giá trị vừa quan sát (không giả định luôn thành công lần 1).
 3. Trong app, xác nhận đúng allowlisted role trên màn confirmation nếu account chooser xuất hiện.
-   Tạo tracker health/event mock prefix `QA011F_`; chọn minute boundary đầu tiên **không sớm hơn
-   now+2:00** và ghi exact `due_at` +07:00. Không dùng dữ liệu thuốc/người thật.
+   Tạo tracker health/event mock và `reminder_text` visible duy nhất dạng `QA011F_<opaque-suffix>`;
+   chọn minute boundary đầu tiên **không sớm hơn now+2:00** và ghi exact `due_at` +07:00. Không dùng
+   dữ liệu thuốc/người thật.
 
 Chuỗi PASS phải quan sát đủ, theo thứ tự:
 
 1. `queue_loaded` sau commit có `next_due_at` đúng occurrence synthetic;
-2. `dispatch_started` cùng `kind/due_at/occurrence_on/occurrence_ref`;
-3. `dispatch_finished` cùng ref, `outcome=sent`, attempt count khớp aggregate;
-4. OS hiện notification trên thiết bị đang test;
-5. click thân notification mở/focus đúng `/reminder-confirm?dispatch=...`, confirmation trả success;
-6. sau terminal event hoặc mốc poll đầu ≥3 phút, chạy D-01 cùng window và so với baseline: đúng target
-   group có `dispatch_count_final - dispatch_count_baseline = 1` và
+2. quan sát **ít nhất một** `dispatch_started` có đúng `kind/due_at/occurrence_on/occurrence_ref`;
+3. quan sát `dispatch_finished` ghép cặp với start, `outcome=sent` và attempt count khớp aggregate.
+   Nếu reload tạo nhiều cặp hợp lệ, dedupe/correlate theo
+   `(occurrence_ref, attempt_count, outcome)`; không gọi đó là duplicate delivery khi terminal
+   re-entry không tăng attempt và không gọi network;
+4. OS hiện notification có đúng visible label `QA011F_<opaque-suffix>` trên thiết bị đang test;
+5. click **đúng notification vừa quan sát có label đó**; app mở/focus route confirmation và request
+   confirmation trả success. Không log/lưu raw dispatch UUID; confirmation screen là generic nên
+   không claim nó hiển thị subject/label;
+6. sau terminal event hoặc mốc poll đầu ≥3 phút, chạy D-01 với
+   `--since <baseline.window_started_at>` và so với baseline: đúng target group có
+   `dispatch_count_final - dispatch_count_baseline = 1` và
    `confirmed_count_final - confirmed_count_baseline = 1`. `earliest/latest_created_at` và
-   `earliest/latest_last_attempt_at` phải nằm trong cùng observation window; `latest_created_at` và
-   `latest_last_attempt_at` phải advance so với baseline tương ứng. Cặp start/finish dùng cùng
-   `occurrence_ref`, có `due_at` trong window và khớp `kind/occurrence_on/attempt_count` của target
-   group. Không bao giờ giả định absolute count ban đầu bằng 0 hoặc final `confirmed_count` tuyệt đối
-   bằng 1.
+   `earliest/latest_last_attempt_at` phải nằm trong cùng observation window. Nếu target group đã có ở
+   baseline, `latest_created_at` và `latest_last_attempt_at` phải advance; nếu group mới, timestamp
+   final phải non-null và nằm trong window. Cặp log đã dedupe dùng cùng `occurrence_ref`, có `due_at`
+   trong window và khớp `kind/occurrence_on/attempt_count` của target group. Không bao giờ giả định
+   absolute count ban đầu bằng 0 hoặc final `confirmed_count` tuyệt đối bằng 1.
 
 `sent` chỉ có nghĩa ít nhất một push provider call thành công; với nhiều device, nó không tự chứng
 minh notification đã hiện trên đúng máy. Mỗi bước ghi `OBSERVED`; thiếu bước nào ghi `CHƯA VERIFY
@@ -236,8 +254,8 @@ notification của app khác.
 
 | ID | Test/receipt bắt buộc | Expected |
 |---|---|---|
-| O-01 | `test_queue_loaded_receipt_includes_next_due_at`, `..._uses_none_for_empty_heap` trong `test_cron_timer.py` | exact token set, một log/snapshot, no extra query |
-| O-02 | PG `test_push_api.py::test_dispatch_receipts_cover_durable_outcomes` param đủ `sent|no_device|temporary_failure|exhausted`; PG `::test_dispatch_item_without_telemetry_keeps_dispatch_outcome_return`; non-PG `test_cron_timer.py::test_cron_timer_dispatch_receipt_ordering` | exact kind/due/occurrence/ref/attempt; count khớp row; same ref; direct caller vẫn nhận `DispatchOutcome` |
+| O-01 | cập nhật exact-dict existing `test_cron_timer.py::test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts` để có `next_due_at`; thêm `::test_queue_loaded_receipt_uses_none_for_empty_heap` | exact token set, một log/snapshot, no extra query; exact-dict test dùng làm RED→GREEN |
+| O-02 | PG `test_push_api.py::test_dispatch_receipts_cover_durable_outcomes` param đủ `sent|no_device|temporary_failure|exhausted`; PG `::test_dispatch_item_without_telemetry_keeps_dispatch_outcome_return`, `::test_terminal_dispatch_reentry_receipts_without_attempt_or_network`; non-PG `test_cron_timer.py::test_cron_timer_dispatch_receipt_ordering`, `::test_reload_within_grace_terminal_reentry_keeps_same_occurrence_ref` | mỗi invocation tối đa một cặp; count khớp row; same ref; terminal re-entry có thể tạo cặp lặp nhưng 0 attempt increment/0 network; direct caller vẫn nhận `DispatchOutcome` |
 | O-03 | caplog sentinel + raw UUID denylist cho mọi event bị chạm | chỉ allowlisted metadata; zero forbidden value |
 | D-01 | non-PG formatter/CLI validation + PG throwaway aggregate test trong `test_reminder_delivery_receipt.py` | SELECT-only, exact JSON schema/group/count/time, deterministic order, cleanup |
 | R-01 | existing `test_push_subscription_create_update_and_unsubscribe` + production receipt | `201 created`, `201 updated`, một row; không artifact endpoint/key |
@@ -249,8 +267,9 @@ postcheck. Không dùng Neon production cho test automation.
 
 Ít nhất hai guard phải có raw RED→GREEN receipt trong implementation PR:
 
-1. tạm bỏ `next_due_at` hoặc một terminal `dispatch_finished`, chạy targeted test và thấy fail đúng
-   assertion; restore rồi thấy green;
+1. tạm bỏ `next_due_at` khỏi exact-dict existing
+   `test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts` hoặc bỏ một terminal
+   `dispatch_finished`, chạy targeted test và thấy fail đúng assertion; restore rồi thấy green;
 2. tạm cho raw subject UUID hoặc sentinel endpoint/text lọt vào output, thấy privacy test fail; restore
    rồi thấy green.
 
