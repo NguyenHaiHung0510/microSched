@@ -69,6 +69,12 @@ validation error hiện có; đừng âm thầm biến nó thành “lịch sử
 - Mọi quyết định “hôm nay”, group ngày và range API dùng `Asia/Ho_Chi_Minh` / UTC+07, không dùng
   timezone của thiết bị, UTC date string, hay locale browser. Reuse helper Vietnam hiện có ở frontend;
   backend phải cùng semantic bằng timezone có tên.
+- `due_at` ở HTTP/DB là instant **offset-aware**. Client đổi giá trị `datetime-local` (civil time mà
+  người dùng nhập) thành instant với offset +07 theo `Asia/Ho_Chi_Minh`, không qua `new Date(value)`
+  theo timezone máy đang mở browser; API từ chối datetime naive bằng 422 và canonicalize instant hợp
+  lệ trước khi lưu. Khi sửa form hoặc render card/dialog/calendar, instant phải format ngược ở
+  `Asia/Ho_Chi_Minh` rồi mới thành `datetime-local`/copy hiển thị. Một browser ở timezone khác không
+  được làm hạn đổi ngày hoặc đổi giờ.
 - Lấy `today` đúng một lần khi dựng/refetch wave. Range mặc định là `[today-3, today+4)` theo ngày
   lịch; `from` inclusive 00:00+07, `to` exclusive 00:00+07. Một `due_at` đúng `00:00+07` vào group
   ngày mới; một `due_at` sát trước boundary ở group ngày trước.
@@ -104,11 +110,16 @@ validation error hiện có; đừng âm thầm biến nó thành “lịch sử
 
 ### 2.3 Điều hướng ngày và lịch sử
 
-- `Xem thêm ngày trước` lấy block `[earliest-7, earliest)`; `Xem thêm ngày sau` lấy
-  `[latest+1, latest+8)`. Không overlap/gap ở boundary, không reset collapse choice của date group
-  đã nằm trên màn và không duplicate ID nếu response/network replay.
+- State có `loaded_range_start` / `loaded_range_end` là ngày đầu/cuối **đã request**, độc lập với
+  group có row để render. `Xem thêm ngày trước` lấy block `[loaded_range_start-7, loaded_range_start)`;
+  `Xem thêm ngày sau` lấy `[loaded_range_end+1, loaded_range_end+8)`. Range trống vẫn advance đúng
+  bảy ngày; không suy ranh giới từ header non-empty, không overlap/gap ở boundary, không reset collapse
+  choice của date group đã nằm trên màn và không duplicate ID nếu response/network replay.
 - CTA vẫn visible/focusable ở mobile. Nếu không còn dữ liệu trong hướng đó, hiển thị state trung thực
-  hoặc disable có giải thích ngắn; không tạo CTA dead. Không dùng number page.
+  hoặc disable có giải thích ngắn; không tạo CTA dead. Điều kiện terminal dùng metadata server
+  `has_previous` / `has_next` (hoặc nearest bound tương đương) tính **sau privacy/deleted/status gate**,
+  không suy từ số group đang render. Metadata không được tiết lộ ngày/có tồn tại của private row khi
+  gate locked. Không dùng number page.
 - `Xem toàn bộ lịch sử` chuyển sang history browsing có chủ đích: bắt đầu từ ranh giới quá khứ đang
   biết và tiếp tục nạp **block 7 ngày** theo cursor/range khi người dùng yêu cầu hoặc scroll tới
   sentinel. Nó là lối tới mọi due-date trong quá khứ, không phải lệnh “fetch tất cả”. Vẫn không có
@@ -133,15 +144,22 @@ validation error hiện có; đừng âm thầm biến nó thành “lịch sử
   cập nhật ngay group cũ/mới (dời hạn, due→null, null→due, complete/reopen, pin) và calendar family
   hiện có; không chờ 1s/CTA kế tiếp. Không `await invalidateQueries` trong `onSuccess`.
 - Không để mutation leak private task vào cache/group khi private gate locked. Khi gate thay đổi, dùng
-  invalidation/purge contract hiện có để rows private không còn render được.
+  invalidation/purge contract hiện có để rows private không còn render được. Đặc biệt lock/expiry phải
+  purge cả họ `['tasks', ...]` **và** `['calendar', ...]` (gồm `['calendar','tasks', ...]`) khỏi
+  memory/persisted read cache trước refetch; selected day/detail dialog đang chứa task private phải
+  đóng hoặc re-resolve qua locked gate, không giữ row cũ trên grid/dialog.
 
 ## 3. Backend/API contract — bounded request, không tăng limit
 
 ### 3.1 Contract cần thi công
 
 Thay list contract Task bằng một contract cursor/date-range đủ cho **cả Timeline và Calendar**, hoặc
-thêm route timeline riêng nhưng phải giữ Calendar functional. L2 route name được phép, nhưng contract
-phải có đầy đủ các khả năng dưới đây và OpenAPI/TypeScript caller phải cùng một source of truth:
+thêm route timeline riêng nhưng phải giữ Calendar functional. Timeline primary screen **phải** có một
+aggregate bounded route/query wave (ví dụ `GET /api/tasks/timeline`) trả dated range, overdue-before-
+range, undated và counts/cursor continuations trong **một** response; không dựng ba `useQuery` poller
+độc lập. Calendar và picker có thể dùng task collection cursor route riêng. L2 route name được phép,
+nhưng contract phải có đầy đủ các khả năng dưới đây và OpenAPI/TypeScript caller phải cùng một source
+of truth:
 
 ```
 status = open | completed | all
@@ -149,22 +167,26 @@ due range = [from, to) theo local Vietnam date, optional
 due bucket = dated | undated (optional; undated means due_at IS NULL)
 cursor = opaque, tamper/shape-invalid -> 422, never SQL fragment
 limit = bounded server-side page size (không 100 fixed cap workaround)
-response = { items, next_cursor: string | null, ...optional group counts }
+response = { items, next_cursor: string | null, has_previous/has_next, ...group counts }
 ```
 
 - Range query trả task có `due_at >= from_instant AND due_at < to_instant`. Có endpoint/query rõ ràng
   cho open `due_at < earliest` và open `due_at IS NULL`; không fetch `status=all` lịch sử rồi lọc
   client-side.
 - Cursor là keyset theo ordering thật, gồm tie-break `id`; không dùng `offset` càng lớn càng chậm.
-  Cursor của dated query không dùng lại cho undated query hay status/range khác. Invalid/tampered/stale
-  cursor phải fail rõ, không skip/duplicate hàng im lặng.
+  Token opaque được ký server-side và bind ít nhất `status`, exact `[from,to)` / before-range,
+  `bucket`, sort direction, `can_see_private` scope và expiry. Mutated, hết hạn, hoặc token hợp lệ
+  nhưng dùng với range/status/bucket/private scope khác đều 422; client bỏ cursor đó, restart range
+  bằng request đầu thay vì im lặng skip/duplicate. Valid cursor vẫn tiếp tục được sau khi row cursor
+  bị xóa; mutations giữa hai page không có snapshot promise và được xử lý bằng invalidation/refetch.
 - `limit` bảo vệ request và được server clamp/reject; không đơn giản đổi `le=100` thành 500/1000 rồi
   gọi đó là solution. UI load next cursor trong cùng group/block không hiển thị page number; nếu cần
   nhiều page trong một date group, control phải nói hành động (“Xem thêm việc trong ngày”), không nói
   trang/số offset.
 - Response/timeline metadata phải đủ để collapsed completed group (kể cả undated) biết count mà không
-  cần poll/nạp full historical content. Fetch rows completed khi expand có thể lazy, nhưng phải
-  reachable và sau mutation đúng.
+  cần poll/nạp full historical content, và `has_previous`/`has_next` must remain correct cho range
+  không có group render. Fetch rows completed khi expand có thể lazy, nhưng phải reachable và sau
+  mutation đúng.
 - `readable()`/privacy gate và `deleted_at` filtering phải nằm **trước** pagination. Child `TaskItem`
   chỉ query cho parent page IDs như store hiện tại; không N+1 task/item. Không trả `completed_at` hay
   private payload khác ngoài TaskRead policy hiện hữu.
@@ -174,15 +196,22 @@ response = { items, next_cursor: string | null, ...optional group counts }
 - Default visible Task screen chỉ request các bucket cần cho seven-day window, overdue-before-window
   và undated-open, theo cursor bounded. Không tải all history lúc mount, focus, poll 1s hay khi click
   một filter.
-- Theo Task 021, chỉ **primary query family của TaskScreen đang visible/mounted** dùng
-  `taskRefetchInterval` 1s (`pollWhileHealthy`); hidden/unmount/error dừng. Expanded history blocks,
-  lazy completed pages và continuation cursors không nhân thêm timer 1s. Chúng refresh qua explicit
-  mutation invalidation/focus cần thiết, không biến một Task screen thành N poller.
+- Theo Task 021, **chính xác một** primary `QueryObserver` của TaskScreen visible/mounted dùng
+  `taskRefetchInterval` 1s (`pollWhileHealthy`). QueryFn primary gọi một aggregate timeline wave nên
+  mỗi cadence healthy chỉ có một primary timeline HTTP GET, dù response có dated/overdue/undated
+  buckets. hidden/unmount/error dừng. Expanded history blocks, lazy completed pages và cursor
+  continuation không nhân timer 1s; chúng refresh qua explicit mutation invalidation/focus cần thiết.
+  Không biến một Task screen thành ba poller/bucket hoặc N poller theo block.
 - Không dùng `refetchIntervalInBackground: true`, custom visibility timer hay global default. Focus
   quay lại được phép một wave như 021; exact request count phải report tách khỏi interval count.
 - Calendar phải đổi từ offset fixed/5×100 sang date-window/cursor loading tương đương và vẫn explicit
   `NO_POLLING_QUERY_OPTIONS`. Calendar không được lấy cả lịch sử task ở mỗi focus/scroll expand; chỉ
   lấy tasks cần cho month window/selected detail hoặc cached cursor range theo contract được chọn.
+- `DayDetailDialog` move picker là exception cần dữ liệu mọi open task: chỉ khi dialog/chooser mở mới
+  enabled một cursor-aware `open` picker query; nạp batch bounded và có “Xem thêm việc” semantic (không
+  page number) cho tới khi `next_cursor=null`, nên mọi open task gồm null-due/historical vẫn reachable.
+  Query unmount/dừng khi dialog đóng, có **0** interval, và không được piggyback vào month-grid fetch
+  hoặc primary Task 1s wave.
 
 ### 3.3 DB/index/performance
 
@@ -204,8 +233,8 @@ kiểm tên/cột/predicate thật. Không create unbounded duplicate index ch�
   `ui-brief.md`.
 - Header ngày, group “Quá hạn trước đó”, “Chưa xếp ngày”, collapse controls và CTAs cần testid semantic
   (đề xuất `task-day-group`, `task-day-completed-toggle`, `task-load-earlier`, `task-load-later`,
-  `task-history`, `task-undated-group`, `task-overdue-earlier-group`). ID/ngày ở `data-*` riêng, không
-  nhét ID vào testid.
+  `task-history`, `task-load-more-in-day`, `task-undated-group`, `task-overdue-earlier-group`). ID/ngày
+  ở `data-*` riêng, không nhét ID vào testid.
 - Mobile 390×844: không horizontal scroll; primary CTA/collapse control đạt 44×44 CSS px hoặc có vùng
   chạm rõ ≥44px; icon button vẫn aria-label động từ + đối tượng. Desktop 1280×800 giữ tooltip chỉ như
   lối tắt, không làm đường duy nhất.
@@ -225,33 +254,50 @@ locked/unlocked. Không hardcode count dữ liệu thật của owner.
 
 1. Cursor/range: theo từng cursor page collect **mọi** visible ID đúng một lần; không skip/duplicate;
    tất cả >191 reachable; invalid cursor 422; status/date/bucket không bypass private/deleted gate.
+   Mutate byte/token, dùng token của range/status/bucket khác, dùng token unlock khi locked (và ngược
+   lại), và token expired đều 422; cursor valid sau delete row cursor vẫn keyset-continue đúng.
 2. Boundary +07: cases ngay trước/tại midnight, `today-3` inclusive, `today+4` exclusive và current
-   now cho overdue. Assert đúng group/bucket, không dùng machine timezone.
+   now cho overdue. API rejects naive write; aware write/input/display qua browser timezone khác vẫn
+   group/hiển thị đúng Vietnam date/hour, không dùng machine timezone.
 3. Ordering: pinned chỉ first trong own day/overdue/undated group; status filter không leak completed
    pin vào open; stable tie-break across cursor page.
 4. `due_at=null` open vào undated group; completed null-due chỉ ở subsection collapsed undated, không
    bị đặt giả vào dated/history và vẫn reachable qua filter completed/all.
 5. Existing create/update/item/delete/restore/private API tests vẫn pass; add API tests cho dời task
    qua range/null, complete/reopen và `next_cursor` response. Calendar caller tests phải chứng minh
-   không còn assumption five `offset=100` pages.
+   không còn assumption five `offset=100` pages. Move-picker open-task query chỉ enabled khi dialog
+   mở, cursor-load hết synthetic open set, rồi unmount/không poll khi dialog đóng.
 6. Nếu migration index cần, run required `Migration QA` lane and catalog/assertion of exact index.
 
 ### 5.2 Frontend unit + Playwright production-build mock lane
 
 Fixture/API mock phải parse range/cursor thật (không trả toàn mảng bất kể query) và có >191 synthetic
-rows. Tests bám `data-testid`, không bám Vietnamese copy dễ đổi.
+rows. Ngoài dữ liệu rải group, seed ít nhất `page_size+1` task cùng **một** Vietnam date để bắt lỗi
+continuation bên trong date group. Tests bám `data-testid`, không bám Vietnamese copy dễ đổi.
 
 - Default thấy exactly seven contiguous date headers today−3…today+3, nhóm overdue-old và undated đúng
   rule, pinned không vượt group, completed collapsed rồi mở được.
 - Filters open/completed/all cập nhật đúng group semantics; banner overdue scrolls/focuses group thay
   vì biến màn thành list pagination.
 - Click/tap previous/next add exact contiguous 7 days no duplicate/gap; history path reaches a task
-  beyond row 191; DOM không có page number/pagination/offset control.
+  beyond row 191; range trống vẫn advance theo `loaded_range_start/end`; DOM không có page
+  number/pagination/offset control. CTA terminal phải theo privacy-filtered metadata, không mất đường
+  tới ngày có task chỉ vì vài block giữa trống.
+- Date group có `page_size+1` row hiển thị continuation “Xem thêm việc trong ngày”; bấm nó đưa được
+  row cuối cùng vào DOM đúng một lần, không tạo page number/timer 1s thứ hai.
 - Mutation mock làm task xuất hiện đúng group ngay qua invalidation (due→null/null→due, reschedule,
   complete/reopen, pin); undo/private gate giữ behavior cũ.
-- Query tests: primary visible Task query ~1s; hidden 0 interval; one expanded history/completed block
-  không tạo poll 1s thứ hai; after mutation GET occurs before next cadence. Đo exact method/path/query
-  params and distinguish initial/focus/mutation from interval.
+- Unlock → load calendar grid/day detail có task private → lock/expiry phải remove private row khỏi
+  Task timeline, `['calendar','tasks', ...]` grid cache và day dialog; dialog đóng/re-resolves locked
+  state, không còn private title/body trong DOM hay persisted cache.
+- Query tests: primary visible Task query ~1s, aggregate wave đúng **một** Task timeline request mỗi
+  cadence (không ba dated/overdue/undated timers); hidden 0 interval; one expanded history/completed
+  block không tạo poll 1s thứ hai; after mutation GET occurs before next cadence. Đo exact method/path/
+  query params and distinguish initial/focus/mutation from interval.
+- Fake clock chuyển `23:59:59` sang `00:00:00` tại +07: wave/focus kế tiếp dựng range key mới đúng
+  today−3…today+3, task chuyển group không duplicate và `loaded_range_start/end` còn contiguous.
+  Playwright chạy ít nhất một browser context timezone không phải Việt Nam để chứng minh write from
+  `datetime-local`, edit và display midnight vẫn giữ local Vietnam semantics.
 - Desktop 1280×800 + mobile 390×844 run cả timeline flows. Mobile measure no horizontal overflow and
   touch targets; keyboard/ARIA collapse/focus on desktop; loading/error/empty states on both. Include
   `30+` visual density and all QA-framework states, then visual screenshots for timeline at ≥30 items.
