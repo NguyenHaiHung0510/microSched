@@ -1,44 +1,46 @@
 # Migration mapping brief — dữ liệu cũ → microSched mới
 
-> Decision record **tự-chứa**. Dựa trên inventory read-only chạy 18/07/2026 (SQLite `todo.db` copy tạm rồi xoá; Postgres `microschedule_v2` mở session read-only, chỉ SELECT). Script tái dùng: `../scripts/inventory_old_stores.py`.
+> Decision record tự-chứa. Nguồn migration là Postgres local `microschedule_v2`; SQLite `todo.db` là tập
+> chết, read-only reference, không đụng. Count đo 18/07/2026 chỉ là ảnh chụp lịch sử, không phải hợp đồng.
 
-## 1. Kết luận: bản thật nằm ở đâu
-| Store | Sửa lần cuối | Trạng thái |
+## 1. Nguồn thật
+
+| Store | Trạng thái | Quy tắc |
 |---|---|---|
-| **PostgreSQL `microschedule_v2`** (local) | 18/07/2026 00:08 (tasks), 17:41 (notes) | 🟢 **SỐNG — nguồn thật** |
-| SQLite `todo.db` | 03/06/2026 | 🔴 chết — tập con cũ, đã migrate 1 lần hồi 05/2026 |
+| PostgreSQL `microschedule_v2` local | nguồn sống cho tới cut-over | chỉ read-only; freeze tại exact cut-off |
+| SQLite `todo.db` | chết/tập con cũ | bỏ qua, không migrate |
 
-**→ Migrate từ Postgres v2, bỏ qua SQLite.**
+microSched sau cutover dùng duy nhất Neon Postgres, role riêng giới hạn. Source local giữ archive read-only,
+không thành store song song để tiếp tục ghi.
 
-Số liệu thật trong Postgres v2: **163 tasks, 97 task_items, 49 notes, 81 note_items, 479 calendar_events, 4 calendar_sources, 8 app_settings, 6 priorities**; `agent_action_log` rỗng.
+## 2. Mapping khái niệm
 
-## 2. Mapping bảng cũ (v2) → schema mới (mức khái niệm)
-| v2 (nguồn) | mới (`schema-v1-brief`) | Ghi chú |
+| v2 source | target | Ghi chú |
 |---|---|---|
-| `tasks` | `task` | + cột `body_md` (markdown) |
-| `task_items` | `task_item` | gần 1:1 |
-| `notes` | `note` | + `body_md`, để trống `embedding` (Bước 1 mới tính) |
-| `note_items` | `note_item` | gần 1:1 (giữ dạng cột) |
-| `calendar_sources` + `calendar_source_versions` | `calendar_source` | **rút gọn** — bỏ version-history (Fork A), giữ source hiện hành |
-| `calendar_events` | `calendar_event` | ép timezone thật khi copy |
-| `app_settings` + `priorities` | `app_setting` (jsonb) | gộp đơn giản |
-| `agent_action_log` | `audit_log` | rỗng, schema mới định nghĩa lại |
-| — | `tracker` / `entry` | **mới hoàn toàn**, tạo rỗng |
+| `tasks` / `task_items` | `task` / `task_item` | giữ historical UUID và timestamp; priority 6 mức → `p1..p3` |
+| `notes` / `note_items` | `note` / `note_item` | prose đầy đủ; `is_done` → `is_completed` |
+| manual `calendar_events` | one new `calendar_source` / events | chỉ `external_uid=manual_*`; lịch gốc import lại từ `.ics` |
+| `priorities` | cột priority task/note | không có bảng target |
+| app settings/version/history/log cũ | — | không map |
 
-## 3. ✅ 121 dòng lịch lệch — chốt bỏ qua (18/07/2026)
-SQLite có 600 dòng `schedule` (tới 09/08/2026) nhưng Postgres v2 chỉ 479 `calendar_events` — vài buổi có thể chỉ còn ở SQLite. **Bỏ qua:** lúc cutover **import lại file TKB/lịch thi gốc** (.ics/.xlsx) vào app mới — sạch hơn đối chiếu tay 2 nguồn.
+Timestamps nguồn đã `timestamptz`: giữ instant, canonical verify UTC; không suy đoán/ép timezone. `calendar`
+manual target source có UUIDv7 mới được ghi vào manifest, còn event giữ ID hợp lệ theo contract cutover.
 
-## 4. Vệ sinh vận hành (chống lặp split-brain)
-Bài học app cũ: dùng **cả SQLite lẫn Postgres cùng lúc** → không rõ bản nào thật. microSched mới:
-- ✅ **Một store duy nhất: Neon Postgres.** Không SQLite, không Postgres-local song song.
-- ✅ **microSched có DB role riêng, quyền giới hạn** — KHÔNG dùng chung superuser `postgres` local (superuser đó host nhiều project của chính chủ, vd `Fang`).
-- ✅ **Credentials chỉ trong `.env`, không commit;** `.gitignore` chặn `.env` từ commit đầu tiên.
-- Postgres local `microschedule_v2` sau migrate → giữ làm archive tạm, không xoá ngay, không dùng làm nguồn sống song song.
+## 3. Cutover contract
 
-## 5. Cutover checklist (chưa phải bây giờ)
-1. `pg_dump` từ Postgres v2 local.
-2. Transform theo mapping §2 (script một lần, T2 viết theo brief này).
-3. Load vào Neon.
-4. Verify: đếm dòng khớp, spot-check vài task/note (dùng `inventory_old_stores.py` làm mẫu).
-5. Import lại file lịch gốc (giải quyết §3).
-6. VC cũ (`main` branch) là đường lùi tới khi tự tin cutover.
+Chi tiết executable/DRAFT nằm ở [`agent-tasks/012-cutover-migration.md`](../agent-tasks/012-cutover-migration.md).
+Task 012 không được chạy trước khi Task 022 đã production-accepted để mọi task sau import còn xem được.
+
+**📝 2026-08-16 — owner-approved refresh:** toàn bộ domain content hiện hữu ở Neon là mock/trash và được
+phép purge atomically khi import. Chỉ preserve `app_setting`, `session`, `push_subscription`,
+`alembic_version`; target cần pre/post canonical count, ID set và full-row digest (optional small encrypted
+preserve export), không full target dump. Source bắt buộc full encrypted verified dump. Mọi mapped component
+phải exact-match transformed source count/IDs/full field digest at the source-freeze cut-off; source archived
+rows are fail-closed pending owner decision.
+
+## 4. Vệ sinh vận hành
+
+- Không chạy hai app ghi song song sau freeze; đó là split-brain cũ cần tránh.
+- Credentials và dump/dữ liệu cá nhân không vào repo/PR/log. Dump dùng encryption, timestamp, restore verify.
+- Chỉ owner workstation chạy real cutover; Fly sole Machine dừng trong maintenance, sau đó start exactly one
+  và verify visual + exact `/api/readyz.commit` SHA + `db=up`.
