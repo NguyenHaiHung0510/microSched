@@ -289,6 +289,7 @@ def test_failure_receipt_signature_and_expiry_are_enforced() -> None:
         "source_dump_sha256": "d" * 64,
     }
     receipt = {
+        "algorithm": "Ed25519",
         "run_id": manifest["run_id"],
         "manifest_digest": manifest["manifest_digest"],
         "script_sha": code["git_sha"],

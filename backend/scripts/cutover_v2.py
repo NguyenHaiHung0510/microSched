@@ -1203,6 +1203,18 @@ def read_final_manifest(
         raise ManifestError("manifest target host mismatch")
     if not payload.get("source_dump_sha256"):
         raise ManifestError("manifest is not bound to a verified encrypted source dump")
+    required_sections = (
+        "source_identity",
+        "source_inventory",
+        "source_expected",
+        "expected_ids",
+        "target_identity",
+        "phase_b_target_snapshot",
+        "phase_b_target_snapshot_digest",
+        "schema_attestation",
+    )
+    if any(payload.get(section) is None for section in required_sections):
+        raise ManifestError("manifest is missing a required signed section")
     approval = payload.get("owner_approval")
     if not isinstance(approval, dict):
         raise ManifestError("manifest has no owner approval")
@@ -1260,6 +1272,8 @@ def read_failure_receipt(
     }
     if any(receipt.get(key) != value for key, value in required.items()):
         raise ManifestError("failure receipt is not bound to this run")
+    if receipt.get("algorithm") != "Ed25519":
+        raise ManifestError("failure receipt algorithm is not Ed25519")
     if receipt.get("failed_command") not in {"commit", "verify"}:
         raise ManifestError("failure receipt has an invalid failed command")
     if (
@@ -1295,6 +1309,7 @@ def write_failure_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
 
 def finalize_failure_receipt(path: Path, signature: str) -> None:
     payload = decrypt_artifact(path)
+    payload["algorithm"] = "Ed25519"
     payload["signature"] = signature
     path.write_bytes(encrypt_artifact(payload))
 
