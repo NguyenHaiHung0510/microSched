@@ -50,6 +50,7 @@ from app.domain.models import (
 )
 
 TRANSFORM_VERSION = "012-cutover-v2-2026-08-20"
+EXPECTED_ALEMBIC_REVISION = "0009"
 SOURCE_DB_NAME = "microschedule_v2"
 SOURCE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
 TARGET_APP_ROLE = "microsched_app"
@@ -60,7 +61,9 @@ RECOVERY_SOURCE_URL_ENV = "CUTOVER_RECOVERY_SOURCE_URL"
 RESTORED_SOURCE_URL_ENV = "CUTOVER_RESTORED_SOURCE_URL"
 FLY_STATE_COMMAND_ENV = "CUTOVER_FLY_STATE_COMMAND"
 FLY_APP_ENV = "CUTOVER_FLY_APP"
+AGE_IDENTITY_FILE_ENV = "CUTOVER_AGE_IDENTITY_FILE"
 ARTIFACT_MAGIC = b"microsched-cutover-v1\0"
+AGE_HEADER = b"age-encryption.org/v1\n"
 
 PRIORITY_MAP: dict[str, str] = {
     "Quan trọng hơn TN": "p1",
@@ -781,9 +784,9 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
         .all()
     )
     ddl = {
-        "columns": [dict(item) for item in columns],
-        "constraints": [dict(item) for item in constraints],
-        "triggers": [dict(item) for item in triggers],
+        "columns": [_catalog_row(item) for item in columns],
+        "constraints": [_catalog_row(item) for item in constraints],
+        "triggers": [_catalog_row(item) for item in triggers],
     }
     return {
         "database": row["database"],
@@ -796,17 +799,55 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
     }
 
 
+def _catalog_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value.decode("utf-8") if isinstance(value, bytes) else value
+        for key, value in row.items()
+    }
+
+
+async def read_runtime_coordinates(connection: Any) -> dict[str, Any]:
+    row = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT current_database() AS database, current_user AS current_user, "
+                    "inet_server_addr()::text AS server_addr, inet_server_port() AS server_port, "
+                    "current_setting('cluster_name', true) AS cluster_name"
+                )
+            )
+        )
+        .mappings()
+        .one()
+    )
+    return dict(row)
+
+
 def assert_identity_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
     keys = ("database", "server_addr", "server_port", "cluster_name", "ddl_sha256")
     if any(actual.get(key) != expected.get(key) for key in keys):
         raise CutoverError("database identity or DDL fingerprint drift")
 
 
+def assert_runtime_coordinates_match(
+    actual: Mapping[str, Any], expected: Mapping[str, Any]
+) -> None:
+    keys = ("database", "server_addr", "server_port", "cluster_name")
+    if any(actual.get(key) != expected.get(key) for key in keys):
+        raise CutoverError("target runtime database coordinates drift")
+
+
 def assert_restored_source_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
-    if actual.get("database") != expected.get("database") or actual.get(
-        "ddl_sha256"
-    ) != expected.get("ddl_sha256"):
-        raise CutoverError("restored source database or DDL fingerprint drift")
+    if actual.get("ddl_sha256") != expected.get("ddl_sha256"):
+        raise CutoverError("restored source DDL fingerprint drift")
+
+
+def assert_restored_source_is_distinct(
+    actual: Mapping[str, Any], live_source: Mapping[str, Any]
+) -> None:
+    keys = ("database", "server_addr", "server_port", "cluster_name")
+    if all(actual.get(key) == live_source.get(key) for key in keys):
+        raise CutoverError("restored source must be distinct from the live source")
 
 
 async def assert_app_role(connection: Any) -> None:
@@ -848,6 +889,8 @@ async def attest_schema(
                 .scalars()
                 .all()
             )
+            if list(revision) != [EXPECTED_ALEMBIC_REVISION]:
+                raise CutoverError("schema attestation is not at the pinned Alembic revision")
             identity = await read_connection_identity(connection, "microsched")
             table_names = set(
                 (
@@ -865,10 +908,15 @@ async def attest_schema(
                 (
                     await connection.execute(
                         text(
-                            "SELECT table_name,grantee,privilege_type "
-                            "FROM information_schema.role_table_grants "
-                            "WHERE table_schema='microsched' "
-                            "ORDER BY table_name,grantee,privilege_type"
+                            "SELECT c.relname AS table_name, r.rolname AS grantee, "
+                            "acl.privilege_type "
+                            "FROM pg_catalog.pg_class c "
+                            "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                            "JOIN LATERAL aclexplode(COALESCE(c.relacl, "
+                            "acldefault('r', c.relowner))) acl ON true "
+                            "JOIN pg_catalog.pg_roles r ON r.oid=acl.grantee "
+                            "WHERE n.nspname='microsched' "
+                            "ORDER BY c.relname,r.rolname,acl.privilege_type"
                         )
                     )
                 )
@@ -891,6 +939,35 @@ async def attest_schema(
     for table_name, expected in expected_columns.items():
         if columns_by_table.get(table_name) != expected:
             raise CutoverError(f"target catalog columns drift: {table_name}")
+    constraint_rows = identity["ddl"]["constraints"]
+    primary_key_tables = {
+        row["table_name"] for row in constraint_rows if row["constraint_type"] == "p"
+    }
+    if primary_key_tables != set(ALL_EXPECTED_TARGET_TABLES):
+        raise CutoverError("target catalog primary-key contract drift")
+    trigger_rows = identity["ddl"]["triggers"]
+    trigger_tables = {
+        row["table_name"] for row in trigger_rows if row["trigger_name"] == "set_updated_at"
+    }
+    if trigger_tables != set(ALL_EXPECTED_TARGET_TABLES):
+        raise CutoverError("target catalog updated-at trigger contract drift")
+    grant_rows = [dict(row) for row in grants]
+    app_grants = {
+        (row["table_name"], row["privilege_type"])
+        for row in grant_rows
+        if row["grantee"] == TARGET_APP_ROLE
+    }
+    for table_name in ALL_EXPECTED_TARGET_TABLES:
+        if not all(
+            (table_name, privilege) in app_grants
+            for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE")
+        ):
+            raise CutoverError(f"target app grant contract drift: {table_name}")
+    if any(
+        row["table_name"] == "alembic_version" and row["grantee"] == TARGET_APP_ROLE
+        for row in grant_rows
+    ):
+        raise CutoverError("target app must not have alembic_version grants")
     payload = {
         "revision": list(revision),
         "tables": sorted(table_names),
@@ -987,11 +1064,11 @@ async def verify_restored_source(
     seam receives only the resulting throwaway connection and compares the full
     source inventory; it never opens the live source URL.
     """
-    await assert_source_identity(engine)
     await assert_source_read_only(engine)
     if expected_identity:
         async with engine.connect() as connection:
             actual_identity = await read_connection_identity(connection, "public")
+        assert_restored_source_is_distinct(actual_identity, expected_identity)
         assert_restored_source_matches(actual_identity, expected_identity)
     snapshot = await load_source_snapshot(engine)
     if snapshot.source_inventory != dict(expected_inventory):
@@ -1356,13 +1433,52 @@ def read_final_manifest(
     return payload
 
 
-def verify_source_dump(dump_path: Path, expected_sha256: str | None = None) -> str:
+def verify_source_dump(
+    dump_path: Path,
+    expected_sha256: str | None = None,
+    *,
+    require_authenticated_restore: bool = False,
+) -> str:
     """Verify only a supplied encrypted/full dump; never opens a live source."""
     if not dump_path.is_file() or dump_path.stat().st_size == 0:
         raise CutoverError("source dump is missing or empty")
     if dump_path.suffix.lower() != ".age":
         raise CutoverError("source dump must be an age-encrypted artifact")
-    digest = hashlib.sha256(dump_path.read_bytes()).hexdigest()
+    blob = dump_path.read_bytes()
+    if not blob.startswith(AGE_HEADER):
+        raise CutoverError("source dump is not an age envelope")
+    if require_authenticated_restore:
+        identity_path = os.environ.get(AGE_IDENTITY_FILE_ENV)
+        if not identity_path:
+            raise CutoverError(f"{AGE_IDENTITY_FILE_ENV} is required for age verification")
+        age_binary = os.environ.get("CUTOVER_AGE_BINARY", "age")
+        restore_binary = os.environ.get("CUTOVER_PG_RESTORE_BINARY", "pg_restore")
+        age_process = restore_process = None
+        try:
+            age_process = subprocess.Popen(
+                [age_binary, "--decrypt", "--identity", identity_path, str(dump_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            restore_process = subprocess.Popen(
+                [restore_binary, "--list"],
+                stdin=age_process.stdout,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if age_process.stdout is not None:
+                age_process.stdout.close()
+            restore_process.wait(timeout=30)
+            age_process.wait(timeout=30)
+            if restore_process.returncode != 0 or age_process.returncode != 0:
+                raise CutoverError("encrypted source dump age/pg_restore verification failed")
+        except OSError, subprocess.SubprocessError:
+            raise CutoverError("encrypted source dump age/pg_restore verification failed") from None
+        finally:
+            for process in (restore_process, age_process):
+                if process is not None and process.poll() is None:
+                    process.kill()
+    digest = hashlib.sha256(blob).hexdigest()
     if expected_sha256 and digest != expected_sha256:
         raise CutoverError("source dump SHA-256 mismatch")
     return digest
@@ -1502,7 +1618,7 @@ async def collect_target_inventory_as_app(
         async with session.begin():
             await session.execute(text("SET TRANSACTION READ ONLY"))
             await assert_app_role(session)
-            identity = await read_connection_identity(session, "microsched")
+            identity = await read_runtime_coordinates(session)
             return identity, await collect_target_inventory(session)
 
 
@@ -1522,8 +1638,8 @@ async def run_commit(
     async with maker() as session:
         async with session.begin():
             await assert_app_role(session)
-            target_identity = await read_connection_identity(session, "microsched")
-            assert_identity_matches(target_identity, manifest["target_identity"])
+            target_identity = await read_runtime_coordinates(session)
+            assert_runtime_coordinates_match(target_identity, manifest["target_identity"])
             current = await collect_target_inventory(session)
             if current == expected_final_inventory(manifest):
                 return
@@ -1595,8 +1711,8 @@ async def run_recover(
     async with maker() as session:
         async with session.begin():
             await assert_app_role(session)
-            target_identity = await read_connection_identity(session, "microsched")
-            assert_identity_matches(target_identity, manifest["target_identity"])
+            target_identity = await read_runtime_coordinates(session)
+            assert_runtime_coordinates_match(target_identity, manifest["target_identity"])
             current = await collect_target_inventory(session)
             failure_inventory = receipt["failed_run_domain_inventory"]
             for component in DOMAIN_COMPONENTS:
@@ -1615,8 +1731,8 @@ async def run_verify(manifest: Mapping[str, Any], engine: AsyncEngine) -> dict[s
         async with session.begin():
             await session.execute(text("SET TRANSACTION READ ONLY"))
             await assert_app_role(session)
-            target_identity = await read_connection_identity(session, "microsched")
-            assert_identity_matches(target_identity, manifest["target_identity"])
+            target_identity = await read_runtime_coordinates(session)
+            assert_runtime_coordinates_match(target_identity, manifest["target_identity"])
             current = await collect_target_inventory(session)
     for component in MAPPED_COMPONENTS:
         if current[component] != manifest["source_expected"][component]:
@@ -1706,6 +1822,44 @@ async def async_main(args: argparse.Namespace) -> int:
     )
     target = target_url()
     code = actual_code_identity()
+    manifest = None
+    if mode == "dry-run" and args.manifest:
+        if not args.confirm_target_host or not args.expected_script_sha:
+            raise CutoverError(
+                "dry-run with a finalized manifest requires actual script SHA and host confirmation"
+            )
+        if args.write_manifest:
+            raise CutoverError("dry-run cannot read and write manifests in one invocation")
+        assert_confirmed_host(target, args.confirm_target_host)
+        assert_target_coordinates()
+        manifest = read_final_manifest(
+            args.manifest,
+            expected_script_sha=args.expected_script_sha,
+            expected_host=args.confirm_target_host.lower(),
+        )
+        if args.source_dump is None or args.source_dump_sha256 is None:
+            raise CutoverError("final-manifest dry-run requires encrypted source dump and SHA-256")
+        dump_digest = verify_source_dump(
+            args.source_dump,
+            args.source_dump_sha256,
+            require_authenticated_restore=True,
+        )
+        if dump_digest != manifest["source_dump_sha256"]:
+            raise ManifestError("source dump does not match signed manifest")
+        attestation_engine = migrator_engine()
+        try:
+            attestation = await attest_schema(
+                attestation_engine,
+                expected_digest=manifest["schema_attestation"]["catalog_digest"],
+            )
+        finally:
+            await attestation_engine.dispose()
+        assert_identity_matches(attestation["target_identity"], manifest["target_identity"])
+        target_probe = target_engine()
+        try:
+            await assert_app_cannot_read_alembic(target_probe)
+        finally:
+            await target_probe.dispose()
     if mode != "dry-run":
         if not args.confirm_target_host or not args.expected_script_sha or not args.manifest:
             raise CutoverError(
@@ -1722,7 +1876,11 @@ async def async_main(args: argparse.Namespace) -> int:
         )
         if args.source_dump is None or args.source_dump_sha256 is None:
             raise CutoverError("non-dry mode requires encrypted source dump and SHA-256")
-        dump_digest = verify_source_dump(args.source_dump, args.source_dump_sha256)
+        dump_digest = verify_source_dump(
+            args.source_dump,
+            args.source_dump_sha256,
+            require_authenticated_restore=True,
+        )
         if dump_digest != manifest["source_dump_sha256"]:
             raise ManifestError("source dump does not match signed manifest")
         attestation_engine = migrator_engine()
@@ -1821,7 +1979,11 @@ async def async_main(args: argparse.Namespace) -> int:
     if args.write_manifest and (args.source_dump is None or args.source_dump_sha256 is None):
         raise CutoverError("manifest draft requires encrypted source dump and SHA-256")
     dump_digest = (
-        verify_source_dump(args.source_dump, args.source_dump_sha256)
+        verify_source_dump(
+            args.source_dump,
+            args.source_dump_sha256,
+            require_authenticated_restore=True,
+        )
         if args.source_dump and args.source_dump_sha256
         else None
     )
@@ -1832,10 +1994,30 @@ async def async_main(args: argparse.Namespace) -> int:
         await assert_source_read_only(source)
         async with source.connect() as connection:
             source_identity = await read_connection_identity(connection, "public")
-        if mode != "dry-run" and source_identity != manifest["source_identity"]:
+        if manifest and source_identity != manifest["source_identity"]:
             raise ManifestError("source identity or DDL fingerprint drift after freeze")
         snapshot = await load_source_snapshot(source)
-        transformed = transform_source(snapshot)
+        source_id = (
+            UUID(manifest["expected_ids"]["calendar_source"][0])
+            if manifest and manifest["expected_ids"].get("calendar_source")
+            else None
+        )
+        transformed = transform_source(snapshot, manual_source_id=source_id)
+        if manifest:
+            if snapshot.source_inventory != manifest["source_inventory"]:
+                raise ManifestError("source inventory drift after freeze")
+            if calendar_bucket_inventory(snapshot.rows) != manifest["calendar_buckets"]:
+                raise ManifestError("calendar bucket receipt drift after freeze")
+            for component in MAPPED_COMPONENTS:
+                if (
+                    inventory(component, transformed[component])
+                    != manifest["source_expected"][component]
+                ):
+                    raise ManifestError(f"transformed source drift: {component}")
+                if sorted(str(row["id"]) for row in transformed[component]) != sorted(
+                    manifest["expected_ids"][component]
+                ):
+                    raise ManifestError(f"transformed source ID set drift: {component}")
         print(f"SOURCE {SOURCE_DB_NAME} @ local (read-only)")
         print(f"TARGET {target_host(target)}")
         buckets = calendar_bucket_counts(snapshot.rows)
@@ -1857,6 +2039,17 @@ async def async_main(args: argparse.Namespace) -> int:
                 f"full_digest={full_digest}"
             )
         if not args.write_manifest:
+            if manifest:
+                target_engine_obj = target_engine()
+                try:
+                    target_identity, target_snapshot = await collect_target_inventory_as_app(
+                        target_engine_obj
+                    )
+                finally:
+                    await target_engine_obj.dispose()
+                assert_runtime_coordinates_match(target_identity, manifest["target_identity"])
+                if target_snapshot != manifest["phase_b_target_snapshot"]:
+                    raise ManifestError("target Phase-B snapshot drift during dry-run")
             return 0
         target_engine_obj = target_engine()
         try:
@@ -1871,7 +2064,7 @@ async def async_main(args: argparse.Namespace) -> int:
             attestation = await attest_schema(attestation_engine)
         finally:
             await attestation_engine.dispose()
-        assert_identity_matches(target_identity, attestation["target_identity"])
+        assert_runtime_coordinates_match(target_identity, attestation["target_identity"])
         restored_value = os.environ.get(RESTORED_SOURCE_URL_ENV)
         if not restored_value:
             raise CutoverError(

@@ -296,12 +296,15 @@ def test_empty_inventory_is_stable() -> None:
 
 def test_source_dump_hash_seam() -> None:
     dump = Path("synthetic-source.dump.age")
-    dump.write_bytes(b"age-encrypted synthetic dump")
+    dump.write_bytes(b"age-encryption.org/v1\nsynthetic encrypted payload")
     try:
         digest = verify_source_dump(dump)
         assert verify_source_dump(dump, digest) == digest
         with pytest.raises(CutoverError, match="SHA-256"):
             verify_source_dump(dump, "0" * 64)
+        dump.write_bytes(b"plaintext pg_dump renamed to age")
+        with pytest.raises(CutoverError, match="age envelope"):
+            verify_source_dump(dump)
     finally:
         dump.unlink(missing_ok=True)
 

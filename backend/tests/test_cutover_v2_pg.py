@@ -24,6 +24,7 @@ from scripts.cutover_v2 import (
     attest_schema,
     build_manifest,
     collect_target_inventory_as_app,
+    expected_final_inventory,
     load_source_snapshot,
     read_connection_identity,
     restored_source_engine,
@@ -256,8 +257,8 @@ def test_restored_source_is_read_only_and_matches_inventory(rehearsal) -> None:
             snapshot = await load_source_snapshot(source)
             async with source.connect() as connection:
                 identity = await read_connection_identity(connection, "public")
-            restored = await verify_restored_source(source, snapshot.source_inventory, identity)
-            assert restored.source_inventory == snapshot.source_inventory
+            with pytest.raises(Exception, match="distinct from the live source"):
+                await verify_restored_source(source, snapshot.source_inventory, identity)
             await assert_source_read_only(source)
         finally:
             await source.dispose()
@@ -409,6 +410,104 @@ def test_recover_reimports_authorized_failed_inventory(rehearsal) -> None:
             )
             await run_verify(manifest, target)
         finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+def test_recover_rejects_stale_failed_inventory(rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        try:
+            await run_commit(manifest, target, transformed)
+            task_id = str(transformed["task"][0]["id"])
+            await admin.execute(
+                "UPDATE microsched.task SET title='stale receipt mismatch' WHERE id=$1", task_id
+            )
+            stale = {
+                "failed_run_domain_inventory": {
+                    component: expected_final_inventory(manifest)[component]
+                    for component in DOMAIN_COMPONENTS
+                }
+            }
+
+            async def fly_state() -> dict[str, bool]:
+                return {"sole_machine_stopped": True, "never_restarted": True}
+
+            with pytest.raises(Exception, match="authorized failed-run state"):
+                await run_recover(
+                    manifest,
+                    stale,
+                    target,
+                    transformed,
+                    fly_state_verifier=fly_state,
+                )
+        finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+def test_verify_rejects_purge_residual_and_preserve_drift(rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        setting_key = f"synthetic-cutover-{uuid4()}"
+        try:
+            await run_commit(manifest, target, transformed)
+            await admin.execute(
+                "INSERT INTO microsched.message (role,content,trace_id) "
+                "VALUES ('user','synthetic residual',$1)",
+                uuid4(),
+            )
+            with pytest.raises(Exception, match="residual purge-only"):
+                await run_verify(manifest, target)
+            await admin.execute("DELETE FROM microsched.message WHERE content='synthetic residual'")
+            await admin.execute(
+                "INSERT INTO microsched.app_setting (key,value) VALUES ($1,$2::jsonb)",
+                setting_key,
+                '{"synthetic":true}',
+            )
+            with pytest.raises(Exception, match="preserve drift"):
+                await run_verify(manifest, target)
+        finally:
+            await admin.execute("DELETE FROM microsched.message WHERE content='synthetic residual'")
+            await admin.execute("DELETE FROM microsched.app_setting WHERE key=$1", setting_key)
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+def test_non_null_vector_is_a_fail_closed_gate(rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        try:
+            await run_commit(manifest, target, transformed)
+            await admin.execute(
+                "UPDATE microsched.note SET embedding='[1,2]'::vector WHERE id=$1",
+                str(transformed["note"][0]["id"]),
+            )
+            with pytest.raises(Exception, match="embedding"):
+                await collect_target_inventory_as_app(target)
+        finally:
+            await admin.execute(
+                "UPDATE microsched.note SET embedding=NULL WHERE id=$1",
+                str(transformed["note"][0]["id"]),
+            )
             await admin.close()
             await source.dispose()
             await migrator.dispose()
