@@ -10,8 +10,10 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.cutover_v2 import (
+    APP_READABLE_PRESERVE,
     ARTIFACT_KEY_ENV,
     ARTIFACT_MAGIC,
+    DOMAIN_COMPONENTS,
     OWNER_PUBLIC_KEY_ENV,
     TARGET_FIELDS,
     CutoverError,
@@ -30,6 +32,7 @@ from scripts.cutover_v2 import (
     finalize_manifest,
     manifest_digest,
     new_uuid7,
+    parse_fly_status,
     read_failure_receipt,
     read_final_manifest,
     transform_source,
@@ -40,6 +43,20 @@ from scripts.cutover_v2 import (
 )
 
 NOW = datetime(2026, 8, 20, 12, 34, 56, 1, tzinfo=UTC)
+
+NATIVE_FLY_STOPPED = {
+    "PlatformVersion": "machines",
+    "Machines": [
+        {
+            "id": "machine-synthetic",
+            "state": "stopped",
+            "events": [
+                {"type": "start", "status": "started", "source": "flyd"},
+                {"type": "launch", "status": "created", "source": "user"},
+            ],
+        }
+    ],
+}
 
 
 def source_rows(*, calendar_uid: str = "manual_123") -> dict[str, list[dict]]:
@@ -129,6 +146,46 @@ def test_canonical_rejects_timezone_bearing_time() -> None:
         canonical_value(time(12, tzinfo=UTC))
 
 
+def test_native_fly_status_requires_one_stopped_machine_without_restart() -> None:
+    state = parse_fly_status(NATIVE_FLY_STOPPED)
+    assert state["sole_machine_stopped"] is True
+    assert state["never_restarted"] is True
+    assert state["machine_id"] == "machine-synthetic"
+    for changed in (
+        {**NATIVE_FLY_STOPPED, "Machines": []},
+        {
+            **NATIVE_FLY_STOPPED,
+            "Machines": [{**NATIVE_FLY_STOPPED["Machines"][0], "state": "started"}],
+        },
+        {
+            **NATIVE_FLY_STOPPED,
+            "Machines": [
+                {
+                    **NATIVE_FLY_STOPPED["Machines"][0],
+                    "events": [
+                        *NATIVE_FLY_STOPPED["Machines"][0]["events"],
+                        {"type": "start", "status": "started"},
+                    ],
+                }
+            ],
+        },
+        {
+            **NATIVE_FLY_STOPPED,
+            "Machines": [
+                {
+                    **NATIVE_FLY_STOPPED["Machines"][0],
+                    "events": [
+                        {"type": "restart", "status": "restarted"},
+                        *NATIVE_FLY_STOPPED["Machines"][0]["events"],
+                    ],
+                }
+            ],
+        },
+    ):
+        with pytest.raises(CutoverError):
+            parse_fly_status(changed)
+
+
 def test_full_digest_changes_when_one_field_changes() -> None:
     row = {"id": uuid4(), "title": "safe", "created_at": NOW}
     changed = {**row, "title": "changed"}
@@ -137,14 +194,10 @@ def test_full_digest_changes_when_one_field_changes() -> None:
     )
 
 
-def test_mapped_full_row_digest_covers_every_ordered_field() -> None:
+def test_domain_and_preserve_full_row_digest_covers_every_ordered_field() -> None:
     for component in (
-        "task",
-        "task_item",
-        "note",
-        "note_item",
-        "calendar_source",
-        "calendar_event",
+        *DOMAIN_COMPONENTS,
+        *APP_READABLE_PRESERVE,
     ):
         row = {field: f"{component}-{field}" for field in TARGET_FIELDS[component]}
         baseline = digest_rows(component, [row], TARGET_FIELDS[component])
@@ -340,7 +393,7 @@ def test_failure_receipt_signature_and_expiry_are_enforced() -> None:
         "failure_time": NOW.isoformat(),
         "expires_at": (NOW + timedelta(hours=1)).isoformat(),
         "fly_state": "stopped",
-        "target_state": {"sole_machine_stopped": True},
+        "target_state": parse_fly_status(NATIVE_FLY_STOPPED),
         "fly_never_restarted": True,
         "failed_run_domain_inventory": {
             component: empty_inventory(component)

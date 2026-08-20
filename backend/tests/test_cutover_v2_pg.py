@@ -39,6 +39,20 @@ pytestmark = pytest.mark.pg
 
 NOW = datetime(2026, 8, 20, 12, 34, 56, tzinfo=UTC)
 
+NATIVE_FLY_STOPPED = {
+    "PlatformVersion": "machines",
+    "Machines": [
+        {
+            "id": "machine-synthetic",
+            "state": "stopped",
+            "events": [
+                {"type": "start", "status": "started", "source": "flyd"},
+                {"type": "launch", "status": "created", "source": "user"},
+            ],
+        }
+    ],
+}
+
 
 def _run(coro):
     return asyncio.run(coro)
@@ -59,6 +73,18 @@ def rehearsal(pg_dsn: str):
     async def prepare() -> None:
         conn = await asyncpg.connect(pg_dsn)
         try:
+            await conn.execute(
+                "TRUNCATE TABLE microsched.reminder_dispatch, microsched.entry, "
+                "microsched.subscription, microsched.tracker, microsched.tracker_group, "
+                "microsched.calendar_event, microsched.calendar_source, microsched.task_item, "
+                "microsched.task, microsched.note_item, microsched.note, "
+                "microsched.day_annotation, "
+                "microsched.message, microsched.audit_log, microsched.app_setting, "
+                "microsched.session, microsched.push_subscription CASCADE"
+            )
+            await conn.execute(
+                "INSERT INTO microsched.task (title, status) VALUES ('synthetic prestate', 'open')"
+            )
             await conn.execute(
                 "DROP TABLE IF EXISTS public.calendar_events, public.calendar_sources, "
                 "public.note_items, public.notes, public.task_items, public.tasks, "
@@ -211,6 +237,18 @@ def rehearsal(pg_dsn: str):
             await conn.close()
 
     _run(prepare())
+    restore_db = f"microsched_restore_{uuid4().hex[:12]}"
+    control_url = parsed.set(database="postgres").render_as_string(hide_password=False)
+
+    async def create_restore() -> None:
+        control = await asyncpg.connect(control_url)
+        try:
+            await control.execute(f'CREATE DATABASE "{restore_db}" TEMPLATE "{db}"')
+        finally:
+            await control.close()
+
+    _run(create_restore())
+    restored_url = parsed.set(database=restore_db).render_as_string(hide_password=False)
     old_env = {
         key: os.environ.get(key)
         for key in (
@@ -224,7 +262,20 @@ def rehearsal(pg_dsn: str):
     os.environ["CUTOVER_TARGET_URL"] = app_url
     os.environ["CUTOVER_MIGRATOR_URL"] = migrator_url
     os.environ["CUTOVER_SOURCE_DATABASE"] = db or "microsched_ci"
-    yield app_url, migrator_url
+    yield app_url, migrator_url, restored_url
+
+    async def drop_restore() -> None:
+        drop_control = await asyncpg.connect(control_url)
+        try:
+            await drop_control.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1",
+                restore_db,
+            )
+            await drop_control.execute(f'DROP DATABASE IF EXISTS "{restore_db}"')
+        finally:
+            await drop_control.close()
+
+    _run(drop_restore())
     for key, value in old_env.items():
         if value is None:
             os.environ.pop(key, None)
@@ -266,11 +317,44 @@ def test_restored_source_is_read_only_and_matches_inventory(rehearsal) -> None:
     _run(run())
 
 
+def test_distinct_restored_source_identity_is_read_only(rehearsal) -> None:
+    async def run() -> None:
+        from scripts.cutover_v2 import source_engine
+
+        live = source_engine()
+        restored = restored_source_engine(rehearsal[2])
+        try:
+            snapshot = await load_source_snapshot(live)
+            async with live.connect() as connection:
+                live_identity = await read_connection_identity(connection, "public")
+            restored_snapshot = await verify_restored_source(
+                restored, snapshot.source_inventory, live_identity
+            )
+            assert restored_snapshot.source_inventory == snapshot.source_inventory
+            async with restored.connect() as connection:
+                restored_identity = await read_connection_identity(connection, "public")
+            assert restored_identity["database"] != live_identity["database"]
+            await assert_source_read_only(restored)
+        finally:
+            await live.dispose()
+            await restored.dispose()
+
+    _run(run())
+
+
 def test_async_main_dry_run_reads_without_target_dml(rehearsal, capsys) -> None:
     async def run() -> int:
         from scripts.cutover_v2 import async_main, parser
 
-        return await async_main(parser().parse_args(["--dry-run"]))
+        target = create_async_engine(async_postgres_url(rehearsal[0]))
+        try:
+            _, before = await collect_target_inventory_as_app(target)
+            result = await async_main(parser().parse_args(["--dry-run"]))
+            _, after = await collect_target_inventory_as_app(target)
+        finally:
+            await target.dispose()
+        assert after == before
+        return result
 
     assert _run(run()) == 0
     output = capsys.readouterr().out
@@ -362,9 +446,9 @@ def test_predelete_mapped_drift_aborts_before_write(rehearsal) -> None:
     async def run() -> None:
         admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
         try:
-            task_id = str(transformed["task"][0]["id"])
             await admin.execute(
-                "UPDATE microsched.task SET title='pre-delete drift' WHERE id=$1", task_id
+                "UPDATE microsched.task SET title='pre-delete drift' "
+                "WHERE title='synthetic prestate'"
             )
             _, before = await collect_target_inventory_as_app(target)
             with pytest.raises(Exception, match="Phase-B snapshot drift"):
@@ -398,8 +482,8 @@ def test_recover_reimports_authorized_failed_inventory(rehearsal) -> None:
                 }
             }
 
-            async def fly_state() -> dict[str, bool]:
-                return {"sole_machine_stopped": True, "never_restarted": True}
+            async def fly_state() -> dict[str, object]:
+                return NATIVE_FLY_STOPPED
 
             await run_recover(
                 manifest,
@@ -436,8 +520,8 @@ def test_recover_rejects_stale_failed_inventory(rehearsal) -> None:
                 }
             }
 
-            async def fly_state() -> dict[str, bool]:
-                return {"sole_machine_stopped": True, "never_restarted": True}
+            async def fly_state() -> dict[str, object]:
+                return NATIVE_FLY_STOPPED
 
             with pytest.raises(Exception, match="authorized failed-run state"):
                 await run_recover(
@@ -447,6 +531,88 @@ def test_recover_rejects_stale_failed_inventory(rehearsal) -> None:
                     transformed,
                     fly_state_verifier=fly_state,
                 )
+        finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+def test_recover_rejects_every_domain_inventory_perturbation(rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        try:
+            await run_commit(manifest, target, transformed)
+            task_id = str(transformed["task"][0]["id"])
+            await admin.execute(
+                "UPDATE microsched.task SET title='authorized failed state' WHERE id=$1", task_id
+            )
+            _, failed = await collect_target_inventory_as_app(target)
+            for component in DOMAIN_COMPONENTS:
+                stale_inventory = {
+                    name: dict(proof) for name, proof in failed.items() if name in DOMAIN_COMPONENTS
+                }
+                stale_inventory[component]["full_row_digest"] = "0" * 64
+                with pytest.raises(Exception, match="authorized failed-run state"):
+                    await run_recover(
+                        manifest,
+                        {"failed_run_domain_inventory": stale_inventory},
+                        target,
+                        transformed,
+                        fly_state_verifier=lambda: NATIVE_FLY_STOPPED,
+                    )
+        finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+def test_recover_rolls_back_mid_transaction_failure(monkeypatch, rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        from scripts import cutover_v2
+
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        try:
+            await run_commit(manifest, target, transformed)
+            task_id = str(transformed["task"][0]["id"])
+            await admin.execute(
+                "UPDATE microsched.task SET title='authorized failed state' WHERE id=$1", task_id
+            )
+            _, failed = await collect_target_inventory_as_app(target)
+            before = await collect_target_inventory_as_app(target)
+
+            async def fail_after_delete(session, current_manifest, current_transformed):
+                await session.execute(text("DELETE FROM microsched.task"))
+                raise cutover_v2.CutoverError("synthetic recovery mid-transaction failure")
+
+            original = cutover_v2.purge_import_assert
+            monkeypatch.setattr(cutover_v2, "purge_import_assert", fail_after_delete)
+            try:
+                with pytest.raises(Exception, match="recovery mid-transaction"):
+                    await run_recover(
+                        manifest,
+                        {
+                            "failed_run_domain_inventory": {
+                                component: failed[component] for component in DOMAIN_COMPONENTS
+                            }
+                        },
+                        target,
+                        transformed,
+                        fly_state_verifier=lambda: NATIVE_FLY_STOPPED,
+                    )
+            finally:
+                monkeypatch.setattr(cutover_v2, "purge_import_assert", original)
+            after = await collect_target_inventory_as_app(target)
+            assert after == before
         finally:
             await admin.close()
             await source.dispose()
@@ -466,21 +632,44 @@ def test_verify_rejects_purge_residual_and_preserve_drift(rehearsal) -> None:
             await run_commit(manifest, target, transformed)
             await admin.execute(
                 "INSERT INTO microsched.message (role,content,trace_id) "
-                "VALUES ('user','synthetic residual',$1)",
+                "VALUES ('user','enc:v1:synthetic-residual',$1)",
                 uuid4(),
             )
             with pytest.raises(Exception, match="residual purge-only"):
                 await run_verify(manifest, target)
-            await admin.execute("DELETE FROM microsched.message WHERE content='synthetic residual'")
             await admin.execute(
-                "INSERT INTO microsched.app_setting (key,value) VALUES ($1,$2::jsonb)",
-                setting_key,
-                '{"synthetic":true}',
+                "DELETE FROM microsched.message WHERE content='enc:v1:synthetic-residual'"
             )
-            with pytest.raises(Exception, match="preserve drift"):
-                await run_verify(manifest, target)
+            preserve_rows = {
+                "app_setting": (
+                    "INSERT INTO microsched.app_setting (key,value) VALUES ($1,$2::jsonb)",
+                    (setting_key, '{"synthetic":true}'),
+                    f"DELETE FROM microsched.app_setting WHERE key='{setting_key}'",
+                ),
+                "session": (
+                    "INSERT INTO microsched.session "
+                    "(token_hash,user_email,expires_at) VALUES ($1,$2,$3)",
+                    (f"hash-{uuid4()}", "synthetic@example.invalid", NOW + timedelta(days=1)),
+                    "DELETE FROM microsched.session WHERE user_email='synthetic@example.invalid'",
+                ),
+                "push_subscription": (
+                    "INSERT INTO microsched.push_subscription "
+                    "(endpoint,p256dh,auth) VALUES ($1,$2,$3)",
+                    (f"https://push.invalid/{uuid4()}", "synthetic-p256dh", "synthetic-auth"),
+                    "DELETE FROM microsched.push_subscription WHERE p256dh='synthetic-p256dh'",
+                ),
+            }
+            for insert_sql, values, cleanup_sql in preserve_rows.values():
+                await admin.execute(insert_sql, *values)
+                try:
+                    with pytest.raises(Exception, match="preserve drift"):
+                        await run_verify(manifest, target)
+                finally:
+                    await admin.execute(cleanup_sql)
         finally:
-            await admin.execute("DELETE FROM microsched.message WHERE content='synthetic residual'")
+            await admin.execute(
+                "DELETE FROM microsched.message WHERE content='enc:v1:synthetic-residual'"
+            )
             await admin.execute("DELETE FROM microsched.app_setting WHERE key=$1", setting_key)
             await admin.close()
             await source.dispose()

@@ -16,6 +16,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import secrets
 import shlex
 import subprocess
@@ -29,7 +30,15 @@ from uuid import UUID, uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import insert, text
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKeyConstraint,
+    PrimaryKeyConstraint,
+    UniqueConstraint,
+    insert,
+    text,
+)
+from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -37,7 +46,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlmodel import select
+from sqlmodel import SQLModel, select
 
 from app.core.database_urls import async_postgres_url
 from app.domain.models import (
@@ -634,11 +643,20 @@ def restored_source_engine(value: str) -> AsyncEngine:
 
 
 def fly_state_verifier_from_env() -> Callable[[], Awaitable[Mapping[str, Any]]]:
-    """Build a read-only Fly status probe; tests inject a synthetic equivalent."""
-    command = os.environ.get(FLY_STATE_COMMAND_ENV)
+    """Build the read-only native ``fly status --json`` probe.
+
+    The native Apps v2 response is an object containing ``Machines``.  The
+    machine event stream is part of the Machines API response; requiring one
+    launch and one start, with no restart/second-start evidence, is what lets a
+    recovery prove the machine was stopped continuously.  A wrapper may still
+    be selected explicitly for a workstation, but the default is the official
+    ``fly`` executable and its native JSON shape is never replaced by a pair of
+    operator-supplied booleans.
+    """
+    command = os.environ.get(FLY_STATE_COMMAND_ENV, "fly")
     app = os.environ.get(FLY_APP_ENV)
-    if not command or not app:
-        raise CutoverError(f"{FLY_STATE_COMMAND_ENV} and {FLY_APP_ENV} are required for recovery")
+    if not app:
+        raise CutoverError(f"{FLY_APP_ENV} is required for recovery")
     try:
         command_parts = shlex.split(command, posix=os.name != "nt")
     except ValueError:
@@ -658,11 +676,79 @@ def fly_state_verifier_from_env() -> Callable[[], Awaitable[Mapping[str, Any]]]:
             value = json.loads(output)
         except OSError, subprocess.SubprocessError, json.JSONDecodeError:
             raise CutoverError("current Fly stopped-state query failed") from None
-        if not isinstance(value, dict):
-            raise CutoverError("current Fly stopped-state query returned invalid JSON")
-        return value
+        return parse_fly_status(value)
 
     return verify
+
+
+def parse_fly_status(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize and fail closed on the native Apps v2 ``fly status --json``.
+
+    Fly's documented status response uses a top-level ``Machines`` array and
+    lower-case machine fields.  ``Events`` is retained in the response by the
+    Machines API and carries ``type`` plus an optional ``request`` with
+    ``restart_count``.  We do not infer continuity from a static ``stopped``
+    string: exactly one machine, exactly one launch/start pair, and explicit
+    absence of restart evidence are required.
+    """
+    if not isinstance(payload, Mapping):
+        raise CutoverError("current Fly stopped-state query returned invalid JSON")
+    machines = payload.get("Machines")
+    if not isinstance(machines, list) or len(machines) != 1:
+        raise CutoverError("current Fly state does not contain exactly one machine")
+    machine = machines[0]
+    if not isinstance(machine, Mapping):
+        raise CutoverError("current Fly machine record is invalid")
+    machine_id = machine.get("id")
+    state = machine.get("state")
+    if not isinstance(machine_id, str) or not machine_id.strip():
+        raise CutoverError("current Fly machine ID is missing")
+    if state != "stopped":
+        raise CutoverError("current Fly machine is not stopped")
+    events = machine.get("events")
+    if not isinstance(events, list) or not events:
+        raise CutoverError("current Fly machine restart evidence is missing")
+    event_types: list[str] = []
+    restart_counts: list[int] = []
+    for event in events:
+        if not isinstance(event, Mapping) or not isinstance(event.get("type"), str):
+            raise CutoverError("current Fly machine event evidence is invalid")
+        event_type = event["type"].lower()
+        event_types.append(event_type)
+        if "restart" in event_type:
+            raise CutoverError("current Fly machine has restart evidence")
+        request = event.get("request")
+        if request is not None:
+            if not isinstance(request, Mapping):
+                raise CutoverError("current Fly machine restart evidence is invalid")
+            restart_count = request.get("restart_count")
+            if restart_count is not None:
+                if isinstance(restart_count, bool) or not isinstance(restart_count, int):
+                    raise CutoverError("current Fly machine restart count is invalid")
+                restart_counts.append(restart_count)
+                if restart_count != 0:
+                    raise CutoverError("current Fly machine has restart evidence")
+            for exit_key in ("exit_event", "MonitorEvent"):
+                exit_event = request.get(exit_key)
+                if isinstance(exit_event, Mapping) and exit_event.get("restarting") is True:
+                    raise CutoverError("current Fly machine has restart evidence")
+        if event.get("status") == "restarted":
+            raise CutoverError("current Fly machine has restart evidence")
+    if event_types.count("launch") != 1 or event_types.count("start") != 1:
+        raise CutoverError("current Fly machine does not prove one launch and one start")
+    return {
+        "fly_state": "stopped",
+        "machine_id": machine_id,
+        "machine_state": state,
+        "sole_machine_stopped": True,
+        "never_restarted": True,
+        "restart_evidence": {
+            "event_count": len(events),
+            "launch_count": event_types.count("launch"),
+            "start_count": event_types.count("start"),
+            "restart_counts": restart_counts,
+        },
+    }
 
 
 async def assert_current_fly_stopped(
@@ -675,13 +761,7 @@ async def assert_current_fly_stopped(
         raise
     except Exception:
         raise CutoverError("current Fly stopped-state query failed") from None
-    if (
-        not isinstance(state, Mapping)
-        or state.get("sole_machine_stopped") is not True
-        or state.get("never_restarted") is not True
-    ):
-        raise CutoverError("current Fly state is not sole-machine stopped and never-restarted")
-    return state
+    return parse_fly_status(state)
 
 
 def assert_target_coordinates() -> None:
@@ -737,7 +817,8 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
             await connection.execute(
                 text(
                     "SELECT table_name,column_name,data_type,is_nullable,ordinal_position,"
-                    "column_default,udt_name "
+                    "column_default,udt_name,numeric_precision,numeric_scale,"
+                    "datetime_precision "
                     "FROM information_schema.columns WHERE table_schema=:schema "
                     "ORDER BY table_name,ordinal_position"
                 ),
@@ -804,6 +885,164 @@ def _catalog_row(row: Mapping[str, Any]) -> dict[str, Any]:
         key: value.decode("utf-8") if isinstance(value, bytes) else value
         for key, value in row.items()
     }
+
+
+def _normalize_catalog_sql(value: Any) -> str:
+    """Normalize PostgreSQL's harmless display differences, not semantics."""
+    result = " ".join(str(value or "").lower().split())
+    while result.startswith("(") and result.endswith(")"):
+        depth = 0
+        balanced = True
+        for index, char in enumerate(result):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0 and index != len(result) - 1:
+                    balanced = False
+                    break
+        if not balanced or depth != 0:
+            break
+        result = result[1:-1].strip()
+    for prefix in ("check ", "primary key ", "unique ", "foreign key "):
+        if result.startswith(prefix):
+            result = result[len(prefix) :]
+            break
+    result = result.replace("::text", "").replace("::boolean", "").replace("::jsonb", "")
+    result = re.sub(r"\s*\(\s*", "(", result)
+    result = re.sub(r"\s*\)", ")", result)
+    return re.sub(r"\s*,\s*", ",", result)
+
+
+def _expected_column_contract() -> dict[tuple[str, str], dict[str, Any]]:
+    """Build the pinned head column contract from the checked-in SQLModel metadata."""
+    dialect = postgresql_dialect()
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    type_map = {
+        "UUID": ("uuid", "uuid"),
+        "TEXT": ("text", "text"),
+        "BOOLEAN": ("boolean", "bool"),
+        "INTEGER": ("integer", "int4"),
+        "DATE": ("date", "date"),
+        "TIME WITHOUT TIME ZONE": ("time without time zone", "time"),
+        "TIMESTAMP WITH TIME ZONE": ("timestamp with time zone", "timestamptz"),
+        "JSONB": ("jsonb", "jsonb"),
+        "VECTOR": ("USER-DEFINED", "vector"),
+        "NUMERIC": ("numeric", "numeric"),
+    }
+    for table in SQLModel.metadata.tables.values():
+        if table.schema != "microsched":
+            continue
+        for column in table.columns:
+            compiled_type = str(column.type.compile(dialect=dialect)).upper()
+            if compiled_type.startswith("NUMERIC"):
+                compiled_type = "NUMERIC"
+            data_type, udt_name = type_map.get(
+                compiled_type,
+                (compiled_type.lower(), compiled_type.lower()),
+            )
+            default = None
+            if column.server_default is not None:
+                default = str(column.server_default.arg)
+            result[(table.name, column.name)] = {
+                "data_type": data_type,
+                "udt_name": udt_name,
+                "is_nullable": "YES" if column.nullable else "NO",
+                "column_default": default,
+                "numeric_precision": getattr(column.type, "precision", None),
+                "numeric_scale": getattr(column.type, "scale", None),
+                "datetime_precision": 6
+                if compiled_type in {"TIMESTAMP WITH TIME ZONE", "TIME WITHOUT TIME ZONE"}
+                else None,
+            }
+    result[("alembic_version", "version_num")] = {
+        "data_type": "character varying",
+        "udt_name": "varchar",
+        "is_nullable": "NO",
+        "column_default": None,
+        "numeric_precision": None,
+        "numeric_scale": None,
+        "datetime_precision": None,
+    }
+    return result
+
+
+def _expected_constraint_contract() -> set[tuple[str, str, str, str]]:
+    """Return exact head constraint names/types/definitions, including Alembic PK."""
+    result: set[tuple[str, str, str, str]] = {
+        ("alembic_version", "alembic_version_pkc", "p", "(version_num)"),
+    }
+    for table in SQLModel.metadata.tables.values():
+        if table.schema != "microsched":
+            continue
+        for constraint in table.constraints:
+            name = constraint.name
+            if not name:
+                raise CutoverError(f"expected schema constraint has no name: {table.name}")
+            if isinstance(constraint, PrimaryKeyConstraint):
+                kind = "p"
+                definition = "(" + ", ".join(column.name for column in constraint.columns) + ")"
+            elif isinstance(constraint, UniqueConstraint):
+                kind = "u"
+                definition = "(" + ", ".join(column.name for column in constraint.columns) + ")"
+            elif isinstance(constraint, ForeignKeyConstraint):
+                kind = "f"
+                columns = ", ".join(element.parent.name for element in constraint.elements)
+                target = constraint.elements[0].target_fullname.rsplit(".", 1)[0]
+                targets = ", ".join(
+                    element.target_fullname.rsplit(".", 1)[-1] for element in constraint.elements
+                )
+                definition = f"({columns}) references {target} ({targets})"
+                ondelete = constraint.elements[0].ondelete
+                if ondelete:
+                    definition += f" on delete {ondelete}"
+            elif isinstance(constraint, CheckConstraint):
+                kind = "c"
+                definition = str(constraint.sqltext)
+            else:
+                raise CutoverError(f"unsupported expected schema constraint: {table.name}")
+            result.add((table.name, str(name), kind, _normalize_catalog_sql(definition)))
+    return result
+
+
+def _expected_trigger_contract() -> set[tuple[str, str, str, str]]:
+    result = {
+        (
+            table,
+            "set_updated_at",
+            "O",
+            _normalize_catalog_sql(
+                f"CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.{table} "
+                "FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()"
+            ),
+        )
+        for table in ALL_EXPECTED_TARGET_TABLES
+    }
+    result.update(
+        {
+            (
+                "task_item",
+                "trg_task_item_privacy",
+                "O",
+                _normalize_catalog_sql(
+                    "CREATE TRIGGER trg_task_item_privacy BEFORE INSERT OR UPDATE "
+                    "ON microsched.task_item FOR EACH ROW EXECUTE FUNCTION "
+                    "microsched.enforce_task_item_privacy()"
+                ),
+            ),
+            (
+                "task",
+                "trg_task_children_privacy",
+                "O",
+                _normalize_catalog_sql(
+                    "CREATE TRIGGER trg_task_children_privacy BEFORE UPDATE OF is_private "
+                    "ON microsched.task FOR EACH ROW EXECUTE FUNCTION "
+                    "microsched.enforce_task_children_privacy()"
+                ),
+            ),
+        }
+    )
+    return result
 
 
 async def read_runtime_coordinates(connection: Any) -> dict[str, Any]:
@@ -909,14 +1148,33 @@ async def attest_schema(
                     await connection.execute(
                         text(
                             "SELECT c.relname AS table_name, r.rolname AS grantee, "
+                            "CASE WHEN acl.grantee=0 THEN 'PUBLIC' ELSE r.rolname END AS grantee, "
                             "acl.privilege_type "
                             "FROM pg_catalog.pg_class c "
                             "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
                             "JOIN LATERAL aclexplode(COALESCE(c.relacl, "
                             "acldefault('r', c.relowner))) acl ON true "
-                            "JOIN pg_catalog.pg_roles r ON r.oid=acl.grantee "
+                            "LEFT JOIN pg_catalog.pg_roles r ON r.oid=acl.grantee "
                             "WHERE n.nspname='microsched' "
                             "ORDER BY c.relname,r.rolname,acl.privilege_type"
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            schema_grants = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT CASE WHEN acl.grantee=0 THEN 'PUBLIC' "
+                            "ELSE r.rolname END AS grantee, acl.privilege_type "
+                            "FROM pg_catalog.pg_namespace n "
+                            "JOIN LATERAL aclexplode(COALESCE(n.nspacl, "
+                            "acldefault('n', n.nspowner))) acl ON true "
+                            "LEFT JOIN pg_catalog.pg_roles r ON r.oid=acl.grantee "
+                            "WHERE n.nspname='microsched' "
+                            "ORDER BY grantee,acl.privilege_type"
                         )
                     )
                 )
@@ -931,37 +1189,75 @@ async def attest_schema(
         raise CutoverError(
             "required microsched target table is missing: " + ",".join(sorted(missing))
         )
-    columns_by_table: dict[str, set[str]] = {}
-    for column in identity["ddl"]["columns"]:
-        columns_by_table.setdefault(column["table_name"], set()).add(column["column_name"])
-    expected_columns = {component: set(fields) for component, fields in TARGET_FIELDS.items()}
-    expected_columns["alembic_version"] = {"version_num"}
-    for table_name, expected in expected_columns.items():
-        if columns_by_table.get(table_name) != expected:
-            raise CutoverError(f"target catalog columns drift: {table_name}")
-    constraint_rows = identity["ddl"]["constraints"]
-    primary_key_tables = {
-        row["table_name"] for row in constraint_rows if row["constraint_type"] == "p"
+    actual_columns = {
+        (row["table_name"], row["column_name"]): {
+            key: row.get(key)
+            for key in (
+                "data_type",
+                "udt_name",
+                "is_nullable",
+                "column_default",
+                "numeric_precision",
+                "numeric_scale",
+                "datetime_precision",
+            )
+        }
+        for row in identity["ddl"]["columns"]
     }
-    if not set(ALL_EXPECTED_TARGET_TABLES) <= primary_key_tables:
-        raise CutoverError("target catalog primary-key contract drift")
-    trigger_rows = identity["ddl"]["triggers"]
-    trigger_tables = {
-        row["table_name"] for row in trigger_rows if row["trigger_name"] == "set_updated_at"
+    expected_columns = _expected_column_contract()
+    if set(actual_columns) != set(expected_columns):
+        raise CutoverError("target catalog column set drift")
+    for key, expected in expected_columns.items():
+        actual = actual_columns[key]
+        for field in ("data_type", "udt_name", "is_nullable"):
+            if actual[field] != expected[field]:
+                raise CutoverError(f"target catalog column {field} drift: {key[0]}.{key[1]}")
+        if _normalize_catalog_sql(actual["column_default"]) != _normalize_catalog_sql(
+            expected["column_default"]
+        ):
+            raise CutoverError(f"target catalog column default drift: {key[0]}.{key[1]}")
+        for field in ("numeric_precision", "numeric_scale", "datetime_precision"):
+            if actual[field] != expected[field]:
+                raise CutoverError(f"target catalog column {field} drift: {key[0]}.{key[1]}")
+    actual_constraints = {
+        (
+            row["table_name"],
+            row["constraint_name"],
+            row["constraint_type"],
+            _normalize_catalog_sql(row["definition"]),
+        )
+        for row in identity["ddl"]["constraints"]
     }
-    if trigger_tables != set(ALL_EXPECTED_TARGET_TABLES):
-        raise CutoverError("target catalog updated-at trigger contract drift")
+    if actual_constraints != _expected_constraint_contract():
+        raise CutoverError("target catalog constraint contract drift")
+    actual_triggers = {
+        (
+            row["table_name"],
+            row["trigger_name"],
+            row["tgenabled"],
+            _normalize_catalog_sql(row["definition"]),
+        )
+        for row in identity["ddl"]["triggers"]
+    }
+    if actual_triggers != _expected_trigger_contract():
+        raise CutoverError("target catalog trigger contract drift")
     grant_rows = [dict(row) for row in grants]
+    if any(row["grantee"] == "PUBLIC" for row in grant_rows) or any(
+        row["grantee"] == "PUBLIC" for row in schema_grants
+    ):
+        raise CutoverError("target catalog PUBLIC grants are forbidden")
     app_grants = {
         (row["table_name"], row["privilege_type"])
         for row in grant_rows
         if row["grantee"] == TARGET_APP_ROLE
     }
     for table_name in ALL_EXPECTED_TARGET_TABLES:
-        if not all(
-            (table_name, privilege) in app_grants
-            for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE")
-        ):
+        expected = {
+            (table_name, privilege) for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE")
+        }
+        if {
+            (table, privilege) for table, privilege in app_grants if table == table_name
+        } != expected:
             raise CutoverError(f"target app grant contract drift: {table_name}")
     if any(
         row["table_name"] == "alembic_version" and row["grantee"] == TARGET_APP_ROLE
@@ -975,6 +1271,7 @@ async def attest_schema(
         "constraints": identity["ddl"]["constraints"],
         "triggers": identity["ddl"]["triggers"],
         "grants": [dict(row) for row in grants],
+        "schema_grants": [dict(row) for row in schema_grants],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
     result = {
@@ -1531,8 +1828,14 @@ def read_failure_receipt(
     if receipt.get("fly_state") != "stopped":
         raise ManifestError("failure receipt does not attest Fly stopped")
     target_state = receipt.get("target_state")
-    if not isinstance(target_state, dict) or target_state.get("sole_machine_stopped") is not True:
-        raise ManifestError("failure receipt lacks sole-machine stopped current state")
+    if (
+        not isinstance(target_state, dict)
+        or target_state.get("sole_machine_stopped") is not True
+        or target_state.get("never_restarted") is not True
+        or not isinstance(target_state.get("machine_id"), str)
+        or not isinstance(target_state.get("restart_evidence"), dict)
+    ):
+        raise ManifestError("failure receipt lacks native Fly stopped/restart evidence")
     verify_signature(receipt["signature"], failure_receipt_payload(receipt))
     inventory_map = receipt.get("failed_run_domain_inventory")
     if set(inventory_map or {}) != set(DOMAIN_COMPONENTS):
@@ -1823,6 +2126,7 @@ async def async_main(args: argparse.Namespace) -> int:
     target = target_url()
     code = actual_code_identity()
     manifest = None
+    final_manifest_target_before: dict[str, dict[str, Any]] | None = None
     if mode == "dry-run" and args.manifest:
         if not args.confirm_target_host or not args.expected_script_sha:
             raise CutoverError(
@@ -1858,6 +2162,7 @@ async def async_main(args: argparse.Namespace) -> int:
         target_probe = target_engine()
         try:
             await assert_app_cannot_read_alembic(target_probe)
+            _, final_manifest_target_before = await collect_target_inventory_as_app(target_probe)
         finally:
             await target_probe.dispose()
     if mode != "dry-run":
@@ -2048,6 +2353,10 @@ async def async_main(args: argparse.Namespace) -> int:
                 finally:
                     await target_engine_obj.dispose()
                 assert_runtime_coordinates_match(target_identity, manifest["target_identity"])
+                if final_manifest_target_before is None:
+                    raise ManifestError("final-manifest dry-run lacks an initial target snapshot")
+                if target_snapshot != final_manifest_target_before:
+                    raise ManifestError("target Phase-B snapshot changed during dry-run")
                 if target_snapshot != manifest["phase_b_target_snapshot"]:
                     raise ManifestError("target Phase-B snapshot drift during dry-run")
             return 0
