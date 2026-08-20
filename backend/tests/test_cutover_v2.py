@@ -108,6 +108,16 @@ NATIVE_FLY_STOPPED = {
             "not is_private or title like 'enc:v1:%' and"
             "(body_md is null or body_md like 'enc:v1:%')",
         ),
+        (
+            "CHECK (priority IS NULL OR (priority IN ('p1', 'p2', 'p3')))",
+            "priority is null or priority in('p1','p2','p3')",
+        ),
+        (
+            "CHECK ((input_mode = 'quantity' AND unit IS NOT NULL) OR "
+            "(input_mode <> 'quantity' AND unit IS NULL))",
+            "input_mode = 'quantity' and unit is not null or "
+            "input_mode <> 'quantity' and unit is null",
+        ),
     ],
 )
 def test_catalog_constraint_normalization_matches_pg_get_constraintdef(
