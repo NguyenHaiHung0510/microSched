@@ -228,7 +228,7 @@ export function PrivateGate({ session }: Props) {
       {isOpen ? (
         <Button
           type="button"
-          variant="outline"
+          variant="softRose"
           size="sm"
           className="min-h-11"
           data-testid="private-lock-now"
@@ -240,7 +240,7 @@ export function PrivateGate({ session }: Props) {
       ) : (
         <Button
           type="button"
-          variant="outline"
+          variant="softRose"
           size="sm"
           className="min-h-11"
           data-testid="private-unlock-open"

@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && npm run verify:apple-icon",
+    "build": "tsc -b && vite build && npm run verify:apple-icon && npm run verify:pwa-surface",
     "e2e": "playwright test",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "tsc -p tsconfig.test.json && vitest run",
-    "verify:apple-icon": "node scripts/verify-apple-touch-icon.mjs"
+    "verify:apple-icon": "node scripts/verify-apple-touch-icon.mjs",
+    "verify:pwa-surface": "node scripts/verify-pwa-surface.mjs"
   },
   "dependencies": {
     "@fontsource-variable/nunito": "^5.3.0",

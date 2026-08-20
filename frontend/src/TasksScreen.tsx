@@ -411,7 +411,7 @@ const TaskCard = memo(function TaskCard({
                 <Button
                   data-testid="task-reschedule-today"
                   size="sm"
-                  variant="outline"
+                  variant="softRose"
                   disabled={reschedule.isPending || update.isPending}
                   onClick={() => rescheduleTo(0)}
                 >
@@ -420,7 +420,7 @@ const TaskCard = memo(function TaskCard({
                 <Button
                   data-testid="task-reschedule-tomorrow"
                   size="sm"
-                  variant="outline"
+                  variant="softRose"
                   disabled={reschedule.isPending || update.isPending}
                   onClick={() => rescheduleTo(1)}
                 >
@@ -429,7 +429,7 @@ const TaskCard = memo(function TaskCard({
                 <Button
                   data-testid="task-reschedule-day-after"
                   size="sm"
-                  variant="outline"
+                  variant="softRose"
                   disabled={reschedule.isPending || update.isPending}
                   onClick={() => rescheduleTo(2)}
                 >
@@ -969,7 +969,7 @@ export function TasksScreen() {
                 data-testid={`filter-${value}`}
                 className="rounded-full px-4"
                 size="lg"
-                variant={activeFilter === value ? 'secondary' : 'ghost'}
+                variant={activeFilter === value ? 'selected' : 'ghost'}
                 aria-pressed={activeFilter === value}
                 key={value}
                 onClick={() => setFilter(value)}
