@@ -25,6 +25,7 @@ from scripts.cutover_v2 import (
     actual_code_identity,
     approval_payload,
     assert_current_fly_stopped,
+    async_main,
     build_failure_receipt,
     build_manifest,
     calendar_bucket_inventory,
@@ -38,6 +39,7 @@ from scripts.cutover_v2 import (
     manifest_digest,
     new_uuid7,
     parse_fly_status,
+    parser,
     read_failure_receipt,
     read_final_manifest,
     transform_source,
@@ -402,6 +404,145 @@ def test_manifest_digest_and_unsigned_gate() -> None:
         monkeypatch.undo()
 
 
+def test_finalized_manifest_dry_run_rechecks_target_and_authenticated_dump(
+    monkeypatch, capsys
+) -> None:
+    import scripts.cutover_v2 as cutover_v2
+
+    key = Ed25519PrivateKey.generate()
+    monkeypatch.setenv(ARTIFACT_KEY_ENV, base64.b64encode(b"f" * 32).decode())
+    monkeypatch.setenv(
+        OWNER_PUBLIC_KEY_ENV,
+        base64.b64encode(key.public_key().public_bytes_raw()).decode(),
+    )
+    monkeypatch.setenv(
+        "CUTOVER_TARGET_URL", "postgresql+asyncpg://microsched_app@throwaway.example/microsched"
+    )
+    monkeypatch.setenv(
+        "CUTOVER_MIGRATOR_URL",
+        "postgresql+asyncpg://microsched_migrator@throwaway.example/microsched",
+    )
+    code = actual_code_identity()
+    snapshot = SourceSnapshot(source_rows(), NOW)
+    transformed = transform_source(snapshot)
+    target_snapshot = {
+        component: empty_inventory(component)
+        for component in (*DOMAIN_COMPONENTS, *APP_READABLE_PRESERVE)
+    }
+    identity = {
+        "database": "microsched",
+        "server_port": 5432,
+        "cluster_name": "synthetic-cluster",
+        "ddl_sha256": "d" * 64,
+    }
+    manifest = build_manifest(
+        snapshot=snapshot,
+        transformed=transformed,
+        target_snapshot=target_snapshot,
+        source_identity={"database": "microschedule_v2", "ddl_sha256": "s" * 64},
+        schema_attestation={"catalog_digest": "catalog", "target_identity": identity},
+        target_host_name="throwaway.example",
+        target_identity=identity,
+        source_dump_sha256="e" * 64,
+        script_sha=code["git_sha"],
+        script_file_sha256=code["file_sha256"],
+    )
+    manifest_path = Path("cutover-final-dry-run.tmp.age")
+    dump_path = Path("cutover-final-dry-run.dump.age")
+    write_manifest(manifest_path, manifest)
+    unsigned = cutover_v2.decrypt_artifact(manifest_path)
+    signature = base64.b64encode(
+        key.sign(
+            json.dumps(
+                approval_payload(unsigned),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+    ).decode()
+    finalize_manifest(manifest_path, signature)
+    dump_path.write_bytes(b"age-encryption.org/v1\nsynthetic")
+
+    class FakeEngine:
+        class _Connection:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+        def connect(self):
+            return self._Connection()
+
+        async def dispose(self):
+            return None
+
+    calls = {"dump": [], "inventory": 0}
+
+    def fake_verify_dump(path, expected, *, require_authenticated_restore):
+        calls["dump"].append((path, expected, require_authenticated_restore))
+        assert require_authenticated_restore is True
+        return "e" * 64
+
+    async def fake_attest_schema(engine, *, expected_digest=None):
+        assert expected_digest == "catalog"
+        return {"catalog_digest": "catalog", "target_identity": identity}
+
+    async def fake_collect(engine):
+        calls["inventory"] += 1
+        return identity, target_snapshot
+
+    async def fake_source_identity(*args):
+        return {"database": "microschedule_v2", "ddl_sha256": "s" * 64}
+
+    async def fake_snapshot(engine):
+        return snapshot
+
+    async def fake_noop(engine):
+        return None
+
+    monkeypatch.setattr(cutover_v2, "verify_source_dump", fake_verify_dump)
+    monkeypatch.setattr(cutover_v2, "migrator_engine", lambda: FakeEngine())
+    monkeypatch.setattr(cutover_v2, "target_engine", lambda: FakeEngine())
+    monkeypatch.setattr(cutover_v2, "source_engine", lambda: FakeEngine())
+    monkeypatch.setattr(cutover_v2, "attest_schema", fake_attest_schema)
+    monkeypatch.setattr(cutover_v2, "assert_app_cannot_read_alembic", fake_noop)
+    monkeypatch.setattr(cutover_v2, "collect_target_inventory_as_app", fake_collect)
+    monkeypatch.setattr(cutover_v2, "assert_source_identity", fake_noop)
+    monkeypatch.setattr(cutover_v2, "assert_source_read_only", fake_noop)
+    monkeypatch.setattr(cutover_v2, "read_connection_identity", fake_source_identity)
+    monkeypatch.setattr(cutover_v2, "load_source_snapshot", fake_snapshot)
+    monkeypatch.setattr(cutover_v2, "assert_target_coordinates", lambda: None)
+    try:
+        result = asyncio.run(
+            async_main(
+                parser().parse_args(
+                    [
+                        "--dry-run",
+                        "--manifest",
+                        str(manifest_path),
+                        "--confirm-target-host",
+                        "throwaway.example",
+                        "--expected-script-sha",
+                        code["git_sha"],
+                        "--source-dump",
+                        str(dump_path),
+                        "--source-dump-sha256",
+                        "e" * 64,
+                    ]
+                )
+            )
+        )
+        assert result == 0
+        assert len(calls["dump"]) == 2
+        assert calls["inventory"] == 2
+        assert "calendar_bucket manual" in capsys.readouterr().out
+    finally:
+        manifest_path.unlink(missing_ok=True)
+        dump_path.unlink(missing_ok=True)
+
+
 def test_empty_inventory_is_stable() -> None:
     first = empty_inventory("message")
     second = empty_inventory("message")
@@ -422,6 +563,21 @@ def test_source_dump_hash_seam() -> None:
             verify_source_dump(dump)
     finally:
         dump.unlink(missing_ok=True)
+
+
+def test_failure_receipt_output_cannot_overwrite_input_before_probe() -> None:
+    same_path = Path("cutover-same-artifact.tmp.age").resolve()
+    args = parser().parse_args(
+        [
+            "--write-failure-receipt",
+            str(same_path),
+            "--manifest",
+            str(same_path),
+        ]
+    )
+    with pytest.raises(CutoverError, match="output must differ"):
+        asyncio.run(async_main(args))
+    assert not same_path.exists()
 
 
 def test_failure_receipt_signature_and_expiry_are_enforced() -> None:

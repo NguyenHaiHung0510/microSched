@@ -426,6 +426,45 @@ def test_source_write_guard_is_real(rehearsal) -> None:
     _run(run())
 
 
+def test_schema_attestation_red_green_for_indexes_and_grantees(rehearsal) -> None:
+    async def run() -> None:
+        from scripts.cutover_v2 import migrator_engine
+
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        migrator = migrator_engine()
+        extra_role = f"cutover_attest_{uuid4().hex[:12]}"
+        try:
+            await attest_schema(migrator)
+            await admin.execute("DROP INDEX microsched.uq_calendar_source_name_lower")
+            with pytest.raises(Exception, match="functional unique-index"):
+                await attest_schema(migrator)
+            await admin.execute(
+                "CREATE UNIQUE INDEX uq_calendar_source_name_lower "
+                "ON microsched.calendar_source (lower(name))"
+            )
+            await attest_schema(migrator)
+
+            await admin.execute(f'CREATE ROLE "{extra_role}"')
+            await admin.execute(f'GRANT USAGE ON SCHEMA microsched TO "{extra_role}"')
+            with pytest.raises(Exception, match="grantee"):
+                await attest_schema(migrator)
+            await admin.execute(f'REVOKE ALL ON SCHEMA microsched FROM "{extra_role}"')
+            await admin.execute(f'DROP ROLE "{extra_role}"')
+            await attest_schema(migrator)
+        finally:
+            # Make teardown safe if the assertion itself fails halfway through
+            # the deliberate RED/GREEN sequence.
+            await admin.execute(f'DROP ROLE IF EXISTS "{extra_role}"')
+            await admin.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_source_name_lower "
+                "ON microsched.calendar_source (lower(name))"
+            )
+            await admin.close()
+            await migrator.dispose()
+
+    _run(run())
+
+
 def test_restored_source_is_read_only_and_matches_inventory(rehearsal) -> None:
     async def run() -> None:
         source = restored_source_engine(os.environ["CUTOVER_SOURCE_URL"])

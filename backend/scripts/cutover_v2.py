@@ -2035,6 +2035,19 @@ def write_failure_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
     path.write_bytes(encrypt_artifact(payload))
 
 
+def assert_artifact_output_is_distinct(output: Path, *inputs: Path | None) -> None:
+    """Reject an output path that would overwrite any ceremony input artifact."""
+    try:
+        output_path = output.expanduser().resolve(strict=False)
+        input_paths = {
+            path.expanduser().resolve(strict=False) for path in inputs if path is not None
+        }
+    except OSError:
+        raise CutoverError("failure receipt output path cannot be resolved") from None
+    if output_path in input_paths:
+        raise CutoverError("failure receipt output must differ from every input artifact")
+
+
 def build_failure_receipt(
     manifest: Mapping[str, Any],
     *,
@@ -2353,6 +2366,13 @@ def read_signature_file(path: Path) -> str:
 
 async def async_main(args: argparse.Namespace) -> int:
     if args.write_failure_receipt:
+        assert_artifact_output_is_distinct(
+            args.write_failure_receipt,
+            args.manifest,
+            args.source_dump,
+            args.failure_receipt,
+            args.signature_file,
+        )
         if (
             args.finalize_manifest
             or args.finalize_failure_receipt
