@@ -1142,7 +1142,10 @@ async def read_runtime_coordinates(connection: Any) -> dict[str, Any]:
 
 
 def assert_identity_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
-    keys = ("database", "server_addr", "server_port", "cluster_name", "ddl_sha256")
+    # Server IPs are connection-pool/provider visibility details, not the
+    # target's immutable host/branch identity.  Host is checked from the signed
+    # manifest URL; database/port/cluster and DDL remain bounded attestation data.
+    keys = ("database", "server_port", "cluster_name", "ddl_sha256")
     if any(actual.get(key) != expected.get(key) for key in keys):
         raise CutoverError("database identity or DDL fingerprint drift")
 
@@ -1150,9 +1153,15 @@ def assert_identity_matches(actual: Mapping[str, Any], expected: Mapping[str, An
 def assert_runtime_coordinates_match(
     actual: Mapping[str, Any], expected: Mapping[str, Any]
 ) -> None:
-    keys = ("database", "server_addr", "server_port", "cluster_name")
+    keys = ("database", "server_port", "cluster_name")
     if any(actual.get(key) != expected.get(key) for key in keys):
         raise CutoverError("target runtime database coordinates drift")
+
+
+def assert_manifest_target_host(manifest: Mapping[str, Any]) -> None:
+    expected_host = str(manifest.get("target_host", "")).lower().rstrip(".")
+    if not expected_host or target_host(target_url()) != expected_host:
+        raise CutoverError("target runtime host/branch does not match the signed manifest")
 
 
 def assert_restored_source_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
@@ -2132,6 +2141,7 @@ async def run_commit(
     engine: AsyncEngine,
     transformed: Mapping[str, Sequence[Mapping[str, Any]]],
 ) -> None:
+    assert_manifest_target_host(manifest)
     for component in MAPPED_COMPONENTS:
         transformed_rows = list(transformed.get(component, []))
         if inventory(component, transformed_rows) != manifest["source_expected"][component]:
@@ -2202,6 +2212,7 @@ async def run_recover(
     | Callable[[], Mapping[str, Any]]
     | None = None,
 ) -> None:
+    assert_manifest_target_host(manifest)
     if fly_state_verifier is None:
         raise CutoverError("current Fly stopped-state verifier is required for recovery")
     try:
@@ -2246,6 +2257,7 @@ async def run_recover(
 
 
 async def run_verify(manifest: Mapping[str, Any], engine: AsyncEngine) -> dict[str, Any]:
+    assert_manifest_target_host(manifest)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
         async with session.begin():
