@@ -80,5 +80,6 @@ export function expirePrivateSession(
 ): boolean {
   if (!privateUntil || remainingSeconds(privateUntil, now) > 0) return false
   queryClient.removeQueries({ queryKey: taskInvalidationKey })
+  queryClient.removeQueries({ queryKey: ['calendar'] })
   return true
 }

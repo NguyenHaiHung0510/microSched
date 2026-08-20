@@ -1,5 +1,7 @@
 /** Pure task-form state rules kept testable without a browser runtime. */
 
+import { vietnamInputToIso } from '@/calendar-ui'
+
 export type TaskStatus = 'open' | 'completed'
 export type TaskFilter = TaskStatus | 'all'
 export type TaskPriority = 'p1' | 'p2' | 'p3'
@@ -35,7 +37,8 @@ export function taskPayload(state: TaskFormState): TaskWritePayload {
     title: state.title,
     body_md: state.body || null,
     priority: state.priority || null,
-    due_at: state.dueAt ? new Date(state.dueAt).toISOString() : null,
+    // datetime-local is Vietnam civil time, never the device/browser timezone.
+    due_at: state.dueAt ? vietnamInputToIso(state.dueAt) : null,
     is_private: state.isPrivate,
   }
 }

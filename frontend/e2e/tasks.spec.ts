@@ -2,13 +2,6 @@ import { type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { expect, fixtureTasks, test } from './fixtures/tasks'
 
-const openTasks = fixtureTasks.filter((entry) => entry.status === 'open')
-const overdueTasks = fixtureTasks.filter(
-  (entry) =>
-    entry.status === 'open' &&
-    entry.due_at !== null &&
-    new Date(entry.due_at).getTime() < Date.now(),
-)
 const MEASUREMENT_MS = 60_000
 
 mkdirSync('output/playwright', { recursive: true })
@@ -18,9 +11,119 @@ async function openTasksScreen(page: Page) {
   await expect(page.getByTestId('task-list')).toBeVisible()
 }
 
-test('smoke renders every open task from the fixture', async ({ page }) => {
+test('smoke renders the seven-day timeline and bounded continuation', async ({ page }) => {
   await openTasksScreen(page)
-  await expect(page.getByTestId('task-card')).toHaveCount(openTasks.length)
+  await expect(page.getByTestId('task-day-group')).toHaveCount(7)
+  await expect(page.getByTestId('task-load-more-in-day')).toBeVisible()
+})
+
+test('date navigation advances contiguous seven-day blocks without duplicate headers', async ({ page }) => {
+  await openTasksScreen(page)
+  const first = await page.getByTestId('task-day-group').evaluateAll((groups) => groups.map((group) => group.getAttribute('data-day')))
+  await page.getByTestId('task-load-earlier').click()
+  await expect(page.getByTestId('task-day-group')).toHaveCount(14)
+  const all = await page.getByTestId('task-day-group').evaluateAll((groups) => groups.map((group) => group.getAttribute('data-day')))
+  expect(new Set(all).size).toBe(all.length)
+  expect(all.slice(0, 7)).not.toEqual(first)
+})
+
+test('bucket continuation keeps its cursor range after date navigation', async ({ page }) => {
+  await openTasksScreen(page)
+  await page.getByTestId('task-load-earlier').click()
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  const statuses: number[] = []
+  page.on('response', (response) => {
+    if (new URL(response.url()).pathname === '/api/tasks' && response.request().method() === 'GET') statuses.push(response.status())
+  })
+  await page.getByTestId('task-load-more-undated').click()
+  await expect(page.locator('[data-task-id="undated-119"]')).toBeVisible()
+  expect(statuses).toContain(200)
+  expect(statuses).not.toContain(422)
+})
+
+test('dense default continuation survives a sparse earlier block', async ({ page }) => {
+  await openTasksScreen(page)
+  await expect(page.getByTestId('task-load-more-in-day')).toBeVisible()
+  await page.getByTestId('task-load-earlier').click()
+  await expect(page.getByTestId('task-load-more-in-day')).toBeVisible()
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const target = page.locator('[data-task-id="synthetic-205"]')
+    if (await target.isVisible()) break
+    await page.getByTestId('task-load-more-in-day').click()
+  }
+  await expect(page.locator('[data-task-id="synthetic-205"]')).toBeVisible()
+})
+
+test('global undated and overlapping overdue continuations do not replay after navigation', async ({ page, taskApi }) => {
+  const overdueRows = taskApi.tasks.filter((task) => task.id.startsWith('synthetic-')).slice(0, 60)
+  overdueRows.forEach((task, index) => {
+    task.due_at = new Date(Date.now() - (30 * 86_400_000 + index * 1_000)).toISOString()
+  })
+  await openTasksScreen(page)
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  await expect(page.getByTestId('task-load-more-overdue')).toBeVisible()
+  await page.getByTestId('task-load-earlier').click()
+  await page.getByTestId('task-load-earlier').click()
+
+  const exhaust = async (buttonTestId: string, itemSelector: string) => {
+    const button = page.getByTestId(buttonTestId)
+    let previousCount = await page.locator(itemSelector).count()
+    while (await button.isVisible()) {
+      await button.click()
+      await expect.poll(() => page.locator(itemSelector).count()).toBeGreaterThan(previousCount)
+      previousCount = await page.locator(itemSelector).count()
+    }
+    return previousCount
+  }
+
+  const undatedSelector = '[data-testid="task-undated-group"] [data-task-id]'
+  const overdueSelector = '[data-testid="task-overdue-earlier-group"] [data-task-id]'
+  const initialUndatedCount = await page.locator(undatedSelector).count()
+  const finalUndatedCount = await exhaust('task-load-more-undated', undatedSelector)
+  expect(finalUndatedCount).toBeGreaterThan(initialUndatedCount)
+  const initialOverdueCount = await page.locator(overdueSelector).count()
+  const finalOverdueCount = await exhaust('task-load-more-overdue', overdueSelector)
+  expect(finalOverdueCount).toBeGreaterThan(initialOverdueCount)
+})
+
+test('bucket continuation keeps a visible retry after a terminal API error', async ({ page }) => {
+  await openTasksScreen(page)
+  await page.route('**/api/tasks?*', async (route) => {
+    const url = new URL(route.request().url())
+    if (route.request().method() === 'GET' && url.searchParams.has('cursor')) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'temporary failure' }) })
+      return
+    }
+    await route.fallback()
+  })
+  await page.getByTestId('task-load-more-undated').click()
+  await expect(page.getByRole('alert')).toContainText('temporary failure')
+  await expect(page.getByRole('button', { name: 'Thử lại' })).toBeVisible()
+})
+
+test('same-day cursor continuation reaches synthetic rows beyond the first bounded page', async ({ page }) => {
+  await openTasksScreen(page)
+  await expect(page.locator('[data-task-id="synthetic-205"]')).toHaveCount(0)
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const continuation = page.getByTestId('task-load-more-in-day')
+    if (!(await continuation.isVisible())) break
+    await continuation.click()
+    await expect(continuation).toBeVisible().catch(() => undefined)
+  }
+  await expect(page.locator('[data-task-id="synthetic-205"]')).toBeVisible()
+})
+
+test('independent undated cursors reach open and completed rows beyond page size', async ({ page }) => {
+  await openTasksScreen(page)
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  await page.getByTestId('task-load-more-undated').click()
+  await expect(page.locator('[data-task-id="undated-119"]')).toBeVisible()
+
+  await page.getByTestId('filter-completed').click()
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  await page.getByTestId('task-load-more-undated').click()
+  await page.getByTestId('task-undated-group').getByTestId('task-day-completed-toggle').click()
+  await expect(page.locator('[data-task-id="undated-120"]')).toBeVisible()
 })
 
 test('clicking card whitespace opens the detail dialog', async ({ page }) => {
@@ -62,41 +165,26 @@ test('drag-selecting task text does not open the dialog', async ({ page }) => {
   await expect(page.getByTestId('task-detail-dialog')).toBeHidden()
 })
 
-test('overdue banner selects overdue view and shows an active escape chip', async ({ page }) => {
+test('overdue banner focuses the earlier overdue group without changing filter', async ({ page }) => {
   await openTasksScreen(page)
   await page.getByTestId('overdue-banner').click()
-  await expect(page.getByTestId('filter-overdue')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('task-card')).toHaveCount(overdueTasks.length)
-  for (const entry of overdueTasks) {
-    await expect(page.locator(`[data-task-id="${entry.id}"]`)).toBeVisible()
-  }
+  await expect(page.getByTestId('filter-open')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('task-overdue-earlier-group')).toBeVisible()
 })
 
 test('pinned completed tasks do not leak into open or overdue views', async ({ page }) => {
   await openTasksScreen(page)
   await expect(page.getByTestId('filter-open')).toHaveAttribute('aria-pressed', 'true')
   await expect(page.locator('[data-task-id="task-002"]')).toHaveCount(0)
-  await page.getByTestId('overdue-banner').click()
   await expect(page.locator('[data-task-id="task-002"]')).toHaveCount(0)
 })
 
-test('completing the final overdue task returns to open view', async ({ page }) => {
+test('completing an overdue task updates its timeline group', async ({ page }) => {
   await openTasksScreen(page)
-  await page.getByTestId('overdue-banner').click()
-  const overdueCards = page.getByTestId('task-card')
-  while ((await overdueCards.count()) > 1) {
-    const before = await overdueCards.count()
-    await overdueCards.first().getByTestId('task-checkbox').click()
-    await expect(overdueCards).toHaveCount(before - 1)
-  }
-  await expect(overdueCards).toHaveCount(1)
-  const finalOverdueId = await overdueCards.first().getAttribute('data-task-id')
-  expect(finalOverdueId).not.toBeNull()
-  if (!finalOverdueId) return
-  await overdueCards.first().getByTestId('task-checkbox').click()
-  await expect(page.getByTestId('filter-open')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByTestId('filter-overdue')).toBeHidden()
-  await expect(page.locator(`[data-task-id="${finalOverdueId}"]`)).toHaveCount(0)
+  const overdueCard = page.getByTestId('task-overdue-earlier-group').getByTestId('task-card').first()
+  const taskId = await overdueCard.getAttribute('data-task-id')
+  await overdueCard.getByTestId('task-checkbox').click()
+  await expect(page.locator(`[data-task-id="${taskId}"]`)).toHaveCount(0)
 })
 
 test('quick add posts once and clears the input', async ({ page, taskApi }) => {
@@ -132,7 +220,7 @@ test('mobile layout has no horizontal overflow and banner has a 44px target', as
 test('last card tooltip is portalled and fully inside the desktop viewport', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Radix tooltip is a desktop shortcut')
   await openTasksScreen(page)
-  const lastTitle = page.locator('[data-testid="task-card"]').last().getByTestId('task-title')
+  const lastTitle = page.locator('[data-task-id="task-032"]').getByTestId('task-title')
   await lastTitle.hover()
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toBeVisible()
@@ -201,8 +289,8 @@ test('healthy visible task query polls and hidden tab stops polling', async ({ p
   await openTasksScreen(page)
   taskApi.resetCounts()
   await page.waitForTimeout(MEASUREMENT_MS)
-  const focusedCount = taskApi.count('GET', '/api/tasks')
-  console.log(`refetchInterval focused: ${focusedCount} GET /api/tasks in ${MEASUREMENT_MS}ms`)
+  const focusedCount = taskApi.count('GET', '/api/tasks/timeline')
+  console.log(`refetchInterval focused: ${focusedCount} GET /api/tasks/timeline in ${MEASUREMENT_MS}ms`)
   expect(focusedCount).toBeGreaterThanOrEqual(50)
   expect(focusedCount).toBeLessThanOrEqual(70)
 
@@ -213,8 +301,8 @@ test('healthy visible task query polls and hidden tab stops polling', async ({ p
   })
   taskApi.resetCounts()
   await page.waitForTimeout(MEASUREMENT_MS)
-  console.log(`refetchInterval hidden: ${taskApi.count('GET', '/api/tasks')} GET /api/tasks in ${MEASUREMENT_MS}ms`)
-  expect(taskApi.count('GET', '/api/tasks')).toBe(0)
+  console.log(`refetchInterval hidden: ${taskApi.count('GET', '/api/tasks/timeline')} GET /api/tasks/timeline in ${MEASUREMENT_MS}ms`)
+  expect(taskApi.count('GET', '/api/tasks/timeline')).toBe(0)
 })
 
 test('session error performs no repeated /api/me polling', async ({ page, taskApi }, testInfo) => {
