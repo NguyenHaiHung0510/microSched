@@ -25,10 +25,13 @@ from scripts.cutover_v2 import (
     build_manifest,
     collect_target_inventory_as_app,
     load_source_snapshot,
+    read_connection_identity,
+    restored_source_engine,
     run_commit,
     run_recover,
     run_verify,
     transform_source,
+    verify_restored_source,
 )
 
 pytestmark = pytest.mark.pg
@@ -246,6 +249,34 @@ def test_source_write_guard_is_real(rehearsal) -> None:
     _run(run())
 
 
+def test_restored_source_is_read_only_and_matches_inventory(rehearsal) -> None:
+    async def run() -> None:
+        source = restored_source_engine(os.environ["CUTOVER_SOURCE_URL"])
+        try:
+            snapshot = await load_source_snapshot(source)
+            async with source.connect() as connection:
+                identity = await read_connection_identity(connection, "public")
+            restored = await verify_restored_source(source, snapshot.source_inventory, identity)
+            assert restored.source_inventory == snapshot.source_inventory
+            await assert_source_read_only(source)
+        finally:
+            await source.dispose()
+
+    _run(run())
+
+
+def test_async_main_dry_run_reads_without_target_dml(rehearsal, capsys) -> None:
+    async def run() -> int:
+        from scripts.cutover_v2 import async_main, parser
+
+        return await async_main(parser().parse_args(["--dry-run"]))
+
+    assert _run(run()) == 0
+    output = capsys.readouterr().out
+    assert "calendar_bucket manual" in output
+    assert "calendar_bucket ics_reimport" in output
+
+
 def _prepared_manifest(rehearsal):
     async def run():
         from scripts.cutover_v2 import migrator_engine, source_engine
@@ -365,7 +396,17 @@ def test_recover_reimports_authorized_failed_inventory(rehearsal) -> None:
                     component: failed[component] for component in DOMAIN_COMPONENTS
                 }
             }
-            await run_recover(manifest, receipt, target, transformed)
+
+            async def fly_state() -> dict[str, bool]:
+                return {"sole_machine_stopped": True, "never_restarted": True}
+
+            await run_recover(
+                manifest,
+                receipt,
+                target,
+                transformed,
+                fly_state_verifier=fly_state,
+            )
             await run_verify(manifest, target)
         finally:
             await admin.close()

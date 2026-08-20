@@ -13,16 +13,18 @@ import argparse
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import os
 import secrets
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 from uuid import UUID, uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -56,6 +58,8 @@ OWNER_PUBLIC_KEY_ENV = "CUTOVER_OWNER_PUBLIC_KEY"
 ARTIFACT_KEY_ENV = "CUTOVER_ARTIFACT_KEY"
 RECOVERY_SOURCE_URL_ENV = "CUTOVER_RECOVERY_SOURCE_URL"
 RESTORED_SOURCE_URL_ENV = "CUTOVER_RESTORED_SOURCE_URL"
+FLY_STATE_COMMAND_ENV = "CUTOVER_FLY_STATE_COMMAND"
+FLY_APP_ENV = "CUTOVER_FLY_APP"
 ARTIFACT_MAGIC = b"microsched-cutover-v1\0"
 
 PRIORITY_MAP: dict[str, str] = {
@@ -615,6 +619,66 @@ def migrator_engine() -> AsyncEngine:
     if not value:
         raise CutoverError("CUTOVER_MIGRATOR_URL is required for schema attestation")
     return create_async_engine(async_postgres_url(value), pool_pre_ping=True)
+
+
+def restored_source_engine(value: str) -> AsyncEngine:
+    """Open a dump restore with the same server-side read-only guard as source."""
+    return create_async_engine(
+        async_postgres_url(value),
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"default_transaction_read_only": "on"}},
+    )
+
+
+def fly_state_verifier_from_env() -> Callable[[], Awaitable[Mapping[str, Any]]]:
+    """Build a read-only Fly status probe; tests inject a synthetic equivalent."""
+    command = os.environ.get(FLY_STATE_COMMAND_ENV)
+    app = os.environ.get(FLY_APP_ENV)
+    if not command or not app:
+        raise CutoverError(f"{FLY_STATE_COMMAND_ENV} and {FLY_APP_ENV} are required for recovery")
+    try:
+        command_parts = shlex.split(command, posix=os.name != "nt")
+    except ValueError:
+        raise CutoverError(f"{FLY_STATE_COMMAND_ENV} is invalid") from None
+    if not command_parts:
+        raise CutoverError(f"{FLY_STATE_COMMAND_ENV} is empty")
+
+    async def verify() -> Mapping[str, Any]:
+        try:
+            output = await asyncio.to_thread(
+                subprocess.check_output,
+                [*command_parts, "status", "--app", app, "--json"],
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                text=True,
+            )
+            value = json.loads(output)
+        except OSError, subprocess.SubprocessError, json.JSONDecodeError:
+            raise CutoverError("current Fly stopped-state query failed") from None
+        if not isinstance(value, dict):
+            raise CutoverError("current Fly stopped-state query returned invalid JSON")
+        return value
+
+    return verify
+
+
+async def assert_current_fly_stopped(
+    verifier: Callable[[], Awaitable[Mapping[str, Any]]] | Callable[[], Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    try:
+        result = verifier()
+        state = await result if inspect.isawaitable(result) else result
+    except CutoverError:
+        raise
+    except Exception:
+        raise CutoverError("current Fly stopped-state query failed") from None
+    if (
+        not isinstance(state, Mapping)
+        or state.get("sole_machine_stopped") is not True
+        or state.get("never_restarted") is not True
+    ):
+        raise CutoverError("current Fly state is not sole-machine stopped and never-restarted")
+    return state
 
 
 def assert_target_coordinates() -> None:
@@ -1512,7 +1576,13 @@ async def run_recover(
     receipt: Mapping[str, Any],
     engine: AsyncEngine,
     transformed: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    fly_state_verifier: Callable[[], Awaitable[Mapping[str, Any]]]
+    | Callable[[], Mapping[str, Any]]
+    | None = None,
 ) -> None:
+    if fly_state_verifier is None:
+        raise CutoverError("current Fly stopped-state verifier is required for recovery")
     for component in MAPPED_COMPONENTS:
         transformed_rows = list(transformed.get(component, []))
         if inventory(component, transformed_rows) != manifest["source_expected"][component]:
@@ -1535,6 +1605,7 @@ async def run_recover(
             for component in APP_READABLE_PRESERVE:
                 if current[component] != manifest["phase_b_target_snapshot"][component]:
                     raise ManifestError("preserve data changed before recovery")
+            await assert_current_fly_stopped(fly_state_verifier)
             await purge_import_assert(session, manifest, transformed)
 
 
@@ -1577,6 +1648,13 @@ def parser() -> argparse.ArgumentParser:
     modes.add_argument("--commit", action="store_true")
     modes.add_argument("--verify", action="store_true")
     modes.add_argument("--recover", action="store_true")
+    p.add_argument("--finalize-manifest", action="store_true")
+    p.add_argument("--finalize-failure-receipt", action="store_true")
+    p.add_argument(
+        "--signature-file",
+        type=Path,
+        help="UTF-8 Ed25519 signature produced by the owner signer; never a private key",
+    )
     p.add_argument("--manifest", type=Path)
     p.add_argument("--write-manifest", type=Path)
     p.add_argument("--confirm-target-host")
@@ -1587,7 +1665,36 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def read_signature_file(path: Path) -> str:
+    try:
+        signature = path.read_text(encoding="utf-8").strip()
+    except OSError, UnicodeError:
+        raise CutoverError("signature file cannot be read as UTF-8") from None
+    if not signature or "\x00" in signature:
+        raise CutoverError("signature file is empty or invalid")
+    return signature
+
+
 async def async_main(args: argparse.Namespace) -> int:
+    if args.finalize_manifest or args.finalize_failure_receipt:
+        if args.finalize_manifest and args.finalize_failure_receipt:
+            raise CutoverError("manifest and failure receipt finalization are mutually exclusive")
+        if args.dry_run or args.commit or args.verify or args.recover:
+            raise CutoverError("finalization cannot be combined with a cutover mode")
+        if not args.signature_file:
+            raise CutoverError("finalization requires --signature-file")
+        signature = read_signature_file(args.signature_file)
+        if args.finalize_manifest:
+            if not args.manifest:
+                raise CutoverError("manifest finalization requires --manifest")
+            finalize_manifest(args.manifest, signature)
+            print("manifest=finalized")
+            return 0
+        if not args.failure_receipt:
+            raise CutoverError("failure receipt finalization requires --failure-receipt")
+        finalize_failure_receipt(args.failure_receipt, signature)
+        print("failure_receipt=finalized")
+        return 0
     mode = (
         "commit"
         if args.commit
@@ -1655,9 +1762,7 @@ async def async_main(args: argparse.Namespace) -> int:
             recovery_value = os.environ.get(RECOVERY_SOURCE_URL_ENV)
             if not recovery_value:
                 raise CutoverError(f"{RECOVERY_SOURCE_URL_ENV} is required for recovery")
-            recovery_engine = create_async_engine(
-                async_postgres_url(recovery_value), pool_pre_ping=True
-            )
+            recovery_engine = restored_source_engine(recovery_value)
             try:
                 restored = await verify_restored_source(
                     recovery_engine,
@@ -1674,7 +1779,13 @@ async def async_main(args: argparse.Namespace) -> int:
             transformed = transform_source(restored, manual_source_id=source_id)
             target_engine_obj = target_engine()
             try:
-                await run_recover(manifest, receipt, target_engine_obj, transformed)
+                await run_recover(
+                    manifest,
+                    receipt,
+                    target_engine_obj,
+                    transformed,
+                    fly_state_verifier=fly_state_verifier_from_env(),
+                )
             finally:
                 await target_engine_obj.dispose()
             await attest_manifest_schema(manifest)
@@ -1766,9 +1877,7 @@ async def async_main(args: argparse.Namespace) -> int:
             raise CutoverError(
                 f"{RESTORED_SOURCE_URL_ENV} is required to verify the full source dump restore"
             )
-        restored_engine = create_async_engine(
-            async_postgres_url(restored_value), pool_pre_ping=True
-        )
+        restored_engine = restored_source_engine(restored_value)
         try:
             await verify_restored_source(
                 restored_engine, snapshot.source_inventory, source_identity
