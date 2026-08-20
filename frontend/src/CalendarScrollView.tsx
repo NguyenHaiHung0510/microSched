@@ -64,17 +64,36 @@ async function fetchSession(): Promise<SessionLite> {
   return apiRequest<SessionLite>('/api/me')
 }
 
-/** At most 5 pages x 100 tasks (spec §4.2); a full fifth page stops and warns. */
-async function fetchTaskPages(status: 'all' | 'open'): Promise<CalendarTask[]> {
+/** Cursor pages are bounded and stop only at the server's explicit end marker. */
+async function fetchTaskPages(
+  status: 'all' | 'open',
+  range?: { from: string; to: string },
+): Promise<CalendarTask[]> {
   const items: CalendarTask[] = []
-  for (let offset = 0; offset < 500; offset += 100) {
-    const page = await apiRequest<Envelope<CalendarTask>>(
-      `/api/tasks?status=${status}&limit=100&offset=${offset}`,
+  let cursor: string | null = null
+  do {
+    const params = new URLSearchParams({ status, limit: '100' })
+    if (range) {
+      params.set('from', range.from)
+      params.set('to', range.to)
+      params.set('bucket', 'dated')
+    }
+    if (cursor) params.set('cursor', cursor)
+    const page = await apiRequest<Envelope<CalendarTask> & { next_cursor?: string | null }>(
+      `/api/tasks?${params.toString()}`,
     )
     items.push(...page.items)
-    if (page.items.length < 100) break
-  }
+    cursor = page.next_cursor ?? null
+  } while (cursor)
   return items
+}
+
+type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
+
+async function fetchOpenTaskPage(cursor: string | null = null): Promise<OpenTaskPage> {
+  const params = new URLSearchParams({ status: 'open', bucket: 'open_picker', limit: '50' })
+  if (cursor) params.set('cursor', cursor)
+  return apiRequest<OpenTaskPage>(`/api/tasks?${params.toString()}`)
 }
 
 function useIsDesktop(): boolean {
@@ -132,17 +151,21 @@ export function CalendarScrollView() {
       to: lastDayOfMonth(last.year, last.month),
     }
   }, [months])
+  const taskRange = useMemo(() => {
+    const first = months[0]
+    const last = months[months.length - 1]
+    return {
+      from: monthFetchRange(first.year, first.month).from,
+      to: monthFetchRange(last.year, last.month).to,
+    }
+  }, [months])
   const annotationsQuery = useQuery({
     ...annotationsQuerySpec(annotationRange.from, annotationRange.to),
     queryFn: () => getAnnotations(annotationRange.from, annotationRange.to),
   })
   const allTasksQuery = useQuery({
-    ...calendarTasksQuerySpec('all'),
-    queryFn: () => fetchTaskPages('all'),
-  })
-  const openTasksQuery = useQuery({
-    ...calendarTasksQuerySpec('open'),
-    queryFn: () => fetchTaskPages('open'),
+    ...calendarTasksQuerySpec('all', taskRange),
+    queryFn: () => fetchTaskPages('all', taskRange),
   })
 
   const allEvents = useMemo(
@@ -185,7 +208,7 @@ export function CalendarScrollView() {
     monthEventQueries.some((query) => query.isError && (query.data?.items.length ?? 0) > 0) ||
     (annotationsQuery.isError && (annotationsQuery.data?.items.length ?? 0) > 0) ||
     (allTasksQuery.isError && (allTasksQuery.data?.length ?? 0) > 0)
-  const tasksTruncated = allTasksQuery.data?.length === 500
+  const tasksTruncated = false
 
   /* IntersectionObserver on every week row, root = the scroll container. The
      callback only reports entries that CHANGED, so state is kept in a Map and
@@ -430,7 +453,7 @@ export function CalendarScrollView() {
         day={selectedDay ?? today}
         events={selectedDay ? (eventsByDayMap.get(selectedDay) ?? []) : []}
         tasks={selectedDay ? (tasksByDayMap.get(selectedDay) ?? []) : []}
-        openTasks={openTasksQuery.data ?? []}
+        loadOpenTasks={fetchOpenTaskPage}
         annotations={selectedDay ? (annotationsByDayMap.get(selectedDay) ?? []) : []}
         sourceById={sourceById}
         privateLocked={privateLocked}

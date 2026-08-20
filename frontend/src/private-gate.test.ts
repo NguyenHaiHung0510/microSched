@@ -23,7 +23,7 @@ describe('private gate expiry controller', () => {
     const queryClient = { removeQueries: vi.fn() }
 
     expect(expirePrivateSession(queryClient, '2026-07-31T00:01:01Z', now)).toBe(true)
-    expect(queryClient.removeQueries).toHaveBeenCalledOnce()
+    expect(queryClient.removeQueries).toHaveBeenCalledTimes(2)
     expect(queryClient.removeQueries).toHaveBeenCalledWith({
       queryKey: taskInvalidationKey,
     })
