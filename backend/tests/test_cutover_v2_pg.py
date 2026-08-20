@@ -1038,7 +1038,7 @@ def test_recover_reimports_authorized_failed_inventory(rehearsal) -> None:
     _run(run())
 
 
-def test_recover_rechecks_fly_continuity_before_commit(rehearsal) -> None:
+def test_recover_post_transaction_fly_audit_is_bounded(rehearsal) -> None:
     manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
 
     async def run() -> None:
@@ -1075,7 +1075,6 @@ def test_recover_rechecks_fly_continuity_before_commit(rehearsal) -> None:
                 "UPDATE microsched.task SET title='authorized failed state' WHERE id=$1", task_id
             )
             _, failed = await collect_target_inventory_as_app(target)
-            before = await collect_target_inventory_as_app(target)
             with pytest.raises(Exception, match="restarted after"):
                 await run_recover(
                     manifest,
@@ -1091,7 +1090,10 @@ def test_recover_rechecks_fly_continuity_before_commit(rehearsal) -> None:
                     fly_state_verifier=fly_state,
                 )
             after = await collect_target_inventory_as_app(target)
-            assert after == before
+            # The owner-assisted stop has no external lease fence: the audit
+            # detects a restart after the DB commit, so the committed target is
+            # the finalized state and recovery must be investigated manually.
+            assert after[1] == expected_final_inventory(manifest)
             assert calls == 2
         finally:
             await admin.close()

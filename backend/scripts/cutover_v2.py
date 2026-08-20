@@ -2254,6 +2254,14 @@ async def run_recover(
             manifest["expected_ids"][component]
         ):
             raise ManifestError(f"recovery source ID set drift: {component}")
+    # The owner-assisted stop is checked before opening the destructive target
+    # transaction.  A post-commit audit below records the explicitly accepted
+    # residual race if an operator restarts the Machine between these checks.
+    await assert_current_fly_stopped(
+        fly_state_verifier,
+        failure_time=failure_time,
+        expected_machine_id=receipt_target_state["machine_id"],
+    )
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
         async with session.begin():
@@ -2268,23 +2276,17 @@ async def run_recover(
             for component in APP_READABLE_PRESERVE:
                 if current[component] != manifest["phase_b_target_snapshot"][component]:
                     raise ManifestError("preserve data changed before recovery")
-            await assert_current_fly_stopped(
-                fly_state_verifier,
-                failure_time=failure_time,
-                expected_machine_id=receipt_target_state["machine_id"],
-            )
             await purge_import_assert(session, manifest, transformed)
             final = await collect_target_inventory(session)
             if final != expected_final_inventory(manifest):
                 raise ManifestError("post-purge final inventory drift")
-            # Re-check the same native machine immediately before the enclosing
-            # transaction commits.  The first stopped-state proof protects the
-            # pre-DML window; this closes the restart race during purge/import.
-            await assert_current_fly_stopped(
-                fly_state_verifier,
-                failure_time=failure_time,
-                expected_machine_id=receipt_target_state["machine_id"],
-            )
+    # This is intentionally an audit after commit, not a claim that the
+    # external Fly state is fenced through the database COMMIT.
+    await assert_current_fly_stopped(
+        fly_state_verifier,
+        failure_time=failure_time,
+        expected_machine_id=receipt_target_state["machine_id"],
+    )
 
 
 async def run_verify(manifest: Mapping[str, Any], engine: AsyncEngine) -> dict[str, Any]:
