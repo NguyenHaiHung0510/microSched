@@ -8,6 +8,7 @@ service database name and the production default remains ``microschedule_v2``.
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import uuid4
 
 import asyncpg
@@ -26,6 +27,7 @@ from scripts.cutover_v2 import (
     collect_target_inventory_as_app,
     expected_final_inventory,
     load_source_snapshot,
+    parse_fly_status,
     read_connection_identity,
     restored_source_engine,
     run_commit,
@@ -46,8 +48,18 @@ NATIVE_FLY_STOPPED = {
             "id": "machine-synthetic",
             "state": "stopped",
             "events": [
-                {"type": "start", "status": "started", "source": "flyd"},
-                {"type": "launch", "status": "created", "source": "user"},
+                {
+                    "type": "start",
+                    "status": "started",
+                    "source": "flyd",
+                    "timestamp": 1724150000000,
+                },
+                {
+                    "type": "launch",
+                    "status": "created",
+                    "source": "user",
+                    "timestamp": 1724140000000,
+                },
             ],
         }
     ],
@@ -84,6 +96,67 @@ def rehearsal(pg_dsn: str):
             )
             await conn.execute(
                 "INSERT INTO microsched.task (title, status) VALUES ('synthetic prestate', 'open')"
+            )
+            group_id, tracker_id, subscription_id = uuid4(), uuid4(), uuid4()
+            await conn.execute(
+                "INSERT INTO microsched.day_annotation "
+                "(label,starts_on,ends_on) VALUES ('synthetic day','2026-08-20','2026-08-21')"
+            )
+            await conn.execute(
+                "INSERT INTO microsched.tracker_group (id,name,kind,position) "
+                "VALUES ($1,'synthetic group','health',0)",
+                group_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.tracker "
+                "(id,name,kind,direction,input_mode,group_id) "
+                "VALUES ($1,'enc:v1:synthetic-tracker','health','out','event',$2)",
+                tracker_id,
+                group_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.subscription "
+                "(id,name,tracker_id,amount,started_on,expires_on) "
+                "VALUES ($1,'enc:v1:synthetic-sub',$2,'enc:v1:amount','2026-08-20','2026-08-21')",
+                subscription_id,
+                tracker_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.entry "
+                "(tracker_id,subscription_id,quantity,occurred_at) VALUES ($1,$2,$3,$4)",
+                tracker_id,
+                subscription_id,
+                Decimal("1.00"),
+                NOW,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.reminder_dispatch "
+                "(subject_type,subject_id,dispatched_on) VALUES ('tracker',$1,'2026-08-20')",
+                tracker_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.message (role,content,trace_id) "
+                "VALUES ('user','enc:v1:synthetic-message',$1)",
+                uuid4(),
+            )
+            await conn.execute(
+                "INSERT INTO microsched.audit_log "
+                "(trace_id,turn_id,action,payload) VALUES ($1,$2,'synthetic-audit','{}'::jsonb)",
+                uuid4(),
+                uuid4(),
+            )
+            await conn.execute(
+                "INSERT INTO microsched.app_setting (key,value) "
+                "VALUES ('synthetic-preserve','{\"synthetic\":true}'::jsonb)"
+            )
+            await conn.execute(
+                "INSERT INTO microsched.session (token_hash,user_email,expires_at) "
+                "VALUES ('synthetic-session-hash','synthetic@example.invalid',$1)",
+                NOW + timedelta(days=1),
+            )
+            await conn.execute(
+                "INSERT INTO microsched.push_subscription (endpoint,p256dh,auth) "
+                "VALUES ('https://push.invalid/synthetic','synthetic-p256dh','synthetic-auth')"
             )
             await conn.execute(
                 "DROP TABLE IF EXISTS public.calendar_events, public.calendar_sources, "
@@ -464,6 +537,106 @@ def test_predelete_mapped_drift_aborts_before_write(rehearsal) -> None:
     _run(run())
 
 
+def test_predelete_real_component_and_preserve_field_drift_aborts(rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        mutations = (
+            (
+                "day_annotation",
+                "UPDATE microsched.day_annotation SET label='drift day' "
+                "WHERE label='synthetic day'",
+                "UPDATE microsched.day_annotation SET label='synthetic day' "
+                "WHERE label='drift day'",
+            ),
+            (
+                "tracker_group",
+                "UPDATE microsched.tracker_group SET color='drift' WHERE name='synthetic group'",
+                "UPDATE microsched.tracker_group SET color=NULL WHERE name='synthetic group'",
+            ),
+            (
+                "tracker",
+                "UPDATE microsched.tracker SET reminder_text='drift' "
+                "WHERE name='enc:v1:synthetic-tracker'",
+                "UPDATE microsched.tracker SET reminder_text=NULL "
+                "WHERE name='enc:v1:synthetic-tracker'",
+            ),
+            (
+                "entry",
+                "UPDATE microsched.entry SET quantity=2.00 WHERE quantity=1.00",
+                "UPDATE microsched.entry SET quantity=1.00 WHERE quantity=2.00",
+            ),
+            (
+                "subscription",
+                "UPDATE microsched.subscription SET note_md='enc:v1:drift' "
+                "WHERE name='enc:v1:synthetic-sub'",
+                "UPDATE microsched.subscription SET note_md=NULL WHERE name='enc:v1:synthetic-sub'",
+            ),
+            (
+                "reminder_dispatch",
+                "UPDATE microsched.reminder_dispatch SET status='sent' "
+                "WHERE status='pending' AND subject_type='tracker'",
+                "UPDATE microsched.reminder_dispatch SET status='pending' "
+                "WHERE status='sent' AND subject_type='tracker'",
+            ),
+            (
+                "message",
+                "UPDATE microsched.message SET content='enc:v1:drift-message' "
+                "WHERE content='enc:v1:synthetic-message'",
+                "UPDATE microsched.message SET content='enc:v1:synthetic-message' "
+                "WHERE content='enc:v1:drift-message'",
+            ),
+            (
+                "audit_log",
+                "UPDATE microsched.audit_log SET action='drift' WHERE action='synthetic-audit'",
+                "UPDATE microsched.audit_log SET action='synthetic-audit' WHERE action='drift'",
+            ),
+            (
+                "app_setting",
+                "UPDATE microsched.app_setting SET value=jsonb_build_object('synthetic',false) "
+                "WHERE key='synthetic-preserve'",
+                "UPDATE microsched.app_setting SET value=jsonb_build_object('synthetic',true) "
+                "WHERE key='synthetic-preserve'",
+            ),
+            (
+                "session",
+                "UPDATE microsched.session SET private_until=$1 "
+                "WHERE token_hash='synthetic-session-hash'",
+                "UPDATE microsched.session SET private_until=NULL "
+                "WHERE token_hash='synthetic-session-hash'",
+            ),
+            (
+                "push_subscription",
+                "UPDATE microsched.push_subscription SET auth='synthetic-auth-drift' "
+                "WHERE endpoint='https://push.invalid/synthetic'",
+                "UPDATE microsched.push_subscription SET auth='synthetic-auth' "
+                "WHERE endpoint='https://push.invalid/synthetic'",
+            ),
+        )
+        try:
+            for component, mutate_sql, restore_sql in mutations:
+                if component == "session":
+                    await admin.execute(mutate_sql, NOW)
+                else:
+                    await admin.execute(mutate_sql)
+                _, before = await collect_target_inventory_as_app(target)
+                try:
+                    with pytest.raises(Exception, match="Phase-B snapshot drift"):
+                        await run_commit(manifest, target, transformed)
+                    _, after = await collect_target_inventory_as_app(target)
+                    assert after == before
+                finally:
+                    await admin.execute(restore_sql)
+        finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
 def test_recover_reimports_authorized_failed_inventory(rehearsal) -> None:
     manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
 
@@ -477,9 +650,11 @@ def test_recover_reimports_authorized_failed_inventory(rehearsal) -> None:
             )
             _, failed = await collect_target_inventory_as_app(target)
             receipt = {
+                "failure_time": NOW.isoformat(),
+                "target_state": parse_fly_status(NATIVE_FLY_STOPPED),
                 "failed_run_domain_inventory": {
                     component: failed[component] for component in DOMAIN_COMPONENTS
-                }
+                },
             }
 
             async def fly_state() -> dict[str, object]:
@@ -514,10 +689,12 @@ def test_recover_rejects_stale_failed_inventory(rehearsal) -> None:
                 "UPDATE microsched.task SET title='stale receipt mismatch' WHERE id=$1", task_id
             )
             stale = {
+                "failure_time": NOW.isoformat(),
+                "target_state": parse_fly_status(NATIVE_FLY_STOPPED),
                 "failed_run_domain_inventory": {
                     component: expected_final_inventory(manifest)[component]
                     for component in DOMAIN_COMPONENTS
-                }
+                },
             }
 
             async def fly_state() -> dict[str, object]:
@@ -560,7 +737,11 @@ def test_recover_rejects_every_domain_inventory_perturbation(rehearsal) -> None:
                 with pytest.raises(Exception, match="authorized failed-run state"):
                     await run_recover(
                         manifest,
-                        {"failed_run_domain_inventory": stale_inventory},
+                        {
+                            "failure_time": NOW.isoformat(),
+                            "target_state": parse_fly_status(NATIVE_FLY_STOPPED),
+                            "failed_run_domain_inventory": stale_inventory,
+                        },
                         target,
                         transformed,
                         fly_state_verifier=lambda: NATIVE_FLY_STOPPED,
@@ -601,9 +782,11 @@ def test_recover_rolls_back_mid_transaction_failure(monkeypatch, rehearsal) -> N
                     await run_recover(
                         manifest,
                         {
+                            "failure_time": NOW.isoformat(),
+                            "target_state": parse_fly_status(NATIVE_FLY_STOPPED),
                             "failed_run_domain_inventory": {
                                 component: failed[component] for component in DOMAIN_COMPONENTS
-                            }
+                            },
                         },
                         target,
                         transformed,

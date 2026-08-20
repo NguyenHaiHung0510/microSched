@@ -1,5 +1,6 @@
 """Synthetic, privacy-safe contracts for the 012 cutover transform."""
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime, time, timedelta
@@ -14,6 +15,7 @@ from scripts.cutover_v2 import (
     ARTIFACT_KEY_ENV,
     ARTIFACT_MAGIC,
     DOMAIN_COMPONENTS,
+    FLY_APP_ENV,
     OWNER_PUBLIC_KEY_ENV,
     TARGET_FIELDS,
     CutoverError,
@@ -22,6 +24,7 @@ from scripts.cutover_v2 import (
     SourceValidationError,
     actual_code_identity,
     approval_payload,
+    assert_current_fly_stopped,
     build_failure_receipt,
     build_manifest,
     calendar_bucket_inventory,
@@ -31,6 +34,7 @@ from scripts.cutover_v2 import (
     failure_receipt_payload,
     finalize_failure_receipt,
     finalize_manifest,
+    fly_state_verifier_from_env,
     manifest_digest,
     new_uuid7,
     parse_fly_status,
@@ -52,8 +56,18 @@ NATIVE_FLY_STOPPED = {
             "id": "machine-synthetic",
             "state": "stopped",
             "events": [
-                {"type": "start", "status": "started", "source": "flyd"},
-                {"type": "launch", "status": "created", "source": "user"},
+                {
+                    "type": "start",
+                    "status": "started",
+                    "source": "flyd",
+                    "timestamp": 1724150000000,
+                },
+                {
+                    "type": "launch",
+                    "status": "created",
+                    "source": "user",
+                    "timestamp": 1724140000000,
+                },
             ],
         }
     ],
@@ -164,18 +178,6 @@ def test_native_fly_status_requires_one_stopped_machine_without_restart() -> Non
                 {
                     **NATIVE_FLY_STOPPED["Machines"][0],
                     "events": [
-                        *NATIVE_FLY_STOPPED["Machines"][0]["events"],
-                        {"type": "start", "status": "started"},
-                    ],
-                }
-            ],
-        },
-        {
-            **NATIVE_FLY_STOPPED,
-            "Machines": [
-                {
-                    **NATIVE_FLY_STOPPED["Machines"][0],
-                    "events": [
                         {"type": "restart", "status": "restarted"},
                         *NATIVE_FLY_STOPPED["Machines"][0]["events"],
                     ],
@@ -185,6 +187,68 @@ def test_native_fly_status_requires_one_stopped_machine_without_restart() -> Non
     ):
         with pytest.raises(CutoverError):
             parse_fly_status(changed)
+    old_history = {
+        **NATIVE_FLY_STOPPED,
+        "Machines": [
+            {
+                **NATIVE_FLY_STOPPED["Machines"][0],
+                "events": [
+                    {"type": "start", "status": "started", "timestamp": 1724150000000},
+                    {"type": "stop", "status": "stopped", "timestamp": 1724160000000},
+                    {"type": "start", "status": "started", "timestamp": 1724170000000},
+                    {"type": "launch", "status": "created", "timestamp": 1724140000000},
+                ],
+            }
+        ],
+    }
+    assert parse_fly_status(old_history, failure_time=NOW)["never_restarted"] is True
+    post_failure_start = {
+        **old_history,
+        "Machines": [
+            {
+                **old_history["Machines"][0],
+                "events": [
+                    *old_history["Machines"][0]["events"],
+                    {"type": "start", "status": "started", "timestamp": 1790000000000},
+                ],
+            }
+        ],
+    }
+    with pytest.raises(CutoverError, match="after the signed failure cutoff"):
+        parse_fly_status(post_failure_start, failure_time=NOW)
+    with pytest.raises(CutoverError, match="event type is unknown"):
+        parse_fly_status(
+            {
+                **NATIVE_FLY_STOPPED,
+                "Machines": [
+                    {
+                        **NATIVE_FLY_STOPPED["Machines"][0],
+                        "events": [
+                            {"type": "mystery", "timestamp": 1724140000000},
+                        ],
+                    }
+                ],
+            },
+            failure_time=NOW,
+        )
+    with pytest.raises(CutoverError, match="machine identity changed"):
+        parse_fly_status(NATIVE_FLY_STOPPED, expected_machine_id="other-machine")
+
+
+def test_native_fly_command_adapter_returns_raw_once(monkeypatch) -> None:
+    monkeypatch.setenv(FLY_APP_ENV, "synthetic-app")
+    monkeypatch.delenv("CUTOVER_FLY_STATE_COMMAND", raising=False)
+
+    def fake_check_output(*args, **kwargs):
+        assert args[0][-4:] == ["status", "--app", "synthetic-app", "--json"]
+        return json.dumps(NATIVE_FLY_STOPPED)
+
+    monkeypatch.setattr("scripts.cutover_v2.subprocess.check_output", fake_check_output)
+    verifier = fly_state_verifier_from_env()
+    raw = asyncio.run(verifier())
+    assert "Machines" in raw
+    normalized = asyncio.run(assert_current_fly_stopped(verifier))
+    assert normalized["machine_id"] == "machine-synthetic"
 
 
 def test_full_digest_changes_when_one_field_changes() -> None:
@@ -195,16 +259,13 @@ def test_full_digest_changes_when_one_field_changes() -> None:
     )
 
 
-def test_domain_and_preserve_full_row_digest_covers_every_ordered_field() -> None:
-    for component in (
-        *DOMAIN_COMPONENTS,
-        *APP_READABLE_PRESERVE,
-    ):
-        row = {field: f"{component}-{field}" for field in TARGET_FIELDS[component]}
-        baseline = digest_rows(component, [row], TARGET_FIELDS[component])
-        for field in TARGET_FIELDS[component]:
-            changed = {**row, field: f"changed-{field}"}
-            assert digest_rows(component, [changed], TARGET_FIELDS[component]) != baseline
+@pytest.mark.parametrize("component", (*DOMAIN_COMPONENTS, *APP_READABLE_PRESERVE))
+def test_domain_and_preserve_full_row_digest_covers_every_ordered_field(component: str) -> None:
+    row = {field: f"{component}-{field}" for field in TARGET_FIELDS[component]}
+    baseline = digest_rows(component, [row], TARGET_FIELDS[component])
+    for field in TARGET_FIELDS[component]:
+        changed = {**row, field: f"changed-{field}"}
+        assert digest_rows(component, [changed], TARGET_FIELDS[component]) != baseline
 
 
 def test_calendar_buckets_keep_manual_and_imported_receipts_separate() -> None:

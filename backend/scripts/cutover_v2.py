@@ -64,6 +64,9 @@ SOURCE_DB_NAME = "microschedule_v2"
 SOURCE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
 TARGET_APP_ROLE = "microsched_app"
 TARGET_MIGRATOR_ROLES = frozenset({"microsched_migrator", "neondb_owner"})
+PINNED_SCHEMA_ROLES = frozenset(
+    {"postgres", "microsched_migrator", "neondb_owner", TARGET_APP_ROLE}
+)
 OWNER_PUBLIC_KEY_ENV = "CUTOVER_OWNER_PUBLIC_KEY"
 ARTIFACT_KEY_ENV = "CUTOVER_ARTIFACT_KEY"
 RECOVERY_SOURCE_URL_ENV = "CUTOVER_RECOVERY_SOURCE_URL"
@@ -646,9 +649,9 @@ def fly_state_verifier_from_env() -> Callable[[], Awaitable[Mapping[str, Any]]]:
     """Build the read-only native ``fly status --json`` probe.
 
     The native Apps v2 response is an object containing ``Machines``.  The
-    machine event stream is part of the Machines API response; requiring one
-    launch and one start, with no restart/second-start evidence, is what lets a
-    recovery prove the machine was stopped continuously.  A wrapper may still
+    machine event stream is part of the Machines API response.  The parser
+    scopes start/restart evidence to the signed failure cutoff and machine ID;
+    older history is allowed while post-failure changes are rejected.  A wrapper may still
     be selected explicitly for a workstation, but the default is the official
     ``fly`` executable and its native JSON shape is never replaced by a pair of
     operator-supplied booleans.
@@ -676,20 +679,25 @@ def fly_state_verifier_from_env() -> Callable[[], Awaitable[Mapping[str, Any]]]:
             value = json.loads(output)
         except OSError, subprocess.SubprocessError, json.JSONDecodeError:
             raise CutoverError("current Fly stopped-state query failed") from None
-        return parse_fly_status(value)
+        return value
 
     return verify
 
 
-def parse_fly_status(payload: Mapping[str, Any]) -> dict[str, Any]:
+def parse_fly_status(
+    payload: Mapping[str, Any],
+    *,
+    failure_time: datetime | None = None,
+    expected_machine_id: str | None = None,
+) -> dict[str, Any]:
     """Normalize and fail closed on the native Apps v2 ``fly status --json``.
 
     Fly's documented status response uses a top-level ``Machines`` array and
     lower-case machine fields.  ``Events`` is retained in the response by the
     Machines API and carries ``type`` plus an optional ``request`` with
     ``restart_count``.  We do not infer continuity from a static ``stopped``
-    string: exactly one machine, exactly one launch/start pair, and explicit
-    absence of restart evidence are required.
+    string: exactly one machine, creation/start history, and explicit absence
+    of restart evidence after the signed failure cutoff are required.
     """
     if not isinstance(payload, Mapping):
         raise CutoverError("current Fly stopped-state query returned invalid JSON")
@@ -703,6 +711,8 @@ def parse_fly_status(payload: Mapping[str, Any]) -> dict[str, Any]:
     state = machine.get("state")
     if not isinstance(machine_id, str) or not machine_id.strip():
         raise CutoverError("current Fly machine ID is missing")
+    if expected_machine_id is not None and machine_id != expected_machine_id:
+        raise CutoverError("current Fly machine identity changed after failure")
     if state != "stopped":
         raise CutoverError("current Fly machine is not stopped")
     events = machine.get("events")
@@ -710,13 +720,42 @@ def parse_fly_status(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise CutoverError("current Fly machine restart evidence is missing")
     event_types: list[str] = []
     restart_counts: list[int] = []
+    known_event_types = {
+        "create",
+        "created",
+        "destroy",
+        "exit",
+        "launch",
+        "restart",
+        "start",
+        "stop",
+        "suspend",
+    }
     for event in events:
         if not isinstance(event, Mapping) or not isinstance(event.get("type"), str):
             raise CutoverError("current Fly machine event evidence is invalid")
         event_type = event["type"].lower()
+        if event_type not in known_event_types:
+            raise CutoverError("current Fly machine event type is unknown")
         event_types.append(event_type)
-        if "restart" in event_type:
-            raise CutoverError("current Fly machine has restart evidence")
+        event_timestamp = event.get("timestamp")
+        event_time = None
+        if event_timestamp is not None:
+            if isinstance(event_timestamp, bool) or not isinstance(event_timestamp, (int, float)):
+                raise CutoverError("current Fly machine event timestamp is invalid")
+            try:
+                event_time = datetime.fromtimestamp(float(event_timestamp) / 1000, tz=UTC)
+            except OverflowError, OSError, ValueError:
+                raise CutoverError("current Fly machine event timestamp is invalid") from None
+        if failure_time is not None and event_time is None:
+            raise CutoverError("current Fly machine event timestamp is missing")
+        if (
+            failure_time is not None
+            and event_time is not None
+            and event_time > failure_time
+            and event_type in {"restart", "start"}
+        ):
+            raise CutoverError("current Fly machine restarted after the signed failure cutoff")
         request = event.get("request")
         if request is not None:
             if not isinstance(request, Mapping):
@@ -726,16 +765,26 @@ def parse_fly_status(payload: Mapping[str, Any]) -> dict[str, Any]:
                 if isinstance(restart_count, bool) or not isinstance(restart_count, int):
                     raise CutoverError("current Fly machine restart count is invalid")
                 restart_counts.append(restart_count)
-                if restart_count != 0:
+                if restart_count != 0 and (
+                    failure_time is None or event_time is None or event_time > failure_time
+                ):
                     raise CutoverError("current Fly machine has restart evidence")
             for exit_key in ("exit_event", "MonitorEvent"):
                 exit_event = request.get(exit_key)
-                if isinstance(exit_event, Mapping) and exit_event.get("restarting") is True:
+                if (
+                    isinstance(exit_event, Mapping)
+                    and exit_event.get("restarting") is True
+                    and (failure_time is None or event_time is None or event_time > failure_time)
+                ):
                     raise CutoverError("current Fly machine has restart evidence")
-        if event.get("status") == "restarted":
+        if event.get("status") == "restarted" and (
+            failure_time is None or event_time is None or event_time > failure_time
+        ):
             raise CutoverError("current Fly machine has restart evidence")
-    if event_types.count("launch") != 1 or event_types.count("start") != 1:
-        raise CutoverError("current Fly machine does not prove one launch and one start")
+    if not any(event_type in {"launch", "created", "create"} for event_type in event_types):
+        raise CutoverError("current Fly machine lacks creation history")
+    if not any(event_type == "start" for event_type in event_types):
+        raise CutoverError("current Fly machine lacks start history")
     return {
         "fly_state": "stopped",
         "machine_id": machine_id,
@@ -744,7 +793,9 @@ def parse_fly_status(payload: Mapping[str, Any]) -> dict[str, Any]:
         "never_restarted": True,
         "restart_evidence": {
             "event_count": len(events),
-            "launch_count": event_types.count("launch"),
+            "launch_count": sum(
+                event_type in {"launch", "created", "create"} for event_type in event_types
+            ),
             "start_count": event_types.count("start"),
             "restart_counts": restart_counts,
         },
@@ -753,6 +804,9 @@ def parse_fly_status(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 async def assert_current_fly_stopped(
     verifier: Callable[[], Awaitable[Mapping[str, Any]]] | Callable[[], Mapping[str, Any]],
+    *,
+    failure_time: datetime | None = None,
+    expected_machine_id: str | None = None,
 ) -> Mapping[str, Any]:
     try:
         result = verifier()
@@ -761,7 +815,11 @@ async def assert_current_fly_stopped(
         raise
     except Exception:
         raise CutoverError("current Fly stopped-state query failed") from None
-    return parse_fly_status(state)
+    return parse_fly_status(
+        state,
+        failure_time=failure_time,
+        expected_machine_id=expected_machine_id,
+    )
 
 
 def assert_target_coordinates() -> None:
@@ -1045,6 +1103,27 @@ def _expected_trigger_contract() -> set[tuple[str, str, str, str]]:
     return result
 
 
+def _expected_functional_unique_index_contract() -> set[tuple[str, str, str]]:
+    return {
+        (
+            "calendar_source",
+            "uq_calendar_source_name_lower",
+            _normalize_catalog_sql(
+                "CREATE UNIQUE INDEX uq_calendar_source_name_lower ON "
+                "microsched.calendar_source USING btree (lower(name))"
+            ),
+        ),
+        (
+            "tracker_group",
+            "uq_tracker_group_name_lower",
+            _normalize_catalog_sql(
+                "CREATE UNIQUE INDEX uq_tracker_group_name_lower ON "
+                "microsched.tracker_group USING btree (lower(name))"
+            ),
+        ),
+    }
+
+
 async def read_runtime_coordinates(connection: Any) -> dict[str, Any]:
     row = (
         (
@@ -1181,6 +1260,39 @@ async def attest_schema(
                 .mappings()
                 .all()
             )
+            owners = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT DISTINCT pg_get_userbyid(c.relowner) AS role "
+                            "FROM pg_catalog.pg_class c "
+                            "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                            "WHERE n.nspname='microsched'"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            functional_unique_indexes = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT tbl.relname AS table_name, idx.relname AS index_name, "
+                            "ix.indisvalid, pg_get_indexdef(ix.indexrelid, 0, true) AS definition "
+                            "FROM pg_catalog.pg_index ix "
+                            "JOIN pg_catalog.pg_class idx ON idx.oid=ix.indexrelid "
+                            "JOIN pg_catalog.pg_class tbl ON tbl.oid=ix.indrelid "
+                            "JOIN pg_catalog.pg_namespace n ON n.oid=tbl.relnamespace "
+                            "LEFT JOIN pg_catalog.pg_constraint con ON con.conindid=ix.indexrelid "
+                            "WHERE n.nspname='microsched' AND ix.indisunique "
+                            "AND con.oid IS NULL ORDER BY tbl.relname,idx.relname"
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
     unknown = table_names - (set(ALL_EXPECTED_TARGET_TABLES) | {"alembic_version"})
     missing = set(ALL_EXPECTED_TARGET_TABLES) - table_names
     if unknown:
@@ -1241,11 +1353,43 @@ async def attest_schema(
     }
     if actual_triggers != _expected_trigger_contract():
         raise CutoverError("target catalog trigger contract drift")
+    actual_functional_unique_indexes = {
+        (
+            row["table_name"],
+            row["index_name"],
+            _normalize_catalog_sql(row["definition"]),
+        )
+        for row in functional_unique_indexes
+        if row["indisvalid"] is True
+    }
+    if len(actual_functional_unique_indexes) != len(functional_unique_indexes) or (
+        actual_functional_unique_indexes != _expected_functional_unique_index_contract()
+    ):
+        raise CutoverError("target catalog functional unique-index contract drift")
     grant_rows = [dict(row) for row in grants]
     if any(row["grantee"] == "PUBLIC" for row in grant_rows) or any(
         row["grantee"] == "PUBLIC" for row in schema_grants
     ):
         raise CutoverError("target catalog PUBLIC grants are forbidden")
+    if not set(owners) <= PINNED_SCHEMA_ROLES:
+        raise CutoverError("target catalog owner is outside the pinned role allowlist")
+    allowed_grantees = set(PINNED_SCHEMA_ROLES)
+    if any(
+        row["grantee"] not in allowed_grantees
+        for row in (*grant_rows, *[dict(row) for row in schema_grants])
+    ):
+        raise CutoverError("target catalog grant grantee is outside the pinned role allowlist")
+    expected_migrator_grants = {
+        (table_name, "SELECT") for table_name in (*ALL_EXPECTED_TARGET_TABLES, "alembic_version")
+    }
+    for migrator_role in TARGET_MIGRATOR_ROLES - set(owners):
+        actual_migrator_grants = {
+            (row["table_name"], row["privilege_type"])
+            for row in grant_rows
+            if row["grantee"] == migrator_role
+        }
+        if actual_migrator_grants and actual_migrator_grants != expected_migrator_grants:
+            raise CutoverError(f"target migrator grant contract drift: {migrator_role}")
     app_grants = {
         (row["table_name"], row["privilege_type"])
         for row in grant_rows
@@ -1272,6 +1416,7 @@ async def attest_schema(
         "triggers": identity["ddl"]["triggers"],
         "grants": [dict(row) for row in grants],
         "schema_grants": [dict(row) for row in schema_grants],
+        "functional_unique_indexes": [dict(row) for row in functional_unique_indexes],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
     result = {
@@ -2059,6 +2204,17 @@ async def run_recover(
 ) -> None:
     if fly_state_verifier is None:
         raise CutoverError("current Fly stopped-state verifier is required for recovery")
+    try:
+        failure_time = datetime.fromisoformat(str(receipt["failure_time"]))
+    except KeyError, TypeError, ValueError:
+        raise ManifestError("recovery receipt failure time is invalid") from None
+    if failure_time.tzinfo is None:
+        raise ManifestError("recovery receipt failure time must include UTC offset")
+    receipt_target_state = receipt.get("target_state")
+    if not isinstance(receipt_target_state, Mapping) or not isinstance(
+        receipt_target_state.get("machine_id"), str
+    ):
+        raise ManifestError("recovery receipt lacks the signed Fly machine identity")
     for component in MAPPED_COMPONENTS:
         transformed_rows = list(transformed.get(component, []))
         if inventory(component, transformed_rows) != manifest["source_expected"][component]:
@@ -2081,7 +2237,11 @@ async def run_recover(
             for component in APP_READABLE_PRESERVE:
                 if current[component] != manifest["phase_b_target_snapshot"][component]:
                     raise ManifestError("preserve data changed before recovery")
-            await assert_current_fly_stopped(fly_state_verifier)
+            await assert_current_fly_stopped(
+                fly_state_verifier,
+                failure_time=failure_time,
+                expected_machine_id=receipt_target_state["machine_id"],
+            )
             await purge_import_assert(session, manifest, transformed)
 
 
