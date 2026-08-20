@@ -579,6 +579,13 @@ def _prepared_manifest(rehearsal):
                 target_identity=attestation["target_identity"],
                 source_dump_sha256="e" * 64,
             )
+            # The caller deliberately runs its assertions in a separate
+            # asyncio.run loop.  Empty these pools before crossing that loop
+            # boundary; AsyncEngine is reusable, but an asyncpg connection
+            # retained by the first loop is not.
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
             return manifest, transformed, target, source, migrator
         except Exception:
             await source.dispose()
