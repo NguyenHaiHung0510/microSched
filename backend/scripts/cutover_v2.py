@@ -1015,6 +1015,8 @@ def _expected_column_contract() -> dict[tuple[str, str], dict[str, Any]]:
                 "numeric_scale": numeric_scale,
                 "datetime_precision": 6
                 if compiled_type in {"TIMESTAMP WITH TIME ZONE", "TIME WITHOUT TIME ZONE"}
+                else 0
+                if compiled_type == "DATE"
                 else None,
             }
     result[("alembic_version", "version_num")] = {
