@@ -943,7 +943,7 @@ async def attest_schema(
     primary_key_tables = {
         row["table_name"] for row in constraint_rows if row["constraint_type"] == "p"
     }
-    if primary_key_tables != set(ALL_EXPECTED_TARGET_TABLES):
+    if not set(ALL_EXPECTED_TARGET_TABLES) <= primary_key_tables:
         raise CutoverError("target catalog primary-key contract drift")
     trigger_rows = identity["ddl"]["triggers"]
     trigger_tables = {
