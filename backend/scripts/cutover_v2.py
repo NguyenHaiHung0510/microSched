@@ -1877,6 +1877,63 @@ def write_failure_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
     path.write_bytes(encrypt_artifact(payload))
 
 
+def build_failure_receipt(
+    manifest: Mapping[str, Any],
+    *,
+    target_inventory: Mapping[str, Mapping[str, Any]],
+    target_state: Mapping[str, Any],
+    failed_command: str,
+    failure_class: str,
+    failure_stage: str,
+    failure_time: datetime,
+    expires_at: datetime,
+) -> dict[str, Any]:
+    """Create an encrypted, unsigned draft from a just-observed failed run.
+
+    This is intentionally a draft ceremony: only the owner signer can attach
+    the Ed25519 signature with ``--finalize-failure-receipt``.  The inventory is
+    copied from the app-role read-only connection and never printed.
+    """
+    if failed_command not in {"commit", "verify"}:
+        raise ManifestError("failure receipt command must be commit or verify")
+    if not failure_class or not failure_stage:
+        raise ManifestError("failure receipt class and stage are required")
+    if failure_time.tzinfo is None or expires_at.tzinfo is None or expires_at <= failure_time:
+        raise ManifestError("failure receipt expiry must follow failure time")
+    if (
+        target_state.get("fly_state") != "stopped"
+        or target_state.get("never_restarted") is not True
+        or not isinstance(target_state.get("machine_id"), str)
+        or not isinstance(target_state.get("restart_evidence"), Mapping)
+    ):
+        raise ManifestError("failure receipt requires current native Fly stopped evidence")
+    if set(target_inventory) != set(DOMAIN_COMPONENTS + APP_READABLE_PRESERVE):
+        raise ManifestError("failure receipt requires the complete target inventory")
+    return {
+        "algorithm": "Ed25519",
+        "run_id": manifest["run_id"],
+        "manifest_digest": manifest["manifest_digest"],
+        "script_sha": manifest["script_sha"],
+        "script_file_sha256": manifest["script_file_sha256"],
+        "target_host": manifest["target_host"],
+        "source_dump_sha256": manifest["source_dump_sha256"],
+        "failed_command": failed_command,
+        "failure_outcome": (
+            "unknown_after_submit" if failed_command == "commit" else "post_commit_verify_failed"
+        ),
+        "failure_class": failure_class,
+        "failure_stage": failure_stage,
+        "failure_time": failure_time.astimezone(UTC).isoformat(),
+        "expires_at": expires_at.astimezone(UTC).isoformat(),
+        "fly_state": "stopped",
+        "target_state": dict(target_state),
+        "fly_never_restarted": True,
+        "failed_run_domain_inventory": {
+            component: dict(target_inventory[component]) for component in DOMAIN_COMPONENTS
+        },
+    }
+
+
 def finalize_failure_receipt(path: Path, signature: str) -> None:
     payload = decrypt_artifact(path)
     payload["algorithm"] = "Ed25519"
@@ -2070,6 +2127,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--finalize-manifest", action="store_true")
     p.add_argument("--finalize-failure-receipt", action="store_true")
     p.add_argument(
+        "--write-failure-receipt",
+        type=Path,
+        help="Write an encrypted unsigned receipt from the current failed-run state",
+    )
+    p.add_argument(
         "--signature-file",
         type=Path,
         help="UTF-8 Ed25519 signature produced by the owner signer; never a private key",
@@ -2081,6 +2143,10 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--source-dump", type=Path)
     p.add_argument("--source-dump-sha256")
     p.add_argument("--failure-receipt", type=Path)
+    p.add_argument("--failed-command", choices=("commit", "verify"))
+    p.add_argument("--failure-class")
+    p.add_argument("--failure-stage")
+    p.add_argument("--expires-at")
     return p
 
 
@@ -2095,6 +2161,66 @@ def read_signature_file(path: Path) -> str:
 
 
 async def async_main(args: argparse.Namespace) -> int:
+    if args.write_failure_receipt:
+        if (
+            args.finalize_manifest
+            or args.finalize_failure_receipt
+            or args.dry_run
+            or args.commit
+            or args.verify
+            or args.recover
+        ):
+            raise CutoverError("failure receipt draft cannot be combined with another mode")
+        if (
+            not args.manifest
+            or not args.confirm_target_host
+            or not args.expected_script_sha
+            or not args.failed_command
+            or not args.failure_class
+            or not args.failure_stage
+            or not args.expires_at
+        ):
+            raise CutoverError(
+                "failure receipt draft requires manifest, SHA, host, failed "
+                "command/class/stage and expiry"
+            )
+        target = target_url()
+        assert_confirmed_host(target, args.confirm_target_host)
+        assert_target_coordinates()
+        manifest = read_final_manifest(
+            args.manifest,
+            expected_script_sha=args.expected_script_sha,
+            expected_host=args.confirm_target_host.lower(),
+        )
+        try:
+            expires_at = datetime.fromisoformat(args.expires_at)
+        except ValueError:
+            raise CutoverError("failure receipt expiry must be RFC3339") from None
+        failure_time = datetime.now(UTC)
+        if expires_at.tzinfo is None or expires_at <= failure_time:
+            raise CutoverError("failure receipt expiry must be in the future")
+        target_engine_obj = target_engine()
+        try:
+            target_identity, target_inventory = await collect_target_inventory_as_app(
+                target_engine_obj
+            )
+        finally:
+            await target_engine_obj.dispose()
+        assert_runtime_coordinates_match(target_identity, manifest["target_identity"])
+        target_state = await assert_current_fly_stopped(fly_state_verifier_from_env())
+        receipt = build_failure_receipt(
+            manifest,
+            target_inventory=target_inventory,
+            target_state=target_state,
+            failed_command=args.failed_command,
+            failure_class=args.failure_class,
+            failure_stage=args.failure_stage,
+            failure_time=failure_time,
+            expires_at=expires_at,
+        )
+        write_failure_receipt(args.write_failure_receipt, receipt)
+        print(f"failure_receipt=draft path={args.write_failure_receipt}")
+        return 0
     if args.finalize_manifest or args.finalize_failure_receipt:
         if args.finalize_manifest and args.finalize_failure_receipt:
             raise CutoverError("manifest and failure receipt finalization are mutually exclusive")

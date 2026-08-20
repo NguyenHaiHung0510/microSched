@@ -22,6 +22,7 @@ from scripts.cutover_v2 import (
     SourceValidationError,
     actual_code_identity,
     approval_payload,
+    build_failure_receipt,
     build_manifest,
     calendar_bucket_inventory,
     canonical_value,
@@ -374,10 +375,25 @@ def test_failure_receipt_signature_and_expiry_are_enforced() -> None:
     manifest = {
         "manifest_digest": "c" * 64,
         "run_id": "run-synthetic",
+        "target_host": "throwaway",
         "script_sha": code["git_sha"],
         "script_file_sha256": code["file_sha256"],
         "source_dump_sha256": "d" * 64,
     }
+    draft = build_failure_receipt(
+        manifest,
+        target_inventory={
+            component: empty_inventory(component)
+            for component in (*DOMAIN_COMPONENTS, *APP_READABLE_PRESERVE)
+        },
+        target_state=parse_fly_status(NATIVE_FLY_STOPPED),
+        failed_command="commit",
+        failure_class="unknown-after-submit",
+        failure_stage="post-submit",
+        failure_time=NOW,
+        expires_at=NOW + timedelta(hours=1),
+    )
+    assert draft["failure_outcome"] == "unknown_after_submit"
     receipt = {
         "algorithm": "Ed25519",
         "run_id": manifest["run_id"],
