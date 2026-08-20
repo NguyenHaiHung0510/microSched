@@ -1,7 +1,7 @@
 # 012 — Cutover: đưa dữ liệu thật từ Postgres v2 sang Neon, rồi ngừng dùng app cũ
 
 > **Executor:** T2 (route chọn từ Runtime Catalog lúc giao) · **Bậc:** L1 · **effort đề xuất:** high.
-> **Trạng thái: DRAFT — refresh 2026-08-20.** Exact head `b62ac72` đã bị T3 BLOCK; các finding xác nhận
+> **Trạng thái: DRAFT — refresh 2026-08-20.** Exact head `ccd3196` đã bị T3 P2 BLOCK; các finding xác nhận
 > đúng đã fold trong bản này. Vẫn cần exact-head adversarial re-review và strategic sign-off của chủ.
 > DRAFT **không** cho phép viết/rà rehearsal, chạm Neon, dump hay cutover thật.
 >
@@ -234,10 +234,18 @@ signature aborts. No dry-run, target mutation or recovery begins from a draft/un
 
 A canonical row uses fixed ordered target fields after the formulas in §3: UTF-8 length-prefixed text;
 UUID lower-case hyphenated; RFC3339 UTC fixed microseconds; DATE ISO; NULL token; bool `true|false`;
-fixed decimal; JSON sorted keys/no whitespace. SHA-256 digests component name + transform version + rows
+fixed decimal; JSON sorted keys/no whitespace. PostgreSQL `TIME WITHOUT TIME ZONE` is exactly
+`HH:MM:SS.ffffff` (zero-padded hour/minute/second plus six microseconds, no offset or timezone); NULL is the
+separate canonical NULL token and a timezone-bearing value aborts. SHA-256 digests component name + transform version + rows
 sorted by identity key. Full-row hashing includes prose, status/priority, foreign keys, completion,
 positions, timestamp, privacy/delete flags and every constant/default field listed in §3. Plaintext exists
 only transiently in local hash computation; never stdout, PR or artifact.
+
+`note.embedding` is a special fail-closed pre-state rule. The transformed target value is always NULL (§3.3),
+and Phase-B target snapshot plus recovery failure inventory require every pre-existing `note.embedding` to be
+NULL. Any non-NULL PostgreSQL `VECTOR` aborts final-manifest creation and every `--commit`/`--recover`
+pre-DELETE gate; code must not stringify, round, reorder or log its elements. Thus the only vector
+canonicalization is the ordinary NULL token, avoiding an unreviewed float/precision contract or semantic leak.
 
 Mapped components require exact count + sorted-ID set + full-row digest after import. Purge-only components
 require the `count=0` and both canonical empty digests in §2.2. Every `APP_READABLE_PRESERVE` component
@@ -374,6 +382,11 @@ Fixture DDL/data are synthetic and sanitized: no owner dump, content, endpoint, 
 1. Field-level mapping test for every §3.3 column, including nullable priority, timestamps, target constants,
    calendar visibility/hidden formula and manual source UUIDv7. Perturb each ordered preserve field in §4.3
    (`private_until`, JSON `value`, endpoint/`p256dh`/`auth`, etc.) and assert the full-row digest changes.
+   Canonical-type boundary tests require `tracker.reminder_time` values `00:00:00.000000`,
+   `12:34:56.000001`, `23:59:59.999999` and NULL to encode deterministically; a microsecond change, NULL↔value
+   change or timezone-bearing value must fail the relevant snapshot/recovery digest gate. `note.embedding=NULL`
+   must use the NULL token; any non-NULL VECTOR fixture aborts Phase-B finalization and commit/recovery before
+   DML, without logging vector elements.
 2. Source validation tests: archived task/note, invalid status/position, bad parent, non-NULL unknown or
    duplicate referenced priority name, invalid duration, unclassified/null UID and unknown source all abort
    before DML.
