@@ -352,6 +352,16 @@ def rehearsal(pg_dsn: str):
     async def create_restore() -> None:
         control = await asyncpg.connect(control_url)
         try:
+            active_sessions = await control.fetchval(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname=$1 AND pid <> pg_backend_pid()",
+                db,
+            )
+            if active_sessions:
+                raise RuntimeError(
+                    "throwaway restore refused: source database has "
+                    f"{active_sessions} active session(s)"
+                )
             await control.execute(f'CREATE DATABASE "{restore_db}" TEMPLATE "{db}"')
         finally:
             await control.close()
@@ -459,17 +469,29 @@ def test_schema_attestation_red_green_for_indexes_and_grantees(
         finally:
             # Make teardown safe if the assertion itself fails halfway through
             # the deliberate RED/GREEN sequence.
-            await admin.execute(f'REASSIGN OWNED BY "{extra_role}" TO postgres')
-            await admin.execute(f'DROP OWNED BY "{extra_role}"')
-            await admin.execute(f'REVOKE ALL ON SCHEMA microsched FROM "{extra_role}"')
-            await admin.execute(f'DROP ROLE IF EXISTS "{extra_role}"')
-            await admin.execute(
-                f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" '
-                f'ON microsched."{table}" (lower(name))'
-            )
-            await attest_schema(migrator)
-            await admin.close()
-            await migrator.dispose()
+            try:
+                role_exists = await admin.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$1)", extra_role
+                )
+                if role_exists:
+                    await admin.execute(f'REASSIGN OWNED BY "{extra_role}" TO postgres')
+                    await admin.execute(f'DROP OWNED BY "{extra_role}"')
+                    await admin.execute(
+                        f"REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA microsched "
+                        f'FROM "{extra_role}"'
+                    )
+                    await admin.execute(f'REVOKE ALL ON SCHEMA microsched FROM "{extra_role}"')
+                    await admin.execute(f'DROP ROLE "{extra_role}"')
+            finally:
+                try:
+                    await admin.execute(
+                        f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" '
+                        f'ON microsched."{table}" (lower(name))'
+                    )
+                    await attest_schema(migrator)
+                finally:
+                    await admin.close()
+                    await migrator.dispose()
 
     _run(run())
 

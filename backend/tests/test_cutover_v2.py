@@ -93,6 +93,21 @@ NATIVE_FLY_STOPPED = {
             "CHECK ((entity_type IS NULL) = (entity_id IS NULL))",
             "(entity_type is null) =(entity_id is null)",
         ),
+        (
+            "CHECK (kind = ANY (ARRAY['ics', 'excel', 'manual']))",
+            "kind in('ics','excel','manual')",
+        ),
+        ('CHECK ("position" >= 0)', "position >= 0"),
+        (
+            "CHECK (quantity IS NULL OR quantity > 0::numeric)",
+            "quantity is null or quantity > 0",
+        ),
+        (
+            "CHECK (NOT is_private OR (title LIKE 'enc:v1:%' AND "
+            "(body_md IS NULL OR body_md LIKE 'enc:v1:%')))",
+            "not is_private or title like 'enc:v1:%' and"
+            "(body_md is null or body_md like 'enc:v1:%')",
+        ),
     ],
 )
 def test_catalog_constraint_normalization_matches_pg_get_constraintdef(

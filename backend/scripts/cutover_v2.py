@@ -971,7 +971,27 @@ def _normalize_catalog_sql(value: Any) -> str:
         if not balanced or depth != 0:
             break
         result = result[1:-1].strip()
-    result = result.replace("::text", "").replace("::boolean", "").replace("::jsonb", "")
+    # PostgreSQL's deparser uses equivalent operator/type spellings for
+    # migrated CHECK expressions.  These replacements are display-only: the
+    # exact constraint name/type and the column nullability contract remain
+    # separately pinned below.
+    result = re.sub(r'"([a-z_][a-z0-9_]*)"', r"\1", result)
+    result = re.sub(r"\s*~~\s*", " like ", result)
+    result = re.sub(r"\s*::(?:text|boolean|jsonb|numeric)\b", "", result)
+    result = re.sub(r"=\s*any\s*\(\s*array\[(.*?)\]\s*\)", r"in(\1)", result)
+    # The deparser drops redundant grouping around a conjunction under OR.
+    # Keep grouping when the first term itself contains OR, where it changes
+    # precedence; only canonicalize the unambiguous display variant.
+    result = re.sub(
+        r"\bor\s*\(\(([^()]*)\)\s+and\s*\(([^()]*)\)\)",
+        r"or(\1) and(\2)",
+        result,
+    )
+    result = re.sub(
+        r"\bor\s*\((?![^()]*\bor\b)([^()]+?)\s+and\s*\(([^()]*)\)\)",
+        r"or \1 and(\2)",
+        result,
+    )
     result = re.sub(r"\s*\(\s*", "(", result)
     result = re.sub(r"\s*\)", ")", result)
     return re.sub(r"\s*,\s*", ",", result)
@@ -1039,7 +1059,12 @@ def _expected_column_contract() -> dict[tuple[str, str], dict[str, Any]]:
 def _expected_constraint_contract() -> set[tuple[str, str, str, str]]:
     """Return exact head constraint names/types/definitions, including Alembic PK."""
     result: set[tuple[str, str, str, str]] = {
-        ("alembic_version", "alembic_version_pkc", "p", "(version_num)"),
+        (
+            "alembic_version",
+            "alembic_version_pkc",
+            "p",
+            _normalize_catalog_sql("(version_num)"),
+        ),
     }
     for table in SQLModel.metadata.tables.values():
         if table.schema != "microsched":
@@ -1359,6 +1384,11 @@ async def attest_schema(
             _normalize_catalog_sql(row["definition"]),
         )
         for row in identity["ddl"]["constraints"]
+        # PostgreSQL 18 exposes NOT NULL as generated contype='n' entries.
+        # Nullability is already pinned exactly in _expected_column_contract;
+        # retaining these provider-generated names would make the contract
+        # depend on a server-version display detail rather than schema DDL.
+        if row["constraint_type"] != "n"
     }
     if actual_constraints != _expected_constraint_contract():
         expected_constraints = _expected_constraint_contract()
