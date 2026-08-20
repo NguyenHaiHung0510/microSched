@@ -426,7 +426,16 @@ def test_source_write_guard_is_real(rehearsal) -> None:
     _run(run())
 
 
-def test_schema_attestation_red_green_for_indexes_and_grantees(rehearsal) -> None:
+@pytest.mark.parametrize(
+    "table,index_name",
+    (
+        ("calendar_source", "uq_calendar_source_name_lower"),
+        ("tracker_group", "uq_tracker_group_name_lower"),
+    ),
+)
+def test_schema_attestation_red_green_for_indexes_and_grantees(
+    rehearsal, table: str, index_name: str
+) -> None:
     async def run() -> None:
         from scripts.cutover_v2 import migrator_engine
 
@@ -435,12 +444,11 @@ def test_schema_attestation_red_green_for_indexes_and_grantees(rehearsal) -> Non
         extra_role = f"cutover_attest_{uuid4().hex[:12]}"
         try:
             await attest_schema(migrator)
-            await admin.execute("DROP INDEX microsched.uq_calendar_source_name_lower")
+            await admin.execute(f'DROP INDEX microsched."{index_name}"')
             with pytest.raises(Exception, match="functional unique-index"):
                 await attest_schema(migrator)
             await admin.execute(
-                "CREATE UNIQUE INDEX uq_calendar_source_name_lower "
-                "ON microsched.calendar_source (lower(name))"
+                f'CREATE UNIQUE INDEX "{index_name}" ON microsched."{table}" (lower(name))'
             )
             await attest_schema(migrator)
 
@@ -456,8 +464,8 @@ def test_schema_attestation_red_green_for_indexes_and_grantees(rehearsal) -> Non
             # the deliberate RED/GREEN sequence.
             await admin.execute(f'DROP ROLE IF EXISTS "{extra_role}"')
             await admin.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_source_name_lower "
-                "ON microsched.calendar_source (lower(name))"
+                f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" '
+                f'ON microsched."{table}" (lower(name))'
             )
             await admin.close()
             await migrator.dispose()
@@ -1231,7 +1239,7 @@ def test_verify_rejects_real_residual_for_each_purge_component(rehearsal, compon
         try:
             await run_commit(manifest, target, transformed)
             await _insert_residual_asyncpg(admin, component)
-            with pytest.raises(Exception, match="residual purge-only"):
+            with pytest.raises(Exception, match=f"residual purge-only row: {component}"):
                 await run_verify(manifest, target)
         finally:
             # The fixture's next parameter starts from a clean state, but this

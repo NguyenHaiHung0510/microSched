@@ -567,6 +567,8 @@ def test_source_dump_hash_seam() -> None:
 
 def test_failure_receipt_output_cannot_overwrite_input_before_probe() -> None:
     same_path = Path("cutover-same-artifact.tmp.age").resolve()
+    original_bytes = b"encrypted input artifact bytes"
+    same_path.write_bytes(original_bytes)
     args = parser().parse_args(
         [
             "--write-failure-receipt",
@@ -575,9 +577,12 @@ def test_failure_receipt_output_cannot_overwrite_input_before_probe() -> None:
             str(same_path),
         ]
     )
-    with pytest.raises(CutoverError, match="output must differ"):
-        asyncio.run(async_main(args))
-    assert not same_path.exists()
+    try:
+        with pytest.raises(CutoverError, match="output must differ"):
+            asyncio.run(async_main(args))
+        assert same_path.read_bytes() == original_bytes
+    finally:
+        same_path.unlink(missing_ok=True)
 
 
 def test_failure_receipt_signature_and_expiry_are_enforced() -> None:

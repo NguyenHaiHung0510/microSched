@@ -2300,7 +2300,9 @@ async def run_verify(manifest: Mapping[str, Any], engine: AsyncEngine) -> dict[s
     for component in MAPPED_COMPONENTS:
         if current[component] != manifest["source_expected"][component]:
             raise ManifestError(f"verify found mapped drift: {component}")
-    for component in PURGE_ONLY_COMPONENTS:
+    # Check descendants before their synthetic FK support rows so a residual
+    # fixture proves the named component's guard rather than its parent.
+    for component in reversed(PURGE_ONLY_COMPONENTS):
         if current[component] != empty_inventory(component):
             raise ManifestError(f"verify found residual purge-only row: {component}")
     for component in APP_READABLE_PRESERVE:
