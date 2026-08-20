@@ -206,3 +206,13 @@ test('lock now removes private task responses before the locked refetch', async 
   await expect(page.getByTestId('private-badge')).toContainText('đang khoá')
   await expect(page.getByText('Task riêng tư')).toHaveCount(0)
 })
+
+test('private expiry clears loaded timeline continuation state', async ({ page, taskApi }) => {
+  taskApi.privateUntil = new Date(Date.now() + 15_000).toISOString()
+  await page.goto('/')
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  await page.getByTestId('task-load-more-undated').click()
+  await expect(page.getByText('Task riêng tư')).toBeVisible()
+  await expect(page.getByText('Task riêng tư')).toHaveCount(0, { timeout: 20_000 })
+  await expect(page.getByTestId('private-badge')).toContainText('đang khoá')
+})

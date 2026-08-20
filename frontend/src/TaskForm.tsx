@@ -17,6 +17,7 @@ import {
   type TaskPriority,
   taskPayload,
 } from '@/task-ui'
+import { toVietnamDateTimeInput } from '@/calendar-ui'
 
 type InitialTask = {
   title: string
@@ -33,10 +34,7 @@ const priorityLabels: Record<TaskPriority, string> = {
 }
 
 function dueForInput(value: string | null): string {
-  if (!value) return ''
-  const date = new Date(value)
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-  return local.toISOString().slice(0, 16)
+  return toVietnamDateTimeInput(value)
 }
 
 function selectedPriorityLabel(priority: TaskPriority | ''): string {
