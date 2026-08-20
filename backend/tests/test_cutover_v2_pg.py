@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.database_urls import async_postgres_url
 from scripts.cutover_v2 import (
     DOMAIN_COMPONENTS,
+    PURGE_ONLY_COMPONENTS,
     assert_app_cannot_read_alembic,
     assert_source_read_only,
     attest_schema,
@@ -94,8 +95,43 @@ def rehearsal(pg_dsn: str):
                 "microsched.message, microsched.audit_log, microsched.app_setting, "
                 "microsched.session, microsched.push_subscription CASCADE"
             )
+            pre_task_id, pre_task_item_id = uuid4(), uuid4()
+            pre_note_id, pre_note_item_id = uuid4(), uuid4()
+            pre_calendar_source_id, pre_calendar_event_id = uuid4(), uuid4()
             await conn.execute(
-                "INSERT INTO microsched.task (title, status) VALUES ('synthetic prestate', 'open')"
+                "INSERT INTO microsched.task (id,title,status) "
+                "VALUES ($1,'synthetic prestate','open')",
+                pre_task_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.task_item (id,task_id,content) "
+                "VALUES ($1,$2,'synthetic item')",
+                pre_task_item_id,
+                pre_task_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.note (id,title,pinned) VALUES ($1,'synthetic note',false)",
+                pre_note_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.note_item (id,note_id,content) "
+                "VALUES ($1,$2,'synthetic note item')",
+                pre_note_item_id,
+                pre_note_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.calendar_source (id,name,kind) "
+                "VALUES ($1,'synthetic source','manual')",
+                pre_calendar_source_id,
+            )
+            await conn.execute(
+                "INSERT INTO microsched.calendar_event "
+                "(id,source_id,title,starts_at,ends_at) "
+                "VALUES ($1,$2,'synthetic event',$3,$4)",
+                pre_calendar_event_id,
+                pre_calendar_source_id,
+                NOW,
+                NOW + timedelta(hours=1),
             )
             group_id, tracker_id, subscription_id = uuid4(), uuid4(), uuid4()
             await conn.execute(
@@ -337,6 +373,22 @@ def rehearsal(pg_dsn: str):
     os.environ["CUTOVER_SOURCE_DATABASE"] = db or "microsched_ci"
     yield app_url, migrator_url, restored_url
 
+    async def clear_target() -> None:
+        cleanup = await asyncpg.connect(admin_url)
+        try:
+            await cleanup.execute(
+                "TRUNCATE TABLE microsched.reminder_dispatch, microsched.entry, "
+                "microsched.subscription, microsched.tracker, microsched.tracker_group, "
+                "microsched.calendar_event, microsched.calendar_source, microsched.task_item, "
+                "microsched.task, microsched.note_item, microsched.note, "
+                "microsched.day_annotation, microsched.message, microsched.audit_log, "
+                "microsched.app_setting, microsched.session, microsched.push_subscription CASCADE"
+            )
+        finally:
+            await cleanup.close()
+
+    _run(clear_target())
+
     async def drop_restore() -> None:
         drop_control = await asyncpg.connect(control_url)
         try:
@@ -474,6 +526,190 @@ async def _identity(engine):
         return await read_connection_identity(conn, "public")
 
 
+MAPPED_DRIFT_CASES = (
+    ("task", "title", "synthetic pre-delete task drift"),
+    ("task_item", "content", "synthetic pre-delete item drift"),
+    ("note", "title", "synthetic pre-delete note drift"),
+    ("note_item", "content", "synthetic pre-delete note item drift"),
+    ("calendar_source", "name", "synthetic pre-delete source drift"),
+    ("calendar_event", "title", "synthetic pre-delete event drift"),
+)
+
+
+async def _insert_residual_asyncpg(conn, component: str) -> None:
+    """Insert one valid synthetic row, including its FK chain, for residual tests."""
+    if component == "day_annotation":
+        await conn.execute(
+            "INSERT INTO microsched.day_annotation "
+            "(label,starts_on,ends_on) VALUES ('enc:v1:residual-day','2026-08-20','2026-08-21')"
+        )
+        return
+    if component == "tracker_group":
+        await conn.execute(
+            "INSERT INTO microsched.tracker_group (id,name,kind,position) "
+            "VALUES ($1,'enc:v1:residual-group','health',0)",
+            uuid4(),
+        )
+        return
+    group_id, tracker_id = uuid4(), uuid4()
+    if component in {"tracker", "entry", "subscription", "reminder_dispatch"}:
+        await conn.execute(
+            "INSERT INTO microsched.tracker_group (id,name,kind,position) "
+            "VALUES ($1,$2,'health',0)",
+            group_id,
+            f"enc:v1:residual-group-{uuid4()}",
+        )
+        await conn.execute(
+            "INSERT INTO microsched.tracker "
+            "(id,name,kind,direction,input_mode,group_id) "
+            "VALUES ($1,$2,'health','out','event',$3)",
+            tracker_id,
+            f"enc:v1:residual-tracker-{uuid4()}",
+            group_id,
+        )
+    if component == "tracker":
+        return
+    if component == "subscription":
+        await conn.execute(
+            "INSERT INTO microsched.subscription "
+            "(id,name,tracker_id,amount,started_on,expires_on) "
+            "VALUES ($1,$2,$3,'enc:v1:residual-amount','2026-08-20','2026-08-21')",
+            uuid4(),
+            f"enc:v1:residual-sub-{uuid4()}",
+            tracker_id,
+        )
+        return
+    if component == "entry":
+        await conn.execute(
+            "INSERT INTO microsched.entry (tracker_id,quantity,occurred_at) VALUES ($1,1.00,$2)",
+            tracker_id,
+            NOW,
+        )
+        return
+    if component == "reminder_dispatch":
+        await conn.execute(
+            "INSERT INTO microsched.reminder_dispatch "
+            "(subject_type,subject_id,dispatched_on) VALUES ('tracker',$1,'2026-08-20')",
+            tracker_id,
+        )
+        return
+    if component == "message":
+        await conn.execute(
+            "INSERT INTO microsched.message (role,content,trace_id) VALUES ('user',$1,$2)",
+            f"enc:v1:residual-message-{uuid4()}",
+            uuid4(),
+        )
+        return
+    if component == "audit_log":
+        await conn.execute(
+            "INSERT INTO microsched.audit_log "
+            "(trace_id,turn_id,action,payload) VALUES ($1,$2,$3,'{}'::jsonb)",
+            uuid4(),
+            uuid4(),
+            f"residual-{uuid4()}",
+        )
+        return
+    raise AssertionError(f"unhandled residual component: {component}")
+
+
+async def _insert_residual_session(session, component: str) -> None:
+    """Session equivalent for same-transaction residual tests."""
+    if component == "day_annotation":
+        await session.execute(
+            text(
+                "INSERT INTO microsched.day_annotation "
+                "(label,starts_on,ends_on) VALUES ('enc:v1:residual-day','2026-08-20','2026-08-21')"
+            )
+        )
+        return
+    if component == "tracker_group":
+        await session.execute(
+            text(
+                "INSERT INTO microsched.tracker_group (id,name,kind,position) "
+                "VALUES (:id,'enc:v1:residual-group','health',0)"
+            ),
+            {"id": uuid4()},
+        )
+        return
+    group_id, tracker_id = uuid4(), uuid4()
+    if component in {"tracker", "entry", "subscription", "reminder_dispatch"}:
+        await session.execute(
+            text(
+                "INSERT INTO microsched.tracker_group (id,name,kind,position) "
+                "VALUES (:id,:name,'health',0)"
+            ),
+            {"id": group_id, "name": f"enc:v1:residual-group-{uuid4()}"},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO microsched.tracker "
+                "(id,name,kind,direction,input_mode,group_id) "
+                "VALUES (:id,:name,'health','out','event',:group_id)"
+            ),
+            {
+                "id": tracker_id,
+                "name": f"enc:v1:residual-tracker-{uuid4()}",
+                "group_id": group_id,
+            },
+        )
+    if component == "tracker":
+        return
+    if component == "subscription":
+        await session.execute(
+            text(
+                "INSERT INTO microsched.subscription "
+                "(id,name,tracker_id,amount,started_on,expires_on) "
+                "VALUES (:id,:name,:tracker_id,'enc:v1:residual-amount',"
+                "'2026-08-20','2026-08-21')"
+            ),
+            {
+                "id": uuid4(),
+                "name": f"enc:v1:residual-sub-{uuid4()}",
+                "tracker_id": tracker_id,
+            },
+        )
+        return
+    if component == "entry":
+        await session.execute(
+            text(
+                "INSERT INTO microsched.entry "
+                "(tracker_id,quantity,occurred_at) VALUES (:tracker_id,1.00,:occurred_at)"
+            ),
+            {"tracker_id": tracker_id, "occurred_at": NOW},
+        )
+        return
+    if component == "reminder_dispatch":
+        await session.execute(
+            text(
+                "INSERT INTO microsched.reminder_dispatch "
+                "(subject_type,subject_id,dispatched_on) "
+                "VALUES ('tracker',:tracker_id,'2026-08-20')"
+            ),
+            {"tracker_id": tracker_id},
+        )
+        return
+    if component == "message":
+        await session.execute(
+            text(
+                "INSERT INTO microsched.message (role,content,trace_id) "
+                "VALUES ('user',:content,:trace_id)"
+            ),
+            {"content": f"enc:v1:residual-message-{uuid4()}", "trace_id": uuid4()},
+        )
+        return
+    if component == "audit_log":
+        await session.execute(
+            text(
+                "INSERT INTO microsched.audit_log "
+                "(trace_id,turn_id,action,payload) "
+                "VALUES (:trace_id,:turn_id,:action,'{}'::jsonb)"
+            ),
+            {"trace_id": uuid4(), "turn_id": uuid4(), "action": f"residual-{uuid4()}"},
+        )
+        return
+    raise AssertionError(f"unhandled residual component: {component}")
+
+
 def test_role_split_and_atomic_commit_idempotency(rehearsal) -> None:
     manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
 
@@ -529,6 +765,76 @@ def test_predelete_mapped_drift_aborts_before_write(rehearsal) -> None:
             _, after = await collect_target_inventory_as_app(target)
             assert after == before
         finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+@pytest.mark.parametrize("component,field,drift_value", MAPPED_DRIFT_CASES)
+def test_predelete_each_mapped_component_real_row_drift_aborts(
+    rehearsal, component: str, field: str, drift_value: str
+) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+    original_value = next(str(row[field]) for row in transformed[component])
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        row_id = str(transformed[component][0]["id"])
+        try:
+            # This is a real target pre-state row mutation; changing only the
+            # signed receipt would not exercise the Phase-B guard.
+            await admin.execute(
+                f'UPDATE microsched."{component}" SET "{field}"=$1 WHERE id=$2',
+                drift_value,
+                row_id,
+            )
+            _, before = await collect_target_inventory_as_app(target)
+            with pytest.raises(Exception, match="Phase-B snapshot drift"):
+                await run_commit(manifest, target, transformed)
+            _, after = await collect_target_inventory_as_app(target)
+            assert after == before
+        finally:
+            await admin.execute(
+                f'UPDATE microsched."{component}" SET "{field}"=$1 WHERE id=$2',
+                original_value,
+                row_id,
+            )
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+@pytest.mark.parametrize("component,field,drift_value", MAPPED_DRIFT_CASES)
+def test_verify_each_mapped_component_real_row_corruption_is_detected(
+    rehearsal, component: str, field: str, drift_value: str
+) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+    original_value = next(str(row[field]) for row in transformed[component])
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        row_id = str(transformed[component][0]["id"])
+        try:
+            await run_commit(manifest, target, transformed)
+            await admin.execute(
+                f'UPDATE microsched."{component}" SET "{field}"=$1 WHERE id=$2',
+                drift_value,
+                row_id,
+            )
+            with pytest.raises(Exception, match="mapped drift"):
+                await run_verify(manifest, target)
+        finally:
+            await admin.execute(
+                f'UPDATE microsched."{component}" SET "{field}"=$1 WHERE id=$2',
+                original_value,
+                row_id,
+            )
             await admin.close()
             await source.dispose()
             await migrator.dispose()
@@ -677,6 +983,70 @@ def test_recover_reimports_authorized_failed_inventory(rehearsal) -> None:
     _run(run())
 
 
+def test_recover_rechecks_fly_continuity_before_commit(rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        calls = 0
+        restarted = {
+            "PlatformVersion": "machines",
+            "Machines": [
+                {
+                    "id": "machine-synthetic",
+                    "state": "stopped",
+                    "events": [
+                        *NATIVE_FLY_STOPPED["Machines"][0]["events"],
+                        {
+                            "type": "start",
+                            "status": "started",
+                            "source": "flyd",
+                            "timestamp": int((NOW + timedelta(seconds=1)).timestamp() * 1000),
+                        },
+                    ],
+                }
+            ],
+        }
+
+        async def fly_state() -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            return NATIVE_FLY_STOPPED if calls == 1 else restarted
+
+        try:
+            await run_commit(manifest, target, transformed)
+            task_id = str(transformed["task"][0]["id"])
+            await admin.execute(
+                "UPDATE microsched.task SET title='authorized failed state' WHERE id=$1", task_id
+            )
+            _, failed = await collect_target_inventory_as_app(target)
+            before = await collect_target_inventory_as_app(target)
+            with pytest.raises(Exception, match="restarted after"):
+                await run_recover(
+                    manifest,
+                    {
+                        "failure_time": NOW.isoformat(),
+                        "target_state": parse_fly_status(NATIVE_FLY_STOPPED),
+                        "failed_run_domain_inventory": {
+                            component: failed[component] for component in DOMAIN_COMPONENTS
+                        },
+                    },
+                    target,
+                    transformed,
+                    fly_state_verifier=fly_state,
+                )
+            after = await collect_target_inventory_as_app(target)
+            assert after == before
+            assert calls == 2
+        finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
 def test_recover_rejects_stale_failed_inventory(rehearsal) -> None:
     manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
 
@@ -798,6 +1168,64 @@ def test_recover_rolls_back_mid_transaction_failure(monkeypatch, rehearsal) -> N
             assert after == before
         finally:
             await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+@pytest.mark.parametrize("component", PURGE_ONLY_COMPONENTS)
+def test_verify_rejects_real_residual_for_each_purge_component(rehearsal, component: str) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        try:
+            await run_commit(manifest, target, transformed)
+            await _insert_residual_asyncpg(admin, component)
+            with pytest.raises(Exception, match="residual purge-only"):
+                await run_verify(manifest, target)
+        finally:
+            # The fixture's next parameter starts from a clean state, but this
+            # keeps this test independently safe if collection order changes.
+            await admin.execute(
+                "TRUNCATE TABLE microsched.reminder_dispatch, microsched.entry, "
+                "microsched.subscription, microsched.tracker, microsched.tracker_group, "
+                "microsched.day_annotation, microsched.message, microsched.audit_log CASCADE"
+            )
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+@pytest.mark.parametrize("component", PURGE_ONLY_COMPONENTS)
+def test_commit_rechecks_each_residual_inside_transaction(
+    monkeypatch, rehearsal, component: str
+) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        from scripts import cutover_v2
+
+        original = cutover_v2.purge_import_assert
+
+        async def add_residual(session, current_manifest, current_transformed):
+            await original(session, current_manifest, current_transformed)
+            await _insert_residual_session(session, component)
+
+        monkeypatch.setattr(cutover_v2, "purge_import_assert", add_residual)
+        try:
+            with pytest.raises(Exception, match="post-purge final inventory drift"):
+                await run_commit(manifest, target, transformed)
+            # The residual and the purge/import must be rolled back together.
+            _, after = await collect_target_inventory_as_app(target)
+            assert after == manifest["phase_b_target_snapshot"]
+        finally:
+            monkeypatch.setattr(cutover_v2, "purge_import_assert", original)
             await source.dispose()
             await migrator.dispose()
             await target.dispose()

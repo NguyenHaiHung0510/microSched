@@ -1002,13 +1002,17 @@ def _expected_column_contract() -> dict[tuple[str, str], dict[str, Any]]:
             default = None
             if column.server_default is not None:
                 default = str(column.server_default.arg)
+            numeric_precision = getattr(column.type, "precision", None)
+            numeric_scale = getattr(column.type, "scale", None)
+            if compiled_type == "INTEGER":
+                numeric_precision, numeric_scale = 32, 0
             result[(table.name, column.name)] = {
                 "data_type": data_type,
                 "udt_name": udt_name,
                 "is_nullable": "YES" if column.nullable else "NO",
                 "column_default": default,
-                "numeric_precision": getattr(column.type, "precision", None),
-                "numeric_scale": getattr(column.type, "scale", None),
+                "numeric_precision": numeric_precision,
+                "numeric_scale": numeric_scale,
                 "datetime_precision": 6
                 if compiled_type in {"TIMESTAMP WITH TIME ZONE", "TIME WITHOUT TIME ZONE"}
                 else None,
@@ -2161,6 +2165,9 @@ async def run_commit(
             if current != manifest["phase_b_target_snapshot"]:
                 raise ManifestError("target Phase-B snapshot drift before DELETE")
             await purge_import_assert(session, manifest, transformed)
+            final = await collect_target_inventory(session)
+            if final != expected_final_inventory(manifest):
+                raise ManifestError("post-purge final inventory drift")
 
 
 async def purge_import_assert(
@@ -2254,6 +2261,17 @@ async def run_recover(
                 expected_machine_id=receipt_target_state["machine_id"],
             )
             await purge_import_assert(session, manifest, transformed)
+            final = await collect_target_inventory(session)
+            if final != expected_final_inventory(manifest):
+                raise ManifestError("post-purge final inventory drift")
+            # Re-check the same native machine immediately before the enclosing
+            # transaction commits.  The first stopped-state proof protects the
+            # pre-DML window; this closes the restart race during purge/import.
+            await assert_current_fly_stopped(
+                fly_state_verifier,
+                failure_time=failure_time,
+                expected_machine_id=receipt_target_state["machine_id"],
+            )
 
 
 async def run_verify(manifest: Mapping[str, Any], engine: AsyncEngine) -> dict[str, Any]:
