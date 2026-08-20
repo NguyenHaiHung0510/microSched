@@ -22,6 +22,7 @@ from scripts.cutover_v2 import (
     ManifestError,
     SourceSnapshot,
     SourceValidationError,
+    _normalize_catalog_sql,
     actual_code_identity,
     approval_payload,
     assert_current_fly_stopped,
@@ -74,6 +75,30 @@ NATIVE_FLY_STOPPED = {
         }
     ],
 }
+
+
+@pytest.mark.parametrize(
+    ("catalog_definition", "expected"),
+    [
+        ("PRIMARY KEY (id)", "id"),
+        (
+            "UNIQUE (subject_type, subject_id, dispatched_on)",
+            "subject_type,subject_id,dispatched_on",
+        ),
+        (
+            "FOREIGN KEY (source_id) REFERENCES microsched.calendar_source(id) ON DELETE CASCADE",
+            "(source_id) references microsched.calendar_source(id) on delete cascade",
+        ),
+        (
+            "CHECK ((entity_type IS NULL) = (entity_id IS NULL))",
+            "(entity_type is null) =(entity_id is null)",
+        ),
+    ],
+)
+def test_catalog_constraint_normalization_matches_pg_get_constraintdef(
+    catalog_definition: str, expected: str
+):
+    assert _normalize_catalog_sql(catalog_definition) == expected
 
 
 def source_rows(*, calendar_uid: str = "manual_123") -> dict[str, list[dict]]:

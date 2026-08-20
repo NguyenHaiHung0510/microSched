@@ -456,17 +456,18 @@ def test_schema_attestation_red_green_for_indexes_and_grantees(
             await admin.execute(f'GRANT USAGE ON SCHEMA microsched TO "{extra_role}"')
             with pytest.raises(Exception, match="grantee"):
                 await attest_schema(migrator)
-            await admin.execute(f'REVOKE ALL ON SCHEMA microsched FROM "{extra_role}"')
-            await admin.execute(f'DROP ROLE "{extra_role}"')
-            await attest_schema(migrator)
         finally:
             # Make teardown safe if the assertion itself fails halfway through
             # the deliberate RED/GREEN sequence.
+            await admin.execute(f'REASSIGN OWNED BY "{extra_role}" TO postgres')
+            await admin.execute(f'DROP OWNED BY "{extra_role}"')
+            await admin.execute(f'REVOKE ALL ON SCHEMA microsched FROM "{extra_role}"')
             await admin.execute(f'DROP ROLE IF EXISTS "{extra_role}"')
             await admin.execute(
                 f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" '
                 f'ON microsched."{table}" (lower(name))'
             )
+            await attest_schema(migrator)
             await admin.close()
             await migrator.dispose()
 

@@ -948,6 +948,15 @@ def _catalog_row(row: Mapping[str, Any]) -> dict[str, Any]:
 def _normalize_catalog_sql(value: Any) -> str:
     """Normalize PostgreSQL's harmless display differences, not semantics."""
     result = " ".join(str(value or "").lower().split())
+    # pg_get_constraintdef prefixes catalog definitions with their object
+    # kind (for example ``PRIMARY KEY (id)`` or ``CHECK ((...))``).  Remove
+    # that display-only prefix before peeling redundant outer parentheses;
+    # doing it in the opposite order leaves every catalog PK/UNIQUE wrapped
+    # and leaves CHECK expressions with one extra pair.
+    for prefix in ("check ", "primary key ", "unique ", "foreign key "):
+        if result.startswith(prefix):
+            result = result[len(prefix) :]
+            break
     while result.startswith("(") and result.endswith(")"):
         depth = 0
         balanced = True
@@ -962,10 +971,6 @@ def _normalize_catalog_sql(value: Any) -> str:
         if not balanced or depth != 0:
             break
         result = result[1:-1].strip()
-    for prefix in ("check ", "primary key ", "unique ", "foreign key "):
-        if result.startswith(prefix):
-            result = result[len(prefix) :]
-            break
     result = result.replace("::text", "").replace("::boolean", "").replace("::jsonb", "")
     result = re.sub(r"\s*\(\s*", "(", result)
     result = re.sub(r"\s*\)", ")", result)
@@ -1356,7 +1361,13 @@ async def attest_schema(
         for row in identity["ddl"]["constraints"]
     }
     if actual_constraints != _expected_constraint_contract():
-        raise CutoverError("target catalog constraint contract drift")
+        expected_constraints = _expected_constraint_contract()
+        missing_constraints = expected_constraints - actual_constraints
+        extra_constraints = actual_constraints - expected_constraints
+        raise CutoverError(
+            "target catalog constraint contract drift: "
+            f"missing={sorted(missing_constraints)!r} extra={sorted(extra_constraints)!r}"
+        )
     actual_triggers = {
         (
             row["table_name"],
