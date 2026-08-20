@@ -11,7 +11,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.cutover_v2 import (
     ARTIFACT_KEY_ENV,
+    ARTIFACT_MAGIC,
     OWNER_PUBLIC_KEY_ENV,
+    TARGET_FIELDS,
     CutoverError,
     ManifestError,
     SourceSnapshot,
@@ -19,6 +21,7 @@ from scripts.cutover_v2 import (
     actual_code_identity,
     approval_payload,
     build_manifest,
+    calendar_bucket_inventory,
     canonical_value,
     digest_rows,
     empty_inventory,
@@ -134,6 +137,33 @@ def test_full_digest_changes_when_one_field_changes() -> None:
     )
 
 
+def test_mapped_full_row_digest_covers_every_ordered_field() -> None:
+    for component in (
+        "task",
+        "task_item",
+        "note",
+        "note_item",
+        "calendar_source",
+        "calendar_event",
+    ):
+        row = {field: f"{component}-{field}" for field in TARGET_FIELDS[component]}
+        baseline = digest_rows(component, [row], TARGET_FIELDS[component])
+        for field in TARGET_FIELDS[component]:
+            changed = {**row, field: f"changed-{field}"}
+            assert digest_rows(component, [changed], TARGET_FIELDS[component]) != baseline
+
+
+def test_calendar_buckets_keep_manual_and_imported_receipts_separate() -> None:
+    rows = source_rows(calendar_uid="manual_123")
+    imported = {**rows["calendar_events"][0], "id": uuid4(), "external_uid": "v1-schedule-9"}
+    rows["calendar_events"].append(imported)
+    buckets = calendar_bucket_inventory(rows)
+    assert buckets["manual"]["count"] == 1
+    assert buckets["ics_reimport"]["count"] == 1
+    assert buckets["unclassified"]["count"] == 0
+    assert buckets["manual"]["sorted_id_digest"] != buckets["ics_reimport"]["sorted_id_digest"]
+
+
 def test_transform_maps_constants_and_uuid7_manual_source() -> None:
     transformed = transform_source(SourceSnapshot(source_rows(), NOW))
     assert transformed["task"][0]["priority"] == "p1"
@@ -221,6 +251,10 @@ def test_manifest_digest_and_unsigned_gate() -> None:
     path = Path("cutover-test-manifest.tmp.json")
     try:
         write_manifest(path, manifest)
+        encrypted = path.read_bytes()
+        assert encrypted.startswith(ARTIFACT_MAGIC)
+        assert b"synthetic title" not in encrypted
+        assert b"run-synthetic" not in encrypted
         assert manifest_digest(
             {**manifest, "manifest_digest": manifest_digest(manifest)}
         ) == manifest_digest(manifest)
@@ -297,6 +331,7 @@ def test_failure_receipt_signature_and_expiry_are_enforced() -> None:
         "target_host": "throwaway",
         "source_dump_sha256": manifest["source_dump_sha256"],
         "failed_command": "commit",
+        "failure_outcome": "unknown_after_submit",
         "failure_class": "unknown-after-submit",
         "failure_stage": "post-submit",
         "failure_time": NOW.isoformat(),

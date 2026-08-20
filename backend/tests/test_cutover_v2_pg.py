@@ -337,6 +337,8 @@ def test_commit_transaction_rolls_back_after_purge(monkeypatch, rehearsal) -> No
         try:
             with pytest.raises(cutover_v2.CutoverError, match="mid-transaction"):
                 await run_commit(manifest, target, transformed)
+            _, after_failure = await collect_target_inventory_as_app(target)
+            assert after_failure == manifest["phase_b_target_snapshot"]
         finally:
             monkeypatch.setattr(cutover_v2, "purge_import_assert", original)
             await source.dispose()

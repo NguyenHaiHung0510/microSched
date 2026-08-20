@@ -19,7 +19,7 @@ import secrets
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -522,6 +522,7 @@ def approval_payload(manifest: Mapping[str, Any]) -> dict[str, Any]:
         "target_host": manifest.get("target_host"),
         "target_identity": manifest.get("target_identity"),
         "source_cutoff_at": manifest.get("source_cutoff_at"),
+        "approval_expires_at": manifest.get("approval_expires_at"),
         "source_expected": manifest.get("source_expected"),
         "phase_b_target_snapshot_digest": manifest.get("phase_b_target_snapshot_digest"),
     }
@@ -668,7 +669,8 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
         (
             await connection.execute(
                 text(
-                    "SELECT table_name,column_name,data_type,is_nullable,ordinal_position "
+                    "SELECT table_name,column_name,data_type,is_nullable,ordinal_position,"
+                    "column_default,udt_name "
                     "FROM information_schema.columns WHERE table_schema=:schema "
                     "ORDER BY table_name,ordinal_position"
                 ),
@@ -682,9 +684,13 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
         (
             await connection.execute(
                 text(
-                    "SELECT table_name,constraint_name,constraint_type "
-                    "FROM information_schema.table_constraints WHERE table_schema=:schema "
-                    "ORDER BY table_name,constraint_name"
+                    "SELECT n.nspname AS table_schema, c.relname AS table_name, "
+                    "con.conname AS constraint_name, con.contype AS constraint_type, "
+                    "pg_get_constraintdef(con.oid, true) AS definition "
+                    "FROM pg_catalog.pg_constraint con "
+                    "JOIN pg_catalog.pg_class c ON c.oid=con.conrelid "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                    "WHERE n.nspname=:schema ORDER BY c.relname,con.conname"
                 ),
                 {"schema": schema},
             )
@@ -696,9 +702,13 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
         (
             await connection.execute(
                 text(
-                    "SELECT event_object_table,trigger_name,event_manipulation,action_statement "
-                    "FROM information_schema.triggers WHERE event_object_schema=:schema "
-                    "ORDER BY event_object_table,trigger_name,event_manipulation"
+                    "SELECT n.nspname AS table_schema, c.relname AS table_name, "
+                    "t.tgname AS trigger_name, t.tgenabled, pg_get_triggerdef(t.oid, true) "
+                    "AS definition FROM pg_catalog.pg_trigger t "
+                    "JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                    "WHERE n.nspname=:schema AND NOT t.tgisinternal "
+                    "ORDER BY c.relname,t.tgname"
                 ),
                 {"schema": schema},
             )
@@ -717,6 +727,7 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
         "server_addr": row["server_addr"],
         "server_port": row["server_port"],
         "cluster_name": row["cluster_name"],
+        "ddl": ddl,
         "ddl_sha256": hashlib.sha256(canonical_json(ddl)).hexdigest(),
     }
 
@@ -774,19 +785,6 @@ async def attest_schema(
                 .all()
             )
             identity = await read_connection_identity(connection, "microsched")
-            columns = (
-                (
-                    await connection.execute(
-                        text(
-                            "SELECT table_name, column_name, data_type, is_nullable "
-                            "FROM information_schema.columns WHERE table_schema='microsched' "
-                            "ORDER BY table_name, ordinal_position"
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
             table_names = set(
                 (
                     await connection.execute(
@@ -824,8 +822,9 @@ async def attest_schema(
     payload = {
         "revision": list(revision),
         "tables": sorted(table_names),
-        "columns": [dict(row) for row in columns],
-        "constraints": identity["ddl_sha256"],
+        "columns": identity["ddl"]["columns"],
+        "constraints": identity["ddl"]["constraints"],
+        "triggers": identity["ddl"]["triggers"],
         "grants": [dict(row) for row in grants],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -860,39 +859,47 @@ class SourceSnapshot:
 
 async def load_source_snapshot(engine: AsyncEngine) -> SourceSnapshot:
     async with engine.connect() as connection:
-        source_rows = {
-            "tasks": await _fetch_source_rows(
-                connection,
-                "SELECT id,title,note,status,priority_id,due_at,completed_at,created_at,"
-                "updated_at FROM public.tasks ORDER BY id",
-            ),
-            "task_items": await _fetch_source_rows(
-                connection,
-                "SELECT id,task_id,content,is_completed,position,created_at,updated_at "
-                "FROM public.task_items ORDER BY id",
-            ),
-            "notes": await _fetch_source_rows(
-                connection,
-                "SELECT id,title,body,pinned,priority_id,archived_at,created_at,updated_at "
-                "FROM public.notes ORDER BY id",
-            ),
-            "note_items": await _fetch_source_rows(
-                connection,
-                "SELECT id,note_id,content,is_done,position,created_at,updated_at "
-                "FROM public.note_items ORDER BY id",
-            ),
-            "priorities": await _fetch_source_rows(
-                connection, "SELECT id,name FROM public.priorities ORDER BY id"
-            ),
-            "calendar_events": await _fetch_source_rows(
-                connection,
-                "SELECT ce.id,ce.source_id,ce.title,ce.location,ce.starts_at,ce.ends_at,"
-                "ce.description,ce.user_cancelled,ce.status,ce.external_uid,ce.created_at,"
-                "ce.updated_at,cs.display_name FROM public.calendar_events ce "
-                "LEFT JOIN public.calendar_sources cs ON cs.id=ce.source_id ORDER BY ce.id",
-            ),
-        }
-        cutoff = datetime.now(UTC)
+        async with connection.begin():
+            await connection.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+            await connection.execute(text("SET TRANSACTION READ ONLY"))
+            cutoff = datetime.now(UTC)
+            source_rows = {
+                "tasks": await _fetch_source_rows(
+                    connection,
+                    "SELECT id,title,note,status,priority_id,due_at,completed_at,created_at,"
+                    "updated_at FROM public.tasks ORDER BY id",
+                ),
+                "task_items": await _fetch_source_rows(
+                    connection,
+                    "SELECT id,task_id,content,is_completed,position,created_at,updated_at "
+                    "FROM public.task_items ORDER BY id",
+                ),
+                "notes": await _fetch_source_rows(
+                    connection,
+                    "SELECT id,title,body,pinned,priority_id,archived_at,created_at,updated_at "
+                    "FROM public.notes ORDER BY id",
+                ),
+                "note_items": await _fetch_source_rows(
+                    connection,
+                    "SELECT id,note_id,content,is_done,position,created_at,updated_at "
+                    "FROM public.note_items ORDER BY id",
+                ),
+                "priorities": await _fetch_source_rows(
+                    connection, "SELECT id,name FROM public.priorities ORDER BY id"
+                ),
+                "calendar_events": await _fetch_source_rows(
+                    connection,
+                    "SELECT ce.id,ce.source_id,ce.title,ce.location,ce.starts_at,ce.ends_at,"
+                    "ce.description,ce.user_cancelled,ce.status,ce.external_uid,ce.created_at,"
+                    "ce.updated_at,cs.display_name,"
+                    "CASE "
+                    "WHEN ce.external_uid LIKE 'manual\\_%' ESCAPE '\\' THEN 'manual' "
+                    "WHEN ce.external_uid LIKE 'v1-schedule-%' THEN 'ics_reimport' "
+                    "ELSE 'unclassified' END AS cutover_bucket "
+                    "FROM public.calendar_events ce "
+                    "LEFT JOIN public.calendar_sources cs ON cs.id=ce.source_id ORDER BY ce.id",
+                ),
+            }
     validate_source(source_rows)
     return SourceSnapshot(source_rows, cutoff)
 
@@ -982,25 +989,47 @@ def validate_source(rows: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
         if event.get("display_name") != "v1_sqlite_schedule":
             raise SourceValidationError("calendar event has unknown source taxonomy")
         uid = event.get("external_uid")
-        if uid is None or not (
-            str(uid).startswith("manual_") or str(uid).startswith("v1-schedule-")
-        ):
+        expected_bucket = _calendar_bucket_from_uid(uid)
+        if event.get("cutover_bucket", expected_bucket) != expected_bucket:
+            raise SourceValidationError("calendar SQL taxonomy disagrees with source UID")
+        if expected_bucket == "unclassified":
             raise SourceValidationError("calendar event has unclassified external_uid")
         if event.get("ends_at") <= event.get("starts_at"):
             raise SourceValidationError("calendar event has invalid duration")
 
 
 def calendar_bucket_counts(rows: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, int]:
-    counts = {"manual": 0, "ics_reimport": 0, "unclassified": 0}
+    return {bucket: value["count"] for bucket, value in calendar_bucket_inventory(rows).items()}
+
+
+def _calendar_bucket_from_uid(value: Any) -> str:
+    if isinstance(value, str) and value.startswith("manual_"):
+        return "manual"
+    if isinstance(value, str) and value.startswith("v1-schedule-"):
+        return "ics_reimport"
+    return "unclassified"
+
+
+def calendar_bucket_inventory(
+    rows: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    buckets: dict[str, list[Mapping[str, Any]]] = {
+        "manual": [],
+        "ics_reimport": [],
+        "unclassified": [],
+    }
     for row in rows.get("calendar_events", []):
-        uid = row.get("external_uid")
-        if isinstance(uid, str) and uid.startswith("manual_"):
-            counts["manual"] += 1
-        elif isinstance(uid, str) and uid.startswith("v1-schedule-"):
-            counts["ics_reimport"] += 1
-        else:
-            counts["unclassified"] += 1
-    return counts
+        bucket = row.get("cutover_bucket")
+        if bucket not in buckets:
+            bucket = _calendar_bucket_from_uid(row.get("external_uid"))
+        buckets[bucket].append(row)
+    return {
+        bucket: {
+            "count": len(bucket_rows),
+            "sorted_id_digest": digest_ids(f"calendar_events:{bucket}", bucket_rows),
+        }
+        for bucket, bucket_rows in buckets.items()
+    }
 
 
 def transform_source(
@@ -1153,10 +1182,14 @@ def build_manifest(
         "target_host": target_host_name,
         "target_identity": dict(target_identity or {}),
         "source_cutoff_at": snapshot.cutoff_at.astimezone(UTC).isoformat(),
+        "approval_expires_at": (
+            snapshot.cutoff_at.astimezone(UTC) + timedelta(hours=24)
+        ).isoformat(),
         "source_identity": dict(source_identity),
         "source_expected": source_expected,
         "source_inventory": snapshot.source_inventory,
         "source_dump_sha256": source_dump_sha256,
+        "calendar_buckets": calendar_bucket_inventory(snapshot.rows),
         "expected_ids": expected_ids,
         "phase_b_target_snapshot": dict(target_snapshot),
         "phase_b_target_snapshot_digest": manifest_digest({"snapshot": target_snapshot}),
@@ -1178,6 +1211,7 @@ def finalize_manifest(path: Path, signature: str) -> None:
     payload = decrypt_artifact(path)
     if payload.get("manifest_digest") != manifest_digest(payload):
         raise ManifestError("cannot finalize a changed manifest")
+    verify_signature(signature, approval_payload(payload))
     payload["owner_approval"] = {
         "algorithm": "Ed25519",
         **approval_payload(payload),
@@ -1201,13 +1235,20 @@ def read_final_manifest(
         raise ManifestError("operator supplied SHA is not the actual immutable git SHA")
     if payload.get("target_host") != expected_host:
         raise ManifestError("manifest target host mismatch")
-    if not payload.get("source_dump_sha256"):
+    source_dump_sha = payload.get("source_dump_sha256")
+    if (
+        not isinstance(source_dump_sha, str)
+        or len(source_dump_sha) != 64
+        or any(char not in "0123456789abcdef" for char in source_dump_sha.lower())
+    ):
         raise ManifestError("manifest is not bound to a verified encrypted source dump")
     required_sections = (
         "source_identity",
         "source_inventory",
         "source_expected",
         "expected_ids",
+        "calendar_buckets",
+        "approval_expires_at",
         "target_identity",
         "phase_b_target_snapshot",
         "phase_b_target_snapshot_digest",
@@ -1224,10 +1265,17 @@ def read_final_manifest(
         "script_sha": identity["git_sha"],
         "script_file_sha256": identity["file_sha256"],
         "target_host": expected_host,
+        "approval_expires_at": payload.get("approval_expires_at"),
         "phase_b_target_snapshot_digest": payload.get("phase_b_target_snapshot_digest"),
     }
     if any(approval.get(key) != value for key, value in required.items()):
         raise ManifestError("owner approval is not bound to this exact manifest")
+    try:
+        approval_expiry = datetime.fromisoformat(payload["approval_expires_at"])
+    except KeyError, TypeError, ValueError:
+        raise ManifestError("manifest approval expiry is invalid") from None
+    if approval_expiry.tzinfo is None or approval_expiry <= datetime.now(UTC):
+        raise ManifestError("manifest owner approval has expired")
     if approval.get("algorithm") != "Ed25519":
         raise ManifestError("owner approval algorithm is not Ed25519")
     if not approval.get("signature"):
@@ -1276,6 +1324,14 @@ def read_failure_receipt(
         raise ManifestError("failure receipt algorithm is not Ed25519")
     if receipt.get("failed_command") not in {"commit", "verify"}:
         raise ManifestError("failure receipt has an invalid failed command")
+    outcome = receipt.get("failure_outcome")
+    expected_outcome = (
+        "unknown_after_submit"
+        if receipt.get("failed_command") == "commit"
+        else "post_commit_verify_failed"
+    )
+    if outcome != expected_outcome:
+        raise ManifestError("failure receipt is not an authorized recoverable outcome")
     if (
         not receipt.get("failure_class")
         or not receipt.get("failure_stage")
@@ -1293,23 +1349,47 @@ def read_failure_receipt(
     inventory_map = receipt.get("failed_run_domain_inventory")
     if set(inventory_map or {}) != set(DOMAIN_COMPONENTS):
         raise ManifestError("failure receipt does not contain the complete domain inventory")
+    for component in DOMAIN_COMPONENTS:
+        proof = inventory_map[component]
+        if (
+            not isinstance(proof, dict)
+            or not isinstance(proof.get("count"), int)
+            or not isinstance(proof.get("sorted_id_digest"), str)
+            or len(proof["sorted_id_digest"]) != 64
+            or not isinstance(proof.get("full_row_digest"), str)
+            or len(proof["full_row_digest"]) != 64
+        ):
+            raise ManifestError("failure receipt has an invalid domain inventory proof")
     try:
         expiry = datetime.fromisoformat(receipt.get("expires_at"))
     except TypeError, ValueError:
         raise ManifestError("failure receipt expiry is invalid") from None
-    if expiry.tzinfo is None or expiry <= (now or datetime.now(UTC)):
+    try:
+        failure_time = datetime.fromisoformat(receipt.get("failure_time"))
+    except TypeError, ValueError:
+        raise ManifestError("failure receipt failure time is invalid") from None
+    current_time = now or datetime.now(UTC)
+    if (
+        expiry.tzinfo is None
+        or failure_time.tzinfo is None
+        or failure_time > current_time
+        or expiry <= current_time
+        or expiry <= failure_time
+    ):
         raise ManifestError("failure receipt has expired")
     return receipt
 
 
 def write_failure_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
     payload = dict(receipt)
+    payload["algorithm"] = "Ed25519"
     path.write_bytes(encrypt_artifact(payload))
 
 
 def finalize_failure_receipt(path: Path, signature: str) -> None:
     payload = decrypt_artifact(path)
     payload["algorithm"] = "Ed25519"
+    verify_signature(signature, failure_receipt_payload(payload))
     payload["signature"] = signature
     path.write_bytes(encrypt_artifact(payload))
 
@@ -1348,6 +1428,7 @@ async def collect_target_inventory_as_app(
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
         async with session.begin():
+            await session.execute(text("SET TRANSACTION READ ONLY"))
             await assert_app_role(session)
             identity = await read_connection_identity(session, "microsched")
             return identity, await collect_target_inventory(session)
@@ -1453,6 +1534,7 @@ async def run_verify(manifest: Mapping[str, Any], engine: AsyncEngine) -> dict[s
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
         async with session.begin():
+            await session.execute(text("SET TRANSACTION READ ONLY"))
             await assert_app_role(session)
             target_identity = await read_connection_identity(session, "microsched")
             assert_identity_matches(target_identity, manifest["target_identity"])
@@ -1643,6 +1725,11 @@ async def async_main(args: argparse.Namespace) -> int:
             f"manual={buckets['manual']} ics_reimport={buckets['ics_reimport']} "
             f"unclassified={buckets['unclassified']}"
         )
+        for bucket, proof in calendar_bucket_inventory(snapshot.rows).items():
+            print(
+                f"calendar_bucket {bucket} count={proof['count']} "
+                f"id_digest={proof['sorted_id_digest']}"
+            )
         for component in transformed:
             full_digest = digest_rows(component, transformed[component], TARGET_FIELDS[component])
             print(
