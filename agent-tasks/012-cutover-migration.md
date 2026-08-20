@@ -52,6 +52,11 @@ sau source freeze tại exact cut-off (§4.1).
 | `push_subscription` | `id` | app-readable: như trên; không in endpoint/key |
 | `alembic_version` | `version_num` | **schema/revision attestation only**, qua bounded migrator/owner read-only connection; không phải app-readable preserve |
 
+`APP_READABLE_PRESERVE = (app_setting, session, push_subscription)`. Mọi `microsched_app` transaction —
+Phase-B preflight, `--commit`, `--verify` và `--recover` — assert **every component của đúng set này**, không
+ít hơn và không nhiều hơn. `alembic_version`/catalog không kế thừa app assertion; chỉ `attest_schema` qua
+migrator/owner read-only pre/post được phép attest chúng.
+
 ### 2.2 Purge set và expected end state
 
 | Nhóm | Tables |
@@ -218,8 +223,8 @@ Close that attestation connection **before** reading application rows or opening
 issue DML, grant, role or schema changes. No grant change is authorized. Record its revision/catalog
 fingerprint in the manifest. A distinct `microsched_app` **read-only preflight** connection runs
 `current_user` and must equal exactly `microsched_app`; it collects encrypted pre-state count/identity/
-full-row digests for every mapped + purge-only table and the three app-readable preserve tables, then closes.
-It neither queries `alembic_version` nor reuses attestation credentials.
+full-row digests for every mapped + purge-only table and **every `APP_READABLE_PRESERVE` component**, then
+closes. It neither queries `alembic_version` nor reuses attestation credentials.
 
 Only then finalize/hash/sign the manifest and owner approval payload in §2.3; lack of a valid matching
 signature aborts. No dry-run, target mutation or recovery begins from a draft/unsigned/changed manifest.
@@ -235,8 +240,9 @@ positions, timestamp, privacy/delete flags and every constant/default field list
 only transiently in local hash computation; never stdout, PR or artifact.
 
 Mapped components require exact count + sorted-ID set + full-row digest after import. Purge-only components
-require the `count=0` and both canonical empty digests in §2.2. Preserve components require exactly their
-Phase-B digest; `alembic_version` uses `version_num` as identity.
+require the `count=0` and both canonical empty digests in §2.2. Every `APP_READABLE_PRESERVE` component
+requires exactly its Phase-B digest; `alembic_version`/catalog are schema-attestation-only and use
+`version_num` identity through `attest_schema`, never an app assertion.
 
 **Ordered full-row preserve formulas** (all fields, in this exact order):
 
@@ -249,8 +255,26 @@ Phase-B digest; `alembic_version` uses `version_num` as identity.
 
 `value` uses the already-defined sorted-key/no-whitespace JSON canonicalization. Endpoint, `p256dh`, `auth`,
 token hash and email are full digest inputs (not redacted/omitted) but never printed; `private_until` is a
-full timestamp input, including NULL. The app transaction reads only the first three **preserve components**;
+full timestamp input, including NULL. The app transaction reads every component in the three-component
+`APP_READABLE_PRESERVE` set only;
 every `alembic_version`/catalog read is only through `attest_schema` before and after the relevant operation.
+
+**Ordered full-row purge-only formulas** (all fields, in this exact order):
+
+| Component | Canonical ordered columns |
+|---|---|
+| `day_annotation` | `id`, `starts_on`, `ends_on`, `label`, `note_md`, `color`, `is_private`, `created_at`, `updated_at` |
+| `tracker_group` | `id`, `name`, `kind`, `color`, `position`, `created_at`, `updated_at` |
+| `tracker` | `id`, `name`, `kind`, `direction`, `input_mode`, `group_id`, `unit`, `color`, `reminder_time`, `reminder_text`, `is_private`, `deleted_at`, `created_at`, `updated_at` |
+| `entry` | `id`, `tracker_id`, `subscription_id`, `quantity`, `amount`, `list_amount`, `occurred_at`, `note_md`, `deleted_at`, `created_at`, `updated_at` |
+| `subscription` | `id`, `name`, `tracker_id`, `amount`, `list_amount`, `period_count`, `period_unit`, `started_on`, `expires_on`, `auto_renew`, `canceled_at`, `note_md`, `deleted_at`, `created_at`, `updated_at` |
+| `reminder_dispatch` | `id`, `subject_type`, `subject_id`, `dispatched_on`, `status`, `attempt_count`, `last_attempt_at`, `confirmed_entry_id`, `confirmed_at`, `created_at`, `updated_at` |
+| `message` | `id`, `role`, `content`, `is_private`, `trace_id`, `created_at`, `updated_at` |
+| `audit_log` | `id`, `trace_id`, `turn_id`, `action`, `tool`, `entity_type`, `entity_id`, `payload`, `created_at`, `updated_at` |
+
+Phase-B snapshot and recovery failure inventory use these exact formulas, not reflected `SELECT *` or a
+catalog-order shortcut. `payload` uses JSON canonicalization; every nullable/encrypted field remains a digest
+input but never appears in logs. Catalog/model drift from this list aborts before DML.
 
 ## 5. CLI, atomic cutover and verify
 
@@ -275,8 +299,8 @@ No `--skip-calendar`, `--force` or implicit write mode exists.
 `attest_schema(commit_pre)` must first exactly match the signed Phase-B revision/catalog digest and close.
 Then open one `AsyncSession` under `microsched_app` and one `db.begin()`. **Before the first DELETE in this
 same transaction**, recompute every mapped + purge-only count, sorted-ID digest and full-row digest; all
-must exact-match `PHASE_B_TARGET_SNAPSHOT`. Recompute the three app-readable preserve digests and require
-their Phase-B values too. Any mismatch aborts before DELETE; `alembic_version` is deliberately absent from
+must exact-match `PHASE_B_TARGET_SNAPSHOT`. Recompute **every `APP_READABLE_PRESERVE` component** and
+require its Phase-B digest. Any mismatch aborts before DELETE; `alembic_version` is deliberately absent from
 this app transaction. Purge only after that gate, in exact child-before-parent order:
 
 `reminder_dispatch -> entry -> subscription -> tracker -> tracker_group -> calendar_event -> calendar_source
@@ -287,7 +311,7 @@ Then insert parent-before-child mapped rows: `task -> task_item`, `note -> note_
 
 1. every mapped component exact-matches manifest count, ID set and full-row digest;
 2. every purge-only component has count 0 plus the two canonical empty digests;
-3. every preserve component still matches Phase-B digest.
+3. every `APP_READABLE_PRESERVE` component still matches its Phase-B digest.
 
 Any conflict, unexpected mapped ID, residual purge-only row, FK error, signature/schema/formula/source/preserve
 drift is exception and rolls back purge plus import. Commit only after all assertions.
@@ -300,7 +324,7 @@ any subsequent app connection; the app role never receives that read.
 
 `attest_schema(verify_pre)` first matches the signed `alembic_version`/catalog digest and closes.
 `--verify` then opens no DML transaction: an app read-only connection repeats mapped exact result, all eight
-purge-only empty results, and the three app-readable preserve digests. It must fail if even one residual row
+purge-only empty results, and every `APP_READABLE_PRESERVE` digest. It must fail if even one residual row
 exists in any purge-only table; it is not a subset check. `attest_schema(verify_post)` repeats the bounded
 migrator/owner read-only revision/catalog proof after the app read and must still match. At no point does the
 app role read `alembic_version`.
@@ -332,12 +356,13 @@ manual-only atomic manifest.
 
 `attest_schema(recover_pre)` must match the signed `alembic_version`/catalog digest and close. In one fresh
 `microsched_app` transaction, **before the first DELETE**, exact-match the current complete mapped +
-purge-only domain inventory to the failure receipt and the three app-readable preserve digests to Phase B.
+purge-only domain inventory to the failure receipt and every `APP_READABLE_PRESERVE` digest to Phase B.
 Mismatch means the target has moved beyond the authorized failed-run state and recovery aborts; this prevents
 reusing an old manifest to purge new domain data. The app transaction never reads `alembic_version`.
 
 Only then purge **the complete §2.2 purge set** in the same child-first order, reimport the exact manifest
-snapshot, perform §5.1 canonical/purge/preserve assertions, and commit. `attest_schema(recover_post)` then
+snapshot, perform §5.1 canonical/purge/every-`APP_READABLE_PRESERVE` assertion, and commit.
+`attest_schema(recover_post)` then
 must exact-match signed revision/catalog before success. Any error rolls back the whole recovery. It is
 recovery of reconstructible domain data, **not** a restore of target mock/trash; it never restores full Neon
 target dump or touches preserve data.
@@ -358,9 +383,10 @@ Fixture DDL/data are synthetic and sanitized: no owner dump, content, endpoint, 
    any grant change.
 4. Target fixture seeds every mapped/purge-only and preserve table. Before first DELETE, mutate each
    Phase-B mapped/purge-only count, ID set or full-row field one at a time; `--commit` must abort with no
-   target DML. Success leaves app-readable preserve byte/digest-identical, mapped exact, and each purge-only
-   table zero/empty. Parameterized residual-row negative cases make inside-transaction and `--verify` fail
-   for every purge-only table.
+   target DML. Success leaves every `APP_READABLE_PRESERVE` component byte/digest-identical, mapped exact, and each purge-only
+   table zero/empty. For each of all eight purge-only field lists in §4.3, perturb every listed field and
+   prove both Phase-B pre-DELETE and recovery-inventory digest gates reject it. Parameterized residual-row
+   negative cases make inside-transaction and `--verify` fail for every purge-only table.
 5. Induce failure after purge and before final assertion: transaction rolls target state back exactly.
    Manifest draft/unsigned/owner-approval payload/signature/SHA/catalog/formula/host/preserve drift and
    mapped-ID overlap each abort. Approval for an altered Phase-B target snapshot must not reach DELETE.

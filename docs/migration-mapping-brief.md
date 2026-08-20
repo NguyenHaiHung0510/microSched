@@ -45,10 +45,14 @@ exact-match signed snapshot; drift abort. Mapped components exact-match transfor
 digest; mọi purge-only table (`day_annotation`, tracker/subscription/reminder, `message`, `audit_log`) must
 end count 0 + canonical empty digests.
 
-`app_setting`/`session`/`push_subscription` là app-readable preserve; `alembic_version`/catalog chỉ được
-attest qua bounded migrator/owner read-only connection trước/sau operation rồi đóng. DML luôn là
-`microsched_app`, không đổi grant. `--recover` còn require failure receipt có hạn, bind run/manifest/failure
-và inventory failed-run với Fly never restarted; source archived rows remain fail-closed pending owner decision.
+`app_setting`/`session`/`push_subscription` là **toàn bộ** app-readable preserve set: mọi app transaction
+assert đủ đúng ba component này. `alembic_version`/catalog chỉ được attest qua bounded migrator/owner
+read-only connection trước/sau operation rồi đóng; không kế thừa app assertion hay mở rộng grant. DML luôn
+là `microsched_app`. `--recover` còn require failure receipt có hạn, bind run/manifest/failure và inventory
+failed-run với Fly never restarted; source archived rows remain fail-closed pending owner decision.
+
+Mọi digest pre-state/recovery cho 8 purge-only tables dùng field-order explicit ở Task 012 (không `SELECT *`
+hay column-order ngầm), gồm mọi field/timestamp/JSON/ciphertext cần thiết để một thay đổi một cột cũng abort.
 
 ## 4. Vệ sinh vận hành
 
