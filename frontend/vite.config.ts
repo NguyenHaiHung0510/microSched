@@ -25,6 +25,8 @@ export default defineConfig({
         name: 'microSched',
         short_name: 'microSched',
         display: 'standalone',
+        theme_color: '#f3eeef',
+        background_color: '#f3eeef',
         icons: [
           {
             src: 'microsched.svg',

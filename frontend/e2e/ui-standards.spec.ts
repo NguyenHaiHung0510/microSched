@@ -160,7 +160,7 @@ test('F15: --border token and rendered outline borders keep non-text contrast >=
   const borders = await page.evaluate(() => {
     const rows: Array<{ border: string; background: string }> = []
     for (const el of document.querySelectorAll<HTMLElement>(
-      '[data-slot="button"][data-variant="outline"]',
+      '[data-slot="button"][data-variant="outline"], [data-slot="button"][data-variant="softRose"]',
     )) {
       const style = getComputedStyle(el)
       const background = style.backgroundColor
