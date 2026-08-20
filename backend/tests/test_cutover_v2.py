@@ -1,27 +1,38 @@
 """Synthetic, privacy-safe contracts for the 012 cutover transform."""
 
+import base64
 import json
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.cutover_v2 import (
+    ARTIFACT_KEY_ENV,
+    OWNER_PUBLIC_KEY_ENV,
     CutoverError,
     ManifestError,
     SourceSnapshot,
     SourceValidationError,
+    actual_code_identity,
+    approval_payload,
     build_manifest,
     canonical_value,
     digest_rows,
     empty_inventory,
+    failure_receipt_payload,
+    finalize_failure_receipt,
+    finalize_manifest,
     manifest_digest,
     new_uuid7,
+    read_failure_receipt,
     read_final_manifest,
     transform_source,
     validate_source,
     verify_source_dump,
+    write_failure_receipt,
     write_manifest,
 )
 
@@ -189,6 +200,14 @@ def test_manifest_digest_and_unsigned_gate() -> None:
             "push_subscription",
         )
     }
+    monkeypatch = pytest.MonkeyPatch()
+    key = Ed25519PrivateKey.generate()
+    monkeypatch.setenv(ARTIFACT_KEY_ENV, base64.b64encode(b"a" * 32).decode())
+    monkeypatch.setenv(
+        OWNER_PUBLIC_KEY_ENV,
+        base64.b64encode(key.public_key().public_bytes_raw()).decode(),
+    )
+    code = actual_code_identity()
     manifest = build_manifest(
         snapshot=SourceSnapshot(source_rows(), NOW),
         transformed=transformed,
@@ -196,7 +215,8 @@ def test_manifest_digest_and_unsigned_gate() -> None:
         source_identity={"database": "microschedule_v2", "host": "local"},
         schema_attestation={"catalog_digest": "synthetic"},
         target_host_name="throwaway",
-        script_sha="synthetic-sha",
+        script_sha=code["git_sha"],
+        source_dump_sha256="a" * 64,
     )
     path = Path("cutover-test-manifest.tmp.json")
     try:
@@ -206,26 +226,31 @@ def test_manifest_digest_and_unsigned_gate() -> None:
         ) == manifest_digest(manifest)
         with pytest.raises(ManifestError, match="owner approval"):
             read_final_manifest(
-                path, expected_script_sha="synthetic-sha", expected_host="throwaway"
+                path, expected_script_sha=code["git_sha"], expected_host="throwaway"
             )
-        approved = json.loads(path.read_text(encoding="utf-8"))
-        approved["owner_approval"] = {
-            "manifest_digest": approved["manifest_digest"],
-            "run_id": approved["run_id"],
-            "script_sha": "synthetic-sha",
-            "target_host": "throwaway",
-            "phase_b_target_snapshot_digest": approved["phase_b_target_snapshot_digest"],
-            "signature": "synthetic-owner-signature",
-        }
-        path.write_text(json.dumps(approved), encoding="utf-8")
+        from scripts.cutover_v2 import decrypt_artifact
+
+        unsigned = decrypt_artifact(path)
+        signature = base64.b64encode(
+            key.sign(
+                json.dumps(
+                    approval_payload(unsigned),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            )
+        ).decode()
+        finalize_manifest(path, signature)
         assert (
             read_final_manifest(
-                path, expected_script_sha="synthetic-sha", expected_host="throwaway"
+                path, expected_script_sha=code["git_sha"], expected_host="throwaway"
             )["manifest_digest"]
-            == approved["manifest_digest"]
+            == unsigned["manifest_digest"]
         )
     finally:
         path.unlink(missing_ok=True)
+        monkeypatch.undo()
 
 
 def test_empty_inventory_is_stable() -> None:
@@ -236,11 +261,115 @@ def test_empty_inventory_is_stable() -> None:
 
 
 def test_source_dump_hash_seam() -> None:
-    dump = Path(__file__)
-    digest = verify_source_dump(dump)
-    assert verify_source_dump(dump, digest) == digest
-    with pytest.raises(CutoverError, match="SHA-256"):
-        verify_source_dump(dump, "0" * 64)
+    dump = Path("synthetic-source.dump.age")
+    dump.write_bytes(b"age-encrypted synthetic dump")
+    try:
+        digest = verify_source_dump(dump)
+        assert verify_source_dump(dump, digest) == digest
+        with pytest.raises(CutoverError, match="SHA-256"):
+            verify_source_dump(dump, "0" * 64)
+    finally:
+        dump.unlink(missing_ok=True)
+
+
+def test_failure_receipt_signature_and_expiry_are_enforced() -> None:
+    monkeypatch = pytest.MonkeyPatch()
+    key = Ed25519PrivateKey.generate()
+    monkeypatch.setenv(ARTIFACT_KEY_ENV, base64.b64encode(b"b" * 32).decode())
+    monkeypatch.setenv(
+        OWNER_PUBLIC_KEY_ENV,
+        base64.b64encode(key.public_key().public_bytes_raw()).decode(),
+    )
+    code = actual_code_identity()
+    manifest = {
+        "manifest_digest": "c" * 64,
+        "run_id": "run-synthetic",
+        "script_sha": code["git_sha"],
+        "script_file_sha256": code["file_sha256"],
+        "source_dump_sha256": "d" * 64,
+    }
+    receipt = {
+        "run_id": manifest["run_id"],
+        "manifest_digest": manifest["manifest_digest"],
+        "script_sha": code["git_sha"],
+        "script_file_sha256": code["file_sha256"],
+        "target_host": "throwaway",
+        "source_dump_sha256": manifest["source_dump_sha256"],
+        "failed_command": "commit",
+        "failure_class": "unknown-after-submit",
+        "failure_stage": "post-submit",
+        "failure_time": NOW.isoformat(),
+        "expires_at": (NOW + timedelta(hours=1)).isoformat(),
+        "fly_state": "stopped",
+        "target_state": {"sole_machine_stopped": True},
+        "fly_never_restarted": True,
+        "failed_run_domain_inventory": {
+            component: empty_inventory(component)
+            for component in (
+                "task",
+                "task_item",
+                "note",
+                "note_item",
+                "calendar_source",
+                "calendar_event",
+                "day_annotation",
+                "tracker_group",
+                "tracker",
+                "entry",
+                "subscription",
+                "reminder_dispatch",
+                "message",
+                "audit_log",
+            )
+        },
+    }
+    path = Path("cutover-failure-receipt.tmp.age")
+    try:
+        write_failure_receipt(path, receipt)
+        signature = base64.b64encode(
+            key.sign(
+                json.dumps(
+                    failure_receipt_payload(receipt),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            )
+        ).decode()
+        finalize_failure_receipt(path, signature)
+        assert (
+            read_failure_receipt(
+                path,
+                manifest=manifest,
+                expected_script_sha=code["git_sha"],
+                expected_host="throwaway",
+                now=NOW,
+            )["failure_class"]
+            == "unknown-after-submit"
+        )
+        stale = {**receipt, "expires_at": (NOW - timedelta(seconds=1)).isoformat()}
+        stale["signature"] = base64.b64encode(
+            key.sign(
+                json.dumps(
+                    failure_receipt_payload(stale),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            )
+        ).decode()
+        write_failure_receipt(path, stale)
+        with pytest.raises(ManifestError, match="expired"):
+            read_failure_receipt(
+                path,
+                manifest=manifest,
+                expected_script_sha=code["git_sha"],
+                expected_host="throwaway",
+                now=NOW,
+            )
+    finally:
+        path.unlink(missing_ok=True)
+        monkeypatch.undo()
 
 
 def test_new_uuid7_is_uuid7() -> None:
