@@ -21,7 +21,7 @@ from app.domain.reading import can_see_private, readable, with_privacy_gate
 
 TaskStatus = Literal["open", "completed"]
 TaskListStatus = Literal["open", "completed", "all"]
-TaskBucket = Literal["dated", "overdue", "undated"]
+TaskBucket = Literal["dated", "overdue", "undated", "open_picker"]
 TaskPriority = Literal["p1", "p2", "p3"]
 NonEmptyText = Annotated[str, Field(min_length=1)]
 
@@ -368,7 +368,11 @@ class TaskStore:
         created_at = datetime.fromisoformat(str(created_raw)) if created_raw else None
         task_id = UUID(str(last["id"]))
         same_due = task_cls.due_at.is_(None) if due_at is None else task_cls.due_at == due_at
-        later_due = task_cls.due_at > due_at if due_at is not None else false()
+        later_due = (
+            or_(task_cls.due_at > due_at, task_cls.due_at.is_(None))
+            if due_at is not None
+            else false()
+        )
         same_created = (
             task_cls.created_at.is_(None)
             if created_at is None
@@ -465,7 +469,13 @@ class TaskStore:
         stmt = readable(select(Task), Task, auth)
         if status != "all":
             stmt = stmt.where(Task.status == status)
-        if bucket == "undated":
+        if bucket == "open_picker":
+            # Calendar move selection is a bounded open-work view across both
+            # dated and undated tasks. It deliberately has its own cursor scope
+            # so a calendar continuation can never be replayed as a timeline
+            # bucket cursor.
+            stmt = stmt.where(Task.status == "open")
+        elif bucket == "undated":
             stmt = stmt.where(Task.due_at.is_(None))
         elif bucket == "overdue":
             if from_instant is None:

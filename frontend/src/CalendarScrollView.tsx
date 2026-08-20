@@ -91,7 +91,7 @@ async function fetchTaskPages(
 type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
 
 async function fetchOpenTaskPage(cursor: string | null = null): Promise<OpenTaskPage> {
-  const params = new URLSearchParams({ status: 'open', limit: '50' })
+  const params = new URLSearchParams({ status: 'open', bucket: 'open_picker', limit: '50' })
   if (cursor) params.set('cursor', cursor)
   return apiRequest<OpenTaskPage>(`/api/tasks?${params.toString()}`)
 }

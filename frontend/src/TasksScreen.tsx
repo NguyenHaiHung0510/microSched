@@ -122,12 +122,17 @@ export function TasksScreen() {
   const [hasPrevious, setHasPrevious] = useState(false)
   const [hasNext, setHasNext] = useState(false)
   const [rangeError, setRangeError] = useState<{ direction: 'earlier' | 'later'; text: string } | null>(null)
+  const [continuationError, setContinuationError] = useState<{ bucket: TimelineBucket; text: string } | null>(null)
   const [completedOpen, setCompletedOpen] = useState<Set<string>>(new Set())
   const [loadingDirection, setLoadingDirection] = useState<'earlier' | 'later' | null>(null)
   const [continuationLoading, setContinuationLoading] = useState(false)
+  const cursorRangeRef = useRef({ from: defaultStart, to: addVietnamDays(defaultEnd, 1) })
+  const cursorStateDirtyRef = useRef(false)
 
   useEffect(() => {
     queueMicrotask(() => {
+      cursorRangeRef.current = { from: defaultStart, to: addVietnamDays(defaultEnd, 1) }
+      cursorStateDirtyRef.current = false
       setLoadedStart(defaultStart)
       setLoadedEnd(defaultEnd)
       setExtraTasks([])
@@ -135,6 +140,7 @@ export function TasksScreen() {
       setHasPrevious(false)
       setHasNext(false)
       setRangeError(null)
+      setContinuationError(null)
       setCompletedOpen(new Set())
     })
   }, [defaultEnd, defaultStart, filter])
@@ -151,8 +157,9 @@ export function TasksScreen() {
   })
 
   useEffect(() => {
-    if (timeline.data) {
+    if (timeline.data && !cursorStateDirtyRef.current) {
       queueMicrotask(() => {
+        cursorRangeRef.current = { from: defaultStart, to: addVietnamDays(defaultEnd, 1) }
         setBucketCursors({
           overdue: timeline.data.bucket_cursors.overdue ?? null,
           dated: timeline.data.bucket_cursors.dated ?? null,
@@ -267,6 +274,8 @@ export function TasksScreen() {
     const to = direction === 'earlier' ? loadedStart : addVietnamDays(loadedEnd, 8)
     setLoadingDirection(direction)
     setRangeError(null)
+    setContinuationError(null)
+    cursorStateDirtyRef.current = true
     try {
       const response = await apiRequest<TaskTimelineResponse>(
         `/api/tasks/timeline?status=${filter}&from=${encodeURIComponent(`${from}T00:00:00+07:00`)}&to=${encodeURIComponent(`${to}T00:00:00+07:00`)}&limit=50`,
@@ -286,6 +295,7 @@ export function TasksScreen() {
       setExtraTasks((current) => [...current, ...response.items])
       if (direction === 'earlier') setLoadedStart(from)
       else setLoadedEnd(addVietnamDays(to, -1))
+      cursorRangeRef.current = { from, to }
       setBucketCursors({
         overdue: response.bucket_cursors.overdue ?? null,
         dated: response.bucket_cursors.dated ?? null,
@@ -304,12 +314,17 @@ export function TasksScreen() {
     const cursor = bucketCursors[bucket]
     if (!cursor || continuationLoading) return
     setContinuationLoading(true)
+    setContinuationError(null)
+    cursorStateDirtyRef.current = true
+    const cursorRange = cursorRangeRef.current
     try {
       const response = await apiRequest<{ items: Task[]; next_cursor: string | null }>(
-        `/api/tasks?status=${filter}&from=${encodeURIComponent(`${loadedStart}T00:00:00+07:00`)}&to=${encodeURIComponent(`${addVietnamDays(loadedEnd, 1)}T00:00:00+07:00`)}&bucket=${bucket}&cursor=${encodeURIComponent(cursor)}&limit=50`,
+        `/api/tasks?status=${filter}&from=${encodeURIComponent(`${cursorRange.from}T00:00:00+07:00`)}&to=${encodeURIComponent(`${cursorRange.to}T00:00:00+07:00`)}&bucket=${bucket}&cursor=${encodeURIComponent(cursor)}&limit=50`,
       )
       setExtraTasks((current) => [...current, ...response.items])
       setBucketCursors((current) => ({ ...current, [bucket]: response.next_cursor }))
+    } catch (error) {
+      setContinuationError({ bucket, text: errorMessage(error) })
     } finally {
       setContinuationLoading(false)
     }
@@ -425,6 +440,7 @@ export function TasksScreen() {
           {bucketCursors.undated ? <Button data-testid="task-load-more-undated" size="lg" variant="ghost" disabled={continuationLoading} onClick={() => void loadMoreBucket('undated')}>{continuationLoading ? 'Đang tải…' : 'Xem thêm việc chưa xếp ngày'}</Button> : null}
         </div>
         {rangeError ? <div className="flex flex-wrap items-center gap-2" role="status"><p className="text-sm text-bad" role="alert">{rangeError.text}</p><Button size="lg" variant="outline" disabled={loadingDirection !== null} onClick={() => void loadBlock(rangeError.direction)}>Thử lại</Button></div> : null}
+        {continuationError ? <div className="flex flex-wrap items-center gap-2" role="status"><p className="text-sm text-bad" role="alert">{continuationError.text}</p><Button size="lg" variant="outline" disabled={continuationLoading} onClick={() => void loadMoreBucket(continuationError.bucket)}>Thử lại</Button></div> : null}
         <p className="text-sm text-muted-foreground" aria-live="polite">Đang xem {loadedStart} đến {loadedEnd}.</p>
       </section>
     </div>

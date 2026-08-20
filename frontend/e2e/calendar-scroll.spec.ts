@@ -270,6 +270,25 @@ test.describe('mobile (390x844, touch)', () => {
     }
   })
 
+  test('move picker reaches an undated open task through bounded pages', async ({ page, taskApi }) => {
+    await calendarRoutes(page, { events: [], annotations: [] })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
+    await page.getByTestId('calendar-day-move-task').tap()
+    await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
+
+    const target = page.locator('[data-testid="calendar-move-task"][data-task-id="undated-001"]')
+    for (let attempt = 0; attempt < 8 && !(await target.isVisible()); attempt += 1) {
+      const more = page.getByTestId('calendar-move-load-more')
+      await expect(more).toBeVisible()
+      await more.click()
+    }
+    await expect(target).toBeVisible()
+    await target.click()
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === 'undated-001')?.due_at).toBe(`${vnDay(0)}T23:59:00+07:00`)
+  })
+
   test('private lock remounts calendar and closes a detail dialog', async ({ page, taskApi }) => {
     const privateTask = taskApi.tasks.find((entry) => entry.id === 'task-009')!
     privateTask.due_at = iso(vnDay(0), 10)

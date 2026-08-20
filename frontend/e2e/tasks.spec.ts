@@ -27,6 +27,35 @@ test('date navigation advances contiguous seven-day blocks without duplicate hea
   expect(all.slice(0, 7)).not.toEqual(first)
 })
 
+test('bucket continuation keeps its cursor range after date navigation', async ({ page }) => {
+  await openTasksScreen(page)
+  await page.getByTestId('task-load-earlier').click()
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  const statuses: number[] = []
+  page.on('response', (response) => {
+    if (new URL(response.url()).pathname === '/api/tasks' && response.request().method() === 'GET') statuses.push(response.status())
+  })
+  await page.getByTestId('task-load-more-undated').click()
+  await expect(page.locator('[data-task-id="undated-119"]')).toBeVisible()
+  expect(statuses).toContain(200)
+  expect(statuses).not.toContain(422)
+})
+
+test('bucket continuation keeps a visible retry after a terminal API error', async ({ page }) => {
+  await openTasksScreen(page)
+  await page.route('**/api/tasks?*', async (route) => {
+    const url = new URL(route.request().url())
+    if (route.request().method() === 'GET' && url.searchParams.has('cursor')) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'temporary failure' }) })
+      return
+    }
+    await route.fallback()
+  })
+  await page.getByTestId('task-load-more-undated').click()
+  await expect(page.getByRole('alert')).toContainText('temporary failure')
+  await expect(page.getByRole('button', { name: 'Thử lại' })).toBeVisible()
+})
+
 test('same-day cursor continuation reaches synthetic rows beyond the first bounded page', async ({ page }) => {
   await openTasksScreen(page)
   await expect(page.locator('[data-task-id="synthetic-205"]')).toHaveCount(0)

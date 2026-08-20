@@ -511,6 +511,8 @@ export function DayDetailDialog({
               moveTasks.map((task) => (
                 <Button
                   key={task.id}
+                  data-testid="calendar-move-task"
+                  data-task-id={task.id}
                   variant="outline"
                   className="h-auto w-full justify-start gap-3 p-3 text-left"
                   disabled={rescheduleTask.isPending}

@@ -119,6 +119,15 @@ def test_cursor_reaches_all_rows_beyond_191_on_throwaway_postgres(pg_dsn):
                     ),
                 )
                 created.append(open_overdue.id)
+                undated_open: list[UUID] = []
+                for index in range(60):
+                    undated = await store.create(
+                        db,
+                        auth,
+                        TaskCreate(title=f"Open undated picker {index}"),
+                    )
+                    undated_open.append(undated.id)
+                    created.append(undated.id)
                 await db.commit()
 
             collected: list[UUID] = []
@@ -155,6 +164,25 @@ def test_cursor_reaches_all_rows_beyond_191_on_throwaway_postgres(pg_dsn):
                 )
             assert [task.status for task in overdue_page.items] == ["open"]
             assert overdue_page.items[0].title == "Open overdue remains reachable"
+            picker_ids: list[UUID] = []
+            picker_cursor = None
+            async with maker() as db:
+                while True:
+                    page = await store.list_cursor(
+                        db,
+                        auth,
+                        status="open",
+                        bucket="open_picker",
+                        limit=50,
+                        cursor=picker_cursor,
+                    )
+                    picker_ids.extend(task.id for task in page.items)
+                    if page.next_cursor is None:
+                        break
+                    picker_cursor = page.next_cursor
+            assert len(picker_ids) == 266
+            assert len(set(picker_ids)) == 266
+            assert set(undated_open).issubset(picker_ids)
         finally:
             async with maker() as db:
                 await db.execute(delete(Task).where(Task.id.in_(created)))

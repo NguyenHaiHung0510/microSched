@@ -195,11 +195,32 @@ function compareTasks(left: FixtureTask, right: FixtureTask): number {
 function fixturePage(
   entries: FixtureTask[],
   url: URL,
-): { items: FixtureTask[]; next_cursor: string | null; has_previous: boolean; has_next: boolean } {
+): { items: FixtureTask[]; next_cursor: string | null; has_previous: boolean; has_next: boolean } | null {
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 50)))
-  const start = Math.max(0, Number(url.searchParams.get('cursor') ?? 0))
+  const cursor = url.searchParams.get('cursor')
+  const scope = JSON.stringify({
+    status: url.searchParams.get('status') ?? 'open',
+    from: url.searchParams.get('from') ?? '',
+    to: url.searchParams.get('to') ?? '',
+    bucket: url.searchParams.get('bucket') ?? 'dated',
+  })
+  let start = 0
+  if (cursor) {
+    try {
+      const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+        start?: number
+        scope?: string
+      }
+      if (decoded.scope !== scope || !Number.isInteger(decoded.start) || decoded.start < 0) return null
+      start = decoded.start
+    } catch {
+      return null
+    }
+  }
   const items = entries.slice(start, start + limit)
-  const next = start + limit < entries.length ? String(start + limit) : null
+  const next = start + limit < entries.length
+    ? Buffer.from(JSON.stringify({ start: start + limit, scope })).toString('base64url')
+    : null
   return {
     items,
     next_cursor: next,
@@ -347,9 +368,19 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
           .filter((entry) => entry.status === 'open' && entry.due_at !== null && Date.parse(entry.due_at) < earliest)
           .sort(compareTasks)
         const undated = visible.filter((entry) => entry.due_at === null).sort(compareTasks)
-        const datedPage = fixturePage(dated, url)
-        const overduePage = fixturePage(overdue, new URL(url.toString()))
-        const undatedPage = fixturePage(undated, new URL(url.toString()))
+        const datedUrl = new URL(url.toString())
+        datedUrl.searchParams.set('bucket', 'dated')
+        const overdueUrl = new URL(url.toString())
+        overdueUrl.searchParams.set('bucket', 'overdue')
+        const undatedUrl = new URL(url.toString())
+        undatedUrl.searchParams.set('bucket', 'undated')
+        const datedPage = fixturePage(dated, datedUrl)
+        const overduePage = fixturePage(overdue, overdueUrl)
+        const undatedPage = fixturePage(undated, undatedUrl)
+        if (!datedPage || !overduePage || !undatedPage) {
+          await route.fulfill(jsonResponse({ detail: 'Invalid or expired task cursor' }, 422))
+          return
+        }
         const hasPrevious = visible.some(
           (entry) => entry.due_at !== null && (!from || Date.parse(entry.due_at) < Date.parse(from)),
         )
@@ -384,15 +415,21 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
         const bucket = url.searchParams.get('bucket') ?? 'dated'
         const visible = state.tasks
           .filter((entry) => !entry.is_private || privateOpen)
-          .filter((entry) => bucket === 'overdue' ? entry.status === 'open' : status === 'all' || entry.status === status)
+          .filter((entry) => bucket === 'overdue' || bucket === 'open_picker' ? entry.status === 'open' : status === 'all' || entry.status === status)
           .filter((entry) => {
+            if (bucket === 'open_picker') return true
             if (bucket === 'undated') return entry.due_at === null
             if (!entry.due_at) return bucket !== 'dated' && !from && !to
             if (bucket === 'overdue') return Boolean(from) && Date.parse(entry.due_at) < Date.parse(from as string)
             return (!from || Date.parse(entry.due_at) >= Date.parse(from)) && (!to || Date.parse(entry.due_at) < Date.parse(to))
           })
           .sort(compareTasks)
-        await route.fulfill(jsonResponse(fixturePage(visible, url)))
+        const page = fixturePage(visible, url)
+        if (!page) {
+          await route.fulfill(jsonResponse({ detail: 'Invalid or expired task cursor' }, 422))
+          return
+        }
+        await route.fulfill(jsonResponse(page))
         return
       }
 
