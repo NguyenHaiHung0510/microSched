@@ -31,8 +31,11 @@ export const annotationsQuerySpec = (from: string, to: string): CalendarQuerySpe
   ...CALENDAR_QUERY_OPTIONS,
 })
 
-export const calendarTasksQuerySpec = (status: 'all' | 'open'): CalendarQuerySpec => ({
-  queryKey: ['calendar', 'tasks', status],
+export const calendarTasksQuerySpec = (
+  status: 'all' | 'open',
+  range?: { from: string; to: string },
+): CalendarQuerySpec => ({
+  queryKey: ['calendar', 'tasks', status, range?.from ?? null, range?.to ?? null],
   ...CALENDAR_QUERY_OPTIONS,
 })
 

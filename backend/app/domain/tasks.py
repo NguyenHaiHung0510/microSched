@@ -470,7 +470,14 @@ class TaskStore:
         elif bucket == "overdue":
             if from_instant is None:
                 raise InvalidTaskCursor("overdue bucket requires range start")
-            stmt = stmt.where(Task.due_at < (now or datetime.now(UTC)), Task.due_at < from_instant)
+            # The overdue bucket is a navigation aid for open work. A caller
+            # asking for ``status=all`` must not let completed historical rows
+            # consume its bounded page and hide still-open work.
+            stmt = stmt.where(
+                Task.status == "open",
+                Task.due_at < (now or datetime.now(UTC)),
+                Task.due_at < from_instant,
+            )
         else:
             if from_instant is not None:
                 stmt = stmt.where(Task.due_at >= from_instant)
@@ -555,11 +562,33 @@ class TaskStore:
             )
         items = [item for bucket in ("overdue", "dated", "undated") for item in pages[bucket].items]
         bucket_cursors = {bucket: pages[bucket].next_cursor for bucket in pages}
+        # Navigation metadata describes rows outside the requested date window,
+        # after status/privacy/deleted filtering. It is deliberately independent
+        # of the bounded bucket page, so a page-full overdue/undated bucket
+        # cannot make the adjacent date CTA lie about terminal history.
+        dated_scope = readable(select(Task), Task, auth)
+        if status != "all":
+            dated_scope = dated_scope.where(Task.status == status)
+        dated_scope = dated_scope.where(Task.due_at.is_not(None))
+        has_previous = bool(
+            await db.scalar(
+                select(func.count()).select_from(
+                    dated_scope.where(Task.due_at < from_instant).subquery()
+                )
+            )
+        )
+        has_next = bool(
+            await db.scalar(
+                select(func.count()).select_from(
+                    dated_scope.where(Task.due_at >= to_instant).subquery()
+                )
+            )
+        )
         return TaskTimeline(
             items=items,
             bucket_cursors=bucket_cursors,
-            has_previous=any(page.has_previous for page in pages.values()),
-            has_next=any(page.has_next for page in pages.values()),
+            has_previous=has_previous,
+            has_next=has_next,
             loaded_range_start=from_instant.date(),
             loaded_range_end=(to_instant - timedelta(days=1)).date(),
             counts={bucket: next(iter(page.counts.values()), 0) for bucket, page in pages.items()},

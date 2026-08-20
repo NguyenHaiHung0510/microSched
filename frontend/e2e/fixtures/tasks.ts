@@ -131,6 +131,14 @@ fixtureTasks.push(
       status: index % 29 === 0 ? 'completed' : 'open',
     }),
   ),
+  ...Array.from({ length: 120 }, (_, index) =>
+    task(`undated-${String(index + 1).padStart(3, '0')}`, `Việc chưa xếp ngày ${index + 1}`, {
+      due_at: null,
+      created_at: new Date(Date.now() - index * 1_000).toISOString(),
+      updated_at: new Date(Date.now() - index * 1_000).toISOString(),
+      status: index % 2 === 0 ? 'open' : 'completed',
+    }),
+  ),
 )
 
 export type TaskApiState = {
@@ -342,6 +350,12 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
         const datedPage = fixturePage(dated, url)
         const overduePage = fixturePage(overdue, new URL(url.toString()))
         const undatedPage = fixturePage(undated, new URL(url.toString()))
+        const hasPrevious = visible.some(
+          (entry) => entry.due_at !== null && (!from || Date.parse(entry.due_at) < Date.parse(from)),
+        )
+        const hasNext = visible.some(
+          (entry) => entry.due_at !== null && (!to || Date.parse(entry.due_at) >= Date.parse(to)),
+        )
         return route.fulfill(
           jsonResponse({
             items: [...overduePage.items, ...datedPage.items, ...undatedPage.items],
@@ -351,8 +365,8 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
               dated: datedPage.next_cursor,
               undated: undatedPage.next_cursor,
             },
-            has_previous: datedPage.has_previous,
-            has_next: overduePage.has_next || datedPage.has_next || undatedPage.has_next,
+            has_previous: hasPrevious,
+            has_next: hasNext,
             loaded_range_start: from?.slice(0, 10) ?? taskDateKey(new Date().toISOString()),
             loaded_range_end: to ? taskDateKey(new Date(Date.parse(to) - 86_400_000).toISOString()) : taskDateKey(new Date().toISOString()),
             counts: { overdue: overdue.length, dated: dated.length, undated: undated.length },
@@ -370,7 +384,7 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
         const bucket = url.searchParams.get('bucket') ?? 'dated'
         const visible = state.tasks
           .filter((entry) => !entry.is_private || privateOpen)
-          .filter((entry) => status === 'all' || entry.status === status)
+          .filter((entry) => bucket === 'overdue' ? entry.status === 'open' : status === 'all' || entry.status === status)
           .filter((entry) => {
             if (bucket === 'undated') return entry.due_at === null
             if (!entry.due_at) return bucket !== 'dated' && !from && !to

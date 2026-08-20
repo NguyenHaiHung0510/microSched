@@ -39,6 +39,19 @@ test('same-day cursor continuation reaches synthetic rows beyond the first bound
   await expect(page.locator('[data-task-id="synthetic-205"]')).toBeVisible()
 })
 
+test('independent undated cursors reach open and completed rows beyond page size', async ({ page }) => {
+  await openTasksScreen(page)
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  await page.getByTestId('task-load-more-undated').click()
+  await expect(page.locator('[data-task-id="undated-119"]')).toBeVisible()
+
+  await page.getByTestId('filter-completed').click()
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  await page.getByTestId('task-load-more-undated').click()
+  await page.getByTestId('task-undated-group').getByTestId('task-day-completed-toggle').click()
+  await expect(page.locator('[data-task-id="undated-120"]')).toBeVisible()
+})
+
 test('clicking card whitespace opens the detail dialog', async ({ page }) => {
   await openTasksScreen(page)
   const card = page.locator('[data-testid="task-card"]').first()
@@ -133,7 +146,7 @@ test('mobile layout has no horizontal overflow and banner has a 44px target', as
 test('last card tooltip is portalled and fully inside the desktop viewport', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Radix tooltip is a desktop shortcut')
   await openTasksScreen(page)
-  const lastTitle = page.locator('[data-testid="task-card"]').last().getByTestId('task-title')
+  const lastTitle = page.locator('[data-task-id="task-032"]').getByTestId('task-title')
   await lastTitle.hover()
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toBeVisible()

@@ -94,6 +94,31 @@ def test_cursor_reaches_all_rows_beyond_191_on_throwaway_postgres(pg_dsn):
                         ),
                     )
                     created.append(task.id)
+                for index in range(60):
+                    overdue = await store.create(
+                        db,
+                        auth,
+                        TaskCreate(
+                            title=f"Completed overdue {index}",
+                            due_at=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+                        ),
+                    )
+                    await store.update(
+                        db,
+                        auth,
+                        overdue.id,
+                        TaskUpdate(status="completed"),
+                    )
+                    created.append(overdue.id)
+                open_overdue = await store.create(
+                    db,
+                    auth,
+                    TaskCreate(
+                        title="Open overdue remains reachable",
+                        due_at=datetime(2026, 8, 1, 13, 0, tzinfo=UTC),
+                    ),
+                )
+                created.append(open_overdue.id)
                 await db.commit()
 
             collected: list[UUID] = []
@@ -116,7 +141,20 @@ def test_cursor_reaches_all_rows_beyond_191_on_throwaway_postgres(pg_dsn):
                     cursor = page.next_cursor
             assert len(collected) == 205
             assert len(set(collected)) == 205
-            assert set(collected) == set(created)
+            assert set(collected) == set(created[:205])
+            async with maker() as db:
+                overdue_page = await store.list_cursor(
+                    db,
+                    auth,
+                    status="all",
+                    from_instant=datetime(2026, 8, 13, tzinfo=UTC),
+                    to_instant=datetime(2026, 8, 20, tzinfo=UTC),
+                    bucket="overdue",
+                    limit=50,
+                    now=datetime(2026, 8, 20, tzinfo=UTC),
+                )
+            assert [task.status for task in overdue_page.items] == ["open"]
+            assert overdue_page.items[0].title == "Open overdue remains reachable"
         finally:
             async with maker() as db:
                 await db.execute(delete(Task).where(Task.id.in_(created)))

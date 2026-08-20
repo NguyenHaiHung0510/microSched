@@ -27,6 +27,7 @@ import { taskInvalidationKey } from '@/task-ui'
 
 type Props = {
   session: PrivateSessionState
+  onVisibilityChange?: () => void
 }
 
 function messageFor(error: unknown): {
@@ -53,7 +54,7 @@ function isSixAsciiDigits(value: string): boolean {
   return /^[0-9]{6}$/.test(value)
 }
 
-export function PrivateGate({ session }: Props) {
+export function PrivateGate({ session, onVisibilityChange }: Props) {
   const queryClient = useQueryClient()
   const [privateOverride, setPrivateOverride] = useState<string | null>()
   const [lockedOverride, setLockedOverride] = useState<string | null>()
@@ -80,8 +81,9 @@ export function PrivateGate({ session }: Props) {
     invalidateStatus()
     void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
     void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+    onVisibilityChange?.()
     return true
-  }, [invalidateStatus, privateUntil, queryClient])
+  }, [invalidateStatus, onVisibilityChange, privateUntil, queryClient])
 
   useEffect(() => {
     if (!privateUntil) return
@@ -149,6 +151,7 @@ export function PrivateGate({ session }: Props) {
       invalidateStatus()
       void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
       void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+      onVisibilityChange?.()
     },
     onError: reportError,
   })
@@ -164,6 +167,7 @@ export function PrivateGate({ session }: Props) {
       setErrorText(null)
       invalidateStatus()
       void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+      onVisibilityChange?.()
     },
     onError: reportError,
   })

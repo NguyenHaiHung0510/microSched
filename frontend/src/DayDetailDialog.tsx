@@ -35,6 +35,8 @@ import { cn } from '@/lib/utils'
 import type { TaskWritePayload } from '@/task-ui'
 import { CALENDAR_FAMILY_KEY } from '@/calendar-queries'
 
+type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
+
 type EventFormValue = {
   source_id?: string
   title: string
@@ -61,7 +63,7 @@ export function DayDetailDialog({
   day,
   events,
   tasks,
-  openTasks,
+  loadOpenTasks,
   annotations,
   sourceById,
   privateLocked,
@@ -71,7 +73,7 @@ export function DayDetailDialog({
   day: string
   events: CalendarEvent[]
   tasks: CalendarTask[]
-  openTasks: CalendarTask[]
+  loadOpenTasks: (cursor: string | null) => Promise<OpenTaskPage>
   annotations: DayAnnotation[]
   sourceById: Map<string, CalendarSource>
   privateLocked: boolean
@@ -83,6 +85,9 @@ export function DayDetailDialog({
   const [moveOpen, setMoveOpen] = useState(false)
   const [moveNow, setMoveNow] = useState(0)
   const [moveTasks, setMoveTasks] = useState<CalendarTask[]>([])
+  const [moveCursor, setMoveCursor] = useState<string | null>(null)
+  const [moveLoading, setMoveLoading] = useState(false)
+  const [moveError, setMoveError] = useState<string | null>(null)
   const [annotationError, setAnnotationError] = useState<string | null>(null)
   const [eventError, setEventError] = useState<string | null>(null)
 
@@ -221,11 +226,41 @@ export function DayDetailDialog({
     })
   }
 
-  function openMoveDialog() {
+  async function openMoveDialog() {
     const now = Date.now()
     setMoveNow(now)
-    setMoveTasks(sortOpenTasksForMove(openTasks, now))
+    setMoveTasks([])
+    setMoveCursor(null)
+    setMoveError(null)
     setMoveOpen(true)
+    setMoveLoading(true)
+    try {
+      const page = await loadOpenTasks(null)
+      setMoveTasks(sortOpenTasksForMove(page.items, now))
+      setMoveCursor(page.next_cursor ?? null)
+    } catch (error) {
+      setMoveError(importErrorMessage(error))
+    } finally {
+      setMoveLoading(false)
+    }
+  }
+
+  async function loadMoreMoveTasks() {
+    if (!moveCursor || moveLoading) return
+    setMoveLoading(true)
+    setMoveError(null)
+    try {
+      const page = await loadOpenTasks(moveCursor)
+      setMoveTasks((current) => [
+        ...current,
+        ...sortOpenTasksForMove(page.items, moveNow),
+      ])
+      setMoveCursor(page.next_cursor ?? null)
+    } catch (error) {
+      setMoveError(importErrorMessage(error))
+    } finally {
+      setMoveLoading(false)
+    }
   }
 
   function closeDialog() {
@@ -233,6 +268,9 @@ export function DayDetailDialog({
     setAnnotationForm(null)
     setEventForm(null)
     setMoveOpen(false)
+    setMoveTasks([])
+    setMoveCursor(null)
+    setMoveError(null)
     setTaskEdit(null)
   }
 
@@ -465,7 +503,9 @@ export function DayDetailDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            {moveTasks.length === 0 ? (
+            {moveLoading && moveTasks.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Đang tải việc…</p>
+            ) : moveTasks.length === 0 ? (
               <p className="text-sm text-muted-foreground">Không có việc đang mở.</p>
             ) : (
               moveTasks.map((task) => (
@@ -494,6 +534,23 @@ export function DayDetailDialog({
                 </Button>
               ))
             )}
+            {moveCursor ? (
+              <Button
+                data-testid="calendar-move-load-more"
+                size="lg"
+                variant="outline"
+                disabled={moveLoading}
+                onClick={() => void loadMoreMoveTasks()}
+              >
+                {moveLoading ? 'Đang tải…' : 'Xem thêm việc'}
+              </Button>
+            ) : null}
+            {moveError ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm text-bad" role="alert">{moveError}</p>
+                <Button size="lg" variant="outline" disabled={moveLoading} onClick={() => void (moveCursor ? loadMoreMoveTasks() : openMoveDialog())}>Thử lại</Button>
+              </div>
+            ) : null}
             {rescheduleTask.isError ? (
               <p className="text-sm text-bad" role="alert">
                 {importErrorMessage(rescheduleTask.error)}

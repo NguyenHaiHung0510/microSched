@@ -114,7 +114,14 @@ export function TasksScreen() {
   const [loadedStart, setLoadedStart] = useState(defaultStart)
   const [loadedEnd, setLoadedEnd] = useState(defaultEnd)
   const [extraTasks, setExtraTasks] = useState<Task[]>([])
-  const [datedCursor, setDatedCursor] = useState<string | null>(null)
+  const [bucketCursors, setBucketCursors] = useState<Record<TimelineBucket, string | null>>({
+    overdue: null,
+    dated: null,
+    undated: null,
+  })
+  const [hasPrevious, setHasPrevious] = useState(false)
+  const [hasNext, setHasNext] = useState(false)
+  const [rangeError, setRangeError] = useState<{ direction: 'earlier' | 'later'; text: string } | null>(null)
   const [completedOpen, setCompletedOpen] = useState<Set<string>>(new Set())
   const [loadingDirection, setLoadingDirection] = useState<'earlier' | 'later' | null>(null)
   const [continuationLoading, setContinuationLoading] = useState(false)
@@ -124,7 +131,10 @@ export function TasksScreen() {
       setLoadedStart(defaultStart)
       setLoadedEnd(defaultEnd)
       setExtraTasks([])
-      setDatedCursor(null)
+      setBucketCursors({ overdue: null, dated: null, undated: null })
+      setHasPrevious(false)
+      setHasNext(false)
+      setRangeError(null)
       setCompletedOpen(new Set())
     })
   }, [defaultEnd, defaultStart, filter])
@@ -142,7 +152,15 @@ export function TasksScreen() {
 
   useEffect(() => {
     if (timeline.data) {
-      queueMicrotask(() => setDatedCursor(timeline.data.bucket_cursors.dated ?? null))
+      queueMicrotask(() => {
+        setBucketCursors({
+          overdue: timeline.data.bucket_cursors.overdue ?? null,
+          dated: timeline.data.bucket_cursors.dated ?? null,
+          undated: timeline.data.bucket_cursors.undated ?? null,
+        })
+        setHasPrevious(timeline.data.has_previous)
+        setHasNext(timeline.data.has_next)
+      })
     }
   }, [timeline.data])
 
@@ -240,32 +258,58 @@ export function TasksScreen() {
   }, [dateKeys, loadedStart, tasks])
 
   async function loadBlock(direction: 'earlier' | 'later') {
-    if (loadingDirection) return
+    if (
+      loadingDirection ||
+      (direction === 'earlier' && !hasPrevious) ||
+      (direction === 'later' && !hasNext)
+    ) return
     const from = direction === 'earlier' ? addVietnamDays(loadedStart, -7) : addVietnamDays(loadedEnd, 1)
     const to = direction === 'earlier' ? loadedStart : addVietnamDays(loadedEnd, 8)
     setLoadingDirection(direction)
+    setRangeError(null)
     try {
       const response = await apiRequest<TaskTimelineResponse>(
         `/api/tasks/timeline?status=${filter}&from=${encodeURIComponent(`${from}T00:00:00+07:00`)}&to=${encodeURIComponent(`${to}T00:00:00+07:00`)}&limit=50`,
       )
+      const terminal =
+        response.items.length === 0 &&
+        (direction === 'earlier' ? !response.has_previous : !response.has_next)
+      if (terminal) {
+        setRangeError({
+          direction,
+          text: direction === 'earlier' ? 'Đã tới đầu lịch sử có thể xem.' : 'Đã tới cuối lịch có thể xem.',
+        })
+        if (direction === 'earlier') setHasPrevious(false)
+        else setHasNext(false)
+        return
+      }
       setExtraTasks((current) => [...current, ...response.items])
       if (direction === 'earlier') setLoadedStart(from)
       else setLoadedEnd(addVietnamDays(to, -1))
-      setDatedCursor(response.bucket_cursors.dated ?? null)
+      setBucketCursors({
+        overdue: response.bucket_cursors.overdue ?? null,
+        dated: response.bucket_cursors.dated ?? null,
+        undated: response.bucket_cursors.undated ?? null,
+      })
+      setHasPrevious(response.has_previous)
+      setHasNext(response.has_next)
+    } catch {
+      setRangeError({ direction, text: 'Không tải được khoảng ngày. Thử lại.' })
     } finally {
       setLoadingDirection(null)
     }
   }
 
-  async function loadMoreInDay() {
-    if (!datedCursor || continuationLoading) return
+  async function loadMoreBucket(bucket: TimelineBucket) {
+    const cursor = bucketCursors[bucket]
+    if (!cursor || continuationLoading) return
     setContinuationLoading(true)
     try {
       const response = await apiRequest<{ items: Task[]; next_cursor: string | null }>(
-        `/api/tasks?status=${filter}&from=${encodeURIComponent(`${loadedStart}T00:00:00+07:00`)}&to=${encodeURIComponent(`${addVietnamDays(loadedEnd, 1)}T00:00:00+07:00`)}&bucket=dated&cursor=${encodeURIComponent(datedCursor)}&limit=50`,
+        `/api/tasks?status=${filter}&from=${encodeURIComponent(`${loadedStart}T00:00:00+07:00`)}&to=${encodeURIComponent(`${addVietnamDays(loadedEnd, 1)}T00:00:00+07:00`)}&bucket=${bucket}&cursor=${encodeURIComponent(cursor)}&limit=50`,
       )
       setExtraTasks((current) => [...current, ...response.items])
-      setDatedCursor(response.next_cursor)
+      setBucketCursors((current) => ({ ...current, [bucket]: response.next_cursor }))
     } finally {
       setContinuationLoading(false)
     }
@@ -373,11 +417,14 @@ export function TasksScreen() {
           {groups.undated.some((task) => task.status === 'completed') && filter !== 'open' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3><Button data-testid="task-day-completed-toggle" size="lg" variant="ghost" aria-expanded={completedOpen.has('undated')} onClick={() => setCompletedOpen((current) => new Set(current).has('undated') ? new Set([...current].filter((key) => key !== 'undated')) : new Set([...current, 'undated']))}>Đã xong ({groups.undated.filter((task) => task.status === 'completed').length})</Button>{completedOpen.has('undated') ? groups.undated.filter((task) => task.status === 'completed').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />) : null}</section> : null}
         </div>
         <div className="flex flex-wrap gap-2 pt-2">
-          <Button data-testid="task-load-earlier" size="lg" variant="outline" disabled={loadingDirection !== null} onClick={() => void loadBlock('earlier')}>{loadingDirection === 'earlier' ? 'Đang tải…' : 'Xem thêm ngày trước'}</Button>
-          <Button data-testid="task-load-later" size="lg" variant="outline" disabled={loadingDirection !== null} onClick={() => void loadBlock('later')}>{loadingDirection === 'later' ? 'Đang tải…' : 'Xem thêm ngày sau'}</Button>
-          <Button data-testid="task-history" size="lg" variant="ghost" disabled={loadingDirection !== null} onClick={() => void loadBlock('earlier')}>Xem toàn bộ lịch sử</Button>
-          {datedCursor ? <Button data-testid="task-load-more-in-day" size="lg" variant="ghost" disabled={continuationLoading} onClick={() => void loadMoreInDay()}>{continuationLoading ? 'Đang tải…' : 'Xem thêm việc trong ngày'}</Button> : null}
+          <Button data-testid="task-load-earlier" size="lg" variant="outline" disabled={loadingDirection !== null || !hasPrevious} title={!hasPrevious ? 'Không còn ngày trước trong phạm vi có thể xem' : undefined} onClick={() => void loadBlock('earlier')}>{loadingDirection === 'earlier' ? 'Đang tải…' : 'Xem thêm ngày trước'}</Button>
+          <Button data-testid="task-load-later" size="lg" variant="outline" disabled={loadingDirection !== null || !hasNext} title={!hasNext ? 'Không còn ngày sau trong phạm vi có thể xem' : undefined} onClick={() => void loadBlock('later')}>{loadingDirection === 'later' ? 'Đang tải…' : 'Xem thêm ngày sau'}</Button>
+          <Button data-testid="task-history" size="lg" variant="ghost" disabled={loadingDirection !== null || !hasPrevious} title={!hasPrevious ? 'Không còn lịch sử trước đó' : undefined} onClick={() => void loadBlock('earlier')}>Xem toàn bộ lịch sử</Button>
+          {bucketCursors.dated ? <Button data-testid="task-load-more-in-day" size="lg" variant="ghost" disabled={continuationLoading} onClick={() => void loadMoreBucket('dated')}>{continuationLoading ? 'Đang tải…' : 'Xem thêm việc trong ngày'}</Button> : null}
+          {bucketCursors.overdue && filter !== 'completed' ? <Button data-testid="task-load-more-overdue" size="lg" variant="ghost" disabled={continuationLoading} onClick={() => void loadMoreBucket('overdue')}>{continuationLoading ? 'Đang tải…' : 'Xem thêm việc quá hạn'}</Button> : null}
+          {bucketCursors.undated ? <Button data-testid="task-load-more-undated" size="lg" variant="ghost" disabled={continuationLoading} onClick={() => void loadMoreBucket('undated')}>{continuationLoading ? 'Đang tải…' : 'Xem thêm việc chưa xếp ngày'}</Button> : null}
         </div>
+        {rangeError ? <div className="flex flex-wrap items-center gap-2" role="status"><p className="text-sm text-bad" role="alert">{rangeError.text}</p><Button size="lg" variant="outline" disabled={loadingDirection !== null} onClick={() => void loadBlock(rangeError.direction)}>Thử lại</Button></div> : null}
         <p className="text-sm text-muted-foreground" aria-live="polite">Đang xem {loadedStart} đến {loadedEnd}.</p>
       </section>
     </div>
@@ -446,6 +493,8 @@ type TaskTimelineResponse = {
   loaded_range_end: string
   counts: Record<string, number>
 }
+
+type TimelineBucket = 'overdue' | 'dated' | 'undated'
 
 function PriorityBadge({ priority }: { priority: TaskPriority }) {
   if (priority === 'p1') {

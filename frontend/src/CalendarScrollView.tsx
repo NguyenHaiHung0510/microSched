@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueries } from '@tanstack/react-query'
 
 import { apiRequest } from '@/api'
 import { todayInVietnam, type CalendarEvent, type CalendarSource } from '@/calendar-ui'
@@ -88,6 +88,14 @@ async function fetchTaskPages(
   return items
 }
 
+type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
+
+async function fetchOpenTaskPage(cursor: string | null = null): Promise<OpenTaskPage> {
+  const params = new URLSearchParams({ status: 'open', limit: '50' })
+  if (cursor) params.set('cursor', cursor)
+  return apiRequest<OpenTaskPage>(`/api/tasks?${params.toString()}`)
+}
+
 function useIsDesktop(): boolean {
   const [isDesktop, setIsDesktop] = useState(
     () => typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 640px)').matches,
@@ -103,7 +111,6 @@ function useIsDesktop(): boolean {
 }
 
 export function CalendarScrollView() {
-  const queryClient = useQueryClient()
   const today = todayInVietnam()
   const todayMonthKey = today.slice(0, 7)
   const isDesktop = useIsDesktop()
@@ -144,32 +151,22 @@ export function CalendarScrollView() {
       to: lastDayOfMonth(last.year, last.month),
     }
   }, [months])
+  const taskRange = useMemo(() => {
+    const first = months[0]
+    const last = months[months.length - 1]
+    return {
+      from: monthFetchRange(first.year, first.month).from,
+      to: monthFetchRange(last.year, last.month).to,
+    }
+  }, [months])
   const annotationsQuery = useQuery({
     ...annotationsQuerySpec(annotationRange.from, annotationRange.to),
     queryFn: () => getAnnotations(annotationRange.from, annotationRange.to),
   })
   const allTasksQuery = useQuery({
-    ...calendarTasksQuerySpec('all'),
-    queryFn: () => {
-      const first = months[0]
-      const last = months[months.length - 1]
-      return fetchTaskPages('all', {
-        from: monthFetchRange(first.year, first.month).from,
-        to: monthFetchRange(last.year, last.month).to,
-      })
-    },
+    ...calendarTasksQuerySpec('all', taskRange),
+    queryFn: () => fetchTaskPages('all', taskRange),
   })
-  const openTasksQuery = useQuery({
-    ...calendarTasksQuerySpec('open'),
-    queryFn: () => fetchTaskPages('open'),
-    enabled: selectedDay !== null,
-  })
-
-  useEffect(() => {
-    if (selectedDay === null) {
-      queryClient.removeQueries({ queryKey: ['calendar', 'tasks', 'open'] })
-    }
-  }, [queryClient, selectedDay])
 
   const allEvents = useMemo(
     () => dedupeById(monthEventQueries.flatMap((query) => query.data?.items ?? [])),
@@ -456,7 +453,7 @@ export function CalendarScrollView() {
         day={selectedDay ?? today}
         events={selectedDay ? (eventsByDayMap.get(selectedDay) ?? []) : []}
         tasks={selectedDay ? (tasksByDayMap.get(selectedDay) ?? []) : []}
-        openTasks={openTasksQuery.data ?? []}
+        loadOpenTasks={fetchOpenTaskPage}
         annotations={selectedDay ? (annotationsByDayMap.get(selectedDay) ?? []) : []}
         sourceById={sourceById}
         privateLocked={privateLocked}

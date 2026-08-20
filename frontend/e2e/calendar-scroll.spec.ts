@@ -249,6 +249,41 @@ test.describe('mobile (390x844, touch)', () => {
       .toBe(originalDue)
   })
 
+  test('move picker loads one bounded page only when opened and retains its cursor', async ({
+    page,
+    taskApi,
+  }) => {
+    await calendarRoutes(page, { events: [], annotations: [] })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await expect(page.getByTestId('calendar-scroll-container')).toBeVisible()
+    const before = taskApi.count('GET', '/api/tasks')
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
+    await expect(page.getByTestId('calendar-day-dialog')).toBeVisible()
+    expect(taskApi.count('GET', '/api/tasks')).toBe(before)
+    await page.getByTestId('calendar-day-move-task').tap()
+    await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
+    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 1)
+    if (await page.getByTestId('calendar-move-load-more').isVisible()) {
+      await page.getByTestId('calendar-move-load-more').click()
+      await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 2)
+    }
+  })
+
+  test('private lock remounts calendar and closes a detail dialog', async ({ page, taskApi }) => {
+    const privateTask = taskApi.tasks.find((entry) => entry.id === 'task-009')!
+    privateTask.due_at = iso(vnDay(0), 10)
+    await calendarRoutes(page, { events: [], annotations: [] })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
+    await expect(page.locator('[data-testid="calendar-day-task"]').filter({ hasText: 'Task riêng tư' })).toBeVisible()
+    await page.getByTestId('private-lock-now').evaluate((element) => (element as HTMLButtonElement).click())
+    await expect.poll(() => taskApi.count('POST', '/api/private/lock')).toBe(1)
+    await expect(page.getByText('Task riêng tư')).toHaveCount(0)
+    await expect(page.getByTestId('calendar-day-dialog')).toBeHidden()
+  })
+
   test('mini-nav does not exist on mobile', async ({ page }) => {
     await calendarRoutes(page, { events: [], annotations: [] })
     await page.goto('/')
@@ -382,6 +417,40 @@ test.describe('desktop (1280x800)', () => {
     await expect
       .poll(async () => header.textContent(), { timeout: 10_000 })
       .not.toBe(before)
+  })
+
+  test('extending calendar months changes the bounded task range key and request', async ({
+    page,
+  }) => {
+    const taskUrls: string[] = []
+    page.on('request', (request) => {
+      const url = new URL(request.url())
+      if (request.method() === 'GET' && url.pathname === '/api/tasks') taskUrls.push(url.toString())
+    })
+    await calendarRoutes(page, { events: [], annotations: [] })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await expect(page.getByTestId('calendar-scroll-container')).toBeVisible()
+    await expect.poll(() => taskUrls.length).toBeGreaterThan(0)
+    const initialRange = new URL(taskUrls[0]).searchParams.get('from') + '|' + new URL(taskUrls[0]).searchParams.get('to')
+    const container = page.getByTestId('calendar-scroll-container')
+    await container.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+      element.dispatchEvent(new Event('scroll', { bubbles: true }))
+    })
+    await page.waitForTimeout(100)
+    await container.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+      element.dispatchEvent(new Event('scroll', { bubbles: true }))
+    })
+    await expect.poll(() => taskUrls.length).toBeGreaterThan(1)
+    const ranges = new Set(taskUrls.map((value) => {
+      const url = new URL(value)
+      return `${url.searchParams.get('from')}|${url.searchParams.get('to')}`
+    }))
+    expect(ranges.has(initialRange)).toBe(true)
+    expect(ranges.size).toBeGreaterThan(1)
+    expect(taskUrls.every((value) => !value.includes('offset='))).toBe(true)
   })
 
   test('overdue task card shows the three reschedule buttons and Hôm nay works', async ({
