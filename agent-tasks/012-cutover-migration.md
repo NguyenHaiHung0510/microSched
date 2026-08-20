@@ -1,90 +1,82 @@
 # 012 — Cutover: đưa dữ liệu thật từ Postgres v2 sang Neon, rồi ngừng dùng app cũ
 
-> **Executor: T2 (route chọn từ Runtime Catalog lúc giao) · Bậc L1 · effort đề xuất high.**
-> **Trạng thái: DRAFT — refresh 2026-08-16.** Các quyết định ở §3 đã được chủ duyệt; bản chi tiết này
-> còn chờ exact-head adversarial review và strategic sign-off của chủ. DRAFT **không** cho phép thi công
-> script, chạy rehearsal, chạm Neon hay cutover thật.
+> **Executor:** T2 (route chọn từ Runtime Catalog lúc giao) · **Bậc:** L1 · **effort đề xuất:** high.
+> **Trạng thái: DRAFT — refresh 2026-08-20.** Exact head `d5e7956` đã bị T3 BLOCK; các finding xác nhận
+> đúng đã fold trong bản này. Vẫn cần exact-head adversarial re-review và strategic sign-off của chủ.
+> DRAFT **không** cho phép viết/rà rehearsal, chạm Neon, dump hay cutover thật.
 >
-> Cutover thật là nghi thức local do chủ giám sát. Executor không nhận secret, dữ liệu cá nhân, URL DB
-> thật, PIN, cookie hay dump; không in plaintext task/note/event, endpoint Push hoặc token/session.
+> Cutover thật chỉ do chủ giám sát tại workstation. Executor không nhận secret, URL DB thật, dump, PIN,
+> cookie, endpoint Push, token hoặc plaintext task/note/event/message.
 
 ## 0. Phạm vi và hard boundary
 
-Lô implementation sau khi spec được duyệt sẽ làm một script one-shot, test fixture giả đã sanitize và
-runbook. Nó đọc Postgres local `microschedule_v2` **read-only**, transform tập được map, rồi thay toàn
-bộ **domain content mock/trash đã được chủ cho phép purge** ở Neon bằng tập đó.
+Lô implementation sau approval tạo `backend/scripts/cutover_v2.py`, fixture DDL/data hoàn toàn sanitize và
+runbook. Nó đọc `microschedule_v2` local **read-only**, transform một snapshot frozen, atomically purge
+toàn bộ domain mock/trash đã được chủ approve ở Neon, rồi import chính snapshot đó.
 
 Không làm:
 
-- không sửa schema/migration; target phải đang ở exact migration head trước khi chạy;
-- không sửa hay xoá `microschedule_v2`, SQLite `todo.db`, hay archive nguồn;
-- không import lịch học/thi từ v2. Chỉ mang event thêm tay; lịch gốc vẫn import `.ics` qua 010a;
-- không đụng `app_setting`, `session`, `push_subscription` hoặc `alembic_version` ở target;
-- không coi `/api/readyz` một mình là bằng chứng dữ liệu đã đúng.
+- không đổi schema/grant/migration, không cấp `SELECT` cho `microsched_app` trên `alembic_version`;
+- không sửa/xoá/vacuum source `microschedule_v2` hay SQLite `todo.db`;
+- không import lịch học/thi từ v2; chỉ map manual legacy events. Lịch gốc re-import từ file `.ics` qua 010a;
+- không sửa `app_setting`, `session`, `push_subscription` hay `alembic_version`;
+- không coi `/api/readyz` đơn lẻ là proof dữ liệu.
 
-`message` là hội thoại AI tương lai đã mã hoá; `audit_log` là metadata trace AI/tool. Nếu hiện có ở
-target, cả hai cùng task/note/calendar/day annotation/tracker/subscription/reminder đều là mock theo
-quyết định chủ 2026-08-16 và được purge trong transaction. Đây không suy ra rằng hai bảng luôn là rác
-ở tương lai.
+`message` là encrypted future AI conversation; `audit_log` là AI/tool trace metadata. Theo owner decision
+2026-08-16, **mọi row hiện hữu** trong hai bảng này, cũng như mọi domain row khác trong §2, là mock/trash
+purge-approved. Điều này không gán nhãn các row tương lai là rác.
 
 ## 1. Cổng vào — thiếu một dòng là dừng
 
-1. **Task 022 đã merge, deploy và được verify viewability thật.** Không chỉ có spec: Task screen phải
-   xem/reach được toàn bộ lịch sử theo timeline bounded, không còn giới hạn 100/offset. Đây là hard
-   prerequisite để không đổ dữ liệu thật vào UI không xem hết được.
-2. Target schema khớp exact Alembic head và app role có đúng quyền DML. Script kiểm catalog/column/
-   constraint cần dùng, không chấp nhận `alembic current` làm bằng chứng duy nhất.
-3. Chủ xác nhận app mới dùng hằng ngày được, 010a/010b và 011 đã production-accepted, giá/backup được
-   re-check theo `docs/cost-brief.md` tại ngày chạy.
-4. Chủ làm source identity gate: đúng máy/database `microschedule_v2`/source read-role và schema
-   `public`; target gate chạy `current_user` và bắt buộc đúng `microsched_app`, không migrator/owner.
-   Script in hostname/database/user đã redaction và xác nhận fingerprint DDL/source identity
-   expected. Lệch bất cứ thành phần nào là abort trước read/target connection.
-5. Chủ đồng ý maintenance window: old app đóng/freeze và sole Fly Machine dừng trước transaction target.
+1. **022 đã merge, deploy và production-verify viewability.** Màn Task phải reach toàn bộ lịch sử theo
+   bounded timeline/cursor, không fixed 100/offset.
+2. 020 đã production-accepted; app mới daily-usable; 010a/010b/011 production gates, pricing và backup
+   được re-check vào ngày chạy.
+3. Source gate: chủ xác nhận máy/database `microschedule_v2`/read-role/schema `public` đúng; script
+   fingerprint identity/DDL không secret. Lệch bất kỳ thành phần nào abort trước target connection.
+4. Chủ đã chọn maintenance window, old app đóng/freeze, và sole Fly Machine có thể dừng.
+5. Target attestation (§4.2) khẳng định revision/catalog exact head trước DML. `alembic current` hay
+   `readyz` đơn lẻ không thay thế catalog receipt.
 
-Không hardcode snapshot 163/191 hay bất kỳ count lịch sử nào. Count, set ID, transformation formula và
-digest được đo lại **sau source freeze, ngay tại cut-off** (§6).
+Không hardcode 163/191 hay count lịch sử nào. Công thức, count, ID set và digest chỉ có giá trị khi đo
+sau source freeze tại exact cut-off (§4.1).
 
-## 2. Mapping nguồn → target
+## 2. Phân loại target — phải exhaustive
 
-| Source `public` | Target `microsched` | Quy tắc |
+### 2.1 Preserve set (không purge/không copy)
+
+| Table | Identity key | Bằng chứng bắt buộc |
 |---|---|---|
-| `tasks` | `task` | giữ UUID cũ; status `open/completed`; priority map 6→3; source `archived` là fail-closed (§3) |
-| `task_items` | `task_item` | giữ ID/FK/position; chỉ cha được map |
-| `notes` | `note` | giữ UUID, title/body/timestamps, pinned/priority |
-| `note_items` | `note_item` | `is_done` → `is_completed`; giữ position; chỉ cha được map |
-| manual legacy calendar events | one target `calendar_source` + `calendar_event` | manual predicate bằng `external_uid LIKE 'manual\\_%' ESCAPE '\\'`; `v1-schedule-*` bỏ để import lại `.ics` |
-| `priorities` | `task.priority`, `note.priority` | map theo **tên** trong §3; không tạo bảng |
-| `app_settings`, `agent_action_log`, source version/history/backup tables | — | không map |
+| `app_setting` | `id` | count + sorted-ID + full-row canonical digest |
+| `session` | `id` | như trên |
+| `push_subscription` | `id` | như trên; không in endpoint/key |
+| `alembic_version` | `version_num` | revision + sorted-key + full-row canonical digest, chỉ qua attestation connection |
 
-Không có `--skip-calendar`: lịch manual là một mapped component, nên bỏ nó là một run khác không cùng
-hợp đồng. Dry-run luôn in hai bucket `manual_*` và `v1-schedule-*`; `manual_* = 0` là kết quả hợp lệ,
-nhưng vẫn có digest/count rỗng trong manifest.
+### 2.2 Purge set và expected end state
 
-## 3. Quyết định chủ duyệt 2026-08-16
+| Nhóm | Tables |
+|---|---|
+| **Mapped rồi nhập lại** | `task`, `task_item`, `note`, `note_item`, `calendar_source`, `calendar_event` |
+| **Purge-only, không có source mapping** | `day_annotation`, `tracker_group`, `tracker`, `entry`, `subscription`, `reminder_dispatch`, `message`, `audit_log` |
 
-### 3.1 Data và preserve boundary
+Mọi purge-only component **bắt buộc** xuất hiện trong final manifest với `expected_count=0`,
+`empty_sorted_id_digest` và `empty_full_row_digest` canonical. Transaction assert cả ba sau purge/import
+và `--verify` assert lại post-commit. Không có bảng purge-only nào được coi là “tự nhiên rỗng”.
 
-- Mọi **domain content hiện hữu trên production** là mock/trash và purge-approved: `task`, `task_item`,
-  `note`, `note_item`, `calendar_source`, `calendar_event`, `day_annotation`, `tracker_group`, `tracker`,
-  `entry`, `subscription`, `reminder_dispatch`, `message`, `audit_log`.
-- Operational state phải nguyên vẹn: `app_setting` (PIN/config), `session`, `push_subscription` (thiết bị
-  thật vừa verify), `alembic_version`. Không dump, alter hay copy lại chúng vào target.
-- Không có rollback value cho mock target ⇒ **bỏ yêu cầu full Neon target dump**. Trước transaction bắt
-  buộc có count + sorted-ID digest + full-row canonical digest cho từng preserve table. Nếu thực tế tiện
-  và an toàn, tạo thêm **small encrypted preserve-set export** chỉ cho các table preserve; không phải full
-  target dump. Export không vào repo và không được mở trong PR.
-- Ngược lại, source phải có full `pg_dump -Fc` mã hoá bằng `age`, timestamped, ngoài repo, và được verify
-  restore vào Postgres throwaway: catalog + count + canonical digest trùng manifest trước khi target write.
+Attestation catalog phải classify mọi table trong schema `microsched` vào preserve/mapped/purge-only.
+Một app/domain table mới không nằm trong ba set là **abort** đến khi chủ phân loại rõ; không được tự coi
+nó là mock hay operational state.
 
-### 3.2 Source validity và priority
+## 3. Source validation và mapping
 
-Tập source chỉ hợp lệ nếu tất cả status/position/reference cần map đều hợp lệ. Trước khi mở target
-transaction, abort nếu có status khác `open|completed|archived`, `task_item.position`/`note_item.position`
-âm, child thiếu cha, priority null/name lạ/duplicate hoặc manual event có `ends_at <= starts_at`. Source
-`tasks.status='archived'` **hoặc** `notes.archived_at IS NOT NULL` có count >0 là fail-closed: script in
-count/ID digest (không plaintext), không import một phần và hỏi chủ quyết. Target chưa có status archived;
-không được tự bỏ hay tự thêm schema.
+### 3.1 Validation chung
+
+Nguồn phải có source status hợp lệ, child có parent, `task_item.position`/`note_item.position >= 0`,
+manual event `ends_at > starts_at` và tất cả timestamp required offset-aware. `tasks.status='archived'`
+hoặc `notes.archived_at IS NOT NULL` có count >0 là **fail-closed**: in count + ID digest, không import
+một phần, hỏi chủ. Target không có archived status; không tự drop hay thêm schema.
+
+Priority map cố định:
 
 ```python
 PRIORITY_MAP = {
@@ -94,124 +86,257 @@ PRIORITY_MAP = {
 }
 ```
 
-Tất cả source rows map với `is_private=false`, `deleted_at=NULL`; target-only defaults được khai rõ trong
-canonical formula. Không qua API DTO/Store `require_uuidv7`: historical source UUID có thể v4. Script dùng
-table model/SQLAlchemy insert có explicit field, nhưng vẫn tái tạo các invariant liên quan và không dùng
-`ON CONFLICT DO NOTHING` để che drift/overlap.
+`priority_id IS NULL -> target priority NULL` là hợp lệ. Với **mỗi priority_id được tham chiếu** bởi
+một row được map, require đúng một source priority row, không có duplicate referenced `name`, và name
+nằm trong `PRIORITY_MAP`. Chỉ referenced unknown/duplicate name abort; priority không tham chiếu không
+tự làm abort.
 
-### 3.3 Manifest, identity và canonical proof
+### 3.2 Calendar taxonomy — exact predicate, không silent skip
 
-Sau cut-off script tạo manifest local encrypted, immutable trong buổi chạy (ký bằng local signing key nếu
-runbook đã provision; nếu chưa có key, file digest có permissions owner-only và operator ký receipt tay).
-Manifest chứa version script/git SHA, source/target identity fingerprints không secret, schema revision,
-transform version, UTC cut-off, và cho **mọi component map** (`task`, `task_item`, `note`, `note_item`,
-`calendar_source`, `calendar_event`) cùng preserve table: count, sorted identity-key digest, full-row digest
-(`alembic_version` dùng `version_num`, các bảng còn lại dùng `id`).
+Chỉ candidate calendar rows có source `display_name = 'v1_sqlite_schedule'`. Classification phải thực
+hiện bằng query này (literal escape là **một** ký tự backslash):
 
-Canonical row hash dùng exactly ordered fields của **hình target sau transform**, UTF-8 length-prefixed
-encoding; UUID lower-case hyphenated; timestamp RFC3339 UTC fixed microseconds; DATE ISO; NULL token;
-bool `true|false`; decimal fixed canonical; JSON sorted keys/no whitespace; text raw UTF-8 (không trim).
-Digest là SHA-256 của rows sort theo UUID plus component name/version. Hash tất cả field, không chỉ
-`id|title`: task/note prose, status/priority/pin/privacy/delete/timestamps; child content/completion/
-position/FK/timestamps; source name/kind/color/visibility/timestamps; event source/FK/title/location/
-description/all-day/hidden/timestamps. Giá trị plaintext chỉ đi vào hash local, không stdout/PR.
-
-Target manual `calendar_source.id` phải là UUIDv7 sinh **một lần trước manifest**, được record như expected
-ID và signed/actual inserted ID; không sinh lại khi retry. Script abort nếu manifest stale, component
-formula/version drift, target schema drift, preserve digest drift, hay bất kỳ expected mapped ID overlap
-với preserve table/record trái contract. Post-import requires exact count, exact sorted ID set và exact
-full-row digest for each mapped component — không phải subset và không chấp nhận "target có nhiều hơn".
-
-## 4. CLI và transaction contract
-
-CLI uses an argparse mutually-exclusive mode group (at most one explicit flag; no flag means dry-run):
-
-```text
-cutover_v2 --dry-run | --commit | --verify
+```sql
+SELECT
+  ce.id,
+  CASE
+    WHEN ce.external_uid LIKE 'manual\_%' ESCAPE '\' THEN 'manual'
+    WHEN ce.external_uid LIKE 'v1-schedule-%' THEN 'ics_reimport'
+    ELSE 'unclassified'
+  END AS cutover_bucket
+FROM public.calendar_events AS ce
+JOIN public.calendar_sources AS cs ON cs.id = ce.source_id
+WHERE cs.display_name = 'v1_sqlite_schedule';
 ```
 
-`--dry-run` và no flag đều ghi 0 byte target; `--commit` require explicit
-`--confirm-target-host=<production-host>` và manifest path vừa tạo; `--verify` require manifest committed
-và không được sửa target. Không có `--skip-calendar`, cờ "force", hoặc mode ngầm. URL chỉ từ environment;
-parser in host/database đã redact, không in credential.
+Dry-run/manifest in count + ID digest riêng cho `manual` và `ics_reimport`; không tạo manual source nếu
+manual count bằng 0. `external_uid` khác pattern hoặc `NULL` là `unclassified` và abort. Event có source
+khác `v1_sqlite_schedule`, source missing, hoặc source display name NULL cũng là unclassified inventory
+và abort. Nhờ vậy không có event cũ nào lặng lẽ ngoài taxonomy.
 
-Source engine dùng `default_transaction_read_only=on`; test RED proof phải cho một `UPDATE` source fail
-Postgres `25006`. Target dùng app role, nhưng preflight read-only source và target identity/catalog trước.
-Sau preflight/manifest, `--commit` mở **một** target `AsyncSession` và **một** `db.begin()`:
+### 3.3 Công thức cột — source `public.*` → target `microsched.*`
 
-1. re-read preserve counts/digests and require equality with manifest;
-2. purge theo exact child-before-parent order: `reminder_dispatch`, `entry`, `subscription`, `tracker`,
-   `tracker_group`, `calendar_event`, `calendar_source`, `task_item`, `task`, `note_item`, `note`,
-   `day_annotation`, `message`, `audit_log`;
-3. insert all mapped components in parent-before-child order, with actual IDs exactly manifest expected;
-4. run canonical count/ID/full-row verification **inside the same transaction**;
-5. commit only if every assertion passes. Any exception rolls back both purge and import atomically.
+Script dùng SQLAlchemy/SQLModel **table models** và explicit values, không DTO/store `require_uuidv7`:
+UUID historical source có thể v4. Không dùng `ON CONFLICT DO NOTHING`; overlap/drift là error.
 
-An `ON CONFLICT`, unexpected existing mapped row, count mismatch, foreign-key mismatch or preserve-table
-change is error/rollback, never an idempotent no-op. The run is intentionally not re-run automatically.
+**`tasks -> task`**
 
-If a post-commit check later fails, primary rollback no longer exists. With Fly still stopped, fix-forward
-may delete **only manifest-recorded inserted rows** in child-before-parent order and rerun a newly frozen
-cut-off; it must never restore a full target dump. The already-purged domain content was approved trash.
+| Target field | Formula |
+|---|---|
+| `id` | `tasks.id`, giữ nguyên UUID |
+| `title` | `tasks.title` |
+| `body_md` | `tasks.note` |
+| `status` | `tasks.status`, chỉ `open -> open` hoặc `completed -> completed` |
+| `priority` | `NULL` nếu `priority_id` NULL; nếu khác NULL, lookup `priorities.name` theo §3.1 rồi `PRIORITY_MAP[name]` |
+| `due_at` / `completed_at` | `tasks.due_at` / `tasks.completed_at`, giữ instant hoặc NULL |
+| `created_at` / `updated_at` | giữ exact source timestamp |
+| `is_private` / `pinned` / `deleted_at` | constants `false` / `false` / `NULL` |
 
-## 5. Tests and rehearsal
+**`task_items -> task_item`**
 
-Fixture DDL/data must be synthetic and sanitized; no copied owner data, dump, title/body, endpoint, email
-or PIN. Cover at least:
+| Target field | Formula |
+|---|---|
+| `id`, `task_id`, `content`, `is_completed`, `position`, `created_at`, `updated_at` | cùng tên từ `task_items` |
+| parent policy | `task_id` phải thuộc task transformed; archived/unmapped parent đã blocked ở §3.1 |
 
-1. valid mixed source maps every component, all canonical hashes and exact ID sets match;
-2. unknown priority/status, invalid position, archived source task/note, invalid manual event and missing
-   child parent each abort before target mutation;
-3. source UPDATE gets `25006`; URL/host confirmation mismatch aborts;
-4. target seeded with all purge-approved domain tables and preserve tables: commit removes only the former,
-   keeps app_setting/session/push/alembic byte-for-byte/hash-for-hash;
-5. induced failure after purge/before final verify rolls back source target state atomically;
-6. manual event plus `v1-schedule-*` proves only manual rows map; generated source ID is UUIDv7 and exact
-   manifest ID; no skip-calendar code path exists;
-7. manifest formula/schema/preserve-digest/overlap drift each abort; post-insert altered field fails
-   full-field digest even when count and IDs match;
-8. source encrypted dump restore verifies against manifest; no plaintext enters test log.
+**`notes -> note`**
 
-Before production, rehearse the complete manifest/transaction on a **disposable Neon branch** with sanitized
-fixture (throwaway Postgres may bổ sung CI only, not replace branch rehearsal). Delete branch after receipt.
-This is a rehearsal only, not production acceptance.
+| Target field | Formula |
+|---|---|
+| `id` / `title` / `created_at` / `updated_at` | giữ fields cùng tên từ `notes` |
+| `body_md` | `notes.body` |
+| `pinned` | `notes.pinned` |
+| `priority` | `NULL` nếu `priority_id` NULL; lookup/map y như task nếu non-NULL |
+| `embedding` / `is_private` / `deleted_at` | constants `NULL` / `false` / `NULL` |
+| archived policy | `notes.archived_at IS NOT NULL` blocked fail-closed theo §3.1, không có row transformed |
 
-## 6. Owner-run maintenance ceremony (after approval only)
+**`note_items -> note_item`**
 
-1. Confirm all §1 gates, exact implementation commit/CI, operator identity and maintenance window.
-2. Close old app, inspect `pg_stat_activity` for `microschedule_v2` until no unexpected session remains;
-   set default transaction read-only only as backstop, never terminate unknown session blindly.
-3. At the exact cut-off compute source formulas/counts/hashes and create the manifest; create the encrypted
-   full source dump then verify its throwaway restore against that manifest. Any source drift means return
-   to step 2.
-4. Stop the **sole** Fly Machine before target mutation, verify it is stopped and no second Machine exists.
-   Run cutover from owner workstation directly against Neon; never through a public endpoint or agent tool.
-5. Compute preserve pre-state digest/export, then make the last source consistency read against manifest.
-   Any source or preserve drift means return to step 2.
-6. Dry-run prints only count/IDs digest/host/formula/version; owner reviews. `--commit` performs §4's one
-   target transaction, then `--verify` rechecks committed exact canonical result and preserved state.
-7. Start exactly one Fly Machine. Verify visually that the intended app is running; then require
-   `/api/readyz.commit` equals the exact deployed SHA **and** `db=up`, check Fly reports one machine, and
-   perform authenticated user-facing visual checks for imported task/note/item/manual calendar data.
-   `/api/readyz` alone is liveness, not data proof.
-8. Keep `microschedule_v2` frozen as archive. After seven days without reopening old app, owner may declare
-   behavioral cutover complete; never delete the source simply because the import passed.
+| Target field | Formula |
+|---|---|
+| `id`, `note_id`, `content`, `position`, `created_at`, `updated_at` | giữ fields cùng tên từ `note_items` |
+| `is_completed` | `note_items.is_done` |
+| parent policy | `note_id` phải thuộc note transformed |
 
-## 7. Acceptance and authority
+**One generated `calendar_source` for all manual events**
 
-- Local/CI proof covers script tests, sanitized DDL fixture, RED→GREEN read-only guard, lint/format and
-  exact PR CI. It does **not** prove real data/production.
-- Production acceptance requires the owner ceremony receipts: source encrypted-dump restore, manifest,
-  atomic verification, preserve digests, one-machine/Fly exact-SHA/db proof and visual UI check.
-- PR must separate **ĐÃ CHẠY**, **CHƯA CHẠY**, and **SUY LUẬN**; no raw personal content or connection data.
-- This DRAFT records only approved owner decisions above. T1/T2/T3 may review it, but none may self-approve
-  implementation, data mutation, actual cutover, or the owner's strategic sign-off.
+| Target field | Formula |
+|---|---|
+| `id` | UUIDv7 sinh đúng một lần before manifest, ký/record as expected ID |
+| `name` / `kind` | constants `Buổi thủ công (app cũ)` / `manual` |
+| `color` / `is_visible` | constants `NULL` / `true` |
+| `created_at` / `updated_at` | exact source-freeze `cutoff_at` from manifest |
 
-## 8. Superseded draft hazards retained for review
+**`manual calendar_events -> calendar_event`**
 
-The 2026-08-01/02 draft was valuable for identifying traps but is superseded where it conflicts here:
-stale `191` count, target-subset verification, full target dump, `--skip-calendar`, target-nonempty
-assumption and old archive skip behavior are removed. Retain these audit facts: Task 022 viewability,
-source/app-role identity, async source read-only driver, full transaction mechanics, manual predicate,
-child/parent FK order, source backup, and no plaintext logs. Exact-head adversarial review must verify
-these against current code/migration before implementation begins.
+| Target field | Formula |
+|---|---|
+| `id` | source `calendar_events.id` |
+| `source_id` | generated manual source ID above |
+| `title`, `location`, `starts_at`, `ends_at` | same-named source fields, including NULL location and exact instants |
+| `description_md` | source `description` |
+| `all_day` | constant `false` |
+| `is_hidden` | `COALESCE(user_cancelled, false) OR status = 'cancelled'` |
+| `created_at` / `updated_at` | exact source timestamps |
+
+Target-only constants and nullable fields above are part of the transform version and full-row digest, not
+implicit server-default behavior.
+
+## 4. Two-phase manifest, role isolation và canonical proof
+
+### 4.1 Phase A — source freeze draft
+
+Sau owner freeze, source read-only connection validates §3 then computes transformed expected rows/counts,
+sorted identity-key digest và full-row digest for all mapped components. It creates an encrypted **draft**
+manifest with source identity/DDL fingerprint, transform version, exact `cutoff_at` UTC, script git SHA and
+source expected section. The full `pg_dump -Fc` source backup is encrypted by `age` outside repo; restore it
+to throwaway Postgres and require catalog/count/digest match Phase-A source section.
+
+### 4.2 Phase B — Fly stopped final manifest
+
+Sau khi sole Fly Machine is confirmed stopped, open a **separate, tightly bounded** attestation connection
+as `microsched_migrator` (or `neondb_owner` only when migrator cannot attest). It is `READ ONLY` from
+connect through close, has short statement timeout, runs only `current_user`, `alembic_version.version_num`
+and `information_schema`/catalog queries needed to classify §2 and assert required columns/constraints. It
+does not read application rows. This is necessary because migration `0001` explicitly revokes all access to
+`microsched.alembic_version` from `microsched_app`.
+
+Close the attestation connection **before** reading application rows or opening target DML. It may never
+issue DML, grant, role or schema changes. No grant change is authorized. Record its revision/catalog
+fingerprint in draft. A distinct `microsched_app` **read-only preflight** connection runs `current_user`
+and must equal exactly `microsched_app`; it collects encrypted pre-state count/identity/full-row digests
+for preserve **except `alembic_version`** and for purge sets, then closes. It neither queries
+`alembic_version` nor reuses attestation credentials.
+
+Only then finalize/hash/sign the manifest with the required owner local signing key; lack of a valid
+signature aborts. No dry-run, target mutation or recovery begins from a draft/unsigned/changed manifest.
+`--commit`/`--recover` open a fresh `microsched_app` connection for DML/readback after this finalization.
+
+### 4.3 Canonical hashes
+
+A canonical row uses fixed ordered target fields after the formulas in §3: UTF-8 length-prefixed text;
+UUID lower-case hyphenated; RFC3339 UTC fixed microseconds; DATE ISO; NULL token; bool `true|false`;
+fixed decimal; JSON sorted keys/no whitespace. SHA-256 digests component name + transform version + rows
+sorted by identity key. Full-row hashing includes prose, status/priority, foreign keys, completion,
+positions, timestamp, privacy/delete flags and every constant/default field listed in §3. Plaintext exists
+only transiently in local hash computation; never stdout, PR or artifact.
+
+Mapped components require exact count + sorted-ID set + full-row digest after import. Purge-only components
+require the `count=0` and both canonical empty digests in §2.2. Preserve components require exactly their
+Phase-B digest; `alembic_version` uses `version_num` as identity.
+
+## 5. CLI, atomic cutover and verify
+
+Argparse has one mutually-exclusive mode group; no flag means `--dry-run`:
+
+```text
+cutover_v2 [--dry-run | --commit | --verify | --recover]
+```
+
+Every non-dry command requires finalized signed manifest, expected script SHA and
+`--confirm-target-host=<production-host>`. URLs live only in environment and logs redact credentials.
+No `--skip-calendar`, `--force` or implicit write mode exists.
+
+- `--dry-run`: validates source/attestation/final manifest and prints only host, versions, counts and digests;
+  writes zero target bytes.
+- `--commit`: only normal initial cutover (§5.1).
+- `--verify`: read-only post-commit proof (§5.2).
+- `--recover`: narrow post-commit reconstruction (§6), not routine rerun.
+
+### 5.1 `--commit` exactly one transaction
+
+After signature/SHA/host/role/preserve-digest preflight, open one `AsyncSession` under `microsched_app` and
+one `db.begin()`. Purge exact child-before-parent order:
+
+`reminder_dispatch -> entry -> subscription -> tracker -> tracker_group -> calendar_event -> calendar_source
+-> task_item -> task -> note_item -> note -> day_annotation -> message -> audit_log`.
+
+Then insert parent-before-child mapped rows: `task -> task_item`, `note -> note_item`, generated manual
+`calendar_source -> calendar_event`. Inside **that same transaction**, assert:
+
+1. every mapped component exact-matches manifest count, ID set and full-row digest;
+2. every purge-only component has count 0 plus the two canonical empty digests;
+3. every preserve component still matches Phase-B digest.
+
+Any conflict, unexpected mapped ID, residual purge-only row, FK error, signature/schema/formula/source/preserve
+drift is exception and rolls back purge plus import. Commit only after all assertions.
+
+### 5.2 `--verify` and post-ICS distinction
+
+`--verify` opens no DML transaction and repeats the signed-manifest proof post-commit: mapped exact result,
+all eight purge-only empty results, and preserve digests unchanged. It must fail if even one residual row
+exists in any purge-only table; it is not a subset check.
+
+This verify ends **before** owner imports canonical `.ics` files. After Fly starts, owner explicitly
+re-imports the approved canonical files through 010a. Final calendar is therefore:
+`migrated manual source/events + separately imported canonical-file sources/events`. Capture exact source/event
+counts per imported file and visual calendar receipt separately; do not compare that final aggregate to the
+manual-only atomic manifest.
+
+## 6. Constrained `--recover` — only after a failed post-commit state
+
+`--recover` is mutually exclusive with every other mode and may run only when all conditions hold:
+
+1. same immutable final manifest, valid signature and exact script git SHA;
+2. `--confirm-target-host` matches; Fly is stopped and a signed local operator receipt names that maintenance
+   state (no production API proof substitutes);
+3. Phase-B preserve digests still match exactly;
+4. recovery source is a fresh restore of the encrypted source dump, verified against the manifest source
+   section. It never reads a live/drifted old-app database;
+5. source identity, transform version, target attestation and manual source UUIDv7 all match manifest.
+
+With those checks, it opens one `microsched_app` transaction, purges **the complete §2.2 purge set** in the
+same child-first order, reimports the exact manifest snapshot, performs §5.1 canonical/purge/preserve
+assertions, then commits. Any error rolls back the whole recovery. It is recovery of reconstructible domain
+data, **not** a restore of target mock/trash; it never restores full Neon target dump or touches preserve data.
+
+## 7. Tests and branch rehearsal
+
+Fixture DDL/data are synthetic and sanitized: no owner dump, content, endpoint, email, PIN or session token.
+
+1. Field-level mapping test for every §3.3 column, including nullable priority, timestamps, target constants,
+   calendar visibility/hidden formula and manual source UUIDv7.
+2. Source validation tests: archived task/note, invalid status/position, bad parent, non-NULL unknown or
+   duplicate referenced priority name, invalid duration, unclassified/null UID and unknown source all abort
+   before DML.
+3. Source write attempt raises Postgres `25006`. Role test proves `microsched_app` cannot select
+   `alembic_version`; only a short read-only attestation connection obtains revision/catalog and it closes
+   before app connection. Test rejects use of migrator/owner for DML and rejects any grant change.
+4. Target fixture seeds every purge-set and preserve table. Commit leaves preserve byte/digest-identical,
+   mapped exact, and each purge-only table zero/empty. Parameterized residual-row negative cases make
+   inside-transaction and `--verify` fail for every purge-only table.
+5. Induce failure after purge and before final assertion: transaction rolls target state back exactly.
+   Manifest draft/unsigned/signature/SHA/catalog/formula/host/preserve drift and mapped-ID overlap each abort.
+6. Calendar fixture covers `manual_*`, `v1-schedule-*`, other and NULL UIDs; only first maps, all other
+   categories fail closed. No `--skip-calendar` parser/code path.
+7. Recovery denial tests: missing operator receipt/Fly stop/signature, wrong SHA/host, stale preserve digest,
+   source dump mismatch, non-frozen source and wrong UUIDv7 all abort before DML. Recovery order and induced
+   error prove complete-set transaction rollback; success proves exact reimport.
+8. Rehearse full signed-manifest flow on a disposable Neon branch with sanitized fixture; delete branch after
+   receipt. Throwaway Postgres supplements CI only, never replaces branch rehearsal.
+
+## 8. Owner maintenance ceremony (after approval only)
+
+1. Confirm §1, implementation SHA/green CI and named operator maintenance window.
+2. Close old app; inspect `pg_stat_activity` until no unexpected `microschedule_v2` session. Default
+   read-only setting is only backstop; never terminate unknown PID blindly.
+3. Freeze source and make Phase-A manifest; encrypt/full-dump source and verify throwaway restore against it.
+4. Stop the sole Fly Machine and verify no second machine. Run Phase-B read-only attestation, capture
+   preserve/purge state, finalize/sign manifest. Any drift returns to step 2.
+5. Owner reviews dry-run. Run `--commit` then `--verify` from owner workstation directly against Neon.
+6. Start exactly one Fly Machine. Verify visual app behavior, Fly one-machine state, and
+   `/api/readyz.commit` equals intended deployed SHA with `db=up`. This is operational proof, not sole
+   data proof.
+7. Owner re-imports canonical `.ics` files, captures per-file calendar count receipt and visually checks
+   manual and imported calendar rows separately.
+8. Keep `microschedule_v2` frozen as archive. Seven days without reopening old app may establish behavioral
+   cutover; never delete source solely because import passed.
+
+## 9. Acceptance and authority
+
+- Local/CI proves sanitized tests, red→green source read-only guard, role separation, exact head diff and CI.
+  It does **not** prove personal data or production.
+- Production acceptance requires source dump restore, signed manifest, atomic/verify receipt, preserve proof,
+  Fly exact SHA/`db=up`/one-machine and visual data/calendar receipts.
+- PR separates **ĐÃ CHẠY**, **CHƯA CHẠY**, **SUY LUẬN**; no personal content/connection data.
+- This remains DRAFT. T1/T2/T3 cannot self-approve implementation, recovery, real cutover or owner sign-off.
