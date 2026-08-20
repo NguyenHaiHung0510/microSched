@@ -146,7 +146,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'tasks' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'tasks' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'tasks'}
             onClick={() => setActiveScreen('tasks')}
           >
@@ -156,7 +156,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'notes' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'notes' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'notes'}
             onClick={() => setActiveScreen('notes')}
           >
@@ -166,7 +166,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'calendar' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'calendar' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'calendar'}
             onClick={() => setActiveScreen('calendar')}
           >
@@ -176,7 +176,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'tracker' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'tracker' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'tracker'}
             onClick={() => setActiveScreen('tracker')}
           >
