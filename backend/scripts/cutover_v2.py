@@ -2306,6 +2306,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--failed-command", choices=("commit", "verify"))
     p.add_argument("--failure-class")
     p.add_argument("--failure-stage")
+    p.add_argument("--failure-time")
     p.add_argument("--expires-at")
     return p
 
@@ -2338,11 +2339,12 @@ async def async_main(args: argparse.Namespace) -> int:
             or not args.failed_command
             or not args.failure_class
             or not args.failure_stage
+            or not args.failure_time
             or not args.expires_at
         ):
             raise CutoverError(
                 "failure receipt draft requires manifest, SHA, host, failed "
-                "command/class/stage and expiry"
+                "command/class/stage/time and expiry"
             )
         target = target_url()
         assert_confirmed_host(target, args.confirm_target_host)
@@ -2353,12 +2355,19 @@ async def async_main(args: argparse.Namespace) -> int:
             expected_host=args.confirm_target_host.lower(),
         )
         try:
+            failure_time = datetime.fromisoformat(args.failure_time)
             expires_at = datetime.fromisoformat(args.expires_at)
         except ValueError:
-            raise CutoverError("failure receipt expiry must be RFC3339") from None
-        failure_time = datetime.now(UTC)
-        if expires_at.tzinfo is None or expires_at <= failure_time:
-            raise CutoverError("failure receipt expiry must be in the future")
+            raise CutoverError("failure receipt time and expiry must be RFC3339") from None
+        now = datetime.now(UTC)
+        if (
+            failure_time.tzinfo is None
+            or expires_at.tzinfo is None
+            or failure_time > now
+            or expires_at <= now
+            or expires_at <= failure_time
+        ):
+            raise CutoverError("failure receipt time/expiry window is invalid")
         target_engine_obj = target_engine()
         try:
             target_identity, target_inventory = await collect_target_inventory_as_app(
@@ -2367,7 +2376,9 @@ async def async_main(args: argparse.Namespace) -> int:
         finally:
             await target_engine_obj.dispose()
         assert_runtime_coordinates_match(target_identity, manifest["target_identity"])
-        target_state = await assert_current_fly_stopped(fly_state_verifier_from_env())
+        target_state = await assert_current_fly_stopped(
+            fly_state_verifier_from_env(), failure_time=failure_time
+        )
         receipt = build_failure_receipt(
             manifest,
             target_inventory=target_inventory,
