@@ -1,7 +1,7 @@
 # 012 — Cutover: đưa dữ liệu thật từ Postgres v2 sang Neon, rồi ngừng dùng app cũ
 
 > **Executor:** T2 (route chọn từ Runtime Catalog lúc giao) · **Bậc:** L1 · **effort đề xuất:** high.
-> **Trạng thái: DRAFT — refresh 2026-08-20.** Exact head `d5e7956` đã bị T3 BLOCK; các finding xác nhận
+> **Trạng thái: DRAFT — refresh 2026-08-20.** Exact head `b62ac72` đã bị T3 BLOCK; các finding xác nhận
 > đúng đã fold trong bản này. Vẫn cần exact-head adversarial re-review và strategic sign-off của chủ.
 > DRAFT **không** cho phép viết/rà rehearsal, chạm Neon, dump hay cutover thật.
 >
@@ -47,10 +47,10 @@ sau source freeze tại exact cut-off (§4.1).
 
 | Table | Identity key | Bằng chứng bắt buộc |
 |---|---|---|
-| `app_setting` | `id` | count + sorted-ID + full-row canonical digest |
-| `session` | `id` | như trên |
-| `push_subscription` | `id` | như trên; không in endpoint/key |
-| `alembic_version` | `version_num` | revision + sorted-key + full-row canonical digest, chỉ qua attestation connection |
+| `app_setting` | `id` | app-readable: count + sorted-ID + full-row canonical digest |
+| `session` | `id` | app-readable: như trên |
+| `push_subscription` | `id` | app-readable: như trên; không in endpoint/key |
+| `alembic_version` | `version_num` | **schema/revision attestation only**, qua bounded migrator/owner read-only connection; không phải app-readable preserve |
 
 ### 2.2 Purge set và expected end state
 
@@ -66,6 +66,19 @@ và `--verify` assert lại post-commit. Không có bảng purge-only nào đư�
 Attestation catalog phải classify mọi table trong schema `microsched` vào preserve/mapped/purge-only.
 Một app/domain table mới không nằm trong ba set là **abort** đến khi chủ phân loại rõ; không được tự coi
 nó là mock hay operational state.
+
+### 2.3 Phase-B target snapshot được owner approve
+
+`PHASE_B_TARGET_SNAPSHOT` là canonical inventory **trước mọi DML** của toàn bộ mapped + purge-only table:
+mỗi table có count, sorted-ID digest và full-row digest. Nó không được rút thành chỉ count hay target-wide
+hash. App-readable preserve tables có digest riêng; `alembic_version`/catalog có schema-attestation digest
+riêng. Final manifest record `run_id`, exact target host/identity, Phase-A source digest, từng Phase-B
+inventory digest, và `phase_b_target_snapshot_digest`.
+
+Chủ ký approval **sau Phase B**, trên payload chứa ít nhất `run_id`, manifest digest, script commit SHA,
+target host, source cut-off và `phase_b_target_snapshot_digest`. Chữ ký không có payload này, chữ ký draft,
+hay approval cho snapshot khác đều không authorize DELETE. Đây là binding giữa owner approval và đúng target
+state đã nhìn thấy, không phải approval chung cho “purge mock”.
 
 ## 3. Source validation và mapping
 
@@ -194,23 +207,23 @@ to throwaway Postgres and require catalog/count/digest match Phase-A source sect
 
 ### 4.2 Phase B — Fly stopped final manifest
 
-Sau khi sole Fly Machine is confirmed stopped, open a **separate, tightly bounded** attestation connection
-as `microsched_migrator` (or `neondb_owner` only when migrator cannot attest). It is `READ ONLY` from
-connect through close, has short statement timeout, runs only `current_user`, `alembic_version.version_num`
-and `information_schema`/catalog queries needed to classify §2 and assert required columns/constraints. It
-does not read application rows. This is necessary because migration `0001` explicitly revokes all access to
-`microsched.alembic_version` from `microsched_app`.
+Sau khi sole Fly Machine is confirmed stopped, `attest_schema(phase_b)` mở một **separate, tightly bounded**
+connection as `microsched_migrator` (or `neondb_owner` only when migrator cannot attest). It is `READ ONLY`
+from connect through close, has short statement timeout, runs only `current_user`,
+`alembic_version.version_num` and `information_schema`/catalog queries needed to classify §2 and assert
+required columns/constraints. It does not read application rows. This is necessary because migration `0001`
+explicitly revokes all access to `microsched.alembic_version` from `microsched_app`.
 
-Close the attestation connection **before** reading application rows or opening target DML. It may never
+Close that attestation connection **before** reading application rows or opening target DML. It may never
 issue DML, grant, role or schema changes. No grant change is authorized. Record its revision/catalog
-fingerprint in draft. A distinct `microsched_app` **read-only preflight** connection runs `current_user`
-and must equal exactly `microsched_app`; it collects encrypted pre-state count/identity/full-row digests
-for preserve **except `alembic_version`** and for purge sets, then closes. It neither queries
-`alembic_version` nor reuses attestation credentials.
+fingerprint in the manifest. A distinct `microsched_app` **read-only preflight** connection runs
+`current_user` and must equal exactly `microsched_app`; it collects encrypted pre-state count/identity/
+full-row digests for every mapped + purge-only table and the three app-readable preserve tables, then closes.
+It neither queries `alembic_version` nor reuses attestation credentials.
 
-Only then finalize/hash/sign the manifest with the required owner local signing key; lack of a valid
+Only then finalize/hash/sign the manifest and owner approval payload in §2.3; lack of a valid matching
 signature aborts. No dry-run, target mutation or recovery begins from a draft/unsigned/changed manifest.
-`--commit`/`--recover` open a fresh `microsched_app` connection for DML/readback after this finalization.
+`--commit`/`--recover` open fresh `microsched_app` connections only after this finalization.
 
 ### 4.3 Canonical hashes
 
@@ -224,6 +237,20 @@ only transiently in local hash computation; never stdout, PR or artifact.
 Mapped components require exact count + sorted-ID set + full-row digest after import. Purge-only components
 require the `count=0` and both canonical empty digests in §2.2. Preserve components require exactly their
 Phase-B digest; `alembic_version` uses `version_num` as identity.
+
+**Ordered full-row preserve formulas** (all fields, in this exact order):
+
+| Component | Canonical ordered columns |
+|---|---|
+| `app_setting` | `id`, `key`, `value`, `created_at`, `updated_at` |
+| `session` | `id`, `token_hash`, `user_email`, `last_seen_at`, `expires_at`, `private_until`, `created_at`, `updated_at` |
+| `push_subscription` | `id`, `endpoint`, `p256dh`, `auth`, `user_agent`, `last_seen_at`, `created_at`, `updated_at` |
+| `alembic_version` | `version_num` |
+
+`value` uses the already-defined sorted-key/no-whitespace JSON canonicalization. Endpoint, `p256dh`, `auth`,
+token hash and email are full digest inputs (not redacted/omitted) but never printed; `private_until` is a
+full timestamp input, including NULL. The app transaction reads only the first three **preserve components**;
+every `alembic_version`/catalog read is only through `attest_schema` before and after the relevant operation.
 
 ## 5. CLI, atomic cutover and verify
 
@@ -245,8 +272,12 @@ No `--skip-calendar`, `--force` or implicit write mode exists.
 
 ### 5.1 `--commit` exactly one transaction
 
-After signature/SHA/host/role/preserve-digest preflight, open one `AsyncSession` under `microsched_app` and
-one `db.begin()`. Purge exact child-before-parent order:
+`attest_schema(commit_pre)` must first exactly match the signed Phase-B revision/catalog digest and close.
+Then open one `AsyncSession` under `microsched_app` and one `db.begin()`. **Before the first DELETE in this
+same transaction**, recompute every mapped + purge-only count, sorted-ID digest and full-row digest; all
+must exact-match `PHASE_B_TARGET_SNAPSHOT`. Recompute the three app-readable preserve digests and require
+their Phase-B values too. Any mismatch aborts before DELETE; `alembic_version` is deliberately absent from
+this app transaction. Purge only after that gate, in exact child-before-parent order:
 
 `reminder_dispatch -> entry -> subscription -> tracker -> tracker_group -> calendar_event -> calendar_source
 -> task_item -> task -> note_item -> note -> day_annotation -> message -> audit_log`.
@@ -261,11 +292,18 @@ Then insert parent-before-child mapped rows: `task -> task_item`, `note -> note_
 Any conflict, unexpected mapped ID, residual purge-only row, FK error, signature/schema/formula/source/preserve
 drift is exception and rolls back purge plus import. Commit only after all assertions.
 
+After commit, `attest_schema(commit_post)` opens a new bounded migrator/owner read-only connection and must
+exact-match the signed Phase-B `alembic_version`/catalog digest before returning success. It closes before
+any subsequent app connection; the app role never receives that read.
+
 ### 5.2 `--verify` and post-ICS distinction
 
-`--verify` opens no DML transaction and repeats the signed-manifest proof post-commit: mapped exact result,
-all eight purge-only empty results, and preserve digests unchanged. It must fail if even one residual row
-exists in any purge-only table; it is not a subset check.
+`attest_schema(verify_pre)` first matches the signed `alembic_version`/catalog digest and closes.
+`--verify` then opens no DML transaction: an app read-only connection repeats mapped exact result, all eight
+purge-only empty results, and the three app-readable preserve digests. It must fail if even one residual row
+exists in any purge-only table; it is not a subset check. `attest_schema(verify_post)` repeats the bounded
+migrator/owner read-only revision/catalog proof after the app read and must still match. At no point does the
+app role read `alembic_version`.
 
 This verify ends **before** owner imports canonical `.ics` files. After Fly starts, owner explicitly
 re-imports the approved canonical files through 010a. Final calendar is therefore:
@@ -277,41 +315,62 @@ manual-only atomic manifest.
 
 `--recover` is mutually exclusive with every other mode and may run only when all conditions hold:
 
-1. same immutable final manifest, valid signature and exact script git SHA;
-2. `--confirm-target-host` matches; Fly is stopped and a signed local operator receipt names that maintenance
-   state (no production API proof substitutes);
-3. Phase-B preserve digests still match exactly;
-4. recovery source is a fresh restore of the encrypted source dump, verified against the manifest source
-   section. It never reads a live/drifted old-app database;
-5. source identity, transform version, target attestation and manual source UUIDv7 all match manifest.
+1. same immutable final manifest, valid signature, exact script git SHA and `run_id`;
+2. a separately signed, **expiring failure receipt** exists for this run. It binds `run_id`, manifest digest,
+   script commit SHA, target host, failed command (`commit` or `verify`), failure class/stage, failure time,
+   mandatory `expires_at`, and `fly_never_restarted=true`. It is valid only inside the named maintenance
+   window; stale, generic or manually recreated receipt aborts;
+3. the failure receipt can only be signed after a `commit` outcome is unknown-after-submit or `verify` fails
+   after a commit. A known pre-commit/transaction rollback never authorizes recovery;
+4. the receipt records the complete **authorized failed-run domain inventory**: per-table count, sorted-ID
+   digest and full-row digest for every mapped + purge-only table observed immediately after that failure.
+   Fly remains stopped from failure through recovery; owner signs that no restart occurred, and the script
+   verifies the machine is still stopped before connection. A restarted/unknown Fly state aborts;
+5. recovery source is a fresh restore of the encrypted source dump, verified against the manifest source
+   section. It never reads a live/drifted old-app database; source identity, transform version and manual
+   source UUIDv7 all match manifest.
 
-With those checks, it opens one `microsched_app` transaction, purges **the complete §2.2 purge set** in the
-same child-first order, reimports the exact manifest snapshot, performs §5.1 canonical/purge/preserve
-assertions, then commits. Any error rolls back the whole recovery. It is recovery of reconstructible domain
-data, **not** a restore of target mock/trash; it never restores full Neon target dump or touches preserve data.
+`attest_schema(recover_pre)` must match the signed `alembic_version`/catalog digest and close. In one fresh
+`microsched_app` transaction, **before the first DELETE**, exact-match the current complete mapped +
+purge-only domain inventory to the failure receipt and the three app-readable preserve digests to Phase B.
+Mismatch means the target has moved beyond the authorized failed-run state and recovery aborts; this prevents
+reusing an old manifest to purge new domain data. The app transaction never reads `alembic_version`.
+
+Only then purge **the complete §2.2 purge set** in the same child-first order, reimport the exact manifest
+snapshot, perform §5.1 canonical/purge/preserve assertions, and commit. `attest_schema(recover_post)` then
+must exact-match signed revision/catalog before success. Any error rolls back the whole recovery. It is
+recovery of reconstructible domain data, **not** a restore of target mock/trash; it never restores full Neon
+target dump or touches preserve data.
 
 ## 7. Tests and branch rehearsal
 
 Fixture DDL/data are synthetic and sanitized: no owner dump, content, endpoint, email, PIN or session token.
 
 1. Field-level mapping test for every §3.3 column, including nullable priority, timestamps, target constants,
-   calendar visibility/hidden formula and manual source UUIDv7.
+   calendar visibility/hidden formula and manual source UUIDv7. Perturb each ordered preserve field in §4.3
+   (`private_until`, JSON `value`, endpoint/`p256dh`/`auth`, etc.) and assert the full-row digest changes.
 2. Source validation tests: archived task/note, invalid status/position, bad parent, non-NULL unknown or
    duplicate referenced priority name, invalid duration, unclassified/null UID and unknown source all abort
    before DML.
 3. Source write attempt raises Postgres `25006`. Role test proves `microsched_app` cannot select
-   `alembic_version`; only a short read-only attestation connection obtains revision/catalog and it closes
-   before app connection. Test rejects use of migrator/owner for DML and rejects any grant change.
-4. Target fixture seeds every purge-set and preserve table. Commit leaves preserve byte/digest-identical,
-   mapped exact, and each purge-only table zero/empty. Parameterized residual-row negative cases make
-   inside-transaction and `--verify` fail for every purge-only table.
+   `alembic_version`; only short migrator/owner `attest_schema` connections obtain revision/catalog and close
+   before/after commit, verify and recover. Test rejects reuse of attestation credentials for DML and rejects
+   any grant change.
+4. Target fixture seeds every mapped/purge-only and preserve table. Before first DELETE, mutate each
+   Phase-B mapped/purge-only count, ID set or full-row field one at a time; `--commit` must abort with no
+   target DML. Success leaves app-readable preserve byte/digest-identical, mapped exact, and each purge-only
+   table zero/empty. Parameterized residual-row negative cases make inside-transaction and `--verify` fail
+   for every purge-only table.
 5. Induce failure after purge and before final assertion: transaction rolls target state back exactly.
-   Manifest draft/unsigned/signature/SHA/catalog/formula/host/preserve drift and mapped-ID overlap each abort.
+   Manifest draft/unsigned/owner-approval payload/signature/SHA/catalog/formula/host/preserve drift and
+   mapped-ID overlap each abort. Approval for an altered Phase-B target snapshot must not reach DELETE.
 6. Calendar fixture covers `manual_*`, `v1-schedule-*`, other and NULL UIDs; only first maps, all other
    categories fail closed. No `--skip-calendar` parser/code path.
-7. Recovery denial tests: missing operator receipt/Fly stop/signature, wrong SHA/host, stale preserve digest,
-   source dump mismatch, non-frozen source and wrong UUIDv7 all abort before DML. Recovery order and induced
-   error prove complete-set transaction rollback; success proves exact reimport.
+7. Recovery denial tests: missing/expired receipt, run-id/manifest digest/commit-or-verify failure mismatch,
+   pre-commit rollback, missing Fly-never-restarted attestation, restarted/unknown Fly state, changed
+   authorized failed-run domain inventory, wrong SHA/host, stale preserve digest, source dump mismatch,
+   non-frozen source and wrong UUIDv7 all abort before DML. Recovery order and induced error prove
+   complete-set transaction rollback; success proves exact reimport.
 8. Rehearse full signed-manifest flow on a disposable Neon branch with sanitized fixture; delete branch after
    receipt. Throwaway Postgres supplements CI only, never replaces branch rehearsal.
 
@@ -321,8 +380,9 @@ Fixture DDL/data are synthetic and sanitized: no owner dump, content, endpoint, 
 2. Close old app; inspect `pg_stat_activity` until no unexpected `microschedule_v2` session. Default
    read-only setting is only backstop; never terminate unknown PID blindly.
 3. Freeze source and make Phase-A manifest; encrypt/full-dump source and verify throwaway restore against it.
-4. Stop the sole Fly Machine and verify no second machine. Run Phase-B read-only attestation, capture
-   preserve/purge state, finalize/sign manifest. Any drift returns to step 2.
+4. Stop the sole Fly Machine and verify no second machine. Run Phase-B read-only attestation, capture the
+   complete mapped/purge-only snapshot plus preserve state, then owner signs the exact `run_id`/manifest/
+   Phase-B snapshot approval payload. Any drift returns to step 2.
 5. Owner reviews dry-run. Run `--commit` then `--verify` from owner workstation directly against Neon.
 6. Start exactly one Fly Machine. Verify visual app behavior, Fly one-machine state, and
    `/api/readyz.commit` equals intended deployed SHA with `db=up`. This is operational proof, not sole

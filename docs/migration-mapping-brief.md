@@ -38,12 +38,17 @@ là mock/trash và được purge atomically khi import. Chỉ preserve `app_set
 `push_subscription`, `alembic_version`; target dùng pre/post canonical proof (optional small encrypted
 preserve export), không full target dump. Source bắt buộc full encrypted, restore-tested dump.
 
-Manifest có hai phase: source expected sau freeze, rồi target preserve/purge state sau khi Fly dừng; chỉ
-final manifest đã ký mới chạy dry-run/commit/verify/recover. Mapped components exact-match transformed
-count/IDs/full-field digest; mọi purge-only table (`day_annotation`, tracker/subscription/reminder,
-`message`, `audit_log`) must end count 0 + canonical empty digests. `alembic_version`/catalog chỉ được
-attest qua connection migrator/owner read-only rồi đóng; DML luôn là `microsched_app`, không đổi grant.
-Source archived rows remain fail-closed pending owner decision.
+Manifest có hai phase: source expected sau freeze, rồi exact Phase-B target snapshot sau khi Fly dừng; chỉ
+owner approval ký trên `run_id` + manifest digest + snapshot digest mới chạy dry-run/commit/verify/recover.
+Ngay trong `microsched_app` transaction, trước DELETE đầu tiên, toàn bộ mapped + purge-only pre-state phải
+exact-match signed snapshot; drift abort. Mapped components exact-match transformed count/IDs/full-field
+digest; mọi purge-only table (`day_annotation`, tracker/subscription/reminder, `message`, `audit_log`) must
+end count 0 + canonical empty digests.
+
+`app_setting`/`session`/`push_subscription` là app-readable preserve; `alembic_version`/catalog chỉ được
+attest qua bounded migrator/owner read-only connection trước/sau operation rồi đóng. DML luôn là
+`microsched_app`, không đổi grant. `--recover` còn require failure receipt có hạn, bind run/manifest/failure
+và inventory failed-run với Fly never restarted; source archived rows remain fail-closed pending owner decision.
 
 ## 4. Vệ sinh vận hành
 
