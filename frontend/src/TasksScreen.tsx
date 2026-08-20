@@ -77,6 +77,20 @@ type Task = {
   updated_at?: string | null
 }
 
+type CursorRangeState = {
+  from: string
+  to: string
+  cursors: Record<TimelineBucket, string | null>
+}
+
+function cursorRangeKey(from: string, to: string): string {
+  return `${from}|${to}`
+}
+
+function emptyBucketCursors(): Record<TimelineBucket, string | null> {
+  return { overdue: null, dated: null, undated: null }
+}
+
 function formatTimelineDay(day: string): string {
   return new Intl.DateTimeFormat('vi-VN', {
     timeZone: VIETNAM_TIME_ZONE,
@@ -126,13 +140,31 @@ export function TasksScreen() {
   const [completedOpen, setCompletedOpen] = useState<Set<string>>(new Set())
   const [loadingDirection, setLoadingDirection] = useState<'earlier' | 'later' | null>(null)
   const [continuationLoading, setContinuationLoading] = useState(false)
-  const cursorRangeRef = useRef({ from: defaultStart, to: addVietnamDays(defaultEnd, 1) })
-  const cursorStateDirtyRef = useRef(false)
+  const defaultCursorTo = addVietnamDays(defaultEnd, 1)
+  const defaultRangeKey = cursorRangeKey(defaultStart, defaultCursorTo)
+  const cursorRangesRef = useRef<Record<string, CursorRangeState>>({
+    [defaultRangeKey]: { from: defaultStart, to: defaultCursorTo, cursors: emptyBucketCursors() },
+  })
+  const continuationRangeByBucketRef = useRef<Record<TimelineBucket, string>>({
+    overdue: defaultRangeKey,
+    dated: defaultRangeKey,
+    undated: defaultRangeKey,
+  })
+  const cursorStoreSeededRef = useRef(false)
 
   useEffect(() => {
     queueMicrotask(() => {
-      cursorRangeRef.current = { from: defaultStart, to: addVietnamDays(defaultEnd, 1) }
-      cursorStateDirtyRef.current = false
+      const nextRange = { from: defaultStart, to: addVietnamDays(defaultEnd, 1) }
+      const nextRangeKey = cursorRangeKey(nextRange.from, nextRange.to)
+      cursorRangesRef.current = {
+        [nextRangeKey]: { ...nextRange, cursors: emptyBucketCursors() },
+      }
+      continuationRangeByBucketRef.current = {
+        overdue: nextRangeKey,
+        dated: nextRangeKey,
+        undated: nextRangeKey,
+      }
+      cursorStoreSeededRef.current = false
       setLoadedStart(defaultStart)
       setLoadedEnd(defaultEnd)
       setExtraTasks([])
@@ -157,19 +189,30 @@ export function TasksScreen() {
   })
 
   useEffect(() => {
-    if (timeline.data && !cursorStateDirtyRef.current) {
+    if (timeline.data && !cursorStoreSeededRef.current) {
+      cursorStoreSeededRef.current = true
       queueMicrotask(() => {
-        cursorRangeRef.current = { from: defaultStart, to: addVietnamDays(defaultEnd, 1) }
-        setBucketCursors({
+        const cursors = {
           overdue: timeline.data.bucket_cursors.overdue ?? null,
           dated: timeline.data.bucket_cursors.dated ?? null,
           undated: timeline.data.bucket_cursors.undated ?? null,
-        })
+        }
+        cursorRangesRef.current[defaultRangeKey] = {
+          from: defaultStart,
+          to: defaultCursorTo,
+          cursors,
+        }
+        continuationRangeByBucketRef.current = {
+          overdue: defaultRangeKey,
+          dated: defaultRangeKey,
+          undated: defaultRangeKey,
+        }
+        setBucketCursors(cursors)
         setHasPrevious(timeline.data.has_previous)
         setHasNext(timeline.data.has_next)
       })
     }
-  }, [timeline.data])
+  }, [defaultCursorTo, defaultEnd, defaultRangeKey, defaultStart, timeline.data])
 
   useEffect(() => {
     if (!timeline.isSuccess || !navigator.onLine) return
@@ -275,7 +318,6 @@ export function TasksScreen() {
     setLoadingDirection(direction)
     setRangeError(null)
     setContinuationError(null)
-    cursorStateDirtyRef.current = true
     try {
       const response = await apiRequest<TaskTimelineResponse>(
         `/api/tasks/timeline?status=${filter}&from=${encodeURIComponent(`${from}T00:00:00+07:00`)}&to=${encodeURIComponent(`${to}T00:00:00+07:00`)}&limit=50`,
@@ -295,11 +337,26 @@ export function TasksScreen() {
       setExtraTasks((current) => [...current, ...response.items])
       if (direction === 'earlier') setLoadedStart(from)
       else setLoadedEnd(addVietnamDays(to, -1))
-      cursorRangeRef.current = { from, to }
-      setBucketCursors({
+      const rangeKey = cursorRangeKey(from, to)
+      const cursors = {
         overdue: response.bucket_cursors.overdue ?? null,
         dated: response.bucket_cursors.dated ?? null,
         undated: response.bucket_cursors.undated ?? null,
+      }
+      cursorRangesRef.current[rangeKey] = { from, to, cursors }
+      setBucketCursors((current) => {
+        const next = { ...current }
+        for (const bucket of ['overdue', 'dated', 'undated'] as const) {
+          if (next[bucket]) continue
+          const pendingRange = Object.entries(cursorRangesRef.current).find(
+            ([, state]) => Boolean(state.cursors[bucket]),
+          )
+          if (pendingRange) {
+            continuationRangeByBucketRef.current[bucket] = pendingRange[0]
+            next[bucket] = pendingRange[1].cursors[bucket]
+          }
+        }
+        return next
       })
       setHasPrevious(response.has_previous)
       setHasNext(response.has_next)
@@ -311,18 +368,30 @@ export function TasksScreen() {
   }
 
   async function loadMoreBucket(bucket: TimelineBucket) {
-    const cursor = bucketCursors[bucket]
-    if (!cursor || continuationLoading) return
+    const rangeKey = continuationRangeByBucketRef.current[bucket]
+    const cursorRange = cursorRangesRef.current[rangeKey]
+    const cursor = cursorRange?.cursors[bucket] ?? null
+    if (!cursor || !cursorRange || continuationLoading) return
     setContinuationLoading(true)
     setContinuationError(null)
-    cursorStateDirtyRef.current = true
-    const cursorRange = cursorRangeRef.current
     try {
       const response = await apiRequest<{ items: Task[]; next_cursor: string | null }>(
         `/api/tasks?status=${filter}&from=${encodeURIComponent(`${cursorRange.from}T00:00:00+07:00`)}&to=${encodeURIComponent(`${cursorRange.to}T00:00:00+07:00`)}&bucket=${bucket}&cursor=${encodeURIComponent(cursor)}&limit=50`,
       )
       setExtraTasks((current) => [...current, ...response.items])
-      setBucketCursors((current) => ({ ...current, [bucket]: response.next_cursor }))
+      cursorRange.cursors[bucket] = response.next_cursor
+      let nextRangeKey = rangeKey
+      if (!response.next_cursor) {
+        const pendingRange = Object.entries(cursorRangesRef.current).find(
+          ([key, state]) => key !== rangeKey && Boolean(state.cursors[bucket]),
+        )
+        if (pendingRange) nextRangeKey = pendingRange[0]
+      }
+      continuationRangeByBucketRef.current[bucket] = nextRangeKey
+      setBucketCursors((current) => ({
+        ...current,
+        [bucket]: cursorRangesRef.current[nextRangeKey]?.cursors[bucket] ?? null,
+      }))
     } catch (error) {
       setContinuationError({ bucket, text: errorMessage(error) })
     } finally {

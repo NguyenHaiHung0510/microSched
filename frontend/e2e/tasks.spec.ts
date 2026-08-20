@@ -41,6 +41,19 @@ test('bucket continuation keeps its cursor range after date navigation', async (
   expect(statuses).not.toContain(422)
 })
 
+test('dense default continuation survives a sparse earlier block', async ({ page }) => {
+  await openTasksScreen(page)
+  await expect(page.getByTestId('task-load-more-in-day')).toBeVisible()
+  await page.getByTestId('task-load-earlier').click()
+  await expect(page.getByTestId('task-load-more-in-day')).toBeVisible()
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const target = page.locator('[data-task-id="synthetic-205"]')
+    if (await target.isVisible()) break
+    await page.getByTestId('task-load-more-in-day').click()
+  }
+  await expect(page.locator('[data-task-id="synthetic-205"]')).toBeVisible()
+})
+
 test('bucket continuation keeps a visible retry after a terminal API error', async ({ page }) => {
   await openTasksScreen(page)
   await page.route('**/api/tasks?*', async (route) => {
