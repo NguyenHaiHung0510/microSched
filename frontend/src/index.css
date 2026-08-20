@@ -173,19 +173,19 @@
 }
 
 html {
-  min-height: 100%;
+  min-height: 100vh;
   background: var(--n-100);
 }
 
 body,
 #root {
   min-height: 100vh;
+  background: var(--n-100);
 }
 
 body {
   min-width: 320px;
   margin: 0;
-  background: var(--n-100);
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;

@@ -9,6 +9,8 @@ const primitiveFiles = ['badge.tsx', 'button.tsx', 'checkbox.tsx', 'input.tsx', 
 
 const manifest = JSON.parse(await readFile(join(dist, 'manifest.webmanifest'), 'utf8'))
 const index = await readFile(join(dist, 'index.html'), 'utf8')
+const sourceCss = await readFile(join(root, 'src', 'index.css'), 'utf8')
+const appSource = await readFile(join(root, 'src', 'App.tsx'), 'utf8')
 const cssFiles = (await readdir(join(dist, 'assets'))).filter((file) => file.endsWith('.css'))
 const builtCss = (await Promise.all(cssFiles.map((file) => readFile(join(dist, 'assets', file), 'utf8')))).join('\n')
 const source = await Promise.all(
@@ -24,6 +26,17 @@ if (!index.includes(`<meta name="theme-color" content="${expectedCanvas}"`)) {
   failures.push('index.html missing exact theme-color meta')
 }
 if (/42b883|#42b883/i.test(JSON.stringify(manifest) + index)) failures.push('green manifest/index color found')
+if (
+  !/html\s*\{[^}]*min-height:\s*100vh[^}]*background:\s*var\(--n-100\)/s.test(sourceCss)
+) {
+  failures.push('html full-canvas min-height/background invariant missing')
+}
+if (!/body,\s*#root\s*\{[^}]*min-height:\s*100vh[^}]*background:\s*var\(--n-100\)/s.test(sourceCss)) {
+  failures.push('body/#root full-canvas min-height/background invariant missing')
+}
+if (!/<main\s+className="[^"]*min-h-screen[^"]*bg-muted/.test(appSource)) {
+  failures.push('main full-canvas min-height/background invariant missing')
+}
 if (source.some((contents) => contents.includes('dark:'))) failures.push('dark:* found in light-only primitive source')
 if (/prefers-color-scheme\s*:\s*dark/i.test(builtCss)) {
   failures.push('prefers-color-scheme: dark found in built CSS')
