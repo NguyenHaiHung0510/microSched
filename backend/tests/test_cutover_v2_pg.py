@@ -566,12 +566,21 @@ async def _identity(engine):
 
 
 MAPPED_DRIFT_CASES = (
-    ("task", "title", "synthetic pre-delete task drift"),
-    ("task_item", "content", "synthetic pre-delete item drift"),
-    ("note", "title", "synthetic pre-delete note drift"),
-    ("note_item", "content", "synthetic pre-delete note item drift"),
-    ("calendar_source", "name", "synthetic pre-delete source drift"),
-    ("calendar_event", "title", "synthetic pre-delete event drift"),
+    ("task", "title", "synthetic source task drift"),
+    ("task_item", "content", "synthetic source item drift"),
+    ("note", "title", "synthetic source note drift"),
+    ("note_item", "content", "synthetic source note item drift"),
+    ("calendar_source", "name", "synthetic source name drift"),
+    ("calendar_event", "title", "synthetic source event drift"),
+)
+
+MAPPED_PREDELETE_DRIFT_CASES = (
+    ("task", "title", "synthetic prestate", "synthetic pre-delete task drift"),
+    ("task_item", "content", "synthetic item", "synthetic pre-delete item drift"),
+    ("note", "title", "synthetic note", "synthetic pre-delete note drift"),
+    ("note_item", "content", "synthetic note item", "synthetic pre-delete note item drift"),
+    ("calendar_source", "name", "synthetic source", "synthetic pre-delete source drift"),
+    ("calendar_event", "title", "synthetic event", "synthetic pre-delete event drift"),
 )
 
 
@@ -812,24 +821,23 @@ def test_predelete_mapped_drift_aborts_before_write(rehearsal) -> None:
     _run(run())
 
 
-@pytest.mark.parametrize("component,field,drift_value", MAPPED_DRIFT_CASES)
+@pytest.mark.parametrize("component,field,original_value,drift_value", MAPPED_PREDELETE_DRIFT_CASES)
 def test_predelete_each_mapped_component_real_row_drift_aborts(
-    rehearsal, component: str, field: str, drift_value: str
+    rehearsal, component: str, field: str, original_value: str, drift_value: str
 ) -> None:
     manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
-    original_value = next(str(row[field]) for row in transformed[component])
 
     async def run() -> None:
         admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
-        row_id = str(transformed[component][0]["id"])
         try:
             # This is a real target pre-state row mutation; changing only the
             # signed receipt would not exercise the Phase-B guard.
-            await admin.execute(
-                f'UPDATE microsched."{component}" SET "{field}"=$1 WHERE id=$2',
+            updated = await admin.execute(
+                f'UPDATE microsched."{component}" SET "{field}"=$1 WHERE "{field}"=$2',
                 drift_value,
-                row_id,
+                original_value,
             )
+            assert updated.endswith("1"), f"expected one target {component} prestate row"
             _, before = await collect_target_inventory_as_app(target)
             with pytest.raises(Exception, match="Phase-B snapshot drift"):
                 await run_commit(manifest, target, transformed)
@@ -837,9 +845,9 @@ def test_predelete_each_mapped_component_real_row_drift_aborts(
             assert after == before
         finally:
             await admin.execute(
-                f'UPDATE microsched."{component}" SET "{field}"=$1 WHERE id=$2',
+                f'UPDATE microsched."{component}" SET "{field}"=$1 WHERE "{field}"=$2',
                 original_value,
-                row_id,
+                drift_value,
             )
             await admin.close()
             await source.dispose()
