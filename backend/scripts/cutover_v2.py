@@ -819,6 +819,14 @@ async def attest_schema(
         raise CutoverError(
             "required microsched target table is missing: " + ",".join(sorted(missing))
         )
+    columns_by_table: dict[str, set[str]] = {}
+    for column in identity["ddl"]["columns"]:
+        columns_by_table.setdefault(column["table_name"], set()).add(column["column_name"])
+    expected_columns = {component: set(fields) for component, fields in TARGET_FIELDS.items()}
+    expected_columns["alembic_version"] = {"version_num"}
+    for table_name, expected in expected_columns.items():
+        if columns_by_table.get(table_name) != expected:
+            raise CutoverError(f"target catalog columns drift: {table_name}")
     payload = {
         "revision": list(revision),
         "tables": sorted(table_names),
