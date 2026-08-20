@@ -54,6 +54,38 @@ test('dense default continuation survives a sparse earlier block', async ({ page
   await expect(page.locator('[data-task-id="synthetic-205"]')).toBeVisible()
 })
 
+test('global undated and overlapping overdue continuations do not replay after navigation', async ({ page, taskApi }) => {
+  const overdueRows = taskApi.tasks.filter((task) => task.id.startsWith('synthetic-')).slice(0, 60)
+  overdueRows.forEach((task, index) => {
+    task.due_at = new Date(Date.now() - (30 * 86_400_000 + index * 1_000)).toISOString()
+  })
+  await openTasksScreen(page)
+  await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
+  await expect(page.getByTestId('task-load-more-overdue')).toBeVisible()
+  await page.getByTestId('task-load-earlier').click()
+  await page.getByTestId('task-load-earlier').click()
+
+  const exhaust = async (buttonTestId: string, itemSelector: string) => {
+    const button = page.getByTestId(buttonTestId)
+    let previousCount = await page.locator(itemSelector).count()
+    while (await button.isVisible()) {
+      await button.click()
+      await expect.poll(() => page.locator(itemSelector).count()).toBeGreaterThan(previousCount)
+      previousCount = await page.locator(itemSelector).count()
+    }
+    return previousCount
+  }
+
+  const undatedSelector = '[data-testid="task-undated-group"] [data-task-id]'
+  const overdueSelector = '[data-testid="task-overdue-earlier-group"] [data-task-id]'
+  const initialUndatedCount = await page.locator(undatedSelector).count()
+  const finalUndatedCount = await exhaust('task-load-more-undated', undatedSelector)
+  expect(finalUndatedCount).toBeGreaterThan(initialUndatedCount)
+  const initialOverdueCount = await page.locator(overdueSelector).count()
+  const finalOverdueCount = await exhaust('task-load-more-overdue', overdueSelector)
+  expect(finalOverdueCount).toBeGreaterThan(initialOverdueCount)
+})
+
 test('bucket continuation keeps a visible retry after a terminal API error', async ({ page }) => {
   await openTasksScreen(page)
   await page.route('**/api/tasks?*', async (route) => {

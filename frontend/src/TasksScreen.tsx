@@ -339,21 +339,20 @@ export function TasksScreen() {
       else setLoadedEnd(addVietnamDays(to, -1))
       const rangeKey = cursorRangeKey(from, to)
       const cursors = {
-        overdue: response.bucket_cursors.overdue ?? null,
+        overdue: null,
         dated: response.bucket_cursors.dated ?? null,
-        undated: response.bucket_cursors.undated ?? null,
+        undated: null,
       }
       cursorRangesRef.current[rangeKey] = { from, to, cursors }
       setBucketCursors((current) => {
         const next = { ...current }
-        for (const bucket of ['overdue', 'dated', 'undated'] as const) {
-          if (next[bucket]) continue
+        if (!next.dated) {
           const pendingRange = Object.entries(cursorRangesRef.current).find(
-            ([, state]) => Boolean(state.cursors[bucket]),
+            ([, state]) => Boolean(state.cursors.dated),
           )
           if (pendingRange) {
-            continuationRangeByBucketRef.current[bucket] = pendingRange[0]
-            next[bucket] = pendingRange[1].cursors[bucket]
+            continuationRangeByBucketRef.current.dated = pendingRange[0]
+            next.dated = pendingRange[1].cursors.dated
           }
         }
         return next
@@ -368,7 +367,9 @@ export function TasksScreen() {
   }
 
   async function loadMoreBucket(bucket: TimelineBucket) {
-    const rangeKey = continuationRangeByBucketRef.current[bucket]
+    const rangeKey = bucket === 'dated'
+      ? continuationRangeByBucketRef.current.dated
+      : defaultRangeKey
     const cursorRange = cursorRangesRef.current[rangeKey]
     const cursor = cursorRange?.cursors[bucket] ?? null
     if (!cursor || !cursorRange || continuationLoading) return
@@ -381,7 +382,7 @@ export function TasksScreen() {
       setExtraTasks((current) => [...current, ...response.items])
       cursorRange.cursors[bucket] = response.next_cursor
       let nextRangeKey = rangeKey
-      if (!response.next_cursor) {
+      if (!response.next_cursor && bucket === 'dated') {
         const pendingRange = Object.entries(cursorRangesRef.current).find(
           ([key, state]) => key !== rangeKey && Boolean(state.cursors[bucket]),
         )
