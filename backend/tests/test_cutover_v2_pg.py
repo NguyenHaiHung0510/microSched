@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.database_urls import async_postgres_url
 from scripts.cutover_v2 import (
+    DOMAIN_COMPONENTS,
     assert_app_cannot_read_alembic,
     assert_source_read_only,
     attest_schema,
@@ -25,6 +26,7 @@ from scripts.cutover_v2 import (
     collect_target_inventory_as_app,
     load_source_snapshot,
     run_commit,
+    run_recover,
     run_verify,
     transform_source,
 )
@@ -313,6 +315,58 @@ def test_mapped_verify_corruption_is_detected(rehearsal) -> None:
             )
             with pytest.raises(Exception, match="mapped drift"):
                 await run_verify(manifest, target)
+        finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+def test_predelete_mapped_drift_aborts_before_write(rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        try:
+            task_id = str(transformed["task"][0]["id"])
+            await admin.execute(
+                "UPDATE microsched.task SET title='pre-delete drift' WHERE id=$1", task_id
+            )
+            _, before = await collect_target_inventory_as_app(target)
+            with pytest.raises(Exception, match="Phase-B snapshot drift"):
+                await run_commit(manifest, target, transformed)
+            _, after = await collect_target_inventory_as_app(target)
+            assert after == before
+        finally:
+            await admin.close()
+            await source.dispose()
+            await migrator.dispose()
+            await target.dispose()
+
+    _run(run())
+
+
+def test_recover_reimports_authorized_failed_inventory(rehearsal) -> None:
+    manifest, transformed, target, source, migrator = _prepared_manifest(rehearsal)
+
+    async def run() -> None:
+        admin = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"])
+        try:
+            await run_commit(manifest, target, transformed)
+            task_id = str(transformed["task"][0]["id"])
+            await admin.execute(
+                "UPDATE microsched.task SET title='authorized failed state' WHERE id=$1", task_id
+            )
+            _, failed = await collect_target_inventory_as_app(target)
+            receipt = {
+                "failed_run_domain_inventory": {
+                    component: failed[component] for component in DOMAIN_COMPONENTS
+                }
+            }
+            await run_recover(manifest, receipt, target, transformed)
+            await run_verify(manifest, target)
         finally:
             await admin.close()
             await source.dispose()
