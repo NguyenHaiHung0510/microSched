@@ -491,7 +491,7 @@ export function TasksScreen() {
       <section aria-labelledby="task-list-heading" className="space-y-3">
         <h2 className="sr-only" id="task-list-heading">Danh sách task</h2>
         <div className="flex flex-wrap gap-1" role="group" aria-label="Lọc task">
-          {(['open', 'completed', 'all'] as ListView[]).map((value) => <Button data-testid={`filter-${value}`} className="rounded-full px-4" size="lg" variant={filter === value ? 'secondary' : 'ghost'} aria-pressed={filter === value} key={value} onClick={() => setFilter(value)}>{listFilterLabels[value]}</Button>)}
+          {(['open', 'completed', 'all'] as ListView[]).map((value) => <Button data-testid={`filter-${value}`} className="rounded-full px-4" size="lg" variant={filter === value ? 'selected' : 'ghost'} aria-pressed={filter === value} key={value} onClick={() => setFilter(value)}>{listFilterLabels[value]}</Button>)}
         </div>
         {timeline.isPending ? <p className="text-sm text-muted-foreground">Đang tải task…</p> : null}
         {timeline.isError ? <div className="flex flex-wrap items-center gap-3"><p className="text-sm text-bad" role="alert">Không tải được việc. Thử lại.</p><Button variant="outline" size="lg" onClick={() => void timeline.refetch()}>Thử lại</Button></div> : null}
