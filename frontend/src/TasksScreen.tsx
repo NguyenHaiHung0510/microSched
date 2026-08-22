@@ -638,6 +638,7 @@ const TaskCard = memo(function TaskCard({
                           {item.content}
                         </span>
                         <Button
+                          data-testid="task-item-delete"
                           size="icon-lg"
                           variant="ghost"
                           className="text-bad hover:text-bad"
@@ -661,6 +662,7 @@ const TaskCard = memo(function TaskCard({
                   }}
                 >
                   <Input
+                    data-testid="task-item-add-input"
                     aria-label={`Thêm checklist cho ${task.title}`}
                     className="h-10 bg-card"
                     placeholder="Thêm checklist…"
@@ -668,6 +670,7 @@ const TaskCard = memo(function TaskCard({
                     onChange={(event) => setNewItem(event.target.value)}
                   />
                   <Button
+                    data-testid="task-item-add-submit"
                     size="lg"
                     type="submit"
                     variant="secondary"
