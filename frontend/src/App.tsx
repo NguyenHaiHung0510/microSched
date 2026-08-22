@@ -9,7 +9,7 @@ import {
   NotebookPen,
   RefreshCw,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -95,6 +95,13 @@ function SignedIn({ session }: { session: SessionResponse }) {
   const [activeScreen, setActiveScreen] = useState<
     'tasks' | 'notes' | 'calendar' | 'tracker'
   >('tasks')
+  // A private visibility transition is a local-state boundary as well as a
+  // query-cache boundary. Remount the two views that can hold private task
+  // rows in dialog/history state after lock, expiry, or unlock.
+  const [privateScopeVersion, setPrivateScopeVersion] = useState(0)
+  const onPrivateVisibilityChange = useCallback(() => {
+    setPrivateScopeVersion((version) => version + 1)
+  }, [])
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -114,7 +121,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <PrivateGate session={session} />
+          <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
           <Button
             variant="secondary"
             size="icon-lg"
@@ -139,7 +146,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'tasks' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'tasks' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'tasks'}
             onClick={() => setActiveScreen('tasks')}
           >
@@ -149,7 +156,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'notes' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'notes' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'notes'}
             onClick={() => setActiveScreen('notes')}
           >
@@ -159,7 +166,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'calendar' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'calendar' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'calendar'}
             onClick={() => setActiveScreen('calendar')}
           >
@@ -169,7 +176,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'tracker' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'tracker' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'tracker'}
             onClick={() => setActiveScreen('tracker')}
           >
@@ -178,9 +185,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           </Button>
         </div>
         <div role="tabpanel">
-          {activeScreen === 'tasks' ? <TasksScreen /> : null}
+          {activeScreen === 'tasks' ? <TasksScreen key={`tasks-${privateScopeVersion}`} /> : null}
           {activeScreen === 'notes' ? <NotesScreen /> : null}
-          {activeScreen === 'calendar' ? <CalendarScreen /> : null}
+          {activeScreen === 'calendar' ? <CalendarScreen key={`calendar-${privateScopeVersion}`} /> : null}
           {activeScreen === 'tracker' ? (
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}

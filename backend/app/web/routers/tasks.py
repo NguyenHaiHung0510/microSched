@@ -1,14 +1,18 @@
 """Authenticated task and nested checklist HTTP endpoints."""
 
+from datetime import UTC, datetime, time, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import AuthSession
 from app.domain.tasks import (
+    InvalidTaskCursor,
     PrivateWriteLocked,
+    TaskBucket,
     TaskCreate,
     TaskIdConflict,
     TaskItemCreate,
@@ -17,12 +21,20 @@ from app.domain.tasks import (
     TaskListStatus,
     TaskRead,
     TaskStore,
+    TaskTimeline,
     TaskUpdate,
 )
 from app.web.deps import get_session, require_session
 
 router = APIRouter(tags=["task"])
 store = TaskStore()
+try:
+    VIETNAM_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+except ZoneInfoNotFoundError:
+    # Minimal throwaway Python images can omit the tzdata package. Vietnam has no
+    # DST, so the fallback preserves the named-zone civil-time contract without
+    # making every backend import fail in that environment.
+    VIETNAM_TZ = timezone(timedelta(hours=7))
 
 Database = Annotated[AsyncSession, Depends(get_session)]
 CurrentSession = Annotated[AuthSession, Depends(require_session)]
@@ -39,16 +51,89 @@ def _private_locked() -> HTTPException:
     )
 
 
-@router.get("/tasks", response_model=dict[str, list[TaskRead]])
+@router.get("/tasks", response_model=dict[str, object])
 async def list_tasks(
     db: Database,
     session: CurrentSession,
     task_status: TaskListStatus = Query(default="open", alias="status"),
     limit: int = Query(default=100, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-) -> dict[str, list[TaskRead]]:
-    """List visible tasks in a stable envelope."""
-    return {"items": await store.list(db, session, status=task_status, limit=limit, offset=offset)}
+    cursor: str | None = Query(default=None),
+    from_value: str | None = Query(default=None, alias="from"),
+    to_value: str | None = Query(default=None, alias="to"),
+    bucket: TaskBucket = Query(default="dated"),
+) -> dict[str, object]:
+    """List tasks through the bounded cursor/range contract."""
+    try:
+        from_instant = _parse_instant(from_value)
+        to_instant = _parse_instant(to_value)
+        page = await store.list_cursor(
+            db,
+            session,
+            status=task_status,
+            from_instant=from_instant,
+            to_instant=to_instant,
+            bucket=bucket,
+            limit=limit,
+            cursor=cursor,
+        )
+    except (InvalidTaskCursor, ValueError) as error:
+        raise HTTPException(status_code=422, detail="Invalid or expired task cursor") from error
+    return page.model_dump(mode="json")
+
+
+def _parse_instant(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise InvalidTaskCursor("invalid date range") from error
+    if result.tzinfo is None:
+        raise InvalidTaskCursor("date range must include a timezone offset")
+    return result.astimezone(UTC)
+
+
+def _default_timeline_range() -> tuple[datetime, datetime]:
+    today = datetime.now(VIETNAM_TZ).date()
+    start = today - timedelta(days=3)
+    end = today + timedelta(days=4)
+    return (
+        datetime.combine(start, time.min, tzinfo=VIETNAM_TZ),
+        datetime.combine(end, time.min, tzinfo=VIETNAM_TZ),
+    )
+
+
+@router.get("/tasks/timeline", response_model=TaskTimeline)
+async def timeline_tasks(
+    db: Database,
+    session: CurrentSession,
+    task_status: TaskListStatus = Query(default="open", alias="status"),
+    from_value: str | None = Query(default=None, alias="from"),
+    to_value: str | None = Query(default=None, alias="to"),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> TaskTimeline:
+    """Return the seven-day/overdue/undated aggregate wave for TaskScreen."""
+    try:
+        if from_value is None and to_value is None:
+            from_instant, to_instant = _default_timeline_range()
+        elif from_value is not None and to_value is not None:
+            from_instant = _parse_instant(from_value)
+            to_instant = _parse_instant(to_value)
+            assert from_instant is not None and to_instant is not None
+        else:
+            raise InvalidTaskCursor("from and to must be supplied together")
+        if to_instant <= from_instant or (to_instant - from_instant).days > 366:
+            raise InvalidTaskCursor("invalid timeline range")
+        return await store.timeline(
+            db,
+            session,
+            status=task_status,
+            from_instant=from_instant,
+            to_instant=to_instant,
+            limit=limit,
+        )
+    except (InvalidTaskCursor, ValueError) as error:
+        raise HTTPException(status_code=422, detail="Invalid timeline range") from error
 
 
 @router.post("/tasks", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
