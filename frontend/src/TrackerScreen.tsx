@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Archive,
@@ -232,6 +232,31 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
     )
   }
 
+  const captureRef = useRef(capture)
+  useLayoutEffect(() => {
+    captureRef.current = capture
+  })
+  const stableCapture = useCallback(
+    (tracker: Tracker, input?: string, occurredAt?: string) =>
+      captureRef.current(tracker, input, occurredAt),
+    [],
+  )
+
+  function handleBackdate(tracker: Tracker) {
+    setBackdateChoice('yesterday')
+    setBackdateCustom('')
+    setBackdateFor(tracker)
+  }
+
+  const backdateRef = useRef(handleBackdate)
+  useLayoutEffect(() => {
+    backdateRef.current = handleBackdate
+  })
+  const stableBackdate = useCallback(
+    (tracker: Tracker) => backdateRef.current(tracker),
+    [],
+  )
+
   function submitBackdate() {
     if (!backdateFor) return
     const option =
@@ -408,12 +433,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         loading={trackersQuery.isPending}
         error={trackersQuery.error}
         onRetry={() => void refresh()}
-        onCapture={capture}
-        onBackdate={(tracker) => {
-          setBackdateChoice('yesterday')
-          setBackdateCustom('')
-          setBackdateFor(tracker)
-        }}
+        onCapture={stableCapture}
+        onBackdate={stableBackdate}
       />
 
       <DashboardPanel

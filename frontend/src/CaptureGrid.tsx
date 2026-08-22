@@ -65,8 +65,8 @@ export function CaptureGrid({
           tracker={tracker}
           locked={locked.has(tracker.id)}
           pending={pendingTrackerId === tracker.id}
-          onCapture={(input) => onCapture(tracker, input)}
-          onBackdate={() => onBackdate(tracker)}
+          onCapture={onCapture}
+          onBackdate={onBackdate}
         />
       ))}
     </div>
