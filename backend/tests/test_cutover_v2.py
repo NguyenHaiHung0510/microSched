@@ -374,6 +374,7 @@ def test_unclassified_calendar_uid_is_fail_closed() -> None:
 
 
 def test_manifest_digest_and_unsigned_gate() -> None:
+    future_date = (datetime.now(UTC) + timedelta(days=1)).isoformat()
     transformed = transform_source(SourceSnapshot(source_rows(), NOW))
     target_snapshot = {
         component: empty_inventory(component)
@@ -416,6 +417,8 @@ def test_manifest_digest_and_unsigned_gate() -> None:
         source_dump_sha256="a" * 64,
     )
     path = Path("cutover-test-manifest.tmp.json")
+    manifest["approval_expires_at"] = future_date
+    manifest["manifest_digest"] = manifest_digest(manifest)
     try:
         write_manifest(path, manifest)
         encrypted = path.read_bytes()
@@ -498,6 +501,8 @@ def test_finalized_manifest_dry_run_rechecks_target_and_authenticated_dump(
         script_file_sha256=code["file_sha256"],
     )
     manifest_path = Path("cutover-final-dry-run.tmp.age")
+    manifest["approval_expires_at"] = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    manifest["manifest_digest"] = manifest_digest(manifest)
     dump_path = Path("cutover-final-dry-run.dump.age")
     write_manifest(manifest_path, manifest)
     unsigned = cutover_v2.decrypt_artifact(manifest_path)
