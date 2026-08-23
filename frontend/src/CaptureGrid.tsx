@@ -1,7 +1,35 @@
+import { memo, useCallback } from 'react'
+
 import { TrackerCard } from '@/TrackerCard'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import type { Tracker } from '@/tracker-ui'
+
+const CaptureGridItem = memo(function CaptureGridItem({
+  tracker,
+  locked,
+  pending,
+  onCapture,
+  onBackdate,
+}: {
+  tracker: Tracker
+  locked: boolean
+  pending: boolean
+  onCapture: (tracker: Tracker, input?: string) => void
+  onBackdate: (tracker: Tracker) => void
+}) {
+  const handleCapture = useCallback((input?: string) => onCapture(tracker, input), [tracker, onCapture])
+  const handleBackdate = useCallback(() => onBackdate(tracker), [tracker, onBackdate])
+  return (
+    <TrackerCard
+      tracker={tracker}
+      locked={locked}
+      pending={pending}
+      onCapture={handleCapture}
+      onBackdate={handleBackdate}
+    />
+  )
+})
 
 type CaptureGridProps = {
   trackers: Tracker[]
@@ -60,13 +88,13 @@ export function CaptureGrid({
       className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
     >
       {trackers.map((tracker) => (
-        <TrackerCard
+        <CaptureGridItem
           key={tracker.id}
           tracker={tracker}
           locked={locked.has(tracker.id)}
           pending={pendingTrackerId === tracker.id}
-          onCapture={(input) => onCapture(tracker, input)}
-          onBackdate={() => onBackdate(tracker)}
+          onCapture={onCapture}
+          onBackdate={onBackdate}
         />
       ))}
     </div>

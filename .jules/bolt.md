@@ -4,3 +4,6 @@
 ## 2026-08-02 - Memoize list items in React mapping loops
 **Learning:** For React components rendering lists using `.map()`, rendering inline JSX with handlers created in the parent scope causes all list items to re-render when the parent's state updates, even if the individual items haven't changed.
 **Action:** Extract list items into separate components, wrap them in `React.memo`, and use `useCallback` on any handler functions passed down from the parent to ensure stable prop references and prevent unnecessary re-renders.
+## 2026-08-04 - Memoize TrackerCard to prevent CaptureGrid re-renders
+**Learning:** Tracker cards inside a capture grid can cause significant re-renders on the parent component when the parent state changes (e.g. tracking capture progress).
+**Action:** Extract and wrap TrackerCard components inside `React.memo()` to prevent unnecessary component trees from being re-evaluated when siblings update.

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { CalendarEvent } from '@/calendar-ui'
 import {
   mergeDayChips,
@@ -8,7 +9,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-export function DayCell({
+export const DayCell = memo(function DayCell({
   day,
   isToday,
   isOtherMonth,
@@ -117,4 +118,4 @@ export function DayCell({
       </div>
     </Button>
   )
-}
+})

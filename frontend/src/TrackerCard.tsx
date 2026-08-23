@@ -1,4 +1,4 @@
-import { type FormEvent, type TouchEvent, useRef, useState } from 'react'
+import { type FormEvent, type TouchEvent, useRef, useState, memo } from 'react'
 import { MoreHorizontal, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -28,7 +28,7 @@ type TrackerCardProps = {
   onBackdate: () => void
 }
 
-export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }: TrackerCardProps) {
+export const TrackerCard = memo(function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }: TrackerCardProps) {
   const [inputOpen, setInputOpen] = useState(false)
   const [input, setInput] = useState('')
   const longPressTimer = useRef<number | null>(null)
@@ -189,4 +189,4 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
       )}
     </Card>
   )
-}
+})
