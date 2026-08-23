@@ -48,9 +48,13 @@ Ngày-only là một `DATE`, không phải timestamp giả được giấu khỏ
   (`frontend/src/calendar-scroll.ts:186-188`). E2E đang khóa chính heuristic này tại
   `frontend/e2e/calendar-scroll.spec.ts:244`, `:289`, `:492`.
 - **[QUAN SÁT]** Timeline/cursor 022 đã được merge vào code: query bucket và sort vẫn dựa hoàn toàn
-  vào `Task.due_at` (`backend/app/domain/tasks.py:472-503`, `:582-593`). Header spec 022 còn ghi
-  implementation pending, nhưng Git history hiện có merge PR #142; implementation phải tin cây code
-  + test hiện tại, không tin header trạng thái cũ.
+  vào `Task.due_at`; SQL hiện order `pinned DESC, due_at ASC NULLS LAST, created_at DESC, id ASC` và
+  keyset hand-code cùng fields (`backend/app/domain/tasks.py:361-430`, `:472-506`, `:582-593`). Header
+  spec 022 còn ghi implementation pending, nhưng Git history hiện có merge PR #142; implementation
+  phải tin cây code + test hiện tại, không tin header trạng thái cũ.
+- **[QUAN SÁT]** Task 017 bắt row giữ `payload_sha256` + `payload_byte_length` immutable và retry cùng
+  UUID/payload (`agent-tasks/017-offline-outbox.md:185-199`); do đó payload cũ `{due_at:null}` không
+  được sửa trong flusher chỉ để khớp DTO mới.
 - **[QUAN SÁT]** Alembic head trên base là `0009_legacy_preserving_columns.py`. Executor phải rebase
   rồi kiểm lại head trước khi đặt revision.
 - **[SUY LUẬN]** Một giá trị lịch sử đúng `23:59` có thể do người dùng thật sự chọn, cũng có thể do
@@ -122,9 +126,13 @@ ngữ event, không phải task.
   `Asia/Ho_Chi_Minh`. Task date-only của hôm nay chưa trễ cho tới khi sang ngày kế tiếp.
 - `datetime`: hiện ngày + giờ theo `Asia/Ho_Chi_Minh`; overdue khi `due_at < now`.
 - `none`: hiện “Chưa xếp lịch”, không bao giờ overdue.
-- Trong cùng date group, sau luật `pinned` của 022: `datetime` theo giờ tăng dần → `date` →
-  `created_at DESC` → `id ASC`. Việc date-only đứng sau các giờ cụ thể là **sort semantic**, không phải
-  lưu một giờ cuối ngày.
+- Mọi bucket và mọi continuation dùng **một** tuple canonical, theo đúng thứ tự/chiều:
+  `pinned DESC` → `scheduled_rank ASC` (`date|datetime=0`, `none=1`) →
+  `schedule_day ASC NULLS LAST` → `precision_rank ASC` (`datetime=0`, `date=1`, `none=2`) →
+  `due_at ASC NULLS LAST` → `created_at DESC` → `id ASC`. `schedule_day` là `due_on` cho `date`, ngày
+  Việt Nam của `due_at` cho `datetime` (SQL: `(due_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`), và
+  `NULL` cho `none`. Vì vậy các ngày đi theo thứ tự civil; trong cùng ngày, giờ cụ thể đi trước
+  date-only; unscheduled đi cuối. Đây là **sort semantic**, không phải lưu một giờ giả.
 - Timeline, Calendar và dialog phải dùng cùng helper typed; cấm mỗi màn tự suy từ `due_at`.
 
 ### 2.5 Editing transitions
@@ -164,10 +172,12 @@ undo. Undo giữ toàn bộ `{due_precision,due_on,due_at}` cũ; không chỉ gi
   normalize nonexistent/ambiguous civil time trong task 026; contract tương lai phải chọn reject hay
   disambiguation tường minh trước khi mở setting đó.
 
-## 3. DB và migration — expand rồi contract, không làm gãy app đang chạy
+## 3. DB và migration — expand, contract an toàn, rồi retire old writer
 
 Một migration duy nhất đặt `NOT NULL + CHECK` **trước** deploy sẽ làm app cũ hỏng: code cũ ghi
-`due_at` nhưng không ghi precision. Vì vậy 026 có hai PR triển khai tuần tự.
+`due_at` nhưng không ghi precision. Chỉ “đợi deploy xong rồi backfill” cũng còn race với old Fly
+machine/request đang chạy. Vì vậy 026 có ba PR tuần tự; contract giữ một trigger compatibility tới khi
+có receipt chứng minh không còn binary cũ.
 
 ### 3.1 026A — expand + dual-read/write
 
@@ -182,35 +192,79 @@ chỉ đổi revision number/down_revision, không đổi contract):
    - `due_at IS NOT NULL` → `due_precision='datetime'`;
    - `due_on` giữ `NULL` cho toàn bộ legacy rows;
 3. không biến bất kỳ `23:59` legacy nào thành date-only;
-4. thêm index `ix_task_due_on`; giữ `ix_task_due_at`.
+4. thêm index `ix_task_due_on`; giữ `ix_task_due_at`;
+5. server V2, trong **cùng transaction** trước mọi task INSERT/UPDATE, gọi
+   `set_config('microsched.task_due_writer','v2',true)`; cờ transaction-local không được leak qua
+   pooled connection;
+6. thêm hai trigger function/trigger canonical, có tên cố định
+   `fn_task_due_legacy_insert_v1` / `trg_task_due_legacy_insert_v1` và
+   `fn_task_due_legacy_update_v1` / `trg_task_due_legacy_update_v1`:
+   - đầu mỗi function: nếu `current_setting('microsched.task_due_writer', true)='v2'`, giữ nguyên NEW;
+   - unmarked `BEFORE INSERT`: map `due_at NULL → none`, non-NULL → `datetime`, clear `due_on`;
+   - unmarked `BEFORE UPDATE OF due_at`: map `NEW.due_at NULL → none`, non-NULL → `datetime`, clear
+     `due_on`; old update chỉ title/status không kích hoạt trigger;
+   - vì V2 write đã marked, invalid explicit V2 shape không được “sửa hộ” và CHECK sẽ chặn.
 
 Code 026A đọc `due_precision IS NULL` theo cùng legacy mapping và **mọi write mới dual-write đủ
-shape**. Khoảng giữa apply migration và deploy vẫn an toàn: server cũ có thể tạo row precision NULL;
-server mới đọc được và canonicalize row đó ở lần write kế tiếp.
+shape** + marker transaction-local. Khoảng giữa apply migration và deploy an toàn: unmarked old writer
+được trigger canonicalize ngay, không để row NULL chờ “lần write kế tiếp”. Marker phải được set trong
+transaction thực sự ghi row, không phải một connection/request setup rời transaction.
 
 ### 3.2 026B — contract
 
-Chỉ bắt đầu sau khi 026A merge, CI/deploy xanh và `/api/readyz.commit` khớp merge SHA.
+Chỉ bắt đầu sau khi 026A merge, CI/deploy xanh và `/api/readyz.commit` khớp merge SHA. Trigger §3.1
+vẫn tồn tại trong suốt 026B, nên một old machine/request muộn không thể tạo shape vi phạm sau preflight.
 Branch/PR: `feat/026b-task-temporal-contract`.
 
 Migration dự kiến `0011_task_due_precision_contract.py`:
 
-1. backfill lại mọi row precision NULL sinh trong deployment gap;
-2. preflight count từng shape, fail nếu có row không canonical;
-3. set `due_precision NOT NULL`, server default `'none'`;
-4. thêm `ck_task_due_precision_values` và `ck_task_due_shape`;
-5. model metadata phải khớp exact names để drift check rỗng.
+1. lấy migration/table lock trong transaction, backfill lại mọi row precision NULL theo mapping
+   legacy rồi preflight count từng shape; fail nếu còn row không canonical;
+2. set `due_precision NOT NULL`; **không đặt DB server default** trong compatibility window — default
+   `'none'` sẽ che việc old INSERT bỏ precision và xung đột với `due_at` non-NULL trước trigger;
+3. thêm `ck_task_due_precision_values` và `ck_task_due_shape`;
+4. giữ cả hai trigger legacy §3.1; model metadata khớp constraints/indexes, còn catalog attestation
+   kiểm exact trigger/function names + definitions.
+
+Sau 026B, direct SQL shape của old binary vẫn deterministic:
+
+| Old-writer statement | Shape lưu sau trigger |
+|---|---|
+| INSERT bỏ precision, `due_at=NULL` | `none/NULL/NULL` |
+| INSERT bỏ precision, `due_at=<aware>` | `datetime/NULL/<aware>` |
+| UPDATE date row `SET due_at=NULL` | `none/NULL/NULL` |
+| UPDATE bất kỳ row `SET due_at=<aware>` | `datetime/NULL/<aware>` |
+| UPDATE chỉ title/status, không SET `due_at` | schedule hiện tại giữ nguyên |
 
 `downgrade` của expand migration **phải fail closed nếu đã có row `due_precision='date'`**, vì bỏ
 `due_on` sẽ mất ngày hoặc buộc bịa timestamp. Empty-DB CI round-trip vẫn phải pass; PG test có một
 date-only row phải thấy downgrade dừng đúng lý do và data/schema còn nguyên. Production rollback là
 roll-forward theo repo policy; không downgrade Neon.
 
-### 3.3 Migration receipts
+### 3.3 026C — chứng minh hết old binary rồi retire trigger
+
+Branch/PR: `feat/026c-retire-legacy-due-writer`. Không gộp vào 026B.
+
+Chỉ drop hai trigger/function legacy bằng migration next-head khi có đủ receipt trong **cùng cửa sổ
+vận hành**:
+
+1. inventory Fly cho thấy mọi machine phục vụ/standby đều chạy exact merge SHA của 026B; machine cũ
+   đã stop/remove, không chỉ “healthy machine mới có mặt”;
+2. `/api/readyz.commit` của mọi machine khớp SHA đó, `db=up`, và không còn deploy đang rolling;
+3. chờ quá max request timeout + retry/backoff của server, rồi aggregate preflight vẫn `NULL=0`,
+   invalid=0; không in row/title/due value;
+4. synthetic old-writer probe trên throwaway PG xanh trước drop; sau drop cùng direct legacy INSERT
+   phải đỏ `NOT NULL/CHECK`, còn **legacy HTTP payload qua server mới** vẫn xanh nhờ shim §4.
+
+Nếu không chứng minh đủ bốn gate, giữ trigger và dừng 026C; không đoán từ một health check. Việc giữ
+trigger tạm thời không cho phép bỏ API dual-write hay validator.
+
+### 3.4 Migration receipts
 
 - Preflight Neon chỉ in: revision, tổng row, count `none/date/datetime/NULL/invalid`; không in title,
   due value hay ID.
-- Dùng throwaway Postgres/Docker cho `upgrade → downgrade → upgrade`, drift và guard RED/GREEN.
+- Dùng throwaway Postgres/Docker cho `upgrade → downgrade → upgrade`, trigger matrix, drift và guard
+  RED/GREEN.
 - Neon: apply từng revision bằng `NEON_MIGRATOR_URL`, rồi query read-only
   `information_schema.columns`, `pg_constraint`, `pg_indexes` và aggregate shape counts.
 - `alembic current` một mình không phải proof. Không chạy downgrade/round-trip trên Neon.
@@ -231,6 +285,7 @@ không để CHECK DB biến lỗi người dùng thành `500`.
 | Request | Kết quả |
 |---|---|
 | không field lịch nào | legacy create → `none` |
+| POST legacy có exact `"due_at":null` | `none`; giữ nguyên request bytes/hash, response canonical |
 | chỉ `due_at=<aware>` | legacy → `datetime`, clear `due_on` |
 | chỉ `due_at=null` trong PATCH | legacy → `none`, clear cả hai |
 | `precision=date` + `due_on` | date-only |
@@ -244,9 +299,18 @@ không để CHECK DB biến lỗi người dùng thành `500`.
 Compatibility shim cho `due_at`-only giữ ít nhất qua khi Task 017 đã rebase và mọi first-party caller
 đã gửi shape mới. Không có deadline xoá shim trong 026; muốn xoá phải có task/telemetry riêng.
 
+`POST {id,…,"due_at":null}` đã nằm trong outbox trước 026 là wire contract hợp lệ, không phải payload
+thiếu cần “nâng cấp”. Flusher gửi **đúng canonical bytes cũ**; cấm chèn `due_precision`, xoá key null,
+đổi UUID, hoặc tính lại `payload_sha256`/`payload_byte_length`. Server mới canonicalize vào DB thành
+`none/NULL/NULL` và trả response ba field; adapter reconcile theo response nhưng row/outbox hash bất
+biến. Command mới enqueue sau 026 dùng triad V2 và hash mới của chính bytes đó. Cùng UUIDv7 + exact
+legacy bytes replay sau mất response vẫn `200`, một row, schedule không bị update/rewrite.
+
 ### 4.3 UUID/idempotency/private
 
 - POST cùng UUIDv7 replay vẫn `200` + row cũ, không biến replay thành update và không thay precision.
+- Hai replay liên tiếp của exact `{due_at:null}` phải giữ cùng UUID, body bytes, SHA-256 và byte length;
+  đây là test fixture byte-for-byte, không chỉ so JSON object sau parse.
 - Private task vẫn mã hoá prose như cũ; ba field lịch để plaintext theo quyết định K23. Không mở lại
   privacy model.
 - Error schedule là `422` có code/detail máy đọc được ổn định; không parse microcopy ở client.
@@ -261,11 +325,20 @@ Với range `[from,to)` mà first-party caller gửi theo midnight của `Asia/H
   `due_at ∈ [from_instant,to_instant)`; `none` không thuộc.
 - `undated`: chỉ precision `none`, không còn suy bằng `due_at IS NULL`.
 - `overdue`: open + trước earliest block **và** đã overdue theo §2.4.
-- `open_picker`: mọi open task; sort deterministic, scheduled trước `none`.
+- `open_picker`: mọi open task; dùng nguyên tuple §2.4, không có comparator riêng.
 
-Cursor payload ký phải bind range/status/bucket/private scope như 022 và mang typed last-sort tuple:
-precision, local day, exact datetime khi có, pinned, created_at, id. Không encode SQL fragment; cursor
-cũ `due_at`-only trả `422` sau deploy, client restart range bằng request đầu theo contract 022.
+Cursor payload ký phải bind range/status/bucket/private scope như 022 và mang **đúng tuple §2.4 theo
+đúng thứ tự**: `pinned`, `scheduled_rank`, `schedule_day`, `precision_rank`, `due_at`, `created_at`,
+`id`. Decode validate rank/null/precision combination; cursor `date` không được có `due_at`, cursor
+`datetime` phải có aware `due_at` và day Việt Nam khớp, `none` phải có day/time NULL. Backend có một
+sort-key builder dùng chung cho SQL `ORDER BY`, keyset-after, inverse/has-previous và cursor
+encode/decode; frontend có đúng một `compareTaskScheduleKey` mirror tuple đó. Contract fixture JSON
+dùng chung phải chứng minh Python/TypeScript cho cùng order; không copy comparator theo từng màn/bucket.
+Cursor cũ `due_at`-only trả `422`, client restart range bằng
+request đầu theo 022. `due_at`/`created_at` trong cursor dùng canonical UTC RFC3339 (`Z`), còn
+`schedule_day` là ISO civil date Việt Nam; frontend không lấy device timezone để dựng key. Với dataset
+không mutation, concat mọi page phải byte-for-byte cùng thứ tự với one-shot query và mỗi ID đúng một
+lần; mutation đổi tuple invalidate/restart cursor, không tiếp tục trên snapshot đã đổi.
 
 Không dựng ba poller. `TasksScreen` vẫn đúng một primary timeline observer 1 giây khi visible theo
 Task 021/022; Calendar không interval. Mutation invalidate cả `['tasks']` và `['calendar']`, không
@@ -294,7 +367,7 @@ Task 017 là source of truth cho queue, optimistic reconcile, private hold, Web 
 - 026 **không** tạo Dexie table, `queuedMutation`, flusher hay adapter riêng; không sửa WIP/worktree
   017 của agent khác.
 - 026 thay đổi các write surface đã có để gửi shape typed online. API shim §4.2 bảo đảm row outbox/cached
-  client cũ chỉ có `due_at` vẫn replay được.
+  client cũ chỉ có `due_at` vẫn replay được **mà không mutate/re-hash payload**.
 - Khi 017 rebase sau 026, adapter `task.create`/`task.update` phải serialize full canonical schedule;
   optimistic apply/reconcile/undo không được suy `date` từ `23:59`.
 - 026 acceptance **không** được gọi là offline/PWA pass. 027 không mở write surface mới cho tới khi
@@ -304,7 +377,8 @@ Task 017 là source of truth cho queue, optimistic reconcile, private hold, Web 
 
 Được chạm trong 026 implementation:
 
-- `backend/alembic/versions/0010_*`, `0011_*` (revision number theo head sau rebase);
+- `backend/alembic/versions/0010_*`, `0011_*`, migration retire-trigger next-head của 026C (revision
+  number theo head sau rebase);
 - `backend/app/domain/models.py`, `backend/app/domain/tasks.py`,
   `backend/app/web/routers/tasks.py`;
 - task/calendar helpers và callers hiện hữu: `frontend/src/task-ui.ts`, `TaskForm.tsx`,
@@ -334,15 +408,24 @@ Không được làm:
    - legacy exact `23:59+07`;
    - private/completed/deleted rows.
    Sau expand: NULL → none, mọi non-NULL (kể cả 23:59) → datetime, zero date. Sau contract: zero
-   invalid/null precision; exact constraints/indexes có mặt.
-3. Deliberately insert từng invalid shape sau contract ⇒ DB đỏ đúng `ck_task_due_shape`; hoàn nguyên
-   rồi insert ba shape hợp lệ xanh.
-4. Downgrade guard với date-only row đỏ **trước khi drop**; empty throwaway DB round-trip xanh.
-5. Range/cursor test >205 synthetic rows trộn ba precision, boundary 00:00, pinned/private/deleted:
-   mọi visible ID đúng một lần, date-only không mất khỏi range, cursor mutation/scope mismatch `422`.
-6. Overdue fake clock: date-only hôm nay chưa trễ lúc 23:59:59 local, trễ sau local midnight;
+   invalid/null precision; exact constraints/indexes/triggers có mặt.
+3. Old-writer PG matrix §3.2 chạy cả giữa 026A→app deploy và sau 026B. Thêm negative regression:
+   unmarked update date row bằng `SET due_at=NULL` thành none; unmarked update chỉ title giữ date;
+   marked canonical datetime→date giữ date; marked invalid shape đỏ CHECK. Kết thúc transaction V2,
+   reuse cùng pooled connection cho unmarked legacy write và chứng minh marker không leak.
+4. Deliberately insert từng invalid V2 shape sau contract ⇒ DB đỏ đúng `ck_task_due_shape`; hoàn
+   nguyên rồi insert ba shape hợp lệ xanh. Trigger không được sửa hộ invalid explicit V2.
+5. Downgrade guard với date-only row đỏ **trước khi drop**; empty throwaway DB round-trip xanh. 026C
+   có RED/GREEN riêng: old direct writer xanh trước drop, đỏ sau drop, legacy HTTP shim vẫn xanh.
+6. Range/cursor test >205 synthetic rows trộn pinned/unpinned, ba precision, nhiều row cùng
+   day/time/created_at, boundary 00:00, private/deleted: concat pages bằng exact one-shot tuple §2.4,
+   mọi visible ID đúng một lần. Chạy cùng assertion cho dated/overdue/undated/open_picker;
+   rank/null mismatch, cursor mutation/scope mismatch đều `422`.
+7. Overdue fake clock: date-only hôm nay chưa trễ lúc 23:59:59 local, trễ sau local midnight;
    datetime trễ đúng instant; none không trễ.
-7. UUIDv7 replay cùng payload và legacy `due_at` payload vẫn một row/`200`.
+8. UUIDv7 create/replay exact legacy `{due_at:null}` vẫn một row/`200`; capture body bytes/hash/length
+   trước hai dispatch và assert bất biến, response luôn canonical none. Fixture `{due_at:<aware>}` có
+   cùng guarantee và canonical datetime.
 
 ### 8.2 Frontend unit/component
 
@@ -378,7 +461,8 @@ Sau khi suite xanh, perturbation không commit:
 1. tạm map date-only reschedule về `23:59` **hoặc** đổi overdue date-only thành `due_on <= today`;
 2. chạy test hẹp, thấy đỏ đúng semantic (không phải lint/type error);
 3. restore source, chạy cùng lệnh xanh;
-4. dán nguyên output RED/GREEN vào PR 026A. PR 026B làm RED/GREEN riêng cho DB CHECK/downgrade guard.
+4. dán nguyên output RED/GREEN vào PR 026A. PR 026B làm RED/GREEN riêng cho trigger + DB CHECK/
+   downgrade guard; PR 026C chứng minh trigger-retire RED/GREEN §8.1.
 
 ## 9. Lệnh/gate và báo cáo
 
@@ -401,10 +485,11 @@ root: git diff --check
 root: pre-commit run --all-files
 ```
 
-PR vào `develop`, giữ tên required checks, chờ `gh pr checks <PR> --watch` terminal. Sau merge 026A
-chỉ claim production khi `/api/readyz.commit` khớp exact merge SHA và `db=up`; đó chưa phải browser/
-iPhone acceptance. iPhone/Safari thật phải verify default today, keyboard, date-only không hiện giờ và
-reschedule; chưa chạy thì ghi **CHƯA VERIFY**, không suy từ Playwright.
+Mỗi 026A/B/C là PR vào `develop`, giữ tên required checks, chờ `gh pr checks <PR> --watch` terminal.
+Chỉ claim phase production khi inventory machine + `/api/readyz.commit` khớp exact merge SHA và
+`db=up`; 026C còn cần gate retire §3.3. Đó chưa phải browser/iPhone acceptance. iPhone/Safari thật phải
+verify default today, keyboard, date-only không hiện giờ và reschedule; chưa chạy thì ghi
+**CHƯA VERIFY**, không suy từ Playwright.
 
 Báo cáo cuối tách đúng bốn mục: **ĐÃ CHẠY** (raw output) · **CHƯA CHẠY** · **SUY LUẬN** ·
 **MIGRATION/PRODUCTION RECEIPT**. Không dán task title, due value thật, account, token hay secret.
