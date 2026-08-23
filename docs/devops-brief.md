@@ -145,6 +145,18 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 **Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật.
 
+### Kỷ luật delegation, báo cáo và topology thử nghiệm
+
+**Hợp đồng lane.** Mỗi delegation lane phải nêu objective, scope/authority chính xác, forbidden actions và evidence/output contract. Steering chỉ làm rõ hoặc đổi ưu tiên trong hợp đồng đó, không tự mở rộng authority. T1/subagent tự chọn phương pháp khảo sát trong guardrail đã giao; coordinator không micro-manage reasoning.
+
+**Báo chủ theo tầng chiến lược.** Mặc định chỉ trình bày lane, decision/risk, evidence boundary và next stage. Không đưa prompt nội bộ hoặc probe raw ra báo cáo, trừ khi chủ yêu cầu hoặc cần giải thích route/blocker. Mọi synthesis phải gắn từng kết luận là **[QUAN SÁT]**, **[SUY LUẬN]** hoặc **[KHÔNG BIẾT]**; parent chịu trách nhiệm reconcile conflict và current-state drift trước khi dùng kết quả.
+
+**Route và song song.** Trước lane thật, phải probe callability của đúng route/model/effort được giao; route không gọi được thì báo rõ, không âm thầm substitute. Probe này không thay Runtime Catalog và không chứng minh capability/acceptance của task. Ưu tiên parallel discovery khi các lane độc lập và coordinator còn reconciliation; vẫn một writer một worktree, không mở rộng authority, và merge/irreversible gate giữ nguyên.
+
+### ⚠️ OPEN — topology/authority chưa là policy
+
+Đảo vai bền vững **T2 coordinator / T1 analyst**, nested delegation, authority propagation, merge accountability, cancellation/context propagation chỉ có thể được nâng thành policy sau experiment có receipt. Mỗi experiment phải đo tối thiểu: decision quality/coverage, authority breach, handoff loss, time-to-PR và CI/device acceptance. Cho đến khi có receipt, current policy flat orchestration, authority và merge gate ở trên vẫn giữ nguyên.
+
 ### Historical harness receipts — RETIRED
 
 Các mục tiếp theo của §7 là receipt lịch sử, giữ để truy nguyên quyết định và failure mode; không phải policy, runtime catalog hoặc routing hiện hành. ClaudeRelay đã RETIRED, không dành thêm maintenance/QA.
