@@ -93,8 +93,14 @@ API dùng discriminated object `time`:
   không có title, checklist, completion, archive, reminder, embedding, AI hoặc notification.
 - Reflection sắp tăng dần theo `reflected_at`, rồi `id`. Timestamp đó là lúc reflection được
   thêm, không phải mốc nội dung của original note.
-- Create mặc định phút hiện tại; client/offline capture action time như note. Người dùng không
-  chọn một ngày tương lai để hẹn gửi. Sau khi tạo, `reflected_at` bất biến; edit chỉ sửa body.
+- `reflected_at` là **một scalar datetime riêng của reflection**, không dùng discriminated object
+  `time` của note ở §3.1. Nó luôn là một instant RFC 3339 có `Z` hoặc numeric offset, precision
+  đến phút: giây phải là `00`, không có fractional seconds. Nó không có biến thể `date`,
+  `unscheduled`, `precision`, `value` hay `source`.
+- Create mặc định phút hiện tại ở `Asia/Ho_Chi_Minh`; client/offline capture action time như note.
+  Server lưu instant bằng `TIMESTAMPTZ`; UI localize về timezone người dùng nhưng không đổi instant.
+  Người dùng không chọn một ngày tương lai để hẹn gửi. Sau khi tạo, `reflected_at` bất biến; edit
+  chỉ sửa body.
 - Edit cập nhật `updated_at` và UI ghi “đã sửa”; delete là soft delete. UI cho Undo 10 giây,
   nhưng server restore vẫn kiểm privacy/parent state và không dựa vào timer client để bảo mật.
 - Xóa mềm original note ẩn toàn timeline theo gate cha. Restore note đưa các reflection chưa
@@ -193,7 +199,12 @@ Reflection create/read DTO:
   `created_at`, `updated_at`; field nội bộ `created` dùng chọn HTTP status nhưng `exclude=True`,
   không ra JSON.
 - Payload vẫn phải qua validation trước lookup. “Không so payload” không biến UUID thành cách bỏ
-  qua 422: body rỗng, time sai precision/offset hoặc extra field vẫn bị từ chối.
+  qua 422. Request `POST` chỉ nhận đúng ba key: `id` UUIDv7 bắt buộc, `body_md` string bắt buộc có
+  ít nhất một ký tự không-whitespace, và `reflected_at` tùy chọn. Nếu có, `reflected_at` phải là
+  RFC 3339 datetime có `Z`/numeric offset, giây đúng `00`, không fractional seconds; naive
+  datetime, date-only, non-zero seconds hoặc note-style object `time` đều là 422. Mọi extra field,
+  gồm `precision`, `value`, `source`, `note_id`, `created_at`, `updated_at`, cũng là 422
+  (`extra=forbid`). Validation chỉ dùng trim để nhận biết body rỗng, không tự trim nội dung đã lưu.
 - Nếu replay trả row live, outbox bỏ queue row và thay optimistic projection bằng **stored response**,
   không merge local payload.
 - Sau insert-conflict, query live row phải lọc cả `reflection.deleted_at IS NULL` và parent readable.
@@ -205,8 +216,9 @@ Reflection create/read DTO:
   `404` khác park ngay. Sau unlock, replay nguyên request: live row cùng parent → `200`; parent vẫn
   404 hoặc physical row đã delete/khác parent → park (`409` vẫn empty) theo classifier 017. Không
   thêm payload hash, conflict table/cột hoặc migration nào.
-- `reflected_at` có thể bỏ ở client online để server default, nhưng outbox bắt buộc gửi capture
-  time. PATCH chỉ nhận `body_md`; extra field, `null` body, body rỗng/whitespace là 422.
+- `reflected_at` có thể bỏ ở client online để server default về phút hiện tại; outbox bắt buộc gửi
+  scalar `reflected_at` đã capture khi tap, không gửi note `time`. PATCH chỉ nhận `body_md`; extra
+  field, `null` body, body rỗng/whitespace là 422. `created_at`/`updated_at` luôn server-owned.
 
 ## 5. UI mobile-first, privacy và accessibility
 
@@ -244,9 +256,12 @@ Reflection create/read DTO:
 
 Test bắt buộc:
 
-- Backend unit/API cho mọi valid/invalid discriminated shape, seconds khác 0, missing offset,
-  extra `source`, stable ordering; reflection lost-response replay với payload cùng/khác; stored
-  `updated_at` bất biến; deleted/cross-parent ID empty 409 và row bất biến; locked parent
+- Backend unit/API cho note `time`: mọi valid/invalid discriminated shape, seconds khác 0,
+  missing offset, extra `source` và stable ordering. Tách riêng reflection create/PATCH: default
+  khi bỏ `reflected_at`; scalar `Z`/numeric offset hợp lệ; naive/date-only/non-zero seconds/
+  fractional seconds/note-style `time` object/extra server field đều 422; PATCH đổi body không đổi
+  `reflected_at`. Reflection lost-response replay với payload cùng/khác; stored `updated_at` bất
+  biến; deleted/cross-parent ID empty 409 và row bất biến; locked parent
   hold→unlock→200 khi row live; hai request đồng thời cùng ID nhưng valid payload khác tạo đúng một
   row, một `201` + một `200`, hai response cùng stored winner; parent/privacy/deletion gates. Không
   có test/hash payload tưởng tượng.

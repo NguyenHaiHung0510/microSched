@@ -48,6 +48,16 @@ per-device delivery history, AI, dịch vụ/cost mới hay daily-task UX.
   auto-confirm khi mở và payload theo từng subject, theo quyết định owner 2026-08-24.
 - [QUAN SÁT] `backend/scripts/reminder_delivery_receipt.py:21-39,84-128` hiện giữ aggregate
   theo kind/date/status/attempt và top-level keys ổn định; chưa có bundle report.
+- [QUAN SÁT] `backend/app/domain/subscription.py:333-352` đọc subscription bình thường bằng JOIN
+  parent Tracker, áp `readable(..., Tracker, auth)` rồi `not_deleted(..., Subscription)`; do đó
+  subscription soft-delete phải tiếp tục ẩn/404 ở CRUD API. Timer chỉ schedule subscription khi
+  `subscription.deleted_at IS NULL`, `canceled_at IS NULL`, `expires_on >= today_vn` và parent
+  tracker chưa delete (`backend/app/core/cron_timer.py:284-299`).
+- [QUAN SÁT] confirm tracker hiện hành lock dispatch, trả 404 khi dispatch thiếu, 409 khi subject
+  sai/Tracker đã delete hoặc config không còn eligible, 403 `PRIVATE_UNLOCK_REQUIRED` khi parent
+  private khóa, và chỉ success mới set confirmation/tạo Entry
+  (`backend/app/domain/reminder.py:283-374`). Acknowledge mới phải giữ cùng thứ tự safety gate và
+  không biến subscription unavailable thành restore/renew.
 - [QUAN SÁT bên ngoài, kiểm 2026-08-24] Apple hỗ trợ Web Push cho Home Screen web app từ
   iOS/iPadOS 16.4 và yêu cầu notification permission từ tương tác trực tiếp:
   <https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/>.
@@ -277,8 +287,20 @@ GET /api/reminders/pending?limit=50&cursor=<opaque>&highlight=<optional UUID>
 - Join subject qua reading gates. Private tracker/subscription khi lock bị **lọc hoàn toàn**, không
   đổi response shape/flag/count. Panel luôn có lời nhắc tĩnh “Mở Chế độ Riêng tư để xem mục riêng
   tư” nên không cần tiết lộ có hidden row hay không; unlock refetch.
-- Subject soft-deleted/config không còn eligible nhưng readable trả label generic
-  `Mục không còn khả dụng`, action `acknowledge_unavailable`; private locked vẫn bị lọc.
+- Resolver của pending projection phân biệt chính xác:
+  - tracker eligible = physical row live, `kind=health`, `input_mode=event`;
+  - subscription eligible = physical row + parent live, subscription chưa soft-delete/chưa
+    cancel và `expires_on >= today_vn` (`today_vn` ở `Asia/Ho_Chi_Minh`), đúng timer contract 011d;
+  - physical subject còn tồn tại nhưng không đạt shape tương ứng là **unavailable**. Riêng
+    subscription gồm ít nhất soft-deleted, canceled, expired hoặc parent tracker soft-deleted.
+- Eligible subject qua reading gate mới được decrypt/trả label thật và action `record_entry`
+  (tracker) hoặc `acknowledge` (subscription). Unavailable subject chỉ trả label generic
+  `Mục không còn khả dụng` + action `acknowledge_unavailable`; không trả tên/status/reason.
+- Đây là projection hẹp theo một dispatch đã có, không nới CRUD API: resolver được phép probe các
+  physical columns tối thiểu và dùng `with_privacy_gate` trên Tracker cha trước khi phân loại,
+  nhưng không dùng probe đó để trả model/name. `GET /api/subscriptions/{id}` của subscription
+  soft-delete vẫn 404. Parent private khóa thì item bị lọc; physical subject/parent thật sự không
+  còn tồn tại thì item cũng bị lọc vì không còn privacy basis an toàn.
 
 ### 7.3 Item actions — luôn explicit và idempotent
 
@@ -303,9 +325,31 @@ check:
   {}
   ```
 
-  Subscription: set `confirmed_at=now`, `confirmed_entry_id=NULL`; không renew/cancel/tạo Entry.
-  Unavailable tracker: explicit acknowledge được phép, không tạo Entry. Eligible tracker trả 409
-  `ENTRY_CONFIRM_REQUIRED`. Lần gọi sau trả success idempotent với `acknowledged=false`.
+  Endpoint không nhận action/subject state từ client; body chỉ `{}` và server lock dispatch rồi
+  derive lại state. First success trả exact `200 {"acknowledged":true}`, set
+  `confirmed_at=now`, giữ `confirmed_entry_id=NULL` (cùng `updated_at` do trigger hiện hành);
+  không renew/cancel/restore/tạo Entry. Replay khi `confirmed_at IS NOT NULL` trả exact
+  `200 {"acknowledged":false}` trước subject lookup và không đổi timestamp/row nào. Row lock phải
+  khiến hai request đồng thời có đúng một `true`, một `false`.
+
+Action/status matrix bắt buộc:
+
+| State ở lúc server xử lý unconfirmed dispatch | Action GET | `POST .../acknowledge` | Mutation |
+|---|---|---|---|
+| Tracker live + eligible | `record_entry` | `409`, `detail.code=ENTRY_CONFIRM_REQUIRED` | không đổi dispatch, không Entry |
+| Tracker physical nhưng soft-delete/config ineligible, privacy gate đọc được | `acknowledge_unavailable` | `200 {"acknowledged":true}`; replay `false` | chỉ confirm dispatch |
+| Subscription live + eligible | `acknowledge` | `200 {"acknowledged":true}`; replay `false` | chỉ confirm dispatch; không Entry/renew/cancel |
+| Subscription physical nhưng soft-delete/canceled/expired/parent soft-delete, privacy gate đọc được | `acknowledge_unavailable` + label generic | `200 {"acknowledged":true}`; replay `false` | chỉ confirm dispatch; không restore/uncancel/renew/Entry |
+| Parent private khóa | item không có trong GET | `403`, `detail.code=PRIVATE_UNLOCK_REQUIRED` | zero mutation |
+| Dispatch thiếu | item không có trong GET | `404`, `detail="Reminder dispatch not found"` | zero mutation |
+| Subject/parent physical thật sự thiếu hoặc `subject_type` không hỗ trợ | item không có trong GET | `409`, `detail="Reminder subject is unavailable"` | zero mutation |
+
+Đặc biệt, soft-deleted subscription **không** trả 404 từ acknowledge nếu physical row và parent
+còn đủ để áp privacy gate; nó đi đúng nhánh unavailable như tracker unavailable. `404` chỉ dành
+cho dispatch ID không tồn tại; physical subject/parent thật sự thiếu hoặc type không hỗ trợ trả
+generic `409` như current confirm-family business conflict, không acknowledge. Một stale panel thấy
+subscription eligible rồi subject đổi trạng thái trước POST vẫn được server derive lại và
+acknowledge theo state mới; client không thể ép `acknowledge` để bypass gate.
 
 - Network/403/409 khác giữ item unchecked và focus/error tại item. Private 403 mở unlock flow;
   success retry đúng body. Không có `check all`, bulk action, auto-dismiss, uncheck/revert hoặc
@@ -404,8 +448,10 @@ Chỉ cộng hai top-level additive fields:
 | R5 | 2 devices, một sent/một temp fail | 2 network sends, aggregate rows sent; không tuyên bố device thứ hai delivered |
 | R6 | no device | status no_device nhưng pending panel vẫn có item |
 | R7 | click OS/old confirm URL | chỉ GET/mở panel; network trace không có POST trước explicit tap |
-| R8 | tracker explicit check | một Entry idempotent; default unchecked; private unlock retry giữ body |
-| R9 | subscription check | confirmed_at set, không Entry/renew/cancel |
+| R8 | tracker explicit check | một Entry idempotent; default unchecked; private unlock retry giữ body; gọi ack khi tracker vẫn eligible → 409/zero mutation |
+| R9a | subscription eligible check | first ack 200/true, concurrent/replay 200/false; confirmed_at set, không Entry/renew/cancel |
+| R9b | subscription soft-delete/cancel/expire/parent delete trước ack | GET generic + `acknowledge_unavailable`; 200 true→false; không name/reason/restore/uncancel/renew/Entry |
+| R9c | subscription private/orphan boundary | locked parent: GET omit + direct ack 403/zero mutation; dispatch missing → 404; physical subject/parent missing → GET omit + 409; CRUD GET soft-deleted vẫn 404 |
 | R10 | public/private canary labels + reminder_text | mọi bundle chỉ exact count-only body; không subject field/text trong payload/log; in-app private detail cần unlock |
 | R11a | migration, chưa chạy recovery | mọi historical row/audit byte-for-byte; downgrade round-trip byte-for-byte |
 | R11b | eligible legacy ở biên 24h | set bundle_id, giữ scheduled_for NULL; chỉ updated_at đổi lúc attach; crash/reload reuse, không ghi attachment lần hai |
@@ -421,7 +467,8 @@ Test lanes:
   unique race, retry/exhausted/crash recovery, aggregate multi-device result, no-device, active
   legacy recovery ở `24h`, `24h+1µs`, attempt 3/4; exact before/after columns + trigger timestamp;
   downgrade trước/sau attachment, gồm receipt + expected non-byte-preserving `updated_at`; pending
-  cursor/privacy/highlight, confirm/ack idempotency.
+  cursor/privacy/highlight; confirm/ack action matrix, gồm subscription live/soft-delete/canceled/
+  expired/parent-delete, locked parent, physical-missing, stale-state và concurrent true→false.
 - Timer regression: heap sleeps tới due/boundary/reload event, không interval DB poll; next-day
   scheduling giữ nguyên cho tracker/subscription.
 - Frontend Vitest: exact Vietnamese payload string/parser/tag/timestamp; canary public/private

@@ -30,6 +30,19 @@ Tracker screen phải ưu tiên việc tổ chức và sửa dữ liệu trướ
   nhưng không có `tracker.position`.
 - [QUAN SÁT] `backend/app/domain/tracker.py:494-501` xếp group theo `position, created_at`;
   `:564-572` xóa group và FK đưa tracker về `group_id=NULL`; `:576-583` trả tracker đang thấy.
+- [QUAN SÁT] `_group_counts()` ở `backend/app/domain/tracker.py:516-529` cố ý áp privacy +
+  soft-delete gate vì count đi vào confirmation; khi khóa private, count không gồm tracker riêng
+  tư. Nhưng route DELETE ở `backend/app/web/routers/tracker.py:125-130` nhận `session` rồi không
+  truyền nó xuống `TrackerStore.delete_group()`, nên backend hiện vẫn có thể detach hidden private
+  tracker bằng FK `ON DELETE SET NULL`.
+- [QUAN SÁT] `backend/app/domain/models.py:324-351` giữ `TrackerGroup` ở `Gate.NONE`, còn `Tracker`
+  là `Gate.APPLIES`. `docs/tracking-brief.md:61-64` khóa private thành auth/display gate theo
+  session: phải unlock trước thao tác ghi vào dữ liệu private; đây không phải encryption key.
+- [SUY LUẬN] “Phải unlock trước khi xóa group” là safety guarantee, không chỉ affordance UI: action
+  này thay `group_id` của mọi member, gồm member đang bị ẩn. Gate phải chặn **mọi** group DELETE
+  khi khóa đóng, trước lookup group/member. Chặn có điều kiện theo “group có private tracker” sẽ
+  biến `403`/`204` thành side channel; trade-off được chấp nhận là group chỉ có public tracker cũng
+  phải unlock để xóa.
 - [SUY LUẬN] Group trực tiếp capture grid trong phase này sẽ thay thứ tự global dynamic đã khóa.
   Vì vậy organizer mới chỉ tổ chức/điều hướng/management cells; capture grid hiện tại vẫn là vùng
   nhập duy nhất và giữ nguyên thuật toán.
@@ -100,8 +113,13 @@ không sống bằng hover/kebab không có accessible trigger.
   menu, không thêm drag-and-drop trong phase này.
 - Xóa group phải nói rõ “Các tracker trong nhóm sẽ chuyển sang Chưa phân nhóm”; không xóa
   tracker/entry. Sau success invalidate groups + trackers một lần và giữ order động hiện hành.
-- Khi private lock đóng, UI không cho delete group: người dùng phải unlock để thấy đủ impact.
-  Count trong confirmation chỉ là count sau unlock; không hiển thị hay log số hidden trước đó.
+- Khi private lock đóng, UI không render active delete action; cùng vị trí là CTA “Mở private để
+  xóa nhóm”. Tap chỉ mở unlock flow, không mở confirmation và không gửi DELETE; đây là lớp UX.
+  Backend **bắt buộc** từ chối mọi group DELETE bằng gate ở §6, kể cả request trực tiếp, stale tab,
+  outbox replay và group chỉ có public tracker. Người dùng phải unlock để thấy đủ impact.
+- Count trong confirmation chỉ fetch/render sau unlock và lúc đó gồm mọi live member public +
+  private. Không query, hiển thị hay log số hidden trước đó. Nếu gate relock khi dialog đang mở,
+  đóng dialog/purge private projection; request lỡ gửi vẫn bị backend trả `403` và không detach gì.
 - Error phải giữ dialog/state để retry; optimistic move/rename/delete rollback về đúng group và
   focus action đã bấm.
 
@@ -127,13 +145,28 @@ Người dùng vẫn có thể tự đặt tên, group và bật `is_private`. N
 ## 6. API/DB/migration
 
 - **Không migration. Không model/endpoint mới.** Giữ `TrackerGroupRead`, `TrackerRead`, group CRUD,
-  tracker PATCH và list entries hiện hành.
+  tracker PATCH và list entries hiện hành. Scope backend duy nhất của 029 là harden endpoint
+  DELETE group đang có; không đổi `TrackerGroup.__privacy_gate__ = Gate.NONE`.
+- `DELETE /api/tracker/groups/{group_id}` phải truyền verified session xuống domain/store. Khi
+  private chưa unlock, domain gate chạy **trước mọi query existence/group/member** và trả:
+
+  ```text
+  HTTP 403
+  {"detail":{"code":"PRIVATE_UNLOCK_REQUIRED","message":"Unlock private mode to delete a tracker group"}}
+  ```
+
+  Mọi group ID existing/missing và public-only/mixed-private có cùng status/body shape; transaction
+  không xóa group và không đổi bất kỳ `tracker.group_id`/Entry nào. Router/UI không được là lớp
+  bảo vệ duy nhất. Sau unlock, flow cũ giữ row lock → delete group → FK đưa member về NULL → `204`.
+- Group DELETE outbox command được tạo sau confirmation phải có `requires_private=true`. Nếu gate
+  hết hạn trước flush, exact code trên đi vào `private_hold` theo 017; unlock rồi replay nguyên
+  command. Create/rename/reorder group không detach hidden member nên không bị gate mới này.
 - Dùng `group_id: UUID | null` đang có. Không thêm group sentinel vào Pydantic/SQL.
 - Không đổi limit 20 hoặc ordering của recent entries; chỉ di chuyển component lên trước
   DashboardPanel.
 - Không đổi computation/copy/chart trong `DashboardPanel` và không đổi subscription card.
 - Nếu implementation phát hiện API hiện hành không hỗ trợ `group_id:null`, dừng và ghi receipt;
-  không mở backend scope lén trong PR frontend-only.
+  không mở thêm backend scope ngoài DELETE gate đã khai ở trên.
 
 ## 7. Accessibility, responsive và privacy
 
@@ -155,7 +188,8 @@ Người dùng vẫn có thể tự đặt tên, group và bật `is_private`. N
 | T3 | Fold/unfold | ARIA/focus đúng; reload reset; không localStorage/IndexedDB/API write |
 | T4 | Dynamic rank | frozen order và fixtures 30 ngày giữ nguyên; filter vào group không alpha-sort |
 | T5 | Move sang virtual group | PATCH `group_id:null`; rollback đúng khi 4xx/5xx/offline |
-| T6 | Delete group | tracker/entry còn nguyên, members về NULL; private lock bắt unlock trước |
+| T6a | Delete group khi unlocked | confirmation count gồm đủ live public/private member; 204; tracker/entry còn nguyên, mọi member về NULL |
+| T6b | Delete group khi locked | existing/missing và public-only/mixed đều exact 403/code/body shape; zero group/tracker/entry mutation; stale dialog/outbox vào unlock/private_hold |
 | T7 | Tracker “Hút thuốc”/“Billiards” | dùng generic kind/input; source/API/DB không có hard-coded branch/flag |
 | T8 | Long/empty/30+ trackers | wrap, fold, focus-to-capture, không fixed height/overflow; thao tác mobile ổn |
 | T9 | Private lock giữa lúc dialog mở | dialog đóng, dữ liệu private purge, không lộ count/name |
@@ -163,20 +197,24 @@ Người dùng vẫn có thể tự đặt tên, group và bật `is_private`. N
 
 Test bắt buộc:
 
+- Backend API/integration cho DELETE group: locked existing/missing/public-only/mixed-private trả
+  cùng `403 + PRIVATE_UNLOCK_REQUIRED` trước lookup và zero mutation; unlocked mixed group trả 204,
+  mọi member về NULL nhưng tracker/entry giữ nguyên; hai request/replay giữ transaction an toàn.
 - Vitest cho projection group/virtual group, frozen order, no-sentinel serialization, DOM order,
-  mutation rollback, lock lifecycle và generic-name fixtures.
+  mutation rollback, lock lifecycle, `requires_private=true` và generic-name fixtures.
 - Playwright desktop + mobile cho fold, move, delete warning, focus capture cell, 44 px target,
   keyboard order, no overflow và screenshot đủ long-name/empty/30+ dataset.
 - Static guard `rg`/test chứng minh không thêm forbidden entity/label list và không thêm browser
   persistence cho fold state.
-- Guardrail mới có RED → GREEN receipt: tạm alpha-sort grouped cells hoặc serialize sentinel,
-  thấy test đỏ đúng lý do; hoàn nguyên rồi xanh.
+- Guardrail mới có RED → GREEN receipt: tạm alpha-sort grouped cells/serialize sentinel **hoặc**
+  bỏ domain delete gate để locked request detach member, thấy đúng test đỏ; hoàn nguyên rồi xanh.
 
 ## 9. Sequencing và không làm
 
 1. **Gate cứng:** task 017 merge trước vì cùng sửa `TrackerScreen`, query cache và outbox.
-2. Sau rebase lên 017, task 029 là frontend-only và có thể chạy song song với 028/030 nếu một
-   writer không cùng sửa file.
+2. Sau rebase lên 017, task 029 gồm frontend organizer + một backend action gate hẹp trên DELETE
+   group. Có thể chạy song song với 028/030 chỉ khi writers không cùng sửa tracker router/store,
+   central privacy normalizer hoặc outbox classifier.
 3. Không chỉnh task/status index rộng trong PR; integration owner cập nhật sau khi merge.
 
 Không làm: grouped CaptureGrid, thay dynamic ranking, tracker position, drag-and-drop, persisted
