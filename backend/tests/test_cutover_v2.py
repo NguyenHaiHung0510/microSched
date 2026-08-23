@@ -445,7 +445,7 @@ def test_manifest_digest_and_unsigned_gate() -> None:
         finalize_manifest(path, signature)
         assert (
             read_final_manifest(
-                path, expected_script_sha=code["git_sha"], expected_host="throwaway"
+                path, expected_script_sha=code["git_sha"], expected_host="throwaway", now=NOW
             )["manifest_digest"]
             == unsigned["manifest_digest"]
         )
@@ -458,6 +458,14 @@ def test_finalized_manifest_dry_run_rechecks_target_and_authenticated_dump(
     monkeypatch, capsys
 ) -> None:
     import scripts.cutover_v2 as cutover_v2
+
+    # Override datetime.now to return NOW in this test
+    class FakeDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+
+    monkeypatch.setattr(cutover_v2, "datetime", FakeDatetime)
 
     key = Ed25519PrivateKey.generate()
     monkeypatch.setenv(ARTIFACT_KEY_ENV, base64.b64encode(b"f" * 32).decode())

@@ -1881,9 +1881,14 @@ def finalize_manifest(path: Path, signature: str) -> None:
 
 
 def read_final_manifest(
-    path: Path, *, expected_script_sha: str | None, expected_host: str
+    path: Path,
+    *,
+    expected_script_sha: str | None,
+    expected_host: str,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     payload = decrypt_artifact(path)
+    now = now or datetime.now(UTC)
     if payload.get("manifest_digest") != manifest_digest(payload):
         raise ManifestError("manifest digest mismatch")
     identity = actual_code_identity()
@@ -1934,7 +1939,7 @@ def read_final_manifest(
         approval_expiry = datetime.fromisoformat(payload["approval_expires_at"])
     except KeyError, TypeError, ValueError:
         raise ManifestError("manifest approval expiry is invalid") from None
-    if approval_expiry.tzinfo is None or approval_expiry <= datetime.now(UTC):
+    if approval_expiry.tzinfo is None or approval_expiry <= now:
         raise ManifestError("manifest owner approval has expired")
     if approval.get("algorithm") != "Ed25519":
         raise ManifestError("owner approval algorithm is not Ed25519")
@@ -2463,6 +2468,7 @@ async def async_main(args: argparse.Namespace) -> int:
             args.manifest,
             expected_script_sha=args.expected_script_sha,
             expected_host=args.confirm_target_host.lower(),
+            now=datetime.now(UTC),
         )
         try:
             failure_time = datetime.fromisoformat(args.failure_time)
@@ -2547,6 +2553,7 @@ async def async_main(args: argparse.Namespace) -> int:
             args.manifest,
             expected_script_sha=args.expected_script_sha,
             expected_host=args.confirm_target_host.lower(),
+            now=datetime.now(UTC),
         )
         if args.source_dump is None or args.source_dump_sha256 is None:
             raise CutoverError("final-manifest dry-run requires encrypted source dump and SHA-256")
