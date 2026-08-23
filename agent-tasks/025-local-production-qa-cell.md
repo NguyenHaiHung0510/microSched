@@ -47,7 +47,8 @@ workflow và Alembic revisions là read-only trong task này.
 
 - Docker daemon/Compose/Playwright browser có sẵn trên máy executor hay không.
 - Candidate image có build và chạy được, cell có dọn sạch sau timeout hay không.
-- Hành vi Safari/installed PWA trên iPhone thật. Mục này giữ receipt riêng, mặc định `NOT RUN`.
+- Hành vi Safari/installed PWA trên iPhone thật. Mục này giữ receipt riêng; machine token mặc định
+  `NOT_RUN` (báo cáo cho người có thể hiển thị “NOT RUN”).
 
 ## 2. Safety boundary tuyệt đối
 
@@ -58,27 +59,44 @@ workflow và Alembic revisions là read-only trong task này.
   `--base-url` và không publish app ra host.
 - DB: service DNS cố định `db:5432` bên trong run-scoped Compose network; **không publish DB port**.
 - Docker resources: project name `msqa025-<UTC timestamp>-<8 hex>` do runner sinh; mọi thao tác dọn
-  chỉ dùng đúng project name đã ghi trong manifest.
+  chỉ dùng exact resource IDs trong hash-bound manifest ở §5.3, không discover-xoá theo prefix.
 - Image: build từ root `Dockerfile` của exact `git rev-parse HEAD`, với
   `--build-arg GIT_SHA=<full SHA>`. Không bind-mount source vào app container.
 
-Network của app + DB + browser-runner phải là Compose `internal: true`; **app và DB đều có 0 host
-port**. Reverse proxy chỉ bind loopback trong browser container, cấm `0.0.0.0`, LAN IP,
-`network_mode: host`, privileged mode và Docker socket. Browser chỉ được request đúng origin
-loopback vừa sinh; proxy không nhận upstream tùy ý và request khác phải bị abort, ghi host đã redact
-rồi làm test fail. Image build/pull có thể dùng mạng trước khi secret được sinh; runtime có secret
-thì chỉ tồn tại trên internal network.
+Mọi service — `db`, `bootstrap`, `migrate`, `seed`, `app`, `browser` — phải publish **0 host port**,
+chỉ nối **đúng một** Compose network `cell` có `internal: true`; không được tự sinh network
+`default`, nối network ngoài, `network_mode: host|service:*|container:*`, privileged mode hay Docker
+socket. Reverse proxy chỉ bind loopback **bên trong browser container**. Browser chỉ được request
+đúng origin loopback vừa sinh; proxy không nhận upstream tùy ý và request khác phải bị abort, ghi
+host đã redact rồi làm test fail. Image build/pull có thể dùng mạng trước khi secret được sinh;
+runtime có secret thì chỉ tồn tại trên internal network.
 
 ### 2.2 Forbidden targets và input
 
 Runner phải từ chối **trước lệnh Docker đầu tiên** nếu caller đưa bất kỳ option/biến cấu hình target
-nào ngoài contract ở §2.1. Ít nhất các tên sau phải nằm trong deny-set và chỉ được báo **tên**, không
-được đọc/in giá trị:
+nào ngoài contract ở §2.1. Chỉ báo **tên biến**, không đọc/in giá trị.
+
+Nhóm app/data bị cấm:
 
 `DATABASE_URL`, `NEON_OWNER_URL`, `NEON_MIGRATOR_URL`, `CUTOVER_MIGRATOR_URL`,
 `ALLOW_REMOTE_PG_TESTS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ALLOWED_EMAILS`,
 `PRIVATE_PIN_BOOTSTRAP`, `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_CLAIMS_SUB`,
 `FLY_API_TOKEN`, `FLY_APP`, `PLAYWRIGHT_BASE_URL`.
+
+Nhóm có thể đổi Docker daemon/build/Compose target bị cấm toàn bộ ở parent environment:
+
+`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`,
+`DOCKER_API_VERSION`, `DOCKER_DEFAULT_PLATFORM`, `BUILDKIT_HOST`, mọi `BUILDX_*`/`BUILDKIT_*`,
+`COMPOSE_FILE`, `COMPOSE_PROJECT_NAME`, `COMPOSE_PROFILES`, `COMPOSE_ENV_FILES`,
+`COMPOSE_PATH_SEPARATOR`, `COMPOSE_CONVERT_WINDOWS_PATHS`, và mọi `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY`/biến proxy không do runner sinh.
+
+Nhóm có thể đổi repo/config/executable resolution bị cấm: mọi `GIT_*` từ parent (đặc biệt
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_CONFIG*`, `GIT_EXEC_PATH`), cộng
+`CDPATH`, `PYTHONPATH`, `PYTHONHOME`, `XDG_CONFIG_HOME`. `HOME`/`USERPROFILE` và
+`XDG_RUNTIME_DIR` chỉ được giữ sau khi chứng minh là absolute local path của account hiện tại, không
+UNC/network path, symlink/reparse vào worktree/temp khác.
 
 Deny-set áp vào **parent environment/caller input** trước khi sinh cell. Sau guard, orchestrator tạo
 `DATABASE_URL` nội bộ từ service `db` + password mới và chỉ truyền nó tới đúng child qua secret
@@ -94,12 +112,69 @@ Ngoài deny-by-name, config validation phải cấm mọi literal/parsed host th
 Không có `--force`, `--allow-production`, `--remote`, escape hatch hoặc interactive prompt để vượt
 guard. Nếu guard từ chối, exit `40`, status `GUARD_DENIED`, resource count phải bằng 0.
 
-### 2.3 Secrets chỉ sống trong một run
+### 2.3 Docker/Git command envelope — áp cho **mọi** lần gọi
+
+Implementation phải có đúng một seam `run_docker(args)` và một seam read-only `run_git(args)`;
+không module nào gọi `docker`, `docker compose`, `git` hoặc shell trực tiếp.
+
+Trước **mỗi** Docker/Compose call, `run_docker` phải:
+
+1. dựng mới child environment từ allowlist đóng, không clone `os.environ`: validated
+   `SystemRoot`/`WINDIR`/`ComSpec`/`PATHEXT` trên Windows, validated `HOME`/`USERPROFILE`/
+   `XDG_RUNTIME_DIR` khi platform cần, locale, và các giá trị **runner tự đặt** `PATH`, `TEMP`,
+   `TMP`, `COMPOSE_DISABLE_ENV_FILE=1`, `COMPOSE_ANSI=never`; allowlist phải được so theo tên key
+   case-insensitive trên Windows. Mọi key Docker/Compose/BuildKit/proxy khác vắng mặt, đặc biệt
+   `DOCKER_HOST`, `DOCKER_CONTEXT`, `COMPOSE_FILE`, `COMPOSE_PROJECT_NAME`, `COMPOSE_PROFILES` và
+   `BUILDKIT_HOST`;
+2. gọi bằng argv list + `shell=False` + owned absolute `cwd`; không command string, alias, `.bat`
+   shim từ worktree hoặc current-directory search;
+3. dùng absolute `docker` executable đã resolve một lần, từ trusted local install root
+   (Windows Docker Desktop; Linux `/usr/bin`/`/usr/local/bin`), không nằm trong repo/temp/UNC; ghi
+   SHA-256 executable vào manifest. `PATH` child được dựng từ trusted executable/system dirs, không
+   copy parent `PATH`;
+4. với mọi engine/Compose command sau context discovery, chèn `--context <attested-name>` tường
+   minh. Không dựa current context;
+5. với mọi Compose command, chèn nguyên văn:
+   `--project-directory <ABS_OWNED_QA_DIR> -f <ABS_BASE_COMPOSE> -f <ABS_GENERATED_OVERRIDE>
+   --project-name <EXACT_RUN_ID>`. Hai file phải regular, không symlink/reparse, nằm trong repo hoặc
+   run-temp do runner sở hữu; hash phải khớp manifest **trước mỗi call**. Không nhận compose path,
+   profile hoặc project từ CLI/env;
+6. ghi receipt argv đã redact + SHA-256 của sanitized environment key-set; không ghi env values.
+
+`run_git` dùng absolute trusted `git` executable, sanitized environment không có parent `GIT_*`,
+absolute `-C <EXPECTED_WORKTREE>`, và đối chiếu root do `Path(__file__).resolve()` suy ra với
+`git rev-parse --show-toplevel`. `.git` worktree indirection phải trỏ vào đúng shared repo metadata;
+alternate object/config/index/worktree path bị từ chối. Candidate SHA phải là 40 lowercase hex và
+worktree clean trước build.
+
+### 2.4 Local daemon/context attestation
+
+Context discovery cũng chạy qua `run_docker` với sanitized env và chỉ đọc metadata. Không dùng
+ambient current context: enumerate contexts rồi chọn đúng một pair trong allowlist đóng:
+
+| Platform | Context | Endpoint bắt buộc |
+|---|---|---|
+| GitHub/Linux local daemon | `default` | `unix:///var/run/docker.sock` |
+| Windows Docker Desktop Linux engine | `desktop-linux` | `npipe:////./pipe/dockerDesktopLinuxEngine` |
+| Windows local engine fallback | `default` | `npipe:////./pipe/docker_engine` |
+
+Nếu có nhiều pair hợp lệ, caller phải chọn bằng runner-owned platform policy (CI=`default`, Docker
+Desktop Windows=`desktop-linux`), không bằng env/CLI. Context khác hoặc endpoint `tcp://`,
+`http(s)://`, `ssh://`, TLS/cert path, UNC/network socket ⇒
+`GUARD_DENIED`; không “thử xem có connect được không”. Qua explicit context, chạy `docker info`
+read-only và bắt buộc server `OSType=linux`, non-empty daemon ID/name/version. Canonical object
+`{context_name, endpoint, daemon_id, daemon_name, server_version, os_type}` được SHA-256 thành
+`daemon_identity_sha256`; manifest/receipt chỉ lưu endpoint kind + endpoint hash, không credential.
+Mọi mutable call và cleanup đều phải dùng cùng explicit context; trước cleanup re-attest identity
+khớp byte-for-byte. Context/daemon đổi giữa run ⇒ `CLEANUP_GUARD_DENIED`, không xoá gì.
+
+### 2.5 Secrets chỉ sống trong một run
 
 - Dùng CSPRNG để sinh Postgres owner/app/migrator passwords, AES key, opaque session token và PIN 6
   chữ số cho từng run. Email fixture luôn thuộc `example.invalid`.
-- Không đọc root/backend `.env`; đặt `COMPOSE_DISABLE_ENV_FILE=1`; Compose files không có `env_file`
-  và không interpolate biến deny-set. Chạy `docker compose config -q` trước `up`.
+- Không đọc root/backend `.env`; `COMPOSE_DISABLE_ENV_FILE=1` chỉ được runner tự đặt; Compose files
+  không có `env_file` và không interpolate biến deny-set. Chạy absolute/attested
+  `docker ... compose ... config -q` trước `up` bằng envelope §2.3.
 - Secret không được đi qua command-line, stdout, log, screenshot, receipt hoặc git. Nếu container
   dài-sống cần secret, dùng file trong temp directory run-scoped (POSIX `0700`/file `0600` khi hệ
   điều hành hỗ trợ) và mount bằng Compose secret; wrapper đọc rồi `exec`. Browser/seed helper nhận
@@ -113,25 +188,36 @@ guard. Nếu guard từ chối, exit `40`, status `GUARD_DENIED`, resource count
 Phase A chỉ được thêm/sửa trong:
 
 - `qa/production-cell/**`: cross-platform Python orchestrator, Compose base, bootstrap/seed helpers,
-  browser-runner Dockerfile/proxy, policy/receipt schema và unit tests;
+  browser-runner Dockerfile/proxy, executable receipt validator, QA-only locked dependencies và
+  unit tests;
 - `frontend/e2e/production-cell/**`: Playwright full-stack tests, không dùng mock routes;
 - `frontend/package.json` chỉ nếu cần một script gọi lane; `.gitignore` chỉ nếu artifact path chưa
   được phủ. Ưu tiên `frontend/test-results/production-cell/<run_id>/`, vốn đã bị ignore.
+
+Receipt schema source-of-truth đã commit tại `agent-tasks/025-qa-receipt.schema.json`; Phase A chỉ
+được sửa schema đó bằng một dated spec amendment/review riêng, không tạo schema song song trong
+`qa/`.
 
 Không sửa `Dockerfile`. App service build thẳng file đó. QA helper có thể có Dockerfile riêng nhưng
 không được thay thế image đang được test.
 
 ### 3.1 Thứ tự dịch vụ
 
-1. **Preflight:** working tree policy, exact SHA, Docker/Compose version, port/network/env policy.
+1. **Preflight:** exact owned worktree/SHA, executable hashes, sanitized environment, local context/
+   daemon identity, absolute Compose file hashes/project và config/network/port policy. Guard fail
+   trước mutation có resource count 0.
 2. **Build:** production app image với full SHA; lấy immutable image ID.
 3. **DB:** `pgvector/pgvector:pg18`, data directory trên tmpfs, healthcheck bounded, không host port.
 4. **Bootstrap:** one-shot owner helper tạo `microsched_migrator` và `microsched_app`, revoke public,
    schema `microsched` do migrator sở hữu, app chỉ có usage + DML. Không gọi
    `bootstrap_neon.py` vì script đó đọc `backend/.env`.
 5. **Migrate:** one-shot production image chạy Alembic head bằng **migrator URL của cell**, rồi
-   migrator revoke mọi DML của app trên `microsched.alembic_version`; container phải exit trước app.
-   Đây là migration rehearsal trên throwaway PG, không phải deploy migration.
+   migrator revoke mọi DML của app trên `microsched.alembic_version`. Compose bắt buộc khai báo
+   `app.depends_on.migrate.condition: service_completed_successfully` (cả `seed`/browser dependency
+   chain cũng không được vòng qua gate). Orchestrator chỉ `up` target `migrate` trước; **chỉ sau exit
+   0** mới được phát lệnh có target `app`. Nếu migrate exit non-zero, không app-create command nào
+   được gọi và `docker inspect`/Compose inventory phải chứng minh app container không tồn tại, không
+   running. Đây là migration rehearsal trên throwaway PG, không phải deploy migration.
 6. **Seed auth:** one-shot helper dùng app role, nhận token qua stdin, chỉ insert session synthetic
    với `hash_session_token`; raw token không vào DB/log.
 7. **App:** production image, `APP_ENV=local`, `SESSION_COOKIE_SECURE=false`,
@@ -143,7 +229,8 @@ không được thay thế image đang được test.
    `browser.newContext()` không persistent, `serviceWorkers: 'allow'`, cookie synthetic chỉ add vào
    context này. Cấm `channel: 'chrome'`, `launchPersistentContext`, `userDataDir`, real
    `storageState`, browser extension và Google OAuth. Browser runner chỉ nối internal network.
-9. **Cleanup:** đóng context/browser rồi dọn đúng Compose project, temp secrets và helper process.
+9. **Cleanup:** đóng context/browser rồi re-attest daemon + hash-bound manifest; dọn exact resource
+   IDs, temp secrets và helper process theo §5.3. Không dùng project/prefix discovery làm delete set.
 
 `/api/readyz` chỉ đạt khi body có `status="ok"`, `db="up"`, `commit=<full candidate SHA>`; HTTP 200
 một mình không đạt.
@@ -161,6 +248,22 @@ Trước browser test, helper chạy và ghi các boolean sau (không ghi URL/pa
 
 Negative query phải nằm trong transaction rollback hoặc dùng tên fixture run-scoped; không để lại
 object ngay cả trong throwaway DB.
+
+### 3.3 Runtime network/port attestation
+
+Static `compose config --format json` và runtime `docker inspect` phải cùng chứng minh:
+
+- top-level chỉ có network `cell`, `internal=true`; không có `default`, external network hoặc
+  service-level `network_mode`;
+- **từng service** `db/bootstrap/migrate/seed/app/browser` có `ports=[]`, runtime
+  `HostConfig.PortBindings` rỗng/null và `NetworkSettings.Ports` rỗng/null;
+- từng container nối đúng một network ID, cùng exact ID của `<project>_cell`; network inspect có
+  `Internal=true`;
+- `total_ports_published=0`, `network_count=1`. One-shot containers phải được giữ tới lúc inspect,
+  không `--rm` trước khi lấy receipt.
+
+Thêm một port cho browser/one-shot hoặc bỏ explicit `networks: [cell]` để Compose sinh default phải
+làm named guard test đỏ.
 
 ## 4. Synthetic fixture và smoke contract
 
@@ -196,11 +299,14 @@ Luồng tối thiểu:
 | browser smoke | 10 min |
 | cleanup | 2 min |
 
-Timeout **không** có nghĩa phase chưa tạo gì. Khi timeout/cancel, runner phải chụp inventory theo
-exact project label, rồi cleanup trong `finally`; cấm wildcard hoặc xoá resource không mang project
-name trong manifest.
+Timeout **không** có nghĩa phase chưa tạo gì. Khi timeout/cancel, runner chỉ inspect exact resource
+IDs đã ghi trong verified manifest, rồi cleanup trong `finally`; label chỉ dùng xác thực ownership,
+không dùng discovery/delete set. Cấm wildcard hoặc xoá resource ngoài manifest.
 
 ### 5.2 Taxonomy + exit code
+
+Các token trong cột Status là **canonical machine tokens** duy nhất trong JSON/CLI. UI/Markdown có
+thể hiển thị `NOT RUN`, nhưng phải map về `NOT_RUN` trước validate.
 
 | Status | Exit | Nghĩa |
 |---|---:|---|
@@ -208,56 +314,213 @@ name trong manifest.
 | `FAIL_ASSERTION` | 20 | App/role/browser assertion sai |
 | `BLOCKED_PREREQUISITE` | 30 | Docker/Compose/Node/browser chưa có; chưa chạy mutation |
 | `GUARD_DENIED` | 40 | Input/target/env vi phạm; chưa tạo Docker resource |
+| `CLEANUP_GUARD_DENIED` | 41 | Daemon/manifest/context đổi; không được xoá resource |
 | `SETUP_TIMEOUT` | 50 | build/DB/migrate/ready quá hạn |
 | `TEST_TIMEOUT` | 51 | browser phase quá hạn |
 | `CLEANUP_TIMEOUT` | 52 | dọn quá hạn hoặc còn resource; luôn non-pass |
 | `INFRA_ERROR` | 60 | lỗi công cụ không thuộc assertion |
-| `NOT_RUN` | — | Chỉ dùng trong sub-receipt chưa chạy, ví dụ physical iPhone |
+| `NOT_RUN` | — | Token machine cho acceptance/sub-receipt chưa chạy |
 
 Nếu test pass nhưng cleanup fail, final status là `CLEANUP_TIMEOUT`, không phải `PASS`.
 
-### 5.3 Receipt JSON v1
+### 5.3 Hash-bound run manifest + exact cleanup
 
-Lưu redacted receipt tại `frontend/test-results/production-cell/<run_id>/receipt.json`, gồm tối thiểu:
+Ngay sau preflight, trước mutation, ghi atomically `run-manifest.json` trong run directory. Object
+canonical JSON (UTF-8, sorted keys, separators `,`/`:`, không field `manifest_sha256`) phải được
+SHA-256; wrapper JSON ngoài chứa `payload` + `manifest_sha256`. Trước **mọi mutable command**, sau
+mỗi resource create và trước cleanup, đọc lại và verify hash. Update resource IDs bằng atomic replace
+rồi tính hash mới; không mutate file in-place.
+
+Payload bắt buộc:
+
+```json
+{
+  "schema": "microsched.qa025.run-manifest.v1",
+  "run_id": "msqa025-...",
+  "project_name": "msqa025-...",
+  "git_sha": "<40 hex>",
+  "docker_executable_sha256": "<64 hex>",
+  "daemon_identity_sha256": "<64 hex>",
+  "daemon": {"context_name": "desktop-linux", "endpoint_kind": "npipe", "endpoint_sha256": "<64 hex>", "daemon_id": "<non-empty>", "server_version": "<non-empty>", "os_type": "linux"},
+  "compose": {"project_directory": "<absolute>", "files": [{"path": "<absolute>", "sha256": "<64 hex>"}]},
+  "resources": {"containers": ["<full id>"], "networks": ["<full id>"], "volumes": ["<full name/id>"], "images": ["sha256:<digest>", "..."]}
+}
+```
+
+Cleanup algorithm cố định:
+
+1. lock run directory; verify manifest hash, run/project equality và Compose-file hashes;
+2. re-attest exact daemon identity qua envelope §2.3; mismatch ⇒ `CLEANUP_GUARD_DENIED`, **0 delete**;
+3. inspect từng exact ID, bắt buộc label `com.docker.compose.project=<project_name>` +
+   `com.microsched.qa025.run_id=<run_id>`; missing label/foreign ID/tamper ⇒ guard denied, 0 delete;
+4. stop/remove exact container IDs, exact network/volume IDs và chỉ image IDs ghi trong manifest;
+   không `compose down`, `--remove-orphans`, prune, prefix/glob hoặc label-query dùng làm delete set;
+5. verify từng exact ID absent. Project/resource lạ nằm ngoài manifest **không được chạm**.
+
+Integration test bắt buộc tạo foreign sentinel project/resource với distinct run label trước cell;
+sau cleanup, exact sentinel ID phải vẫn tồn tại/running và config hash không đổi, rồi test fixture tự
+dọn sentinel trong một `finally` riêng. Manifest/project/resource ID bị sửa một byte phải làm cleanup
+fail-closed `CLEANUP_GUARD_DENIED`, sentinel và cell resources đều chưa bị delete.
+
+Nếu manifest/daemon guard từ chối cleanup, runner không được tự bypass để “cố dọn”: receipt giữ
+`CLEANUP_GUARD_DENIED` + exact IDs đỏ hoá, in hướng dẫn recovery thủ công nhưng không chạy lệnh xoá.
+Đây là khả năng còn resource có chủ đích để tránh xoá nhầm remote/foreign target; reviewer/owner chỉ
+dọn sau khi đối chiếu daemon + manifest gốc bằng một thao tác riêng ngoài verdict của run.
+
+### 5.4 Receipt JSON v1 — executable contract
+
+Source-of-truth: `agent-tasks/025-qa-receipt.schema.json` (JSON Schema Draft 2020-12). Phase A phải
+pin runtime-only `jsonschema` trong `qa/production-cell/requirements.lock` và cung cấp validator
+`qa/production-cell/validate_receipt.py`. Exact command:
+
+```text
+python qa/production-cell/validate_receipt.py \
+  --schema agent-tasks/025-qa-receipt.schema.json \
+  --receipt frontend/test-results/production-cell/<run_id>/receipt.json
+```
+
+Validator phải dùng `Draft202012Validator.check_schema()` + `FormatChecker`, rồi validate instance.
+Sau schema, semantic pass bắt buộc kiểm: `ended_at >= started_at`; phase name không lặp và PASS có
+đủ chín phase; Compose file roles đúng một `base` + một `generated_override`; root/Compose/cleanup
+`run_id`/project bằng nhau; daemon identity ở target/cleanup bằng nhau; foreign-sentinel before/after
+config hash bằng nhau. Recursive redaction scan phải reject key (case-insensitive)
+`database_url|owner_url|migrator_url|password|session_token|pin|aes_key|cookie|authorization|`
+`container_env|env_dump` và string chứa `postgres://|postgresql://|*.neon.tech|*.fly.dev` hoặc email
+ngoài `example.invalid`. Khi hợp lệ, in đúng
+`receipt_schema=microsched.qa025.receipt.v1 status=<final_status>`. Không được chỉ parse JSON.
+
+Lưu redacted receipt tại `frontend/test-results/production-cell/<run_id>/receipt.json`. Schema là
+contract field/enum/required/conditional chính xác; PASS-shaped receipt có đủ các field sau:
 
 ```json
 {
   "schema": "microsched.qa025.receipt.v1",
-  "run_id": "msqa025-...",
+  "run_id": "msqa025-20260824T000000Z-00000000",
   "target_class": "local_disposable",
-  "git_sha": "<40 hex>",
-  "image_id": "sha256:<digest>",
-  "started_at": "<UTC>",
-  "ended_at": "<UTC>",
+  "git_sha": "0000000000000000000000000000000000000000",
+  "image_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "started_at": "2026-08-24T00:00:00Z",
+  "ended_at": "2026-08-24T00:01:00Z",
   "final_status": "PASS",
-  "phases": [{"name": "preflight", "status": "PASS", "duration_ms": 0}],
+  "phases": [
+    {"name": "preflight", "status": "PASS", "duration_ms": 1, "exit_code": 0},
+    {"name": "build", "status": "PASS", "duration_ms": 1, "exit_code": 0},
+    {"name": "database", "status": "PASS", "duration_ms": 1, "exit_code": 0},
+    {"name": "bootstrap", "status": "PASS", "duration_ms": 1, "exit_code": 0},
+    {"name": "migrate", "status": "PASS", "duration_ms": 1, "exit_code": 0},
+    {"name": "seed", "status": "PASS", "duration_ms": 1, "exit_code": 0},
+    {"name": "app_ready", "status": "PASS", "duration_ms": 1, "exit_code": 0},
+    {"name": "browser", "status": "PASS", "duration_ms": 1, "exit_code": 0},
+    {"name": "cleanup", "status": "PASS", "duration_ms": 1, "exit_code": 0}
+  ],
+  "docker_target": {
+    "context_name": "default", "endpoint_kind": "unix",
+    "endpoint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "daemon_id_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "daemon_name_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "server_version": "28.0.0", "os_type": "linux",
+    "daemon_identity_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "command_envelope": {
+    "status": "PASS",
+    "docker_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "git_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sanitized_env_keys_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "rejected_parent_variable_names": [], "docker_call_count": 20, "compose_call_count": 10,
+    "all_calls_used_sanitized_env": true, "all_calls_used_explicit_context": true,
+    "all_calls_used_absolute_executable": true,
+    "all_compose_calls_used_absolute_owned_files": true,
+    "all_compose_calls_used_exact_project": true, "all_calls_used_shell_false": true
+  },
+  "compose": {
+    "project_name": "msqa025-20260824T000000Z-00000000",
+    "project_directory_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "files": [
+      {"role": "base", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+      {"role": "generated_override", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+    ],
+    "config_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "network_name": "cell"
+  },
   "safety": {
     "browser_origin": "runner-loopback:<redacted-ephemeral-port>",
-    "app_ports_published": 0,
-    "db_ports_published": 0,
-    "network_internal": true,
-    "env_file_disabled": true,
-    "outbound_requests": 0
+    "ports_by_service": {"db": 0, "bootstrap": 0, "migrate": 0, "seed": 0, "app": 0, "browser": 0},
+    "total_ports_published": 0,
+    "networks_by_service": {"db": 1, "bootstrap": 1, "migrate": 1, "seed": 1, "app": 1, "browser": 1},
+    "network_count": 1, "network_internal": true,
+    "network_id_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "unexpected_networks": 0, "env_file_disabled": true, "outbound_requests": 0
   },
-  "roles": {"app": "microsched_app", "migrator": "microsched_migrator", "ddl_denied": true},
-  "fixtures": {"prefix": "[QA025:<run_id>]", "task_count": 2, "note_count": 1},
-  "acceptance": {"025-CELL-01": "PASS"},
-  "cleanup": {"status": "PASS", "containers": 0, "networks": 0, "volumes": 0},
-  "physical_iphone": {"status": "NOT RUN", "reason": "separate acceptance"}
+  "roles": {
+    "status": "PASS", "app": "microsched_app", "migrator": "microsched_migrator",
+    "ddl_denied": true, "alembic_write_denied": true, "app_role_only": true
+  },
+  "fixtures": {
+    "status": "PASS", "prefix": "[QA025:msqa025-20260824T000000Z-00000000]",
+    "task_count": 2, "note_count": 1, "synthetic_domain": "example.invalid"
+  },
+  "migration_gate": {
+    "status": "PASS", "fault_case": "none", "exit_code": 0,
+    "service_completed_successfully": true, "app_create_command_issued": true,
+    "app_created_before_success": false, "app_container_created": true,
+    "app_container_running": true
+  },
+  "acceptance": {
+    "025-SAFE-01": "PASS", "025-SAFE-02": "PASS", "025-SAFE-03": "PASS",
+    "025-SAFE-04": "PASS", "025-SAFE-05": "PASS", "025-SAFE-06": "PASS",
+    "025-SAFE-07": "PASS", "025-CELL-01": "PASS", "025-CELL-02": "PASS",
+    "025-CELL-03": "PASS", "025-CELL-04": "PASS", "025-CELL-05": "PASS",
+    "025-CELL-06": "PASS", "025-RED-01": "PASS", "025-CI-01": "NOT_APPLICABLE",
+    "025-DEP-017": "NOT_APPLICABLE"
+  },
+  "cleanup": {
+    "status": "PASS", "manifest_verified": true,
+    "manifest_schema": "microsched.qa025.run-manifest.v1",
+    "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "manifest_resource_ids_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "run_id": "msqa025-20260824T000000Z-00000000",
+    "project_name": "msqa025-20260824T000000Z-00000000",
+    "daemon_identity_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "delete_selection": "exact_manifest_resource_ids", "delete_command_count": 6,
+    "tamper_detected": false,
+    "residual_counts": {"containers": 0, "networks": 0, "volumes": 0, "images": 0, "helper_processes": 0},
+    "foreign_sentinel": {
+      "project_name_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "resource_ids_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "config_sha256_before": "0000000000000000000000000000000000000000000000000000000000000000",
+      "config_sha256_after": "0000000000000000000000000000000000000000000000000000000000000000",
+      "survived_cell_cleanup": true, "separate_cleanup_status": "PASS"
+    }
+  },
+  "physical_iphone": {
+    "acceptance_id": "Q025-DEVICE-IPHONE-01", "status": "NOT_RUN",
+    "reason": "Physical iPhone acceptance is separate", "production_commit": null,
+    "executed_at": null, "evidence": []
+  }
 }
 ```
 
 Receipt cấm URL DB, env values, token, PIN, AES key, real email, container env dump và literal host
-production. Schema validator phải fail nếu xuất hiện key cấm hoặc string thuộc forbidden targets.
+production. Root required fields/enums/conditionals nằm trong committed schema. Enum machine status
+chỉ gồm
+`PASS|FAIL_ASSERTION|BLOCKED_PREREQUISITE|GUARD_DENIED|CLEANUP_GUARD_DENIED|SETUP_TIMEOUT|TEST_TIMEOUT|CLEANUP_TIMEOUT|INFRA_ERROR|NOT_RUN`;
+`final_status` cấm `NOT_RUN`. Acceptance value thêm `NOT_APPLICABLE`. Schema validator phải fail nếu
+unknown field, required field thiếu, status viết `NOT RUN`, key cấm hoặc string forbidden target.
+Riêng physical-iPhone sub-receipt có enum `PASS|FAIL|NOT_RUN` theo dated policy; `FAIL` ở đây không
+được dùng làm `final_status` của cell.
 
 ## 6. Acceptance IDs cho implementer
 
-- **025-SAFE-01 — Default deny:** mọi target/env injection ở §2.2 trả `GUARD_DENIED` trước Docker;
-  không có production URL option hoặc escape hatch.
+- **025-SAFE-01 — Default deny:** mọi app/data target injection ở §2.2 trả `GUARD_DENIED` trước
+  Docker; không có production URL option hoặc escape hatch.
+- **025-SAFE-07 — Local Docker only:** remote/ambient daemon, context, BuildKit, proxy và Compose
+  project/file/profile injection bị từ chối trước resource creation; mọi call dùng sanitized
+  allowlist, trusted absolute executable, explicit attested local context, owned absolute files +
+  exact project. Git/path indirection bị loại theo §2.3.
 - **025-SAFE-02 — No ambient secret:** `.env` bị vô hiệu; secrets mỗi run không vào argv/log/git/
   receipt; gitleaks + receipt validator pass.
-- **025-SAFE-03 — Network boundary:** app + DB có 0 published port; proxy chỉ bind loopback trong
-  browser container; network internal; browser có 0 outbound request.
+- **025-SAFE-03 — Network boundary:** mọi service có 0 published port, đúng một internal network và
+  không default/external/host network; proxy chỉ bind loopback; browser có 0 outbound request.
 - **025-SAFE-04 — Role split:** assertions §3.2 pass; app chỉ nhận app URL, migration chỉ nhận
   migrator URL; owner helper chết trước app.
 - **025-SAFE-05 — Auth thật, danh tính giả:** session digest + cookie thật, PIN endpoint thật;
@@ -271,8 +534,12 @@ production. Schema validator phải fail nếu xuất hiện key cấm hoặc st
 - **025-CELL-03 — Browser isolation:** bundled Chromium context mới, đóng cuối run; không Chrome
   profile/persistent state.
 - **025-CELL-04 — Timeout/cleanup:** từng failure class sinh đúng status; success chỉ khi resource
-  inventory về 0; rerun cùng máy không gặp fixture/resource cũ.
-- **025-CELL-05 — Receipt:** JSON schema pass, đủ phase/duration/acceptance/cleanup, không secret/PII.
+  inventory exact-ID về 0; hash-bound manifest/daemon/resource labels khớp; foreign sentinel sống nguyên;
+  tamper trả `CLEANUP_GUARD_DENIED` với 0 delete.
+- **025-CELL-05 — Receipt:** committed schema + executable validator pass, đủ required fields/enums,
+  canonical `NOT_RUN`, phase/duration/daemon/migration/network/acceptance/cleanup, không secret/PII.
+- **025-CELL-06 — Migration gate:** Compose khai báo `service_completed_successfully`; orchestrator
+  không issue app-create trước migrate exit 0; injected exit non-zero chứng minh app absent/not running.
 - **025-RED-01 — Guard biết đỏ:** chạy mutation matrix trong QA spec, lưu raw RED rồi restore GREEN;
   không commit mutant.
 - **025-CI-01 — Named-check compatibility:** Phase B giữ nguyên toàn bộ tên check hiện có và thêm
@@ -324,7 +591,7 @@ Mỗi feature (đặc biệt 017) thêm scenario riêng ở PR riêng sau khi co
 4. adapter 017 thêm scenario vào Phase C mà không sửa guard/network/auth của foundation;
 5. independent QA vẫn chạy A01–A20 của `017-qa-offline-outbox.md`. 025 không đổi A18 thành PASS.
 
-Nếu 017 chưa có, receipt ghi `025-DEP-017 = NOT APPLICABLE`, không dựng fake outbox và không copy
+Nếu 017 chưa có, receipt ghi `025-DEP-017 = NOT_APPLICABLE`, không dựng fake outbox và không copy
 file từ `feat/017-offline-outbox`.
 
 ## 9. 🚫 Không được làm
@@ -333,10 +600,17 @@ file từ `feat/017-offline-outbox`.
 2. Không auth/PIN bypass route, test-only branch trong app, shared long-lived QA account hoặc PIN.
 3. Không bật cron/push, không gửi outbound, không deploy, không `fly`, không production migration.
 4. Không sửa `Dockerfile`, `fly.toml`, deploy workflow, app source, Alembic revision hoặc task 017.
-5. Không publish DB hoặc app ra LAN; không Docker socket/privileged/host network.
-6. Không gọi cleanup bằng wildcard/project prefix; chỉ exact manifest target.
-7. Không gọi local Chromium/iPhone/viewport là bằng chứng physical iPhone.
-8. Không merge và không đổi required checks. Reviewers quyết định gate.
+5. Không publish port của bất kỳ service nào; không Docker socket/privileged/default/external/host
+   network.
+6. Không gọi Docker/Git ngoài command envelope; không dùng ambient daemon/context/BuildKit/Compose/
+   proxy/Git/path config, remote endpoint, caller-supplied Compose file/profile/project hoặc relative
+   executable/path.
+7. Không gọi cleanup bằng Compose down, wildcard/project prefix, prune hoặc label-discovery delete
+   set; chỉ exact IDs trong verified manifest trên re-attested daemon.
+8. Không issue app-create/start trước migrator exit 0; migration non-zero không được để app container
+   tồn tại hay running.
+9. Không gọi local Chromium/iPhone/viewport là bằng chứng physical iPhone.
+10. Không merge và không đổi required checks. Reviewers quyết định gate.
 
 ## 10. Nguồn chuẩn để implementer đối chiếu
 

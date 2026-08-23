@@ -62,11 +62,12 @@ timeout, fault injection hoặc bộ dữ liệu hàng loạt. Từ `025`, áp p
    luật “lái trình duyệt production = Chrome profile thật của chủ” trong `AGENTS.md`. Local cell cấm
    `channel: "chrome"`, `launchPersistentContext`, `userDataDir`, `storageState` lấy từ máy thật,
    Google OAuth thật và mọi profile Chrome thật.
-4. **Physical iPhone là acceptance riêng, không được suy ra từ viewport 390×844/Chromium.** Biên lai
-   phải ghi đúng `PASS`, `FAIL` hoặc `NOT RUN`. Owner đã chốt: release v1.0 **được phép** đi tiếp khi
-   mục này là `NOT RUN`; `NOT RUN` không được đổi nhãn thành `PASS` và một task có contract riêng
+4. **Physical iPhone là acceptance riêng, không được suy ra từ viewport 390×844/Chromium.** Machine
+   receipt phải ghi đúng token `PASS`, `FAIL` hoặc `NOT_RUN`; báo cáo hiển thị có thể viết
+   “NOT RUN”. Owner đã chốt: release v1.0 **được phép** đi tiếp khi mục này là `NOT_RUN`;
+   `NOT_RUN` không được đổi nhãn thành `PASS` và một task có contract riêng
    vẫn giữ verdict riêng của nó. Cụ thể, nếu `017` chưa chạy A18 trên iPhone thì báo
-   `017 = PARTIAL / A18 NOT RUN`, dù release gate cấp sản phẩm có thể là `GO` theo policy này.
+   `017 = PARTIAL / A18 = NOT_RUN`, dù release gate cấp sản phẩm có thể là `GO` theo policy này.
 
 Task `025` là spec thi công + QA độc lập cho cell nói trên. Nó không cho phép auth-bypass route,
 không chạm Neon/host DB/`.env`, không tự bật recurring outbound, không chạy deploy migration, và
