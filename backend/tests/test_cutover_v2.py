@@ -461,6 +461,13 @@ def test_manifest_digest_unsigned_and_expiry_gates(monkeypatch) -> None:
             )["manifest_digest"]
             == unsigned["manifest_digest"]
         )
+        freeze_cutover_clock(monkeypatch, NOW + timedelta(hours=24) - timedelta(microseconds=1))
+        assert (
+            read_final_manifest(
+                path, expected_script_sha=code["git_sha"], expected_host="throwaway"
+            )["manifest_digest"]
+            == unsigned["manifest_digest"]
+        )
         freeze_cutover_clock(monkeypatch, NOW + timedelta(hours=24))
         with pytest.raises(ManifestError, match="owner approval has expired"):
             read_final_manifest(
