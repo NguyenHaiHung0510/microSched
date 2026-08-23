@@ -1,6 +1,6 @@
 # QA framework — khung soi giao diện dùng chung
 
-> **Trạng thái: ✅ CHỐT 2026-07-29 (v1), +3.E thêm 2026-07-31 (v1.1), +hash-verify ảnh thêm 2026-08-01 (v1.2).** Áp cho `009`–`012` và mọi slice có UI sau đó.
+> **Trạng thái: ✅ CHỐT 2026-07-29 (v1), +3.E thêm 2026-07-31 (v1.1), +hash-verify ảnh thêm 2026-08-01 (v1.2), +làm rõ policy môi trường 2026-08-24 (v1.3).** Áp cho `009`–`012` và mọi slice có UI sau đó.
 > Đọc kèm `docs/ui-brief.md` §6 (luật UI cứng). **File này không lặp lại luật đó** — nó là
 > cách kiểm xem luật đó có còn được giữ không, cộng với những trục mà luật UI không nói tới.
 > Tự-chứa: đọc được ở phiên 0-context, dùng thẳng làm nguồn cho prompt giao T3/T2.
@@ -43,6 +43,34 @@ nếu T3 tắc. T1 chỉ **viết kịch bản** và **đọc kết quả**.
 
 ⚠️ **`resize_window` của kênh trình duyệt từng báo resize 390px trong khi `innerWidth` vẫn 1254**
 (đo thật 25/07). Trước khi tin viewport, **đọc `window.innerWidth` thật**.
+
+### 2.1 📝 Làm rõ 2026-08-24 — production không phải môi trường test dùng chung
+
+Phần §2 ban đầu ghi production + Chrome profile thật + iPhone thật vì nó mô tả **dogfooding sau
+deploy** của các slice UI. Nó không cấp quyền dùng production cho test phá huỷ, lặp dày, migration,
+timeout, fault injection hoặc bộ dữ liệu hàng loạt. Từ `025`, áp policy sau; đoạn này **thắng hai ô
+“Môi trường” và “Thiết bị thật” ở bảng trên khi phạm vi là disposable QA**:
+
+1. **Lane mặc định cho QA có mutation là local disposable cell:** đúng Docker image production của
+   candidate SHA, Postgres throwaway, session/PIN/data hoàn toàn synthetic, và Playwright Chromium
+   trong context mới, không persistent. Cell không được biết URL/credential production và phải tự
+   huỷ toàn bộ DB/network/container sau lượt chạy.
+2. **Production mặc định-deny, không phải general test environment.** Chỉ một smoke/post-deploy
+   acceptance hẹp được spec riêng nêu đích danh và chủ cho phép mới được chạm production. Không dùng
+   production cho seed dữ liệu QA, migration rehearsal, retry/fault/timeout hoặc automation lặp.
+3. **Isolated Playwright context chỉ thuộc local disposable cell.** Nó không sửa, nới hay thay thế
+   luật “lái trình duyệt production = Chrome profile thật của chủ” trong `AGENTS.md`. Local cell cấm
+   `channel: "chrome"`, `launchPersistentContext`, `userDataDir`, `storageState` lấy từ máy thật,
+   Google OAuth thật và mọi profile Chrome thật.
+4. **Physical iPhone là acceptance riêng, không được suy ra từ viewport 390×844/Chromium.** Biên lai
+   phải ghi đúng `PASS`, `FAIL` hoặc `NOT RUN`. Owner đã chốt: release v1.0 **được phép** đi tiếp khi
+   mục này là `NOT RUN`; `NOT RUN` không được đổi nhãn thành `PASS` và một task có contract riêng
+   vẫn giữ verdict riêng của nó. Cụ thể, nếu `017` chưa chạy A18 trên iPhone thì báo
+   `017 = PARTIAL / A18 NOT RUN`, dù release gate cấp sản phẩm có thể là `GO` theo policy này.
+
+Task `025` là spec thi công + QA độc lập cho cell nói trên. Nó không cho phép auth-bypass route,
+không chạm Neon/host DB/`.env`, không tự bật recurring outbound, không chạy deploy migration, và
+không hấp thụ implementation hay acceptance của `017`.
 
 ## 3. Bốn trục
 
