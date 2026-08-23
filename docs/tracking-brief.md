@@ -94,7 +94,7 @@
 | `note`/`task` không private | 📖 trần | Lõi retrieval của AI Bước 1 — phải FTS/embed được. Escape hatch = bật private. |
 | **Cột tiền** `amount`/`list_amount`/`orig_amount` | 🔐 **mã hóa** *(chủ chọn lật từ đề xuất "trần" ban đầu — an toàn hơn dashboard-aggregate)* | Chấp nhận đánh đổi: mất `SUM`/`ORDER BY`/CHECK trực tiếp trong SQL, mọi tổng dashboard (§8.2) phải kéo entry về app rồi cộng bằng Python (khối lượng vài nghìn dòng — không đau, đã nói ở §6 gốc). |
 | `tracker_group.name` | 📖 trần | Nhãn nhóm chung chung ("Giải trí/Ăn uống") — giá trị pretext ~0; giữ trần cho seed-migration + sort đơn giản. |
-| `tracker.reminder_text` | 📖 trần **có chủ đích** | Được thiết kế là bề mặt công khai (§12 — hiện trên lock-screen qua web-push); mức kín do chủ tự gõ, mã hóa in-DB không đổi bản chất đó. |
+| `tracker.reminder_text` | 📖 trần — config/backward compatibility, **không còn là OS surface** | 📝 **2026-08-24 SUPERSEDED:** task 030 cấm đưa field này/name/type lên Web Push. Giữ cột và posture at-rest hiện có để tránh migration ngoài scope; trong app nó đi qua Tracker reading gate, tracker private chỉ hiện sau unlock. |
 | `calendar_event.*`, `app_setting`, timestamps/enums/ids | 📖 trần | Không đổi so với sơ bộ §6 gốc; calendar vốn nằm ở Google. Luật kèm: `app_setting` **cấm** chứa secret thật (secret → Fly secrets/`.env`, không qua DB). |
 
 📝 **2026-07-23 — ✅ CHỐT: `note.title` mã hóa khi private; và vá cách viết `task.*`.**
@@ -272,7 +272,24 @@ Chủ: tính năng **quan trọng nhất app** (sức khỏe trực tiếp) như
 1. **Cron: "Google Cloud Scheduler, 3 job cố định" → "In-process Timer, exact time"** (`011d`). Google Cloud Scheduler và cơ chế external endpoint đã bị bỏ hẳn. Thay vào đó, app chạy một async timer trong RAM để đánh thức nhắc nhở chính xác theo giờ phút của tracker mà không bị giới hạn lượng tử hoá 3 khe.
 2. **"Bấm ✓ ngay trên noti = ghi entry 1 chạm" → chạm vào thân noti mở route `/reminder-confirm?dispatch=<id>` rồi app ghi ngay** (`011b` §1.3, §4.2). Không phải đổi ý về UX mà là **giới hạn nền tảng đo được**: iOS không cho notification có nút hành động ở lock-screen cho web push, nên nút ✓ không tồn tại được. Tinh thần "một chạm, không hỏi lại" giữ nguyên — vẫn đúng một thao tác, và `reminder_dispatch` chống ghi trùng khi tap ở hai thiết bị.
 
-**Không đổi:** mô hình dữ liệu (không entity mới, hai cột `reminder_time`/`reminder_text` trên `tracker`), nguyên tắc kín đáo trên noti, không streak, cadence daily-only.
+**Không đổi tại mốc 2026-08-01** *(xem supersession 2026-08-24 ngay dưới)*: mô hình dữ liệu (không entity mới, hai cột `reminder_time`/`reminder_text` trên `tracker`), nguyên tắc kín đáo trên noti, không streak, cadence daily-only.
+
+### 📝 2026-08-24 — SUPERSEDE lock-screen payload và auto-confirm của §12/011b
+
+Owner chốt global bundle/template của task 030, thay đúng hai contract đang sống từ 2026-08-01:
+
+1. **Payload theo subject/public text → một payload count-only:** mọi tracker/subscription, public
+   hay private, chỉ dùng title `microSched` và body
+   `Bạn có N thông báo từ microSched, bấm để xem ngay`. Cấm `reminder_text`, tracker/subscription
+   name, kind, subject/dispatch ID và privacy state trên lock screen hoặc log payload.
+2. **Mở app rồi ghi ngay → mở pending inbox, chưa ghi gì:** tap notification chỉ focus/navigate
+   tới panel; từng item mặc định unchecked. Chỉ explicit check trong app mới confirm tracker/tạo
+   Entry hoặc acknowledge subscription, sau đúng reading/private gate.
+
+`reminder_text` và name vẫn có thể hiện trong authenticated in-app detail theo gate liên quan;
+`reminder_text` column được giữ để backward compatibility, không phải nguồn OS payload. Không đổi
+tracker model, daily cadence, reminder time, subscription 07:00, retry hay no-streak decision ngoài
+những điểm task 030 ghi rõ.
 
 ## 13. ✅ ĐÓNG PHIÊN 2026-07-19
 

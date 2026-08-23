@@ -31,6 +31,9 @@ per-device delivery history, AI, dịch vụ/cost mới hay daily-task UX.
   payload một lần cho mỗi row; chỉ cần một send thành công thì occurrence có status `sent`.
 - [QUAN SÁT] `backend/app/domain/reminder.py:118-123` ghi contract production đúng một app
   process và process-local mutex; durable dispatch state mới là lớp recovery qua restart.
+- [QUAN SÁT] `backend/tests/test_reminder_domain.py:26-146` đang khóa payload cũ: private có thể dùng
+  `reminder_text`, public có thể fallback tracker/subscription name. Implementation 030 phải thay
+  các assertion đó bằng canary/count-only guard ở R10, không giữ hai expected contract cùng lúc.
 - [QUAN SÁT] `backend/app/core/cron_timer.py:30-39,46-54` khóa timezone +07, subscription lúc
   07:00, grace 15 phút và retry `30s → 2m → 10m`; `:679-705` pop rồi dispatch từng item.
 - [QUAN SÁT] `frontend/src/sw.ts:16-55` chỉ parse `{title, body, url}`, gọi
@@ -38,8 +41,11 @@ per-device delivery history, AI, dịch vụ/cost mới hay daily-task UX.
   tự nó không POST.
 - [QUAN SÁT] `frontend/src/ReminderConfirmScreen.tsx:43-139` tạo UUID/time rồi
   `useEffect(...confirmMutation.mutate())`; chỉ cần mở `/reminder-confirm?dispatch=…` hiện nay
-  đã POST confirm và tạo Entry. Task này **cố ý thay thế** hành vi auto-confirm đã khóa trong
-  `docs/tracking-brief.md:263-275`/task 011b theo quyết định owner 2026-08-24.
+  đã POST confirm và tạo Entry. Historical contract ở `docs/tracking-brief.md:263-275` và
+  `agent-tasks/011b-medication-reminder-webpush.md:217-228,526-529` còn ghi allowance đưa public
+  `reminder_text`/tracker name lên lock screen; dated supersession hiện nằm ở
+  `docs/tracking-brief.md:277-290` và các note 2026-08-24 của 011b. Task này **cố ý thay thế cả hai**:
+  auto-confirm khi mở và payload theo từng subject, theo quyết định owner 2026-08-24.
 - [QUAN SÁT] `backend/scripts/reminder_delivery_receipt.py:21-39,84-128` hiện giữ aggregate
   theo kind/date/status/attempt và top-level keys ổn định; chưa có bundle report.
 - [QUAN SÁT bên ngoài, kiểm 2026-08-24] Apple hỗ trợ Web Push cho Home Screen web app từ
@@ -108,16 +114,42 @@ INDEX (scheduled_for, id)
 INDEX (bundle_id) WHERE bundle_id IS NOT NULL
 ```
 
-- **Không DML backfill.** Historical rows giữ NULL/NULL, status/attempt/confirmation/audit timestamp
-  byte-for-byte. Không dùng `created_at` để giả một due time trong DB.
+- **Alembic upgrade không có DML backfill.** Ngay sau riêng bước upgrade, mọi historical row giữ
+  NULL/NULL và toàn bộ status/attempt/confirmation/audit timestamp byte-for-byte. Không dùng
+  `created_at` để giả một due time trong DB.
 - Occurrence mới set `scheduled_for=item.due_at` (convert UTC) và `bundle_id` trước lần network
   đầu. Unique occurrence constraint/status enum/attempt max 4 giữ nguyên.
 - Legacy `pending` row còn trong recovery window 24 giờ và attempt <4 được assign `bundle_id`
   để retry generic nhưng giữ `scheduled_for=NULL`, vì không biết chắc original due instant. Row đó
   vào inbox bằng fallback read-only `created_at`; row legacy ngoài recovery không gửi lại.
 - `bundle_ref = sha256(bundle_id bytes)[:16]` chỉ để payload/log/report; không log raw bundle UUID.
-- Downgrade drop hai index/check/cột; không sửa historical row. Migration QA chỉ trên Postgres
-  throwaway/CI, không round-trip Neon.
+- Downgrade drop hai index/check/cột. Migration QA chỉ trên Postgres throwaway/CI, không round-trip
+  Neon.
+
+### 4.1 Legacy recovery, audit timestamp và rollback
+
+`backend/alembic/versions/0008_push_subscription_and_reminder_dispatch.py:129-137` cài
+`BEFORE UPDATE` trigger cho `reminder_dispatch`; vì vậy không được đồng thời nói “gắn bundle” và
+“audit byte-for-byte mãi mãi”. Contract duy nhất là:
+
+1. Eligibility tại snapshot `now`: row legacy `status='pending'`, `bundle_id IS NULL`,
+   `attempt_count < 4`, và `COALESCE(last_attempt_at,created_at) >= now - 24h`. Biên đúng 24h được
+   nhận; cũ hơn dù một microsecond hoặc attempt =4 không được attach/mutate.
+2. Trước network, một transaction ngắn set **chỉ** `bundle_id` cho các row eligible và commit.
+   `scheduled_for` vẫn NULL; trigger đổi `updated_at` sang lúc attachment. Đây là audit trung thực
+   của recovery metadata mutation, không phải timestamp reminder gốc và không được giấu/bypass
+   trigger. `created_at`, status, attempt, last-attempt và confirmation fields giữ nguyên trong
+   transaction attachment.
+3. Crash sau commit phục hồi cùng durable `bundle_id`; đọc/reload lần sau không ghi lại attachment
+   và không đổi `updated_at` chỉ vì quan sát. Network attempt sau đó mới đổi attempt/status fields
+   và `updated_at` lần nữa theo contract dispatcher bình thường.
+4. Legacy row **đã** `sent|no_device` tại recovery snapshot, pending quá 24h hoặc exhausted giữ
+   NULL/NULL và audit timestamps byte-for-byte. Không có bulk historical rewrite.
+5. Downgrade **trước** khi runtime attach row nào thì round-trip byte-for-byte. Sau khi đã attach,
+   rollback contract được nói hẹp và rõ: dừng đường claim/dispatch 030 trước schema downgrade; chạy
+   receipt read-only ghi `legacy_scheduled_count`; downgrade drop cột nhưng giữ `updated_at` ở mốc
+   DML có thật gần nhất. Trường hợp này **không** còn byte-for-byte và tuyệt đối không backdate để
+   giả lịch sử. Restore từ backup không phải acceptance hay thao tác tự động của task 030.
 
 Không thêm bundle table, inbox table, device-delivery row, preference, cron service, queue/broker,
 provider API hay retention job. `reminder_dispatch` tiếp tục là delivery receipt và pending state.
@@ -183,6 +215,11 @@ showNotification(title, {
   `/reminder-confirm?dispatch=…` là compatibility route mở inbox/highlight, không auto-confirm.
 - Payload không chứa subject type/id/name, reminder text, privacy state, endpoint hay dispatch ID.
   Số `N` là metadata generic duy nhất có thể hiện trên lock screen theo template owner chốt.
+- Builder active chỉ nhận `count`, `bundle_ref`, `window_end`; không nhận/decrypt `Tracker`,
+  `Subscription`, name hay `reminder_text`. Public hay private đều đi **cùng một** count-only
+  template. `reminder_text` chỉ còn là config/backward-compatible detail trong app; private detail
+  chỉ đọc được sau reading gate tương ứng (`Subscription` kế thừa privacy từ Tracker cha), không bao
+  giờ vào OS payload/log.
 - App không điều khiển preview setting của iOS. Acceptance phải kiểm cả preview-on/off nhưng không
   tuyên bố app có thể buộc OS che count.
 
@@ -283,7 +320,7 @@ Hai event, một dòng key/value mỗi event:
 ```text
 reminder_bundle_claimed
   bundle_ref window_start window_end scheduled_min scheduled_max item_count
-  tracker_count subscription_count attempt_count is_retry
+  tracker_count subscription_count legacy_scheduled_count attempt_count is_retry
 
 reminder_bundle_finished
   bundle_ref item_count device_count sent_count temporary_failure_count dead_count
@@ -369,8 +406,11 @@ Chỉ cộng hai top-level additive fields:
 | R7 | click OS/old confirm URL | chỉ GET/mở panel; network trace không có POST trước explicit tap |
 | R8 | tracker explicit check | một Entry idempotent; default unchecked; private unlock retry giữ body |
 | R9 | subscription check | confirmed_at set, không Entry/renew/cancel |
-| R10 | private lock | push chỉ generic count; inbox không label/count/flag hidden; unlock refetch |
-| R11 | legacy migration | row/audit giữ nguyên; chỉ active bundled legacy vào inbox, không historical backlog; old link vẫn explicit |
+| R10 | public/private canary labels + reminder_text | mọi bundle chỉ exact count-only body; không subject field/text trong payload/log; in-app private detail cần unlock |
+| R11a | migration, chưa chạy recovery | mọi historical row/audit byte-for-byte; downgrade round-trip byte-for-byte |
+| R11b | eligible legacy ở biên 24h | set bundle_id, giữ scheduled_for NULL; chỉ updated_at đổi lúc attach; crash/reload reuse, không ghi attachment lần hai |
+| R11c | legacy quá 24h/attempt=4/terminal | không attach, không gửi, mọi field/audit byte-for-byte |
+| R11d | downgrade sau attachment | dừng claim/dispatch; pre-downgrade receipt có legacy count; cột bị drop nhưng updated_at giữ mốc DML thật, không backdate; byte-for-byte không còn được hứa |
 | R12 | offline/delayed | mọi nhánh §9 có deterministic unit/integration test; không poller mới |
 | R13 | receipt/log privacy | schema exact/additive; không ID/name/endpoint/payload; read-only CLI |
 | R14 | mobile/a11y | 320×568/390×844, 44 px, keyboard/SR/focus/error; sheet không overflow |
@@ -379,11 +419,14 @@ Test lanes:
 
 - Backend unit/integration: bucket boundaries/timezone, mixed grouping, stale/catch-up, atomic claim,
   unique race, retry/exhausted/crash recovery, aggregate multi-device result, no-device, active
-  legacy recovery ≤24h, pending cursor/privacy/highlight, confirm/ack idempotency.
+  legacy recovery ở `24h`, `24h+1µs`, attempt 3/4; exact before/after columns + trigger timestamp;
+  downgrade trước/sau attachment, gồm receipt + expected non-byte-preserving `updated_at`; pending
+  cursor/privacy/highlight, confirm/ack idempotency.
 - Timer regression: heap sleeps tới due/boundary/reload event, không interval DB poll; next-day
   scheduling giữ nguyên cho tracker/subscription.
-- Frontend Vitest: exact Vietnamese payload string/parser/tag/timestamp, click no mutation, panel
-  query lifecycle, unchecked/error/unlock actions, old route, offline state/cache exclusion.
+- Frontend Vitest: exact Vietnamese payload string/parser/tag/timestamp; canary public/private
+  names và `reminder_text` không xuất hiện; click no mutation, panel query lifecycle,
+  unchecked/error/unlock actions, old route, offline state/cache exclusion.
 - Playwright: intercept GET/POST để chứng minh open/deep-link không POST; mobile sheet/a11y/focus;
   service-worker notification path ở browser hỗ trợ.
 - Physical iPhone Home Screen post-deploy: cùng bucket N=2 trên một device chỉ thấy một generic OS
@@ -399,8 +442,11 @@ Test lanes:
    028. Không để hai Alembic heads hoặc triển khai hai migration song song.
 3. Backend migration → bundle dispatcher/tests → pending API → SW/UI → receipt/docs. Production
    migration áp dụng thủ công theo runbook; không thêm auto-migrate/cron/worker.
-4. Update `docs/tracking-brief.md` trong PR implementation để ghi owner 2026-08-24 supersede
-   auto-confirm, nhưng không xóa historical decision. Không sửa status/index rộng.
+4. Dated records 2026-08-24 trong `docs/tracking-brief.md` và task 011b của spec PR này đã
+   supersede **cả** auto-confirm lẫn public `reminder_text`/name payload. Implementation/QA phải
+   giữ count-only contract; payload-specific assertion cũ trong `test_reminder_domain.py`, QA 011b
+   và acceptance 011d là historical ở đúng điểm này, còn scheduler/retry contract khác vẫn giữ.
+   Không xóa historical decision và không sửa status/index rộng.
 5. Deploy/physical device là gate tuần tự sau CI/review; task này không tự merge/deploy.
 
 Không làm: task reminder/daily-task UX, per-device history/preferences, notification categories/

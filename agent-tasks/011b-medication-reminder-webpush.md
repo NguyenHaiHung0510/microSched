@@ -91,6 +91,12 @@ banner. Cơ chế thay thế, **tái dùng nguyên xi triết lý "ghi ngay + ho
    không queue generic create-entry. Hành động vẫn chạy trong tab app, không fetch trần từ service
    worker; auth/private gate vẫn do server thi hành khi outbox flush.
 
+> 📝 **2026-08-24 — OWNER CHỐT SUPERSEDE qua task 030:** bốn bước “tap → auto-confirm/queue confirm” trên
+> chỉ là historical 011b contract. Luồng active mới: tap chỉ mở pending inbox, item unchecked;
+> offline không queue confirmation; explicit check trong app online mới tạo/acknowledge. Seam
+> `return_to` vẫn phải giữ safe relative route để sau login quay lại inbox, nhưng không được biến
+> việc quay lại thành mutation.
+
 Đây là phát hiện làm **đơn giản hoá** bài toán so với lo ngại ban đầu: không cần thiết kế đường xác
 thực riêng cho hành động chạy trong service worker, vì hành động thật chạy trong tab app đã mở.
 
@@ -212,6 +218,14 @@ mạng mỗi lần bật nhắc là một request/đời-thiết-bị — rẻ h
 
 (Thuật toán `assign_slot` đã bị loại bỏ vì dùng exact time theo `011d`).
 Chỉ giữ lại các hàm thuần tạo lock-screen text dựa trên `subject_type` (tracker/subscription).
+
+> 📝 **2026-08-24 — OWNER CHỐT SUPERSEDE qua task 030:** active dispatcher không còn build lock-screen
+> text theo subject và không dùng public `reminder_text`/tracker/subscription name. Mọi public/private
+> occurrence trong một bundle dùng đúng count-only template `microSched` +
+> `Bạn có N thông báo từ microSched, bấm để xem ngay`. Các hàm payload theo subject ở 011b chỉ là
+> historical implementation cần được bỏ khỏi active call path; không được dùng làm fallback. Tap
+> notification chỉ mở pending inbox, không auto-confirm. In-app label/detail vẫn qua reading/private
+> gate tương ứng.
 
 ### 3.3 `app/domain/push.py` — gửi push, dọn subscription chết
 
@@ -389,6 +403,10 @@ sẽ làm — ghi vào Definition of Done, không chặn viết spec này.
 
 ### 4.2 Route `/reminder-confirm` — ghi ngay, idempotent theo dispatch
 
+> 📝 **2026-08-24 — OWNER CHỐT SUPERSEDE qua task 030:** route cũ chỉ là compatibility alias mở/highlight
+> pending inbox. Toàn bộ auto-mutation bên dưới là historical behavior và phải có regression test
+> chứng minh open/deep-link chỉ GET; endpoint confirm vẫn được gọi sau explicit tracker checkbox.
+
 > 🔴 **Vá 2026-08-01 (T1, lúc viết `011c`) — file này giả định một router chưa từng tồn tại.**
 > Đo tay cùng ngày: `App.tsx:104-125` chuyển màn bằng `useState`, `package.json` **không có**
 > `react-router`. Nghĩa là cả hai deep link của lô này (`/reminder-confirm?dispatch=…` ở đây và URL
@@ -505,8 +523,10 @@ Reminder chỉ do `011d` schedule in-process. Không có fallback external; khi 
 >
 > 📝 **2026-08-06 — JC docs:** JC2 (renew anchor) / JC3 (giờ nhắc sub 07:00) / JC4 (privacy
 > toast) sẽ được ghi chi tiết khi luồng UI (Kuhn) báo cáo — **placeholder: [chờ báo cáo Kuhn]**.
-- Không dùng `tracker.name` làm fallback payload khi tracker private; `reminder_text` vẫn được phép vì
-  đã khoá là bề mặt public do chủ tự viết (§3.2).
+- 📝 **2026-08-24 OWNER CHỐT SUPERSEDE:** allowance cũ “private không dùng name nhưng được dùng
+  `reminder_text`; public được fallback name” không còn hiệu lực. Task 030 cấm name,
+  `reminder_text`, kind/id/privacy state trong **mọi** OS payload; fallback cũng phải generic
+  count-only. In-app detail tiếp tục theo gate, không mở encryption/schema scope ở 011b.
 - Không cho `/reminder-confirm` gọi generic create-entry trực tiếp; bắt buộc đi endpoint confirmation
   khoá `reminder_dispatch` (§3.6), nếu không hai thiết bị tạo hai Entry.
 - Không thêm entity lịch con trong v1; thuốc nhiều lần/ngày dùng một tracker/mỗi lần uống (§1.2).
@@ -521,9 +541,10 @@ Reminder chỉ do `011d` schedule in-process. Không có fallback external; khi 
 - `PushResult` + dispatch state: sent/temp/dead; hỗn hợp dead+temp giữ **cùng row/id** ở `pending` +
   endpoint 5xx; chỉ dead hoặc bảng rỗng chuyển `no_device`; ≥1 sent chuyển `sent`. Retry/crash phải
   reuse đúng dispatch id.
-- Private payload: tracker có `reminder_text` dùng đúng text public; thiếu text thì **không chứa
-  tracker.name** và dùng generic; public thiếu text mới fallback name. Subscription có parent private
-  cũng không chứa `subscription.name`.
+- **030 supersession guard:** fixture bundle trộn public/private tracker + subscription, đặt canary
+  riêng trong `reminder_text` và mọi name; payload/log chỉ có exact title/body count-only + metadata
+  030 cho phép, không canary/type/id/privacy. Test phải đỏ nếu gọi lại subject payload builder hoặc
+  public-name fallback. Unlock chỉ làm in-app item hiện, không đổi OS template.
 - Hai request confirm cùng dispatch nhưng hai `entry_id` khác nhau (mô phỏng hai thiết bị, chạy đồng
   thời) ⇒ đúng một Entry + cùng `confirmed_entry_id`; gửi lại qua outbox ⇒ vẫn một dòng.
 - Private gate khoá ⇒ confirm `403 PRIVATE_UNLOCK_REQUIRED`, 0 Entry, 0 confirmation; unlock rồi retry

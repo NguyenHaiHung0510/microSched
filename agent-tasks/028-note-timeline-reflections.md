@@ -149,8 +149,9 @@ deleted_at    TIMESTAMPTZ NULL
 ```
 
 - Index live timeline: `(note_id, reflected_at, id) WHERE deleted_at IS NULL`.
-- Model khai `Gate.VIA_PARENT` cho privacy và delete. Không thêm `is_private` riêng; parent note
-  là source of truth.
+- Model khai `Gate.VIA_PARENT` cho privacy vì không có `is_private` riêng; parent note là source of
+  truth. Delete gate là `Gate.APPLIES` vì reflection có `deleted_at` và được xóa/restore độc lập;
+  mọi live read đồng thời JOIN parent readable để parent bị xóa cũng ẩn cả timeline.
 - `body_md` dùng cùng crypto envelope `enc:v1:` như `NoteItem`: public lưu cleartext, private
   lưu ciphertext. Không index/search/embedding reflection trong phase này.
 - Khi toggle note public ↔ private, lock row cha và convert original, items, **mọi reflection
@@ -183,12 +184,29 @@ Reflection create/read DTO:
 }
 ```
 
-- `id` client-selected UUIDv7 để đi qua outbox 017; replay cùng ID + cùng logical payload trả
-  row cũ, payload khác trả conflict theo contract idempotency hiện hành sau 017.
+- `id` client-selected UUIDv7 để đi qua outbox 017. Khuôn phải giống note create hiện hành
+  (`backend/app/domain/notes.py:215-233`, router `backend/app/web/routers/notes.py:52-64`): dùng
+  `INSERT ... ON CONFLICT (id) DO NOTHING`, không check-then-insert; insert mới trả `201`; PK đã
+  tồn tại **trong đúng note cha và đọc được** trả `200` cùng row đang lưu, không phụ thuộc valid
+  request body/reflected_at có giống lần đầu hay không.
+- Replay `200` không biến thành update: giữ nguyên stored `body_md`, `reflected_at`,
+  `created_at`, `updated_at`; field nội bộ `created` dùng chọn HTTP status nhưng `exclude=True`,
+  không ra JSON.
+- Payload vẫn phải qua validation trước lookup. “Không so payload” không biến UUID thành cách bỏ
+  qua 422: body rỗng, time sai precision/offset hoặc extra field vẫn bị từ chối.
+- Nếu replay trả row live, outbox bỏ queue row và thay optimistic projection bằng **stored response**,
+  không merge local payload.
+- Sau insert-conflict, query live row phải lọc cả `reflection.deleted_at IS NULL` và parent readable.
+  Probe vật lý kế tiếp chỉ được `SELECT reflection.id`, không đọc body/timestamp. ID vật lý đã
+  soft-delete hoặc thuộc note cha khác trả generic empty `409`, giữ nguyên row và không restore;
+  đây là invisible/parent identity conflict theo 008m, **không** là payload mismatch.
+- Parent đích private đang khóa/soft-deleted hoặc không tồn tại bị chặn trước insert và trả generic
+  `404`. Outbox chỉ hold khi command có `requires_private=true` **và** client biết gate đang khóa;
+  `404` khác park ngay. Sau unlock, replay nguyên request: live row cùng parent → `200`; parent vẫn
+  404 hoặc physical row đã delete/khác parent → park (`409` vẫn empty) theo classifier 017. Không
+  thêm payload hash, conflict table/cột hoặc migration nào.
 - `reflected_at` có thể bỏ ở client online để server default, nhưng outbox bắt buộc gửi capture
   time. PATCH chỉ nhận `body_md`; extra field, `null` body, body rỗng/whitespace là 422.
-- Parent không tồn tại, soft-deleted hoặc private đang khóa đều trả 404 như reading gate hiện
-  hành. Không tiết lộ trường hợp nào qua response khác nhau.
 
 ## 5. UI mobile-first, privacy và accessibility
 
@@ -218,7 +236,7 @@ Reflection create/read DTO:
 | N5 | Legacy row | triple-NULL giữ nguyên; read fallback từ `created_at`; `updated_at` byte-for-byte không đổi sau upgrade |
 | N6 | Edit mở rồi đóng | không PATCH, không đổi time/audit; “Đặt về bây giờ” mới đổi |
 | N7 | Pin + newest/oldest | pin trước; fixtures cùng ngày/date-only/unscheduled/tie có order deterministic |
-| N8 | Reflection CRUD | original không đổi; create/order/edit marker/soft-delete/restore đúng |
+| N8 | Reflection CRUD/replay | original không đổi; 201 mới/200 live replay trả stored row; payload khác không update; deleted/cross-parent ID → empty 409, không restore |
 | N9 | Toggle privacy có reflection deleted | toàn bộ descendants convert atomically; forced mid-transaction failure rollback |
 | N10 | Private đang khóa | list/detail/reflection CRUD không tiết lộ existence; cache bị purge |
 | N11 | A11y/mobile | 390×844 và 320×568 không overflow; 44 px targets; keyboard/SR names/focus pass |
@@ -227,7 +245,11 @@ Reflection create/read DTO:
 Test bắt buộc:
 
 - Backend unit/API cho mọi valid/invalid discriminated shape, seconds khác 0, missing offset,
-  extra `source`, stable ordering, UUIDv7 idempotency/conflict, parent/privacy/deletion gates.
+  extra `source`, stable ordering; reflection lost-response replay với payload cùng/khác; stored
+  `updated_at` bất biến; deleted/cross-parent ID empty 409 và row bất biến; locked parent
+  hold→unlock→200 khi row live; hai request đồng thời cùng ID nhưng valid payload khác tạo đúng một
+  row, một `201` + một `200`, hai response cùng stored winner; parent/privacy/deletion gates. Không
+  có test/hash payload tưởng tượng.
 - Migration QA trên Postgres throwaway với legacy fixture đã ghi chính xác
   `created_at`/`updated_at`; so sánh trước/sau upgrade. Không dùng SQLite cho DDL proof.
 - Frontend Vitest cho default/edit state, labels, pin/sort, timeline/undo/error rollback; Playwright
