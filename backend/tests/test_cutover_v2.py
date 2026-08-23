@@ -52,6 +52,18 @@ from scripts.cutover_v2 import (
 
 NOW = datetime(2026, 8, 20, 12, 34, 56, 1, tzinfo=UTC)
 
+
+def freeze_cutover_clock(monkeypatch: pytest.MonkeyPatch, current_time: datetime) -> None:
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return current_time.replace(tzinfo=None)
+            return current_time.astimezone(tz)
+
+    monkeypatch.setattr("scripts.cutover_v2.datetime", FrozenDateTime)
+
+
 NATIVE_FLY_STOPPED = {
     "PlatformVersion": "machines",
     "Machines": [
@@ -373,7 +385,8 @@ def test_unclassified_calendar_uid_is_fail_closed() -> None:
         validate_source(rows)
 
 
-def test_manifest_digest_and_unsigned_gate() -> None:
+def test_manifest_digest_unsigned_and_expiry_gates(monkeypatch) -> None:
+    freeze_cutover_clock(monkeypatch, NOW)
     transformed = transform_source(SourceSnapshot(source_rows(), NOW))
     target_snapshot = {
         component: empty_inventory(component)
@@ -397,7 +410,6 @@ def test_manifest_digest_and_unsigned_gate() -> None:
             "push_subscription",
         )
     }
-    monkeypatch = pytest.MonkeyPatch()
     key = Ed25519PrivateKey.generate()
     monkeypatch.setenv(ARTIFACT_KEY_ENV, base64.b64encode(b"a" * 32).decode())
     monkeypatch.setenv(
@@ -449,9 +461,13 @@ def test_manifest_digest_and_unsigned_gate() -> None:
             )["manifest_digest"]
             == unsigned["manifest_digest"]
         )
+        freeze_cutover_clock(monkeypatch, NOW + timedelta(hours=24))
+        with pytest.raises(ManifestError, match="owner approval has expired"):
+            read_final_manifest(
+                path, expected_script_sha=code["git_sha"], expected_host="throwaway"
+            )
     finally:
         path.unlink(missing_ok=True)
-        monkeypatch.undo()
 
 
 def test_finalized_manifest_dry_run_rechecks_target_and_authenticated_dump(
@@ -459,6 +475,7 @@ def test_finalized_manifest_dry_run_rechecks_target_and_authenticated_dump(
 ) -> None:
     import scripts.cutover_v2 as cutover_v2
 
+    freeze_cutover_clock(monkeypatch, NOW)
     key = Ed25519PrivateKey.generate()
     monkeypatch.setenv(ARTIFACT_KEY_ENV, base64.b64encode(b"f" * 32).decode())
     monkeypatch.setenv(
