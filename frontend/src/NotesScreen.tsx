@@ -422,6 +422,14 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                             >
                               Lưu
                             </Button>
+                            <Button
+                              variant="outline"
+                              size="lg"
+                              disabled={changeItem.isPending}
+                              onClick={() => setEditingItemId(null)}
+                            >
+                              Huỷ
+                            </Button>
                           </>
                         ) : (
                           <>
