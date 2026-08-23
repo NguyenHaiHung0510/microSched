@@ -290,7 +290,19 @@
         "server_version": {"type": "string", "pattern": "^[0-9A-Za-z._+-]{1,80}$"},
         "os_type": {"const": "linux"},
         "daemon_identity_sha256": {"$ref": "#/$defs/sha256"}
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"context_name": {"const": "desktop-linux"}},
+            "required": ["context_name"]
+          },
+          "then": {
+            "properties": {"endpoint_kind": {"const": "npipe"}},
+            "required": ["endpoint_kind"]
+          }
+        }
+      ]
     },
     "commandEnvelope": {
       "type": "object",

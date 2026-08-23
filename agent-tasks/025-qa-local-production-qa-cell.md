@@ -140,7 +140,8 @@ trước full run, trừ artifact ignored trong `frontend/test-results/`.
 ### Q025-A11 — receipt integrity
 
 - `agent-tasks/025-qa-receipt.schema.json` pass Draft 2020-12 meta-schema check; exact validator
-  command trong implementation spec pass receipt và reject unknown/missing field hoặc enum sai.
+  command trong implementation spec pass receipt và reject unknown/missing field, enum sai hoặc
+  daemon pair `desktop-linux+unix`.
 - Receipt validate `microsched.qa025.receipt.v1`, đủ SHA/image/phases/durations/safety/roles/fixture/
   acceptance/migration/network/cleanup/device fields.
 - Receipt không secret, DB URL, real email, production host, env/container dump. Timestamps UTC và
@@ -151,7 +152,7 @@ trước full run, trừ artifact ignored trong `frontend/test-results/`.
 ### Q025-A12 — RED→GREEN mutation proof
 
 - Chạy toàn bộ persistent negative tests.
-- Chạy các mutation bắt buộc **M01, M03, M05, M07, M09, M10, M12 và M13–M24** dưới đây; mỗi
+- Chạy các mutation bắt buộc **M01, M03, M05, M07, M09, M10, M12 và M13–M25** dưới đây; mỗi
   mutation phải làm đúng named test đỏ vì guard bị phá, restore rồi cùng test xanh.
 - Không commit mutant; sau restore, `git diff --exit-code` so với candidate patch/snapshot pass.
 
@@ -203,6 +204,7 @@ Mutation chỉ diễn ra trong reviewer worktree. Không thêm runtime bypass fl
 | M22 | Đổi receipt `NOT_RUN` thành `NOT RUN` hoặc xoá required field | schema validator | A11 / 025-CELL-05 |
 | M23 | Cho một Docker call clone parent env/không chèn explicit context | command-envelope call-ledger test | A02 / 025-SAFE-07 |
 | M24 | Set `GIT_DIR` ngoài repo hoặc prepend fake `docker`/`git` vào parent `PATH` | Git/path/executable indirection guard | A02 / 025-SAFE-07 |
+| M25 | Đổi receipt target thành `context_name=desktop-linux`, `endpoint_kind=unix` | daemon context/endpoint pair schema test | A11 / 025-CELL-05 |
 
 Với mỗi row đã chạy, PR receipt cần raw block theo khuôn:
 

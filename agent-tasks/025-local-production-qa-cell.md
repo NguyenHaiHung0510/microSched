@@ -380,10 +380,13 @@ python qa/production-cell/validate_receipt.py \
 ```
 
 Validator phải dùng `Draft202012Validator.check_schema()` + `FormatChecker`, rồi validate instance.
-Sau schema, semantic pass bắt buộc kiểm: `ended_at >= started_at`; phase name không lặp và PASS có
-đủ chín phase; Compose file roles đúng một `base` + một `generated_override`; root/Compose/cleanup
-`run_id`/project bằng nhau; daemon identity ở target/cleanup bằng nhau; foreign-sentinel before/after
-config hash bằng nhau. Recursive redaction scan phải reject key (case-insensitive)
+Schema và semantic validator checklist phải cùng enforce allowlisted pair ở §2.4; cụ thể
+`context_name=desktop-linux` ⇒ `endpoint_kind=npipe`, và fixture `desktop-linux+unix` phải fail.
+Sau schema, semantic pass còn bắt buộc kiểm:
+`ended_at >= started_at`; phase name không lặp và PASS có đủ chín phase; Compose file roles đúng một
+`base` + một `generated_override`; root/Compose/cleanup `run_id`/project bằng nhau; daemon identity ở
+target/cleanup bằng nhau; foreign-sentinel before/after config hash bằng nhau. Recursive redaction
+scan phải reject key (case-insensitive)
 `database_url|owner_url|migrator_url|password|session_token|pin|aes_key|cookie|authorization|`
 `container_env|env_dump` và string chứa `postgres://|postgresql://|*.neon.tech|*.fly.dev` hoặc email
 ngoài `example.invalid`. Khi hợp lệ, in đúng
