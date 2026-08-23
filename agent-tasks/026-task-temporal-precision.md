@@ -52,6 +52,12 @@ Ngày-only là một `DATE`, không phải timestamp giả được giấu khỏ
   keyset hand-code cùng fields (`backend/app/domain/tasks.py:361-430`, `:472-506`, `:582-593`). Header
   spec 022 còn ghi implementation pending, nhưng Git history hiện có merge PR #142; implementation
   phải tin cây code + test hiện tại, không tin header trạng thái cũ.
+- **[QUAN SÁT]** Product contract 022 khóa group trước pin: “Quá hạn trước đó” đứng trước các date
+  group tăng dần, “Chưa xếp ngày” đứng sau; `pinned` chỉ đứng đầu **ngày/nhóm của chính nó**
+  (`agent-tasks/022-task-day-timeline.md:20-27`, `:89-97`). Frontend merge hiện cũng dựng group trước
+  rồi mới sort pinned bên trong (`frontend/src/TasksScreen.tsx:289-306`).
+- **[SUY LUẬN]** SQL/keyset pin-first đang thấy ở code là implementation gap so với 022, **không** phải
+  product permission để 026 đổi pin semantics; implementation 026 phải sửa gap đó cùng typed cursor.
 - **[QUAN SÁT]** Task 017 bắt row giữ `payload_sha256` + `payload_byte_length` immutable và retry cùng
   UUID/payload (`agent-tasks/017-offline-outbox.md:185-199`); do đó payload cũ `{due_at:null}` không
   được sửa trong flusher chỉ để khớp DTO mới.
@@ -71,12 +77,13 @@ Quyết định owner ngày 2026-08-24 thắng các đoạn sau khi không tươ
 |---|---|---|
 | `schema-v1-brief.md` ERD `task.due_at` duy nhất | mô hình deadline chỉ-timestamp | §2: `due_precision` + `due_on` + `due_at` |
 | `010b` §5.6 (`:471`) | dời task vào `23:59+07` | §2.6: giữ precision, không bịa giờ |
-| `022` §2.1/§3 (`:72-76`, `:173`) | mọi task có lịch đều là instant | §4–5: range/cursor hiểu cả `DATE` và instant |
+| `022` §2.1/§3 (`:72-76`, `:173`) | mọi task có lịch đều là instant | §4–5: range/cursor hiểu cả `DATE` và instant; giữ nguyên group/pin §0 + §2.2 |
 | Test `endOfDayVietnam` và ba assertion `23:59` | guard cho heuristic cũ | thay bằng guard “không có phút bịa” |
 
 Các quyết định **không** bị mở lại: timezone app là `Asia/Ho_Chi_Minh`; timeline 7 ngày/cursor bounded;
-privacy gate; soft-delete/undo; UUIDv7/idempotency; Task 017 typed outbox. Sau merge spec, integration
-owner cập nhật index/status board riêng; PR 026 không sửa bảng trạng thái dùng chung.
+**group trước pin của 022**; privacy gate; soft-delete/undo; UUIDv7/idempotency; Task 017 typed outbox.
+Sau merge spec, integration owner cập nhật index/status board riêng; PR 026 không sửa bảng trạng thái
+dùng chung.
 
 ## 2. Hợp đồng domain đã khóa
 
@@ -126,13 +133,20 @@ ngữ event, không phải task.
   `Asia/Ho_Chi_Minh`. Task date-only của hôm nay chưa trễ cho tới khi sang ngày kế tiếp.
 - `datetime`: hiện ngày + giờ theo `Asia/Ho_Chi_Minh`; overdue khi `due_at < now`.
 - `none`: hiện “Chưa xếp lịch”, không bao giờ overdue.
-- Mọi bucket và mọi continuation dùng **một** tuple canonical, theo đúng thứ tự/chiều:
-  `pinned DESC` → `scheduled_rank ASC` (`date|datetime=0`, `none=1`) →
-  `schedule_day ASC NULLS LAST` → `precision_rank ASC` (`datetime=0`, `date=1`, `none=2`) →
-  `due_at ASC NULLS LAST` → `created_at DESC` → `id ASC`. `schedule_day` là `due_on` cho `date`, ngày
-  Việt Nam của `due_at` cho `datetime` (SQL: `(due_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`), và
-  `NULL` cho `none`. Vì vậy các ngày đi theo thứ tự civil; trong cùng ngày, giờ cụ thể đi trước
-  date-only; unscheduled đi cuối. Đây là **sort semantic**, không phải lưu một giờ giả.
+- 026 kế thừa nguyên văn group/pin của 022 §0 và §2.2: **group trước, pin sau**. Normalized sort key
+  duy nhất, theo đúng thứ tự/chiều, là `group_rank ASC` → `group_day ASC NULLS LAST` →
+  `pinned DESC` → `schedule_day ASC NULLS LAST` → `precision_rank ASC` (`datetime=0`, `date=1`,
+  `none=2`) → `due_at ASC NULLS LAST` → `created_at DESC` → `id ASC`.
+- `group_rank/group_day` được dựng từ cursor scope: `0/NULL` cho một group “Quá hạn trước đó”;
+  `1/schedule_day` cho từng date group; `2/NULL` cho một group “Chưa xếp ngày”. `open_picker` không có
+  overdue window nên chỉ dùng rank `1` cho scheduled và `2` cho unscheduled. `schedule_day` là `due_on`
+  cho `date`, ngày Việt Nam của `due_at` cho `datetime` (SQL:
+  `(due_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`), và `NULL` cho `none`; field lặp sau `pinned` giữ
+  thứ tự due bên trong virtual overdue group, còn trong một date group nó là constant.
+- Hệ quả bắt buộc: toàn bộ overdue group đứng trước date block; date group tăng theo civil day; undated
+  đứng sau. **Task pinned của ngày sau không bao giờ đứng trước task unpinned của ngày trước.** Chỉ khi
+  hai task cùng group/ngày thì pinned mới thắng; sau đó giờ cụ thể tăng dần rồi date-only. Đây là sort
+  semantic, không phải lưu một giờ giả.
 - Timeline, Calendar và dialog phải dùng cùng helper typed; cấm mỗi màn tự suy từ `due_at`.
 
 ### 2.5 Editing transitions
@@ -325,15 +339,33 @@ Với range `[from,to)` mà first-party caller gửi theo midnight của `Asia/H
   `due_at ∈ [from_instant,to_instant)`; `none` không thuộc.
 - `undated`: chỉ precision `none`, không còn suy bằng `due_at IS NULL`.
 - `overdue`: open + trước earliest block **và** đã overdue theo §2.4.
-- `open_picker`: mọi open task; dùng nguyên tuple §2.4, không có comparator riêng.
+- Timeline response giữ đúng assembly order 022: `overdue` → các `dated` group tăng theo ngày →
+  `undated`. `open_picker` chứa mọi open task nhưng vẫn dùng phần date/undated của normalized key §2.4,
+  không có comparator pin-first riêng.
 
 Cursor payload ký phải bind range/status/bucket/private scope như 022 và mang **đúng tuple §2.4 theo
-đúng thứ tự**: `pinned`, `scheduled_rank`, `schedule_day`, `precision_rank`, `due_at`, `created_at`,
-`id`. Decode validate rank/null/precision combination; cursor `date` không được có `due_at`, cursor
-`datetime` phải có aware `due_at` và day Việt Nam khớp, `none` phải có day/time NULL. Backend có một
-sort-key builder dùng chung cho SQL `ORDER BY`, keyset-after, inverse/has-previous và cursor
-encode/decode; frontend có đúng một `compareTaskScheduleKey` mirror tuple đó. Contract fixture JSON
-dùng chung phải chứng minh Python/TypeScript cho cùng order; không copy comparator theo từng màn/bucket.
+đúng thứ tự**: `group_rank`, `group_day`, `pinned`, `schedule_day`, `precision_rank`, `due_at`,
+`created_at`, `id`. Decode validate bucket/group/rank/null/precision combination: `overdue` chỉ nhận
+`0/NULL`; `dated` chỉ nhận `1/group_day=schedule_day`; `undated` chỉ nhận `2/NULL`; `open_picker` chỉ
+nhận rank `1|2` đúng shape. Cursor `date` không được có `due_at`; cursor `datetime` phải có aware
+`due_at` và day Việt Nam khớp; `none` phải có day/time NULL.
+
+Backend có một sort-key builder dùng chung cho cursor encode/decode, keyset-after,
+inverse/has-previous và SQL `ORDER BY`. Sau khi elide fields constant theo bucket, SQL variable suffix
+phải tương đương exact normalized tuple:
+
+- `dated`: `schedule_day ASC, pinned DESC, precision_rank ASC, due_at ASC NULLS LAST,
+  created_at DESC, id ASC`;
+- `overdue`: `pinned DESC, schedule_day ASC, precision_rank ASC, due_at ASC NULLS LAST,
+  created_at DESC, id ASC`;
+- `undated`: `pinned DESC, created_at DESC, id ASC`;
+- `open_picker`: `group_rank ASC, group_day ASC NULLS LAST, pinned DESC, schedule_day ASC NULLS LAST,
+  precision_rank ASC, due_at ASC NULLS LAST, created_at DESC, id ASC`.
+
+Frontend có đúng một `compareTaskScheduleKey` mirror normalized tuple; nó group trước rồi mới so pin,
+không gọi `.sort(pinned…)` trên collection nhiều ngày. Một contract fixture JSON dùng chung phải chứng
+minh SQL result/Python key/TypeScript comparator cho cùng order; không copy comparator theo từng màn/
+bucket. Ít nhất một fixture đặt unpinned ngày sớm cạnh pinned ngày muộn để bắt pin vượt group.
 Cursor cũ `due_at`-only trả `422`, client restart range bằng
 request đầu theo 022. `due_at`/`created_at` trong cursor dùng canonical UTC RFC3339 (`Z`), còn
 `schedule_day` là ISO civil date Việt Nam; frontend không lấy device timezone để dựng key. Với dataset
@@ -418,9 +450,14 @@ Không được làm:
 5. Downgrade guard với date-only row đỏ **trước khi drop**; empty throwaway DB round-trip xanh. 026C
    có RED/GREEN riêng: old direct writer xanh trước drop, đỏ sau drop, legacy HTTP shim vẫn xanh.
 6. Range/cursor test >205 synthetic rows trộn pinned/unpinned, ba precision, nhiều row cùng
-   day/time/created_at, boundary 00:00, private/deleted: concat pages bằng exact one-shot tuple §2.4,
-   mọi visible ID đúng một lần. Chạy cùng assertion cho dated/overdue/undated/open_picker;
-   rank/null mismatch, cursor mutation/scope mismatch đều `422`.
+   day/time/created_at, boundary 00:00, private/deleted. Fixture bắt buộc có (a) unpinned ngày sớm +
+   pinned ngày muộn, (b) unpinned overdue cũ + pinned overdue mới, (c) pinned/unpinned cùng ngày. Kỳ
+   vọng: group/ngày thắng pin ở (a); pin chỉ thắng bên trong overdue group ở (b) và cùng date group ở
+   (c), đúng Task 022 §2.2. Concat pages phải bằng exact one-shot normalized tuple §2.4 và mỗi visible
+   ID đúng một lần; lặp với `limit=1` và `limit=2` để đặt page boundary ngay giữa các pair đối nghịch.
+   Chạy cùng assertion cho dated/overdue/undated/open_picker; mọi SQL result, Python key, cursor
+   continuation và TypeScript fixture cùng order; group/rank/null mismatch, cursor mutation/scope
+   mismatch đều `422`.
 7. Overdue fake clock: date-only hôm nay chưa trễ lúc 23:59:59 local, trễ sau local midnight;
    datetime trễ đúng instant; none không trễ.
 8. UUIDv7 create/replay exact legacy `{due_at:null}` vẫn một row/`200`; capture body bytes/hash/length
@@ -446,7 +483,9 @@ Không được làm:
 ### 8.3 Timeline/Calendar regression + performance
 
 - Existing 022 paths (>191 reachability, seven-day groups, cursor, one primary poller) xanh sau typed
-  grouping. Calendar date-window query vẫn bounded/no polling và không thêm request theo số ô.
+  grouping. Thêm regression: pin một task ở ngày sau không đổi thứ tự date headers/đẩy nó qua ngày
+  trước; pin chỉ đổi vị trí trong đúng date/overdue/undated group. Calendar date-window query vẫn
+  bounded/no polling và không thêm request theo số ô.
 - Mutation chuyển task qua old/new group ngay sau invalidate; private lock purge cả Task/Calendar
   cache như 022.
 - Playwright mobile 390×844 + desktop 1280×800: create/edit/quick-add/reschedule/undo bằng keyboard
@@ -463,6 +502,9 @@ Sau khi suite xanh, perturbation không commit:
 3. restore source, chạy cùng lệnh xanh;
 4. dán nguyên output RED/GREEN vào PR 026A. PR 026B làm RED/GREEN riêng cho trigger + DB CHECK/
    downgrade guard; PR 026C chứng minh trigger-retire RED/GREEN §8.1.
+
+Comparator guard riêng cũng bắt buộc trong 026A: tạm chuyển `pinned DESC` lên trước `group_day`, chạy
+fixture unpinned-ngày-sớm/pinned-ngày-muộn và thấy đỏ vì task vượt group; restore exact tuple rồi xanh.
 
 ## 9. Lệnh/gate và báo cáo
 
