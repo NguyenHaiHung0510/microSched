@@ -64,6 +64,8 @@ cover/
 # Playwright's own default artifact dir (trace.zip/screenshots on failure,
 # .last-run.json) — separate from the custom reporter output above.
 /frontend/test-results/
+# Hash-bound QA025 run manifests/Compose overrides are local recovery receipts.
+/qa/production-cell/.runs/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
