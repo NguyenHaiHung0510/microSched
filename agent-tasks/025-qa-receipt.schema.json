@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://microsched.invalid/schemas/qa025-receipt-v1.json",
   "title": "microSched QA025 local production-image cell receipt v1",
+  "description": "Draft 2020-12 validates only each field's local grammar. The executable semantic validator, not this schema alone, must parse the exact run_id embedded in fixtures.prefix and every fixture label-ledger entry, then compare raw UTF-8 bytes with run_id, compose.project_name, cleanup.run_id, and cleanup.project_name without normalization, coercion, or derivation.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -444,7 +445,7 @@
       "required": ["status", "prefix", "task_count", "note_count", "synthetic_domain"],
       "properties": {
         "status": {"$ref": "#/$defs/machineStatus"},
-        "prefix": {"type": "string", "pattern": "^\\[QA025:msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}\\]$"},
+        "prefix": {"type": "string", "description": "Local grammar only; the semantic validator must extract the exact ID from this literal wrapper and bind it byte-for-byte to the root, Compose, cleanup, and fixture label ledger IDs.", "pattern": "^\\[QA025:msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}\\]$"},
         "task_count": {"type": "integer", "minimum": 0, "maximum": 2},
         "note_count": {"type": "integer", "minimum": 0, "maximum": 1},
         "synthetic_domain": {"const": "example.invalid"}
