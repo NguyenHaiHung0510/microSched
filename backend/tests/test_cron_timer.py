@@ -991,9 +991,19 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
 async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monkeypatch, caplog):
     """011e: the real startup path emits only the locked, safe receipts."""
 
+    fixed_now = datetime(2026, 8, 24, 6, 0, tzinfo=VN_TZ)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now.replace(tzinfo=None)
+            return fixed_now.astimezone(tz)
+
     async def fake_lead(db):
         return 3
 
+    monkeypatch.setattr(cron, "datetime", FixedDateTime)
     monkeypatch.setattr(cron, "expiry_lead_days", fake_lead)
     tracker_id = UUID("01912345-6789-7000-8000-000000000901")
     parent_id = UUID("01912345-6789-7000-8000-000000000902")
@@ -1009,7 +1019,7 @@ async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monk
     sub = _subscription(
         sub_id,
         parent_id,
-        expires_on=datetime.now(VN_TZ).date() + timedelta(days=2),
+        expires_on=fixed_now.date() + timedelta(days=2),
     )
     sub.name = sentinel_subscription_name
     sub.note_md = sentinel_subscription_note
@@ -1059,7 +1069,7 @@ async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monk
         "subscription_count": "1",
         "lead_days": "3",
         "queue_size": "2",
-        "next_due_at": timer._heap[0][0].isoformat(),
+        "next_due_at": "2026-08-24T07:00:00+07:00",
         "pending_recovered_count": "0",
         "pending_manual_required_count": "0",
     }

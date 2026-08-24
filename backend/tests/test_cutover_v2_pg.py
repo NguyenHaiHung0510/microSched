@@ -7,6 +7,7 @@ service database name and the production default remains ``microschedule_v2``.
 
 import asyncio
 import os
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -41,6 +42,11 @@ from scripts.cutover_v2 import (
 pytestmark = pytest.mark.pg
 
 NOW = datetime(2026, 8, 20, 12, 34, 56, tzinfo=UTC)
+REHEARSAL_PREPARE_APPLICATION_NAME = "microsched-migration-qa-prepare"
+AUTOVACUUM_BACKEND_TYPE = "autovacuum worker"
+AUTOVACUUM_WAIT_TIMEOUT_SECONDS = 5.0
+AUTOVACUUM_POLL_SECONDS = 0.05
+SESSION_EXIT_QUERY = "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1)"
 
 NATIVE_FLY_STOPPED = {
     "PlatformVersion": "machines",
@@ -71,6 +77,299 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+async def _close_owned_source_session_and_wait(
+    control,
+    connection,
+    pid: int,
+    *,
+    sleep=asyncio.sleep,
+    timeout_seconds: float = AUTOVACUUM_WAIT_TIMEOUT_SECONDS,
+    monotonic=None,
+) -> None:
+    """Close one session opened by this fixture and observe its backend exit."""
+    clock = monotonic or asyncio.get_running_loop().time
+    deadline = clock() + timeout_seconds
+    error = f"test-owned source session {pid} remained active at wait deadline"
+
+    async def before_deadline(operation):
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise RuntimeError(error)
+        try:
+            async with asyncio.timeout(remaining):
+                return await operation()
+        except TimeoutError:
+            raise RuntimeError(error) from None
+
+    await before_deadline(connection.close)
+    while await before_deadline(lambda: control.fetchval(SESSION_EXIT_QUERY, pid)):
+        if clock() >= deadline:
+            raise RuntimeError(error)
+        await before_deadline(
+            lambda: sleep(min(AUTOVACUUM_POLL_SECONDS, max(0.0, deadline - clock())))
+        )
+
+
+async def _create_throwaway_restore(
+    control,
+    source_db: str,
+    restore_db: str,
+    *,
+    sleep=asyncio.sleep,
+    timeout_seconds: float = AUTOVACUUM_WAIT_TIMEOUT_SECONDS,
+    monotonic=None,
+) -> None:
+    """Clone only after client sessions leave; tolerate bounded server maintenance."""
+    clock = monotonic or asyncio.get_running_loop().time
+    deadline = clock() + timeout_seconds
+
+    async def before_deadline(operation):
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise RuntimeError(
+                "throwaway restore refused: source database has active session(s) at wait deadline"
+            )
+        try:
+            async with asyncio.timeout(remaining):
+                return await operation()
+        except TimeoutError:
+            raise RuntimeError(
+                "throwaway restore refused: source database has active session(s) at wait deadline"
+            ) from None
+
+    while True:
+        sessions = await before_deadline(
+            lambda: control.fetch(
+                "SELECT pid, backend_type, application_name, state FROM pg_stat_activity "
+                "WHERE datname=$1 AND pid <> pg_backend_pid() ORDER BY pid",
+                source_db,
+            )
+        )
+        foreign_sessions = [
+            row for row in sessions if row["backend_type"] != AUTOVACUUM_BACKEND_TYPE
+        ]
+        if foreign_sessions:
+            details = "; ".join(
+                "pid={pid} backend_type={backend_type!r} application_name={application_name!r} "
+                "state={state!r}".format(**dict(row))
+                for row in foreign_sessions
+            )
+            raise RuntimeError(
+                "throwaway restore refused: source database has "
+                f"{len(foreign_sessions)} non-maintenance active session(s): {details}"
+            )
+        if sessions:
+            await before_deadline(lambda: sleep(AUTOVACUUM_POLL_SECONDS))
+            continue
+        try:
+            await before_deadline(
+                lambda: control.execute(f'CREATE DATABASE "{restore_db}" TEMPLATE "{source_db}"')
+            )
+            return
+        except asyncpg.ObjectInUseError:
+            await before_deadline(lambda: sleep(AUTOVACUUM_POLL_SECONDS))
+
+
+def test_throwaway_restore_waits_for_transient_autovacuum() -> None:
+    class Control:
+        def __init__(self) -> None:
+            self.fetch_results = [[{"backend_type": AUTOVACUUM_BACKEND_TYPE}], []]
+            self.executed: list[str] = []
+
+        async def fetch(self, _query, _source_db):
+            return self.fetch_results.pop(0)
+
+        async def execute(self, query):
+            self.executed.append(query)
+
+    async def run() -> None:
+        control = Control()
+        sleeps: list[float] = []
+
+        async def record_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        await _create_throwaway_restore(
+            control,
+            "synthetic_source",
+            "synthetic_restore",
+            sleep=record_sleep,
+        )
+        assert sleeps == [AUTOVACUUM_POLL_SECONDS]
+        assert control.executed == [
+            'CREATE DATABASE "synthetic_restore" TEMPLATE "synthetic_source"'
+        ]
+
+    _run(run())
+
+
+def test_throwaway_restore_refuses_persistent_autovacuum() -> None:
+    class Control:
+        async def fetch(self, _query, _source_db):
+            return [{"backend_type": AUTOVACUUM_BACKEND_TYPE}]
+
+        async def execute(self, _query):
+            raise AssertionError("persistent autovacuum must prevent the clone")
+
+    async def run() -> None:
+        sleeps: list[float] = []
+        now = 0.0
+
+        async def record_sleep(seconds: float) -> None:
+            nonlocal now
+            sleeps.append(seconds)
+            now = AUTOVACUUM_WAIT_TIMEOUT_SECONDS
+
+        def monotonic() -> float:
+            return now
+
+        with pytest.raises(RuntimeError, match="deadline"):
+            await _create_throwaway_restore(
+                Control(),
+                "synthetic_source",
+                "synthetic_restore",
+                sleep=record_sleep,
+                monotonic=monotonic,
+            )
+        assert sleeps == [AUTOVACUUM_POLL_SECONDS]
+
+    _run(run())
+
+
+@pytest.mark.parametrize("hang_at", ("fetch", "execute"))
+def test_throwaway_restore_deadline_bounds_hung_database_call(hang_at: str) -> None:
+    class Control:
+        async def fetch(self, _query, _source_db):
+            if hang_at == "fetch":
+                await asyncio.Event().wait()
+            return []
+
+        async def execute(self, _query):
+            if hang_at == "execute":
+                await asyncio.Event().wait()
+
+    async def run() -> None:
+        with pytest.raises(RuntimeError, match="deadline"):
+            await asyncio.wait_for(
+                _create_throwaway_restore(
+                    Control(),
+                    "synthetic_source",
+                    "synthetic_restore",
+                    timeout_seconds=0.01,
+                ),
+                timeout=0.2,
+            )
+
+    _run(run())
+
+
+def test_owned_source_cleanup_waits_for_server_observed_exit() -> None:
+    class Control:
+        def __init__(self) -> None:
+            self.exists = [True, False]
+            self.queries: list[tuple[str, int]] = []
+
+        async def fetchval(self, query, pid):
+            self.queries.append((query, pid))
+            return self.exists.pop(0)
+
+    class Owned:
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    async def run() -> None:
+        control = Control()
+        owned = Owned()
+        sleeps: list[float] = []
+
+        async def record_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        await _close_owned_source_session_and_wait(
+            control,
+            owned,
+            4242,
+            sleep=record_sleep,
+        )
+        assert owned.closed
+        assert [pid for _, pid in control.queries] == [4242, 4242]
+        assert sleeps == [AUTOVACUUM_POLL_SECONDS]
+
+    _run(run())
+
+
+def test_owned_source_cleanup_times_out_without_terminating() -> None:
+    class Control:
+        commands: list[str] = []
+
+        async def fetchval(self, query, _pid):
+            self.commands.append(query)
+            return True
+
+    class Owned:
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    async def run() -> None:
+        now = 0.0
+
+        async def advance_clock(_seconds: float) -> None:
+            nonlocal now
+            now = AUTOVACUUM_WAIT_TIMEOUT_SECONDS
+
+        def monotonic() -> float:
+            return now
+
+        control = Control()
+        owned = Owned()
+        with pytest.raises(RuntimeError, match="test-owned source session 4242.*deadline"):
+            await _close_owned_source_session_and_wait(
+                control,
+                owned,
+                4242,
+                sleep=advance_clock,
+                monotonic=monotonic,
+            )
+        assert owned.closed
+        assert control.commands
+        assert all("pg_terminate_backend" not in command for command in control.commands)
+
+    _run(run())
+
+
+def test_throwaway_restore_reports_foreign_session_metadata() -> None:
+    class Control:
+        async def fetch(self, _query, _source_db):
+            return [
+                {
+                    "pid": 31337,
+                    "backend_type": "client backend",
+                    "application_name": "synthetic-unowned-client",
+                    "state": "idle",
+                }
+            ]
+
+        async def execute(self, _query):
+            raise AssertionError("foreign client must prevent the clone")
+
+    async def run() -> None:
+        with pytest.raises(
+            RuntimeError,
+            match=r"pid=31337.*application_name='synthetic-unowned-client'.*state='idle'",
+        ):
+            await _create_throwaway_restore(
+                Control(),
+                "synthetic_source",
+                "synthetic_restore",
+            )
+
+    _run(run())
+
+
 @pytest.fixture
 def rehearsal(pg_dsn: str):
     admin_url = os.environ["NEON_MIGRATOR_URL"]
@@ -82,10 +381,18 @@ def rehearsal(pg_dsn: str):
     migrator_url = parsed.set(
         username="microsched_migrator", password="synthetic-migrator"
     ).render_as_string(hide_password=False)
+    control_url = parsed.set(database="postgres").render_as_string(hide_password=False)
 
     async def prepare() -> None:
-        conn = await asyncpg.connect(pg_dsn)
+        control = await asyncpg.connect(control_url)
+        conn = None
+        prepare_pid = None
         try:
+            conn = await asyncpg.connect(
+                pg_dsn,
+                server_settings={"application_name": REHEARSAL_PREPARE_APPLICATION_NAME},
+            )
+            prepare_pid = await conn.fetchval("SELECT pg_backend_pid()")
             await conn.execute(
                 "TRUNCATE TABLE microsched.reminder_dispatch, microsched.entry, "
                 "microsched.subscription, microsched.tracker, microsched.tracker_group, "
@@ -343,26 +650,26 @@ def rehearsal(pg_dsn: str):
                 "GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA microsched TO microsched_app"
             )
         finally:
-            await conn.close()
+            try:
+                if conn is not None:
+                    if prepare_pid is None:
+                        await conn.close()
+                    else:
+                        await _close_owned_source_session_and_wait(
+                            control,
+                            conn,
+                            prepare_pid,
+                        )
+            finally:
+                await control.close()
 
     _run(prepare())
     restore_db = f"microsched_restore_{uuid4().hex[:12]}"
-    control_url = parsed.set(database="postgres").render_as_string(hide_password=False)
 
     async def create_restore() -> None:
         control = await asyncpg.connect(control_url)
         try:
-            active_sessions = await control.fetchval(
-                "SELECT count(*) FROM pg_stat_activity "
-                "WHERE datname=$1 AND pid <> pg_backend_pid()",
-                db,
-            )
-            if active_sessions:
-                raise RuntimeError(
-                    "throwaway restore refused: source database has "
-                    f"{active_sessions} active session(s)"
-                )
-            await control.execute(f'CREATE DATABASE "{restore_db}" TEMPLATE "{db}"')
+            await _create_throwaway_restore(control, db, restore_db)
         finally:
             await control.close()
 
@@ -416,6 +723,205 @@ def rehearsal(pg_dsn: str):
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+
+
+async def _assert_active_foreign_source_session_is_rejected(
+    pg_dsn: str,
+    *,
+    connect=asyncpg.connect,
+) -> None:
+    parsed = make_url(os.environ["NEON_MIGRATOR_URL"])
+    source_db = parsed.database or "microsched_ci"
+    restore_db = f"microsched_restore_{uuid4().hex[:12]}"
+    control_url = parsed.set(database="postgres").render_as_string(hide_password=False)
+    async with AsyncExitStack() as stack:
+        control = await connect(control_url)
+        stack.push_async_callback(control.close)
+        foreign = await connect(
+            pg_dsn,
+            server_settings={"application_name": "migration-qa-deliberate-foreign-session"},
+        )
+        foreign_pid = None
+
+        async def close_foreign() -> None:
+            if foreign_pid is None:
+                await foreign.close()
+                return
+            await _close_owned_source_session_and_wait(
+                control,
+                foreign,
+                foreign_pid,
+            )
+
+        async def cleanup_restore() -> None:
+            try:
+                await control.execute(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1",
+                    restore_db,
+                )
+            finally:
+                await control.execute(f'DROP DATABASE IF EXISTS "{restore_db}"')
+
+        stack.push_async_callback(cleanup_restore)
+        stack.push_async_callback(close_foreign)
+        foreign_pid = await foreign.fetchval("SELECT pg_backend_pid()")
+        with pytest.raises(RuntimeError, match="active session"):
+            await _create_throwaway_restore(control, source_db, restore_db)
+        assert await control.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1)", foreign_pid
+        )
+        assert not await control.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname=$1)", restore_db
+        )
+
+
+def test_throwaway_restore_rejects_active_foreign_source_session(pg_dsn: str) -> None:
+    _run(_assert_active_foreign_source_session_is_rejected(pg_dsn))
+
+
+def test_foreign_guard_closes_control_when_foreign_connect_fails(monkeypatch) -> None:
+    class Control:
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    control = Control()
+    calls = 0
+
+    async def connect(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return control
+        raise RuntimeError("synthetic foreign connect failure")
+
+    monkeypatch.setenv(
+        "NEON_MIGRATOR_URL", "postgresql://postgres:postgres@localhost/synthetic_source"
+    )
+    with pytest.raises(RuntimeError, match="foreign connect failure"):
+        _run(
+            _assert_active_foreign_source_session_is_rejected(
+                "postgresql://postgres:postgres@localhost/synthetic_source",
+                connect=connect,
+            )
+        )
+    assert control.closed
+
+
+def test_foreign_guard_closes_connections_when_pid_fetch_fails(monkeypatch) -> None:
+    class Control:
+        closed = False
+        cleanup_calls = 0
+
+        async def execute(self, _query, *_args):
+            self.cleanup_calls += 1
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class Foreign:
+        closed = False
+
+        async def fetchval(self, _query):
+            raise RuntimeError("synthetic PID fetch failure")
+
+        async def close(self) -> None:
+            self.closed = True
+
+    control = Control()
+    foreign = Foreign()
+    connections = iter((control, foreign))
+
+    async def connect(*_args, **_kwargs):
+        return next(connections)
+
+    monkeypatch.setenv(
+        "NEON_MIGRATOR_URL", "postgresql://postgres:postgres@localhost/synthetic_source"
+    )
+    with pytest.raises(RuntimeError, match="PID fetch failure"):
+        _run(
+            _assert_active_foreign_source_session_is_rejected(
+                "postgresql://postgres:postgres@localhost/synthetic_source",
+                connect=connect,
+            )
+        )
+    assert foreign.closed
+    assert control.cleanup_calls == 2
+    assert control.closed
+
+
+def test_foreign_guard_closes_control_when_foreign_close_fails(monkeypatch) -> None:
+    class Control:
+        closed = False
+        cleanup_calls = 0
+
+        async def fetch(self, _query, _source_db):
+            return [
+                {
+                    "pid": 123,
+                    "backend_type": "client backend",
+                    "application_name": "synthetic-foreign",
+                    "state": "idle",
+                }
+            ]
+
+        async def fetchval(self, query, *_args):
+            return "pg_stat_activity" in query
+
+        async def execute(self, _query, *_args):
+            self.cleanup_calls += 1
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class Foreign:
+        async def fetchval(self, _query):
+            return 123
+
+        async def close(self) -> None:
+            raise RuntimeError("synthetic foreign close failure")
+
+    control = Control()
+    connections = iter((control, Foreign()))
+
+    async def connect(*_args, **_kwargs):
+        return next(connections)
+
+    monkeypatch.setenv(
+        "NEON_MIGRATOR_URL", "postgresql://postgres:postgres@localhost/synthetic_source"
+    )
+    with pytest.raises(RuntimeError, match="foreign close failure"):
+        _run(
+            _assert_active_foreign_source_session_is_rejected(
+                "postgresql://postgres:postgres@localhost/synthetic_source",
+                connect=connect,
+            )
+        )
+    assert control.cleanup_calls == 2
+    assert control.closed
+
+
+def test_rehearsal_closes_its_prepare_connection_before_restore(rehearsal) -> None:
+    async def run() -> None:
+        parsed = make_url(os.environ["NEON_MIGRATOR_URL"])
+        control_url = parsed.set(database="postgres").render_as_string(hide_password=False)
+        control = await asyncpg.connect(control_url)
+        try:
+            assert not await control.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                "WHERE datname=$1 AND application_name=$2)",
+                parsed.database,
+                REHEARSAL_PREPARE_APPLICATION_NAME,
+            )
+            assert await control.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname=$1)",
+                make_url(rehearsal[2]).database,
+            )
+        finally:
+            await control.close()
+
+    _run(run())
 
 
 def test_source_write_guard_is_real(rehearsal) -> None:
