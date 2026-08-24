@@ -54,7 +54,15 @@ NOW = datetime(2026, 8, 20, 12, 34, 56, 1, tzinfo=UTC)
 
 
 def freeze_cutover_clock(monkeypatch: pytest.MonkeyPatch, current_time: datetime) -> None:
-    class FrozenDateTime(datetime):
+    real_datetime = datetime
+
+    # The module also uses ``isinstance(value, datetime)`` to canonicalize rows.
+    # The frozen class must therefore keep recognizing ordinary driver datetimes.
+    class FrozenDateTimeMeta(type):
+        def __instancecheck__(cls, instance):
+            return isinstance(instance, real_datetime)
+
+    class FrozenDateTime(real_datetime, metaclass=FrozenDateTimeMeta):
         @classmethod
         def now(cls, tz=None):
             if tz is None:
@@ -213,6 +221,15 @@ def source_rows(*, calendar_uid: str = "manual_123") -> dict[str, list[dict]]:
 def test_canonical_value_uses_length_prefixed_utf8_and_null() -> None:
     assert canonical_value(None) == "<NULL>"
     assert canonical_value("đỏ") == "5:đỏ"
+
+
+def test_frozen_clock_preserves_canonical_datetime_contract(monkeypatch) -> None:
+    import scripts.cutover_v2 as cutover_v2
+
+    production_shape = canonical_value(NOW)
+    freeze_cutover_clock(monkeypatch, NOW)
+    assert isinstance(NOW, cutover_v2.datetime)
+    assert canonical_value(NOW) == production_shape
 
 
 def test_canonical_time_boundaries_are_fixed() -> None:
