@@ -42,14 +42,14 @@
 
 Nguyên nhân không phải lười: chưa ai định nghĩa *điều kiện* để merge, nên không bao giờ tới lúc "đủ điều kiện".
 
-**Định nghĩa chốt: `main` = bản đang chạy trên Fly mà chính chủ đã dùng tay và tin.** Không phải "code xong" — là **"đã sờ vào và nó sống"**.
+**Quy tắc hiện hành: `develop` = nhánh production được deploy; `main` = release-label/rollback milestone do chủ chọn sau receipt production acceptance trên `develop`.** `main` không phải deployment trigger và không thêm cổng acceptance độc lập.
 
 | | `develop` | `main` |
 |---|---|---|
-| Nhận từ | mọi `feat/NNN` qua PR nhỏ | `develop`, khi một **lát cắt dùng được** |
-| Điều kiện | CI xanh | CI xanh **+ đã nghiệm thu bằng mắt trên fly.dev** |
-| Nhịp | mỗi task | mỗi 008a·008 / 009 / 010 / 011 / 012 |
-| Ý nghĩa | "đã build" | "đã sống" |
+| Nhận từ | mọi `feat/NNN` qua PR nhỏ | `develop`, khi chủ chọn một lát cắt release |
+| Điều kiện | CI xanh; runtime/production acceptance có receipt riêng | receipt production acceptance đã có trên `develop` + quyết định release của chủ; không deploy lại |
+| Nhịp | mỗi task | theo quyết định release |
+| Ý nghĩa | nhánh production được deploy | release-label và điểm rollback được chọn có chủ ý |
 
 - **Gắn tag `v0.x` mỗi lần merge vào `main`.** Không có tag thì `main` vẫn không phải đường lùi dùng được — muốn quay về "bản chạy tốt tuần trước" phải mò commit hash.
 - **RETIRED receipt (2026-07-22, wording cũ):** ~~Từ 008b, `main` là trigger deploy (CD chỉ chạy từ `main`, không từ `develop`).~~ **Current truth:** CD deploy chỉ từ `develop`; merge vào `develop` deploy production, còn `main` không deploy và chỉ nhận release-label PR sau production acceptance.
@@ -131,25 +131,45 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 **Flat orchestration + tách lane.** T1 tách **judgment lane** khỏi **procedural receipt lane**. Runtime hiện không cấp nested `spawn_agent` cho subagent, nên child không được dựa vào nested delegation: T1 trực tiếp spawn các lane ngang hàng (flat) và giữ reconciliation ở parent. Judgment/high-blast-radius giao model mạnh; model nhẹ chỉ nhận acceptance deterministic có command, expected output và điểm dừng rõ. Parent bắt buộc đọc diff/output thay vì chỉ tin lời khai của child.
 
-**Delegation không mở rộng authority.** Mỗi lane giữ nguyên scope/quyền của task cha; không có hai writer cùng sửa một worktree. Deploy, migration, secret-bearing flow và thao tác irreversible chỉ do executor được ủy quyền thực hiện dưới đúng explicit owner/policy gate; T1 chỉ chuẩn bị scope/options, đối chiếu receipt và khuyến nghị gate. Với architecture/product decision khó, T1 chuẩn bị evidence/options và đưa chủ quyết định, trừ khi đã explicit delegate.
+**Delegation không mở rộng authority.** Mỗi lane giữ nguyên scope/quyền của task cha; authority không tự truyền tiếp và không được suy từ approval/lịch sử cũ. Không có hai writer cùng sửa một worktree. Deploy, migration, secret-bearing flow và thao tác irreversible chỉ do executor có `coordination_record` hợp lệ thực hiện dưới đúng explicit owner/policy gate; T1 chỉ chuẩn bị scope/options, đối chiếu receipt và khuyến nghị gate. Với architecture/product decision khó, T1 chuẩn bị evidence/options và đưa chủ quyết định, trừ khi record explicit delegate authority đó.
 
-**Default-retain branch/worktree.** Trước cleanup phải phân loại active, dirty, open PR và unique/unreconciled work. Không tự xóa: chỉ executor được ủy quyền mới được prune khi worktree clean, không có open PR, tip đã reachable từ target integration branch (ví dụ `git merge-base --is-ancestor <tip> <target>`), và không còn unique/unreconciled work. Nhánh superseded phải trỏ tới merged replacement. Không đạt đủ điều kiện thì retain/quarantine; unfinished/unique work (kể cả Task 017) giữ lại đến khi có quyết định continue, replace hoặc report. T1 chỉ khuyến nghị/lập lịch cleanup; cleanup không bao giờ là lý do xóa in-flight work.
+**Fresh merge/release compare-and-swap gate.** Chỉ executor có `coordination_record` hợp lệ còn hiệu lực mới chạy action. Ngay trước merge, kể cả release-label PR, executor phải re-query và ghi receipt: PR còn `OPEN`/không draft/`MERGEABLE`/`CLEAN`; exact head SHA; current target-base SHA; required checks/reviews đều terminal success; expected diff/scope vẫn khớp. Merge phải dùng `gh pr merge --match-head-commit <head>` hoặc compare-and-swap tương đương — không tái dùng snapshot cũ, không bật auto-merge để né fresh gate. Receipt sau action ghi executor + `record_id`, head/base, check/review gate, exact command + exit và resulting merge/release SHA (thêm tag/artifact SHA nếu có); bất kỳ drift nào thì dừng và reconcile, không tự refresh rồi tiếp tục.
 
-**Kỷ luật chờ và quan sát.** Agent/CI đang chạy không tiến nhanh hơn vì T1 gọi `wait`, `gh pr checks` hay status poll song song; các lượt trùng chỉ tạo noise và đốt context. Báo chủ theo milestone/outcome, không theo agent chatter; commentary giữa các lần kiểm chỉ có receipt, blocker hoặc decision mới. Nếu reviewed spec không ra implementation PR trong short timebox đã khai báo, T1 phải correct course bằng reassign trong nguyên objective/scope/authority hoặc điều chỉnh lịch; không âm thầm mở rộng scope, cancel hay delete. Quy tắc này không cấm executor tự làm việc giữa các event.
+**Default-retain branch/worktree.** Cleanup là destructive action riêng, chỉ được chạy khi `coordination_record` hợp lệ nêu đúng target, executor và cleanup authority; quyền viết/merge chung không bao hàm quyền cleanup. Trước action phải lưu exact target/path/ref và bốn receipt: **dirty** (`git status --short` hoặc tương đương), **open PR** (query theo head ref), **reachability** (command + exit, ví dụ `git merge-base --is-ancestor <tip> <target>`), **unique/unreconciled work** (commit/diff inventory so với target). Chỉ prune khi worktree clean, không có open PR, tip reachable và inventory không còn unique/unreconciled work; sau action ghi `record_id`, exact target đã xóa và kết quả. Nhánh superseded phải trỏ tới merged replacement. Thiếu record/receipt hoặc kết quả mơ hồ thì retain/quarantine; unfinished/unique work (kể cả Task 017) giữ lại đến khi có quyết định continue, replace hoặc report. T1 chỉ khuyến nghị/lập lịch cleanup; cleanup không bao giờ là lý do xóa in-flight work.
 
-**Cadence mặc định của chủ.** Tính từ lúc giao agent, T1 không poll trước phút 3 và kiểm đúng một lần gần các mốc **phút 3, 6, 10, 15 và 20**; sau phút 20, kiểm khoảng **10 phút/lần** đến terminal state. **Mọi scheduled poll timer phải tối thiểu 3 phút**; không tạo timer 1–2 phút để lách mốc đầu. Completion/blocker notification vẫn được xử lý ngay vì đó là event-driven wake, không phải poll. Với PR checks, deploy và các external run tương tự, khoảng cách mặc định giữa hai lần kiểm cũng **không ngắn hơn 3 phút** đến terminal state. Một mốc chỉ có một status query; không gọi các check song song để hỏi cùng một trạng thái.
+**Milestone/event-driven, không T1 poll loop.** T1 chỉ báo chủ khi có dispatch/review receipt, blocker/decision, terminal CI/acceptance receipt hoặc timebox correction; không chạy scheduled status/forensic/CI/deploy poll loop và không tạo automatic heartbeat để poll lặp. Khi short timebox đã khai báo hết mà chưa có terminal outcome, T1 chỉ được **reassign hoặc reschedule trong nguyên objective/scope/authority**; ghi trigger + outcome receipt (vào `coordination_record` nếu lane có record) nêu boundary giữ nguyên và next gate. Silence/timebox không bao giờ là approval để âm thầm expand, cancel hay delete.
 
-**Nghĩa vận hành của cadence do chủ yêu cầu.** “Check theo cadence” hoặc “check sau khi xong” là lệnh tạo một **scheduled follow-up/heartbeat** bền gắn với task đang chạy trước khi T1 kết thúc lượt hiện tại — không phải lời hứa sẽ quay lại ở một chat đã đóng. Follow-up phải lưu thời điểm giao việc và mốc kiểm tiếp theo để thực hiện cadence staged ở trên; completion/blocker notification là điều kiện wake ngay. Khi đạt terminal receipt, blocker cần chủ quyết, hoặc task bị thay thế, T1 phải pause/xóa lịch. Nếu runtime không có cơ chế schedule phù hợp, nói rõ không thể bảo đảm lần check tương lai; không được viết “sẽ kiểm sau” rồi kết thúc.
+**Recurring monitor chỉ theo yêu cầu owner.** Monitor lặp chỉ tồn tại khi chủ yêu cầu rõ; nó là runner/scheduled automation độc lập với T1, không phải lane hay forensic/poll loop của T1. Monitor phải có target, trigger từ yêu cầu owner, frequency và stop condition; mỗi wake ghi trigger + observed receipt vào task/PR evidence. Nó chỉ thông báo event, không tự cấp authority, đổi gate hoặc mở rộng scope. Không có yêu cầu owner thì không hứa/thiết lập repeated check hay heartbeat. Mọi 3/6/10/15/20-minute cadence hoặc scheduled heartbeat còn xuất hiện trong status/session receipt lịch sử không kích hoạt monitor và không phải policy hiện hành.
 
 **Independent second review theo criticality.** Với PR critical/high-blast-radius, T1 **có thể** chỉ định thêm một reviewer độc lập từ model family khác khi judgment thấy cần; đây không phải yêu cầu mặc định cho mọi PR critical. Nhưng một khi T1 đã chỉ định second reviewer cho PR cụ thể, hoàn tất **cả hai review** trở thành merge gate của chính PR đó. Giới hạn concurrency có thể khiến các lượt review chạy staged thay vì song song, nhưng không miễn hoặc hạ gate đã được chỉ định. Reviewer luôn read-only, chỉ đưa finding/receipt, không được sửa branch và không được mở rộng authority của task.
 
-**Role profile + Runtime Catalog.** Sol/max chỉ cho coordination mơ hồ/high-blast-radius hoặc chuẩn bị evidence/options cho architecture decision khó; owner vẫn giữ quyết định product/architecture trừ khi đã explicit delegate. Terra/xhigh cho implementation; Gemini 3.7/high qua OpenCodex cho independent review khi cần, sau exact callability probe; Luna/xhigh cho adversarial review/fallback. Không blanket `max` hoặc ép multi-model review cho việc deterministic. Runtime Catalog vẫn là source of truth duy nhất cho availability/route tại thời điểm giao; không ghi catalog/quota/ranking tạm trong policy. Probe chỉ chứng minh callability, không chứng minh task capability/acceptance; route không available thì báo rõ, không âm thầm đổi.
+**Role profile + Runtime Catalog.** Sol/max, Terra/xhigh, Gemini 3.7/high qua OpenCodex và Luna/xhigh chỉ là role default đề xuất, không phải cam kết availability. Trước lane thật, executor phải query Runtime Catalog live rồi probe exact route/model/effort; chỉ khi probe callable mới dùng Sol/max cho coordination mơ hồ/high-blast-radius hoặc chuẩn bị evidence/options cho architecture decision khó, Terra/xhigh cho implementation, Gemini 3.7/high cho independent review khi cần, và Luna/xhigh cho adversarial review/fallback. Owner vẫn giữ quyết định product/architecture trừ khi record explicit delegate. Không blanket `max` hoặc ép multi-model review cho việc deterministic; route không callable thì báo rõ, không âm thầm substitute. Probe chỉ chứng minh callability, không chứng minh task capability/acceptance.
 
-**Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật.
+**Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật. **Review/CI không tự chứng minh runtime, physical-device hoặc production acceptance; mỗi lớp cần receipt riêng.**
 
 ### Kỷ luật delegation, báo cáo và topology thử nghiệm
 
-**Hợp đồng lane.** Mỗi delegation lane phải nêu objective, scope/authority chính xác, forbidden actions và evidence/output contract. Steering chỉ làm rõ hoặc đổi ưu tiên trong hợp đồng đó, không tự mở rộng authority. T1/subagent tự chọn phương pháp khảo sát trong guardrail đã giao; coordinator không micro-manage reasoning.
+**Canonical `coordination_record` (fail-closed).** Delegation/experiment nào cấp authority architecture/product/irreversible dùng **một** artifact tracked, UTF-8 JSON tại `agent-tasks/coordination-records/<record_id>.json`; `record_id` phải khớp filename và regex `^CR-[0-9]{8}-[a-z0-9]+(?:-[a-z0-9]+)*$`. Không có service mới: đây là JSON file cạnh task/PR, audit được bằng JSON parser thông thường. Shape root bắt buộc (đúng type) là:
+
+```json
+{
+  "schema_version": 1,
+  "record_id": "CR-20260824-example",
+  "kind": "delegation|experiment",
+  "status": "active|closed|revoked",
+  "authorization_source": {"kind": "owner_approval|named_policy", "ref": "immutable receipt reference"},
+  "subject": {"kind": "task|pr", "ref": "task file or PR number"},
+  "objective": "non-empty string",
+  "executor": {"role": "non-empty string", "lane_id": "non-empty string"},
+  "scope": {"repository": "non-empty string", "paths": [], "refs": [], "external_targets": []},
+  "allowed_authority": {"architecture_product": false, "irreversible_actions": []},
+  "allowed_actions": [], "forbidden_actions": [],
+  "expires_at": "RFC 3339 UTC", "terminal_condition": "non-empty string",
+  "required_receipts": [], "receipt_log": [{"at": "RFC 3339 UTC", "event": "string", "receipt_ref": "string"}]
+}
+```
+
+`allowed_authority.architecture_product` hoặc `irreversible_actions` phải nêu tường minh authority cần cấp; `authorization_source.ref` chỉ tới approval/policy bất biến và record không tự thay approval đó. Không ghi secret hoặc personal data trong record. Một record chỉ hợp lệ khi file tracked ở đúng path, JSON parse được, filename/`record_id` khớp, đủ field/type nêu trên, `authorization_source` khớp action, `status=active`, chưa hết `expires_at`, chưa chạm `terminal_condition`, và executor/action/path/ref/target đang làm đều nằm trong scope + allowed fields. `closed`/`revoked` chỉ giữ lịch sử, không cấp authority. Authority không được suy từ câu chữ chung, approval/lịch sử cũ hay record khác. Thiếu/sai/mơ hồ là **không có authority**: executor phải dừng/escalate, không được nhận delegated architecture/product/irreversible authority. Steering chỉ làm rõ hoặc đổi ưu tiên trong record, không tự mở rộng authority. T1/subagent tự chọn phương pháp khảo sát trong guardrail đã giao; coordinator không micro-manage reasoning.
 
 **Báo chủ theo tầng chiến lược.** Mặc định chỉ trình bày lane, decision/risk, evidence boundary và next stage. Không đưa prompt nội bộ hoặc probe raw ra báo cáo, trừ khi chủ yêu cầu hoặc cần giải thích route/blocker. Mọi synthesis phải gắn từng kết luận là **[QUAN SÁT]**, **[SUY LUẬN]** hoặc **[KHÔNG BIẾT]**; parent chịu trách nhiệm reconcile conflict và current-state drift trước khi dùng kết quả.
 
@@ -157,7 +177,7 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 ### ⚠️ OPEN — topology/authority chưa là policy
 
-Đảo vai bền vững **T2 coordinator / T1 analyst**, nested delegation, authority propagation, merge accountability, cancellation/context propagation chỉ có thể được nâng thành policy sau experiment có receipt. Mỗi experiment phải đo tối thiểu: decision quality/coverage, authority breach, handoff loss, time-to-PR và CI/device acceptance. Cho đến khi có receipt, current policy flat orchestration, authority và merge gate ở trên vẫn giữ nguyên.
+Đảo vai bền vững **T2 coordinator / T1 analyst**, nested delegation, authority propagation, merge accountability, cancellation/context propagation chỉ có thể được nâng thành policy sau experiment có receipt. **Chỉ owner được duyệt mở experiment**, và experiment chỉ bắt đầu với `coordination_record` hợp lệ: hypothesis/objective, exact scope + authority, forbidden actions, named executor, expiry/stop condition và required receipt/metrics. Mỗi experiment phải đo tối thiểu: decision quality/coverage, authority breach, handoff loss, time-to-PR và CI/device acceptance. Hết hạn hoặc chạm stop condition thì dừng; kết quả experiment không tự nâng thành policy. Cho đến khi owner quyết định sau receipt, current policy flat orchestration, authority và merge gate ở trên vẫn giữ nguyên.
 
 ### Historical harness receipts — RETIRED
 
@@ -528,7 +548,7 @@ Tới 22/07 deploy vẫn là `fly deploy` gõ tay. Câu hỏi không phải "có
 
 **Vì sao không sớm hơn (ngay bây giờ):** trước 008 chưa có gì để deploy ngoài trang đăng nhập; CD sẽ được chạy gần như 0 lần trước khi thực sự cần. **Vì sao không muộn hơn (sau 008):** 008 là task **đặt khuôn** — mọi slice sau bắt chước nó, kể cả bắt chước *quy trình nghiệm thu* của nó. Muốn khuôn đúng thì lúc đúc khuôn phải đã có CD.
 
-**Nội dung 008b (spec viết sau, đây là ranh giới):**
+**RETIRED pre-spec draft (không phải policy hiện hành) — nội dung 008b từng dự kiến:**
 - GH Actions: merge vào **`main`** → build + `fly deploy` → **smoke test bắt buộc**, đỏ thì fail. Smoke test gọi `/api/readyz` (không phải `healthz` — xem `health.py`), kiểm `status == "ok"`. Đây đúng là thứ đã bắt được lỗi crash-loop B1 của 007 nếu nó tồn tại lúc đó.
 - Deploy **chỉ từ `main`** — nhất quán với §2.1, và khiến định nghĩa "`main` = bản đang chạy" tự cưỡng chế thay vì trông vào kỷ luật.
 - Nuốt luôn 2 món polish tồn từ 007 (`auth-brief.md` §6.2): cảnh báo lúc khởi động khi thiếu `OAUTH_STATE_SECRET`, và `except Exception` trần ở callback. Cả hai là guardrail lúc khởi động/deploy — mà **CD làm deploy nhanh hơn ⇒ deploy sai cũng nhanh hơn**, nên đây đúng lúc chúng đáng giá nhất.
