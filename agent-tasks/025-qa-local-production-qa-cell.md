@@ -5,6 +5,12 @@
 > access, không secret thật, không merge. Physical iPhone là receipt riêng; machine token được phép
 > `NOT_RUN` (báo cáo cho người có thể hiển thị “NOT RUN”).
 
+> **Amendment 2026-08-24 — ✅ CHỐT · pre-activation receipt v1 erratum:** QA chỉ chấp nhận canonical
+> `run_id` khớp `^msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$`, với `t`/`z` lowercase literal.
+> `project_name == run_id` byte-for-byte vẫn là invariant; không có derived Compose ID hoặc alias
+> cho `T`/`Z` uppercase. Schema vẫn là `microsched.qa025.receipt.v1`; artifact uppercase lịch sử,
+> nếu có, không được rewrite và chỉ được đối chiếu bằng schema tại commit lịch sử tương ứng.
+
 ## 0. Verdict đang được kiểm
 
 QA này chỉ trả lời: **cell có dùng production image candidate trong một biên local disposable
@@ -66,6 +72,12 @@ trước full run, trừ artifact ignored trong `frontend/test-results/`.
   indirection. Mọi Docker/Compose call dùng allowlist child env, trusted absolute executable,
   explicit attested local context, absolute owned Compose files + exact generated project.
 - Trước/sau guard-denied không có Docker mutable command và resource count là 0.
+- `run_id` chỉ nhận canonical lowercase grammar; fixture dùng `T`/`Z` uppercase phải trả exit 40 +
+  `GUARD_DENIED` trước subprocess/resource creation và không được tự lowercase/coerce.
+- Trước subprocess hay acceptance/resource mutation, runner phải parse exact ID từ `fixtures.prefix`
+  và fixture label ledger rồi byte-compare với root/Compose/cleanup. M27 chỉ đổi ID
+  embedded sang canonical lowercase khác (ví dụ `...-00000001` thay `...-00000000`) phải trả exit 40
+  + `GUARD_DENIED`; schema regex pass từng field không đủ proof và không được dùng để né guard.
 - Không tồn tại `--force`, `--allow-production`, `--remote`, `--base-url` hoặc fallback prompt.
 
 ### Q025-A03 — không ambient config/secret
@@ -131,9 +143,9 @@ trước full run, trừ artifact ignored trong `frontend/test-results/`.
 - Fake/subprocess seams sinh đúng `SETUP_TIMEOUT`, `TEST_TIMEOUT`, `CLEANUP_TIMEOUT`.
 - Timeout sau partial setup vẫn inventory rồi cleanup; timeout không được báo “chưa tạo gì”.
 - Browser pass + cleanup fail ⇒ final nonzero/`CLEANUP_TIMEOUT`.
-- Manifest canonical hash bind exact `run_id`, `project_name`, daemon identity, Compose hashes và mọi
-  resource ID. Cleanup chỉ stop/remove exact verified IDs; không Compose down, wildcard/prefix,
-  prune hoặc label-discovery delete set.
+- Manifest canonical hash bind exact `run_id`, `project_name == run_id` byte-for-byte, daemon
+  identity, Compose hashes và mọi resource ID. Cleanup chỉ stop/remove exact verified IDs; không
+  Compose down, wildcard/prefix, prune hoặc label-discovery delete set.
 - Manifest/project/resource tamper trả `CLEANUP_GUARD_DENIED`, không delete cell hay sentinel.
 - Receipt PASS chỉ khi cell containers/networks/volumes/helper-processes đều 0 và sentinel sống.
 
@@ -142,6 +154,12 @@ trước full run, trừ artifact ignored trong `frontend/test-results/`.
 - `agent-tasks/025-qa-receipt.schema.json` pass Draft 2020-12 meta-schema check; exact validator
   command trong implementation spec pass receipt và reject unknown/missing field, enum sai hoặc
   daemon pair `desktop-linux+unix`.
+- Schema v1 chỉ validate grammar cục bộ; `description` của schema phải nêu rõ nó không là cross-field
+  proof. Semantic validator phải parse exact ID trong `fixtures.prefix`/mọi fixture label ledger entry
+  và byte-compare (không lower/normalize/coerce/derive) với root `run_id`, `compose.project_name`,
+  `cleanup.run_id`, `cleanup.project_name`. Nó accept canonical lowercase `run_id`, reject fixture đổi
+  separator thành `T`/`Z` uppercase, và reject receipt chỉ đổi embedded fixture ID sang lowercase hợp
+  lệ nhưng khác; root, Compose và cleanup vẫn phải dùng đúng cùng một ID.
 - Receipt validate `microsched.qa025.receipt.v1`, đủ SHA/image/phases/durations/safety/roles/fixture/
   acceptance/migration/network/cleanup/device fields.
 - Receipt không secret, DB URL, real email, production host, env/container dump. Timestamps UTC và
@@ -152,7 +170,7 @@ trước full run, trừ artifact ignored trong `frontend/test-results/`.
 ### Q025-A12 — RED→GREEN mutation proof
 
 - Chạy toàn bộ persistent negative tests.
-- Chạy các mutation bắt buộc **M01, M03, M05, M07, M09, M10, M12 và M13–M25** dưới đây; mỗi
+- Chạy các mutation bắt buộc **M01, M03, M05, M07, M09, M10, M12 và M13–M27** dưới đây; mỗi
   mutation phải làm đúng named test đỏ vì guard bị phá, restore rồi cùng test xanh.
 - Không commit mutant; sau restore, `git diff --exit-code` so với candidate patch/snapshot pass.
 
@@ -205,6 +223,8 @@ Mutation chỉ diễn ra trong reviewer worktree. Không thêm runtime bypass fl
 | M23 | Cho một Docker call clone parent env/không chèn explicit context | command-envelope call-ledger test | A02 / 025-SAFE-07 |
 | M24 | Set `GIT_DIR` ngoài repo hoặc prepend fake `docker`/`git` vào parent `PATH` | Git/path/executable indirection guard | A02 / 025-SAFE-07 |
 | M25 | Đổi receipt target thành `context_name=desktop-linux`, `endpoint_kind=unix` | daemon context/endpoint pair schema test | A11 / 025-CELL-05 |
+| M26 | Đổi separator của canonical run-ID fixture từ `t`/`z` thành `T`/`Z` | run-ID guard + receipt schema fail trước subprocess/resource creation | A02/A11 / 025-SAFE-07/025-CELL-05 |
+| M27 | Chỉ đổi ID embedded trong `fixtures.prefix`/fixture label ledger từ `msqa025-20260824t000000z-00000000` sang canonical lowercase `msqa025-20260824t000000z-00000001`; root/Compose/cleanup giữ `...00000000` | preflight binding guard exit 40 `GUARD_DENIED` trước subprocess/acceptance/resource mutation; receipt semantic validator đỏ dù schema grammar từng field pass | A02/A11 / 025-SAFE-07/025-CELL-05 |
 
 Với mỗi row đã chạy, PR receipt cần raw block theo khuôn:
 
