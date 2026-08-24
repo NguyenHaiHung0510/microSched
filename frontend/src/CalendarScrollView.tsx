@@ -1,8 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueries } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
+import { GripVertical, Plus } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
-import { todayInVietnam, type CalendarEvent, type CalendarSource } from '@/calendar-ui'
+import {
+  todayInVietnam,
+  type CalendarEvent,
+  type CalendarSource,
+} from '@/calendar-ui'
 import {
   CHIP_LIMIT_DESKTOP,
   CHIP_LIMIT_MOBILE,
@@ -11,6 +17,7 @@ import {
   annotationsByDay,
   dedupeById,
   eventsByDay,
+  formatShortVietnamDate,
   lastDayOfMonth,
   monthFetchRange,
   monthKey,
@@ -24,16 +31,25 @@ import {
   type YearMonth,
 } from '@/calendar-scroll'
 import {
+  CALENDAR_FAMILY_KEY,
   annotationsQuerySpec,
   calendarTasksQuerySpec,
   monthEventsQuerySpec,
   sessionQuerySpec,
   sourcesQuerySpec,
 } from '@/calendar-queries'
-import { DayCell } from '@/DayCell'
+import { DayCell, type DropTaskPayload } from '@/DayCell'
 import { DayDetailDialog } from '@/DayDetailDialog'
 import { MiniNav } from '@/MiniNav'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { remainingSeconds } from '@/private-gate'
 
 type Envelope<T> = { items: T[] }
@@ -111,10 +127,12 @@ function useIsDesktop(): boolean {
 }
 
 export function CalendarScrollView() {
+  const queryClient = useQueryClient()
   const today = todayInVietnam()
   const todayMonthKey = today.slice(0, 7)
   const isDesktop = useIsDesktop()
   const containerRef = useRef<HTMLDivElement>(null)
+  const [quickTitle, setQuickTitle] = useState('')
   const [months, setMonths] = useState<YearMonth[]>(() =>
     monthsWindow(
       { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) },
@@ -168,6 +186,98 @@ export function CalendarScrollView() {
     queryFn: () => fetchTaskPages('all', taskRange),
   })
 
+  const refreshCalendar = () =>
+    void queryClient.invalidateQueries({ queryKey: CALENDAR_FAMILY_KEY })
+  const refreshAll = () => {
+    void queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    refreshCalendar()
+  }
+
+  const createQuickTask = useMutation({
+    mutationFn: (variables: { title: string; due_on: string }) =>
+      apiRequest<CalendarTask>('/api/tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: variables.title,
+          status: 'open',
+          priority: null,
+          due_precision: 'date',
+          due_on: variables.due_on,
+          due_at: null,
+          is_private: false,
+        }),
+      }),
+    onSuccess: (_data, variables) => {
+      setQuickTitle('')
+      refreshAll()
+      toast.success(`Đã thêm task vào ${formatShortVietnamDate(variables.due_on)}`)
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Không thể tạo task.')
+    },
+  })
+
+  const toggleTaskStatus = useMutation({
+    mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
+      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: variables.status }),
+      }),
+    onSuccess: () => {
+      refreshAll()
+    },
+  })
+
+  const rescheduleTask = useMutation({
+    mutationFn: (variables: {
+      taskId: string
+      due_on: string
+      previousDueOn?: string
+    }) =>
+      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          due_precision: 'date',
+          due_on: variables.due_on,
+          due_at: null,
+        }),
+      }),
+    onSuccess: (_data, variables) => {
+      refreshAll()
+      toast(`Đã dời task sang ${formatShortVietnamDate(variables.due_on)}`, {
+        action: variables.previousDueOn
+          ? {
+              label: 'Hoàn tác',
+              onClick: () =>
+                rescheduleTask.mutate({
+                  taskId: variables.taskId,
+                  due_on: variables.previousDueOn!,
+                }),
+            }
+          : undefined,
+      })
+    },
+  })
+
+  function handleDropTask(day: string, payload: DropTaskPayload) {
+    if (payload.kind === 'quick-new-task') {
+      createQuickTask.mutate({ title: payload.title, due_on: day })
+    } else if (payload.kind === 'reschedule-task') {
+      rescheduleTask.mutate({
+        taskId: payload.taskId,
+        due_on: day,
+        previousDueOn: payload.fromDay,
+      })
+    }
+  }
+
+  function handleQuickSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = quickTitle.trim()
+    if (!trimmed) return
+    createQuickTask.mutate({ title: trimmed, due_on: today })
+  }
+
   const allEvents = useMemo(
     () => dedupeById(monthEventQueries.flatMap((query) => query.data?.items ?? [])),
     [monthEventQueries],
@@ -210,10 +320,6 @@ export function CalendarScrollView() {
     (allTasksQuery.isError && (allTasksQuery.data?.length ?? 0) > 0)
   const tasksTruncated = false
 
-  /* IntersectionObserver on every week row, root = the scroll container. The
-     callback only reports entries that CHANGED, so state is kept in a Map and
-     derived as a value list (spec §5.2). No setTimeout throttle: the joined
-     string comparison already drops no-op renders. */
   useEffect(() => {
     const container = containerRef.current
     if (!container || typeof IntersectionObserver === 'undefined') return
@@ -280,8 +386,6 @@ export function CalendarScrollView() {
     if (el) scrollToRow(el)
   }
 
-  /* Nhảy tới hôm nay trước lần vẽ đầu tiên: useLayoutEffect, không useEffect,
-     để người dùng không thấy cảnh "mở giữa trang rồi giật lên" (spec §5.2). */
   useLayoutEffect(() => {
     scrollToToday()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -343,18 +447,86 @@ export function CalendarScrollView() {
         onScroll={handleScroll}
         className="relative h-[calc(100dvh-13rem)] min-h-80 min-w-0 flex-1 overflow-y-auto rounded-xl border bg-card shadow-1"
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-background px-3 py-2">
-          <h3 data-testid="calendar-month-header" className="text-base font-extrabold">
-            {monthLabel(headerMonth.year, headerMonth.month)}
-          </h3>
-          <Button
-            data-testid="calendar-today-button"
-            size="sm"
-            variant="outline"
-            onClick={scrollToToday}
-          >
-            Hôm nay
-          </Button>
+        <div
+          className={cn(
+            'sticky top-0 z-10 border-b bg-background px-3 py-2',
+            isDesktop ? 'flex flex-col gap-2' : 'flex items-center justify-between gap-2',
+          )}
+        >
+          <div className={cn('flex items-center justify-between gap-2', isDesktop && 'w-full')}>
+            <h3 data-testid="calendar-month-header" className="text-base font-extrabold">
+              {monthLabel(headerMonth.year, headerMonth.month)}
+            </h3>
+            <Button
+              data-testid="calendar-today-button"
+              size="sm"
+              variant="outline"
+              onClick={scrollToToday}
+            >
+              Hôm nay
+            </Button>
+          </div>
+
+          {/* Tooltip & Quick Task Entry bar for desktop */}
+          {isDesktop ? (
+            <form
+              onSubmit={handleQuickSubmit}
+              data-testid="calendar-quick-task-bar"
+              className="flex items-center gap-2"
+            >
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="min-w-0 flex-1">
+                      <Input
+                        data-testid="calendar-quick-task-input"
+                        placeholder="Nhập task nhanh… kéo chip hoặc Enter để lưu vào Hôm nay"
+                        value={quickTitle}
+                        onChange={(e) => setQuickTitle(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Nhập task rồi kéo chip sang ô ngày bất kỳ trên lịch để xếp lịch, hoặc bấm Thêm để đặt cho Hôm nay.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
+              {quickTitle.trim() ? (
+                <div
+                  data-testid="calendar-quick-task-draggable"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(
+                      'application/json',
+                      JSON.stringify({
+                        kind: 'quick-new-task',
+                        title: quickTitle.trim(),
+                      }),
+                    )
+                    e.dataTransfer.effectAllowed = 'copy'
+                  }}
+                  className="flex cursor-grab items-center gap-1 rounded-md border border-dashed border-primary bg-accent px-2 py-1 text-xs font-bold text-accent-foreground active:cursor-grabbing"
+                >
+                  <GripVertical className="size-3.5" />
+                  <span className="max-w-28 truncate">{quickTitle.trim()}</span>
+                </div>
+              ) : null}
+
+              <Button
+                type="submit"
+                size="sm"
+                variant="secondary"
+                disabled={!quickTitle.trim() || createQuickTask.isPending}
+                data-testid="calendar-quick-task-submit"
+                className="h-8 px-2.5 text-xs font-semibold"
+              >
+                <Plus data-icon="inline-start" className="size-3.5" />
+                Thêm
+              </Button>
+            </form>
+          ) : null}
         </div>
 
         {staleWithData ? (
@@ -394,8 +566,9 @@ export function CalendarScrollView() {
 
         {months.map(({ year, month }, index) => {
           const query = monthEventQueries[index]
+          const currentMonthKey = monthKey(year, month)
           return (
-            <div key={monthKey(year, month)} data-month-key={monthKey(year, month)} className="pt-3">
+            <div key={currentMonthKey} data-month-key={currentMonthKey} className="pt-3">
               <h4 className="mb-1 px-1 text-base font-extrabold">{monthLabel(year, month)}</h4>
               {query.isError ? (
                 <p
@@ -415,21 +588,38 @@ export function CalendarScrollView() {
               </div>
               {monthWeeks(year, month).map((week) => (
                 <div key={week.key} data-week-key={week.key} className="grid grid-cols-7 gap-0.5">
-                  {week.days.map((day) => (
-                    <DayCell
-                      key={day}
-                      day={day}
-                      isToday={day === today}
-                      isOtherMonth={day.slice(0, 7) !== monthKey(year, month)}
+                  {week.days.map((day) => {
+                    const isSameMonth = day.slice(0, 7) === currentMonthKey
+                    if (!isSameMonth) {
+                      return (
+                        <div
+                          key={day}
+                          aria-hidden="true"
+                          className="h-auto min-h-16 w-full rounded-lg border border-transparent p-1 pointer-events-none opacity-0 sm:min-h-24 md:min-h-28"
+                        />
+                      )
+                    }
+                    return (
+                      <DayCell
+                        key={day}
+                        day={day}
+                        isToday={day === today}
+                        isOtherMonth={false}
+                        isDesktop={isDesktop}
                       events={eventsByDayMap.get(day) ?? []}
                       tasks={tasksByDayMap.get(day) ?? []}
                       annotations={annotationsByDayMap.get(day) ?? []}
                       chipLimit={isDesktop ? CHIP_LIMIT_DESKTOP : CHIP_LIMIT_MOBILE}
                       showAnnotationLabels={isDesktop}
                       sourceColorOf={(sourceId) => sourceById.get(sourceId)?.color ?? null}
-                      onSelect={setSelectedDay}
-                    />
-                  ))}
+                        onSelect={setSelectedDay}
+                        onToggleTask={(taskId, status) =>
+                          toggleTaskStatus.mutate({ taskId, status })
+                        }
+                        onDropTask={handleDropTask}
+                      />
+                    )
+                  })}
                 </div>
               ))}
             </div>

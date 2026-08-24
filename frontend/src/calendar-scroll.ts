@@ -77,7 +77,7 @@ export type DayChip =
 export const WEEKDAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 
 export const CHIP_LIMIT_MOBILE = 2
-export const CHIP_LIMIT_DESKTOP = 3
+export const CHIP_LIMIT_DESKTOP = 4
 
 export function pad2(value: number): string {
   return String(value).padStart(2, '0')
