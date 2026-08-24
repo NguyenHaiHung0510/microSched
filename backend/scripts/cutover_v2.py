@@ -934,7 +934,7 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
                     "SELECT n.nspname AS routine_schema, p.proname AS routine_name, "
                     "pg_get_functiondef(p.oid) AS definition FROM pg_catalog.pg_proc p "
                     "JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace "
-                    "WHERE n.nspname=:schema ORDER BY p.proname"
+                    "WHERE n.nspname=:schema AND p.prokind = 'f' ORDER BY p.proname"
                 ),
                 {"schema": schema},
             )
