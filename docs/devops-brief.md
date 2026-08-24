@@ -125,7 +125,7 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 ## 7. Harness operating policy — ACTIVE
 
-**T1 = Codex Desktop Main Thread, GPT-5.6 Sol program lead.** T1 giữ scope/dependency graph, dispatch, chọn model + effort, đối chiếu receipt, khuyến nghị merge/release gate, reconciliation và milestone report ngắn. T1 điều phối, không trực tiếp thi công, thực hiện merge/release hay lặp forensic/poll loop. Chủ vẫn giữ quyền quyết định product/architecture và approval; T1 không tự nâng DRAFT thành approved. Chỉ executor được ủy quyền mới thực hiện merge/release dưới explicit owner/policy gate.
+**T1 = Codex Desktop Main Thread; GPT-5.6 Sol là program lead đang được gán mặc định (profile đề xuất: Sol/max).** Việc gán chỉ có hiệu lực sau khi Runtime Catalog live và exact route/model/effort probe đều callable; nó không giữ chỗ hay hứa availability cố định. T1 giữ scope/dependency graph, dispatch, chọn model + effort, đối chiếu receipt, khuyến nghị merge/release gate, reconciliation và milestone report ngắn. T1 điều phối, không trực tiếp thi công, thực hiện merge/release hay lặp forensic/poll loop. Chủ vẫn giữ quyền quyết định product/architecture và approval; T1 không tự nâng DRAFT thành approved. Chỉ executor được ủy quyền mới thực hiện merge/release dưới explicit owner/policy gate.
 
 **OpenCodex = multi-provider fabric cho T2/T3.** Subagent thực hiện analysis/spec/code/QA/review thực chất trong lane được giao; T2 thi công trên worktree/branch, T3 test/phản biện độc lập. Một writer một worktree. Implementation độc lập có thể khởi động sau reviewed spec dù CI baseline/merge không liên quan còn chờ; CI là merge gate, còn declared real dependency vẫn là hard start/merge gate.
 
@@ -143,33 +143,51 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 **Independent second review theo criticality.** Với PR critical/high-blast-radius, T1 **có thể** chỉ định thêm một reviewer độc lập từ model family khác khi judgment thấy cần; đây không phải yêu cầu mặc định cho mọi PR critical. Nhưng một khi T1 đã chỉ định second reviewer cho PR cụ thể, hoàn tất **cả hai review** trở thành merge gate của chính PR đó. Giới hạn concurrency có thể khiến các lượt review chạy staged thay vì song song, nhưng không miễn hoặc hạ gate đã được chỉ định. Reviewer luôn read-only, chỉ đưa finding/receipt, không được sửa branch và không được mở rộng authority của task.
 
-**Role profile + Runtime Catalog.** Sol/max, Terra/xhigh, Gemini 3.7/high qua OpenCodex và Luna/xhigh chỉ là role default đề xuất, không phải cam kết availability. Trước lane thật, executor phải query Runtime Catalog live rồi probe exact route/model/effort; chỉ khi probe callable mới dùng Sol/max cho coordination mơ hồ/high-blast-radius hoặc chuẩn bị evidence/options cho architecture decision khó, Terra/xhigh cho implementation, Gemini 3.7/high cho independent review khi cần, và Luna/xhigh cho adversarial review/fallback. Owner vẫn giữ quyết định product/architecture trừ khi record explicit delegate. Không blanket `max` hoặc ép multi-model review cho việc deterministic; route không callable thì báo rõ, không âm thầm substitute. Probe chỉ chứng minh callability, không chứng minh task capability/acceptance.
+**Role profile + Runtime Catalog.** Sol/max (bao gồm T1 default hiện tại), Terra/xhigh, Gemini 3.7/high qua OpenCodex và Luna/xhigh chỉ là role default đề xuất, không phải cam kết availability. Trước lane thật, executor phải query Runtime Catalog live rồi probe exact route/model/effort; chỉ khi probe callable mới dùng Sol/max cho coordination mơ hồ/high-blast-radius hoặc chuẩn bị evidence/options cho architecture decision khó, Terra/xhigh cho implementation, Gemini 3.7/high cho independent review khi cần, và Luna/xhigh cho adversarial review/fallback. Owner vẫn giữ quyết định product/architecture trừ khi record explicit delegate. Không blanket `max` hoặc ép multi-model review cho việc deterministic; route không callable thì báo rõ, không âm thầm substitute. Probe chỉ chứng minh callability, không chứng minh task capability/acceptance.
 
 **Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật. **Review/CI không tự chứng minh runtime, physical-device hoặc production acceptance; mỗi lớp cần receipt riêng.**
 
 ### Kỷ luật delegation, báo cáo và topology thử nghiệm
 
-**Canonical `coordination_record` (fail-closed).** Delegation/experiment nào cấp authority architecture/product/irreversible dùng **một** artifact tracked, UTF-8 JSON tại `agent-tasks/coordination-records/<record_id>.json`; `record_id` phải khớp filename và regex `^CR-[0-9]{8}-[a-z0-9]+(?:-[a-z0-9]+)*$`. Không có service mới: đây là JSON file cạnh task/PR, audit được bằng JSON parser thông thường. Shape root bắt buộc (đúng type) là:
+**Canonical `coordination_record` (fail-closed).** Delegation/experiment nào cấp authority architecture/product/irreversible dùng **một** artifact tracked, UTF-8 JSON tại `agent-tasks/coordination-records/<record_id>.json`; `record_id` phải khớp filename và regex `^CR-[0-9]{8}-[a-z0-9]+(?:-[a-z0-9]+)*$`. Không có service mới: đây là JSON file cạnh task/PR, audit được bằng JSON parser thông thường. Record **không tự là authority**: chỉ `authority_binding` được approval/policy source bất biến bind exact mới cấp quyền. Shape root bắt buộc (đúng type) là:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_id": "CR-20260824-example",
-  "kind": "delegation|experiment",
   "status": "active|closed|revoked",
-  "authorization_source": {"kind": "owner_approval|named_policy", "ref": "immutable receipt reference"},
-  "subject": {"kind": "task|pr", "ref": "task file or PR number"},
-  "objective": "non-empty string",
-  "executor": {"role": "non-empty string", "lane_id": "non-empty string"},
-  "scope": {"repository": "non-empty string", "paths": [], "refs": [], "external_targets": []},
-  "allowed_authority": {"architecture_product": false, "irreversible_actions": []},
-  "allowed_actions": [], "forbidden_actions": [],
-  "expires_at": "RFC 3339 UTC", "terminal_condition": "non-empty string",
+  "authorization_source": {
+    "kind": "owner_approval|named_policy",
+    "immutable_ref": {
+      "repository": "non-empty canonical repository id",
+      "commit_oid": "full Git commit object id",
+      "path": "path to UTF-8 authority-source JSON",
+      "blob_oid": "full Git blob object id",
+      "source_content_sha256": "lowercase SHA-256 of exact blob bytes"
+    },
+    "authority_binding_sha256": "lowercase SHA-256 of RFC 8785 canonical UTF-8 authority_binding"
+  },
+  "authority_binding": {
+    "record_id": "CR-20260824-example",
+    "kind": "delegation|experiment",
+    "status": "active",
+    "subject": {"kind": "task|pr", "ref": "task file or PR number"},
+    "objective": "non-empty string",
+    "executor": {"role": "non-empty string", "lane_id": "non-empty string"},
+    "scope": {"repository": "non-empty string", "paths": [], "refs": [], "external_targets": []},
+    "allowed_authority": {"architecture_product": false, "irreversible_actions": []},
+    "allowed_actions": [], "forbidden_actions": [],
+    "expires_at": "RFC 3339 UTC", "terminal_condition": "non-empty string"
+  },
   "required_receipts": [], "receipt_log": [{"at": "RFC 3339 UTC", "event": "string", "receipt_ref": "string"}]
 }
 ```
 
-`allowed_authority.architecture_product` hoặc `irreversible_actions` phải nêu tường minh authority cần cấp; `authorization_source.ref` chỉ tới approval/policy bất biến và record không tự thay approval đó. Không ghi secret hoặc personal data trong record. Một record chỉ hợp lệ khi file tracked ở đúng path, JSON parse được, filename/`record_id` khớp, đủ field/type nêu trên, `authorization_source` khớp action, `status=active`, chưa hết `expires_at`, chưa chạm `terminal_condition`, và executor/action/path/ref/target đang làm đều nằm trong scope + allowed fields. `closed`/`revoked` chỉ giữ lịch sử, không cấp authority. Authority không được suy từ câu chữ chung, approval/lịch sử cũ hay record khác. Thiếu/sai/mơ hồ là **không có authority**: executor phải dừng/escalate, không được nhận delegated architecture/product/irreversible authority. Steering chỉ làm rõ hoặc đổi ưu tiên trong record, không tự mở rộng authority. T1/subagent tự chọn phương pháp khảo sát trong guardrail đã giao; coordinator không micro-manage reasoning.
+`authority_binding` là **toàn bộ grant surface**: phải mang exact `record_id`, kind/status, subject/objective, executor, scope, `allowed_authority`, allowed/forbidden actions, expiry và terminal condition. Không được đặt một field ảnh hưởng authority ở ngoài object này; unknown field hay type/enum không đúng đều deny. `allowed_authority.architecture_product` hoặc `irreversible_actions` phải nêu tường minh authority cần cấp. Không ghi secret hoặc personal data trong record.
+
+**Authority source cũng phải machine-readable và immutable.** Blob mà `immutable_ref` trỏ tới phải là UTF-8 JSON envelope strict gồm `schema_version`, `source_id`, `kind` khớp `authorization_source.kind`, `authority_binding_sha256`, và `authority_binding` có **cùng canonical value** với record. `commit_oid` + `path` phải resolve đúng `blob_oid`; SHA-256 của bytes blob phải khớp `source_content_sha256`. Nguồn chỉ đáng tin nếu commit/blob này nằm trong trust anchor owner/policy do validator nhận **độc lập với record, task/PR và executor** (ví dụ commit đã được owner chấp nhận trên protected base); ref do chính record hoặc branch đang xin quyền tự nêu ra không tạo trust. Vì vậy source vừa pin digest exact, vừa pin exact authority/scope/actions/expiry; một approval prose chung hay policy không có envelope exact không cấp quyền.
+
+**Independent validator trước action.** Validator phải strict-parse record/source, reject duplicate JSON keys, unknown authority fields và hash thiếu/sai format; tính SHA-256 trên RFC 8785 canonical UTF-8 `authority_binding`; resolve Git object bằng exact OID (không dùng moving branch/tag); kiểm hash/blob/source envelope, equality toàn bộ binding, và trust anchor độc lập. Sau đó mới kiểm record file tracked đúng path/`record_id`, `status=active` cùng binding status, expiry/terminal condition, executor/action/path/ref/external target đều trong grant, rồi ghi validation receipt. `closed`/`revoked` chỉ giữ lịch sử, không cấp authority; một record đã đóng/revoke chỉ active lại với **source + binding mới** được trust độc lập. Mismatch, thiếu field, parse/hash/ref/blob/trust không verify được, source không exact, hoặc bất kỳ scope/action/expiry nào chỉ do record tự khai đều là **deny**: executor dừng/escalate. Authority không được suy từ câu chữ chung, approval/lịch sử cũ hay record khác. Steering chỉ làm rõ hoặc đổi ưu tiên trong grant hiện có, không tự mở rộng authority. T1/subagent tự chọn phương pháp khảo sát trong guardrail đã giao; coordinator không micro-manage reasoning.
 
 **Báo chủ theo tầng chiến lược.** Mặc định chỉ trình bày lane, decision/risk, evidence boundary và next stage. Không đưa prompt nội bộ hoặc probe raw ra báo cáo, trừ khi chủ yêu cầu hoặc cần giải thích route/blocker. Mọi synthesis phải gắn từng kết luận là **[QUAN SÁT]**, **[SUY LUẬN]** hoặc **[KHÔNG BIẾT]**; parent chịu trách nhiệm reconcile conflict và current-state drift trước khi dùng kết quả.
 
