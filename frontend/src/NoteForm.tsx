@@ -15,6 +15,7 @@ type InitialNote = {
   title: string | null
   body_md: string | null
   is_private: boolean
+  pinned?: boolean
 }
 
 export function NoteForm({
@@ -33,7 +34,8 @@ export function NoteForm({
   const [title, setTitle] = useState(initial?.title ?? '')
   const [body, setBody] = useState(initial?.body_md ?? '')
   const [isPrivate, setIsPrivate] = useState(initial?.is_private ?? false)
-  const state: NoteFormState = { title, body, isPrivate }
+  const [pinned, setPinned] = useState(initial?.pinned ?? false)
+  const state: NoteFormState = { title, body, isPrivate, pinned }
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -61,14 +63,25 @@ export function NoteForm({
         />
       </label>
 
-      <label className="flex min-h-9 items-center gap-3 text-sm font-semibold">
-        <Checkbox
-          className="size-5 rounded-md"
-          checked={isPrivate}
-          onCheckedChange={(checked) => setIsPrivate(checked === true)}
-        />
-        <span>Riêng tư</span>
-      </label>
+      <div className="flex flex-col gap-2">
+        <label className="flex min-h-9 items-center gap-3 text-sm font-semibold">
+          <Checkbox
+            className="size-5 rounded-md"
+            checked={isPrivate}
+            onCheckedChange={(checked) => setIsPrivate(checked === true)}
+          />
+          <span>Riêng tư</span>
+        </label>
+
+        <label className="flex min-h-9 items-center gap-3 text-sm font-semibold">
+          <Checkbox
+            className="size-5 rounded-md"
+            checked={pinned}
+            onCheckedChange={(checked) => setPinned(checked === true)}
+          />
+          <span>Ghim lên đầu</span>
+        </label>
+      </div>
 
       <div className="flex flex-wrap gap-2 pt-1">
         <Button size="lg" type="submit" disabled={!canSubmitNote(state, pending)}>

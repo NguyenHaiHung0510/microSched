@@ -188,7 +188,8 @@ def test_note_crud_nullable_title_checklist_restore_and_dto_boundary(pg_dsn):
                 second_item_id = created["items"][1]["id"]
                 assert created["title"] is None
                 assert "embedding" not in created
-                assert not {"status", "priority", "due_at", "pinned"} & set(created)
+                assert created["pinned"] is False
+                assert not {"status", "priority", "due_at"} & set(created)
 
                 conn = await asyncpg.connect(pg_dsn)
                 try:
@@ -454,6 +455,37 @@ def test_notes_list_newest_first(pg_dsn):
                 listed = await store.list(db, auth)
                 relevant = [note.id for note in listed if note.id in set(created_ids)]
                 assert relevant == [newer.id, older.id]
+        finally:
+            await _cleanup(pg_dsn, created_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_notes_list_pinned_then_newest_first(pg_dsn):
+    """Pinned notes appear first; within same pinned status, newest first."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        store = NoteStore()
+        auth = _auth()
+        created_ids: list[UUID] = []
+        try:
+            async with maker() as db:
+                older_pinned = await store.create(
+                    db, auth, NoteCreate(title="Cũ ghim", pinned=True)
+                )
+                await db.commit()
+                await asyncio.sleep(0.01)
+                newer_unpinned = await store.create(
+                    db, auth, NoteCreate(title="Mới không ghim", pinned=False)
+                )
+                await db.commit()
+                created_ids.extend([older_pinned.id, newer_unpinned.id])
+                listed = await store.list(db, auth)
+                relevant = [note.id for note in listed if note.id in set(created_ids)]
+                assert relevant == [older_pinned.id, newer_unpinned.id]
         finally:
             await _cleanup(pg_dsn, created_ids)
             await engine.dispose()
