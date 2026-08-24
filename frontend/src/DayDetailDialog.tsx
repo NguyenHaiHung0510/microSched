@@ -12,7 +12,6 @@ import {
   type CalendarSource,
 } from '@/calendar-ui'
 import {
-  endOfDayVietnam,
   formatFullVietnameseDate,
   formatShortVietnamDate,
   isTaskOverdue,
@@ -32,7 +31,12 @@ import {
 import { EventForm } from '@/EventForm'
 import { TaskForm } from '@/TaskForm'
 import { cn } from '@/lib/utils'
-import type { TaskWritePayload } from '@/task-ui'
+import {
+  rescheduleTaskSchedule,
+  scheduleDay,
+  type TaskSchedule,
+  type TaskWritePayload,
+} from '@/task-ui'
 import { CALENDAR_FAMILY_KEY } from '@/calendar-queries'
 
 type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
@@ -184,13 +188,13 @@ export function DayDetailDialog({
   const rescheduleTask = useMutation({
     mutationFn: (variables: {
       taskId: string
-      dueAt: string | null
-      previousDue: string | null
+      schedule: TaskSchedule
+      previousSchedule: TaskSchedule
       showToast: boolean
     }) =>
       apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ due_at: variables.dueAt }),
+        body: JSON.stringify(variables.schedule),
       }),
     onSuccess: (_data, variables) => {
       refreshAll()
@@ -206,8 +210,8 @@ export function DayDetailDialog({
             onClick: () =>
               rescheduleTask.mutate({
                 taskId: variables.taskId,
-                dueAt: variables.previousDue,
-                previousDue: null,
+                schedule: variables.previousSchedule,
+                previousSchedule: variables.schedule,
                 showToast: false,
               }),
           },
@@ -218,10 +222,15 @@ export function DayDetailDialog({
 
   function moveTask(task: CalendarTask) {
     setMoveOpen(false)
+    const previousSchedule: TaskSchedule = {
+      due_precision: task.due_precision,
+      due_on: task.due_on,
+      due_at: task.due_at,
+    }
     rescheduleTask.mutate({
       taskId: task.id,
-      dueAt: endOfDayVietnam(day),
-      previousDue: task.due_at,
+      schedule: rescheduleTaskSchedule(previousSchedule, day),
+      previousSchedule,
       showToast: true,
     })
   }
@@ -499,7 +508,7 @@ export function DayDetailDialog({
           <DialogHeader>
             <DialogTitle>Dời việc sang ngày này</DialogTitle>
             <DialogDescription>
-              Hạn sẽ đặt cuối ngày {formatShortVietnamDate(day)} theo giờ Việt Nam.
+              Ngày sẽ đổi sang {formatShortVietnamDate(day)}; task có giờ giữ nguyên giờ.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -521,16 +530,16 @@ export function DayDetailDialog({
                   <span className="min-w-0 flex-1 truncate text-sm font-semibold">
                     {task.title}
                   </span>
-                  {task.due_at ? (
+                  {scheduleDay(task) ? (
                     <span
                       className={cn(
                         'shrink-0 text-xs',
-                        isTaskOverdue(task.due_at, moveNow)
+                        isTaskOverdue(task, moveNow)
                           ? 'font-bold text-bad'
                           : 'text-muted-foreground',
                       )}
                     >
-                      {formatShortVietnamDate(task.due_at.slice(0, 10))}
+                      {formatShortVietnamDate(scheduleDay(task) as string)}
                     </span>
                   ) : null}
                 </Button>

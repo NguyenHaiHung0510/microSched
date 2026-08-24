@@ -131,7 +131,17 @@ export function toVietnamDateTimeInput(value: string | null): string {
 }
 
 export function vietnamInputToIso(value: string): string {
-  return value.length === 16 ? `${value}:00+07:00` : `${value}+07:00`
+  const normalized = value.length === 16 ? `${value}:00` : value
+  const guess = new Date(`${normalized}Z`)
+  const zonePart = new Intl.DateTimeFormat('en-US', {
+    timeZone: VIETNAM_TIME_ZONE,
+    timeZoneName: 'longOffset',
+  }).formatToParts(guess).find(({ type }) => type === 'timeZoneName')?.value
+  const offset = zonePart?.match(/^GMT([+-]\d{2}:\d{2})$/)?.[1]
+  if (!offset || Number.isNaN(guess.getTime())) {
+    throw new Error('Vietnam civil datetime is invalid')
+  }
+  return `${normalized}${offset}`
 }
 
 export function allDayVietnamRange(day: string): { startsAt: string; endsAt: string } {

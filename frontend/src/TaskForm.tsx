@@ -12,17 +12,21 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import {
   canSubmitTask,
+  type TaskDuePrecision,
   type TaskFormState,
   type TaskWritePayload,
   type TaskPriority,
   taskPayload,
+  transitionTaskDuePrecision,
 } from '@/task-ui'
-import { toVietnamDateTimeInput } from '@/calendar-ui'
+import { todayInVietnam, toVietnamDateTimeInput } from '@/calendar-ui'
 
 type InitialTask = {
   title: string
   body_md: string | null
   priority: TaskPriority | null
+  due_precision: TaskDuePrecision
+  due_on: string | null
   due_at: string | null
   is_private: boolean
 }
@@ -33,8 +37,23 @@ const priorityLabels: Record<TaskPriority, string> = {
   p3: 'P3',
 }
 
-function dueForInput(value: string | null): string {
-  return toVietnamDateTimeInput(value)
+const duePrecisionLabels: Record<TaskDuePrecision, string> = {
+  date: 'Ngày',
+  datetime: 'Ngày + giờ',
+  none: 'Chưa xếp lịch',
+}
+
+function initialDue(initial?: InitialTask): { precision: TaskDuePrecision; day: string; time: string } {
+  if (!initial) return { precision: 'date', day: todayInVietnam(), time: '' }
+  if (initial.due_precision === 'date') {
+    return { precision: 'date', day: initial.due_on ?? '', time: '' }
+  }
+  if (initial.due_precision === 'datetime') {
+    const local = toVietnamDateTimeInput(initial.due_at)
+    const [day = '', time = ''] = local.split('T')
+    return { precision: 'datetime', day, time }
+  }
+  return { precision: 'none', day: '', time: '' }
 }
 
 function selectedPriorityLabel(priority: TaskPriority | ''): string {
@@ -57,7 +76,10 @@ export function TaskForm({
   const [title, setTitle] = useState(initial?.title ?? '')
   const [body, setBody] = useState(initial?.body_md ?? '')
   const [priority, setPriority] = useState<TaskPriority | ''>(initial?.priority ?? '')
-  const [dueAt, setDueAt] = useState(dueForInput(initial?.due_at ?? null))
+  const dueInitial = initialDue(initial)
+  const [duePrecision, setDuePrecision] = useState<TaskDuePrecision>(dueInitial.precision)
+  const [dueOn, setDueOn] = useState(dueInitial.day)
+  const [dueTime, setDueTime] = useState(dueInitial.time)
   const [isPrivate, setIsPrivate] = useState(initial?.is_private ?? false)
 
   function submit(event: FormEvent) {
@@ -66,10 +88,24 @@ export function TaskForm({
       title,
       body,
       priority,
-      dueAt,
+      duePrecision,
+      dueOn,
+      dueTime,
       isPrivate,
     }
     onSubmit(taskPayload(state))
+  }
+
+  function changeDuePrecision(value: string) {
+    const next = value as TaskDuePrecision
+    const schedule = transitionTaskDuePrecision(
+      { duePrecision, dueOn, dueTime },
+      next,
+      todayInVietnam(),
+    )
+    setDuePrecision(schedule.duePrecision)
+    setDueOn(schedule.dueOn)
+    setDueTime(schedule.dueTime)
   }
 
   return (
@@ -77,7 +113,7 @@ export function TaskForm({
       <label className="block space-y-1.5 text-sm font-semibold">
         <span>Tiêu đề</span>
         <Input
-          className="h-10 bg-card"
+          className="h-11 bg-card"
           value={title}
           minLength={1}
           required
@@ -103,12 +139,12 @@ export function TaskForm({
               setPriority(value === 'none' ? '' : (value as TaskPriority))
             }
           >
-            <SelectTrigger className="h-10 w-full bg-card" aria-label="Ưu tiên">
+            <SelectTrigger size="lg" className="w-full bg-card" aria-label="Ưu tiên">
               <span data-selected-priority={priority || 'none'}>
                 {selectedPriorityLabel(priority)}
               </span>
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent position="popper" align="start">
               <SelectItem value="none">Không đặt</SelectItem>
               <SelectItem value="p1">{priorityLabels.p1}</SelectItem>
               <SelectItem value="p2">{priorityLabels.p2}</SelectItem>
@@ -117,18 +153,42 @@ export function TaskForm({
           </Select>
         </div>
 
-        <label className="block space-y-1.5 text-sm font-semibold">
-          <span>Hạn</span>
-          <Input
-            className="h-10 bg-card"
-            type="datetime-local"
-            value={dueAt}
-            onChange={(event) => setDueAt(event.target.value)}
-          />
-        </label>
+        <div className="space-y-1.5">
+          <span className="text-sm font-semibold">Lịch</span>
+          <Select value={duePrecision} onValueChange={changeDuePrecision}>
+            <SelectTrigger size="lg" className="w-full bg-card" aria-label="Kiểu lịch">
+              <span data-selected-due-precision={duePrecision}>
+                {duePrecisionLabels[duePrecision]}
+              </span>
+            </SelectTrigger>
+            <SelectContent position="popper" align="start">
+              <SelectItem value="date">Ngày</SelectItem>
+              <SelectItem value="datetime">Ngày + giờ</SelectItem>
+              <SelectItem value="none">Chưa xếp lịch</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      <label className="flex min-h-9 items-center gap-3 text-sm font-semibold">
+      {duePrecision !== 'none' ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block space-y-1.5 text-sm font-semibold">
+            <span>Ngày</span>
+            <Input className="h-11 bg-card" type="date" value={dueOn} onChange={(event) => setDueOn(event.target.value)} />
+          </label>
+          {duePrecision === 'datetime' ? (
+            <label className="block space-y-1.5 text-sm font-semibold">
+              <span>Giờ</span>
+              <Input className="h-11 bg-card" type="time" value={dueTime} onChange={(event) => setDueTime(event.target.value)} />
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+      {duePrecision === 'datetime' && !dueTime ? (
+        <p className="text-sm text-muted-foreground" role="status">Chọn giờ để lưu task có giờ.</p>
+      ) : null}
+
+      <label className="flex min-h-11 items-center gap-3 text-sm font-semibold">
         <Checkbox
           className="size-5 rounded-md"
           checked={isPrivate}
@@ -141,7 +201,7 @@ export function TaskForm({
         <Button
           size="lg"
           type="submit"
-          disabled={!canSubmitTask(title, pending)}
+          disabled={!canSubmitTask(title, pending, { duePrecision, dueOn, dueTime })}
         >
           {pending ? 'Đang lưu…' : submitLabel}
         </Button>
