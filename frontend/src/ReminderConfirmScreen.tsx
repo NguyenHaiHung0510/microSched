@@ -1,12 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type FormEvent } from 'react'
-import { Bell, CheckCircle2, Home } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { ApiError, TimeoutError, apiRequest } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -48,7 +46,6 @@ export function ReminderConfirmScreen() {
   // F9: entryId/occurredAt đóng băng ở state — retry sau khi mở khoá gửi NGUYÊN body.
   const [entryId] = useState(() => uuidv7())
   const [occurredAt] = useState(() => new Date().toISOString())
-  const [confirmed, setConfirmed] = useState(false)
   const [unlockOpen, setUnlockOpen] = useState(false)
   const [pin, setPin] = useState('')
   const [unlockError, setUnlockError] = useState<string | null>(null)
@@ -134,8 +131,12 @@ export function ReminderConfirmScreen() {
     if (!dispatchId) {
       toast.error('Liên kết nhắc nhở không hợp lệ', { duration: 10000 })
       navigate('/')
+      return
     }
-  }, [dispatchId])
+    if (!confirmMutation.isPending && !confirmMutation.isSuccess && !confirmMutation.isError) {
+      confirmMutation.mutate()
+    }
+  }, [dispatchId, confirmMutation])
 
   // JC4: nếu khoản mục đang riêng tư, hướng dẫn trực quan ngay từ đầu.
   useEffect(() => {
@@ -148,63 +149,18 @@ export function ReminderConfirmScreen() {
 
   return (
     <Card className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0" role="status">
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
-          <Bell className="size-5" />
-        </div>
-        <div>
-          <h1 className="text-xl font-extrabold tracking-tight text-primary">microSched</h1>
-          <p className="text-sm text-muted-foreground">Xác nhận lời nhắc uống thuốc / theo dõi</p>
-        </div>
-      </div>
-
-      <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-4">
-        <p className="text-sm font-semibold">
-          Bạn có một thông báo nhắc nhở đã đến giờ thực hiện.
-        </p>
-        <label className="flex min-h-11 items-center gap-3 text-sm font-semibold cursor-pointer">
-          <Checkbox
-            data-testid="reminder-confirm-checkbox"
-            className="size-5 rounded-md"
-            checked={confirmed}
-            onCheckedChange={(checked) => setConfirmed(checked === true)}
-          />
-          <span>Đánh dấu đã hoàn thành lần nhắc này</span>
-        </label>
-      </div>
-
-      <div className="flex flex-wrap gap-2 pt-2">
+      <h1 className="text-xl font-extrabold tracking-tight text-primary">microSched</h1>
+      <p className="text-sm text-muted-foreground">Đang xác nhận lời nhắc uống thuốc…</p>
+      {confirmMutation.isError ? (
         <Button
-          data-testid="reminder-confirm-submit"
+          data-testid="reminder-confirm-retry"
           size="lg"
           className="min-h-11"
-          disabled={!confirmed || confirmMutation.isPending}
           onClick={() => confirmMutation.mutate()}
         >
-          <CheckCircle2 data-icon="inline-start" className="size-4" />
-          {confirmMutation.isPending ? 'Đang xác nhận…' : 'Xác nhận đã uống'}
+          Thử lại
         </Button>
-        <Button
-          size="lg"
-          variant="outline"
-          className="min-h-11"
-          onClick={() => navigate('/')}
-        >
-          <Home data-icon="inline-start" className="size-4" />
-          Về trang chủ
-        </Button>
-        {confirmMutation.isError ? (
-          <Button
-            data-testid="reminder-confirm-retry"
-            size="lg"
-            variant="secondary"
-            className="min-h-11"
-            onClick={() => confirmMutation.mutate()}
-          >
-            Thử lại
-          </Button>
-        ) : null}
-      </div>
+      ) : null}
 
       <Dialog open={unlockOpen} onOpenChange={setUnlockOpen}>
         <DialogContent>
