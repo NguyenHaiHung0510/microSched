@@ -118,6 +118,8 @@ TARGET_FIELDS: dict[str, tuple[str, ...]] = {
         "body_md",
         "status",
         "priority",
+        "due_precision",
+        "due_on",
         "due_at",
         "completed_at",
         "is_private",
@@ -925,10 +927,26 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
         .mappings()
         .all()
     )
+    routines = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT n.nspname AS routine_schema, p.proname AS routine_name, "
+                    "pg_get_functiondef(p.oid) AS definition FROM pg_catalog.pg_proc p "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace "
+                    "WHERE n.nspname=:schema ORDER BY p.proname"
+                ),
+                {"schema": schema},
+            )
+        )
+        .mappings()
+        .all()
+    )
     ddl = {
         "columns": [_catalog_row(item) for item in columns],
         "constraints": [_catalog_row(item) for item in constraints],
         "triggers": [_catalog_row(item) for item in triggers],
+        "routines": [_catalog_row(item) for item in routines],
     }
     return {
         "database": row["database"],
@@ -1008,6 +1026,7 @@ def _normalize_catalog_sql(value: Any) -> str:
         r"\1 or \2",
         result,
     )
+    result = re.sub(r"\$\$", "$function$", result)
     result = re.sub(r"\s*\(\s*", "(", result)
     result = re.sub(r"\s*\)", ")", result)
     return re.sub(r"\s*,\s*", ",", result)
@@ -1173,6 +1192,84 @@ def _expected_trigger_contract() -> set[tuple[str, str, str, str]]:
         }
     )
     return result
+
+
+def _expected_routine_contract() -> set[tuple[str, str]]:
+    return {
+        (
+            "enforce_task_children_privacy",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.enforce_task_children_privacy() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN IF NEW.is_private = TRUE THEN "
+                "IF EXISTS (SELECT 1 FROM microsched.task_item WHERE task_id = NEW.id) THEN "
+                "RAISE EXCEPTION 'Private task cannot have checklist items'; "
+                "END IF; "
+                "IF EXISTS (SELECT 1 FROM microsched.reminder WHERE task_id = NEW.id) THEN "
+                "RAISE EXCEPTION 'Private task cannot have reminders'; "
+                "END IF; "
+                "END IF; RETURN NEW; END; $function$"
+            ),
+        ),
+        (
+            "enforce_task_item_privacy",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.enforce_task_item_privacy() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN IF EXISTS ( "
+                "SELECT 1 FROM microsched.task "
+                "WHERE id = NEW.task_id AND is_private = TRUE "
+                ") THEN RAISE EXCEPTION 'Task items cannot belong to private tasks'; "
+                "END IF; RETURN NEW; END; $function$"
+            ),
+        ),
+        (
+            "fn_task_due_legacy_insert_v1",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.fn_task_due_legacy_insert_v1() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN "
+                "IF current_setting('microsched.task_due_writer', true) = 'v2' THEN "
+                "RETURN NEW; "
+                "END IF; "
+                "IF NEW.due_at IS NULL THEN "
+                "NEW.due_precision := 'none'; "
+                "ELSE "
+                "NEW.due_precision := 'datetime'; "
+                "END IF; "
+                "NEW.due_on := NULL; "
+                "RETURN NEW; "
+                "END; $function$"
+            ),
+        ),
+        (
+            "fn_task_due_legacy_update_v1",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.fn_task_due_legacy_update_v1() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN "
+                "IF current_setting('microsched.task_due_writer', true) = 'v2' THEN "
+                "RETURN NEW; "
+                "END IF; "
+                "IF NEW.due_at IS NULL THEN "
+                "NEW.due_precision := 'none'; "
+                "ELSE "
+                "NEW.due_precision := 'datetime'; "
+                "END IF; "
+                "NEW.due_on := NULL; "
+                "RETURN NEW; "
+                "END; $function$"
+            ),
+        ),
+        (
+            "set_updated_at",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.set_updated_at() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $function$"
+            ),
+        ),
+    }
 
 
 def _expected_functional_unique_index_contract() -> set[tuple[str, str, str]]:
@@ -1445,6 +1542,21 @@ async def attest_schema(
     }
     if actual_triggers != _expected_trigger_contract():
         raise CutoverError("target catalog trigger contract drift")
+    actual_routines = {
+        (
+            row["routine_name"],
+            _normalize_catalog_sql(row["definition"]),
+        )
+        for row in identity["ddl"].get("routines", [])
+    }
+    if actual_routines != _expected_routine_contract():
+        expected_routines = _expected_routine_contract()
+        missing_routines = expected_routines - actual_routines
+        extra_routines = actual_routines - expected_routines
+        raise CutoverError(
+            "target catalog routine contract drift: "
+            f"missing={sorted(missing_routines)!r} extra={sorted(extra_routines)!r}"
+        )
     actual_functional_unique_indexes = {
         (
             row["table_name"],
@@ -1725,6 +1837,7 @@ def transform_source(
         priority = (
             None if row["priority_id"] is None else PRIORITY_MAP[priorities[row["priority_id"]]]
         )
+        due_at = row["due_at"]
         task_rows.append(
             {
                 "id": row["id"],
@@ -1732,7 +1845,9 @@ def transform_source(
                 "body_md": row["note"],
                 "status": row["status"],
                 "priority": priority,
-                "due_at": row["due_at"],
+                "due_precision": "none" if due_at is None else "datetime",
+                "due_on": None,
+                "due_at": due_at,
                 "completed_at": row["completed_at"],
                 "is_private": False,
                 "pinned": False,

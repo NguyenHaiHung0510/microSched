@@ -168,7 +168,9 @@ export function compareTaskScheduleKey<T extends TaskSchedule & {
   const precisionRank = (value: TaskDuePrecision) => value === 'datetime' ? 0 : value === 'date' ? 1 : 2
   const precisionOrder = precisionRank(left.due_precision) - precisionRank(right.due_precision)
   if (precisionOrder !== 0) return precisionOrder
-  const dueOrder = (left.due_at ?? '').localeCompare(right.due_at ?? '')
+  const leftTime = left.due_at ? new Date(left.due_at).getTime() : 0
+  const rightTime = right.due_at ? new Date(right.due_at).getTime() : 0
+  const dueOrder = (leftTime - rightTime) || (left.due_at ?? '').localeCompare(right.due_at ?? '')
   if (dueOrder !== 0) return dueOrder
   const createdOrder = (right.created_at ?? '').localeCompare(left.created_at ?? '')
   return createdOrder || left.id.localeCompare(right.id)
