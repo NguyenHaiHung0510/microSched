@@ -1,0 +1,661 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.invalid/schemas/qa025-receipt-v1.json",
+  "title": "microSched QA025 local production-image cell receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "target_class",
+    "git_sha",
+    "image_id",
+    "started_at",
+    "ended_at",
+    "final_status",
+    "phases",
+    "docker_target",
+    "command_envelope",
+    "compose",
+    "safety",
+    "roles",
+    "fixtures",
+    "migration_gate",
+    "acceptance",
+    "cleanup",
+    "physical_iphone"
+  ],
+  "properties": {
+    "schema": {"const": "microsched.qa025.receipt.v1"},
+    "run_id": {"$ref": "#/$defs/runId"},
+    "target_class": {"const": "local_disposable"},
+    "git_sha": {"$ref": "#/$defs/sha40"},
+    "image_id": {"$ref": "#/$defs/nullableImageId"},
+    "started_at": {"$ref": "#/$defs/utcTimestamp"},
+    "ended_at": {"$ref": "#/$defs/utcTimestamp"},
+    "final_status": {"$ref": "#/$defs/finalStatus"},
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/phase"}
+    },
+    "docker_target": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/dockerTarget"}
+      ]
+    },
+    "command_envelope": {"$ref": "#/$defs/commandEnvelope"},
+    "compose": {"$ref": "#/$defs/compose"},
+    "safety": {"$ref": "#/$defs/safety"},
+    "roles": {"$ref": "#/$defs/roles"},
+    "fixtures": {"$ref": "#/$defs/fixtures"},
+    "migration_gate": {"$ref": "#/$defs/migrationGate"},
+    "acceptance": {"$ref": "#/$defs/acceptance"},
+    "cleanup": {"$ref": "#/$defs/cleanup"},
+    "physical_iphone": {"$ref": "#/$defs/physicalIphone"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"final_status": {"const": "PASS"}},
+        "required": ["final_status"]
+      },
+      "then": {
+        "properties": {
+          "image_id": {"$ref": "#/$defs/imageId"},
+          "docker_target": {"$ref": "#/$defs/dockerTarget"},
+          "command_envelope": {
+            "properties": {
+              "status": {"const": "PASS"},
+              "rejected_parent_variable_names": {"maxItems": 0},
+              "all_calls_used_sanitized_env": {"const": true},
+              "all_calls_used_explicit_context": {"const": true},
+              "all_calls_used_absolute_executable": {"const": true},
+              "all_compose_calls_used_absolute_owned_files": {"const": true},
+              "all_compose_calls_used_exact_project": {"const": true},
+              "all_calls_used_shell_false": {"const": true}
+            }
+          },
+          "safety": {
+            "properties": {
+              "browser_origin": {"const": "runner-loopback:<redacted-ephemeral-port>"},
+              "network_count": {"const": 1},
+              "network_internal": {"const": true},
+              "network_id_sha256": {"$ref": "#/$defs/sha256"},
+              "networks_by_service": {
+                "properties": {
+                  "db": {"const": 1},
+                  "bootstrap": {"const": 1},
+                  "migrate": {"const": 1},
+                  "seed": {"const": 1},
+                  "app": {"const": 1},
+                  "browser": {"const": 1}
+                }
+              }
+            }
+          },
+          "roles": {
+            "properties": {
+              "status": {"const": "PASS"},
+              "app": {"const": "microsched_app"},
+              "migrator": {"const": "microsched_migrator"},
+              "ddl_denied": {"const": true},
+              "alembic_write_denied": {"const": true},
+              "app_role_only": {"const": true}
+            }
+          },
+          "fixtures": {
+            "properties": {
+              "status": {"const": "PASS"},
+              "task_count": {"const": 2},
+              "note_count": {"const": 1},
+              "synthetic_domain": {"const": "example.invalid"}
+            }
+          },
+          "migration_gate": {
+            "properties": {
+              "status": {"const": "PASS"},
+              "fault_case": {"const": "none"},
+              "exit_code": {"const": 0},
+              "service_completed_successfully": {"const": true},
+              "app_create_command_issued": {"const": true},
+              "app_created_before_success": {"const": false},
+              "app_container_created": {"const": true},
+              "app_container_running": {"const": true}
+            }
+          },
+          "acceptance": {
+            "properties": {
+              "025-SAFE-01": {"const": "PASS"},
+              "025-SAFE-02": {"const": "PASS"},
+              "025-SAFE-03": {"const": "PASS"},
+              "025-SAFE-04": {"const": "PASS"},
+              "025-SAFE-05": {"const": "PASS"},
+              "025-SAFE-06": {"const": "PASS"},
+              "025-SAFE-07": {"const": "PASS"},
+              "025-CELL-01": {"const": "PASS"},
+              "025-CELL-02": {"const": "PASS"},
+              "025-CELL-03": {"const": "PASS"},
+              "025-CELL-04": {"const": "PASS"},
+              "025-CELL-05": {"const": "PASS"},
+              "025-CELL-06": {"const": "PASS"},
+              "025-RED-01": {"const": "PASS"}
+            }
+          },
+          "cleanup": {
+            "properties": {
+              "status": {"const": "PASS"},
+              "manifest_verified": {"const": true},
+              "tamper_detected": {"const": false},
+              "delete_selection": {"const": "exact_manifest_resource_ids"},
+              "residual_counts": {
+                "properties": {
+                  "containers": {"const": 0},
+                  "networks": {"const": 0},
+                  "volumes": {"const": 0},
+                  "images": {"const": 0},
+                  "helper_processes": {"const": 0}
+                }
+              },
+              "foreign_sentinel": {
+                "allOf": [
+                  {"$ref": "#/$defs/foreignSentinel"},
+                  {
+                    "properties": {
+                      "survived_cell_cleanup": {"const": true},
+                      "separate_cleanup_status": {"const": "PASS"}
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "machineStatus": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL_ASSERTION",
+        "BLOCKED_PREREQUISITE",
+        "GUARD_DENIED",
+        "CLEANUP_GUARD_DENIED",
+        "SETUP_TIMEOUT",
+        "TEST_TIMEOUT",
+        "CLEANUP_TIMEOUT",
+        "INFRA_ERROR",
+        "NOT_RUN"
+      ]
+    },
+    "finalStatus": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL_ASSERTION",
+        "BLOCKED_PREREQUISITE",
+        "GUARD_DENIED",
+        "CLEANUP_GUARD_DENIED",
+        "SETUP_TIMEOUT",
+        "TEST_TIMEOUT",
+        "CLEANUP_TIMEOUT",
+        "INFRA_ERROR"
+      ]
+    },
+    "acceptanceStatus": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL_ASSERTION",
+        "BLOCKED_PREREQUISITE",
+        "GUARD_DENIED",
+        "CLEANUP_GUARD_DENIED",
+        "SETUP_TIMEOUT",
+        "TEST_TIMEOUT",
+        "CLEANUP_TIMEOUT",
+        "INFRA_ERROR",
+        "NOT_RUN",
+        "NOT_APPLICABLE"
+      ]
+    },
+    "runId": {"type": "string", "pattern": "^msqa025-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$"},
+    "sha40": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nullableSha256": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/sha256"}
+      ]
+    },
+    "utcTimestamp": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "nullableUtcTimestamp": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/utcTimestamp"}
+      ]
+    },
+    "imageId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "nullableImageId": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/imageId"}
+      ]
+    },
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "duration_ms", "exit_code"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "preflight",
+            "build",
+            "database",
+            "bootstrap",
+            "migrate",
+            "seed",
+            "app_ready",
+            "browser",
+            "cleanup"
+          ]
+        },
+        "status": {"$ref": "#/$defs/machineStatus"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "exit_code": {"type": ["integer", "null"]}
+      }
+    },
+    "dockerTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "context_name",
+        "endpoint_kind",
+        "endpoint_sha256",
+        "daemon_id_sha256",
+        "daemon_name_sha256",
+        "server_version",
+        "os_type",
+        "daemon_identity_sha256"
+      ],
+      "properties": {
+        "context_name": {"type": "string", "enum": ["default", "desktop-linux"]},
+        "endpoint_kind": {"type": "string", "enum": ["unix", "npipe"]},
+        "endpoint_sha256": {"$ref": "#/$defs/sha256"},
+        "daemon_id_sha256": {"$ref": "#/$defs/sha256"},
+        "daemon_name_sha256": {"$ref": "#/$defs/sha256"},
+        "server_version": {"type": "string", "pattern": "^[0-9A-Za-z._+-]{1,80}$"},
+        "os_type": {"const": "linux"},
+        "daemon_identity_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"context_name": {"const": "desktop-linux"}},
+            "required": ["context_name"]
+          },
+          "then": {
+            "properties": {"endpoint_kind": {"const": "npipe"}},
+            "required": ["endpoint_kind"]
+          }
+        }
+      ]
+    },
+    "commandEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "docker_executable_sha256",
+        "git_executable_sha256",
+        "sanitized_env_keys_sha256",
+        "rejected_parent_variable_names",
+        "docker_call_count",
+        "compose_call_count",
+        "all_calls_used_sanitized_env",
+        "all_calls_used_explicit_context",
+        "all_calls_used_absolute_executable",
+        "all_compose_calls_used_absolute_owned_files",
+        "all_compose_calls_used_exact_project",
+        "all_calls_used_shell_false"
+      ],
+      "properties": {
+        "status": {"$ref": "#/$defs/machineStatus"},
+        "docker_executable_sha256": {"$ref": "#/$defs/sha256"},
+        "git_executable_sha256": {"$ref": "#/$defs/sha256"},
+        "sanitized_env_keys_sha256": {"$ref": "#/$defs/sha256"},
+        "rejected_parent_variable_names": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,79}$"}
+        },
+        "docker_call_count": {"type": "integer", "minimum": 0},
+        "compose_call_count": {"type": "integer", "minimum": 0},
+        "all_calls_used_sanitized_env": {"type": "boolean"},
+        "all_calls_used_explicit_context": {"type": "boolean"},
+        "all_calls_used_absolute_executable": {"type": "boolean"},
+        "all_compose_calls_used_absolute_owned_files": {"type": "boolean"},
+        "all_compose_calls_used_exact_project": {"type": "boolean"},
+        "all_calls_used_shell_false": {"type": "boolean"}
+      }
+    },
+    "composeFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "sha256"],
+      "properties": {
+        "role": {"type": "string", "enum": ["base", "generated_override"]},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "compose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_name", "project_directory_sha256", "files", "config_sha256", "network_name"],
+      "properties": {
+        "project_name": {"$ref": "#/$defs/runId"},
+        "project_directory_sha256": {"$ref": "#/$defs/sha256"},
+        "files": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"$ref": "#/$defs/composeFile"}
+        },
+        "config_sha256": {"$ref": "#/$defs/sha256"},
+        "network_name": {"const": "cell"}
+      }
+    },
+    "serviceZeroCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["db", "bootstrap", "migrate", "seed", "app", "browser"],
+      "properties": {
+        "db": {"const": 0},
+        "bootstrap": {"const": 0},
+        "migrate": {"const": 0},
+        "seed": {"const": 0},
+        "app": {"const": 0},
+        "browser": {"const": 0}
+      }
+    },
+    "serviceNetworkCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["db", "bootstrap", "migrate", "seed", "app", "browser"],
+      "properties": {
+        "db": {"type": "integer", "minimum": 0, "maximum": 1},
+        "bootstrap": {"type": "integer", "minimum": 0, "maximum": 1},
+        "migrate": {"type": "integer", "minimum": 0, "maximum": 1},
+        "seed": {"type": "integer", "minimum": 0, "maximum": 1},
+        "app": {"type": "integer", "minimum": 0, "maximum": 1},
+        "browser": {"type": "integer", "minimum": 0, "maximum": 1}
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "browser_origin",
+        "ports_by_service",
+        "total_ports_published",
+        "networks_by_service",
+        "network_count",
+        "network_internal",
+        "network_id_sha256",
+        "unexpected_networks",
+        "env_file_disabled",
+        "outbound_requests"
+      ],
+      "properties": {
+        "browser_origin": {
+          "type": ["string", "null"],
+          "enum": ["runner-loopback:<redacted-ephemeral-port>", null]
+        },
+        "ports_by_service": {"$ref": "#/$defs/serviceZeroCounts"},
+        "total_ports_published": {"const": 0},
+        "networks_by_service": {"$ref": "#/$defs/serviceNetworkCounts"},
+        "network_count": {"type": "integer", "minimum": 0, "maximum": 1},
+        "network_internal": {"type": ["boolean", "null"]},
+        "network_id_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "unexpected_networks": {"const": 0},
+        "env_file_disabled": {"const": true},
+        "outbound_requests": {"const": 0}
+      }
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "app", "migrator", "ddl_denied", "alembic_write_denied", "app_role_only"],
+      "properties": {
+        "status": {"$ref": "#/$defs/machineStatus"},
+        "app": {"type": ["string", "null"], "enum": ["microsched_app", null]},
+        "migrator": {"type": ["string", "null"], "enum": ["microsched_migrator", null]},
+        "ddl_denied": {"type": ["boolean", "null"]},
+        "alembic_write_denied": {"type": ["boolean", "null"]},
+        "app_role_only": {"type": ["boolean", "null"]}
+      }
+    },
+    "fixtures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "prefix", "task_count", "note_count", "synthetic_domain"],
+      "properties": {
+        "status": {"$ref": "#/$defs/machineStatus"},
+        "prefix": {"type": "string", "pattern": "^\\[QA025:msqa025-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\\]$"},
+        "task_count": {"type": "integer", "minimum": 0, "maximum": 2},
+        "note_count": {"type": "integer", "minimum": 0, "maximum": 1},
+        "synthetic_domain": {"const": "example.invalid"}
+      }
+    },
+    "migrationGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "fault_case",
+        "exit_code",
+        "service_completed_successfully",
+        "app_create_command_issued",
+        "app_created_before_success",
+        "app_container_created",
+        "app_container_running"
+      ],
+      "properties": {
+        "status": {"type": "string", "enum": ["PASS", "FAIL_ASSERTION", "SETUP_TIMEOUT", "INFRA_ERROR", "NOT_RUN"]},
+        "fault_case": {"type": "string", "enum": ["none", "migration_nonzero", "not_run"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "service_completed_successfully": {"type": "boolean"},
+        "app_create_command_issued": {"type": "boolean"},
+        "app_created_before_success": {"const": false},
+        "app_container_created": {"type": "boolean"},
+        "app_container_running": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"fault_case": {"const": "migration_nonzero"}}, "required": ["fault_case"]},
+          "then": {
+            "properties": {
+              "status": {"const": "FAIL_ASSERTION"},
+              "exit_code": {"type": "integer", "not": {"const": 0}},
+              "service_completed_successfully": {"const": false},
+              "app_create_command_issued": {"const": false},
+              "app_container_created": {"const": false},
+              "app_container_running": {"const": false}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"fault_case": {"const": "not_run"}}, "required": ["fault_case"]},
+          "then": {
+            "properties": {
+              "status": {"const": "NOT_RUN"},
+              "exit_code": {"type": "null"},
+              "service_completed_successfully": {"const": false},
+              "app_create_command_issued": {"const": false},
+              "app_container_created": {"const": false},
+              "app_container_running": {"const": false}
+            }
+          }
+        }
+      ]
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "025-SAFE-01", "025-SAFE-02", "025-SAFE-03", "025-SAFE-04", "025-SAFE-05", "025-SAFE-06", "025-SAFE-07",
+        "025-CELL-01", "025-CELL-02", "025-CELL-03", "025-CELL-04", "025-CELL-05", "025-CELL-06",
+        "025-RED-01", "025-CI-01", "025-DEP-017"
+      ],
+      "properties": {
+        "025-SAFE-01": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-SAFE-02": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-SAFE-03": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-SAFE-04": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-SAFE-05": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-SAFE-06": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-SAFE-07": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-CELL-01": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-CELL-02": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-CELL-03": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-CELL-04": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-CELL-05": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-CELL-06": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-RED-01": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-CI-01": {"$ref": "#/$defs/acceptanceStatus"},
+        "025-DEP-017": {"$ref": "#/$defs/acceptanceStatus"}
+      }
+    },
+    "resourceCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["containers", "networks", "volumes", "images", "helper_processes"],
+      "properties": {
+        "containers": {"type": "integer", "minimum": 0},
+        "networks": {"type": "integer", "minimum": 0},
+        "volumes": {"type": "integer", "minimum": 0},
+        "images": {"type": "integer", "minimum": 0},
+        "helper_processes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "foreignSentinel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_name_sha256",
+        "resource_ids_sha256",
+        "config_sha256_before",
+        "config_sha256_after",
+        "survived_cell_cleanup",
+        "separate_cleanup_status"
+      ],
+      "properties": {
+        "project_name_sha256": {"$ref": "#/$defs/sha256"},
+        "resource_ids_sha256": {"$ref": "#/$defs/sha256"},
+        "config_sha256_before": {"$ref": "#/$defs/sha256"},
+        "config_sha256_after": {"$ref": "#/$defs/sha256"},
+        "survived_cell_cleanup": {"type": "boolean"},
+        "separate_cleanup_status": {"type": "string", "enum": ["PASS", "NOT_RUN"]}
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "manifest_verified",
+        "manifest_schema",
+        "manifest_sha256",
+        "manifest_resource_ids_sha256",
+        "run_id",
+        "project_name",
+        "daemon_identity_sha256",
+        "delete_selection",
+        "delete_command_count",
+        "tamper_detected",
+        "residual_counts",
+        "foreign_sentinel"
+      ],
+      "properties": {
+        "status": {"type": "string", "enum": ["PASS", "CLEANUP_GUARD_DENIED", "CLEANUP_TIMEOUT", "INFRA_ERROR", "NOT_RUN"]},
+        "manifest_verified": {"type": "boolean"},
+        "manifest_schema": {"type": ["string", "null"], "enum": ["microsched.qa025.run-manifest.v1", null]},
+        "manifest_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "manifest_resource_ids_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "run_id": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/runId"}
+          ]
+        },
+        "project_name": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/runId"}
+          ]
+        },
+        "daemon_identity_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "delete_selection": {"const": "exact_manifest_resource_ids"},
+        "delete_command_count": {"type": "integer", "minimum": 0},
+        "tamper_detected": {"type": "boolean"},
+        "residual_counts": {"$ref": "#/$defs/resourceCounts"},
+        "foreign_sentinel": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/foreignSentinel"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "CLEANUP_GUARD_DENIED"}}, "required": ["status"]},
+          "then": {"properties": {"delete_command_count": {"const": 0}}}
+        }
+      ]
+    },
+    "physicalIphone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acceptance_id", "status", "reason", "production_commit", "executed_at", "evidence"],
+      "properties": {
+        "acceptance_id": {"const": "Q025-DEVICE-IPHONE-01"},
+        "status": {"type": "string", "enum": ["PASS", "FAIL", "NOT_RUN"]},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 240},
+        "production_commit": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/sha40"}
+          ]
+        },
+        "executed_at": {"$ref": "#/$defs/nullableUtcTimestamp"},
+        "evidence": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"type": "string", "minLength": 1, "maxLength": 240}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "NOT_RUN"}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "production_commit": {"type": "null"},
+              "executed_at": {"type": "null"},
+              "evidence": {"maxItems": 0}
+            }
+          },
+          "else": {
+            "properties": {
+              "production_commit": {"$ref": "#/$defs/sha40"},
+              "executed_at": {"$ref": "#/$defs/utcTimestamp"},
+              "evidence": {"minItems": 1}
+            }
+          }
+        }
+      ]
+    }
+  }
+}
