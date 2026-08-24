@@ -1201,14 +1201,18 @@ def _expected_routine_contract() -> set[tuple[str, str]]:
             _normalize_catalog_sql(
                 "CREATE OR REPLACE FUNCTION microsched.enforce_task_children_privacy() "
                 "RETURNS trigger LANGUAGE plpgsql AS $function$ "
-                "BEGIN IF NEW.is_private = TRUE THEN "
-                "IF EXISTS (SELECT 1 FROM microsched.task_item WHERE task_id = NEW.id) THEN "
-                "RAISE EXCEPTION 'Private task cannot have checklist items'; "
+                "BEGIN "
+                "IF NEW.is_private AND NOT OLD.is_private THEN "
+                "IF EXISTS ( "
+                "SELECT 1 FROM microsched.task_item "
+                "WHERE task_id = NEW.id AND content NOT LIKE 'enc:v1:%' "
+                ") THEN "
+                "RAISE EXCEPTION "
+                "'cannot make task private while it has plaintext task_item children'; "
                 "END IF; "
-                "IF EXISTS (SELECT 1 FROM microsched.reminder WHERE task_id = NEW.id) THEN "
-                "RAISE EXCEPTION 'Private task cannot have reminders'; "
                 "END IF; "
-                "END IF; RETURN NEW; END; $function$"
+                "RETURN NEW; "
+                "END; $function$"
             ),
         ),
         (
@@ -1216,11 +1220,18 @@ def _expected_routine_contract() -> set[tuple[str, str]]:
             _normalize_catalog_sql(
                 "CREATE OR REPLACE FUNCTION microsched.enforce_task_item_privacy() "
                 "RETURNS trigger LANGUAGE plpgsql AS $function$ "
-                "BEGIN IF EXISTS ( "
+                "BEGIN "
+                "IF EXISTS ( "
                 "SELECT 1 FROM microsched.task "
-                "WHERE id = NEW.task_id AND is_private = TRUE "
-                ") THEN RAISE EXCEPTION 'Task items cannot belong to private tasks'; "
-                "END IF; RETURN NEW; END; $function$"
+                "WHERE id = NEW.task_id AND is_private "
+                ") THEN "
+                "IF NEW.content NOT LIKE 'enc:v1:%' THEN "
+                "RAISE EXCEPTION "
+                "'task_item.content must be ciphertext when parent task is private'; "
+                "END IF; "
+                "END IF; "
+                "RETURN NEW; "
+                "END; $function$"
             ),
         ),
         (
