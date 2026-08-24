@@ -221,7 +221,7 @@
         "NOT_APPLICABLE"
       ]
     },
-    "runId": {"type": "string", "pattern": "^msqa025-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$"},
+    "runId": {"type": "string", "pattern": "^msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$"},
     "sha40": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "nullableSha256": {
@@ -444,7 +444,7 @@
       "required": ["status", "prefix", "task_count", "note_count", "synthetic_domain"],
       "properties": {
         "status": {"$ref": "#/$defs/machineStatus"},
-        "prefix": {"type": "string", "pattern": "^\\[QA025:msqa025-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\\]$"},
+        "prefix": {"type": "string", "pattern": "^\\[QA025:msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}\\]$"},
         "task_count": {"type": "integer", "minimum": 0, "maximum": 2},
         "note_count": {"type": "integer", "minimum": 0, "maximum": 1},
         "synthetic_domain": {"const": "example.invalid"}
