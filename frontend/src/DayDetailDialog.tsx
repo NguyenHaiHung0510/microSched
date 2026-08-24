@@ -21,6 +21,7 @@ import {
 } from '@/calendar-scroll'
 import { AnnotationForm, type AnnotationFormValue } from '@/AnnotationForm'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -181,6 +182,17 @@ export function DayDetailDialog({
       }),
     onSuccess: () => {
       setTaskEdit(null)
+      refreshAll()
+    },
+  })
+
+  const toggleTaskStatus = useMutation({
+    mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
+      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: variables.status }),
+      }),
+    onSuccess: () => {
       refreshAll()
     },
   })
@@ -456,26 +468,38 @@ export function DayDetailDialog({
                   <p className="text-sm text-muted-foreground">Không có task đến hạn hôm nay.</p>
                 ) : (
                   tasks.map((task) => (
-                    <Button
+                    <div
                       data-testid="calendar-day-task"
                       data-task-id={task.id}
                       key={task.id}
-                      variant="ghost"
                       className={cn(
-                        'h-auto w-full justify-start gap-3 rounded-lg border p-3 text-left',
+                        'flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50',
                         task.status === 'completed' && 'opacity-70',
                       )}
-                      onClick={() => setTaskEdit(task)}
                     >
-                      <span
+                      <Checkbox
+                        data-testid="calendar-day-task-toggle"
+                        aria-label={`Đổi trạng thái ${task.title}`}
+                        checked={task.status === 'completed'}
+                        onCheckedChange={(checked) => {
+                          toggleTaskStatus.mutate({
+                            taskId: task.id,
+                            status: checked === true ? 'completed' : 'open',
+                          })
+                        }}
+                        className="size-4 rounded-sm"
+                      />
+                      <Button
+                        variant="ghost"
                         className={cn(
-                          'min-w-0 flex-1 truncate text-sm font-semibold',
+                          'h-auto min-w-0 flex-1 justify-start p-0 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                           task.status === 'completed' && 'line-through',
                         )}
+                        onClick={() => setTaskEdit(task)}
                       >
                         {task.title}
-                      </span>
-                    </Button>
+                      </Button>
+                    </div>
                   ))
                 )}
               </section>

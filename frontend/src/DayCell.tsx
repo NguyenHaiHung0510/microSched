@@ -1,3 +1,5 @@
+import { useState, type KeyboardEvent } from 'react'
+
 import type { CalendarEvent } from '@/calendar-ui'
 import {
   mergeDayChips,
@@ -5,8 +7,12 @@ import {
   type DayAnnotation,
   type TaskSummary,
 } from '@/calendar-scroll'
-import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
+
+export type DropTaskPayload =
+  | { kind: 'quick-new-task'; title: string }
+  | { kind: 'reschedule-task'; taskId: string; fromDay?: string }
 
 export function DayCell({
   day,
@@ -19,6 +25,8 @@ export function DayCell({
   showAnnotationLabels,
   sourceColorOf,
   onSelect,
+  onToggleTask,
+  onDropTask,
 }: {
   day: string
   isToday: boolean
@@ -30,22 +38,62 @@ export function DayCell({
   showAnnotationLabels: boolean
   sourceColorOf: (sourceId: string) => string | null
   onSelect: (day: string) => void
+  onToggleTask?: (taskId: string, newStatus: 'open' | 'completed') => void
+  onDropTask?: (day: string, payload: DropTaskPayload) => void
 }) {
+  const [isDragOver, setIsDragOver] = useState(false)
   const merged = mergeDayChips(events, tasks, chipLimit)
   const visibleAnnotations = annotations.slice(0, 2)
   const hiddenAnnotations = Math.max(0, annotations.length - 2)
   const dayNumber = Number(day.slice(8, 10))
 
+  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onSelect(day)
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    if (!isDragOver) setIsDragOver(true)
+  }
+
+  function handleDragLeave() {
+    setIsDragOver(false)
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setIsDragOver(false)
+    const raw = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain')
+    if (!raw || !onDropTask) return
+    try {
+      const payload = JSON.parse(raw) as DropTaskPayload
+      if (payload.kind === 'quick-new-task' || payload.kind === 'reschedule-task') {
+        onDropTask(day, payload)
+      }
+    } catch {
+      // Ignored if non-json drag
+    }
+  }
+
   return (
-    <Button
+    <div
       data-testid="calendar-day-cell"
       data-day={day}
-      variant="ghost"
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(day)}
+      onKeyDown={handleKeyDown}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={cn(
-        'flex h-auto min-h-16 w-full flex-col items-stretch justify-start gap-0.5 rounded-lg border p-1 text-left sm:min-h-24',
-        // Hôm nay: viền đậm + nền accent nhạt, đúng hình dạng app cũ.
+        'flex h-auto min-h-16 w-full cursor-pointer select-none flex-col items-stretch justify-start gap-0.5 rounded-lg border p-1 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-24 md:min-h-28',
         isToday ? 'border-primary bg-accent' : 'border-transparent',
+        isDragOver && 'border-primary bg-primary/10 ring-2 ring-primary/30',
       )}
     >
       <div className="flex flex-col gap-0.5">
@@ -94,16 +142,52 @@ export function DayCell({
               {chip.event.title}
             </span>
           ) : (
-            <span
+            <div
               data-testid="calendar-day-chip-task"
               key={chip.task.id}
+              draggable
+              onDragStart={(e) => {
+                e.stopPropagation()
+                e.dataTransfer.setData(
+                  'application/json',
+                  JSON.stringify({
+                    kind: 'reschedule-task',
+                    taskId: chip.task.id,
+                    fromDay: day,
+                  }),
+                )
+                e.dataTransfer.effectAllowed = 'move'
+              }}
               className={cn(
-                'block truncate rounded-sm border border-dashed border-input px-1 py-px text-xs font-semibold text-secondary-foreground',
-                chip.task.status === 'completed' && 'line-through',
+                'group flex items-center justify-between gap-1 rounded-sm border border-dashed border-input bg-card/60 px-1 py-0.5 text-xs font-semibold text-secondary-foreground hover:border-primary',
+                chip.task.status === 'completed' && 'opacity-70',
               )}
             >
-              {chip.task.title}
-            </span>
+              <span
+                className={cn(
+                  'min-w-0 flex-1 truncate',
+                  chip.task.status === 'completed' && 'line-through',
+                )}
+              >
+                {chip.task.title}
+              </span>
+              {onToggleTask ? (
+                <div
+                  className="shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Checkbox
+                    data-testid="calendar-chip-task-toggle"
+                    aria-label={`Đổi trạng thái ${chip.task.title}`}
+                    checked={chip.task.status === 'completed'}
+                    onCheckedChange={(checked) => {
+                      onToggleTask(chip.task.id, checked === true ? 'completed' : 'open')
+                    }}
+                    className="size-3.5 rounded-sm"
+                  />
+                </div>
+              ) : null}
+            </div>
           ),
         )}
         {merged.overflow > 0 ? (
@@ -115,6 +199,6 @@ export function DayCell({
           </span>
         ) : null}
       </div>
-    </Button>
+    </div>
   )
 }
