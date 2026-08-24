@@ -461,64 +461,66 @@ export function CalendarScrollView() {
             </Button>
           </div>
 
-          {/* Tooltip & Quick Task Entry bar */}
-          <form
-            onSubmit={handleQuickSubmit}
-            data-testid="calendar-quick-task-bar"
-            className="flex items-center gap-2"
-          >
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="min-w-0 flex-1">
-                    <Input
-                      data-testid="calendar-quick-task-input"
-                      placeholder="Nhập task nhanh… kéo chip hoặc Enter để lưu vào Hôm nay"
-                      value={quickTitle}
-                      onChange={(e) => setQuickTitle(e.target.value)}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Nhập task rồi kéo chip sang ô ngày bất kỳ trên lịch để xếp lịch, hoặc bấm Thêm để đặt cho Hôm nay.
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            {quickTitle.trim() ? (
-              <div
-                data-testid="calendar-quick-task-draggable"
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(
-                    'application/json',
-                    JSON.stringify({
-                      kind: 'quick-new-task',
-                      title: quickTitle.trim(),
-                    }),
-                  )
-                  e.dataTransfer.effectAllowed = 'copy'
-                }}
-                className="flex cursor-grab items-center gap-1 rounded-md border border-dashed border-primary bg-accent px-2 py-1 text-xs font-bold text-accent-foreground active:cursor-grabbing"
-              >
-                <GripVertical className="size-3.5" />
-                <span className="max-w-28 truncate">{quickTitle.trim()}</span>
-              </div>
-            ) : null}
-
-            <Button
-              type="submit"
-              size="sm"
-              variant="secondary"
-              disabled={!quickTitle.trim() || createQuickTask.isPending}
-              data-testid="calendar-quick-task-submit"
-              className="h-8 px-2.5 text-xs font-semibold"
+          {/* Tooltip & Quick Task Entry bar for desktop */}
+          {isDesktop ? (
+            <form
+              onSubmit={handleQuickSubmit}
+              data-testid="calendar-quick-task-bar"
+              className="flex items-center gap-2"
             >
-              <Plus data-icon="inline-start" className="size-3.5" />
-              Thêm
-            </Button>
-          </form>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="min-w-0 flex-1">
+                      <Input
+                        data-testid="calendar-quick-task-input"
+                        placeholder="Nhập task nhanh… kéo chip hoặc Enter để lưu vào Hôm nay"
+                        value={quickTitle}
+                        onChange={(e) => setQuickTitle(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Nhập task rồi kéo chip sang ô ngày bất kỳ trên lịch để xếp lịch, hoặc bấm Thêm để đặt cho Hôm nay.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
+              {quickTitle.trim() ? (
+                <div
+                  data-testid="calendar-quick-task-draggable"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(
+                      'application/json',
+                      JSON.stringify({
+                        kind: 'quick-new-task',
+                        title: quickTitle.trim(),
+                      }),
+                    )
+                    e.dataTransfer.effectAllowed = 'copy'
+                  }}
+                  className="flex cursor-grab items-center gap-1 rounded-md border border-dashed border-primary bg-accent px-2 py-1 text-xs font-bold text-accent-foreground active:cursor-grabbing"
+                >
+                  <GripVertical className="size-3.5" />
+                  <span className="max-w-28 truncate">{quickTitle.trim()}</span>
+                </div>
+              ) : null}
+
+              <Button
+                type="submit"
+                size="sm"
+                variant="secondary"
+                disabled={!quickTitle.trim() || createQuickTask.isPending}
+                data-testid="calendar-quick-task-submit"
+                className="h-8 px-2.5 text-xs font-semibold"
+              >
+                <Plus data-icon="inline-start" className="size-3.5" />
+                Thêm
+              </Button>
+            </form>
+          ) : null}
         </div>
 
         {staleWithData ? (
