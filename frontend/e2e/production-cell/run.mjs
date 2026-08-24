@@ -16,14 +16,30 @@ async function readPayload() {
   const chunks = []
   for await (const chunk of process.stdin) chunks.push(chunk)
   const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  const expected = ['candidate_sha', 'email', 'pin', 'prefix', 'run_id', 'session_token']
+  const expected = ['candidate_sha', 'email', 'fixture_labels', 'pin', 'prefix', 'run_id', 'session_token']
   assert(Object.keys(payload).sort().join(',') === expected.join(','), 'stdin fields')
-  assert(/^msqa025-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$/.test(payload.run_id), 'run id')
+  assert(/^msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$/.test(payload.run_id), 'run id')
   assert(/^[0-9a-f]{40}$/.test(payload.candidate_sha), 'candidate sha')
   assert(payload.email.endsWith('@example.invalid'), 'synthetic email')
   assert(/^[0-9]{6}$/.test(payload.pin), 'synthetic pin')
   assert(payload.session_token.length >= 32, 'synthetic session token')
   assert(payload.prefix === `[QA025:${payload.run_id}]`, 'fixture prefix')
+  const expectedFixtureLabels = [
+    `${payload.prefix} denied-private`,
+    `${payload.prefix} denied-item`,
+    `${payload.prefix} public-task`,
+    `${payload.prefix} private-task`,
+    `${payload.prefix} public-note`,
+    `${payload.prefix} public-item`,
+    `${payload.prefix} private-item`,
+    `${payload.prefix} note-item`,
+    `${payload.prefix} synthetic body`,
+  ]
+  assert(
+    Array.isArray(payload.fixture_labels) &&
+      JSON.stringify(payload.fixture_labels) === JSON.stringify(expectedFixtureLabels),
+    'fixture label ledger',
+  )
   return payload
 }
 
@@ -137,11 +153,21 @@ async function main() {
     })
     assert(setPin.status === 204, 'protected PIN setup failed')
 
-    const deniedTitle = `${payload.prefix} denied-private`
+    const [
+      deniedTitle,
+      deniedItem,
+      publicTitle,
+      privateTitle,
+      noteTitle,
+      publicItem,
+      privateItem,
+      noteItem,
+      noteBody,
+    ] = payload.fixture_labels
     const deniedPrivate = await jsonApi(page, '/api/tasks', 'POST', {
       title: deniedTitle,
       is_private: true,
-      items: [`${payload.prefix} denied-item`],
+      items: [deniedItem],
     })
     assert(deniedPrivate.status === 403, 'locked private create must be 403')
     assert(!deniedPrivate.text.includes(deniedTitle), 'locked response leaked private title')
@@ -149,24 +175,21 @@ async function main() {
     step = 'unlock-and-create'
     const unlock = await jsonApi(page, '/api/private/unlock', 'POST', { pin: payload.pin })
     assert(unlock.status === 200, 'protected private unlock failed')
-    const publicTitle = `${payload.prefix} public-task`
-    const privateTitle = `${payload.prefix} private-task`
-    const noteTitle = `${payload.prefix} public-note`
     const publicTask = await jsonApi(page, '/api/tasks', 'POST', {
       title: publicTitle,
       is_private: false,
-      items: [`${payload.prefix} public-item`],
+      items: [publicItem],
     })
     const privateTask = await jsonApi(page, '/api/tasks', 'POST', {
       title: privateTitle,
       is_private: true,
-      items: [`${payload.prefix} private-item`],
+      items: [privateItem],
     })
     const note = await jsonApi(page, '/api/notes', 'POST', {
       title: noteTitle,
-      body_md: `${payload.prefix} synthetic body`,
+      body_md: noteBody,
       is_private: false,
-      items: [`${payload.prefix} note-item`],
+      items: [noteItem],
     })
     assert(publicTask.status === 201, 'public task create failed')
     assert(privateTask.status === 201, 'private task create failed')

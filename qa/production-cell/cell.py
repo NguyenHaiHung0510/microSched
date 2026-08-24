@@ -26,12 +26,15 @@ from contract import (
     assert_no_runtime_port_bindings,
     assert_zero_residuals,
     canonical_json,
+    fixture_label_ledger,
     guard_parent_environment,
     sha256_bytes,
     sha256_file,
     timeout_status_for_phase,
     validate_browser_source,
     validate_compose_config,
+    validate_fixture_identity_bindings,
+    validate_run_id,
 )
 from envelope import CommandEnvelope, DockerTarget
 from manifest import (
@@ -55,7 +58,7 @@ CLEANUP_TIMEOUT = 2 * 60
 
 
 def new_run_id() -> str:
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dt%H%M%Sz")
     return f"msqa025-{timestamp}-{secrets.token_hex(4)}"
 
 
@@ -134,6 +137,7 @@ class CellRun:
     manifest_exists: bool = False
     cleanup_delete_count: int = 0
     migration_exit_code: int | None = None
+    fixture_labels: tuple[str, ...] = ()
 
     @property
     def base_compose(self) -> Path:
@@ -168,6 +172,23 @@ class CellRun:
             compose_files=(self.base_compose, self.override_file),
         )
         return payload
+
+    def validate_fixture_contract(self) -> None:
+        cleanup = self.receipt["cleanup"]
+        cleanup_run_id = cleanup.get("run_id")
+        cleanup_project_name = cleanup.get("project_name")
+        if not isinstance(cleanup_run_id, str) or not isinstance(
+            cleanup_project_name, str
+        ):
+            raise GuardDenied("preflight cleanup IDs must be bound before mutation")
+        validate_fixture_identity_bindings(
+            run_id=self.run_id,
+            project_name=self.receipt["compose"]["project_name"],
+            cleanup_run_id=cleanup_run_id,
+            cleanup_project_name=cleanup_project_name,
+            fixture_prefix=self.receipt["fixtures"]["prefix"],
+            fixture_labels=self.fixture_labels,
+        )
 
     def compose(
         self,
@@ -225,6 +246,7 @@ def _write_runtime_file(path: Path, value: str, *, secret_file: bool = False) ->
 
 
 def _generated_override(run: CellRun) -> dict[str, Any]:
+    run.validate_fixture_contract()
     labels = {
         "com.docker.compose.project": run.run_id,
         "com.microsched.qa025.run_id": run.run_id,
@@ -332,6 +354,9 @@ def _render_and_validate_compose(
 
 
 def preflight(run: CellRun) -> dict[str, Any]:
+    # This is deliberately first: fixture/root/Compose/cleanup binding must
+    # fail before Git, Docker, directory preparation, acceptance, or resources.
+    run.validate_fixture_contract()
     candidate_sha, clean = run.envelope.verify_git_worktree(
         allowed_untracked_prefixes=(
             "qa/production-cell/.runs/",
@@ -666,6 +691,7 @@ def run_browser(run: CellRun) -> dict[str, Any]:
     payload = {
         "candidate_sha": run.candidate_sha,
         "email": run.secret_values["email"],
+        "fixture_labels": list(run.fixture_labels),
         "pin": run.secret_values["pin"],
         "prefix": f"[QA025:{run.run_id}]",
         "run_id": run.run_id,
@@ -1152,7 +1178,17 @@ def run_full_cell(run: CellRun) -> int:
 def make_run(
     repo_root: Path, parent_env: dict[str, str], run_id: str | None = None
 ) -> CellRun:
-    selected_run_id = run_id or new_run_id()
+    selected_run_id = validate_run_id(run_id or new_run_id())
+    labels = fixture_label_ledger(selected_run_id)
+    fixture_prefix = f"[QA025:{selected_run_id}]"
+    validate_fixture_identity_bindings(
+        run_id=selected_run_id,
+        project_name=selected_run_id,
+        cleanup_run_id=selected_run_id,
+        cleanup_project_name=selected_run_id,
+        fixture_prefix=fixture_prefix,
+        fixture_labels=labels,
+    )
     qa_directory = repo_root / "qa" / "production-cell"
     run_directory = qa_directory / ".runs" / selected_run_id
     receipt_directory = (
@@ -1178,6 +1214,7 @@ def make_run(
         manifest_path=run_directory / "run-manifest.json",
         envelope=envelope,
         receipt=receipt,
+        fixture_labels=labels,
     )
 
 

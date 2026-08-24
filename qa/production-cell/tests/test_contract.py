@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import shutil
 import unittest
+from unittest.mock import patch
 
 from common import CELL_ROOT, REPO_ROOT, compose_config
+from cell import make_run, preflight
 from contract import (
     AssertionFailure,
     GuardDenied,
@@ -10,10 +14,12 @@ from contract import (
     assert_no_runtime_port_bindings,
     assert_zero_residuals,
     denied_parent_variable_names,
+    fixture_label_ledger,
     guard_parent_environment,
     timeout_status_for_phase,
     validate_browser_source,
     validate_compose_config,
+    validate_fixture_identity_bindings,
 )
 
 
@@ -45,6 +51,66 @@ class ParentEnvironmentGuardTests(unittest.TestCase):
             {"https_proxy": "ignored", "No_Proxy": "ignored", "ordinary": "ok"}
         )
         self.assertEqual(names, ["HTTPS_PROXY", "NO_PROXY"])
+
+
+class FixtureIdentityGuardTests(unittest.TestCase):
+    def test_m26_uppercase_separator_is_denied_before_run_directory_creation(self) -> None:
+        uppercase = "msqa025-20260824T000000Z-00000000"
+        run_directory = CELL_ROOT / ".runs" / uppercase
+        self.assertFalse(run_directory.exists())
+        with self.assertRaisesRegex(GuardDenied, "canonical lowercase"):
+            make_run(REPO_ROOT, {}, uppercase)
+        self.assertFalse(run_directory.exists())
+
+    def test_m27_different_valid_fixture_id_is_denied_before_git_or_docker(self) -> None:
+        run_id = "msqa025-20260824t000000z-aaaaaaaa"
+        different_id = "msqa025-20260824t000000z-bbbbbbbb"
+        run = make_run(REPO_ROOT, dict(os.environ), run_id)
+        try:
+            run.receipt["fixtures"]["prefix"] = f"[QA025:{different_id}]"
+            run.fixture_labels = fixture_label_ledger(different_id)
+            with patch.object(
+                run.envelope,
+                "verify_git_worktree",
+                side_effect=AssertionError("Git must not run after M27"),
+            ) as git_seam:
+                with self.assertRaisesRegex(GuardDenied, "fixtures.prefix run_id"):
+                    preflight(run)
+            git_seam.assert_not_called()
+            self.assertEqual(run.resources, {
+                "containers": [], "networks": [], "volumes": [], "images": []
+            })
+            self.assertEqual(run.receipt["acceptance"]["025-SAFE-07"], "NOT_RUN")
+        finally:
+            shutil.rmtree(run.run_directory, ignore_errors=True)
+
+    def test_green_fixture_ledger_binds_every_entry_byte_for_byte(self) -> None:
+        run_id = "msqa025-20260824t000000z-00000000"
+        validate_fixture_identity_bindings(
+            run_id=run_id,
+            project_name=run_id,
+            cleanup_run_id=run_id,
+            cleanup_project_name=run_id,
+            fixture_prefix=f"[QA025:{run_id}]",
+            fixture_labels=fixture_label_ledger(run_id),
+        )
+
+    def test_m27_fixture_ledger_entry_with_different_valid_lowercase_id_is_denied(
+        self,
+    ) -> None:
+        run_id = "msqa025-20260824t000000z-00000000"
+        different_id = "msqa025-20260824t000000z-00000001"
+        labels = list(fixture_label_ledger(run_id))
+        labels[3] = f"[QA025:{different_id}] private-task"
+        with self.assertRaisesRegex(GuardDenied, "fixture label ledger entry 3"):
+            validate_fixture_identity_bindings(
+                run_id=run_id,
+                project_name=run_id,
+                cleanup_run_id=run_id,
+                cleanup_project_name=run_id,
+                fixture_prefix=f"[QA025:{run_id}]",
+                fixture_labels=labels,
+            )
 
 
 class ComposePolicyTests(unittest.TestCase):

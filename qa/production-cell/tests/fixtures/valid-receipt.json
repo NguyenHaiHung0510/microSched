@@ -33,7 +33,7 @@
     "manifest_schema": "microsched.qa025.run-manifest.v1",
     "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "manifest_verified": true,
-    "project_name": "msqa025-20260824T000000Z-00000000",
+    "project_name": "msqa025-20260824t000000z-00000000",
     "residual_counts": {
       "containers": 0,
       "helper_processes": 0,
@@ -41,7 +41,7 @@
       "networks": 0,
       "volumes": 0
     },
-    "run_id": "msqa025-20260824T000000Z-00000000",
+    "run_id": "msqa025-20260824t000000z-00000000",
     "status": "PASS",
     "tamper_detected": false
   },
@@ -74,7 +74,7 @@
     ],
     "network_name": "cell",
     "project_directory_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "project_name": "msqa025-20260824T000000Z-00000000"
+    "project_name": "msqa025-20260824t000000z-00000000"
   },
   "docker_target": {
     "context_name": "default",
@@ -90,7 +90,7 @@
   "final_status": "PASS",
   "fixtures": {
     "note_count": 1,
-    "prefix": "[QA025:msqa025-20260824T000000Z-00000000]",
+    "prefix": "[QA025:msqa025-20260824t000000z-00000000]",
     "status": "PASS",
     "synthetic_domain": "example.invalid",
     "task_count": 2
@@ -179,7 +179,7 @@
     "migrator": "microsched_migrator",
     "status": "PASS"
   },
-  "run_id": "msqa025-20260824T000000Z-00000000",
+  "run_id": "msqa025-20260824t000000z-00000000",
   "safety": {
     "browser_origin": "runner-loopback:<redacted-ephemeral-port>",
     "env_file_disabled": true,

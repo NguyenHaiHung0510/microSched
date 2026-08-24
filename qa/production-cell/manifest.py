@@ -10,7 +10,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from contract import CleanupGuardDenied, canonical_json, sha256_bytes, sha256_file
+from contract import (
+    CleanupGuardDenied,
+    GuardDenied,
+    canonical_json,
+    sha256_bytes,
+    sha256_file,
+    validate_run_id,
+)
 
 MANIFEST_SCHEMA = "microsched.qa025.run-manifest.v1"
 RESOURCE_KINDS = ("containers", "networks", "volumes", "images")
@@ -92,6 +99,21 @@ def verify_manifest_bindings(
     project_directory: Path | None = None,
     compose_files: tuple[Path, Path] | None = None,
 ) -> None:
+    try:
+        canonical_run_id = validate_run_id(run_id)
+        validate_run_id(project_name, label="project_name")
+        payload_run_id = payload.get("run_id")
+        payload_project_name = payload.get("project_name")
+        validate_run_id(payload_run_id, label="manifest.run_id")
+        validate_run_id(payload_project_name, label="manifest.project_name")
+    except GuardDenied as error:
+        raise CleanupGuardDenied("run manifest uses a non-canonical run/project ID") from error
+    if project_name.encode("utf-8") != canonical_run_id.encode("utf-8"):
+        raise CleanupGuardDenied("cleanup project_name must equal run_id byte-for-byte")
+    if payload_run_id.encode("utf-8") != canonical_run_id.encode("utf-8"):
+        raise CleanupGuardDenied("run manifest run_id binding mismatch")
+    if payload_project_name.encode("utf-8") != canonical_run_id.encode("utf-8"):
+        raise CleanupGuardDenied("run manifest project_name binding mismatch")
     if payload.get("run_id") != run_id or payload.get("project_name") != project_name:
         raise CleanupGuardDenied("run manifest project/run binding mismatch")
     if payload.get("daemon_identity_sha256") != daemon_identity_sha256:

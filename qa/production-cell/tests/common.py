@@ -14,7 +14,7 @@ if str(CELL_ROOT) not in sys.path:
 from contract import PASS_PHASES, SERVICES
 from receipt import initial_receipt
 
-RUN_ID = "msqa025-20260824T000000Z-00000000"
+RUN_ID = "msqa025-20260824t000000z-00000000"
 SHA40 = "0" * 40
 SHA256 = "0" * 64
 

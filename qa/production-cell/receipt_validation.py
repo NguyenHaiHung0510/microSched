@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from contract import PASS_PHASES
+from contract import GuardDenied, PASS_PHASES, parse_fixture_prefix, validate_run_id
 from jsonschema import Draft202012Validator, FormatChecker
 
 FORBIDDEN_KEY = re.compile(
@@ -102,14 +102,35 @@ def validate_receipt_object(schema: dict[str, Any], receipt: dict[str, Any]) -> 
             "Compose receipt must bind one base and one generated override"
         )
     run_id = receipt["run_id"]
-    if compose["project_name"] != run_id:
+    try:
+        validate_run_id(run_id)
+        validate_run_id(compose["project_name"], label="compose.project_name")
+        fixture_run_id = parse_fixture_prefix(receipt["fixtures"]["prefix"])
+    except GuardDenied as error:
+        raise ReceiptValidationError("fixture/run ID semantic binding failed") from error
+    if fixture_run_id.encode("utf-8") != run_id.encode("utf-8"):
+        raise ReceiptValidationError("fixtures.prefix run_id must equal receipt run_id")
+    if compose["project_name"].encode("utf-8") != run_id.encode("utf-8"):
         raise ReceiptValidationError("Compose project_name must equal run_id")
 
     cleanup = receipt["cleanup"]
-    if cleanup["run_id"] is not None and cleanup["run_id"] != run_id:
-        raise ReceiptValidationError("cleanup run_id must equal receipt run_id")
-    if cleanup["project_name"] is not None and cleanup["project_name"] != run_id:
-        raise ReceiptValidationError("cleanup project_name must equal receipt run_id")
+    for field in ("run_id", "project_name"):
+        cleanup_id = cleanup[field]
+        if cleanup_id is not None:
+            try:
+                validate_run_id(cleanup_id, label=f"cleanup.{field}")
+            except GuardDenied as error:
+                raise ReceiptValidationError(
+                    "fixture/run ID semantic binding failed"
+                ) from error
+            if cleanup_id.encode("utf-8") != run_id.encode("utf-8"):
+                raise ReceiptValidationError(
+                    f"cleanup {field} must equal receipt run_id"
+                )
+    if receipt["final_status"] == "PASS" and (
+        cleanup["run_id"] is None or cleanup["project_name"] is None
+    ):
+        raise ReceiptValidationError("PASS receipt must bind cleanup run and project IDs")
     if (
         docker_target is not None
         and cleanup["daemon_identity_sha256"] is not None

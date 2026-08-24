@@ -89,7 +89,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_m19_project_swap_to_sentinel_is_denied(self) -> None:
         payload = read_verified_manifest(self.path)
-        payload["project_name"] = "msqa025-20260824T000001Z-11111111"
+        payload["project_name"] = "msqa025-20260824t000001z-11111111"
         write_manifest(self.path, payload)
         with self.assertRaises(CleanupGuardDenied):
             verify_manifest_bindings(

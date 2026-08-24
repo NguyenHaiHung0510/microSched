@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-RUN_ID_RE = re.compile(r"^msqa025-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$")
+RUN_ID_RE = re.compile(r"^msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$")
+FIXTURE_PREFIX_RE = re.compile(
+    r"^\[QA025:(msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8})\]$"
+)
+FIXTURE_LABEL_RE = re.compile(
+    r"^\[QA025:(msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8})\](?: .+)?$"
+)
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -237,6 +243,112 @@ def assert_sha40(value: str, *, label: str = "git_sha") -> str:
     if SHA40_RE.fullmatch(value) is None:
         raise GuardDenied(f"{label} must be 40 lowercase hexadecimal characters")
     return value
+
+
+def validate_run_id(value: str, *, label: str = "run_id") -> str:
+    """Accept only the canonical lowercase QA025 identity.
+
+    The lowercase separators are intentional protocol bytes, not a display
+    convention.  Do not coerce a historical uppercase receipt into this
+    schema-v1 contract.
+    """
+
+    if not isinstance(value, str) or RUN_ID_RE.fullmatch(value) is None:
+        raise GuardDenied(
+            f"{label} must match the canonical lowercase QA025 run_id grammar"
+        )
+    return value
+
+
+def fixture_label_ledger(run_id: str) -> tuple[str, ...]:
+    """Return every synthetic label the browser fixture may persist.
+
+    This ledger remains run-local rather than becoming a receipt field: the
+    receipt deliberately keeps only its compact prefix.  It is nevertheless a
+    preflight contract because every future subprocess relies on these labels.
+    """
+
+    canonical = validate_run_id(run_id)
+    prefix = f"[QA025:{canonical}]"
+    return (
+        f"{prefix} denied-private",
+        f"{prefix} denied-item",
+        f"{prefix} public-task",
+        f"{prefix} private-task",
+        f"{prefix} public-note",
+        f"{prefix} public-item",
+        f"{prefix} private-item",
+        f"{prefix} note-item",
+        f"{prefix} synthetic body",
+    )
+
+
+def _exact_utf8_equal(expected: str, actual: str, *, label: str) -> None:
+    if not isinstance(actual, str) or actual.encode("utf-8") != expected.encode("utf-8"):
+        raise GuardDenied(f"{label} must match run_id byte-for-byte")
+
+
+def parse_fixture_prefix(prefix: str) -> str:
+    """Extract the exact ID from the compact receipt fixture wrapper."""
+
+    if not isinstance(prefix, str):
+        raise GuardDenied("fixtures.prefix must be a string")
+    match = FIXTURE_PREFIX_RE.fullmatch(prefix)
+    if match is None:
+        raise GuardDenied("fixtures.prefix must contain a canonical lowercase run_id")
+    return match.group(1)
+
+
+def parse_fixture_label(label: str) -> str:
+    """Extract the exact ID carried by one fixture-ledger entry."""
+
+    if not isinstance(label, str):
+        raise GuardDenied("fixture label ledger entry must be a string")
+    match = FIXTURE_LABEL_RE.fullmatch(label)
+    if match is None:
+        raise GuardDenied(
+            "fixture label ledger entry must contain a canonical lowercase run_id"
+        )
+    return match.group(1)
+
+
+def validate_fixture_identity_bindings(
+    *,
+    run_id: str,
+    project_name: str,
+    cleanup_run_id: str,
+    cleanup_project_name: str,
+    fixture_prefix: str,
+    fixture_labels: Sequence[str],
+) -> None:
+    """Bind all run identity copies before filesystem or process side effects.
+
+    Regex checks establish grammar only.  The raw UTF-8 comparisons below are
+    the fail-closed proof that a valid-but-different lowercase M27 fixture ID
+    cannot target the candidate cell.
+    """
+
+    canonical = validate_run_id(run_id)
+    for label, value in (
+        ("compose.project_name", project_name),
+        ("cleanup.run_id", cleanup_run_id),
+        ("cleanup.project_name", cleanup_project_name),
+    ):
+        validate_run_id(value, label=label)
+        _exact_utf8_equal(canonical, value, label=label)
+    _exact_utf8_equal(
+        canonical,
+        parse_fixture_prefix(fixture_prefix),
+        label="fixtures.prefix run_id",
+    )
+    if not fixture_labels:
+        raise GuardDenied("fixture label ledger must not be empty")
+    for index, fixture_label in enumerate(fixture_labels):
+        _exact_utf8_equal(
+            canonical,
+            parse_fixture_label(fixture_label),
+            label=f"fixture label ledger entry {index}",
+        )
 
 
 def _service_network_names(service: Mapping[str, Any]) -> set[str]:

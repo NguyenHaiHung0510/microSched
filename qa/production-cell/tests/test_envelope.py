@@ -163,7 +163,7 @@ class CommandEnvelopeTests(unittest.TestCase):
         ):
             envelope.run_compose(
                 ["-f", str(self.temp_path / "foreign.yaml"), "config"],
-                project_name="msqa025-20260824T000000Z-00000000",
+                project_name="msqa025-20260824t000000z-00000000",
                 base_file=CELL_ROOT / "compose.yaml",
                 override_file=override,
                 run_temp=self.temp_path,

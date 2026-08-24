@@ -47,6 +47,20 @@ class ReceiptValidationTests(unittest.TestCase):
         with self.assertRaises(ReceiptValidationError):
             validate_receipt_object(self.schema, receipt)
 
+    def test_m26_uppercase_fixture_separator_is_rejected_by_schema(self) -> None:
+        receipt = valid_receipt()
+        receipt["fixtures"]["prefix"] = "[QA025:msqa025-20260824T000000Z-00000000]"
+        with self.assertRaises(ReceiptValidationError):
+            validate_receipt_object(self.schema, receipt)
+
+    def test_m27_different_valid_lowercase_fixture_id_is_rejected_semantically(self) -> None:
+        receipt = valid_receipt()
+        receipt["fixtures"]["prefix"] = "[QA025:msqa025-20260824t000000z-00000001]"
+        with self.assertRaisesRegex(
+            ReceiptValidationError, "fixtures.prefix run_id"
+        ):
+            validate_receipt_object(self.schema, receipt)
+
     def test_phase_duplicates_are_rejected_semantically(self) -> None:
         receipt = valid_receipt()
         receipt["phases"][1]["name"] = receipt["phases"][0]["name"]
