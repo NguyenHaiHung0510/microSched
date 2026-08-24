@@ -12,6 +12,8 @@ export type FixtureTask = {
   body_md: string | null
   status: 'open' | 'completed'
   priority: 'p1' | 'p2' | 'p3' | null
+  due_precision: 'none' | 'date' | 'datetime'
+  due_on: string | null
   due_at: string | null
   is_private: boolean
   pinned: boolean
@@ -37,6 +39,15 @@ export const fixturePrivatePin = randomPin()
 export let fixtureWrongPin = randomPin()
 while (fixtureWrongPin === fixturePrivatePin) fixtureWrongPin = randomPin()
 
+const vietnamDayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Ho_Chi_Minh',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+const scheduleDayCache = new WeakMap<FixtureTask, { shape: string; day: string | null }>()
+
 const adversarialNoBreak = 'A'.repeat(70)
 const adversarialVietnamese =
   'Đọc kỹ những việc cần làm, giữ nguyên dấu tiếng Việt dày đặc để kiểm tra xuống dòng và chiều cao thẻ; '
@@ -53,12 +64,14 @@ function task(
   options: Partial<FixtureTask> = {},
 ): FixtureTask {
   const timestamp = new Date().toISOString()
-  return {
+  const result: FixtureTask = {
     id,
     title,
     body_md: null,
     status: 'open',
     priority: null,
+    due_precision: 'none',
+    due_on: null,
     due_at: null,
     is_private: false,
     pinned: false,
@@ -67,6 +80,16 @@ function task(
     updated_at: timestamp,
     ...options,
   }
+  if (options.due_precision === undefined) {
+    if (options.due_on !== undefined && options.due_on !== null) {
+      result.due_precision = 'date'
+      result.due_at = null
+    } else if (options.due_at !== undefined && options.due_at !== null) {
+      result.due_precision = 'datetime'
+      result.due_on = null
+    }
+  }
+  return result
 }
 
 /** Required QA data: hostile text, 30+ records, mixed status, and 3 scattered overdue records. */
@@ -93,7 +116,10 @@ export const fixtureTasks: FixtureTask[] = [
       item('item-012-4', 'Mục thứ tư'),
     ],
   }),
-  task('task-013', 'Học một điều mới', { priority: 'p3' }),
+  task('task-013', 'Học một điều mới', {
+    priority: 'p3',
+    due_on: taskDateKey(new Date().toISOString()),
+  }),
   task('task-014', 'Sắp xếp tài liệu'),
   task('task-015', 'Gọi điện'),
   task('task-016', 'Mua đồ dùng'),
@@ -117,6 +143,29 @@ export const fixtureTasks: FixtureTask[] = [
     items: [item('item-032', 'Checklist cuối màn hình')],
   }),
 ]
+
+// Cursor QA needs more than the historical 191-row snapshot. These are
+// synthetic-only rows, deliberately spread over the visible window and with
+// one dense Vietnam date to exercise same-day continuation.
+fixtureTasks.push(
+  ...Array.from({ length: 205 }, (_, index) =>
+    task(`synthetic-${String(index + 1).padStart(3, '0')}`, `Việc kiểm cursor ${index + 1}`, {
+      due_at: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+      created_at: new Date(Date.now() - index * 1_000).toISOString(),
+      updated_at: new Date(Date.now() - index * 1_000).toISOString(),
+      pinned: index % 67 === 0,
+      status: index % 29 === 0 ? 'completed' : 'open',
+    }),
+  ),
+  ...Array.from({ length: 120 }, (_, index) =>
+    task(`undated-${String(index + 1).padStart(3, '0')}`, `Việc chưa xếp ngày ${index + 1}`, {
+      due_at: null,
+      created_at: new Date(Date.now() - index * 1_000).toISOString(),
+      updated_at: new Date(Date.now() - index * 1_000).toISOString(),
+      status: index % 2 === 0 ? 'open' : 'completed',
+    }),
+  ),
+)
 
 export type TaskApiState = {
   tasks: FixtureTask[]
@@ -143,6 +192,108 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     contentType: 'application/json',
     body: JSON.stringify(body),
+  }
+}
+
+function taskDateKey(value: string): string {
+  const parts = vietnamDayFormatter.formatToParts(new Date(value))
+  const fields = Object.fromEntries(
+    parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]),
+  )
+  return `${fields.year}-${fields.month}-${fields.day}`
+}
+
+function scheduleDay(entry: FixtureTask): string | null {
+  const shape = `${entry.due_precision}|${entry.due_on ?? ''}|${entry.due_at ?? ''}`
+  const cached = scheduleDayCache.get(entry)
+  if (cached?.shape === shape) return cached.day
+  const day = entry.due_precision === 'date'
+    ? entry.due_on
+    : entry.due_precision === 'datetime' && entry.due_at
+      ? taskDateKey(entry.due_at)
+      : null
+  scheduleDayCache.set(entry, { shape, day })
+  return day
+}
+
+function compareTasks(
+  left: FixtureTask,
+  right: FixtureTask,
+  group: 'dated' | 'overdue' | 'undated' | 'open_picker' = 'open_picker',
+): number {
+  const leftDay = scheduleDay(left)
+  const rightDay = scheduleDay(right)
+  const groupOrder = Number(leftDay === null) - Number(rightDay === null)
+  if (groupOrder !== 0) return groupOrder
+  if (group !== 'overdue') {
+    const groupDayOrder = (leftDay ?? '').localeCompare(rightDay ?? '')
+    if (groupDayOrder !== 0) return groupDayOrder
+  }
+  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
+  const scheduleDayOrder = (leftDay ?? '').localeCompare(rightDay ?? '')
+  if (scheduleDayOrder !== 0) return scheduleDayOrder
+  const precisionRank = (value: FixtureTask['due_precision']) => value === 'datetime' ? 0 : value === 'date' ? 1 : 2
+  const precisionOrder = precisionRank(left.due_precision) - precisionRank(right.due_precision)
+  if (precisionOrder !== 0) return precisionOrder
+  const dueOrder = (left.due_at ?? '').localeCompare(right.due_at ?? '')
+  if (dueOrder !== 0) return dueOrder
+  return Date.parse(right.created_at) - Date.parse(left.created_at) || left.id.localeCompare(right.id)
+}
+
+function canonicalSchedule(
+  payload: Partial<FixtureTask>,
+): Pick<FixtureTask, 'due_precision' | 'due_on' | 'due_at'> {
+  if (payload.due_precision === 'date') {
+    return { due_precision: 'date', due_on: payload.due_on ?? null, due_at: null }
+  }
+  if (payload.due_precision === 'datetime') {
+    return { due_precision: 'datetime', due_on: null, due_at: payload.due_at ?? null }
+  }
+  if (payload.due_precision === 'none') {
+    return { due_precision: 'none', due_on: null, due_at: null }
+  }
+  if (Object.hasOwn(payload, 'due_at')) {
+    return payload.due_at === null
+      ? { due_precision: 'none', due_on: null, due_at: null }
+      : { due_precision: 'datetime', due_on: null, due_at: payload.due_at ?? null }
+  }
+  return { due_precision: 'none', due_on: null, due_at: null }
+}
+
+function fixturePage(
+  entries: FixtureTask[],
+  url: URL,
+): { items: FixtureTask[]; next_cursor: string | null; has_previous: boolean; has_next: boolean } | null {
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 50)))
+  const cursor = url.searchParams.get('cursor')
+  const scope = JSON.stringify({
+    status: url.searchParams.get('status') ?? 'open',
+    from: url.searchParams.get('from') ?? '',
+    to: url.searchParams.get('to') ?? '',
+    bucket: url.searchParams.get('bucket') ?? 'dated',
+  })
+  let start = 0
+  if (cursor) {
+    try {
+      const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+        start?: number
+        scope?: string
+      }
+      if (decoded.scope !== scope || !Number.isInteger(decoded.start) || decoded.start < 0) return null
+      start = decoded.start
+    } catch {
+      return null
+    }
+  }
+  const items = entries.slice(start, start + limit)
+  const next = start + limit < entries.length
+    ? Buffer.from(JSON.stringify({ start: start + limit, scope })).toString('base64url')
+    : null
+  return {
+    items,
+    next_cursor: next,
+    has_previous: start > 0,
+    has_next: next !== null,
   }
 }
 
@@ -265,27 +416,128 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
         return
       }
 
+      if (path === '/api/tasks/timeline' && method === 'GET') {
+        const privateOpen = Boolean(
+          state.privateUntil && Date.parse(state.privateUntil) > Date.now(),
+        )
+        const status = url.searchParams.get('status') ?? 'open'
+        const from = url.searchParams.get('from')
+        const to = url.searchParams.get('to')
+        const fromDay = from ? taskDateKey(from) : null
+        const toDay = to ? taskDateKey(to) : null
+        const today = taskDateKey(new Date().toISOString())
+        const visible = state.tasks
+          .filter((entry) => !entry.is_private || privateOpen)
+          .filter((entry) => status === 'all' || entry.status === status)
+        const inRange = (entry: FixtureTask) => {
+          if (entry.due_precision === 'date' && entry.due_on) {
+            return (!fromDay || entry.due_on >= fromDay) && (!toDay || entry.due_on < toDay)
+          }
+          return entry.due_precision === 'datetime' && entry.due_at !== null &&
+            (!from || Date.parse(entry.due_at) >= Date.parse(from)) &&
+            (!to || Date.parse(entry.due_at) < Date.parse(to))
+        }
+        const dated = visible.filter(inRange).sort((left, right) => compareTasks(left, right, 'dated'))
+        const overdue = visible
+          .filter((entry) => entry.status === 'open' && (
+            entry.due_precision === 'date'
+              ? Boolean(entry.due_on && fromDay && entry.due_on < today && entry.due_on < fromDay)
+              : Boolean(entry.due_precision === 'datetime' && entry.due_at && from && Date.parse(entry.due_at) < Date.now() && Date.parse(entry.due_at) < Date.parse(from))
+          ))
+          .sort((left, right) => compareTasks(left, right, 'overdue'))
+        const undated = visible
+          .filter((entry) => entry.due_precision === 'none')
+          .sort((left, right) => compareTasks(left, right, 'undated'))
+        const datedUrl = new URL(url.toString())
+        datedUrl.searchParams.set('bucket', 'dated')
+        const overdueUrl = new URL(url.toString())
+        overdueUrl.searchParams.set('bucket', 'overdue')
+        const undatedUrl = new URL(url.toString())
+        undatedUrl.searchParams.set('bucket', 'undated')
+        const datedPage = fixturePage(dated, datedUrl)
+        const overduePage = fixturePage(overdue, overdueUrl)
+        const undatedPage = fixturePage(undated, undatedUrl)
+        if (!datedPage || !overduePage || !undatedPage) {
+          await route.fulfill(jsonResponse({ detail: 'Invalid or expired task cursor' }, 422))
+          return
+        }
+        const hasPrevious = visible.some(
+          (entry) => entry.due_precision === 'date'
+            ? Boolean(entry.due_on && fromDay && entry.due_on < fromDay)
+            : Boolean(entry.due_precision === 'datetime' && entry.due_at && from && Date.parse(entry.due_at) < Date.parse(from)),
+        )
+        const hasNext = visible.some(
+          (entry) => entry.due_precision === 'date'
+            ? Boolean(entry.due_on && toDay && entry.due_on >= toDay)
+            : Boolean(entry.due_precision === 'datetime' && entry.due_at && to && Date.parse(entry.due_at) >= Date.parse(to)),
+        )
+        return route.fulfill(
+          jsonResponse({
+            items: [...overduePage.items, ...datedPage.items, ...undatedPage.items],
+            next_cursor: datedPage.next_cursor,
+            bucket_cursors: {
+              overdue: overduePage.next_cursor,
+              dated: datedPage.next_cursor,
+              undated: undatedPage.next_cursor,
+            },
+            has_previous: hasPrevious,
+            has_next: hasNext,
+            loaded_range_start: from?.slice(0, 10) ?? taskDateKey(new Date().toISOString()),
+            loaded_range_end: to ? taskDateKey(new Date(Date.parse(to) - 86_400_000).toISOString()) : taskDateKey(new Date().toISOString()),
+            counts: { overdue: overdue.length, dated: dated.length, undated: undated.length },
+          }),
+        )
+      }
+
       if (path === '/api/tasks' && method === 'GET') {
         const privateOpen = Boolean(
           state.privateUntil && Date.parse(state.privateUntil) > Date.now(),
         )
-        await route.fulfill(
-          jsonResponse({
-            items: state.tasks.filter((entry) => !entry.is_private || privateOpen),
-          }),
-        )
+        const status = url.searchParams.get('status') ?? 'open'
+        const from = url.searchParams.get('from')
+        const to = url.searchParams.get('to')
+        const fromDay = from ? taskDateKey(from) : null
+        const toDay = to ? taskDateKey(to) : null
+        const today = taskDateKey(new Date().toISOString())
+        const bucket = url.searchParams.get('bucket') ?? 'dated'
+        const visible = state.tasks
+          .filter((entry) => !entry.is_private || privateOpen)
+          .filter((entry) => bucket === 'overdue' || bucket === 'open_picker' ? entry.status === 'open' : status === 'all' || entry.status === status)
+          .filter((entry) => {
+            if (bucket === 'open_picker') return true
+            if (bucket === 'undated') return entry.due_precision === 'none'
+            if (bucket === 'overdue') {
+              if (entry.due_precision === 'date') {
+                return Boolean(entry.due_on && fromDay && entry.due_on < today && entry.due_on < fromDay)
+              }
+              return Boolean(entry.due_precision === 'datetime' && entry.due_at && from && Date.parse(entry.due_at) < Date.now() && Date.parse(entry.due_at) < Date.parse(from))
+            }
+            if (entry.due_precision === 'date' && entry.due_on) {
+              return (!fromDay || entry.due_on >= fromDay) && (!toDay || entry.due_on < toDay)
+            }
+            if (entry.due_precision !== 'datetime' || !entry.due_at) return false
+            return (!from || Date.parse(entry.due_at) >= Date.parse(from)) && (!to || Date.parse(entry.due_at) < Date.parse(to))
+          })
+          .sort((left, right) => compareTasks(left, right, bucket as 'dated' | 'overdue' | 'undated' | 'open_picker'))
+        const page = fixturePage(visible, url)
+        if (!page) {
+          await route.fulfill(jsonResponse({ detail: 'Invalid or expired task cursor' }, 422))
+          return
+        }
+        await route.fulfill(jsonResponse(page))
         return
       }
 
       if (path === '/api/tasks' && method === 'POST') {
         const payload = JSON.parse(request.postData() ?? '{}') as Partial<FixtureTask>
+        const schedule = canonicalSchedule(payload)
         const created = task(
           String(payload.id ?? `task-created-${Date.now()}`),
           String(payload.title ?? ''),
           {
             body_md: payload.body_md ?? null,
             priority: payload.priority ?? null,
-            due_at: payload.due_at ?? null,
+            ...schedule,
             is_private: payload.is_private ?? false,
           },
         )
@@ -302,7 +554,13 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
           return
         }
         const payload = JSON.parse(request.postData() ?? '{}') as Partial<FixtureTask>
-        Object.assign(current, payload, { updated_at: new Date().toISOString() })
+        const hasSchedule = ['due_precision', 'due_on', 'due_at'].some((key) => Object.hasOwn(payload, key))
+        Object.assign(
+          current,
+          payload,
+          hasSchedule ? canonicalSchedule(payload) : {},
+          { updated_at: new Date().toISOString() },
+        )
         await route.fulfill(jsonResponse(current))
         return
       }

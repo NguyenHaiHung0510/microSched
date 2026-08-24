@@ -1,3 +1,4 @@
+import { ReminderConfirmScreen } from '@/ReminderConfirmScreen'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Activity,
@@ -8,7 +9,7 @@ import {
   NotebookPen,
   RefreshCw,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -19,6 +20,9 @@ import { CalendarScreen } from '@/CalendarScreen'
 import { NotesScreen } from '@/NotesScreen'
 import { PrivateGate } from '@/PrivateGate'
 import type { PrivateSessionState } from '@/private-gate'
+import { queryParams, useLocation } from '@/lib/route'
+import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
+import { SubscriptionScreen } from '@/SubscriptionScreen'
 import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
 
@@ -47,6 +51,13 @@ function todayLabel(): string {
 }
 
 function LoginScreen() {
+  const location = useLocation()
+  // F8: OAuth redirect phải quay về ĐÚNG chỗ người dùng định làm (nhắc thuốc,
+  // subscription…) — nếu không, prompt bị nuốt khi session hết hạn. Chỉ gửi
+  // pathname+search tương đối, không bao giờ origin (chống open-redirect).
+  const returnTo =
+    location.startsWith('/') && !location.startsWith('//') ? location : '/'
+  const loginHref = `/auth/login?return_to=${encodeURIComponent(returnTo)}`
   return (
     <div className="mx-auto max-w-lg space-y-5 pt-10 sm:pt-20">
       <div className="space-y-1 text-center">
@@ -66,7 +77,7 @@ function LoginScreen() {
         </div>
         {/* A real link, not fetch: the OAuth handshake needs a full page navigation. */}
         <Button asChild size="lg">
-          <a href="/auth/login">
+          <a href={loginHref} data-testid="login-link">
             <LogIn data-icon="inline-start" />
             Đăng nhập bằng Google
           </a>
@@ -77,9 +88,20 @@ function LoginScreen() {
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
+  // 011c §5.1: exactly one deep-linked screen besides the tab block; every tab
+  // keeps the URL "/" and activeScreen stays a useState (tabs do NOT own URLs).
+  const location = useLocation()
+  const reminderDispatchKey = queryParams(location).get('dispatch') ?? ''
   const [activeScreen, setActiveScreen] = useState<
     'tasks' | 'notes' | 'calendar' | 'tracker'
   >('tasks')
+  // A private visibility transition is a local-state boundary as well as a
+  // query-cache boundary. Remount the two views that can hold private task
+  // rows in dialog/history state after lock, expiry, or unlock.
+  const [privateScopeVersion, setPrivateScopeVersion] = useState(0)
+  const onPrivateVisibilityChange = useCallback(() => {
+    setPrivateScopeVersion((version) => version + 1)
+  }, [])
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -99,10 +121,11 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <PrivateGate session={session} />
+          <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
           <Button
             variant="secondary"
             size="icon-lg"
+            className="size-11"
             aria-label="Đăng xuất"
             disabled={logout.isPending}
             onClick={() => logout.mutate()}
@@ -113,11 +136,17 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
+        {location.startsWith('/subscription') ? (
+          <SubscriptionScreen />
+        ) : location.startsWith('/reminder-confirm') ? (
+          <ReminderConfirmScreen key={reminderDispatchKey} />
+        ) : (
+          <>
         <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'tasks' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'tasks' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'tasks'}
             onClick={() => setActiveScreen('tasks')}
           >
@@ -127,7 +156,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'notes' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'notes' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'notes'}
             onClick={() => setActiveScreen('notes')}
           >
@@ -137,7 +166,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'calendar' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'calendar' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'calendar'}
             onClick={() => setActiveScreen('calendar')}
           >
@@ -147,7 +176,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'tracker' ? 'secondary' : 'ghost'}
+            variant={activeScreen === 'tracker' ? 'selected' : 'ghost'}
             aria-selected={activeScreen === 'tracker'}
             onClick={() => setActiveScreen('tracker')}
           >
@@ -156,13 +185,15 @@ function SignedIn({ session }: { session: SessionResponse }) {
           </Button>
         </div>
         <div role="tabpanel">
-          {activeScreen === 'tasks' ? <TasksScreen /> : null}
+          {activeScreen === 'tasks' ? <TasksScreen key={`tasks-${privateScopeVersion}`} /> : null}
           {activeScreen === 'notes' ? <NotesScreen /> : null}
-          {activeScreen === 'calendar' ? <CalendarScreen /> : null}
+          {activeScreen === 'calendar' ? <CalendarScreen key={`calendar-${privateScopeVersion}`} /> : null}
           {activeScreen === 'tracker' ? (
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}
         </div>
+          </>
+        )}
         {logout.isError ? (
           <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>
         ) : null}
@@ -175,9 +206,9 @@ function App() {
   const session = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
-    // The session has a long TTL. Window focus already checks it when returning
-    // to the tab, so it must opt out of the live task polling default.
-    refetchInterval: false,
+    // The session has a long TTL. Window focus checks it when returning to the
+    // tab; keeping no-poll explicit prevents future defaults from changing it.
+    ...NO_POLLING_QUERY_OPTIONS,
     // Being logged out is an answer, not a failure worth retrying.
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,

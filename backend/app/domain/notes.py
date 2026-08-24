@@ -59,6 +59,7 @@ class NoteCreate(BaseModel):
     title: str | None = None
     body_md: str | None = None
     is_private: bool = False
+    pinned: bool = False
     items: list[NonEmptyText] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -75,11 +76,12 @@ class NoteUpdate(BaseModel):
     title: str | None = Field(default=None)
     body_md: str | None = None
     is_private: bool | None = None
+    pinned: bool | None = None
 
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> "NoteUpdate":
-        """Only the non-null privacy flag rejects an explicit null."""
-        for field in ("is_private",):
+        """Only the non-null boolean flags reject an explicit null."""
+        for field in ("is_private", "pinned"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null")
         return self
@@ -92,6 +94,7 @@ class NoteRead(BaseModel):
     title: str | None
     body_md: str | None
     is_private: bool
+    pinned: bool = False
     items: list[NoteItemRead]
     created_at: datetime | None
     updated_at: datetime | None
@@ -161,6 +164,7 @@ class NoteStore:
             title=_clear(note.title),
             body_md=_clear(note.body_md),
             is_private=note.is_private,
+            pinned=note.pinned,
             items=[self._item_read(item) for item in items],
             created_at=note.created_at,
             updated_at=note.updated_at,
@@ -174,8 +178,10 @@ class NoteStore:
         limit: int = 100,
         offset: int = 0,
     ) -> list[NoteRead]:
-        """List visible notes and their children, newest first."""
-        stmt = readable(select(Note), Note, auth).order_by(Note.created_at.desc())
+        """List visible notes and their children, pinned first then newest first."""
+        stmt = readable(select(Note), Note, auth).order_by(
+            Note.pinned.desc(), Note.created_at.desc()
+        )
         result = await db.execute(stmt.limit(limit).offset(offset))
         parents = list(result.scalars())
         if not parents:
@@ -207,6 +213,7 @@ class NoteStore:
             "title": _sealed(payload.title) if payload.is_private else payload.title,
             "body_md": _sealed(payload.body_md) if payload.is_private else payload.body_md,
             "is_private": payload.is_private,
+            "pinned": payload.pinned,
         }
         if payload.id is None:
             note = Note(**values)
@@ -299,6 +306,9 @@ class NoteStore:
             if "body_md" in changes:
                 body_md = changes["body_md"]
                 note.body_md = _sealed(body_md) if note.is_private else body_md
+
+        if "pinned" in changes:
+            note.pinned = changes["pinned"]
 
         await db.flush()
         return self._note_read(note, items)

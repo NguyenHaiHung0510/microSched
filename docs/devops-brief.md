@@ -30,7 +30,7 @@
 
 ## 2. Git workflow — ✅ CHỐT
 
-- **Nhánh:** làm việc trên `develop` → PR vào `main`. `main` = trạng thái đã duyệt.
+- **Nhánh:** mọi thay đổi, kể cả docs, làm việc trên branch riêng → PR vào `develop`. Merge `develop` deploy production; sau production acceptance mới mở release-label PR vào `main`. `main` không deploy.
 - **Ruleset `protect-main`** (đã bật trên GitHub): chặn xóa nhánh, chặn force-push, **bắt buộc PR** để vào `main`.
   - **`required_approving_review_count: 0` là CỐ Ý** — dự án một người; đòi 1 approval sẽ tự khóa chính mình (không ai tự duyệt PR của mình được). Rule vẫn có giá trị: ép mọi thay đổi đi qua PR (có chỗ để đọc lại diff) + chặn tai nạn force-push.
 - **Quy ước commit:** **1 commit = 1 phiên quyết định** → history đọc được như nhật ký thiết kế. Message tiếng Việt, mô tả *tại sao* chứ không chỉ *cái gì*, kèm `Co-Authored-By:`.
@@ -42,18 +42,18 @@
 
 Nguyên nhân không phải lười: chưa ai định nghĩa *điều kiện* để merge, nên không bao giờ tới lúc "đủ điều kiện".
 
-**Định nghĩa chốt: `main` = bản đang chạy trên Fly mà chính chủ đã dùng tay và tin.** Không phải "code xong" — là **"đã sờ vào và nó sống"**.
+**Quy tắc hiện hành: `develop` = nhánh production được deploy; `main` = release-label/rollback milestone do chủ chọn sau receipt production acceptance trên `develop`.** `main` không phải deployment trigger và không thêm cổng acceptance độc lập.
 
 | | `develop` | `main` |
 |---|---|---|
-| Nhận từ | mọi `feat/NNN` qua PR nhỏ | `develop`, khi một **lát cắt dùng được** |
-| Điều kiện | CI xanh | CI xanh **+ đã nghiệm thu bằng mắt trên fly.dev** |
-| Nhịp | mỗi task | mỗi 008a·008 / 009 / 010 / 011 / 012 |
-| Ý nghĩa | "đã build" | "đã sống" |
+| Nhận từ | mọi `feat/NNN` qua PR nhỏ | `develop`, khi chủ chọn một lát cắt release |
+| Điều kiện | CI xanh; runtime/production acceptance có receipt riêng | receipt production acceptance đã có trên `develop` + quyết định release của chủ; không deploy lại |
+| Nhịp | mỗi task | theo quyết định release |
+| Ý nghĩa | nhánh production được deploy | release-label và điểm rollback được chọn có chủ ý |
 
 - **Gắn tag `v0.x` mỗi lần merge vào `main`.** Không có tag thì `main` vẫn không phải đường lùi dùng được — muốn quay về "bản chạy tốt tuần trước" phải mò commit hash.
-- **Từ 008b, `main` là trigger deploy** (CD chỉ chạy từ `main`, không từ `develop`). Điều này khiến định nghĩa trên tự cưỡng chế: cái gì lên `main` là cái đó ra production.
-  - **📝 2026-07-22 (muộn trong ngày) — ĐẢO LẠI: trigger deploy là `develop`.** Gạch đầu dòng trên và điều kiện ở bảng (*"đã nghiệm thu bằng mắt trên fly.dev"*) tạo một **vòng tròn**: muốn merge vào `main` phải đã thấy nó chạy trên fly.dev, mà thứ duy nhất đưa code lên fly.dev lại là merge vào `main`. Hôm nay chưa cắn vì deploy còn gõ tay từ `develop`; sau 008b thì cắn. Nặng hơn: nếu lời giải là *"vẫn deploy tay để nghiệm thu"* thì **008b không gỡ được đúng khoản ma sát nó sinh ra để gỡ**. → **Chốt (chủ): merge vào `develop` = deploy production ngay; `main` không deploy, chỉ đánh dấu release ổn định kèm tag `v0.x`.** Chi tiết: `agent-tasks/008b-cd-fly-deploy.md`.
+- **RETIRED receipt (2026-07-22, wording cũ):** ~~Từ 008b, `main` là trigger deploy (CD chỉ chạy từ `main`, không từ `develop`).~~ **Current truth:** CD deploy chỉ từ `develop`; merge vào `develop` deploy production, còn `main` không deploy và chỉ nhận release-label PR sau production acceptance.
+  - **📝 2026-07-22 (muộn trong ngày) — RETIRED receipt: đảo quyết định trigger deploy sang `develop`.** Gạch đầu dòng trên và điều kiện ở bảng (*"đã nghiệm thu bằng mắt trên fly.dev"*) tạo một **vòng tròn**: muốn merge vào `main` phải đã thấy nó chạy trên fly.dev, mà thứ duy nhất đưa code lên fly.dev lại là merge vào `main`. Hôm nay chưa cắn vì deploy còn gõ tay từ `develop`; sau 008b thì cắn. Nặng hơn: nếu lời giải là *"vẫn deploy tay để nghiệm thu"* thì **008b không gỡ được đúng khoản ma sát nó sinh ra để gỡ**. → **Chốt (chủ): merge vào `develop` = deploy production ngay; `main` không deploy, chỉ đánh dấu release ổn định kèm tag `v0.x`.** Chi tiết: `agent-tasks/008b-cd-fly-deploy.md`.
   - **📝 2026-07-22 — `main` KHÔNG deploy, và việc kiểm chứng dời hẳn sang `develop`.** Không có trigger nào trên `main`, cả trước lẫn sau 008b. **Chủ + T3 test ngay trên `develop`** — hợp lý vì `develop` *chính là* bản đang chạy production. `main` chỉ còn là **nhãn release ổn định**; lúc cân nhắc đẩy ra có thể test + review lại kỹ, nhưng đó là tuỳ nghi, không phải cổng.
     **Nói thẳng cái đã đổi, đừng để câu chữ cũ đánh lừa người đọc sau:** định nghĩa ở dòng 33 hàm ý việc chứng minh diễn ra **tại cổng vào `main`**. Nay nó diễn ra **liên tục trên `develop`**, nên `main` không thêm lớp kiểm chứng riêng nào nữa. Giá trị còn lại — vẫn thật, chỉ khác loại — là **điểm lùi được chọn có chủ ý**: mốc mà chủ đã nhìn lại cả lát cắt và nói "đây là chỗ đáng quay về". Ai đọc `main` như một cổng chất lượng là đọc sai kể từ 2026-07-22.
     **Hệ quả phải canh:** `main` giờ **không có cơ chế tự cưỡng chế nào** — chính thứ đã làm nó tụt 33 commit thành con trỏ chết. Phanh duy nhất là workflow CD in độ tụt `main` sau mỗi lần deploy (`agent-tasks/008b` mục 1.5). Nếu con số đó cứ lớn dần qua vài tuần thì luật này đang chết lần thứ hai, và lần này đã có sẵn đồng hồ đo.
@@ -111,7 +111,7 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 
 `agent-tasks/NNN-<slug>.md` = spec tự-chứa giao cho agent chạy độc lập. Mỗi spec bắt buộc có: bối cảnh đủ để đọc ở session 0-context · việc phải làm · **việc KHÔNG được làm** · acceptance kiểm chứng được · **model tier + effort đề xuất** (để không đốt token thừa). Chi tiết: `agent-tasks/README.md`.
 
-📝 **2026-07-20 (nâng cấp cho §2, có hiệu lực từ 003):** executor mặc định cho task **code** = **T2 Codex** (§7); code chạy trên branch **`feat/NNN-<slug>`** → **PR nhỏ vào `develop`** để T1 review diff từng task — *docs* vẫn commit thẳng `develop` như cũ.
+📝 **2026-07-20 — RETIRED receipt:** executor mặc định cho task **code** = **T2 Codex** (§7); code chạy trên branch **`feat/NNN-<slug>`** → **PR nhỏ vào `develop`** để T1 review diff từng task. Phần *"docs vẫn commit thẳng `develop`"* đã bị rule bảo vệ `develop` thay thế; không dùng câu cũ làm hướng dẫn hiện hành.
 
 ## 6. Chưa làm (không phải quên)
 - **CI nền GitHub Actions** — ✅ dựng 2026-07-20 qua `agent-tasks/003`: job backend khóa theo `uv.lock`, chạy Ruff (lint + format) và pytest; job hooks chạy toàn bộ pre-commit. `agent-tasks/006` sẽ nối thêm hàng rào QA Alembic đã chốt ở `schema-physical-brief.md` §2 (round-trip test, drift-check, chặn drop ngầm) + thử migration trên bản restore (`db-and-data-model-brief.md`).
@@ -123,7 +123,83 @@ Lý do cần cả hai: push protection chỉ cứu ở phút chót và chỉ v�
 - ⏸ **MỞ (2026-07-21) — agent tự lái Chrome profile của chủ để test UI.** Ý tưởng của chủ, đúng hướng theo §7.1 (T3 + MCP Chrome-DevTools là tầng duy nhất thấy lớp lỗi trình duyệt). **Vướng thật:** profile đó chứa 4 tài khoản Google thật đang dùng hằng ngày → chạm luật ranh giới dữ liệu §7 luật 3 (*data thật chỉ tool local do chính chủ giám sát*). Cần quyết riêng: dùng profile Chrome **tách rời chỉ để test** (sạch về ranh giới nhưng phải tự đăng nhập lại), hay cấp quyền theo từng phiên có chủ ngồi cạnh. **Không nhét vào task nào đang chạy** — quyết trước, dùng sau.
   📌 **2026-07-21 — đã va vào hậu quả thật, nâng mức ưu tiên.** Sau khi merge 006, site thật **vẫn chạy image dựng từ 005** nên `/api/healthz` không có trường `db`; `fly secrets set` chỉ restart máy chứ **không build lại image**. Phải `flyctl deploy` tay mới lên sóng. → **Mỗi task merge xong, repo tiến còn site đứng yên** — đúng dạng lệch-trạng-thái mà dự án này sinh ra để tránh, chỉ ở tầng deploy thay vì tầng dữ liệu. Càng nhiều task thì cửa sổ "code đã merge nhưng chưa chạy" càng dễ bị quên. **Ứng viên số 1 cho task ngay sau 007.**
 
-## 7. Harness 3 tầng + công cụ AI cá nhân — ✅ CHỐT 2026-07-20 (soi lại ~10/2026)
+## 7. Harness operating policy — ACTIVE
+
+**T1 = Codex Desktop Main Thread; GPT-5.6 Sol là program lead đang được gán mặc định (profile đề xuất: Sol/max).** Việc gán chỉ có hiệu lực sau khi Runtime Catalog live và exact route/model/effort probe đều callable; nó không giữ chỗ hay hứa availability cố định. T1 giữ scope/dependency graph, dispatch, chọn model + effort, đối chiếu receipt, khuyến nghị merge/release gate, reconciliation và milestone report ngắn. T1 điều phối, không trực tiếp thi công, thực hiện merge/release hay lặp forensic/poll loop. Chủ vẫn giữ quyền quyết định product/architecture và approval; T1 không tự nâng DRAFT thành approved. Chỉ executor được ủy quyền mới thực hiện merge/release dưới explicit owner/policy gate.
+
+**OpenCodex = multi-provider fabric cho T2/T3.** Subagent thực hiện analysis/spec/code/QA/review thực chất trong lane được giao; T2 thi công trên worktree/branch, T3 test/phản biện độc lập. Một writer một worktree. Implementation độc lập có thể khởi động sau reviewed spec dù CI baseline/merge không liên quan còn chờ; CI là merge gate, còn declared real dependency vẫn là hard start/merge gate.
+
+**Flat orchestration + tách lane.** T1 tách **judgment lane** khỏi **procedural receipt lane**. Runtime hiện không cấp nested `spawn_agent` cho subagent, nên child không được dựa vào nested delegation: T1 trực tiếp spawn các lane ngang hàng (flat) và giữ reconciliation ở parent. Judgment/high-blast-radius giao model mạnh; model nhẹ chỉ nhận acceptance deterministic có command, expected output và điểm dừng rõ. Parent bắt buộc đọc diff/output thay vì chỉ tin lời khai của child.
+
+**Delegation không mở rộng authority.** Mỗi lane giữ nguyên scope/quyền của task cha; authority không tự truyền tiếp và không được suy từ approval/lịch sử cũ. Không có hai writer cùng sửa một worktree. Deploy, migration, secret-bearing flow và thao tác irreversible chỉ do executor có `coordination_record` hợp lệ thực hiện dưới đúng explicit owner/policy gate; T1 chỉ chuẩn bị scope/options, đối chiếu receipt và khuyến nghị gate. Với architecture/product decision khó, T1 chuẩn bị evidence/options và đưa chủ quyết định, trừ khi record explicit delegate authority đó.
+
+**Fresh merge/release compare-and-swap gate.** Chỉ executor có `coordination_record` hợp lệ còn hiệu lực mới chạy action. Ngay trước merge, kể cả release-label PR, executor phải re-query và ghi receipt: PR còn `OPEN`/không draft/`MERGEABLE`/`CLEAN`; exact head SHA; current target-base SHA; required checks/reviews đều terminal success; expected diff/scope vẫn khớp. Merge phải dùng `gh pr merge --match-head-commit <head>` hoặc compare-and-swap tương đương — không tái dùng snapshot cũ, không bật auto-merge để né fresh gate. Receipt sau action ghi executor + `record_id`, head/base, check/review gate, exact command + exit và resulting merge/release SHA (thêm tag/artifact SHA nếu có); bất kỳ drift nào thì dừng và reconcile, không tự refresh rồi tiếp tục.
+
+**Default-retain branch/worktree.** Cleanup là destructive action riêng, chỉ được chạy khi `coordination_record` hợp lệ nêu đúng target, executor và cleanup authority; quyền viết/merge chung không bao hàm quyền cleanup. Trước action phải lưu exact target/path/ref và bốn receipt: **dirty** (`git status --short` hoặc tương đương), **open PR** (query theo head ref), **reachability** (command + exit, ví dụ `git merge-base --is-ancestor <tip> <target>`), **unique/unreconciled work** (commit/diff inventory so với target). Chỉ prune khi worktree clean, không có open PR, tip reachable và inventory không còn unique/unreconciled work; sau action ghi `record_id`, exact target đã xóa và kết quả. Nhánh superseded phải trỏ tới merged replacement. Thiếu record/receipt hoặc kết quả mơ hồ thì retain/quarantine; unfinished/unique work (kể cả Task 017) giữ lại đến khi có quyết định continue, replace hoặc report. T1 chỉ khuyến nghị/lập lịch cleanup; cleanup không bao giờ là lý do xóa in-flight work.
+
+**Milestone/event-driven, không T1 poll loop.** T1 chỉ báo chủ khi có dispatch/review receipt, blocker/decision, terminal CI/acceptance receipt hoặc timebox correction; không chạy scheduled status/forensic/CI/deploy poll loop và không tạo automatic heartbeat để poll lặp. Khi short timebox đã khai báo hết mà chưa có terminal outcome, T1 chỉ được **reassign hoặc reschedule trong nguyên objective/scope/authority**; ghi trigger + outcome receipt (vào `coordination_record` nếu lane có record) nêu boundary giữ nguyên và next gate. Silence/timebox không bao giờ là approval để âm thầm expand, cancel hay delete.
+
+**Recurring monitor chỉ theo yêu cầu owner.** Monitor lặp chỉ tồn tại khi chủ yêu cầu rõ; nó là runner/scheduled automation độc lập với T1, không phải lane hay forensic/poll loop của T1. Monitor phải có target, trigger từ yêu cầu owner, frequency và stop condition; mỗi wake ghi trigger + observed receipt vào task/PR evidence. Nó chỉ thông báo event, không tự cấp authority, đổi gate hoặc mở rộng scope. Không có yêu cầu owner thì không hứa/thiết lập repeated check hay heartbeat. Mọi 3/6/10/15/20-minute cadence hoặc scheduled heartbeat còn xuất hiện trong status/session receipt lịch sử không kích hoạt monitor và không phải policy hiện hành.
+
+**Independent second review theo criticality.** Với PR critical/high-blast-radius, T1 **có thể** chỉ định thêm một reviewer độc lập từ model family khác khi judgment thấy cần; đây không phải yêu cầu mặc định cho mọi PR critical. Nhưng một khi T1 đã chỉ định second reviewer cho PR cụ thể, hoàn tất **cả hai review** trở thành merge gate của chính PR đó. Giới hạn concurrency có thể khiến các lượt review chạy staged thay vì song song, nhưng không miễn hoặc hạ gate đã được chỉ định. Reviewer luôn read-only, chỉ đưa finding/receipt, không được sửa branch và không được mở rộng authority của task.
+
+**Role profile + Runtime Catalog.** Sol/max (bao gồm T1 default hiện tại), Terra/xhigh, Gemini 3.7/high qua OpenCodex và Luna/xhigh chỉ là role default đề xuất, không phải cam kết availability. Trước lane thật, executor phải query Runtime Catalog live rồi probe exact route/model/effort; chỉ khi probe callable mới dùng Sol/max cho coordination mơ hồ/high-blast-radius hoặc chuẩn bị evidence/options cho architecture decision khó, Terra/xhigh cho implementation, Gemini 3.7/high cho independent review khi cần, và Luna/xhigh cho adversarial review/fallback. Owner vẫn giữ quyết định product/architecture trừ khi record explicit delegate. Không blanket `max` hoặc ép multi-model review cho việc deterministic; route không callable thì báo rõ, không âm thầm substitute. Probe chỉ chứng minh callability, không chứng minh task capability/acceptance.
+
+**Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật. **Review/CI không tự chứng minh runtime, physical-device hoặc production acceptance; mỗi lớp cần receipt riêng.**
+
+### Kỷ luật delegation, báo cáo và topology thử nghiệm
+
+**Canonical `coordination_record` (fail-closed).** Delegation/experiment nào cấp authority architecture/product/irreversible dùng **một** artifact tracked, UTF-8 JSON tại `agent-tasks/coordination-records/<record_id>.json`; `record_id` phải khớp filename và regex `^CR-[0-9]{8}-[a-z0-9]+(?:-[a-z0-9]+)*$`. Không có service mới: đây là JSON file cạnh task/PR, audit được bằng JSON parser thông thường. Record **không tự là authority**: chỉ `authority_binding` được approval/policy source bất biến bind exact mới cấp quyền. Shape root bắt buộc (đúng type) là:
+
+```json
+{
+  "schema_version": 2,
+  "record_id": "CR-20260824-example",
+  "status": "active|closed|revoked",
+  "authorization_source": {
+    "kind": "owner_approval|named_policy",
+    "immutable_ref": {
+      "repository": "non-empty canonical repository id",
+      "commit_oid": "full Git commit object id",
+      "path": "path to UTF-8 authority-source JSON",
+      "blob_oid": "full Git blob object id",
+      "source_content_sha256": "lowercase SHA-256 of exact blob bytes"
+    },
+    "authority_binding_sha256": "lowercase SHA-256 of RFC 8785 canonical UTF-8 authority_binding"
+  },
+  "authority_binding": {
+    "record_id": "CR-20260824-example",
+    "kind": "delegation|experiment",
+    "status": "active",
+    "subject": {"kind": "task|pr", "ref": "task file or PR number"},
+    "objective": "non-empty string",
+    "executor": {"role": "non-empty string", "lane_id": "non-empty string"},
+    "scope": {"repository": "non-empty string", "paths": [], "refs": [], "external_targets": []},
+    "allowed_authority": {"architecture_product": false, "irreversible_actions": []},
+    "allowed_actions": [], "forbidden_actions": [],
+    "expires_at": "RFC 3339 UTC", "terminal_condition": "non-empty string"
+  },
+  "required_receipts": [], "receipt_log": [{"at": "RFC 3339 UTC", "event": "string", "receipt_ref": "string"}]
+}
+```
+
+`authority_binding` là **toàn bộ grant surface**: phải mang exact `record_id`, kind/status, subject/objective, executor, scope, `allowed_authority`, allowed/forbidden actions, expiry và terminal condition. Không được đặt một field ảnh hưởng authority ở ngoài object này; unknown field hay type/enum không đúng đều deny. `allowed_authority.architecture_product` hoặc `irreversible_actions` phải nêu tường minh authority cần cấp. Không ghi secret hoặc personal data trong record.
+
+**Authority source cũng phải machine-readable và immutable.** Blob mà `immutable_ref` trỏ tới phải là UTF-8 JSON envelope strict gồm `schema_version`, `source_id`, `kind` khớp `authorization_source.kind`, `authority_binding_sha256`, và `authority_binding` có **cùng canonical value** với record. `commit_oid` + `path` phải resolve đúng `blob_oid`; SHA-256 của bytes blob phải khớp `source_content_sha256`. Nguồn chỉ đáng tin nếu commit/blob này nằm trong trust anchor owner/policy do validator nhận **độc lập với record, task/PR và executor** (ví dụ commit đã được owner chấp nhận trên protected base); ref do chính record hoặc branch đang xin quyền tự nêu ra không tạo trust. Vì vậy source vừa pin digest exact, vừa pin exact authority/scope/actions/expiry; một approval prose chung hay policy không có envelope exact không cấp quyền.
+
+**Independent validator trước action.** Validator phải strict-parse record/source, reject duplicate JSON keys, unknown authority fields và hash thiếu/sai format; tính SHA-256 trên RFC 8785 canonical UTF-8 `authority_binding`; resolve Git object bằng exact OID (không dùng moving branch/tag); kiểm hash/blob/source envelope, equality toàn bộ binding, và trust anchor độc lập. Sau đó mới kiểm record file tracked đúng path/`record_id`, `status=active` cùng binding status, expiry/terminal condition, executor/action/path/ref/external target đều trong grant, rồi ghi validation receipt. `closed`/`revoked` chỉ giữ lịch sử, không cấp authority; một record đã đóng/revoke chỉ active lại với **source + binding mới** được trust độc lập. Mismatch, thiếu field, parse/hash/ref/blob/trust không verify được, source không exact, hoặc bất kỳ scope/action/expiry nào chỉ do record tự khai đều là **deny**: executor dừng/escalate. Authority không được suy từ câu chữ chung, approval/lịch sử cũ hay record khác. Steering chỉ làm rõ hoặc đổi ưu tiên trong grant hiện có, không tự mở rộng authority. T1/subagent tự chọn phương pháp khảo sát trong guardrail đã giao; coordinator không micro-manage reasoning.
+
+**Báo chủ theo tầng chiến lược.** Mặc định chỉ trình bày lane, decision/risk, evidence boundary và next stage. Không đưa prompt nội bộ hoặc probe raw ra báo cáo, trừ khi chủ yêu cầu hoặc cần giải thích route/blocker. Mọi synthesis phải gắn từng kết luận là **[QUAN SÁT]**, **[SUY LUẬN]** hoặc **[KHÔNG BIẾT]**; parent chịu trách nhiệm reconcile conflict và current-state drift trước khi dùng kết quả.
+
+**Route và song song.** Trước lane thật, phải probe callability của đúng route/model/effort được giao; route không gọi được thì báo rõ, không âm thầm substitute. Probe này không thay Runtime Catalog và không chứng minh capability/acceptance của task. Ưu tiên parallel discovery khi các lane độc lập và coordinator còn reconciliation; vẫn một writer một worktree, không mở rộng authority, và merge/irreversible gate giữ nguyên.
+
+### ⚠️ OPEN — topology/authority chưa là policy
+
+Đảo vai bền vững **T2 coordinator / T1 analyst**, nested delegation, authority propagation, merge accountability, cancellation/context propagation chỉ có thể được nâng thành policy sau experiment có receipt. **Chỉ owner được duyệt mở experiment**, và experiment chỉ bắt đầu với `coordination_record` hợp lệ: hypothesis/objective, exact scope + authority, forbidden actions, named executor, expiry/stop condition và required receipt/metrics. Mỗi experiment phải đo tối thiểu: decision quality/coverage, authority breach, handoff loss, time-to-PR và CI/device acceptance. Hết hạn hoặc chạm stop condition thì dừng; kết quả experiment không tự nâng thành policy. Cho đến khi owner quyết định sau receipt, current policy flat orchestration, authority và merge gate ở trên vẫn giữ nguyên.
+
+### Historical harness receipts — RETIRED
+
+Các mục tiếp theo của §7 là receipt lịch sử, giữ để truy nguyên quyết định và failure mode; không phải policy, runtime catalog hoặc routing hiện hành. ClaudeRelay đã RETIRED, không dành thêm maintenance/QA.
 
 Bối cảnh: bước vào phase B (scaffold), chính chủ chốt bộ công cụ thi công. Tra giá/thị trường **live 2026-07-20** (nguồn cuối mục — thị trường coding-plan đổi theo quý, đừng tin con số này quá 10/2026). Nguyên tắc phân vai: **theo blast-radius của lỗi, không theo độ to của việc** (cùng nguyên tắc sequencing AI của chính app).
 
@@ -151,7 +227,7 @@ Chi phí cả stack + bảng giá đối chiếu: `cost-brief.md` §6. Nguồn c
 
 ---
 
-## 7.1 📝 2026-07-21 — bằng chứng thực nghiệm cho vai T3: ba lỗi chỉ trình duyệt mới thấy
+### 7.1 📝 2026-07-21 — RETIRED receipt: ba lỗi chỉ trình duyệt mới thấy
 
 Ngày thi công 007 đẻ ra ba lỗi mà **không** công cụ nào của T1/T2 bắt được — kể cả security-review Opus MAX chạy riêng trên diff (nó soi *code*, ba lỗi này không nằm trong code):
 
@@ -169,7 +245,7 @@ Cái thứ ba do **chính chủ** phát hiện, bằng một thao tác mà khôn
 - Task nào đụng tới **bản build production** (Docker, PWA/service worker, cookie, redirect, OAuth) thì mục Acceptance **bắt buộc** có bước nhìn bằng mắt trên bản deploy thật — ghi rõ *nhìn cái gì*, không ghi "kiểm tra hoạt động".
 - Xanh CI ≠ chạy được. Ba lỗi trên đều xảy ra khi CI xanh 100%.
 
-## 7.2 ✅ ĐÓNG 2026-07-22 — "cho agent lái Chrome profile thật của chủ" (mục MỞ từ 007)
+### 7.2 ✅ ĐÓNG 2026-07-22 — RETIRED receipt: agent lái Chrome profile thật của chủ
 
 Kiểm chứng thật bằng Codex: **chạy tốt**, chuyển được giữa nhiều profile, đi trọn luồng OAuth trên `microsched.fly.dev` (tài khoản trong allowlist vào được; tài khoản ngoài allowlist bị chặn đúng, sang `/auth/denied`), và **không** chạm trực tiếp cookie/mật khẩu/profile store.
 
@@ -180,7 +256,7 @@ Kiểm chứng thật bằng Codex: **chạy tốt**, chuyển được giữa n
 - **Có một tài khoản chính chủ cấm đụng.** Tên tài khoản **không ghi vào repo** — chỉ nêu trong prompt giao việc.
 - **Không dán địa chỉ email thật vào PR/commit/docs.** Repo public + threat model = social engineering ⇒ danh sách tài khoản là vật liệu dựng pretext. Viết theo vai (*"tài khoản trong allowlist"*), không viết địa chỉ.
 
-## 7.3 ✅ CHỐT 2026-07-22 (muộn) — Claude **điều phối** Codex trực tiếp, thay cho chuyển tay
+### 7.3 ✅ CHỐT 2026-07-22 — RETIRED receipt: Claude điều phối Codex trực tiếp
 
 Bối cảnh: sau 003→008b, chính chủ đã đủ tin để bỏ khâu **copy prompt/báo cáo qua lại giữa hai harness**. Chính chủ nói rõ đây là đánh đổi có ý thức: *"chọn thêm risk 40% để đổi lấy hiệu suất, rồi tiến tới nâng cấp harness eng để giảm risk xuống như thủ công mà vẫn giữ hiệu suất."*
 
@@ -421,7 +497,7 @@ sống trong chính phiên này — Codex tự chẩn đoán đúng nguyên nhâ
 
 ---
 
-## 8. Chạy nhiều agent song song — ⚠️ GHI NHẬN 2026-07-21, chưa nghiên cứu đủ
+## 8. Chạy nhiều agent song song — RETIRED receipt (2026-07-21/23)
 
 Bối cảnh: Codex lẫn Claude Code đều mở được nhiều session cùng lúc, và máy chủ **thừa sức về phần cứng** — nên câu hỏi không phải "máy chịu nổi không" mà là **"cái gì hỏng khi hai agent cùng chạy"**. Ghi lại để nghiên cứu tiếp trước khi mở song song thật (dự kiến từ 009).
 
@@ -490,7 +566,7 @@ Tới 22/07 deploy vẫn là `fly deploy` gõ tay. Câu hỏi không phải "có
 
 **Vì sao không sớm hơn (ngay bây giờ):** trước 008 chưa có gì để deploy ngoài trang đăng nhập; CD sẽ được chạy gần như 0 lần trước khi thực sự cần. **Vì sao không muộn hơn (sau 008):** 008 là task **đặt khuôn** — mọi slice sau bắt chước nó, kể cả bắt chước *quy trình nghiệm thu* của nó. Muốn khuôn đúng thì lúc đúc khuôn phải đã có CD.
 
-**Nội dung 008b (spec viết sau, đây là ranh giới):**
+**RETIRED pre-spec draft (không phải policy hiện hành) — nội dung 008b từng dự kiến:**
 - GH Actions: merge vào **`main`** → build + `fly deploy` → **smoke test bắt buộc**, đỏ thì fail. Smoke test gọi `/api/readyz` (không phải `healthz` — xem `health.py`), kiểm `status == "ok"`. Đây đúng là thứ đã bắt được lỗi crash-loop B1 của 007 nếu nó tồn tại lúc đó.
 - Deploy **chỉ từ `main`** — nhất quán với §2.1, và khiến định nghĩa "`main` = bản đang chạy" tự cưỡng chế thay vì trông vào kỷ luật.
 - Nuốt luôn 2 món polish tồn từ 007 (`auth-brief.md` §6.2): cảnh báo lúc khởi động khi thiếu `OAUTH_STATE_SECRET`, và `except Exception` trần ở callback. Cả hai là guardrail lúc khởi động/deploy — mà **CD làm deploy nhanh hơn ⇒ deploy sai cũng nhanh hơn**, nên đây đúng lúc chúng đáng giá nhất.
@@ -557,28 +633,32 @@ git ls-tree --name-only origin/main .github/workflows/   →  chỉ có ci.yml
 
 **Bất biến §9 vẫn nguyên giá trị, nay cộng thêm một:** ① không job nền nào poll DB dày hơn cửa sổ idle 5 phút của Neon; ② 🔒 **endpoint cron phải làm xong việc bên trong request** — proxy Fly mù với việc sinh ra sau khi response đã trả, và không có cách nào để app nói "tôi đang bận". Với deadline 180s của Cloud Scheduler thì đây gần như không phải hy sinh gì.
 
-### 📝 2026-08-02 — Fly always-on không đảo quyết định Scheduler
+### 📝 2026-08-06 — ĐẢO LẠI: Fly always-on đảo luôn quyết định Scheduler (xoá GCS)
 
-App nay giữ đúng một Machine 256MB chạy liên tục (`architecture-brief.md` §5), nên **cron không còn
-nhiệm vụ đánh thức Fly**. Phần so cold-start và các phương án bị loại vì va `suspend` ở trên là bằng
-chứng lịch sử của quyết định 23/07, không phải mô tả runtime hiện hành.
+Toàn bộ tranh luận phía trên về Google Cloud Scheduler vs GitHub Actions giờ trở thành hồ sơ lưu trữ
+lịch sử (legacy evidence) của giai đoạn `008`. Với `011d`, **GCS đã bị loại bỏ hoàn toàn** cùng mọi
+cơ chế route `/api/cron/heartbeat` hay `CRON_TOKEN`. App chỉ dùng một **in-process async timer**.
 
-Google Cloud Scheduler **vẫn được giữ**: lịch chạy độc lập với deploy/commit, retry cấu hình được và
-attempt deadline rõ ràng. APScheduler/Supercronic trong process trở lại khả thi về mặt kỹ thuật, nhưng
-vẫn bị loại vì buộc lịch nhắc vào uptime/restart của chính app và làm mất retry/result reporting của
-một scheduler ngoài.
+**Đánh đổi đã được chấp nhận:**
+1. Mất external retry policy/attempt deadline/independent result reporting; đổi lại được exact-time
+   scheduling và xoá hẳn external API.
+2. Reliability được dời vào process: 4 lần attempt tối đa (bền qua restart), timeout 20s cho Web Push,
+   và observability qua logs.
 
-RSS + uptime ở các khe cron nay quan sát **rò rỉ của tiến trình 256MB sống dài**, không còn quan sát
-snapshot `suspend`. Endpoint vẫn phải hoàn tất đồng bộ trong request để Scheduler nhận đúng success
-hay failure và retry đúng; lý do hiện hành là biên lai kết quả chính xác, **không phải** lo Fly Proxy
-suspend Machine sau khi response trả về.
+**Runbook cutover vận hành một chiều (one-way):**
+1. 011c/011b merge xong, 011d code sẵn sàng nhưng flag `ENABLE_INPROCESS_CRON=false`.
+2. Deploy liveness preflight: app boot nhưng timer no-op.
+3. Chủ xoá mọi GCS jobs và lưu biên lai sạch.
+4. Đổi flag thành `true` và deploy SHA đã review, xác minh có đúng một Fly Machine chạy.
+5. Mọi abort phải giữ flag `false` kèm manual downtime notification; **không** dựng lại GCS hay GitHub
+   workflow cho scheduler. Không còn fallback external.
 
 ---
 *Cập nhật khi: bật auto-review, dựng CI, đổi repo visibility, hoặc đổi công cụ harness. Soi lại §4 + §7 sau ~3 tháng (~10/2026 — chính sách/giá vendor đổi nhanh). §8 xem lại sau khi chạy 009 (lần song song thật đầu tiên). **§9 đã đóng 2026-07-22**; mở lại nếu đổi hạ tầng deploy. **§10 chốt 2026-07-23**; mở lại nếu đổi nhà cung cấp cron hoặc khi 011 cần >3 job. §7.2 xem lại nếu đổi cách agent truy cập trình duyệt. Thêm note có ngày — không xóa kết luận cũ.*
 
-### j) 📝 2026-08-03 — Chuyển đổi Harness sang Codex Desktop + OpenCodex Sub-agents (✅ CHỐT)
+### j) 📝 2026-08-03 — RETIRED route snapshot: chuyển đổi Harness sang Codex Desktop + OpenCodex
 
-Bối cảnh: Claude Code dừng hoạt động, dự án chuyển sang **Codex Desktop App** làm harness điều phối chính.
+Bối cảnh: snapshot này ghi nhận thời điểm dự án chuyển sang **Codex Desktop App** làm harness điều phối chính. Danh sách model/route bên dưới là historical evidence, không phải catalog có hiệu lực; dùng Runtime Catalog ở §7 cho availability hiện tại.
 
 1. **T1 mới:** Môi trường Codex Desktop chính (Main Thread) đảm nhiệm vai T1. Model chính khi quay lại: `gpt-5.6-sol` (effort: `xhigh`/`high`). **Tạm thời từ 2026-08-04:** Terra đang giữ Main Thread; không tự đổi T1 giữa chừng chỉ vì một model khác vừa xuất hiện. Khi cần thêm một lượt reasoning/coding độc lập, dùng `openrouter/openai-gpt-5.6-luna` trước vì bảng tham chiếu hiện hành xếp Luna #1 ở intelligence, coding và agentic.
 2. **T2 & T3 mới:** Sử dụng tính năng `spawn_agent` tích hợp sẵn trong Codex Desktop để điều phối sub-agents. Danh sách route tạm đã được chủ lưu ngày 2026-08-04: `google-antigravity/gemini-3.6-flash`, `openrouter/~deepseek-deepseek-v4-flash-latest`, `openrouter/openai-gpt-5.6-luna`.

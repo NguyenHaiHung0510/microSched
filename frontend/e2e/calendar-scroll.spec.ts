@@ -147,7 +147,11 @@ function calendarRoutes(
 test.beforeEach(async ({ page, taskApi }) => {
   // A task due today gives the grid a task chip on today's cell (spec §5.4).
   const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
-  if (dueToday) dueToday.due_at = iso(vnDay(0), 10)
+  if (dueToday) {
+    dueToday.due_precision = 'datetime'
+    dueToday.due_on = null
+    dueToday.due_at = iso(vnDay(0), 10)
+  }
 })
 
 test.describe('mobile (390x844, touch)', () => {
@@ -230,7 +234,17 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByRole('tab', { name: 'Lịch' }).click()
 
     const moved = taskApi.tasks.find((entry) => entry.id === 'task-004')!
-    const originalDue = moved.due_at
+    const originalSchedule = {
+      due_precision: moved.due_precision,
+      due_on: moved.due_on,
+      due_at: moved.due_at,
+    }
+    const oldClock = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date(moved.due_at!))
 
     const todayCell = page.locator(
       `[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`,
@@ -241,12 +255,80 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByRole('button', { name: /Việc trễ hạn thứ nhất/ }).tap()
 
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved.due_at).toBe(`${vnDay(0)}T23:59:00+07:00`)
+    expect(moved).toMatchObject({
+      due_precision: 'datetime',
+      due_on: null,
+      due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
+    })
 
     await page.getByRole('button', { name: 'Hoàn tác' }).tap()
     await expect
-      .poll(() => moved.due_at)
-      .toBe(originalDue)
+      .poll(() => ({
+        due_precision: moved.due_precision,
+        due_on: moved.due_on,
+        due_at: moved.due_at,
+      }))
+      .toEqual(originalSchedule)
+  })
+
+  test('move picker loads one bounded page only when opened and retains its cursor', async ({
+    page,
+    taskApi,
+  }) => {
+    await calendarRoutes(page, { events: [], annotations: [] })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await expect(page.getByTestId('calendar-scroll-container')).toBeVisible()
+    const before = taskApi.count('GET', '/api/tasks')
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
+    await expect(page.getByTestId('calendar-day-dialog')).toBeVisible()
+    expect(taskApi.count('GET', '/api/tasks')).toBe(before)
+    await page.getByTestId('calendar-day-move-task').tap()
+    await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
+    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 1)
+    if (await page.getByTestId('calendar-move-load-more').isVisible()) {
+      await page.getByTestId('calendar-move-load-more').click()
+      await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 2)
+    }
+  })
+
+  test('move picker reaches an undated open task through bounded pages', async ({ page, taskApi }) => {
+    await calendarRoutes(page, { events: [], annotations: [] })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
+    await page.getByTestId('calendar-day-move-task').tap()
+    await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
+
+    const target = page.locator('[data-testid="calendar-move-task"][data-task-id="undated-001"]')
+    for (let attempt = 0; attempt < 8 && !(await target.isVisible()); attempt += 1) {
+      const more = page.getByTestId('calendar-move-load-more')
+      await expect(more).toBeVisible()
+      await more.click()
+    }
+    await expect(target).toBeVisible()
+    await target.click()
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === 'undated-001')).toMatchObject({
+      due_precision: 'date',
+      due_on: vnDay(0),
+      due_at: null,
+    })
+  })
+
+  test('private lock remounts calendar and closes a detail dialog', async ({ page, taskApi }) => {
+    const privateTask = taskApi.tasks.find((entry) => entry.id === 'task-009')!
+    privateTask.due_precision = 'datetime'
+    privateTask.due_on = null
+    privateTask.due_at = iso(vnDay(0), 10)
+    await calendarRoutes(page, { events: [], annotations: [] })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
+    await expect(page.locator('[data-testid="calendar-day-task"]').filter({ hasText: 'Task riêng tư' })).toBeVisible()
+    await page.getByTestId('private-lock-now').evaluate((element) => (element as HTMLButtonElement).click())
+    await expect.poll(() => taskApi.count('POST', '/api/private/lock')).toBe(1)
+    await expect(page.getByText('Task riêng tư')).toHaveCount(0)
+    await expect(page.getByTestId('calendar-day-dialog')).toBeHidden()
   })
 
   test('mini-nav does not exist on mobile', async ({ page }) => {
@@ -384,6 +466,40 @@ test.describe('desktop (1280x800)', () => {
       .not.toBe(before)
   })
 
+  test('extending calendar months changes the bounded task range key and request', async ({
+    page,
+  }) => {
+    const taskUrls: string[] = []
+    page.on('request', (request) => {
+      const url = new URL(request.url())
+      if (request.method() === 'GET' && url.pathname === '/api/tasks') taskUrls.push(url.toString())
+    })
+    await calendarRoutes(page, { events: [], annotations: [] })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await expect(page.getByTestId('calendar-scroll-container')).toBeVisible()
+    await expect.poll(() => taskUrls.length).toBeGreaterThan(0)
+    const initialRange = new URL(taskUrls[0]).searchParams.get('from') + '|' + new URL(taskUrls[0]).searchParams.get('to')
+    const container = page.getByTestId('calendar-scroll-container')
+    await container.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+      element.dispatchEvent(new Event('scroll', { bubbles: true }))
+    })
+    await page.waitForTimeout(100)
+    await container.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+      element.dispatchEvent(new Event('scroll', { bubbles: true }))
+    })
+    await expect.poll(() => taskUrls.length).toBeGreaterThan(1)
+    const ranges = new Set(taskUrls.map((value) => {
+      const url = new URL(value)
+      return `${url.searchParams.get('from')}|${url.searchParams.get('to')}`
+    }))
+    expect(ranges.has(initialRange)).toBe(true)
+    expect(ranges.size).toBeGreaterThan(1)
+    expect(taskUrls.every((value) => !value.includes('offset='))).toBe(true)
+  })
+
   test('overdue task card shows the three reschedule buttons and Hôm nay works', async ({
     page,
     taskApi,
@@ -399,9 +515,19 @@ test.describe('desktop (1280x800)', () => {
     await expect(card.getByTestId('task-reschedule-day-after')).toBeVisible()
 
     const moved = taskApi.tasks.find((entry) => entry.id === 'task-004')!
+    const oldClock = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date(moved.due_at!))
     await card.getByTestId('task-reschedule-today').click()
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved.due_at).toBe(`${vnDay(0)}T23:59:00+07:00`)
+    expect(moved).toMatchObject({
+      due_precision: 'datetime',
+      due_on: null,
+      due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
+    })
   })
 
   test('mini-nav day cells measure at least 24x24', async ({ page }) => {
@@ -444,7 +570,11 @@ test('an ICS event opened from the day dialog shows the will-lose-edits warning'
 
 test('desktop font sizes are at least 12px', async ({ page, taskApi }) => {
   const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
-  if (dueToday) dueToday.due_at = iso(vnDay(0), 10)
+  if (dueToday) {
+    dueToday.due_precision = 'datetime'
+    dueToday.due_on = null
+    dueToday.due_at = iso(vnDay(0), 10)
+  }
   const state = {
     events: [
       event('event-today', 'source-manual', iso(vnDay(0), 9), iso(vnDay(0), 10)),

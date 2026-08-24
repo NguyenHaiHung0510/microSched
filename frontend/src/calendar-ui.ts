@@ -40,6 +40,23 @@ export const SOURCE_COLORS: Record<string, string> = {
   sky: 'var(--primary)',
   violet: 'var(--rose-700)',
   slate: 'var(--n-500)',
+  teal: '#0d9488',
+  indigo: '#4f46e5',
+  orange: '#ea580c',
+  cyan: '#0891b2',
+}
+
+export const SOURCE_COLOR_LABELS: Record<string, string> = {
+  rose: 'Hồng ấm',
+  amber: 'Vàng hổ phách',
+  emerald: 'Xanh lục bảo',
+  sky: 'Hồng đậm (Chính)',
+  violet: 'Mận tím',
+  slate: 'Xám ấm',
+  teal: 'Xanh mòng két',
+  indigo: 'Chàm hoàng gia',
+  orange: 'Cam san hô',
+  cyan: 'Xanh lơ biển',
 }
 
 export const SOURCE_COLOR_KEYS = Object.keys(SOURCE_COLORS)
@@ -131,7 +148,17 @@ export function toVietnamDateTimeInput(value: string | null): string {
 }
 
 export function vietnamInputToIso(value: string): string {
-  return value.length === 16 ? `${value}:00+07:00` : `${value}+07:00`
+  const normalized = value.length === 16 ? `${value}:00` : value
+  const guess = new Date(`${normalized}Z`)
+  const zonePart = new Intl.DateTimeFormat('en-US', {
+    timeZone: VIETNAM_TIME_ZONE,
+    timeZoneName: 'longOffset',
+  }).formatToParts(guess).find(({ type }) => type === 'timeZoneName')?.value
+  const offset = zonePart?.match(/^GMT([+-]\d{2}:\d{2})$/)?.[1]
+  if (!offset || Number.isNaN(guess.getTime())) {
+    throw new Error('Vietnam civil datetime is invalid')
+  }
+  return `${normalized}${offset}`
 }
 
 export function allDayVietnamRange(day: string): { startsAt: string; endsAt: string } {

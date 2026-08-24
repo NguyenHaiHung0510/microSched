@@ -35,6 +35,8 @@
   --n-400: #ab999d; /* ⚠ KHÔNG dùng cho chữ (2,54:1), cũng KHÔNG cho viền control
                        hay icon mang nghĩa: 2,70:1 trên nền trắng, vẫn dưới ngưỡng
                        non-text 3:1. Chỉ còn hợp lệ cho trang trí thuần tuý. */
+  --n-450: #978a8e; /* viền control đạt non-text ≥ 3:1 (đo 2026-08-06: 3,31:1 trên
+                       trắng, 3,11:1 trên --background) mà vẫn sáng hơn n-500. */
   --n-500: #7d6b6f; /* ngưỡng thấp nhất còn đọc được (4,69:1) */
   --n-700: #4a3c40;
   --n-900: #241d20;
@@ -66,9 +68,12 @@
   --muted-foreground:       var(--n-500);
   --accent:                 var(--rose-100);
   --accent-foreground:      var(--rose-700);
-  /* `--border` là ranh giới TRANG TRÍ (viền thẻ, đường phân cách). WCAG không đòi
-     3:1 cho thứ không mang thông tin, nên n-200 ở lại. */
-  --border:                 var(--n-200);
+  /* `--border` là ranh giới TRANG TRÍ (viền thẻ, đường phân cách). Nhưng nút
+     outline đọc trực tiếp token này (`border-border`), và base layer
+     `* { border-color: var(--border) }` cũng chảy vào viền control trong build
+     thật — QA đo #e8dedf chỉ ~1,33:1 trên nền app. F15 ad-review 2026-08-06:
+     nâng token lên ≥ 3:1 (n-450 = 3,11:1 trên --background), giữ light-only. */
+  --border:                 var(--n-450);
   /* `--input` là viền của CONTROL — checkbox, input, select, textarea, nút outline.
      Với checkbox chưa tick thì cái viền LÀ toàn bộ hình hài của control, nên nó rơi
      đúng vào non-text contrast 3:1 (WCAG 1.4.11). n-200 chỉ đạt 1,32:1 trên nền thẻ
@@ -167,11 +172,20 @@
   }
 }
 
+html {
+  min-height: 100vh;
+  background: var(--n-100);
+}
+
+body,
+#root {
+  min-height: 100vh;
+  background: var(--n-100);
+}
+
 body {
   min-width: 320px;
-  min-height: 100vh;
   margin: 0;
-  background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;

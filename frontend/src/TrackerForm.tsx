@@ -26,6 +26,9 @@ export type TrackerWritePayload = {
   group_id: string | null
   unit: string | null
   is_private: boolean
+  reminder_time?: string | null
+  reminder_text?: string | null
+  ensure_push?: boolean
 }
 
 export function TrackerForm({
@@ -50,14 +53,27 @@ export function TrackerForm({
   const [groupId, setGroupId] = useState<string>(initial?.group_id ?? '')
   const [unit, setUnit] = useState(initial?.unit ?? '')
   const [isPrivate, setIsPrivate] = useState(initial?.is_private ?? false)
+  const [reminderEnabled, setReminderEnabled] = useState(Boolean(initial?.reminder_time))
+  const [reminderTime, setReminderTime] = useState(initial?.reminder_time ?? '08:00')
+  const [reminderText, setReminderText] = useState(initial?.reminder_text ?? '')
 
   const kindGroups = groups.filter((group) => group.kind === kind)
   const needsUnit = inputMode === 'quantity'
+  const canConfigureReminder = kind === 'health' && inputMode === 'event'
   const canSubmit = name.trim().length > 0 && (!needsUnit || unit.trim().length > 0) && !pending
 
   function submit(event: FormEvent) {
     event.preventDefault()
     if (!canSubmit) return
+    const reminderPayload = canConfigureReminder
+      ? {
+          reminder_time: reminderEnabled ? reminderTime : null,
+          reminder_text: reminderEnabled ? reminderText.trim() || null : null,
+          // A tracker reminder can be edited from a device that has never
+          // subscribed. Device state belongs to PushManager, not this tracker.
+          ensure_push: reminderEnabled,
+        }
+      : {}
     onSubmit({
       name: name.trim(),
       kind,
@@ -66,6 +82,7 @@ export function TrackerForm({
       group_id: groupId || null,
       unit: needsUnit ? unit.trim() : null,
       is_private: isPrivate,
+      ...reminderPayload,
     })
   }
 
@@ -74,6 +91,7 @@ export function TrackerForm({
       <label className="block space-y-1.5 text-sm font-semibold">
         <span>Tên tracker</span>
         <Input
+          data-testid="tracker-name-input"
           className="h-10 bg-card"
           value={name}
           maxLength={150}
@@ -137,6 +155,45 @@ export function TrackerForm({
             onChange={(event) => setUnit(event.target.value)}
           />
         </label>
+      ) : null}
+
+      {canConfigureReminder ? (
+        <fieldset className="space-y-3 rounded-lg border border-input p-3">
+          <legend className="px-1 text-sm font-semibold">Nhắc uống thuốc</legend>
+          <label className="flex min-h-11 items-center gap-3 text-sm font-semibold">
+            <Checkbox
+              className="size-5 rounded-md"
+              data-testid="tracker-reminder-enabled"
+              checked={reminderEnabled}
+              onCheckedChange={(checked) => setReminderEnabled(checked === true)}
+            />
+            <span>Bật nhắc nhở</span>
+          </label>
+          {reminderEnabled ? (
+            <>
+              <label className="block space-y-1.5 text-sm font-semibold">
+                <span>Giờ nhắc</span>
+                <Input
+                  className="h-10 bg-card"
+                  data-testid="tracker-reminder-time"
+                  type="time"
+                  value={reminderTime}
+                  onChange={(event) => setReminderTime(event.target.value)}
+                />
+              </label>
+              <label className="block space-y-1.5 text-sm font-semibold">
+                <span>Nội dung hiện trên màn hình khoá (không bắt buộc)</span>
+                <Input
+                  className="h-10 bg-card"
+                  data-testid="tracker-reminder-text"
+                  value={reminderText}
+                  maxLength={240}
+                  onChange={(event) => setReminderText(event.target.value)}
+                />
+              </label>
+            </>
+          ) : null}
+        </fieldset>
       ) : null}
 
       <label className="block space-y-1.5 text-sm font-semibold">

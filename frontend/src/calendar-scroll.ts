@@ -11,6 +11,12 @@ import {
   VIETNAM_TIME_ZONE,
   type CalendarEvent,
 } from '@/calendar-ui'
+import {
+  compareTaskScheduleKey,
+  isTaskScheduleOverdue,
+  scheduleDay,
+  type TaskDuePrecision,
+} from '@/task-ui'
 
 export type YearMonth = { year: number; month: number }
 
@@ -38,6 +44,8 @@ export type CalendarTask = {
   body_md: string | null
   status: 'open' | 'completed'
   priority: 'p1' | 'p2' | 'p3' | null
+  due_precision: TaskDuePrecision
+  due_on: string | null
   due_at: string | null
   is_private: boolean
   pinned: boolean
@@ -55,8 +63,11 @@ export type TaskSummary = {
   id: string
   title: string
   status: 'open' | 'completed'
+  due_precision: TaskDuePrecision
+  due_on: string | null
   due_at: string | null
   created_at: string | null
+  pinned?: boolean
 }
 
 export type DayChip =
@@ -66,7 +77,7 @@ export type DayChip =
 export const WEEKDAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 
 export const CHIP_LIMIT_MOBILE = 2
-export const CHIP_LIMIT_DESKTOP = 3
+export const CHIP_LIMIT_DESKTOP = 4
 
 export function pad2(value: number): string {
   return String(value).padStart(2, '0')
@@ -183,10 +194,6 @@ export function formatFullVietnameseDate(day: string): string {
   }).format(new Date(`${day}T12:00:00+07:00`))
 }
 
-export function endOfDayVietnam(day: string): string {
-  return `${day}T23:59:00+07:00`
-}
-
 export function dedupeById<T extends { id: string }>(items: T[]): T[] {
   const seen = new Set<string>()
   const result: T[] = []
@@ -221,8 +228,8 @@ export function sourceTone(color: string | null): { background: string; color: s
   }
 }
 
-export function isTaskOverdue(dueAt: string | null, now: number): boolean {
-  return dueAt !== null && Date.parse(dueAt) < now
+export function isTaskOverdue(task: TaskSummary, now: number): boolean {
+  return isTaskScheduleOverdue(task, new Date(now))
 }
 
 /**
@@ -236,12 +243,12 @@ export function sortOpenTasksForMove<T extends TaskSummary>(
   return [...tasks]
     .filter((task) => task.status === 'open')
     .sort((left, right) => {
-      const leftOverdue = isTaskOverdue(left.due_at, now) ? 0 : 1
-      const rightOverdue = isTaskOverdue(right.due_at, now) ? 0 : 1
+      const leftOverdue = isTaskOverdue(left, now) ? 0 : 1
+      const rightOverdue = isTaskOverdue(right, now) ? 0 : 1
       if (leftOverdue !== rightOverdue) return leftOverdue - rightOverdue
-      return (
-        Date.parse(left.due_at ?? '') - Date.parse(right.due_at ?? '') ||
-        (left.created_at ?? left.id).localeCompare(right.created_at ?? right.id)
+      return compareTaskScheduleKey(
+        { ...left, pinned: left.pinned ?? false },
+        { ...right, pinned: right.pinned ?? false },
       )
     })
 }
@@ -310,8 +317,8 @@ export function annotationsByDay(
 export function tasksByDueDay<T extends TaskSummary>(tasks: T[]): Map<string, T[]> {
   const groups = new Map<string, T[]>()
   for (const task of dedupeById(tasks)) {
-    if (!task.due_at) continue
-    const day = vnDayKey(task.due_at)
+    const day = scheduleDay(task)
+    if (!day) continue
     const current = groups.get(day) ?? []
     current.push(task)
     groups.set(day, current)
@@ -320,8 +327,10 @@ export function tasksByDueDay<T extends TaskSummary>(tasks: T[]): Map<string, T[
     groups.set(
       day,
       [...dayTasks].sort((left, right) =>
-        Date.parse(left.due_at ?? '') - Date.parse(right.due_at ?? '') ||
-        (left.created_at ?? left.id).localeCompare(right.created_at ?? right.id),
+        compareTaskScheduleKey(
+          { ...left, pinned: left.pinned ?? false },
+          { ...right, pinned: right.pinned ?? false },
+        ),
       ),
     )
   }

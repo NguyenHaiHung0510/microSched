@@ -6,7 +6,6 @@ import {
   annotationDays,
   annotationsByDay,
   dedupeById,
-  endOfDayVietnam,
   eventsByDay,
   formatFullVietnameseDate,
   lastDayOfMonth,
@@ -39,7 +38,15 @@ function event(
 }
 
 function task(id: string, due_at: string | null) {
-  return { id, title: id, status: 'open' as const, due_at, created_at: null }
+  return {
+    id,
+    title: id,
+    status: 'open' as const,
+    due_precision: due_at === null ? 'none' as const : 'datetime' as const,
+    due_on: null,
+    due_at,
+    created_at: null,
+  }
 }
 
 function annotation(id: string, starts_on: string, ends_on: string) {
@@ -186,10 +193,6 @@ test('ⓗ a day with one task renders one task chip and no +N line', () => {
   assert.equal(result.chips.length, 1)
   assert.equal(result.chips[0].kind, 'task')
   assert.equal(result.overflow, 0)
-})
-
-test('endOfDayVietnam pins the deadline to 23:59+07:00', () => {
-  assert.equal(endOfDayVietnam('2026-08-15'), '2026-08-15T23:59:00+07:00')
 })
 
 test('the full Vietnamese date for 15/08/2026 is Thứ Bảy (spec §5.5 example)', () => {

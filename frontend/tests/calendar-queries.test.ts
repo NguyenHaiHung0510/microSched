@@ -5,11 +5,10 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { CALENDAR_QUERY_SPECS } from '../src/calendar-queries'
 
 /**
- * 010b §2 mục 8 (CRITICAL) / §7.3: the app-wide QueryClient in main.tsx polls
- * every visible query each second. Every 010b query must carry an explicit
- * `refetchInterval: false` — the grid mounts 13 month queries plus annotations,
- * tasks and sources, so a dropped flag would become tens of requests per second
- * on Fly/Neon. This is the regression net that catches the flag going missing.
+ * 010b §2 mục 8 (CRITICAL) / 021: polling is opt-in app-wide, and every Calendar
+ * query still carries an explicit `refetchInterval: false`. The grid mounts 13
+ * month queries plus annotations, tasks and sources, then grows while scrolling;
+ * this regression net keeps that fanout outside every interval policy.
  */
 test('every 010b query spec explicitly opts out of the live polling default', () => {
   assert.ok(CALENDAR_QUERY_SPECS.length >= 5)
@@ -18,13 +17,13 @@ test('every 010b query spec explicitly opts out of the live polling default', ()
   }
 })
 
-test('advancing 3s with the app-wide polling default refetches nothing', async () => {
+test('calendar specs override even a caller that supplies a polling default', async () => {
   vi.useFakeTimers()
   try {
     const client = new QueryClient({
       defaultOptions: {
         queries: {
-          // Mirror main.tsx: a healthy query polls every second.
+          // A hostile/caller-supplied default must not override Calendar.
           refetchInterval: (query) => (query.state.status === 'error' ? false : 1000),
         },
       },

@@ -36,6 +36,8 @@ export type Tracker = {
   group_id: string | null
   unit: string | null
   color: string | null
+  reminder_time: string | null
+  reminder_text: string | null
   is_private: boolean
   last_entry_at: string | null
   entry_count_30d: number
@@ -55,6 +57,21 @@ export type Entry = {
   updated_at: string | null
 }
 
+export type DashboardF6 = {
+  monthly_burn: number
+  subscription_count: number
+  upcoming: Array<{
+    subscription_id: string
+    name: string
+    amount: number | null
+    monthly_amount: number | null
+    expires_on: string
+    days_left: number
+    corrupted: boolean
+  }>
+  corrupted_subscription_count: number
+}
+
 export type DashboardResponse = {
   period_start: string
   period_end: string
@@ -71,6 +88,7 @@ export type DashboardResponse = {
   a2_gap: Array<{ tracker_id: string; current_days: number | null; avg_days: number | null; enough: boolean }>
   a3_counts: { week: number; month: number; year: number }
   a4_trend: { current_month: number; prev_avg: number; trend: 'up' | 'down' | 'flat' }
+  f6: DashboardF6
 }
 
 export const trackerInvalidationKey = ['tracker'] as const
@@ -89,6 +107,74 @@ export function sortTrackersForGrid(trackers: Tracker[]): Tracker[] {
     const rightAt = right.last_entry_at ? Date.parse(right.last_entry_at) : 0
     if (leftAt !== rightAt) return rightAt - leftAt
     return left.name.localeCompare(right.name, 'vi')
+  })
+}
+
+export type GroupedTrackersResult = {
+  grouped: Array<{ group: TrackerGroup; trackers: Tracker[] }>
+  unassigned: Tracker[]
+}
+
+/** Group trackers by their assigned group, preserving group positions and sorting unassigned. */
+export function groupTrackersByGroup(
+  trackers: Tracker[],
+  groups: TrackerGroup[],
+): GroupedTrackersResult {
+  const groupMap = new Map<string, Tracker[]>()
+  const unassigned: Tracker[] = []
+
+  for (const group of groups) {
+    groupMap.set(group.id, [])
+  }
+
+  for (const tracker of trackers) {
+    if (tracker.group_id && groupMap.has(tracker.group_id)) {
+      const list = groupMap.get(tracker.group_id)
+      if (list) list.push(tracker)
+    } else {
+      unassigned.push(tracker)
+    }
+  }
+
+  const grouped = groups.map((group) => ({
+    group,
+    trackers: groupMap.get(group.id) ?? [],
+  }))
+
+  return { grouped, unassigned }
+}
+
+export type HourReminderGroup = {
+  time: string
+  trackers: Tracker[]
+  previewText: string
+}
+
+/** Cluster health trackers with configured reminder_time by hour for aggregated notifications. */
+export function groupRemindersByHour(trackers: Tracker[]): HourReminderGroup[] {
+  const timeMap = new Map<string, Tracker[]>()
+  for (const tracker of trackers) {
+    if (tracker.reminder_time) {
+      const current = timeMap.get(tracker.reminder_time) ?? []
+      current.push(tracker)
+      timeMap.set(tracker.reminder_time, current)
+    }
+  }
+
+  const times = [...timeMap.keys()].sort()
+  return times.map((time) => {
+    const items = timeMap.get(time) ?? []
+    const names = items.map((item) => item.name).join(', ')
+    const customTexts = items
+      .map((item) => item.reminder_text)
+      .filter((t): t is string => Boolean(t && t.trim()))
+    const previewText =
+      customTexts.length > 0 ? customTexts.join(' · ') : 'Nhắc uống: ' + names
+    return {
+      time,
+      trackers: items,
+      previewText,
+    }
   })
 }
 
@@ -277,6 +363,8 @@ export function useTrackerWrites(refresh: () => void) {
       input_mode?: TrackerInputMode
       group_id?: string | null
       unit?: string | null
+      reminder_time?: string | null
+      reminder_text?: string | null
       is_private?: boolean
     }) =>
       apiRequest<Tracker>('/api/tracker/trackers', {
@@ -291,7 +379,20 @@ export function useTrackerWrites(refresh: () => void) {
       payload,
     }: {
       trackerId: string
-      payload: Partial<Pick<Tracker, 'name' | 'kind' | 'direction' | 'input_mode' | 'group_id' | 'unit' | 'is_private'>>
+      payload: Partial<
+        Pick<
+          Tracker,
+          | 'name'
+          | 'kind'
+          | 'direction'
+          | 'input_mode'
+          | 'group_id'
+          | 'unit'
+          | 'is_private'
+          | 'reminder_time'
+          | 'reminder_text'
+        >
+      >
     }) =>
       apiRequest<Tracker>(`/api/tracker/trackers/${trackerId}`, {
         method: 'PATCH',

@@ -2,16 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Archive,
+  Bell,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock,
+  Folder,
+  Layers,
   Pencil,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
+import { navigate } from '@/lib/route'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -28,12 +36,22 @@ import { DashboardPanel } from '@/DashboardPanel'
 import { EntryEditDialog, type EntryEditPayload } from '@/EntryEditDialog'
 import { GroupForm } from '@/GroupForm'
 import { TrackerForm, type TrackerWritePayload } from '@/TrackerForm'
+import {
+  subscriptionQueryKey,
+  type SettingsItem,
+  type Subscription,
+} from '@/subscription-ui'
 import { errorMessage } from '@/tracker-undo'
+import { ensurePushSubscription } from '@/push-subscription'
+import { standardRefetchInterval } from '@/query-polling'
 import {
   backdateOptions,
   capturePayload,
   currentVietnamMonth,
   formatQuantity,
+  formatVnd,
+  groupRemindersByHour,
+  groupTrackersByGroup,
   sortTrackersForGrid,
   trackerInvalidationKey,
   trackerQueryKey,
@@ -45,6 +63,8 @@ import {
 } from '@/tracker-ui'
 
 const UNLOCK_MS = 1500
+const EMPTY_TRACKERS: Tracker[] = []
+const EMPTY_GROUPS: TrackerGroup[] = []
 
 type BackdateChoice = 'yesterday' | '2h' | 'custom'
 
@@ -71,22 +91,36 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const groupsQuery = useQuery({
     queryKey: trackerQueryKey('groups'),
     queryFn: () => apiRequest<{ items: TrackerGroup[] }>('/api/tracker/groups'),
+    refetchInterval: standardRefetchInterval,
   })
   const trackersQuery = useQuery({
     queryKey: trackerQueryKey('trackers'),
     queryFn: () => apiRequest<{ items: Tracker[] }>('/api/tracker/trackers'),
+    refetchInterval: standardRefetchInterval,
   })
   const dashboardQuery = useQuery({
     queryKey: [...trackerQueryKey('dashboard'), month],
     queryFn: () => apiRequest<DashboardResponse>(`/api/tracker/dashboard?month=${month}`),
+    refetchInterval: standardRefetchInterval,
   })
   const entriesQuery = useQuery({
     queryKey: trackerQueryKey('entries'),
     queryFn: () => apiRequest<{ items: Entry[] }>('/api/tracker/entries?limit=20'),
+    refetchInterval: standardRefetchInterval,
+  })
+  const subscriptionsQuery = useQuery({
+    queryKey: subscriptionQueryKey('subscriptions'),
+    queryFn: () => apiRequest<{ items: Subscription[] }>('/api/subscriptions'),
+    refetchInterval: standardRefetchInterval,
+  })
+  const settingsQuery = useQuery({
+    queryKey: subscriptionQueryKey('settings'),
+    queryFn: () => apiRequest<{ items: SettingsItem[] }>('/api/settings'),
+    refetchInterval: standardRefetchInterval,
   })
 
-  const trackers = trackersQuery.data?.items ?? []
-  const groups = groupsQuery.data?.items ?? []
+  const trackers = trackersQuery.data?.items ?? EMPTY_TRACKERS
+  const groups = groupsQuery.data?.items ?? EMPTY_GROUPS
 
   // C1: the private gate lives in PrivateGate (shared with other screens); the
   // tracker query family is this screen's own cache, so IT must react to the
@@ -133,6 +167,9 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [lockedIds, setLockedIds] = useState<ReadonlySet<string>>(new Set())
   const [capturingIds, setCapturingIds] = useState<ReadonlySet<string>>(new Set())
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(new Set())
+  const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
+  const createReturnRef = useRef<HTMLButtonElement | null>(null)
   const unlockTimers = useRef<Map<string, number>>(new Map())
 
   useEffect(() => {
@@ -224,13 +261,24 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   function submitTracker(payload: TrackerWritePayload) {
     if (editingTracker) {
-      writes.updateTracker.mutate(
-        { trackerId: editingTracker.id, payload },
-        {
-          onSuccess: () => setEditingTracker(null),
-          onError: (error) => toast.error(errorMessage(error)),
-        },
-      )
+      const { ensure_push: ensurePush, ...trackerPayload } = payload
+      const saveTracker = () =>
+        writes.updateTracker.mutate(
+          { trackerId: editingTracker.id, payload: trackerPayload },
+          {
+            onSuccess: () => setEditingTracker(null),
+            onError: (error) => toast.error(errorMessage(error)),
+          },
+        )
+      if (ensurePush) {
+        void ensurePushSubscription()
+          .then(saveTracker)
+          .catch((error: unknown) =>
+            toast.error(error instanceof Error ? error.message : errorMessage(error)),
+          )
+      } else {
+        saveTracker()
+      }
       return
     }
     writes.createTracker.mutate(payload, {
@@ -298,12 +346,39 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   // Tracker/dashboard errors render inside their own panels (M3); this card
   // covers the remaining shared queries only.
-  const queryError = groupsQuery.error ?? entriesQuery.error
+  const queryError =
+    groupsQuery.error ??
+    entriesQuery.error ??
+    subscriptionsQuery.error ??
+    settingsQuery.error
+  const showListPrice =
+    settingsQuery.data?.items.find((item) => item.key === 'show_list_price')?.value !== false
   const pendingForm = writes.createTracker.isPending || writes.updateTracker.isPending
   const pendingGroup = writes.createGroup.isPending || writes.updateGroup.isPending
   const entryTracker = editingEntry
     ? trackers.find((tracker) => tracker.id === editingEntry?.tracker_id) ?? null
     : null
+
+  const groupedData = useMemo(
+    () => groupTrackersByGroup(trackers, groups),
+    [trackers, groups],
+  )
+  const reminderGroups = useMemo(
+    () => groupRemindersByHour(trackers),
+    [trackers],
+  )
+
+  function toggleGroupCollapse(groupId: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupId)) {
+        next.delete(groupId)
+      } else {
+        next.add(groupId)
+      }
+      return next
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -319,7 +394,13 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             <Plus data-icon="inline-start" />
             Nhóm mới
           </Button>
-          <Button size="lg" className="min-h-11" onClick={() => setCreateOpen(true)}>
+          <Button
+            ref={createReturnRef}
+            size="lg"
+            className="min-h-11"
+            data-testid="tracker-create"
+            onClick={() => setCreateOpen(true)}
+          >
             <Plus data-icon="inline-start" />
             Tracker mới
           </Button>
@@ -336,6 +417,75 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         </Card>
       ) : null}
 
+      {reminderGroups.length > 0 ? (
+        <Card className="gap-3 p-4 shadow-1 ring-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Bell className="size-4 text-primary" />
+              <h3 className="text-base font-bold">Lịch nhắc nhở trong ngày</h3>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {reminderGroups.length} khung giờ
+            </span>
+          </div>
+          <div className="space-y-2 pt-1">
+            {reminderGroups.map((group) => (
+              <div
+                key={group.time}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-muted/40 p-3 border border-border/60"
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary">
+                      {group.time}
+                    </span>
+                    <span className="text-sm font-semibold truncate">
+                      {group.previewText}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Mục: {group.trackers.map((t) => t.name).join(', ')}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {group.trackers.map((tracker) => (
+                    <Button
+                      key={tracker.id}
+                      size="xs"
+                      variant="outline"
+                      className="text-xs min-h-8"
+                      disabled={lockedIds.has(tracker.id)}
+                      onClick={() => capture(tracker)}
+                    >
+                      <CheckCircle2 className="size-3 text-ok mr-1" />
+                      Ghi {tracker.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      <Card className="gap-3 p-4 shadow-1 ring-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-base font-bold">Đăng ký định kỳ</h3>
+            <p className="text-sm text-muted-foreground">Theo dõi hạn và chi phí cố định.</p>
+          </div>
+          <Button
+            data-testid="subscription-entry"
+            size="lg"
+            variant="outline"
+            className="min-h-11"
+            onClick={() => navigate('/subscription')}
+          >
+            Đăng ký · {subscriptionsQuery.data?.items.length ?? 0} khoản
+          </Button>
+        </div>
+      </Card>
+
       <CaptureGrid
         trackers={frozenOrder}
         locked={lockedIds}
@@ -351,19 +501,253 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         }}
       />
 
-      <DashboardPanel
-        dashboard={dashboardQuery.data ?? null}
-        monthLabel={monthLabel(month)}
-        trackers={trackers}
-        loading={dashboardQuery.isPending}
-        error={dashboardQuery.error}
-        // TanStack v5 returns 0 (not null) while the query has never
-        // succeeded; fold that into null so the chip reads "never fresh"
-        // instead of a ~57-year-old elapsed time.
-        lastSuccessAt={dashboardQuery.dataUpdatedAt || null}
-        queryStatus={dashboardQuery.status}
-        onRetry={() => void refresh()}
-      />
+      <Card className="gap-4 p-4 shadow-1 ring-0">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Layers className="size-4 text-primary" />
+            <h3 className="text-base font-bold">Quản lý nhóm & Tracker</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="min-h-10 text-xs"
+              onClick={() => {
+                if (collapsedGroups.size > 0 || unassignedCollapsed) {
+                  setCollapsedGroups(new Set())
+                  setUnassignedCollapsed(false)
+                } else {
+                  setCollapsedGroups(new Set(groups.map((g) => g.id)))
+                  setUnassignedCollapsed(true)
+                }
+              }}
+            >
+              {collapsedGroups.size > 0 || unassignedCollapsed ? 'Mở rộng tất cả' : 'Thu gọn tất cả'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="min-h-10"
+              aria-label="Thêm nhóm"
+              onClick={() => setGroupOpen(true)}
+            >
+              <Plus data-icon="inline-start" />
+              Thêm nhóm
+            </Button>
+          </div>
+        </div>
+
+        {groups.length === 0 && trackers.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Chưa có nhóm hoặc tracker nào.</p>
+        ) : (
+          <div className="space-y-3">
+            {groupedData.grouped.map(({ group, trackers: groupTrackers }) => {
+              const isCollapsed = collapsedGroups.has(group.id)
+              return (
+                <div
+                  key={group.id}
+                  className="rounded-lg border border-border/80 bg-card p-3 shadow-sm transition-all"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold cursor-pointer select-none"
+                      onClick={() => toggleGroupCollapse(group.id)}
+                    >
+                      <Folder className="size-4 text-primary shrink-0" />
+                      <span className="break-words text-sm font-bold text-foreground">
+                        {group.name}
+                      </span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                        {group.kind === 'health' ? 'Sức khoẻ' : 'Tài chính'} · {groupTrackers.length} tracker
+                      </span>
+                      {isCollapsed ? (
+                        <ChevronDown className="size-4 text-muted-foreground ml-auto" />
+                      ) : (
+                        <ChevronUp className="size-4 text-muted-foreground ml-auto" />
+                      )}
+                    </button>
+
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon-lg"
+                        className="size-9"
+                        aria-label={`Sửa nhóm ${group.name}`}
+                        onClick={() => setEditingGroup(group)}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-lg"
+                        className="size-9"
+                        aria-label={`Xoá nhóm ${group.name}`}
+                        onClick={() => setDeletingGroup(group)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!isCollapsed ? (
+                    <div className="mt-3 space-y-2 border-t border-border/50 pt-2">
+                      {groupTrackers.length > 0 ? (
+                        groupTrackers.map((tracker) => (
+                          <div
+                            key={tracker.id}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-2.5"
+                          >
+                            <div className="min-w-0">
+                              <p className="max-w-full break-words text-sm font-semibold">
+                                {tracker.name}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {tracker.input_mode === 'event'
+                                  ? 'Một chạm'
+                                  : tracker.input_mode === 'money'
+                                    ? 'Số tiền'
+                                    : `Số lượng (${tracker.unit ?? 'đơn vị'})`}
+                                {tracker.reminder_time ? ` · Nhắc ${tracker.reminder_time}` : ''}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <label className="flex items-center gap-1.5 text-xs font-semibold">
+                                <Checkbox
+                                  data-testid="tracker-private-toggle"
+                                  data-tracker-id={tracker.id}
+                                  className="size-4 rounded-[4px]"
+                                  checked={tracker.is_private}
+                                  disabled={!tracker.is_private && !privateUnlocked}
+                                  onCheckedChange={(checked) =>
+                                    writes.updateTracker.mutate(
+                                      { trackerId: tracker.id, payload: { is_private: checked === true } },
+                                      { onError: (error) => toast.error(errorMessage(error)) },
+                                    )
+                                  }
+                                />
+                                Riêng tư
+                              </label>
+                              <Button
+                                variant="ghost"
+                                size="icon-lg"
+                                className="size-9"
+                                aria-label={`Sửa ${tracker.name}`}
+                                onClick={() => setEditingTracker(tracker)}
+                              >
+                                <Pencil className="size-3.5" />
+                              </Button>
+                              <Button
+                                data-testid="tracker-archive"
+                                data-tracker-id={tracker.id}
+                                variant="ghost"
+                                size="icon-lg"
+                                className="size-9"
+                                aria-label={`Lưu trữ ${tracker.name}`}
+                                onClick={() => setArchiveFor(tracker)}
+                              >
+                                <Archive className="size-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-xs text-muted-foreground py-1">Chưa có tracker nào trong nhóm này.</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+
+            {groupedData.unassigned.length > 0 ? (
+              <div className="rounded-lg border border-border/80 bg-card p-3 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold cursor-pointer select-none"
+                    onClick={() => setUnassignedCollapsed(!unassignedCollapsed)}
+                  >
+                    <Sparkles className="size-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm font-bold">Tracker chưa phân nhóm</span>
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                      {groupedData.unassigned.length} tracker
+                    </span>
+                    {unassignedCollapsed ? (
+                      <ChevronDown className="size-4 text-muted-foreground ml-auto" />
+                    ) : (
+                      <ChevronUp className="size-4 text-muted-foreground ml-auto" />
+                    )}
+                  </button>
+                </div>
+
+                {!unassignedCollapsed ? (
+                  <div className="mt-3 space-y-2 border-t border-border/50 pt-2">
+                    {groupedData.unassigned.map((tracker) => (
+                      <div
+                        key={tracker.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="max-w-full break-words text-sm font-semibold">
+                            {tracker.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {tracker.input_mode === 'event'
+                              ? 'Một chạm'
+                              : tracker.input_mode === 'money'
+                                ? 'Số tiền'
+                                : `Số lượng (${tracker.unit ?? 'đơn vị'})`}
+                            {tracker.reminder_time ? ` · Nhắc ${tracker.reminder_time}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="flex items-center gap-1.5 text-xs font-semibold">
+                            <Checkbox
+                              data-testid="tracker-private-toggle"
+                              data-tracker-id={tracker.id}
+                              className="size-4 rounded-[4px]"
+                              checked={tracker.is_private}
+                              disabled={!tracker.is_private && !privateUnlocked}
+                              onCheckedChange={(checked) =>
+                                writes.updateTracker.mutate(
+                                  { trackerId: tracker.id, payload: { is_private: checked === true } },
+                                  { onError: (error) => toast.error(errorMessage(error)) },
+                                )
+                              }
+                            />
+                            Riêng tư
+                          </label>
+                          <Button
+                            variant="ghost"
+                            size="icon-lg"
+                            className="size-9"
+                            aria-label={`Sửa ${tracker.name}`}
+                            onClick={() => setEditingTracker(tracker)}
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
+                          <Button
+                            data-testid="tracker-archive"
+                            data-tracker-id={tracker.id}
+                            variant="ghost"
+                            size="icon-lg"
+                            className="size-9"
+                            aria-label={`Lưu trữ ${tracker.name}`}
+                            onClick={() => setArchiveFor(tracker)}
+                          >
+                            <Archive className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </Card>
 
       <Card className="gap-3 p-4 shadow-1 ring-0">
         <div className="flex items-baseline justify-between gap-3">
@@ -399,6 +783,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold tabular-nums">
+                      {showListPrice &&
+                      entry.list_amount != null &&
+                      entry.amount != null &&
+                      entry.list_amount !== entry.amount ? (
+                        <span className="mr-2 text-xs font-normal text-muted-foreground line-through">
+                          {formatVnd(entry.list_amount)}
+                        </span>
+                      ) : null}
                       {formatEntryLine(entry)}
                     </span>
                     <Button
@@ -433,132 +825,30 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         )}
       </Card>
 
-      <Card className="gap-3 p-4 shadow-1 ring-0">
-        <h3 className="text-base font-bold">Quản lý tracker</h3>
-        {trackers.length ? (
-          <div className="space-y-2">
-            {trackers.map((tracker) => (
-              <div
-                key={tracker.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/50 p-3"
-              >
-                <div className="min-w-0">
-                  <p className="max-w-full break-words text-sm font-semibold">{tracker.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {tracker.input_mode === 'event'
-                      ? 'Một chạm'
-                      : tracker.input_mode === 'money'
-                        ? 'Số tiền'
-                        : `Số lượng (${tracker.unit ?? 'đơn vị'})`}
-                    {tracker.group_id
-                      ? ` · ${groups.find((group) => group.id === tracker.group_id)?.name ?? ''}`
-                      : ''}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-1.5 text-xs font-semibold">
-                    <Checkbox
-                      data-testid="tracker-private-toggle"
-                      data-tracker-id={tracker.id}
-                      className="size-4 rounded-[4px]"
-                      checked={tracker.is_private}
-                      disabled={!tracker.is_private && !privateUnlocked}
-                      onCheckedChange={(checked) =>
-                        writes.updateTracker.mutate(
-                          { trackerId: tracker.id, payload: { is_private: checked === true } },
-                          { onError: (error) => toast.error(errorMessage(error)) },
-                        )
-                      }
-                    />
-                    Riêng tư
-                  </label>
-                  <Button
-                    variant="ghost"
-                    size="icon-lg"
-                    className="size-11"
-                    aria-label={`Sửa ${tracker.name}`}
-                    onClick={() => setEditingTracker(tracker)}
-                  >
-                    <Pencil />
-                  </Button>
-                  <Button
-                    data-testid="tracker-archive"
-                    data-tracker-id={tracker.id}
-                    variant="ghost"
-                    size="icon-lg"
-                    className="size-11"
-                    aria-label={`Lưu trữ ${tracker.name}`}
-                    onClick={() => setArchiveFor(tracker)}
-                  >
-                    <Archive />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Chưa có tracker nào.</p>
-        )}
-      </Card>
-
-      <Card className="gap-3 p-4 shadow-1 ring-0">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-base font-bold">Quản lý nhóm</h3>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="min-h-11"
-            aria-label="Thêm nhóm"
-            onClick={() => setGroupOpen(true)}
-          >
-            <Plus data-icon="inline-start" />
-            Thêm
-          </Button>
-        </div>
-        {groups.length ? (
-          <div className="space-y-2">
-            {groups.map((group) => (
-              <div
-                key={group.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/50 p-3"
-              >
-                <div className="min-w-0">
-                  <p className="max-w-full break-words text-sm font-semibold">{group.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {group.kind === 'health' ? 'Sức khoẻ' : 'Tài chính'} · {group.tracker_count}{' '}
-                    tracker
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="icon-lg"
-                    className="size-11"
-                    aria-label={`Sửa nhóm ${group.name}`}
-                    onClick={() => setEditingGroup(group)}
-                  >
-                    <Pencil />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-lg"
-                    className="size-11"
-                    aria-label={`Xoá nhóm ${group.name}`}
-                    onClick={() => setDeletingGroup(group)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Chưa có nhóm nào.</p>
-        )}
-      </Card>
+      <DashboardPanel
+        dashboard={dashboardQuery.data ?? null}
+        monthLabel={monthLabel(month)}
+        trackers={trackers}
+        loading={dashboardQuery.isPending}
+        error={dashboardQuery.error}
+        // TanStack v5 returns 0 (not null) while the query has never
+        // succeeded; fold that into null so the chip reads "never fresh"
+        // instead of a ~57-year-old elapsed time.
+        lastSuccessAt={dashboardQuery.dataUpdatedAt || null}
+        queryStatus={dashboardQuery.status}
+        onRetry={() => void refresh()}
+      />
 
       <Dialog open={createOpen} onOpenChange={(open) => !open && setCreateOpen(false)}>
-        <DialogContent data-testid="tracker-dialog">
+        <DialogContent
+          data-testid="tracker-dialog"
+          onCloseAutoFocus={(event) => {
+            const opener = createReturnRef.current
+            if (!opener?.isConnected) return
+            event.preventDefault()
+            opener.focus()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Tracker mới</DialogTitle>
             <DialogDescription>Tạo một nút ghi một chạm mới.</DialogDescription>

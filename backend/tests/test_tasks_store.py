@@ -426,8 +426,8 @@ def test_soft_delete_leaves_the_row_with_a_timestamp(pg_dsn):
     asyncio.run(scenario())
 
 
-def test_pinned_tasks_sort_first_in_all_and_status_filtered_lists(pg_dsn):
-    """Pinned ordering wins over due date, including inside an active status filter."""
+def test_schedule_day_precedes_pin_in_all_and_status_filtered_lists(pg_dsn):
+    """A later pinned task cannot leap over an earlier task's date group."""
 
     async def scenario():
         tasks = _tasks()
@@ -463,12 +463,12 @@ def test_pinned_tasks_sort_first_in_all_and_status_filtered_lists(pg_dsn):
                 all_tasks = await store.list(db, auth, status="all")
                 open_tasks = await store.list(db, auth, status="open")
                 assert [task.id for task in all_tasks if task.id in {pinned_id, unpinned_id}] == [
-                    pinned_id,
                     unpinned_id,
+                    pinned_id,
                 ]
                 assert [task.id for task in open_tasks if task.id in {pinned_id, unpinned_id}] == [
-                    pinned_id,
                     unpinned_id,
+                    pinned_id,
                 ]
         finally:
             await _cleanup(pg_dsn, unpinned_id, pinned_id)

@@ -1,13 +1,13 @@
-# AGENTS.md — hướng dẫn cho executor ngoài hệ Claude (Codex, OpenCode, …)
+# AGENTS.md — hướng dẫn cho executor
 
-Đọc **`CLAUDE.md`** trước tiên — đó là tài liệu trạng thái dự án, quyết định đã khóa, hard boundaries, và quy ước làm việc của repo này. Mọi điều trong đó áp dụng cho bạn khi thi công trong Codex Desktop hay các harness ngoài hệ Claude.
+Đọc **`CLAUDE.md`** trước tiên — đó là tài liệu chỉ dẫn dự án, quyết định đã khóa, hard boundaries, và quy ước làm việc của repo này. Mọi điều trong đó áp dụng cho mọi executor.
 
 Nếu `CLAUDE.md` **tự mâu thuẫn** giữa phần current state và một dated update, hoặc mâu thuẫn với cây code đang thấy trên đĩa ⇒ **dừng và nêu đủ hai phía**; không tự chọn phần "có vẻ mới hơn". *(Đã xảy ra thật: đoạn đầu ghi "pre-code, no application code" trong khi cuối cùng đoạn đó ghi "003–007 all DONE" — sống 2 ngày, `harness-audit/02` mới bắt được.)*
 
 Thêm cho agent thi công (vai T2 theo `docs/devops-brief.md` §7):
 
 - Việc được giao nằm ở `agent-tasks/NNN-<slug>.md` — spec tự-chứa. Làm **đúng spec, không hơn**; mục "KHÔNG được làm" quan trọng ngang mục "Phải làm".
-- Code trên branch **`feat/NNN-<slug>`** → PR nhỏ vào `develop`. Không commit thẳng `develop` (docs mới được phép), không đụng `main`.
+- **Mọi thay đổi, kể cả docs**, đều làm trên branch riêng → PR nhỏ vào `develop`. Code task dùng branch **`feat/NNN-<slug>`**; không commit thẳng `develop`, không đụng `main`.
 - `docs/*.md` là decision record **đã chốt** — chỉ sửa đúng mục spec giao. Muốn làm khác điều đã ✅ CHỐT, hoặc thấy 2 brief mâu thuẫn → **dừng, ghi nhận, để chính chủ/T1 quyết** — đừng tự phát minh kiến trúc.
 - **Đụng vào UI thì đọc `docs/ui-brief.md` TRƯỚC KHI viết dòng đầu tiên** — §6 là luật cứng, không phải gợi ý: không viết `<button>`/`<input>`/`<select>` thô (dùng `@/components/ui/*`, thiếu thì thêm component chứ đừng vá tại chỗ); không hardcode màu (mọi màu qua token trong `index.css`); không đặt chiều cao cứng cho thẻ; chữ không nhỏ hơn 12px; không có tương tác nào chỉ sống bằng `hover` (thiết bị chính của chủ là iPhone); light mode, đừng tự thêm dark. *Lý do (đo thật ở 008): executor bắt chước code đang có — nó tự dùng `Button` của shadcn vì `App.tsx` đã dùng, không vì ai bảo. Nhưng **bắt chước không phải luật**: cùng lúc đó nó vẫn để lại 2 thẻ `<button>` thô trong `TaskForm.tsx`. Muốn ràng buộc UI thì phải viết thành luật ở đây — skill của T1 không băng qua được sang harness khác, chỉ văn bản trong repo mới tới nơi.*
 - Không bao giờ hỏi hay echo secret thật; code bằng `.env.example` (giá trị thật do chính chủ đặt tay). pre-commit + gitleaks đang hoạt động — đừng tìm cách vòng qua.
@@ -20,7 +20,7 @@ Thêm cho agent thi công (vai T2 theo `docs/devops-brief.md` §7):
 - **Guardrail/test an toàn mới phải chứng minh được là BIẾT ĐỎ.** Cố ý phá đúng hành vi nó canh → thấy đỏ đúng lý do → hoàn nguyên → thấy xanh. Chạy test ở trạng thái đúng rồi thấy xanh **không chứng minh test đang bảo vệ điều gì**.
 - **Lời khai không phải bằng chứng — biên lai mới là.** Câu "tôi đã làm xong" không đóng được task; thứ đóng task là **biên lai máy kiểm được**: số PR + `gh pr checks <PR>` xanh + diff đọc được. Lý do (đo thật, task 004 ngày 2026-07-20): agent khai sai về chính việc nó vừa làm — báo "chưa có dependency" trong khi lockfile 263KB đang nằm trên đĩa. Cùng họ với luật smoke test của 008b: **kiểm git SHA đã deploy, không kiểm `status: ok`** — một deploy hỏng nửa chừng để lại máy cũ phục vụ vui vẻ. Khi được điều phối bởi một agent khác thay vì bởi chính chủ, luật này là thứ duy nhất còn lại chặn lỗi lan sang bước sau.
 - Commit message tiếng Việt, giải thích *tại sao*, kèm `Co-Authored-By:` của agent thực thi (xem `git log`).
-- **Full-access cho git/Docker (từ 2026-07-27, `devops-brief.md` §7.3h):** mặc định bạn chạy `workspace-write` — sandbox Windows chặn cứng `.git` bằng ACL (không sửa được bằng `writable_roots`) và không chạm được Docker. Khi T1 gọi bạn kèm cờ `-s danger-full-access` (hoặc `--dangerously-bypass-approvals-and-sandbox`) cho **một lệnh cụ thể**, cờ đó chỉ có hiệu lực cho đúng lệnh đó — không phải trạng thái bền, không cần ai "tắt lại". Trong lệnh full-access, bạn được:
+- **Full-access cho git/Docker (policy hiện hành: `docs/devops-brief.md` §7 ACTIVE):** mặc định bạn chạy `workspace-write` — sandbox Windows chặn cứng `.git` bằng ACL (không sửa được bằng `writable_roots`) và không chạm được Docker. Khi T1 gọi bạn kèm cờ `-s danger-full-access` (hoặc `--dangerously-bypass-approvals-and-sandbox`) cho **một lệnh cụ thể**, cờ đó chỉ có hiệu lực cho đúng lệnh đó — không phải trạng thái bền, không cần ai "tắt lại". Trong lệnh full-access, bạn được:
   - Tự `git add`/`commit`/`push` sau khi sửa code xong — đúng quy ước commit ở trên (tiếng Việt, qua file UTF-8, `Co-Authored-By`).
   - Tự `gh pr merge` **CHỈ SAU KHI** T1/T3 đã xác nhận review đạt trong prompt giao việc — **không bao giờ** tự `gh pr merge --auto` hay tự merge khi chưa có xác nhận review; bỏ qua review là bỏ đúng bước đã nhiều lần bắt bug thật trong dự án này.
   - Chạy migration (`alembic`), `gitleaks`, và lane test cần Docker (PG thật).

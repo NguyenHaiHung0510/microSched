@@ -1,0 +1,147 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    pull_policy: never
+    restart: "no"
+    environment:
+      POSTGRES_DB: microsched
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_owner_password
+    secrets:
+      - postgres_owner_password
+    tmpfs:
+      - /var/lib/postgresql:rw,noexec,nosuid,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d microsched"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    ports: []
+    networks: [cell]
+
+  bootstrap:
+    pull_policy: never
+    restart: "no"
+    command: ["bootstrap"]
+    depends_on:
+      db:
+        condition: service_healthy
+    secrets:
+      - postgres_owner_password
+      - app_password
+      - migrator_password
+    ports: []
+    networks: [cell]
+
+  migrate:
+    pull_policy: never
+    restart: "no"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        export NEON_MIGRATOR_URL="$$(cat /run/secrets/migrator_url)"
+        alembic upgrade head
+        python - <<'PY'
+        import asyncio
+        import os
+
+        import asyncpg
+
+
+        async def revoke_app_access() -> None:
+            connection = await asyncpg.connect(os.environ["NEON_MIGRATOR_URL"], timeout=20)
+            try:
+                await connection.execute(
+                    "REVOKE ALL ON TABLE microsched.alembic_version FROM microsched_app"
+                )
+            finally:
+                await connection.close()
+
+
+        asyncio.run(revoke_app_access())
+        PY
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    secrets:
+      - migrator_url
+    ports: []
+    networks: [cell]
+
+  seed:
+    pull_policy: never
+    restart: "no"
+    command: ["seed"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stdin_open: true
+    secrets:
+      - app_password
+    ports: []
+    networks: [cell]
+
+  app:
+    pull_policy: never
+    restart: "no"
+    environment:
+      APP_ENV: local
+      SESSION_COOKIE_SECURE: "false"
+      ENABLE_INPROCESS_CRON: "false"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        export DATABASE_URL="$$(cat /run/secrets/app_url)"
+        export ENCRYPTION_MASTER_KEY="$$(cat /run/secrets/aes_key)"
+        exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    secrets:
+      - app_url
+      - aes_key
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json,os,sys,urllib.request;
+          value=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/readyz',timeout=3));
+          sys.exit(0 if value.get('status')=='ok' and value.get('db')=='up' and value.get('commit')==os.environ.get('GIT_SHA') else 1)
+      interval: 2s
+      timeout: 5s
+      retries: 45
+      start_period: 5s
+    ports: []
+    networks: [cell]
+
+  browser:
+    pull_policy: never
+    restart: "no"
+    command: ["node", "/qa/run.mjs"]
+    depends_on:
+      app:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    stdin_open: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    ports: []
+    networks: [cell]
+
+networks:
+  cell:
+    internal: true
+
+secrets:
+  postgres_owner_password: {}
+  app_password: {}
+  migrator_password: {}
+  migrator_url: {}
+  app_url: {}
+  aes_key: {}

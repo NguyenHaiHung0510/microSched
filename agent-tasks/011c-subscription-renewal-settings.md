@@ -2,9 +2,9 @@
 
 > **Executor: T2 Codex (`gpt-5.6-sol`, full-access `-s danger-full-access`, effort `high`) · Bậc: L2
 > · Skill gợi ý: không cần · MCP cần: không cần.**
-> **Trạng thái: DRAFT 2026-08-01 (T1 Opus 5 viết) — đã qua phản biện **T3** (`gemini-3.1-pro-high`,
+> **Trạng thái: OWNER-APPROVED; local acceptance PASS trên `b12bae6`.** Owner approved explicitly **2026-08-09** trong handoff/current harness session; PR **#114** là receipt truy hồi được cho status dated này. Approval cho implementation/merge gate không tự authorize production activation; activation vẫn theo cutover runbook. GitHub/final-review/production gates chưa đóng. Đã qua phản biện **T3** (`gemini-3.1-pro-high`,
 > 9 finding) + **T2 Codex** (18 finding); T1 kiểm tay từng finding rồi vá, và ghi rõ chỗ nào kết luận
-> đúng nhưng lý do sai (§8). **CHƯA được chủ duyệt — đừng giao thi công trước khi chủ duyệt.**
+> đúng nhưng lý do sai (§8).
 
 ## 0. Bối cảnh — lô này nằm GIỮA, không phải cuối
 
@@ -512,6 +512,11 @@ mốc; cả hai phải đọc được trước khi bấm.
 
 - Tiền: **dùng lại nguyên xi** ô nhập tiền của `011a` §5.4 — kể cả **dòng vọng lại** *"= 260.000 ₫"*
   cập nhật theo từng phím. Đừng viết ô thứ hai.
+
+> 📝 **2026-08-06 — Errata (ad-review luồng C):** `MoneyInput` (component dùng chung) **không tồn
+> tại trong repo** (rg toàn `frontend/src` = 0). Cả `011a` (`EntryEditDialog.tsx`) lẫn màn sub
+> (`SubscriptionScreen.tsx`) dùng pattern `Input` + `digitsOnly` inline. Lô này bám theo pattern
+> đang có; việc trích component chung **chờ quyết định** — không tự dựng component mới ở đây.
 - Ngày: `<input type="date">` (không phải `datetime-local`) — `started_on`/`expires_on` là DATE, gửi
   `YYYY-MM-DD` trần, **không** nối `+07:00`, **không** `toISOString()`. Đây là chỗ khác `011a` và
   executor rất dễ chép nhầm luật.
@@ -566,6 +571,10 @@ Id riêng đi bằng `data-subscription-id`.
   | `TrackerScreen.tsx` | thêm đúng một đường vào màn sub (§5.2) |
   | danh sách entry của `011a` | áp `show_list_price` (§5.4) |
   | `MoneyInput` (component dùng chung của `011a`) | **chỉ import, không sửa** (§5.5) |
+
+> 📝 **2026-08-06 — Errata:** dòng `MoneyInput` ở bảng trên là tham chiếu tới component **không
+> tồn tại** trong repo (rg = 0); `011a` dùng `Input` + `digitsOnly` inline. Chờ quyết định trích
+> component chung — không tự tạo component mới trong lô này (xem §5.5).
 
 ## 7. Nghiệm thu (Definition of Done)
 

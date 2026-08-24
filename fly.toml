@@ -8,6 +8,10 @@ primary_region = 'sin'
 
 [env]
   APP_ENV = 'production'
+  ENABLE_INPROCESS_CRON = 'true'
+
+[deploy]
+  strategy = 'immediate'
 
 [http_service]
   internal_port = 8000

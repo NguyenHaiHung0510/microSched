@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import contextlib
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -138,6 +139,158 @@ def test_store_serializes_toggle_and_item_write_on_the_parent_row(pg_dsn):
     asyncio.run(scenario())
 
 
+def test_store_serializes_concurrent_status_changes_before_reading_completed_at(pg_dsn):
+    """A later completion reads the opener's committed status, never a stale one."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        monitor = await asyncpg.connect(pg_dsn)
+        store = TaskStore()
+        auth = _auth()
+        task_id = None
+        writer = None
+        initial_completed_at = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
+        try:
+            async with maker() as setup:
+                created = await store.create(
+                    setup, auth, TaskCreate(title="Chuyển trạng thái tuần tự", status="completed")
+                )
+                task_id = created.id
+                await setup.execute(
+                    text(
+                        "UPDATE microsched.task "
+                        "SET completed_at = :completed_at "
+                        "WHERE id = :task_id"
+                    ),
+                    {"completed_at": initial_completed_at, "task_id": task_id},
+                )
+                await setup.commit()
+
+            async with maker() as opener, maker() as completer:
+                completer_pid = (
+                    await completer.execute(text("SELECT pg_backend_pid()"))
+                ).scalar_one()
+                opened = await store.update(opener, auth, task_id, TaskUpdate(status="open"))
+                assert opened is not None
+                assert opened.completed_at is None
+
+                async def complete_after_lock():
+                    completed = await store.update(
+                        completer,
+                        auth,
+                        task_id,
+                        TaskUpdate(status="completed", title="Hoàn thành sau khi mở lại"),
+                    )
+                    await completer.commit()
+                    return completed
+
+                writer = asyncio.create_task(complete_after_lock())
+                await _wait_until_blocked(monitor, completer_pid)
+                await opener.commit()
+                completed = await asyncio.wait_for(writer, timeout=10.0)
+                assert completed is not None
+
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                stored = await conn.fetchrow(
+                    "SELECT status, completed_at, title FROM microsched.task WHERE id = $1",
+                    task_id,
+                )
+                assert stored["status"] == "completed"
+                assert stored["completed_at"] is not None
+                assert stored["completed_at"] != initial_completed_at
+                assert stored["title"] == "Hoàn thành sau khi mở lại"
+            finally:
+                await conn.close()
+        finally:
+            if writer is not None and not writer.done():
+                writer.cancel()
+                with contextlib.suppress(BaseException):
+                    await writer
+            await _cleanup(pg_dsn, [task_id] if task_id is not None else [])
+            await monitor.close()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_task_uuidv7_completed_create_replay_keeps_the_original_data(pg_dsn):
+    """A replay keeps the first completed payload and returns the existing HTTP semantics."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        app = create_app()
+        auth_state = {"value": _auth()}
+        task_id = UUID("0190a0b0-c0d0-7e00-8000-000000000020")
+
+        async def current_session() -> AuthSession:
+            return auth_state["value"]
+
+        async def request_session():
+            async with maker() as db:
+                try:
+                    yield db
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+        app.dependency_overrides[require_session] = current_session
+        app.dependency_overrides[get_session] = request_session
+        transport = httpx.ASGITransport(app=app)
+        initial_payload = {
+            "id": str(task_id),
+            "title": "Bản gốc đã hoàn thành",
+            "body_md": "Nội dung gốc phải được giữ nguyên.",
+            "status": "completed",
+            "priority": "p1",
+            "items": ["Mục gốc"],
+        }
+        replay_payload = {
+            "id": str(task_id),
+            "title": "Không được ghi đè",
+            "body_md": "Nội dung replay khác.",
+            "status": "open",
+            "priority": "p3",
+            "items": ["Mục replay"],
+        }
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = await client.post("/api/tasks", json=initial_payload)
+                assert created.status_code == 201
+                completed_at = created.json()["completed_at"]
+                assert completed_at is not None
+
+                replayed = await client.post("/api/tasks", json=replay_payload)
+                assert replayed.status_code == 200
+                replay = replayed.json()
+                assert replay["id"] == str(task_id)
+                assert replay["status"] == "completed"
+                assert replay["completed_at"] == completed_at
+                assert replay["title"] == initial_payload["title"]
+                assert replay["body_md"] == initial_payload["body_md"]
+                assert replay["priority"] == initial_payload["priority"]
+                assert [item["content"] for item in replay["items"]] == initial_payload["items"]
+
+                persisted = await client.get(f"/api/tasks/{task_id}")
+                assert persisted.status_code == 200
+                assert persisted.json()["status"] == "completed"
+                assert persisted.json()["completed_at"] == completed_at
+                assert persisted.json()["title"] == initial_payload["title"]
+                assert persisted.json()["body_md"] == initial_payload["body_md"]
+                assert persisted.json()["priority"] == initial_payload["priority"]
+                assert [item["content"] for item in persisted.json()["items"]] == initial_payload[
+                    "items"
+                ]
+        finally:
+            await _cleanup(pg_dsn, [task_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_task_crud_and_nested_items_through_http(pg_dsn):
     """Happy path covers the list envelope, updates, filters, children, and deletes."""
 
@@ -177,11 +330,17 @@ def test_task_crud_and_nested_items_through_http(pg_dsn):
                 assert created_response.status_code == 201
                 created = created_response.json()
                 assert created["pinned"] is False
+                assert created["completed_at"] is None
+                assert (created["due_precision"], created["due_on"], created["due_at"]) == (
+                    "none",
+                    None,
+                    None,
+                )
                 task_id = UUID(created["id"])
                 created_ids.append(task_id)
                 first_item_id = created["items"][0]["id"]
 
-                listed = await client.get("/api/tasks?status=open")
+                listed = await client.get("/api/tasks?status=open&bucket=undated")
                 assert listed.status_code == 200
                 assert task_id in {UUID(task["id"]) for task in listed.json()["items"]}
 
@@ -236,21 +395,238 @@ def test_task_crud_and_nested_items_through_http(pg_dsn):
                     f"/api/tasks/{task_id}", json={"status": "completed"}
                 )
                 assert completed.status_code == 200
+                completed_at = completed.json()["completed_at"]
+                assert completed_at is not None
                 open_ids = {
                     UUID(task["id"])
-                    for task in (await client.get("/api/tasks?status=open")).json()["items"]
+                    for task in (await client.get("/api/tasks?status=open&bucket=undated")).json()[
+                        "items"
+                    ]
                 }
                 completed_ids = {
                     UUID(task["id"])
-                    for task in (await client.get("/api/tasks?status=completed")).json()["items"]
+                    for task in (
+                        await client.get("/api/tasks?status=completed&bucket=undated")
+                    ).json()["items"]
                 }
                 assert task_id not in open_ids
                 assert task_id in completed_ids
+
+                same_status = await client.patch(
+                    f"/api/tasks/{task_id}", json={"status": "completed"}
+                )
+                assert same_status.status_code == 200
+                assert same_status.json()["completed_at"] == completed_at
+
+                renamed = await client.patch(
+                    f"/api/tasks/{task_id}", json={"title": "Giữ nguyên mốc hoàn thành"}
+                )
+                assert renamed.status_code == 200
+                assert renamed.json()["completed_at"] == completed_at
+
+                reopened = await client.patch(f"/api/tasks/{task_id}", json={"status": "open"})
+                assert reopened.status_code == 200
+                assert reopened.json()["completed_at"] is None
+
+                initially_completed = await client.post(
+                    "/api/tasks",
+                    json={"title": "Tạo ở trạng thái đã xong", "status": "completed"},
+                )
+                assert initially_completed.status_code == 201
+                assert initially_completed.json()["completed_at"] is not None
+                created_ids.append(UUID(initially_completed.json()["id"]))
 
                 deleted = await client.delete(f"/api/tasks/{task_id}")
                 assert deleted.status_code == 204
                 assert (await client.get(f"/api/tasks/{task_id}")).status_code == 404
                 assert (await client.get(f"/api/tasks/{task_id}/items")).status_code == 404
+        finally:
+            await _cleanup(pg_dsn, created_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_task_http_temporal_matrix_and_legacy_replay_bytes(pg_dsn):
+    """HTTP keeps legacy payloads valid while V2 writes expose an honest triad."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        app = create_app()
+        created_ids: list[UUID] = []
+        legacy_id = UUID("0190a0b0-c0d0-7e00-8000-000000000026")
+        legacy_timed_id = UUID("0190a0b0-c0d0-7e00-8000-000000000027")
+
+        async def current_session() -> AuthSession:
+            return _auth()
+
+        async def request_session():
+            async with maker() as db:
+                try:
+                    yield db
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+        app.dependency_overrides[require_session] = current_session
+        app.dependency_overrides[get_session] = request_session
+        transport = httpx.ASGITransport(app=app)
+        legacy_body = (
+            b'{"id":"0190a0b0-c0d0-7e00-8000-000000000026","title":"legacy-none","due_at":null}'
+        )
+        before_hash = hashlib.sha256(legacy_body).hexdigest()
+        before_length = len(legacy_body)
+        legacy_timed_body = (
+            b'{"id":"0190a0b0-c0d0-7e00-8000-000000000027",'
+            b'"title":"legacy-timed","due_at":"2026-08-24T09:30:00+07:00"}'
+        )
+        timed_hash = hashlib.sha256(legacy_timed_body).hexdigest()
+        timed_length = len(legacy_timed_body)
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                first = await client.post(
+                    "/api/tasks",
+                    content=legacy_body,
+                    headers={"Content-Type": "application/json"},
+                )
+                assert first.status_code == 201
+                created_ids.append(legacy_id)
+                assert first.json()["id"] == str(legacy_id)
+                assert (
+                    first.json()["due_precision"],
+                    first.json()["due_on"],
+                    first.json()["due_at"],
+                ) == ("none", None, None)
+
+                replay = await client.post(
+                    "/api/tasks",
+                    content=legacy_body,
+                    headers={"Content-Type": "application/json"},
+                )
+                assert replay.status_code == 200
+                assert replay.json()["id"] == str(legacy_id)
+                for dispatched in (first.request.content, replay.request.content):
+                    assert dispatched == legacy_body
+                    assert hashlib.sha256(dispatched).hexdigest() == before_hash
+                    assert len(dispatched) == before_length
+
+                legacy_timed = await client.post(
+                    "/api/tasks",
+                    content=legacy_timed_body,
+                    headers={"Content-Type": "application/json"},
+                )
+                assert legacy_timed.status_code == 201
+                created_ids.append(legacy_timed_id)
+                assert legacy_timed.json()["id"] == str(legacy_timed_id)
+                assert legacy_timed.json()["due_precision"] == "datetime"
+                assert legacy_timed.json()["due_on"] is None
+                assert datetime.fromisoformat(legacy_timed.json()["due_at"]).astimezone(
+                    UTC
+                ) == datetime(2026, 8, 24, 2, 30, tzinfo=UTC)
+                timed_replay = await client.post(
+                    "/api/tasks",
+                    content=legacy_timed_body,
+                    headers={"Content-Type": "application/json"},
+                )
+                assert timed_replay.status_code == 200
+                assert timed_replay.json()["id"] == str(legacy_timed_id)
+                assert timed_replay.json()["due_precision"] == "datetime"
+                for dispatched in (legacy_timed.request.content, timed_replay.request.content):
+                    assert dispatched == legacy_timed_body
+                    assert hashlib.sha256(dispatched).hexdigest() == timed_hash
+                    assert len(dispatched) == timed_length
+
+                civil = await client.post(
+                    "/api/tasks",
+                    json={
+                        "title": "civil-date",
+                        "due_precision": "date",
+                        "due_on": "2026-08-24",
+                    },
+                )
+                assert civil.status_code == 201
+                civil_id = UUID(civil.json()["id"])
+                created_ids.append(civil_id)
+                assert (
+                    civil.json()["due_precision"],
+                    civil.json()["due_on"],
+                    civil.json()["due_at"],
+                ) == ("date", "2026-08-24", None)
+
+                renamed = await client.patch(
+                    f"/api/tasks/{civil_id}", json={"title": "civil-renamed"}
+                )
+                assert renamed.status_code == 200
+                assert (
+                    renamed.json()["due_precision"],
+                    renamed.json()["due_on"],
+                    renamed.json()["due_at"],
+                ) == ("date", "2026-08-24", None)
+
+                timed = await client.patch(
+                    f"/api/tasks/{civil_id}",
+                    json={
+                        "due_precision": "datetime",
+                        "due_at": "2026-08-25T14:20:00+07:00",
+                    },
+                )
+                assert timed.status_code == 200
+                assert timed.json()["due_precision"] == "datetime"
+                assert timed.json()["due_on"] is None
+
+                cleared = await client.patch(f"/api/tasks/{civil_id}", json={"due_at": None})
+                assert cleared.status_code == 200
+                assert (
+                    cleared.json()["due_precision"],
+                    cleared.json()["due_on"],
+                    cleared.json()["due_at"],
+                ) == ("none", None, None)
+
+                invalid_payloads = [
+                    {"due_precision": None},
+                    {"due_on": "2026-08-24"},
+                    {"due_precision": "date"},
+                    {"due_precision": "datetime"},
+                    {
+                        "due_precision": "date",
+                        "due_on": "2026-08-24",
+                        "due_at": "2026-08-24T09:30:00+07:00",
+                    },
+                    {
+                        "due_precision": "datetime",
+                        "due_at": "2026-08-24T09:30:00",
+                    },
+                ]
+                for invalid in invalid_payloads:
+                    rejected = await client.post("/api/tasks", json={"title": "invalid", **invalid})
+                    assert rejected.status_code == 422
+                    assert any(
+                        error["type"] == "task_schedule_invalid"
+                        for error in rejected.json()["detail"]
+                    )
+                    rejected_patch = await client.patch(
+                        f"/api/tasks/{civil_id}",
+                        json=invalid,
+                    )
+                    assert rejected_patch.status_code == 422
+                    assert any(
+                        error["type"] == "task_schedule_invalid"
+                        for error in rejected_patch.json()["detail"]
+                    )
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                for replayed_id in (legacy_id, legacy_timed_id):
+                    assert (
+                        await conn.fetchval(
+                            "SELECT count(*) FROM microsched.task WHERE id = $1",
+                            replayed_id,
+                        )
+                        == 1
+                    )
+            finally:
+                await conn.close()
         finally:
             await _cleanup(pg_dsn, created_ids)
             await engine.dispose()
@@ -382,7 +758,9 @@ def test_restore_is_idempotent_and_preserves_items_and_privacy_gate(pg_dsn):
                 assert (await client.delete(f"/api/tasks/{task_id}")).status_code == 204
                 assert task_id not in {
                     UUID(task["id"])
-                    for task in (await client.get("/api/tasks?status=all")).json()["items"]
+                    for task in (await client.get("/api/tasks?status=all&bucket=undated")).json()[
+                        "items"
+                    ]
                 }
 
                 restored = await client.post(f"/api/tasks/{task_id}/restore")
@@ -390,7 +768,7 @@ def test_restore_is_idempotent_and_preserves_items_and_privacy_gate(pg_dsn):
                 assert restored.json() == {"id": str(task_id), "status": "restored"}
                 assert set(restored.json()) == {"id", "status"}
 
-                listed = (await client.get("/api/tasks?status=all")).json()["items"]
+                listed = (await client.get("/api/tasks?status=all&bucket=undated")).json()["items"]
                 restored_task = next(task for task in listed if UUID(task["id"]) == task_id)
                 assert [item["content"] for item in restored_task["items"]] == [
                     "Mục một",

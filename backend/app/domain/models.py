@@ -26,6 +26,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.schema import conv
 from sqlmodel import Field, SQLModel
 
 SCHEMA = "microsched"
@@ -124,7 +125,15 @@ class Task(UUIDTimestampModel, table=True):
         sa_column=Column(Text, nullable=False, server_default=text("'open'")),
     )
     priority: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # 026A expand phase: nullable until the compatibility trigger has protected
+    # the full rolling-deploy window and 026B can add NOT NULL + CHECK safely.
+    due_precision: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    due_on: date | None = Field(default=None, sa_column=Column(Date, nullable=True))
     due_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    completed_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
@@ -176,6 +185,10 @@ class Note(UUIDTimestampModel, table=True):
     __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
         CheckConstraint(
+            "priority IS NULL OR priority IN ('p1', 'p2', 'p3')",
+            name="priority_values",
+        ),
+        CheckConstraint(
             "NOT is_private OR ("
             "(title IS NULL OR title LIKE 'enc:v1:%') "
             "AND (body_md IS NULL OR body_md LIKE 'enc:v1:%'))",
@@ -190,6 +203,11 @@ class Note(UUIDTimestampModel, table=True):
         default=None,
         sa_column=Column(Vector(), nullable=True),
     )
+    pinned: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
+    )
+    priority: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     is_private: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),
@@ -292,7 +310,7 @@ class DayAnnotation(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.APPLIES
     __delete_gate__: ClassVar[Gate] = Gate.NONE
     __table_args__ = (
-        CheckConstraint("ends_on >= starts_on", name="day_range"),
+        CheckConstraint("ends_on >= starts_on", name=conv("day_range")),
         {"schema": SCHEMA},
     )
 
@@ -561,6 +579,93 @@ class AuditLog(UUIDTimestampModel, table=True):
     )
 
 
+class PushSubscription(UUIDTimestampModel, table=True):
+    """A device registration for Web Push notifications."""
+
+    __tablename__ = "push_subscription"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        UniqueConstraint("endpoint", name="uq_push_subscription_endpoint"),
+        {"schema": SCHEMA},
+    )
+
+    endpoint: str = Field(sa_column=Column(Text, nullable=False))
+    p256dh: str = Field(sa_column=Column(Text, nullable=False))
+    auth: str = Field(sa_column=Column(Text, nullable=False))
+    user_agent: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    last_seen_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            server_default=func.now(),
+        ),
+    )
+
+
+class ReminderDispatch(UUIDTimestampModel, table=True):
+    """Execution and confirmation log for reminder occurrences."""
+
+    __tablename__ = "reminder_dispatch"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_type",
+            "subject_id",
+            "dispatched_on",
+            name="uq_reminder_dispatch_subject_date",
+        ),
+        UniqueConstraint(
+            "confirmed_entry_id",
+            name="uq_reminder_dispatch_confirmed_entry_id",
+        ),
+        ForeignKeyConstraint(
+            ["confirmed_entry_id"],
+            [f"{SCHEMA}.entry.id"],
+            name="fk_reminder_dispatch_confirmed_entry_id",
+        ),
+        CheckConstraint(
+            "subject_type IN ('tracker', 'subscription')",
+            name="subject_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'no_device')",
+            name="status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="attempt_count",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    subject_type: str = Field(sa_column=Column(Text, nullable=False))
+    subject_id: UUID = Field(sa_column=Column(PGUUID, nullable=False))
+    dispatched_on: date = Field(sa_column=Column(Date, nullable=False))
+    status: str = Field(
+        default="pending",
+        sa_column=Column(Text, nullable=False, server_default=text("'pending'")),
+    )
+    attempt_count: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default=text("0")),
+    )
+    last_attempt_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    confirmed_entry_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID, nullable=True),
+    )
+    confirmed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
 class AuthSession(UUIDTimestampModel, table=True):
     """A server-side login session identified by an opaque-token hash."""
 
@@ -590,6 +695,7 @@ class AuthSession(UUIDTimestampModel, table=True):
 
 
 Index("ix_task_due_at", Task.__table__.c.due_at)
+Index("ix_task_due_on", Task.__table__.c.due_on)
 Index("ix_task_item_task_id", TaskItem.__table__.c.task_id)
 Index("ix_note_item_note_id", NoteItem.__table__.c.note_id)
 Index(
@@ -619,3 +725,10 @@ Index("ix_entry_subscription_id", Entry.__table__.c.subscription_id)
 Index("ix_message_trace_id", Message.__table__.c.trace_id)
 Index("ix_audit_log_trace_id", AuditLog.__table__.c.trace_id)
 Index("ix_audit_log_turn_id", AuditLog.__table__.c.turn_id)
+
+Index(
+    "ix_reminder_dispatch_subject",
+    ReminderDispatch.__table__.c.subject_type,
+    ReminderDispatch.__table__.c.subject_id,
+)
+Index("ix_reminder_dispatch_status", ReminderDispatch.__table__.c.status)

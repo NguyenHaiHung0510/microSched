@@ -1,0 +1,212 @@
+{
+  "acceptance": {
+    "025-CELL-01": "PASS",
+    "025-CELL-02": "PASS",
+    "025-CELL-03": "PASS",
+    "025-CELL-04": "PASS",
+    "025-CELL-05": "PASS",
+    "025-CELL-06": "PASS",
+    "025-CI-01": "NOT_APPLICABLE",
+    "025-DEP-017": "NOT_APPLICABLE",
+    "025-RED-01": "PASS",
+    "025-SAFE-01": "PASS",
+    "025-SAFE-02": "PASS",
+    "025-SAFE-03": "PASS",
+    "025-SAFE-04": "PASS",
+    "025-SAFE-05": "PASS",
+    "025-SAFE-06": "PASS",
+    "025-SAFE-07": "PASS"
+  },
+  "cleanup": {
+    "daemon_identity_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "delete_command_count": 6,
+    "delete_selection": "exact_manifest_resource_ids",
+    "foreign_sentinel": {
+      "config_sha256_after": "0000000000000000000000000000000000000000000000000000000000000000",
+      "config_sha256_before": "0000000000000000000000000000000000000000000000000000000000000000",
+      "project_name_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "resource_ids_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "separate_cleanup_status": "PASS",
+      "survived_cell_cleanup": true
+    },
+    "manifest_resource_ids_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "manifest_schema": "microsched.qa025.run-manifest.v1",
+    "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "manifest_verified": true,
+    "project_name": "msqa025-20260824t000000z-00000000",
+    "residual_counts": {
+      "containers": 0,
+      "helper_processes": 0,
+      "images": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    "run_id": "msqa025-20260824t000000z-00000000",
+    "status": "PASS",
+    "tamper_detected": false
+  },
+  "command_envelope": {
+    "all_calls_used_absolute_executable": true,
+    "all_calls_used_explicit_context": true,
+    "all_calls_used_sanitized_env": true,
+    "all_calls_used_shell_false": true,
+    "all_compose_calls_used_absolute_owned_files": true,
+    "all_compose_calls_used_exact_project": true,
+    "compose_call_count": 10,
+    "docker_call_count": 20,
+    "docker_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "git_executable_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "rejected_parent_variable_names": [],
+    "sanitized_env_keys_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "status": "PASS"
+  },
+  "compose": {
+    "config_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "files": [
+      {
+        "role": "base",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "role": "generated_override",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "network_name": "cell",
+    "project_directory_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "project_name": "msqa025-20260824t000000z-00000000"
+  },
+  "docker_target": {
+    "context_name": "default",
+    "daemon_id_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "daemon_identity_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "daemon_name_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "endpoint_kind": "unix",
+    "endpoint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "os_type": "linux",
+    "server_version": "28.0.0"
+  },
+  "ended_at": "2026-08-24T00:01:00Z",
+  "final_status": "PASS",
+  "fixtures": {
+    "note_count": 1,
+    "prefix": "[QA025:msqa025-20260824t000000z-00000000]",
+    "status": "PASS",
+    "synthetic_domain": "example.invalid",
+    "task_count": 2
+  },
+  "git_sha": "0000000000000000000000000000000000000000",
+  "image_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "migration_gate": {
+    "app_container_created": true,
+    "app_container_running": true,
+    "app_create_command_issued": true,
+    "app_created_before_success": false,
+    "exit_code": 0,
+    "fault_case": "none",
+    "service_completed_successfully": true,
+    "status": "PASS"
+  },
+  "phases": [
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "preflight",
+      "status": "PASS"
+    },
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "build",
+      "status": "PASS"
+    },
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "database",
+      "status": "PASS"
+    },
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "bootstrap",
+      "status": "PASS"
+    },
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "migrate",
+      "status": "PASS"
+    },
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "seed",
+      "status": "PASS"
+    },
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "app_ready",
+      "status": "PASS"
+    },
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "browser",
+      "status": "PASS"
+    },
+    {
+      "duration_ms": 1,
+      "exit_code": 0,
+      "name": "cleanup",
+      "status": "PASS"
+    }
+  ],
+  "physical_iphone": {
+    "acceptance_id": "Q025-DEVICE-IPHONE-01",
+    "evidence": [],
+    "executed_at": null,
+    "production_commit": null,
+    "reason": "Physical iPhone acceptance is separate from the disposable local cell",
+    "status": "NOT_RUN"
+  },
+  "roles": {
+    "alembic_write_denied": true,
+    "app": "microsched_app",
+    "app_role_only": true,
+    "ddl_denied": true,
+    "migrator": "microsched_migrator",
+    "status": "PASS"
+  },
+  "run_id": "msqa025-20260824t000000z-00000000",
+  "safety": {
+    "browser_origin": "runner-loopback:<redacted-ephemeral-port>",
+    "env_file_disabled": true,
+    "network_count": 1,
+    "network_id_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "network_internal": true,
+    "networks_by_service": {
+      "app": 1,
+      "bootstrap": 1,
+      "browser": 1,
+      "db": 1,
+      "migrate": 1,
+      "seed": 1
+    },
+    "outbound_requests": 0,
+    "ports_by_service": {
+      "app": 0,
+      "bootstrap": 0,
+      "browser": 0,
+      "db": 0,
+      "migrate": 0,
+      "seed": 0
+    },
+    "total_ports_published": 0,
+    "unexpected_networks": 0
+  },
+  "schema": "microsched.qa025.receipt.v1",
+  "started_at": "2026-08-24T00:00:00Z",
+  "target_class": "local_disposable"
+}

@@ -12,7 +12,7 @@
 - Toàn bộ gross cost "cứng" hiện tại = 1× Fly `shared-cpu-1x` 256MB always-on ở `sin`.
 - Fly Support đã waive invoice khi finalized cost dưới \$5 cho original personal organization của chủ,
   nhưng đây **không** phải free tier/credit được pricing docs bảo đảm; xem điều kiện và cliff ở §7.6.
-- Neon, backup, auth, GitHub Actions CI/CD và Google Cloud Scheduler hiện đều \$0.
+- Neon, backup, auth, GitHub Actions CI/CD hiện đều \$0.
 - Hai biến số cần canh: tổng invoice Fly của **cả organization** và LLM usage; domain vẫn tuỳ chọn
   (~\$12/năm).
 - **2026-07-20:** thêm **§6 — stack công cụ AI cá nhân (~\$80/mo)**, hạch toán RIÊNG — đó là chi phí *học/xây*, không phải chi phí *vận hành app*.
@@ -25,7 +25,7 @@
 | LLM | OpenRouter / API (credit sẵn: Google AI Studio, OpenAI, OpenRouter free) | ~\$0 giờ → usage | ⚠️ biến số |
 | Backup | Google Drive (sync) + dump laptop | \$0 | ✅ chốt |
 | CI/CD + cron chạy tay | GitHub Actions, public-repo standard runners | \$0 | ✅ đang chạy |
-| Cron production | Google Cloud Scheduler (1/3 job free mỗi billing account) | \$0 | ✅ chốt |
+| Cron production | In-process timer | \$0 | ✅ chốt (xoá GCS) |
 | Domain | `*.fly.dev` (mặc định) · hoặc custom ~\$12/năm | \$0 / ~\$12/năm | ⚠️ OPEN, tuỳ chọn |
 | CDN / Access | Cloudflare free (nếu dùng) | \$0 | DEFER, tuỳ chọn |
 | **TỔNG runtime** | | **gross ~\$29,6–30,6/năm; net kỳ vọng \$0 khi đủ điều kiện §7.6** | |
@@ -211,10 +211,10 @@ chỉ trả \$0,01. Vì scope là organization aggregate, Machine/workload khác
 ăn vào ngưỡng. Đặt alert gần **\$4** để còn khoảng phản ứng; không dùng 512MB hay Machine thứ hai nếu
 chưa tính lại cả tháng 31 ngày.
 
-**Hai dòng \$0 khác không đổi nhưng phải tách tên:** GitHub Actions làm CI/CD và giữ nút
-`workflow_dispatch` chạy cron bằng tay; Google Cloud Scheduler mới giữ lịch production và đang dùng
-1/3 job free của billing account. Always-on không tự thay Scheduler. Neon vẫn autosuspend vì
-`/api/healthz` không chạm DB.
+**Dòng chi phí CI/CD \$0 không đổi:** GitHub Actions làm CI/CD và giữ nút `workflow_dispatch` để
+chạy CD thủ công. Google Cloud Scheduler đã bị **xoá hoàn toàn** để nhường chỗ cho `011d` in-process timer.
+Neon vẫn autosuspend độc lập vì `/api/healthz` không chạm DB và timer ngủ bằng async memory event
+khi rỗng.
 
 ---
 *Cập nhật khi: đổi host/DB/LLM provider, hết credit, đổi công cụ dev-stack (§6), hoặc tới mốc soi-lại 3 tháng (~10/2026). §7 cập nhật theo nhịp 3–7 ngày — đó là mục đích của nó. Thêm ghi chú có ngày — không xoá trắng con số cũ.*

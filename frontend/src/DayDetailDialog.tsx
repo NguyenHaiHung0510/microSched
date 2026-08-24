@@ -12,7 +12,6 @@ import {
   type CalendarSource,
 } from '@/calendar-ui'
 import {
-  endOfDayVietnam,
   formatFullVietnameseDate,
   formatShortVietnamDate,
   isTaskOverdue,
@@ -22,6 +21,7 @@ import {
 } from '@/calendar-scroll'
 import { AnnotationForm, type AnnotationFormValue } from '@/AnnotationForm'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -32,8 +32,15 @@ import {
 import { EventForm } from '@/EventForm'
 import { TaskForm } from '@/TaskForm'
 import { cn } from '@/lib/utils'
-import type { TaskWritePayload } from '@/task-ui'
+import {
+  rescheduleTaskSchedule,
+  scheduleDay,
+  type TaskSchedule,
+  type TaskWritePayload,
+} from '@/task-ui'
 import { CALENDAR_FAMILY_KEY } from '@/calendar-queries'
+
+type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
 
 type EventFormValue = {
   source_id?: string
@@ -61,7 +68,7 @@ export function DayDetailDialog({
   day,
   events,
   tasks,
-  openTasks,
+  loadOpenTasks,
   annotations,
   sourceById,
   privateLocked,
@@ -71,7 +78,7 @@ export function DayDetailDialog({
   day: string
   events: CalendarEvent[]
   tasks: CalendarTask[]
-  openTasks: CalendarTask[]
+  loadOpenTasks: (cursor: string | null) => Promise<OpenTaskPage>
   annotations: DayAnnotation[]
   sourceById: Map<string, CalendarSource>
   privateLocked: boolean
@@ -83,6 +90,9 @@ export function DayDetailDialog({
   const [moveOpen, setMoveOpen] = useState(false)
   const [moveNow, setMoveNow] = useState(0)
   const [moveTasks, setMoveTasks] = useState<CalendarTask[]>([])
+  const [moveCursor, setMoveCursor] = useState<string | null>(null)
+  const [moveLoading, setMoveLoading] = useState(false)
+  const [moveError, setMoveError] = useState<string | null>(null)
   const [annotationError, setAnnotationError] = useState<string | null>(null)
   const [eventError, setEventError] = useState<string | null>(null)
 
@@ -176,16 +186,27 @@ export function DayDetailDialog({
     },
   })
 
+  const toggleTaskStatus = useMutation({
+    mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
+      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: variables.status }),
+      }),
+    onSuccess: () => {
+      refreshAll()
+    },
+  })
+
   const rescheduleTask = useMutation({
     mutationFn: (variables: {
       taskId: string
-      dueAt: string | null
-      previousDue: string | null
+      schedule: TaskSchedule
+      previousSchedule: TaskSchedule
       showToast: boolean
     }) =>
       apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ due_at: variables.dueAt }),
+        body: JSON.stringify(variables.schedule),
       }),
     onSuccess: (_data, variables) => {
       refreshAll()
@@ -201,8 +222,8 @@ export function DayDetailDialog({
             onClick: () =>
               rescheduleTask.mutate({
                 taskId: variables.taskId,
-                dueAt: variables.previousDue,
-                previousDue: null,
+                schedule: variables.previousSchedule,
+                previousSchedule: variables.schedule,
                 showToast: false,
               }),
           },
@@ -213,19 +234,54 @@ export function DayDetailDialog({
 
   function moveTask(task: CalendarTask) {
     setMoveOpen(false)
+    const previousSchedule: TaskSchedule = {
+      due_precision: task.due_precision,
+      due_on: task.due_on,
+      due_at: task.due_at,
+    }
     rescheduleTask.mutate({
       taskId: task.id,
-      dueAt: endOfDayVietnam(day),
-      previousDue: task.due_at,
+      schedule: rescheduleTaskSchedule(previousSchedule, day),
+      previousSchedule,
       showToast: true,
     })
   }
 
-  function openMoveDialog() {
+  async function openMoveDialog() {
     const now = Date.now()
     setMoveNow(now)
-    setMoveTasks(sortOpenTasksForMove(openTasks, now))
+    setMoveTasks([])
+    setMoveCursor(null)
+    setMoveError(null)
     setMoveOpen(true)
+    setMoveLoading(true)
+    try {
+      const page = await loadOpenTasks(null)
+      setMoveTasks(sortOpenTasksForMove(page.items, now))
+      setMoveCursor(page.next_cursor ?? null)
+    } catch (error) {
+      setMoveError(importErrorMessage(error))
+    } finally {
+      setMoveLoading(false)
+    }
+  }
+
+  async function loadMoreMoveTasks() {
+    if (!moveCursor || moveLoading) return
+    setMoveLoading(true)
+    setMoveError(null)
+    try {
+      const page = await loadOpenTasks(moveCursor)
+      setMoveTasks((current) => [
+        ...current,
+        ...sortOpenTasksForMove(page.items, moveNow),
+      ])
+      setMoveCursor(page.next_cursor ?? null)
+    } catch (error) {
+      setMoveError(importErrorMessage(error))
+    } finally {
+      setMoveLoading(false)
+    }
   }
 
   function closeDialog() {
@@ -233,6 +289,9 @@ export function DayDetailDialog({
     setAnnotationForm(null)
     setEventForm(null)
     setMoveOpen(false)
+    setMoveTasks([])
+    setMoveCursor(null)
+    setMoveError(null)
     setTaskEdit(null)
   }
 
@@ -409,26 +468,38 @@ export function DayDetailDialog({
                   <p className="text-sm text-muted-foreground">Không có task đến hạn hôm nay.</p>
                 ) : (
                   tasks.map((task) => (
-                    <Button
+                    <div
                       data-testid="calendar-day-task"
                       data-task-id={task.id}
                       key={task.id}
-                      variant="ghost"
                       className={cn(
-                        'h-auto w-full justify-start gap-3 rounded-lg border p-3 text-left',
+                        'flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50',
                         task.status === 'completed' && 'opacity-70',
                       )}
-                      onClick={() => setTaskEdit(task)}
                     >
-                      <span
+                      <Checkbox
+                        data-testid="calendar-day-task-toggle"
+                        aria-label={`Đổi trạng thái ${task.title}`}
+                        checked={task.status === 'completed'}
+                        onCheckedChange={(checked) => {
+                          toggleTaskStatus.mutate({
+                            taskId: task.id,
+                            status: checked === true ? 'completed' : 'open',
+                          })
+                        }}
+                        className="size-4 rounded-sm"
+                      />
+                      <Button
+                        variant="ghost"
                         className={cn(
-                          'min-w-0 flex-1 truncate text-sm font-semibold',
+                          'h-auto min-w-0 flex-1 justify-start p-0 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                           task.status === 'completed' && 'line-through',
                         )}
+                        onClick={() => setTaskEdit(task)}
                       >
                         {task.title}
-                      </span>
-                    </Button>
+                      </Button>
+                    </div>
                   ))
                 )}
               </section>
@@ -461,16 +532,20 @@ export function DayDetailDialog({
           <DialogHeader>
             <DialogTitle>Dời việc sang ngày này</DialogTitle>
             <DialogDescription>
-              Hạn sẽ đặt cuối ngày {formatShortVietnamDate(day)} theo giờ Việt Nam.
+              Ngày sẽ đổi sang {formatShortVietnamDate(day)}; task có giờ giữ nguyên giờ.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            {moveTasks.length === 0 ? (
+            {moveLoading && moveTasks.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Đang tải việc…</p>
+            ) : moveTasks.length === 0 ? (
               <p className="text-sm text-muted-foreground">Không có việc đang mở.</p>
             ) : (
               moveTasks.map((task) => (
                 <Button
                   key={task.id}
+                  data-testid="calendar-move-task"
+                  data-task-id={task.id}
                   variant="outline"
                   className="h-auto w-full justify-start gap-3 p-3 text-left"
                   disabled={rescheduleTask.isPending}
@@ -479,21 +554,38 @@ export function DayDetailDialog({
                   <span className="min-w-0 flex-1 truncate text-sm font-semibold">
                     {task.title}
                   </span>
-                  {task.due_at ? (
+                  {scheduleDay(task) ? (
                     <span
                       className={cn(
                         'shrink-0 text-xs',
-                        isTaskOverdue(task.due_at, moveNow)
+                        isTaskOverdue(task, moveNow)
                           ? 'font-bold text-bad'
                           : 'text-muted-foreground',
                       )}
                     >
-                      {formatShortVietnamDate(task.due_at.slice(0, 10))}
+                      {formatShortVietnamDate(scheduleDay(task) as string)}
                     </span>
                   ) : null}
                 </Button>
               ))
             )}
+            {moveCursor ? (
+              <Button
+                data-testid="calendar-move-load-more"
+                size="lg"
+                variant="outline"
+                disabled={moveLoading}
+                onClick={() => void loadMoreMoveTasks()}
+              >
+                {moveLoading ? 'Đang tải…' : 'Xem thêm việc'}
+              </Button>
+            ) : null}
+            {moveError ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm text-bad" role="alert">{moveError}</p>
+                <Button size="lg" variant="outline" disabled={moveLoading} onClick={() => void (moveCursor ? loadMoreMoveTasks() : openMoveDialog())}>Thử lại</Button>
+              </div>
+            ) : null}
             {rescheduleTask.isError ? (
               <p className="text-sm text-bad" role="alert">
                 {importErrorMessage(rescheduleTask.error)}

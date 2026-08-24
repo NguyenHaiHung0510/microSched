@@ -43,9 +43,9 @@ Fork thật sự sau khi loại Django (batteries/admin thừa cho single-user +
         Neon PG                LLM API (ext, OpenRouter)
      (+pgvector)
 ```
-- **Ranh giới module = trong process** (Web/Domain/Retrieval/Agent/Jobs), không phải ranh giới mạng.
-- **Background/định kỳ (embed, import lịch, backup, nhắc thuốc):** **external cron (Google Cloud Scheduler)** gọi endpoint — độc lập với vòng đời deploy/restart của app. **Bỏ** Celery/RQ + Redis broker — thừa cho một user.
-- **Hệ quả quan trọng:** "nhắc uống thuốc" = Scheduler bắn đúng giờ → app đang chạy xử lý → gửi web-push. Scheduler vẫn ở ngoài để có retry/deadline và không gắn lịch nhắc vào hoạt động phát triển; always-on không tự sinh ra lịch chạy.
+- **Ranh giới module = trong process** (Web/Domain/Retrieval/Agent/Jobs/Cron), không phải ranh giới mạng.
+- **Background/định kỳ (nhắc thuốc):** **in-process async timer** (`011d`) đọc lịch từ RAM và trigger Web Push. **Bỏ** Celery/RQ + Redis broker + Google Cloud Scheduler (GCS) — thừa cho một user và GCS không định thời được phút chính xác của từng tracker.
+- **Hệ quả quan trọng:** "nhắc uống thuốc" = timer trong app tự bật đúng giờ → app gọi service xử lý → gửi web-push. Không có scheduler bên ngoài, đánh đổi là mất result reporting độc lập nhưng được đơn giản hoá deployment.
 
 ## 4. Frontend/PWA — ✅ offline-first cho capture, còn lại OPEN
 Yêu cầu cứng đã nêu: xem task hôm nay / ghi ý tưởng ngay **không được đợi**. Tách 2 đường theo đúng nơi nó cần giải:
@@ -137,9 +137,7 @@ phải kiểm live count riêng. Các cấu hình `suspend`/`min_machines_runnin
 trên là hồ sơ quyết định cũ, không còn là chỉ dẫn hiện hành; giữ nguyên số đo vì chúng chứng minh đường
 đảo lại nếu waiver biến mất hoặc chi phí vượt ngưỡng.
 
-**Google Cloud Scheduler vẫn giữ nguyên.** Always-on chỉ bỏ nhu cầu “cron đánh thức app”; nó không thay
-thế lịch chạy, retry hay attempt deadline. `/api/healthz` tiếp tục không chạm DB để Neon vẫn
-autosuspend độc lập — Fly luôn thức không có nghĩa Neon phải luôn thức.
+📝 **2026-08-06 — ĐẢO LẠI scheduler: GCS bị loại bỏ, in-process timer thay thế.** Always-on biến in-process timer thành khả thi. Đổi lấy khả năng nhắc đúng từng phút chính xác và loại bỏ external target, ta chọn xoá hẳn GCS và mọi endpoint liên quan. Không có dual-run, không có job/fallback ngoài.
 
 ## 6. Truy cập & domain — ✅ `*.fly.dev` trước, domain riêng khi cần bền
 - Fly cấp sẵn `tên-app.fly.dev` + HTTPS tự động, **miễn phí, dùng ngay** — không cần mua gì, không đụng IP thô.
@@ -168,7 +166,7 @@ Một repo (backend + frontend), backend serve static PWA build cùng origin →
 |---|---|---|
 | Ngôn ngữ lõi | Python | ✅ |
 | Framework | **FastAPI** (+ Pydantic v2; **ORM=SQLModel chốt Nhóm 2** → `schema-physical-brief.md`) | ✅ |
-| Kiến trúc | Modular monolith, cron ngoài cho jobs | ✅ |
+| Kiến trúc | Modular monolith, in-process timer cho nhắc nhở | ✅ |
 | Frontend | SPA/PWA **tĩnh** (offline-first), serve chung 1 origin; stack = React+TS+Vite 8+Tailwind/shadcn+TanStack Query+Dexie/outbox (chốt 2026-07-20 → `frontend-brief.md`) | ✅ |
 | Hosting | Fly.io, 1× shared-cpu-1x 256MB always-on, `sin` | ✅ |
 | Domain | `*.fly.dev` trước, custom khi cần bền | ✅ |

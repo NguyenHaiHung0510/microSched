@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { canSubmitNote, notePayload, type NoteFormState } from '@/note-ui'
+import {
+  appendFutureReflection,
+  canSubmitNote,
+  formatNoteTime,
+  notePayload,
+  type NoteFormState,
+} from '@/note-ui'
 
 function state(overrides: Partial<NoteFormState> = {}): NoteFormState {
   return {
@@ -34,5 +40,50 @@ describe('note form rules', () => {
       body_md: null,
       is_private: true,
     })
+  })
+
+  it('includes pinned when specified', () => {
+    expect(notePayload(state({ title: 'Ghim', pinned: true }))).toEqual({
+      title: 'Ghim',
+      body_md: null,
+      is_private: false,
+      pinned: true,
+    })
+  })
+})
+
+describe('note time formatting', () => {
+  it('formats Vietnam timezone timestamp correctly', () => {
+    const formatted = formatNoteTime('2026-08-24T07:30:00.000Z')
+    expect(formatted).toBe('14:30 · 24/08/2026')
+  })
+
+  it('handles null/invalid timestamp gracefully', () => {
+    expect(formatNoteTime(null)).toBe('')
+    expect(formatNoteTime(undefined)).toBe('')
+    expect(formatNoteTime('invalid-date')).toBe('')
+  })
+})
+
+describe('future reflection formatting', () => {
+  it('appends reflection with header and quote format', () => {
+    const initialBody = 'Cần mua Gemini Pro để test harness.'
+    const reflection = 'Đã có cả GPT Plus và OpenRouter cùng hoạt động!'
+    const nowIso = '2026-09-24T07:30:00.000Z'
+
+    const result = appendFutureReflection(initialBody, reflection, nowIso)
+    expect(result).toContain('Cần mua Gemini Pro để test harness.')
+    expect(result).toContain('---')
+    expect(result).toContain('Lời nhắn từ tương lai')
+    expect(result).toContain('Đã có cả GPT Plus và OpenRouter cùng hoạt động!')
+  })
+
+  it('handles multiline reflection and empty base body', () => {
+    const reflection = 'Dòng 1\nDòng 2'
+    const nowIso = '2026-09-24T07:30:00.000Z'
+
+    const result = appendFutureReflection(null, reflection, nowIso)
+    expect(result).toContain('Dòng 1')
+    expect(result).toContain('Dòng 2')
   })
 })

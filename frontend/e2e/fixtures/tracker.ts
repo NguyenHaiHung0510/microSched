@@ -1,4 +1,4 @@
-﻿import { expect, test as base } from './tasks'
+import { expect, test as base } from './tasks'
 
 /**
  * Mock for the tracker slice (`/api/tracker/**`). It intentionally mirrors the
@@ -14,6 +14,8 @@ export type FixtureTracker = {
   group_id: string | null
   unit: string | null
   color: string | null
+  reminder_time: string | null
+  reminder_text: string | null
   is_private: boolean
   last_entry_at: string | null
   entry_count_30d: number
@@ -47,6 +49,8 @@ function tracker(overrides: Partial<FixtureTracker>): FixtureTracker {
     group_id: null,
     unit: null,
     color: null,
+    reminder_time: null,
+    reminder_text: null,
     is_private: false,
     last_entry_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
     entry_count_30d: 3,
@@ -77,6 +81,7 @@ export type TrackerApiState = {
   entries: FixtureEntry[]
   counts: Record<string, number>
   count(method: string, path: string): number
+  resetCounts(): void
 }
 
 export const test = base.extend<{ trackerApi: TrackerApiState }>({
@@ -117,6 +122,9 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         counts: {},
         count(method, path) {
           return this.counts[`${method}:${path}`] ?? 0
+        },
+        resetCounts() {
+          this.counts = {}
         },
       }
 
@@ -241,6 +249,12 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
               a2_gap: [],
               a3_counts: { week: 0, month: 0, year: 0 },
               a4_trend: { current_month: 0, prev_avg: 0, trend: 'flat' },
+              f6: {
+                monthly_burn: 0,
+                subscription_count: 0,
+                upcoming: [],
+                corrupted_subscription_count: 0,
+              },
             }),
           )
           return
@@ -249,6 +263,38 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         await route.fallback()
       })
 
+      await page.route('**/api/subscriptions**', async (route) => {
+        const request = route.request()
+        const method = request.method()
+        const path = new URL(request.url()).pathname
+        const key = `${method}:${path}`
+        state.counts[key] = (state.counts[key] ?? 0) + 1
+        if (path === '/api/subscriptions' && method === 'GET') {
+          await route.fulfill(jsonResponse({ items: [] }))
+          return
+        }
+        await route.fulfill({ status: 404 })
+      })
+
+      await page.route('**/api/settings**', async (route) => {
+        const request = route.request()
+        const method = request.method()
+        const path = new URL(request.url()).pathname
+        const key = `${method}:${path}`
+        state.counts[key] = (state.counts[key] ?? 0) + 1
+        if (path === '/api/settings' && method === 'GET') {
+          await route.fulfill(
+            jsonResponse({
+              items: [
+                { key: 'subscription_expiry_lead_days', value: 3 },
+                { key: 'show_list_price', value: true },
+              ],
+            }),
+          )
+          return
+        }
+        await route.fulfill({ status: 404 })
+      })
       await use(state)
     },
     { auto: true },

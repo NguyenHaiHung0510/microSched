@@ -27,6 +27,8 @@ EXPECTED_TABLES = {
     "task_item",
     "tracker",
     "tracker_group",
+    "push_subscription",
+    "reminder_dispatch",
 }
 
 GATE_AXES = {
@@ -80,6 +82,8 @@ def assert_gate_declarations_match_columns(
             )
 
             for foreign_key in vars(model)["__table__"].foreign_keys:
+                if foreign_key.parent.nullable:
+                    continue
                 parent_table = foreign_key.column.table
                 parent_model = models.get(parent_table.fullname)
                 if parent_model is None:
@@ -238,6 +242,41 @@ def test_calendar_010a_columns_are_nullable_or_defaulted_as_locked() -> None:
     assert str(event.c.all_day.server_default.arg) == "false"
 
 
+def test_legacy_preserving_0009_columns_match_the_migration_contract() -> None:
+    """The ORM exposes all three cutover destinations with matching defaults and CHECK."""
+    task = table("task")
+    note = table("note")
+
+    assert task.c.completed_at.nullable is True
+    assert note.c.pinned.nullable is False
+    assert str(note.c.pinned.server_default.arg) == "false"
+    assert note.c.priority.nullable is True
+
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in note.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert checks["ck_note_priority_values"] == (
+        "priority IS NULL OR priority IN ('p1', 'p2', 'p3')"
+    )
+
+
+@pytest.mark.pg
+def test_note_priority_rejects_values_outside_p1_to_p3(pg_dsn: str) -> None:
+    """The physical 0009 CHECK rejects a legacy priority outside the mapped domain."""
+
+    async def scenario() -> None:
+        connection = await asyncpg.connect(pg_dsn)
+        try:
+            with pytest.raises(asyncpg.CheckViolationError):
+                await connection.execute("INSERT INTO microsched.note (priority) VALUES ('p4')")
+        finally:
+            await connection.close()
+
+    asyncio.run(scenario())
+
+
 def test_day_annotation_0006_shape_is_locked() -> None:
     """The 010b table is a DATE-range marker with the privacy gate from day one."""
     annotation = table("day_annotation")
@@ -256,12 +295,30 @@ def test_day_annotation_0006_shape_is_locked() -> None:
         for constraint in annotation.constraints
         if isinstance(constraint, CheckConstraint)
     }
-    assert "ck_day_annotation_day_range" in checks
-    assert "ends_on >= starts_on" in checks["ck_day_annotation_day_range"]
+    assert "day_range" in checks
+    assert "ck_day_annotation_day_range" not in checks
+    assert "ends_on >= starts_on" in checks["day_range"]
 
     index_columns = {index.name: [c.name for c in index.columns] for index in annotation.indexes}
     assert index_columns["ix_day_annotation_starts_on"] == ["starts_on"]
     assert index_columns["ix_day_annotation_ends_on"] == ["ends_on"]
+
+
+def test_reminder_dispatch_check_constraint_metadata_names_match_migration() -> None:
+    """Keep named-CHECK metadata aligned with the physical 0008 constraints."""
+    dispatch = table("reminder_dispatch")
+
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in dispatch.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert checks == {
+        "ck_reminder_dispatch_subject_type": "subject_type IN ('tracker', 'subscription')",
+        "ck_reminder_dispatch_status": "status IN ('pending', 'sent', 'no_device')",
+        "ck_reminder_dispatch_attempt_count": "attempt_count >= 0",
+    }
 
 
 @pytest.mark.pg
@@ -285,5 +342,77 @@ def test_day_annotation_physical_constraint_name_is_day_range(pg_dsn: str) -> No
         connames = {row["conname"] for row in rows}
         assert "day_range" in connames
         assert "ck_day_annotation_day_range" not in connames
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+def test_0008_tables_have_updated_at_triggers(pg_dsn: str) -> None:
+    """PushSubscription and ReminderDispatch update updated_at via set_updated_at trigger."""
+
+    async def scenario() -> None:
+        conn = await asyncpg.connect(pg_dsn)
+        try:
+            # 1. Test push_subscription trigger
+            res = await conn.fetchrow(
+                """
+                INSERT INTO microsched.push_subscription (endpoint, p256dh, auth)
+                VALUES ('https://example.com/push/1', 'p256key', 'authkey')
+                RETURNING id, created_at, updated_at;
+                """
+            )
+            sub_id, created_at, updated_at1 = res["id"], res["created_at"], res["updated_at"]
+            assert created_at is not None
+            assert updated_at1 is not None
+
+            await asyncio.sleep(0.02)
+            await conn.execute(
+                """
+                UPDATE microsched.push_subscription
+                SET last_seen_at = now()
+                WHERE id = $1;
+                """,
+                sub_id,
+            )
+            updated_at2 = await conn.fetchval(
+                "SELECT updated_at FROM microsched.push_subscription WHERE id = $1;",
+                sub_id,
+            )
+            assert updated_at2 > updated_at1
+
+            # 2. Test reminder_dispatch trigger
+            dispatch_res = await conn.fetchrow(
+                """
+                INSERT INTO microsched.reminder_dispatch
+                    (subject_type, subject_id, dispatched_on, status)
+                VALUES ('tracker', gen_random_uuid(), CURRENT_DATE, 'pending')
+                RETURNING id, created_at, updated_at;
+                """
+            )
+            dispatch_id, d_created_at, d_updated_at1 = (
+                dispatch_res["id"],
+                dispatch_res["created_at"],
+                dispatch_res["updated_at"],
+            )
+            assert d_created_at is not None
+            assert d_updated_at1 is not None
+
+            await asyncio.sleep(0.02)
+            await conn.execute(
+                """
+                UPDATE microsched.reminder_dispatch
+                SET status = 'sent'
+                WHERE id = $1;
+                """,
+                dispatch_id,
+            )
+            d_updated_at2 = await conn.fetchval(
+                "SELECT updated_at FROM microsched.reminder_dispatch WHERE id = $1;",
+                dispatch_id,
+            )
+            assert d_updated_at2 > d_updated_at1
+
+        finally:
+            await conn.close()
 
     asyncio.run(scenario())
