@@ -49,6 +49,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { remainingSeconds } from '@/private-gate'
 
 type Envelope<T> = { items: T[] }
@@ -446,8 +447,13 @@ export function CalendarScrollView() {
         onScroll={handleScroll}
         className="relative h-[calc(100dvh-13rem)] min-h-80 min-w-0 flex-1 overflow-y-auto rounded-xl border bg-card shadow-1"
       >
-        <div className="sticky top-0 z-10 flex flex-col gap-2 border-b bg-background px-3 py-2">
-          <div className="flex items-center justify-between gap-2">
+        <div
+          className={cn(
+            'sticky top-0 z-10 border-b bg-background px-3 py-2',
+            isDesktop ? 'flex flex-col gap-2' : 'flex items-center justify-between gap-2',
+          )}
+        >
+          <div className={cn('flex items-center justify-between gap-2', isDesktop && 'w-full')}>
             <h3 data-testid="calendar-month-header" className="text-base font-extrabold">
               {monthLabel(headerMonth.year, headerMonth.month)}
             </h3>
@@ -599,6 +605,7 @@ export function CalendarScrollView() {
                         day={day}
                         isToday={day === today}
                         isOtherMonth={false}
+                        isDesktop={isDesktop}
                       events={eventsByDayMap.get(day) ?? []}
                       tasks={tasksByDayMap.get(day) ?? []}
                       annotations={annotationsByDayMap.get(day) ?? []}

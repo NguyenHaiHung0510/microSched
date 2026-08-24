@@ -26,6 +26,7 @@ export function DayCell({
   showAnnotationLabels,
   sourceColorOf,
   onSelect,
+  isDesktop = false,
   onToggleTask,
   onDropTask,
 }: {
@@ -39,6 +40,7 @@ export function DayCell({
   showAnnotationLabels: boolean
   sourceColorOf: (sourceId: string) => string | null
   onSelect: (day: string) => void
+  isDesktop?: boolean
   onToggleTask?: (taskId: string, newStatus: 'open' | 'completed') => void
   onDropTask?: (day: string, payload: DropTaskPayload) => void
 }) {
@@ -49,6 +51,7 @@ export function DayCell({
   const dayNumber = Number(day.slice(8, 10))
 
   function handleDragOver(e: React.DragEvent) {
+    if (!isDesktop) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     if (!isDragOver) setIsDragOver(true)
@@ -59,6 +62,7 @@ export function DayCell({
   }
 
   function handleDrop(e: React.DragEvent) {
+    if (!isDesktop) return
     e.preventDefault()
     setIsDragOver(false)
     const raw = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain')
@@ -133,12 +137,13 @@ export function DayCell({
             >
               {chip.event.title}
             </span>
-          ) : (
+          ) : isDesktop ? (
             <div
               data-testid="calendar-day-chip-task"
               key={chip.task.id}
-              draggable
+              draggable={isDesktop}
               onDragStart={(e) => {
+                if (!isDesktop) return
                 e.stopPropagation()
                 e.dataTransfer.setData(
                   'application/json',
@@ -152,7 +157,7 @@ export function DayCell({
               }}
               className={cn(
                 'group flex items-center justify-between gap-1 rounded-sm border border-dashed border-input bg-card/60 px-1 py-0.5 text-xs font-semibold text-secondary-foreground hover:border-primary',
-                chip.task.status === 'completed' && 'opacity-70',
+                chip.task.status === 'completed' && 'line-through',
               )}
             >
               <span
@@ -189,6 +194,17 @@ export function DayCell({
                 </span>
               ) : null}
             </div>
+          ) : (
+            <span
+              data-testid="calendar-day-chip-task"
+              key={chip.task.id}
+              className={cn(
+                'block truncate rounded-sm border border-dashed border-input px-1 py-px text-xs font-semibold text-secondary-foreground',
+                chip.task.status === 'completed' && 'line-through',
+              )}
+            >
+              {chip.task.title}
+            </span>
           ),
         )}
         {merged.overflow > 0 ? (
