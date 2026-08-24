@@ -11,9 +11,12 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronUp,
+  Clock,
   Edit3,
   LockKeyhole,
+  Pin,
   Plus,
+  Sparkles,
   Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -32,31 +35,22 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
 import { uuidv7 } from '@/lib/uuidv7'
 import { NoteForm } from '@/NoteForm'
 import { standardRefetchInterval } from '@/query-polling'
 import {
+  appendFutureReflection,
+  formatNoteTime,
+  type Note,
+  type NoteItem,
   type NotePayload,
   type NoteWritePayload,
   noteInvalidationKey,
   noteQueryKey,
 } from '@/note-ui'
 import { errorMessage, restoreNote } from '@/note-undo'
-
-type NoteItem = {
-  id: string
-  content: string
-  is_completed: boolean
-  position: number
-}
-
-type Note = {
-  id: string
-  title: string | null
-  body_md: string | null
-  is_private: boolean
-  items: NoteItem[]
-}
 
 type CreateSource = 'quick' | 'detail'
 
@@ -70,6 +64,8 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const [editing, setEditing] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [newItem, setNewItem] = useState('')
+  const [reflectionOpen, setReflectionOpen] = useState(false)
+  const [reflectionText, setReflectionText] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingItemContent, setEditingItemContent] = useState('')
   const detailsReturnRef = useRef<HTMLButtonElement | null>(null)
@@ -217,6 +213,12 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
+              {note.pinned ? (
+                <Badge data-testid="note-pinned-badge-card" variant="default" className="gap-1 px-1.5 py-0 text-xs">
+                  <Pin className="size-3 fill-current" />
+                  Đã ghim
+                </Badge>
+              ) : null}
               <Button
                 data-testid="note-title"
                 className="h-auto min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent"
@@ -240,14 +242,45 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               </p>
             ) : null}
 
-            {note.items.length > 0 ? (
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {completedItems}/{note.items.length} mục nhỏ
-              </p>
-            ) : null}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="size-3 shrink-0" />
+                <span>{formatNoteTime(note.created_at)}</span>
+                {note.items.length > 0 ? (
+                  <span>· {completedItems}/{note.items.length} mục</span>
+                ) : null}
+              </div>
+              <Button
+                data-testid="note-future-reflection-trigger"
+                size="xs"
+                variant="outline"
+                className="gap-1 text-xs"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setReflectionOpen(true)
+                }}
+              >
+                <Sparkles className="size-3 text-primary" />
+                Lời nhắn từ tương lai
+              </Button>
+            </div>
           </div>
 
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <Button
+              data-testid="note-pin"
+              size="icon-lg"
+              variant="ghost"
+              className={cn('size-11', note.pinned ? 'text-primary' : 'text-muted-foreground')}
+              aria-label={note.pinned ? `Bỏ ghim ${label}` : `Ghim ${label}`}
+              disabled={update.isPending}
+              onClick={(e) => {
+                e.stopPropagation()
+                update.mutate({ pinned: !note.pinned })
+              }}
+            >
+              <Pin className={cn('size-4', note.pinned && 'fill-primary')} />
+            </Button>
             <Button
               data-testid="note-edit"
               size="icon-lg"
@@ -367,11 +400,24 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                   Riêng tư
                 </Badge>
               ) : null}
+              {note.pinned ? (
+                <Badge data-testid="note-pinned-badge-detail" variant="default" className="gap-1">
+                  <Pin className="size-3 fill-current" />
+                  Đã ghim
+                </Badge>
+              ) : null}
 
               <div className="space-y-1">
-                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Nội dung
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Nội dung
+                  </p>
+                  {note.created_at ? (
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="size-3" /> {formatNoteTime(note.created_at)}
+                    </span>
+                  ) : null}
+                </div>
                 <p className="whitespace-pre-wrap break-words text-sm">
                   {note.body_md || 'Chưa có nội dung.'}
                 </p>
@@ -525,6 +571,17 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               </div>
 
               <div className="flex flex-wrap gap-2 border-t pt-4">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => {
+                    setDetailsOpen(false)
+                    setReflectionOpen(true)
+                  }}
+                >
+                  <Sparkles data-icon="inline-start" className="text-primary" />
+                  Lời nhắn từ tương lai
+                </Button>
                 <Button size="lg" onClick={() => setEditing(true)}>
                   <Edit3 data-icon="inline-start" />
                   Sửa ghi chú
@@ -543,6 +600,69 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           )}
 
           {mutationError ? <p className="text-sm text-bad">{errorMessage(mutationError)}</p> : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reflectionOpen} onOpenChange={setReflectionOpen}>
+        <DialogContent
+          data-testid="note-future-reflection-dialog"
+          className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+        >
+          <DialogHeader>
+            <DialogTitle>Lời nhắn từ tương lai · {label}</DialogTitle>
+            <DialogDescription>
+              Gửi cập nhật, suy nghĩ hoặc phản hồi thực tế vào ghi chú này sau một thời gian trải nghiệm.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const trimmed = reflectionText.trim()
+              if (!trimmed || update.isPending) return
+              const newBody = appendFutureReflection(note.body_md, trimmed)
+              update.mutate(
+                { body_md: newBody },
+                {
+                  onSuccess: () => {
+                    setReflectionText('')
+                    setReflectionOpen(false)
+                    toast.success(`Đã thêm lời nhắn từ tương lai cho "${label}"`)
+                  },
+                },
+              )
+            }}
+          >
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Nội dung lời nhắn
+              </label>
+              <Textarea
+                data-testid="note-future-reflection-input"
+                className="min-h-28 bg-card text-sm"
+                placeholder="Ví dụ: Sau 1 tháng xem lại, thực tế là ta đã hoàn thành việc này và có thêm công cụ mới..."
+                value={reflectionText}
+                onChange={(e) => setReflectionText(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setReflectionOpen(false)}
+              >
+                Huỷ
+              </Button>
+              <Button
+                data-testid="note-future-reflection-submit"
+                type="submit"
+                disabled={!reflectionText.trim() || update.isPending}
+              >
+                <Sparkles data-icon="inline-start" className="size-4" />
+                {update.isPending ? 'Đang gửi…' : 'Gửi lời nhắn'}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </>
