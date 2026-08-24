@@ -59,7 +59,10 @@ from app.domain.models import (
 )
 
 TRANSFORM_VERSION = "012-cutover-v2-2026-08-20"
-EXPECTED_ALEMBIC_REVISION = "0009"
+# 026A is an expand migration: the cutover attestation must reject a target
+# that has not yet received its compatible temporal triad and legacy writer
+# triggers, even though source data is still legacy due_at-only.
+EXPECTED_ALEMBIC_REVISION = "0010"
 SOURCE_DB_NAME = "microschedule_v2"
 SOURCE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
 TARGET_APP_ROLE = "microsched_app"
@@ -1145,6 +1148,26 @@ def _expected_trigger_contract() -> set[tuple[str, str, str, str]]:
                     "CREATE TRIGGER trg_task_children_privacy BEFORE UPDATE OF is_private "
                     "ON microsched.task FOR EACH ROW EXECUTE FUNCTION "
                     "microsched.enforce_task_children_privacy()"
+                ),
+            ),
+            (
+                "task",
+                "trg_task_due_legacy_insert_v1",
+                "O",
+                _normalize_catalog_sql(
+                    "CREATE TRIGGER trg_task_due_legacy_insert_v1 BEFORE INSERT "
+                    "ON microsched.task FOR EACH ROW EXECUTE FUNCTION "
+                    "microsched.fn_task_due_legacy_insert_v1()"
+                ),
+            ),
+            (
+                "task",
+                "trg_task_due_legacy_update_v1",
+                "O",
+                _normalize_catalog_sql(
+                    "CREATE TRIGGER trg_task_due_legacy_update_v1 BEFORE UPDATE OF due_at "
+                    "ON microsched.task FOR EACH ROW EXECUTE FUNCTION "
+                    "microsched.fn_task_due_legacy_update_v1()"
                 ),
             ),
         }
