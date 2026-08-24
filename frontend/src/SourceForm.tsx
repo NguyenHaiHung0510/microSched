@@ -3,7 +3,7 @@ import { type FormEvent, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
-import { SOURCE_COLOR_KEYS } from '@/calendar-ui'
+import { SOURCE_COLOR_KEYS, SOURCE_COLOR_LABELS, SOURCE_COLORS } from '@/calendar-ui'
 
 export function SourceForm({
   kind,
@@ -46,12 +46,26 @@ export function SourceForm({
         <span>Màu nguồn</span>
         <Select value={color} onValueChange={setColor}>
           <SelectTrigger className="h-11 w-full bg-card" aria-label="Màu nguồn">
-            <span>{color}</span>
+            <span className="flex items-center gap-2">
+              <span
+                className="inline-block size-3 rounded-full shrink-0"
+                style={{ backgroundColor: SOURCE_COLORS[color] ?? SOURCE_COLORS.slate }}
+                aria-hidden="true"
+              />
+              <span>{SOURCE_COLOR_LABELS[color] ?? color}</span>
+            </span>
           </SelectTrigger>
           <SelectContent>
             {SOURCE_COLOR_KEYS.map((key) => (
               <SelectItem key={key} value={key}>
-                {key}
+                <span className="flex items-center gap-2">
+                  <span
+                    className="inline-block size-3 rounded-full shrink-0"
+                    style={{ backgroundColor: SOURCE_COLORS[key] }}
+                    aria-hidden="true"
+                  />
+                  <span>{SOURCE_COLOR_LABELS[key] ?? key}</span>
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
