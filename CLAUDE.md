@@ -62,7 +62,7 @@ GitHub repo is **public by deliberate choice**; every change, including docs, wo
 
 **`develop` requires a PR for everything, including docs** — `protect-develop` has required status checks (incl. `Secret scan`), so a bare push without a passing check is rejected (`GH013`). One commit per decision session, Vietnamese message explaining *why*. Delegated work goes in `agent-tasks/NNN-<slug>.md` as self-contained specs; all task branches, including docs-only work, use a separate branch with a PR into `develop`.
 
-**Merge gate by criticality** (`pr-merge-gate-by-criticality` memory): non-critical PRs need one adversarial-review pass (T2 or T3) + green CI, then merge (owner has pre-authorized this, no need to ask). Critical/ops-irreversible work still gets the full T1 receipt trail (PR# + `gh pr checks` green + diff read + live SHA).
+**Merge gate by criticality** (`pr-merge-gate-by-criticality` memory): non-critical PRs need one adversarial-review pass (T2 or T3) + green CI; chỉ executor được ủy quyền mới merge dưới owner/policy gate đã nêu. Critical/ops-irreversible work vẫn cần full T1 receipt trail (PR# + `gh pr checks` green + diff read + live SHA) trước khi T1 khuyến nghị gate.
 
 Data boundary for third-party tools (`devops-brief.md` §7): public code/docs = any tier may touch; real secrets and personal data never enter agent sessions.
 
@@ -76,13 +76,13 @@ Data boundary for third-party tools (`devops-brief.md` §7): public code/docs = 
 
 ## Harness operating policy — ACTIVE
 
-**T1 = Codex Desktop Main Thread.** T1 lập kế hoạch, viết/fold spec, xử lý escalation L1, đọc receipt và review diff trước merge. Chủ vẫn giữ quyền quyết định product/architecture và approval; T1 không tự nâng DRAFT thành approved.
+**T1 = Codex Desktop Main Thread, GPT-5.6 Sol program lead.** T1 giữ scope/dependency graph, dispatch, chọn model + effort, đối chiếu receipt, khuyến nghị merge/release gate, reconciliation và milestone report ngắn; không trực tiếp thi công, thực hiện merge/release hay lặp forensic/poll loop. Chủ vẫn giữ quyền quyết định product/architecture và approval; T1 không tự nâng DRAFT thành approved. Chỉ executor được ủy quyền mới thực hiện merge/release dưới explicit owner/policy gate.
 
-**OpenCodex = multi-provider fabric cho T2/T3.** T2 thi công đúng `agent-tasks/` trên worktree/branch được giao; T3 chạy test và phản biện độc lập. Chọn executor theo blast radius, capability cần thật và boundary của task, không theo một provider/model cố định trong tài liệu.
+**OpenCodex = multi-provider fabric cho T2/T3.** Subagent nhận analysis/spec/code/QA/review thực chất trong lane được giao; một writer một worktree. Khi spec đã được review, implementation độc lập có thể khởi động dù CI baseline/merge không liên quan còn chờ; CI là merge gate, còn dependency thật đã khai báo vẫn là hard start/merge gate.
 
 **Orchestration pointer:** T1 tách judgment khỏi procedural receipt, trực tiếp spawn flat vì child không được giả định có nested `spawn_agent`, và luôn đọc diff/output của lane con. Quy tắc đầy đủ về authority, writer isolation, irreversible lanes và wait cadence nằm ở [`docs/devops-brief.md`](docs/devops-brief.md) §7.
 
-**Runtime Catalog là source of truth duy nhất cho model availability và route tại thời điểm giao việc.** Không ghi model catalog, quota, ranking, fallback hay routing tạm trong policy/repo. Chọn model + reasoning effort khi giao task, ghi lại trong spec/receipt nếu nó ảnh hưởng acceptance; route không available thì báo rõ, không âm thầm đổi.
+**Role profile + Runtime Catalog.** Sol/max chỉ cho coordination mơ hồ/high-blast-radius hoặc chuẩn bị evidence/options cho architecture decision khó; owner vẫn giữ quyết định product/architecture trừ khi đã explicit delegate. Terra/xhigh cho implementation; Gemini 3.7/high qua OpenCodex cho independent review khi cần, sau exact callability probe; Luna/xhigh cho adversarial review/fallback. Không blanket `max` hoặc ép multi-model review cho việc deterministic. Runtime Catalog vẫn là source of truth duy nhất cho availability/route tại thời điểm giao; probe chỉ chứng minh callability, không chứng minh task capability/acceptance; route không available thì báo rõ, không âm thầm đổi.
 
 **Control boundaries giữ nguyên:** code/docs public có thể vào phạm vi tool; `.env`, token, credential và personal data thật không vào prompt/log/diff; cutover và dữ liệu thật chỉ tool local do chủ giám sát. T2 dừng sau ~2 vòng bí hoặc khi đụng quyết định đã chốt; full-access git/Docker là theo đúng lệnh được giao, không thay merge gate. Receipt máy kiểm được vẫn là PR/diff/CI và, khi required, production SHA + QA thật.
 
