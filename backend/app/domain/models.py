@@ -125,6 +125,10 @@ class Task(UUIDTimestampModel, table=True):
         sa_column=Column(Text, nullable=False, server_default=text("'open'")),
     )
     priority: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # 026A expand phase: nullable until the compatibility trigger has protected
+    # the full rolling-deploy window and 026B can add NOT NULL + CHECK safely.
+    due_precision: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    due_on: date | None = Field(default=None, sa_column=Column(Date, nullable=True))
     due_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
@@ -691,6 +695,7 @@ class AuthSession(UUIDTimestampModel, table=True):
 
 
 Index("ix_task_due_at", Task.__table__.c.due_at)
+Index("ix_task_due_on", Task.__table__.c.due_on)
 Index("ix_task_item_task_id", TaskItem.__table__.c.task_id)
 Index("ix_note_item_note_id", NoteItem.__table__.c.note_id)
 Index(

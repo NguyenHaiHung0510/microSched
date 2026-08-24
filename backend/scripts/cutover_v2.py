@@ -59,7 +59,10 @@ from app.domain.models import (
 )
 
 TRANSFORM_VERSION = "012-cutover-v2-2026-08-20"
-EXPECTED_ALEMBIC_REVISION = "0009"
+# 026A is an expand migration: the cutover attestation must reject a target
+# that has not yet received its compatible temporal triad and legacy writer
+# triggers, even though source data is still legacy due_at-only.
+EXPECTED_ALEMBIC_REVISION = "0010"
 SOURCE_DB_NAME = "microschedule_v2"
 SOURCE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
 TARGET_APP_ROLE = "microsched_app"
@@ -115,6 +118,8 @@ TARGET_FIELDS: dict[str, tuple[str, ...]] = {
         "body_md",
         "status",
         "priority",
+        "due_precision",
+        "due_on",
         "due_at",
         "completed_at",
         "is_private",
@@ -922,10 +927,26 @@ async def read_connection_identity(connection: Any, schema: str) -> dict[str, An
         .mappings()
         .all()
     )
+    routines = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT n.nspname AS routine_schema, p.proname AS routine_name, "
+                    "pg_get_functiondef(p.oid) AS definition FROM pg_catalog.pg_proc p "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace "
+                    "WHERE n.nspname=:schema AND p.prokind = 'f' ORDER BY p.proname"
+                ),
+                {"schema": schema},
+            )
+        )
+        .mappings()
+        .all()
+    )
     ddl = {
         "columns": [_catalog_row(item) for item in columns],
         "constraints": [_catalog_row(item) for item in constraints],
         "triggers": [_catalog_row(item) for item in triggers],
+        "routines": [_catalog_row(item) for item in routines],
     }
     return {
         "database": row["database"],
@@ -1005,6 +1026,7 @@ def _normalize_catalog_sql(value: Any) -> str:
         r"\1 or \2",
         result,
     )
+    result = re.sub(r"\$\$", "$function$", result)
     result = re.sub(r"\s*\(\s*", "(", result)
     result = re.sub(r"\s*\)", ")", result)
     return re.sub(r"\s*,\s*", ",", result)
@@ -1147,9 +1169,118 @@ def _expected_trigger_contract() -> set[tuple[str, str, str, str]]:
                     "microsched.enforce_task_children_privacy()"
                 ),
             ),
+            (
+                "task",
+                "trg_task_due_legacy_insert_v1",
+                "O",
+                _normalize_catalog_sql(
+                    "CREATE TRIGGER trg_task_due_legacy_insert_v1 BEFORE INSERT "
+                    "ON microsched.task FOR EACH ROW EXECUTE FUNCTION "
+                    "microsched.fn_task_due_legacy_insert_v1()"
+                ),
+            ),
+            (
+                "task",
+                "trg_task_due_legacy_update_v1",
+                "O",
+                _normalize_catalog_sql(
+                    "CREATE TRIGGER trg_task_due_legacy_update_v1 BEFORE UPDATE OF due_at "
+                    "ON microsched.task FOR EACH ROW EXECUTE FUNCTION "
+                    "microsched.fn_task_due_legacy_update_v1()"
+                ),
+            ),
         }
     )
     return result
+
+
+def _expected_routine_contract() -> set[tuple[str, str]]:
+    return {
+        (
+            "enforce_task_children_privacy",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.enforce_task_children_privacy() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN "
+                "IF NEW.is_private AND NOT OLD.is_private THEN "
+                "IF EXISTS ( "
+                "SELECT 1 FROM microsched.task_item "
+                "WHERE task_id = NEW.id AND content NOT LIKE 'enc:v1:%' "
+                ") THEN "
+                "RAISE EXCEPTION "
+                "'cannot make task private while it has plaintext task_item children'; "
+                "END IF; "
+                "END IF; "
+                "RETURN NEW; "
+                "END; $function$"
+            ),
+        ),
+        (
+            "enforce_task_item_privacy",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.enforce_task_item_privacy() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN "
+                "IF EXISTS ( "
+                "SELECT 1 FROM microsched.task "
+                "WHERE id = NEW.task_id AND is_private "
+                ") THEN "
+                "IF NEW.content NOT LIKE 'enc:v1:%' THEN "
+                "RAISE EXCEPTION "
+                "'task_item.content must be ciphertext when parent task is private'; "
+                "END IF; "
+                "END IF; "
+                "RETURN NEW; "
+                "END; $function$"
+            ),
+        ),
+        (
+            "fn_task_due_legacy_insert_v1",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.fn_task_due_legacy_insert_v1() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN "
+                "IF current_setting('microsched.task_due_writer', true) = 'v2' THEN "
+                "RETURN NEW; "
+                "END IF; "
+                "IF NEW.due_at IS NULL THEN "
+                "NEW.due_precision := 'none'; "
+                "ELSE "
+                "NEW.due_precision := 'datetime'; "
+                "END IF; "
+                "NEW.due_on := NULL; "
+                "RETURN NEW; "
+                "END; $function$"
+            ),
+        ),
+        (
+            "fn_task_due_legacy_update_v1",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.fn_task_due_legacy_update_v1() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN "
+                "IF current_setting('microsched.task_due_writer', true) = 'v2' THEN "
+                "RETURN NEW; "
+                "END IF; "
+                "IF NEW.due_at IS NULL THEN "
+                "NEW.due_precision := 'none'; "
+                "ELSE "
+                "NEW.due_precision := 'datetime'; "
+                "END IF; "
+                "NEW.due_on := NULL; "
+                "RETURN NEW; "
+                "END; $function$"
+            ),
+        ),
+        (
+            "set_updated_at",
+            _normalize_catalog_sql(
+                "CREATE OR REPLACE FUNCTION microsched.set_updated_at() "
+                "RETURNS trigger LANGUAGE plpgsql AS $function$ "
+                "BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $function$"
+            ),
+        ),
+    }
 
 
 def _expected_functional_unique_index_contract() -> set[tuple[str, str, str]]:
@@ -1422,6 +1553,21 @@ async def attest_schema(
     }
     if actual_triggers != _expected_trigger_contract():
         raise CutoverError("target catalog trigger contract drift")
+    actual_routines = {
+        (
+            row["routine_name"],
+            _normalize_catalog_sql(row["definition"]),
+        )
+        for row in identity["ddl"].get("routines", [])
+    }
+    if actual_routines != _expected_routine_contract():
+        expected_routines = _expected_routine_contract()
+        missing_routines = expected_routines - actual_routines
+        extra_routines = actual_routines - expected_routines
+        raise CutoverError(
+            "target catalog routine contract drift: "
+            f"missing={sorted(missing_routines)!r} extra={sorted(extra_routines)!r}"
+        )
     actual_functional_unique_indexes = {
         (
             row["table_name"],
@@ -1702,6 +1848,7 @@ def transform_source(
         priority = (
             None if row["priority_id"] is None else PRIORITY_MAP[priorities[row["priority_id"]]]
         )
+        due_at = row["due_at"]
         task_rows.append(
             {
                 "id": row["id"],
@@ -1709,7 +1856,9 @@ def transform_source(
                 "body_md": row["note"],
                 "status": row["status"],
                 "priority": priority,
-                "due_at": row["due_at"],
+                "due_precision": "none" if due_at is None else "datetime",
+                "due_on": None,
+                "due_at": due_at,
                 "completed_at": row["completed_at"],
                 "is_private": False,
                 "pinned": False,

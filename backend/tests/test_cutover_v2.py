@@ -22,6 +22,7 @@ from scripts.cutover_v2 import (
     ManifestError,
     SourceSnapshot,
     SourceValidationError,
+    _expected_routine_contract,
     _normalize_catalog_sql,
     actual_code_identity,
     approval_payload,
@@ -349,6 +350,18 @@ def test_domain_and_preserve_full_row_digest_covers_every_ordered_field(componen
         assert digest_rows(component, [changed], TARGET_FIELDS[component]) != baseline
 
 
+def test_expected_routine_contract_is_pinned() -> None:
+    routines = _expected_routine_contract()
+    names = {name for name, _ in routines}
+    assert names == {
+        "enforce_task_children_privacy",
+        "enforce_task_item_privacy",
+        "fn_task_due_legacy_insert_v1",
+        "fn_task_due_legacy_update_v1",
+        "set_updated_at",
+    }
+
+
 def test_calendar_buckets_keep_manual_and_imported_receipts_separate() -> None:
     rows = source_rows(calendar_uid="manual_123")
     imported = {**rows["calendar_events"][0], "id": uuid4(), "external_uid": "v1-schedule-9"}
@@ -363,6 +376,8 @@ def test_calendar_buckets_keep_manual_and_imported_receipts_separate() -> None:
 def test_transform_maps_constants_and_uuid7_manual_source() -> None:
     transformed = transform_source(SourceSnapshot(source_rows(), NOW))
     assert transformed["task"][0]["priority"] == "p1"
+    assert transformed["task"][0]["due_precision"] == "datetime"
+    assert transformed["task"][0]["due_on"] is None
     assert transformed["note"][0]["pinned"] is True
     assert transformed["note_item"][0]["is_completed"] is True
     assert "is_done" not in transformed["note_item"][0]

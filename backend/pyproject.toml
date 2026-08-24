@@ -19,6 +19,8 @@ dependencies = [
     "pydantic-settings",
     "pywebpush>=2.4.0",
     "sqlmodel",
+    # Windows has no system IANA database; ZoneInfo needs this at app runtime.
+    "tzdata",
     "uvicorn",
 ]
 

@@ -8,9 +8,11 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import and_, delete, false, func, or_, select
+from pydantic_core import PydanticCustomError
+from sqlalchemy import Date, and_, case, cast, delete, false, func, literal, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +25,63 @@ TaskStatus = Literal["open", "completed"]
 TaskListStatus = Literal["open", "completed", "all"]
 TaskBucket = Literal["dated", "overdue", "undated", "open_picker"]
 TaskPriority = Literal["p1", "p2", "p3"]
+TaskDuePrecision = Literal["none", "date", "datetime"]
 NonEmptyText = Annotated[str, Field(min_length=1)]
+
+VIETNAM_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+_SCHEDULE_FIELDS = frozenset({"due_precision", "due_on", "due_at"})
+
+
+def _schedule_error(message: str) -> PydanticCustomError:
+    """Return the stable machine-readable 422 error for an invalid due shape."""
+    return PydanticCustomError("task_schedule_invalid", message)
+
+
+def _canonicalize_schedule(payload: BaseModel, *, default_none: bool) -> None:
+    """Validate one input triad and replace it with its canonical representation.
+
+    ``TaskUpdate`` may omit the whole triad, which means preserve. ``TaskCreate``
+    maps an omitted legacy schedule to ``none`` without consulting a server clock.
+    """
+    supplied = payload.model_fields_set & _SCHEDULE_FIELDS
+    if not supplied:
+        if default_none:
+            payload.due_precision = "none"  # type: ignore[attr-defined]
+            payload.due_on = None  # type: ignore[attr-defined]
+            payload.due_at = None  # type: ignore[attr-defined]
+        return
+
+    precision = payload.due_precision  # type: ignore[attr-defined]
+    due_on = payload.due_on  # type: ignore[attr-defined]
+    due_at = payload.due_at  # type: ignore[attr-defined]
+
+    if "due_precision" in supplied and precision is None:
+        raise _schedule_error("due_precision cannot be null")
+    if "due_precision" not in supplied:
+        if "due_on" in supplied:
+            raise _schedule_error("due_on requires an explicit due_precision")
+        precision = "datetime" if due_at is not None else "none"
+
+    if precision == "none":
+        if due_on is not None or due_at is not None:
+            raise _schedule_error("none precision cannot include due_on or due_at")
+        due_on = None
+        due_at = None
+    elif precision == "date":
+        if due_on is None or due_at is not None:
+            raise _schedule_error("date precision requires due_on and no due_at")
+        due_at = None
+    elif precision == "datetime":
+        if due_at is None or due_on is not None:
+            raise _schedule_error("datetime precision requires due_at and no due_on")
+        due_on = None
+    else:  # Literal validation normally catches this; keep the helper fail-closed.
+        raise _schedule_error("unsupported due_precision")
+
+    payload.due_precision = precision  # type: ignore[attr-defined]
+    payload.due_on = due_on  # type: ignore[attr-defined]
+    payload.due_at = due_at  # type: ignore[attr-defined]
 
 
 class TaskItemCreate(BaseModel):
@@ -69,22 +127,33 @@ class TaskCreate(BaseModel):
     body_md: str | None = None
     status: TaskStatus = "open"
     priority: TaskPriority | None = None
+    due_precision: TaskDuePrecision | None = None
+    due_on: date | None = None
     due_at: datetime | None = None
     is_private: bool = False
     items: list[NonEmptyText] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def require_uuidv7(self) -> "TaskCreate":
-        """Client-selected task IDs must preserve the UUIDv7 ordering contract."""
+    def validate_create(self) -> "TaskCreate":
+        """Preserve UUID ordering and canonicalize legacy/V2 due inputs."""
         if self.id is not None and self.id.version != 7:
             raise ValueError("id must be a UUIDv7")
+        _canonicalize_schedule(self, default_none=True)
         return self
 
     @field_validator("due_at")
     @classmethod
     def require_aware_due_at(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.tzinfo is None:
-            raise ValueError("due_at must include a timezone offset")
+            raise _schedule_error("due_at must include a timezone offset")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def reject_blank_title(cls, value: str) -> str:
+        """Keep the stored title intact while refusing a whitespace-only task."""
+        if not value.strip():
+            raise ValueError("title must not be blank")
         return value
 
 
@@ -95,6 +164,8 @@ class TaskUpdate(BaseModel):
     body_md: str | None = None
     status: TaskStatus | None = None
     priority: TaskPriority | None = None
+    due_precision: TaskDuePrecision | None = None
+    due_on: date | None = None
     due_at: datetime | None = None
     is_private: bool | None = None
     pinned: bool | None = None
@@ -105,13 +176,22 @@ class TaskUpdate(BaseModel):
         for field in ("title", "status", "is_private", "pinned"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null")
+        _canonicalize_schedule(self, default_none=False)
         return self
 
     @field_validator("due_at")
     @classmethod
     def require_aware_due_at(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.tzinfo is None:
-            raise ValueError("due_at must include a timezone offset")
+            raise _schedule_error("due_at must include a timezone offset")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def reject_blank_title(cls, value: str | None) -> str | None:
+        """PATCH follows create's whitespace rule without rewriting valid text."""
+        if value is not None and not value.strip():
+            raise ValueError("title must not be blank")
         return value
 
 
@@ -123,6 +203,8 @@ class TaskRead(BaseModel):
     body_md: str | None
     status: TaskStatus
     priority: TaskPriority | None
+    due_precision: TaskDuePrecision
+    due_on: date | None
     due_at: datetime | None
     completed_at: datetime | None
     is_private: bool
@@ -160,7 +242,7 @@ class InvalidTaskCursor(ValueError):
     """An opaque cursor was malformed, tampered, expired, or mis-scoped."""
 
 
-_CURSOR_VERSION = 1
+_CURSOR_VERSION = 2
 _CURSOR_TTL = timedelta(minutes=15)
 
 
@@ -177,6 +259,113 @@ def _cursor_encode(payload: dict[str, object]) -> str:
     signature = hmac.new(_cursor_secret(), encoded, hashlib.sha256).digest()
     encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
     return f"{encoded.decode('ascii')}.{encoded_signature}"
+
+
+def _canonical_instant(value: datetime) -> str:
+    """Serialize cursor instants in one timezone-independent RFC3339 form."""
+    if value.tzinfo is None:
+        raise InvalidTaskCursor("cursor instant must be timezone-aware")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _scope_instant(value: datetime | None) -> str | None:
+    return _canonical_instant(value) if value is not None else None
+
+
+def _parse_cursor_instant(value: object, field: str) -> datetime:
+    if not isinstance(value, str):
+        raise InvalidTaskCursor(f"cursor {field} must be an instant")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise InvalidTaskCursor(f"cursor {field} is invalid") from error
+    if parsed.tzinfo is None or _canonical_instant(parsed) != value:
+        raise InvalidTaskCursor(f"cursor {field} is not canonical UTC")
+    return parsed
+
+
+def _parse_cursor_day(value: object, field: str) -> date:
+    if not isinstance(value, str):
+        raise InvalidTaskCursor(f"cursor {field} must be a civil date")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as error:
+        raise InvalidTaskCursor(f"cursor {field} is invalid") from error
+    if parsed.isoformat() != value:
+        raise InvalidTaskCursor(f"cursor {field} is not canonical")
+    return parsed
+
+
+def _validate_cursor_last(last: object, bucket: TaskBucket) -> dict[str, object]:
+    """Validate every normalized-key field before it reaches a SQL predicate."""
+    expected_fields = {
+        "group_rank",
+        "group_day",
+        "pinned",
+        "schedule_day",
+        "precision_rank",
+        "due_at",
+        "created_at",
+        "id",
+    }
+    if not isinstance(last, dict) or set(last) != expected_fields:
+        raise InvalidTaskCursor("invalid cursor position")
+    if not isinstance(last["pinned"], bool):
+        raise InvalidTaskCursor("invalid cursor pin value")
+    for field in ("group_rank", "precision_rank"):
+        if isinstance(last[field], bool) or not isinstance(last[field], int):
+            raise InvalidTaskCursor(f"invalid cursor {field}")
+
+    try:
+        task_id = UUID(str(last["id"]))
+    except ValueError as error:
+        raise InvalidTaskCursor("invalid cursor id") from error
+    if not isinstance(last["id"], str) or str(task_id) != last["id"]:
+        raise InvalidTaskCursor("cursor id is not canonical")
+    _parse_cursor_instant(last["created_at"], "created_at")
+
+    group_day = (
+        None if last["group_day"] is None else _parse_cursor_day(last["group_day"], "group_day")
+    )
+    schedule_day = (
+        None
+        if last["schedule_day"] is None
+        else _parse_cursor_day(last["schedule_day"], "schedule_day")
+    )
+    due_at = None if last["due_at"] is None else _parse_cursor_instant(last["due_at"], "due_at")
+    precision_rank = last["precision_rank"]
+    if precision_rank == 0:
+        if schedule_day is None or due_at is None:
+            raise InvalidTaskCursor("datetime cursor shape is incomplete")
+        if due_at.astimezone(VIETNAM_TZ).date() != schedule_day:
+            raise InvalidTaskCursor("datetime cursor day does not match due_at")
+    elif precision_rank == 1:
+        if schedule_day is None or due_at is not None:
+            raise InvalidTaskCursor("date cursor shape is invalid")
+    elif precision_rank == 2:
+        if schedule_day is not None or due_at is not None:
+            raise InvalidTaskCursor("unscheduled cursor shape is invalid")
+    else:
+        raise InvalidTaskCursor("invalid cursor precision rank")
+
+    group_rank = last["group_rank"]
+    if bucket == "overdue":
+        valid_group = group_rank == 0 and group_day is None and precision_rank in {0, 1}
+    elif bucket == "dated":
+        valid_group = group_rank == 1 and group_day == schedule_day and precision_rank in {0, 1}
+    elif bucket == "undated":
+        valid_group = (
+            group_rank == 2 and group_day is None and schedule_day is None and precision_rank == 2
+        )
+    else:
+        valid_group = (
+            group_rank == 1 and group_day == schedule_day and precision_rank in {0, 1}
+        ) or (
+            group_rank == 2 and group_day is None and schedule_day is None and precision_rank == 2
+        )
+    if not valid_group:
+        raise InvalidTaskCursor("cursor group does not match bucket")
+    return last
 
 
 def _cursor_decode(
@@ -204,17 +393,15 @@ def _cursor_decode(
             raise InvalidTaskCursor("expired cursor")
         scope = {
             "status": status,
-            "from": from_instant.isoformat() if from_instant else None,
-            "to": to_instant.isoformat() if to_instant else None,
+            "from": _scope_instant(from_instant),
+            "to": _scope_instant(to_instant),
             "bucket": bucket,
             "private": can_see_private,
             "direction": "forward",
         }
         if any(payload.get(key) != value for key, value in scope.items()):
             raise InvalidTaskCursor("cursor scope mismatch")
-        last = payload.get("last")
-        if not isinstance(last, dict) or not isinstance(last.get("id"), str):
-            raise InvalidTaskCursor("invalid cursor position")
+        payload["last"] = _validate_cursor_last(payload.get("last"), bucket)
         return payload
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
         if isinstance(error, InvalidTaskCursor):
@@ -231,20 +418,48 @@ def _cursor_for(
     bucket: TaskBucket,
     can_see_private: bool,
 ) -> str:
+    precision, due_on, due_at = _stored_schedule(task)
+    if precision == "date":
+        schedule_day = due_on
+        precision_rank = 1
+    elif precision == "datetime":
+        assert due_at is not None
+        schedule_day = due_at.astimezone(VIETNAM_TZ).date()
+        precision_rank = 0
+    else:
+        schedule_day = None
+        precision_rank = 2
+
+    if bucket == "overdue":
+        group_rank, group_day = 0, None
+    elif bucket == "dated":
+        group_rank, group_day = 1, schedule_day
+    elif bucket == "undated":
+        group_rank, group_day = 2, None
+    elif schedule_day is None:
+        group_rank, group_day = 2, None
+    else:
+        group_rank, group_day = 1, schedule_day
+    if task.created_at is None:
+        raise InvalidTaskCursor("cannot cursor a task without created_at")
     return _cursor_encode(
         {
             "v": _CURSOR_VERSION,
             "status": status,
-            "from": from_instant.isoformat() if from_instant else None,
-            "to": to_instant.isoformat() if to_instant else None,
+            "from": _scope_instant(from_instant),
+            "to": _scope_instant(to_instant),
             "bucket": bucket,
             "private": can_see_private,
             "direction": "forward",
             "expires": (datetime.now(UTC) + _CURSOR_TTL).timestamp(),
             "last": {
+                "group_rank": group_rank,
+                "group_day": group_day.isoformat() if group_day else None,
                 "pinned": task.pinned,
-                "due_at": task.due_at.isoformat() if task.due_at else None,
-                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "schedule_day": schedule_day.isoformat() if schedule_day else None,
+                "precision_rank": precision_rank,
+                "due_at": _canonical_instant(due_at) if due_at else None,
+                "created_at": _canonical_instant(task.created_at),
                 "id": str(task.id),
             },
         }
@@ -259,6 +474,10 @@ class PrivateWriteLocked(Exception):
     """A write tried to create private data while the display gate was closed."""
 
 
+class TaskScheduleShapeError(RuntimeError):
+    """A physical row violates the expand-phase application invariant."""
+
+
 def _clear(value: str | None) -> str | None:
     """Decrypt a stored value when needed, preserving nullable fields."""
     if value is None:
@@ -271,6 +490,161 @@ def _sealed(value: str | None) -> str | None:
     if value is None:
         return None
     return value if crypto.is_encrypted(value) else crypto.encrypt(value)
+
+
+def _stored_schedule(task: Task) -> tuple[TaskDuePrecision, date | None, datetime | None]:
+    """Dual-read the expand schema and fail closed for an impossible V2 shape."""
+    precision = task.due_precision
+    if precision is None:
+        # A row created before 0010, or caught in the expand/deploy window.
+        return ("datetime", None, task.due_at) if task.due_at is not None else ("none", None, None)
+    if precision == "none" and task.due_on is None and task.due_at is None:
+        return "none", None, None
+    if precision == "date" and task.due_on is not None and task.due_at is None:
+        return "date", task.due_on, None
+    if precision == "datetime" and task.due_on is None and task.due_at is not None:
+        if task.due_at.tzinfo is None:
+            raise TaskScheduleShapeError("stored datetime task has a naive due_at")
+        return "datetime", None, task.due_at
+    raise TaskScheduleShapeError("stored task has an invalid due schedule shape")
+
+
+def _dual_write_stored_schedule(task: Task) -> None:
+    """Canonicalize the full triad whenever this V2 binary updates a task row."""
+    precision, due_on, due_at = _stored_schedule(task)
+    task.due_precision = precision
+    task.due_on = due_on
+    task.due_at = due_at
+
+
+async def _mark_v2_due_writer(db: AsyncSession) -> None:
+    """Mark only the current transaction so legacy triggers never rewrite V2."""
+    await db.execute(text("SELECT set_config('microsched.task_due_writer', 'v2', true)"))
+
+
+def _schedule_sql(task_cls: type[Task]):
+    """Build the single dual-read SQL representation used by filter/order/cursor."""
+    precision = case(
+        (
+            task_cls.due_precision.is_(None),
+            case(
+                (task_cls.due_at.is_not(None), literal("datetime")),
+                else_=literal("none"),
+            ),
+        ),
+        else_=task_cls.due_precision,
+    )
+    schedule_day = case(
+        (precision == "date", task_cls.due_on),
+        (
+            precision == "datetime",
+            cast(func.timezone("Asia/Ho_Chi_Minh", task_cls.due_at), Date),
+        ),
+        else_=None,
+    )
+    precision_rank = case(
+        (precision == "datetime", 0),
+        (precision == "date", 1),
+        else_=2,
+    )
+    return precision, schedule_day, precision_rank
+
+
+def _order_fields(task_cls: type[Task], bucket: TaskBucket):
+    """Return the exact variable suffix of the normalized Task schedule key."""
+    precision, schedule_day, precision_rank = _schedule_sql(task_cls)
+    pinned_rank = case((task_cls.pinned.is_(True), 1), else_=0)
+    group_rank = case((precision == "none", 2), else_=1)
+    group_day = case((precision == "none", None), else_=schedule_day)
+    common_tail = [
+        ("precision_rank", precision_rank, "asc", False),
+        ("due_at", task_cls.due_at, "asc", True),
+        ("created_at", task_cls.created_at, "desc", False),
+        ("id", task_cls.id, "asc", False),
+    ]
+    if bucket == "dated":
+        return [
+            ("schedule_day", schedule_day, "asc", True),
+            ("pinned", pinned_rank, "desc", False),
+            *common_tail,
+        ]
+    if bucket == "overdue":
+        return [
+            ("pinned", pinned_rank, "desc", False),
+            ("schedule_day", schedule_day, "asc", True),
+            *common_tail,
+        ]
+    if bucket == "undated":
+        return [
+            ("pinned", pinned_rank, "desc", False),
+            ("created_at", task_cls.created_at, "desc", False),
+            ("id", task_cls.id, "asc", False),
+        ]
+    return [
+        ("group_rank", group_rank, "asc", False),
+        ("group_day", group_day, "asc", True),
+        ("pinned", pinned_rank, "desc", False),
+        ("schedule_day", schedule_day, "asc", True),
+        *common_tail,
+    ]
+
+
+def _cursor_sql_value(field: str, value: object):
+    if field in {"group_day", "schedule_day"}:
+        return None if value is None else date.fromisoformat(str(value))
+    if field in {"due_at", "created_at"}:
+        return None if value is None else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if field == "id":
+        return UUID(str(value))
+    if field == "pinned":
+        return 1 if value is True else 0
+    return value
+
+
+def _equal_expression(expression, value):
+    return expression.is_(None) if value is None else expression == value
+
+
+def _relative_expression(expression, value, *, direction: str, nulls_last: bool, after: bool):
+    """Compare one ordered field while preserving explicit NULLS LAST semantics."""
+    if value is None:
+        if not nulls_last:
+            raise InvalidTaskCursor("unexpected null in cursor order key")
+        return false() if after else expression.is_not(None)
+    if after:
+        comparison = expression > value if direction == "asc" else expression < value
+        return or_(comparison, expression.is_(None)) if nulls_last else comparison
+    return expression < value if direction == "asc" else expression > value
+
+
+def _keyset_relative(
+    task_cls: type[Task], last: dict[str, object], bucket: TaskBucket, *, after: bool
+):
+    """Build a mixed-direction lexicographic predicate from the shared order spec."""
+    prefixes = []
+    branches = []
+    for field, expression, direction, nulls_last in _order_fields(task_cls, bucket):
+        value = _cursor_sql_value(field, last[field])
+        relative = _relative_expression(
+            expression,
+            value,
+            direction=direction,
+            nulls_last=nulls_last,
+            after=after,
+        )
+        branches.append(and_(*prefixes, relative))
+        prefixes.append(_equal_expression(expression, value))
+    return or_(*branches)
+
+
+def _ordered(stmt, task_cls: type[Task], bucket: TaskBucket):
+    expressions = []
+    for _field, expression, direction, nulls_last in _order_fields(task_cls, bucket):
+        ordered = expression.asc() if direction == "asc" else expression.desc()
+        if nulls_last:
+            ordered = ordered.nulls_last()
+        expressions.append(ordered)
+    return stmt.order_by(*expressions)
 
 
 class TaskStore:
@@ -309,13 +683,16 @@ class TaskStore:
         )
 
     def _task_read(self, task: Task, items: list[TaskItem]) -> TaskRead:
+        due_precision, due_on, due_at = _stored_schedule(task)
         return TaskRead(
             id=task.id,
             title=_clear(task.title),
             body_md=_clear(task.body_md),
             status=task.status,
             priority=task.priority,
-            due_at=task.due_at,
+            due_precision=due_precision,
+            due_on=due_on,
+            due_at=due_at,
             completed_at=task.completed_at,
             is_private=task.is_private,
             pinned=task.pinned,
@@ -337,11 +714,7 @@ class TaskStore:
         stmt = readable(select(Task), Task, auth)
         if status != "all":
             stmt = stmt.where(Task.status == status)
-        stmt = stmt.order_by(
-            Task.pinned.desc(),
-            Task.due_at.asc().nulls_last(),
-            Task.created_at.desc(),
-        )
+        stmt = _ordered(stmt, Task, "open_picker")
         result = await db.execute(stmt.limit(limit).offset(offset))
         parents = list(result.scalars())
         if not parents:
@@ -357,78 +730,6 @@ class TaskStore:
         for item in child_result.scalars():
             grouped[item.task_id].append(item)
         return [self._task_read(task, grouped[task.id]) for task in parents]
-
-    @staticmethod
-    def _keyset_after(task_cls: type[Task], last: dict[str, object]):
-        """Build the forward predicate for pinned/due/created/id ordering."""
-        pinned = bool(last["pinned"])
-        due_raw = last.get("due_at")
-        created_raw = last.get("created_at")
-        due_at = datetime.fromisoformat(str(due_raw)) if due_raw else None
-        created_at = datetime.fromisoformat(str(created_raw)) if created_raw else None
-        task_id = UUID(str(last["id"]))
-        same_due = task_cls.due_at.is_(None) if due_at is None else task_cls.due_at == due_at
-        later_due = (
-            or_(task_cls.due_at > due_at, task_cls.due_at.is_(None))
-            if due_at is not None
-            else false()
-        )
-        same_created = (
-            task_cls.created_at.is_(None)
-            if created_at is None
-            else task_cls.created_at == created_at
-        )
-        later_created = (
-            task_cls.created_at.is_not(None)
-            if created_at is None
-            else task_cls.created_at < created_at
-        )
-        later_pinned = task_cls.pinned.is_(False) if pinned else false()
-        return or_(
-            later_pinned,
-            and_(
-                task_cls.pinned == pinned,
-                or_(
-                    later_due,
-                    and_(same_due, later_created),
-                    and_(same_due, same_created, task_cls.id > task_id),
-                ),
-            ),
-        )
-
-    @staticmethod
-    def _keyset_before(task_cls: type[Task], last: dict[str, object]):
-        """Build the inverse predicate used only for honest has_previous metadata."""
-        pinned = bool(last["pinned"])
-        due_raw = last.get("due_at")
-        created_raw = last.get("created_at")
-        due_at = datetime.fromisoformat(str(due_raw)) if due_raw else None
-        created_at = datetime.fromisoformat(str(created_raw)) if created_raw else None
-        task_id = UUID(str(last["id"]))
-        same_due = task_cls.due_at.is_(None) if due_at is None else task_cls.due_at == due_at
-        earlier_due = task_cls.due_at.is_not(None) if due_at is None else task_cls.due_at < due_at
-        same_created = (
-            task_cls.created_at.is_(None)
-            if created_at is None
-            else task_cls.created_at == created_at
-        )
-        earlier_created = (
-            task_cls.created_at.is_not(None)
-            if created_at is None
-            else task_cls.created_at > created_at
-        )
-        earlier_pinned = task_cls.pinned.is_(True) if not pinned else false()
-        return or_(
-            earlier_pinned,
-            and_(
-                task_cls.pinned == pinned,
-                or_(
-                    earlier_due,
-                    and_(same_due, earlier_created),
-                    and_(same_due, same_created, task_cls.id < task_id),
-                ),
-            ),
-        )
 
     async def list_cursor(
         self,
@@ -454,6 +755,14 @@ class TaskStore:
             raise InvalidTaskCursor("from must be timezone-aware")
         if to_instant and to_instant.tzinfo is None:
             raise InvalidTaskCursor("to must be timezone-aware")
+        if from_instant and to_instant and to_instant <= from_instant:
+            raise InvalidTaskCursor("invalid range")
+        now_value = now or datetime.now(UTC)
+        if now_value.tzinfo is None:
+            raise InvalidTaskCursor("now must be timezone-aware")
+        from_day = from_instant.astimezone(VIETNAM_TZ).date() if from_instant else None
+        to_day = to_instant.astimezone(VIETNAM_TZ).date() if to_instant else None
+        today = now_value.astimezone(VIETNAM_TZ).date()
         visible_private = can_see_private(auth)
         last: dict[str, object] | None = None
         if cursor:
@@ -469,6 +778,7 @@ class TaskStore:
         stmt = readable(select(Task), Task, auth)
         if status != "all":
             stmt = stmt.where(Task.status == status)
+        precision, _schedule_day, _precision_rank = _schedule_sql(Task)
         if bucket == "open_picker":
             # Calendar move selection is a bounded open-work view across both
             # dated and undated tasks. It deliberately has its own cursor scope
@@ -476,34 +786,51 @@ class TaskStore:
             # bucket cursor.
             stmt = stmt.where(Task.status == "open")
         elif bucket == "undated":
-            stmt = stmt.where(Task.due_at.is_(None))
+            stmt = stmt.where(precision == "none")
         elif bucket == "overdue":
-            if from_instant is None:
+            if from_instant is None or from_day is None:
                 raise InvalidTaskCursor("overdue bucket requires range start")
             # The overdue bucket is a navigation aid for open work. A caller
             # asking for ``status=all`` must not let completed historical rows
             # consume its bounded page and hide still-open work.
             stmt = stmt.where(
                 Task.status == "open",
-                Task.due_at < (now or datetime.now(UTC)),
-                Task.due_at < from_instant,
+                or_(
+                    and_(precision == "date", Task.due_on < today, Task.due_on < from_day),
+                    and_(
+                        precision == "datetime",
+                        Task.due_at < now_value,
+                        Task.due_at < from_instant,
+                    ),
+                ),
             )
         else:
-            if from_instant is not None:
-                stmt = stmt.where(Task.due_at >= from_instant)
-            if to_instant is not None:
-                stmt = stmt.where(Task.due_at < to_instant)
+            date_conditions = [precision == "date"]
+            datetime_conditions = [precision == "datetime"]
+            if from_instant is not None and from_day is not None:
+                date_conditions.append(Task.due_on >= from_day)
+                datetime_conditions.append(Task.due_at >= from_instant)
+            if to_instant is not None and to_day is not None:
+                date_conditions.append(Task.due_on < to_day)
+                datetime_conditions.append(Task.due_at < to_instant)
+            stmt = stmt.where(or_(and_(*date_conditions), and_(*datetime_conditions)))
         total = int(
             await db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
         )
+        base_stmt = stmt
+        has_previous = False
         if last:
-            stmt = stmt.where(self._keyset_after(Task, last))
-        ordered = stmt.order_by(
-            Task.pinned.desc(),
-            Task.due_at.asc().nulls_last(),
-            Task.created_at.desc(),
-            Task.id.asc(),
-        )
+            has_previous = bool(
+                await db.scalar(
+                    select(func.count()).select_from(
+                        base_stmt.where(_keyset_relative(Task, last, bucket, after=False))
+                        .order_by(None)
+                        .subquery()
+                    )
+                )
+            )
+            stmt = stmt.where(_keyset_relative(Task, last, bucket, after=True))
+        ordered = _ordered(stmt, Task, bucket)
         result = await db.execute(ordered.limit(limit + 1))
         parents = list(result.scalars())
         has_next = len(parents) > limit
@@ -536,7 +863,6 @@ class TaskStore:
         )
         # A cursor establishes a previous page. On the initial page, a bounded
         # range has a previous page only when an older matching row exists.
-        has_previous = bool(cursor)
         return TaskPage(
             items=items,
             next_cursor=next_cursor,
@@ -579,18 +905,31 @@ class TaskStore:
         dated_scope = readable(select(Task), Task, auth)
         if status != "all":
             dated_scope = dated_scope.where(Task.status == status)
-        dated_scope = dated_scope.where(Task.due_at.is_not(None))
+        precision, _schedule_day, _precision_rank = _schedule_sql(Task)
+        from_day = from_instant.astimezone(VIETNAM_TZ).date()
+        to_day = to_instant.astimezone(VIETNAM_TZ).date()
+        dated_scope = dated_scope.where(precision.in_(("date", "datetime")))
         has_previous = bool(
             await db.scalar(
                 select(func.count()).select_from(
-                    dated_scope.where(Task.due_at < from_instant).subquery()
+                    dated_scope.where(
+                        or_(
+                            and_(precision == "date", Task.due_on < from_day),
+                            and_(precision == "datetime", Task.due_at < from_instant),
+                        )
+                    ).subquery()
                 )
             )
         )
         has_next = bool(
             await db.scalar(
                 select(func.count()).select_from(
-                    dated_scope.where(Task.due_at >= to_instant).subquery()
+                    dated_scope.where(
+                        or_(
+                            and_(precision == "date", Task.due_on >= to_day),
+                            and_(precision == "datetime", Task.due_at >= to_instant),
+                        )
+                    ).subquery()
                 )
             )
         )
@@ -599,8 +938,8 @@ class TaskStore:
             bucket_cursors=bucket_cursors,
             has_previous=has_previous,
             has_next=has_next,
-            loaded_range_start=from_instant.date(),
-            loaded_range_end=(to_instant - timedelta(days=1)).date(),
+            loaded_range_start=from_day,
+            loaded_range_end=to_day - timedelta(days=1),
             counts={bucket: next(iter(page.counts.values()), 0) for bucket, page in pages.items()},
         )
 
@@ -615,12 +954,15 @@ class TaskStore:
         """Create a task and its initial checklist atomically."""
         if payload.is_private and not can_see_private(auth):
             raise PrivateWriteLocked
+        await _mark_v2_due_writer(db)
         values = {
             "title": _sealed(payload.title) if payload.is_private else payload.title,
             "body_md": _sealed(payload.body_md) if payload.is_private else payload.body_md,
             "status": payload.status,
             "completed_at": datetime.now(UTC) if payload.status == "completed" else None,
             "priority": payload.priority,
+            "due_precision": payload.due_precision,
+            "due_on": payload.due_on,
             "due_at": payload.due_at,
             "is_private": payload.is_private,
         }
@@ -679,6 +1021,7 @@ class TaskStore:
     ) -> TaskRead | None:
         """Patch a task, preserving the trigger-required toggle ordering."""
         changes = payload.model_dump(exclude_unset=True)
+        schedule_supplied = bool(payload.model_fields_set & _SCHEDULE_FIELDS)
         wants_toggle = "is_private" in changes
         task = await self._parent(db, auth, task_id, for_update=wants_toggle or "status" in changes)
         if task is None:
@@ -687,6 +1030,7 @@ class TaskStore:
         target_private = changes.get("is_private", task.is_private)
         if target_private and not can_see_private(auth):
             raise PrivateWriteLocked
+        await _mark_v2_due_writer(db)
 
         if wants_toggle and target_private != task.is_private:
             if target_private:
@@ -727,9 +1071,15 @@ class TaskStore:
         if "status" in changes and changes["status"] != old_status:
             task.completed_at = datetime.now(UTC) if changes["status"] == "completed" else None
 
-        for field in ("status", "priority", "due_at", "pinned"):
+        for field in ("status", "priority", "pinned"):
             if field in changes:
                 setattr(task, field, changes[field])
+        if schedule_supplied:
+            task.due_precision = payload.due_precision
+            task.due_on = payload.due_on
+            task.due_at = payload.due_at
+        else:
+            _dual_write_stored_schedule(task)
         await db.flush()
         return self._task_read(task, items)
 
@@ -738,6 +1088,8 @@ class TaskStore:
         task = await self._parent(db, auth, task_id)
         if task is None:
             return False
+        await _mark_v2_due_writer(db)
+        _dual_write_stored_schedule(task)
         task.deleted_at = datetime.now(UTC)
         await db.flush()
         return True
@@ -757,6 +1109,8 @@ class TaskStore:
             if task is None:
                 return None
         else:
+            await _mark_v2_due_writer(db)
+            _dual_write_stored_schedule(task)
             task.deleted_at = None
             await db.flush()
 

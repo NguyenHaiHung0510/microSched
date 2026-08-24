@@ -4,6 +4,17 @@ import { expect, fixtureTasks, test } from './fixtures/tasks'
 
 const MEASUREMENT_MS = 60_000
 
+function todayInVietnam(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
 mkdirSync('output/playwright', { recursive: true })
 
 async function openTasksScreen(page: Page) {
@@ -57,6 +68,8 @@ test('dense default continuation survives a sparse earlier block', async ({ page
 test('global undated and overlapping overdue continuations do not replay after navigation', async ({ page, taskApi }) => {
   const overdueRows = taskApi.tasks.filter((task) => task.id.startsWith('synthetic-')).slice(0, 60)
   overdueRows.forEach((task, index) => {
+    task.due_precision = 'datetime'
+    task.due_on = null
     task.due_at = new Date(Date.now() - (30 * 86_400_000 + index * 1_000)).toISOString()
   })
   await openTasksScreen(page)
@@ -194,6 +207,67 @@ test('quick add posts once and clears the input', async ({ page, taskApi }) => {
   await page.getByTestId('quick-add-submit').click()
   await expect.poll(() => taskApi.count('POST', '/api/tasks')).toBe(1)
   await expect(input).toHaveValue('')
+  const created = taskApi.tasks.find((entry) => entry.title === 'Việc thêm nhanh')
+  expect(created).toMatchObject({
+    due_precision: 'date',
+    due_on: todayInVietnam(),
+    due_at: null,
+  })
+})
+
+test('full create form defaults to today and requires an explicit time for datetime', async ({
+  page,
+  taskApi,
+}, testInfo) => {
+  await openTasksScreen(page)
+  await page.getByText('Thêm chi tiết').click()
+  const dialog = page.getByTestId('task-create-dialog')
+  await expect(dialog).toBeVisible()
+  const scheduleSelect = dialog.getByLabel('Kiểu lịch')
+  const dateInput = dialog.getByLabel('Ngày')
+  await expect(scheduleSelect).toContainText('Ngày')
+  await expect(dateInput).toHaveValue(todayInVietnam())
+  await expect(dialog.getByLabel('Giờ')).toHaveCount(0)
+  for (const control of [scheduleSelect, dateInput]) {
+    const metrics = await control.evaluate((element) => ({
+      height: element.getBoundingClientRect().height,
+    }))
+    expect(metrics.height).toBeGreaterThanOrEqual(44)
+  }
+  if (testInfo.project.name === 'mobile') {
+    const dateFontSize = await dateInput.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).fontSize))
+    expect(dateFontSize).toBeGreaterThanOrEqual(16)
+  }
+  const viewport = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }))
+  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth)
+
+  await dialog.getByLabel('Tiêu đề').fill('   ')
+  await expect(dialog.getByRole('button', { name: 'Tạo task' })).toBeDisabled()
+  await dialog.getByLabel('Tiêu đề').fill('Có giờ rõ ràng')
+  await scheduleSelect.click()
+  await page.getByRole('option', { name: 'Ngày + giờ' }).click()
+  const timeInput = dialog.getByLabel('Giờ')
+  await expect(timeInput).toHaveValue('')
+  await expect(timeInput).toHaveCSS('height', '44px')
+  if (testInfo.project.name === 'mobile') {
+    const timeFontSize = await timeInput.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).fontSize))
+    expect(timeFontSize).toBeGreaterThanOrEqual(16)
+  }
+  await expect(dialog.getByRole('button', { name: 'Tạo task' })).toBeDisabled()
+  await timeInput.fill('09:30')
+  await expect(dialog.getByRole('button', { name: 'Tạo task' })).toBeEnabled()
+  await dialog.getByRole('button', { name: 'Tạo task' }).click()
+  await expect(dialog).toBeHidden()
+  expect(taskApi.tasks.find((entry) => entry.title === 'Có giờ rõ ràng')).toMatchObject({
+    due_precision: 'datetime',
+    due_on: null,
+    due_at: `${todayInVietnam()}T09:30:00+07:00`,
+  })
 })
 
 test('obsolete quick-add microcopy is absent', async ({ page }) => {

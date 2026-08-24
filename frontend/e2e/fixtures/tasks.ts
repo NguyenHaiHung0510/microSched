@@ -12,6 +12,8 @@ export type FixtureTask = {
   body_md: string | null
   status: 'open' | 'completed'
   priority: 'p1' | 'p2' | 'p3' | null
+  due_precision: 'none' | 'date' | 'datetime'
+  due_on: string | null
   due_at: string | null
   is_private: boolean
   pinned: boolean
@@ -37,6 +39,15 @@ export const fixturePrivatePin = randomPin()
 export let fixtureWrongPin = randomPin()
 while (fixtureWrongPin === fixturePrivatePin) fixtureWrongPin = randomPin()
 
+const vietnamDayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Ho_Chi_Minh',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+const scheduleDayCache = new WeakMap<FixtureTask, { shape: string; day: string | null }>()
+
 const adversarialNoBreak = 'A'.repeat(70)
 const adversarialVietnamese =
   'Đọc kỹ những việc cần làm, giữ nguyên dấu tiếng Việt dày đặc để kiểm tra xuống dòng và chiều cao thẻ; '
@@ -53,12 +64,14 @@ function task(
   options: Partial<FixtureTask> = {},
 ): FixtureTask {
   const timestamp = new Date().toISOString()
-  return {
+  const result: FixtureTask = {
     id,
     title,
     body_md: null,
     status: 'open',
     priority: null,
+    due_precision: 'none',
+    due_on: null,
     due_at: null,
     is_private: false,
     pinned: false,
@@ -67,6 +80,16 @@ function task(
     updated_at: timestamp,
     ...options,
   }
+  if (options.due_precision === undefined) {
+    if (options.due_on !== undefined && options.due_on !== null) {
+      result.due_precision = 'date'
+      result.due_at = null
+    } else if (options.due_at !== undefined && options.due_at !== null) {
+      result.due_precision = 'datetime'
+      result.due_on = null
+    }
+  }
+  return result
 }
 
 /** Required QA data: hostile text, 30+ records, mixed status, and 3 scattered overdue records. */
@@ -93,7 +116,10 @@ export const fixtureTasks: FixtureTask[] = [
       item('item-012-4', 'Mục thứ tư'),
     ],
   }),
-  task('task-013', 'Học một điều mới', { priority: 'p3' }),
+  task('task-013', 'Học một điều mới', {
+    priority: 'p3',
+    due_on: taskDateKey(new Date().toISOString()),
+  }),
   task('task-014', 'Sắp xếp tài liệu'),
   task('task-015', 'Gọi điện'),
   task('task-016', 'Mua đồ dùng'),
@@ -170,26 +196,68 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 function taskDateKey(value: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date(value))
+  const parts = vietnamDayFormatter.formatToParts(new Date(value))
   const fields = Object.fromEntries(
     parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]),
   )
   return `${fields.year}-${fields.month}-${fields.day}`
 }
 
-function compareTasks(left: FixtureTask, right: FixtureTask): number {
+function scheduleDay(entry: FixtureTask): string | null {
+  const shape = `${entry.due_precision}|${entry.due_on ?? ''}|${entry.due_at ?? ''}`
+  const cached = scheduleDayCache.get(entry)
+  if (cached?.shape === shape) return cached.day
+  const day = entry.due_precision === 'date'
+    ? entry.due_on
+    : entry.due_precision === 'datetime' && entry.due_at
+      ? taskDateKey(entry.due_at)
+      : null
+  scheduleDayCache.set(entry, { shape, day })
+  return day
+}
+
+function compareTasks(
+  left: FixtureTask,
+  right: FixtureTask,
+  group: 'dated' | 'overdue' | 'undated' | 'open_picker' = 'open_picker',
+): number {
+  const leftDay = scheduleDay(left)
+  const rightDay = scheduleDay(right)
+  const groupOrder = Number(leftDay === null) - Number(rightDay === null)
+  if (groupOrder !== 0) return groupOrder
+  if (group !== 'overdue') {
+    const groupDayOrder = (leftDay ?? '').localeCompare(rightDay ?? '')
+    if (groupDayOrder !== 0) return groupDayOrder
+  }
   if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
-  if (left.due_at && right.due_at) {
-    const due = Date.parse(left.due_at) - Date.parse(right.due_at)
-    if (due !== 0) return due
-  } else if (left.due_at) return -1
-  else if (right.due_at) return 1
+  const scheduleDayOrder = (leftDay ?? '').localeCompare(rightDay ?? '')
+  if (scheduleDayOrder !== 0) return scheduleDayOrder
+  const precisionRank = (value: FixtureTask['due_precision']) => value === 'datetime' ? 0 : value === 'date' ? 1 : 2
+  const precisionOrder = precisionRank(left.due_precision) - precisionRank(right.due_precision)
+  if (precisionOrder !== 0) return precisionOrder
+  const dueOrder = (left.due_at ?? '').localeCompare(right.due_at ?? '')
+  if (dueOrder !== 0) return dueOrder
   return Date.parse(right.created_at) - Date.parse(left.created_at) || left.id.localeCompare(right.id)
+}
+
+function canonicalSchedule(
+  payload: Partial<FixtureTask>,
+): Pick<FixtureTask, 'due_precision' | 'due_on' | 'due_at'> {
+  if (payload.due_precision === 'date') {
+    return { due_precision: 'date', due_on: payload.due_on ?? null, due_at: null }
+  }
+  if (payload.due_precision === 'datetime') {
+    return { due_precision: 'datetime', due_on: null, due_at: payload.due_at ?? null }
+  }
+  if (payload.due_precision === 'none') {
+    return { due_precision: 'none', due_on: null, due_at: null }
+  }
+  if (Object.hasOwn(payload, 'due_at')) {
+    return payload.due_at === null
+      ? { due_precision: 'none', due_on: null, due_at: null }
+      : { due_precision: 'datetime', due_on: null, due_at: payload.due_at ?? null }
+  }
+  return { due_precision: 'none', due_on: null, due_at: null }
 }
 
 function fixturePage(
@@ -355,19 +423,31 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
         const status = url.searchParams.get('status') ?? 'open'
         const from = url.searchParams.get('from')
         const to = url.searchParams.get('to')
+        const fromDay = from ? taskDateKey(from) : null
+        const toDay = to ? taskDateKey(to) : null
+        const today = taskDateKey(new Date().toISOString())
         const visible = state.tasks
           .filter((entry) => !entry.is_private || privateOpen)
           .filter((entry) => status === 'all' || entry.status === status)
-        const inRange = (entry: FixtureTask) =>
-          entry.due_at !== null &&
-          (!from || Date.parse(entry.due_at) >= Date.parse(from)) &&
-          (!to || Date.parse(entry.due_at) < Date.parse(to))
-        const dated = visible.filter(inRange).sort(compareTasks)
-        const earliest = from ? Date.parse(from) : Number.NEGATIVE_INFINITY
+        const inRange = (entry: FixtureTask) => {
+          if (entry.due_precision === 'date' && entry.due_on) {
+            return (!fromDay || entry.due_on >= fromDay) && (!toDay || entry.due_on < toDay)
+          }
+          return entry.due_precision === 'datetime' && entry.due_at !== null &&
+            (!from || Date.parse(entry.due_at) >= Date.parse(from)) &&
+            (!to || Date.parse(entry.due_at) < Date.parse(to))
+        }
+        const dated = visible.filter(inRange).sort((left, right) => compareTasks(left, right, 'dated'))
         const overdue = visible
-          .filter((entry) => entry.status === 'open' && entry.due_at !== null && Date.parse(entry.due_at) < earliest)
-          .sort(compareTasks)
-        const undated = visible.filter((entry) => entry.due_at === null).sort(compareTasks)
+          .filter((entry) => entry.status === 'open' && (
+            entry.due_precision === 'date'
+              ? Boolean(entry.due_on && fromDay && entry.due_on < today && entry.due_on < fromDay)
+              : Boolean(entry.due_precision === 'datetime' && entry.due_at && from && Date.parse(entry.due_at) < Date.now() && Date.parse(entry.due_at) < Date.parse(from))
+          ))
+          .sort((left, right) => compareTasks(left, right, 'overdue'))
+        const undated = visible
+          .filter((entry) => entry.due_precision === 'none')
+          .sort((left, right) => compareTasks(left, right, 'undated'))
         const datedUrl = new URL(url.toString())
         datedUrl.searchParams.set('bucket', 'dated')
         const overdueUrl = new URL(url.toString())
@@ -382,10 +462,14 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
           return
         }
         const hasPrevious = visible.some(
-          (entry) => entry.due_at !== null && (!from || Date.parse(entry.due_at) < Date.parse(from)),
+          (entry) => entry.due_precision === 'date'
+            ? Boolean(entry.due_on && fromDay && entry.due_on < fromDay)
+            : Boolean(entry.due_precision === 'datetime' && entry.due_at && from && Date.parse(entry.due_at) < Date.parse(from)),
         )
         const hasNext = visible.some(
-          (entry) => entry.due_at !== null && (!to || Date.parse(entry.due_at) >= Date.parse(to)),
+          (entry) => entry.due_precision === 'date'
+            ? Boolean(entry.due_on && toDay && entry.due_on >= toDay)
+            : Boolean(entry.due_precision === 'datetime' && entry.due_at && to && Date.parse(entry.due_at) >= Date.parse(to)),
         )
         return route.fulfill(
           jsonResponse({
@@ -412,18 +496,29 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
         const status = url.searchParams.get('status') ?? 'open'
         const from = url.searchParams.get('from')
         const to = url.searchParams.get('to')
+        const fromDay = from ? taskDateKey(from) : null
+        const toDay = to ? taskDateKey(to) : null
+        const today = taskDateKey(new Date().toISOString())
         const bucket = url.searchParams.get('bucket') ?? 'dated'
         const visible = state.tasks
           .filter((entry) => !entry.is_private || privateOpen)
           .filter((entry) => bucket === 'overdue' || bucket === 'open_picker' ? entry.status === 'open' : status === 'all' || entry.status === status)
           .filter((entry) => {
             if (bucket === 'open_picker') return true
-            if (bucket === 'undated') return entry.due_at === null
-            if (!entry.due_at) return bucket !== 'dated' && !from && !to
-            if (bucket === 'overdue') return Boolean(from) && Date.parse(entry.due_at) < Date.parse(from as string)
+            if (bucket === 'undated') return entry.due_precision === 'none'
+            if (bucket === 'overdue') {
+              if (entry.due_precision === 'date') {
+                return Boolean(entry.due_on && fromDay && entry.due_on < today && entry.due_on < fromDay)
+              }
+              return Boolean(entry.due_precision === 'datetime' && entry.due_at && from && Date.parse(entry.due_at) < Date.now() && Date.parse(entry.due_at) < Date.parse(from))
+            }
+            if (entry.due_precision === 'date' && entry.due_on) {
+              return (!fromDay || entry.due_on >= fromDay) && (!toDay || entry.due_on < toDay)
+            }
+            if (entry.due_precision !== 'datetime' || !entry.due_at) return false
             return (!from || Date.parse(entry.due_at) >= Date.parse(from)) && (!to || Date.parse(entry.due_at) < Date.parse(to))
           })
-          .sort(compareTasks)
+          .sort((left, right) => compareTasks(left, right, bucket as 'dated' | 'overdue' | 'undated' | 'open_picker'))
         const page = fixturePage(visible, url)
         if (!page) {
           await route.fulfill(jsonResponse({ detail: 'Invalid or expired task cursor' }, 422))
@@ -435,13 +530,14 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
 
       if (path === '/api/tasks' && method === 'POST') {
         const payload = JSON.parse(request.postData() ?? '{}') as Partial<FixtureTask>
+        const schedule = canonicalSchedule(payload)
         const created = task(
           String(payload.id ?? `task-created-${Date.now()}`),
           String(payload.title ?? ''),
           {
             body_md: payload.body_md ?? null,
             priority: payload.priority ?? null,
-            due_at: payload.due_at ?? null,
+            ...schedule,
             is_private: payload.is_private ?? false,
           },
         )
@@ -458,7 +554,13 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
           return
         }
         const payload = JSON.parse(request.postData() ?? '{}') as Partial<FixtureTask>
-        Object.assign(current, payload, { updated_at: new Date().toISOString() })
+        const hasSchedule = ['due_precision', 'due_on', 'due_at'].some((key) => Object.hasOwn(payload, key))
+        Object.assign(
+          current,
+          payload,
+          hasSchedule ? canonicalSchedule(payload) : {},
+          { updated_at: new Date().toISOString() },
+        )
         await route.fulfill(jsonResponse(current))
         return
       }

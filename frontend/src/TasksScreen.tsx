@@ -22,7 +22,6 @@ import {
 import { toast } from 'sonner'
 
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
-import { endOfDayVietnam } from '@/calendar-scroll'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,9 +46,15 @@ import { taskRefetchInterval } from '@/query-polling'
 import { TaskForm } from '@/TaskForm'
 import {
   type TaskFilter,
+  type TaskDuePrecision,
   type TaskPayload,
   type TaskPriority,
+  type TaskSchedule,
   type TaskStatus,
+  compareTaskScheduleKey,
+  isTaskScheduleOverdue,
+  rescheduleTaskSchedule,
+  scheduleDay,
   taskInvalidationKey,
   taskQueryKey,
   toggledStatus,
@@ -69,6 +74,8 @@ type Task = {
   body_md: string | null
   status: TaskStatus
   priority: TaskPriority | null
+  due_precision: TaskDuePrecision
+  due_on: string | null
   due_at: string | null
   is_private: boolean
   pinned: boolean
@@ -101,17 +108,11 @@ function formatTimelineDay(day: string): string {
   }).format(new Date(`${day}T00:00:00+07:00`))
 }
 
-function sortTimelineTasks(tasks: Task[]): Task[] {
-  return [...tasks].sort((left, right) => {
-    if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
-    if (left.due_at && right.due_at) {
-      const due = Date.parse(left.due_at) - Date.parse(right.due_at)
-      if (due !== 0) return due
-    } else if (left.due_at) return -1
-    else if (right.due_at) return 1
-    const created = Date.parse(right.created_at ?? '') - Date.parse(left.created_at ?? '')
-    return created || left.id.localeCompare(right.id)
-  })
+function sortTimelineTasks(
+  tasks: Task[],
+  group: 'dated' | 'overdue' | 'undated',
+): Task[] {
+  return [...tasks].sort((left, right) => compareTaskScheduleKey(left, right, group))
 }
 
 export function TasksScreen() {
@@ -292,18 +293,18 @@ export function TasksScreen() {
     const overdue: Task[] = []
     const undated: Task[] = []
     for (const task of tasks) {
-      if (task.due_at === null) {
+      const key = scheduleDay(task)
+      if (key === null) {
         undated.push(task)
         continue
       }
-      const key = vietnamDateKey(task.due_at)
       if (dateGroups.has(key)) dateGroups.get(key)?.push(task)
       else if (task.status === 'open' && key < loadedStart) overdue.push(task)
     }
     return {
-      dateGroups: dateKeys.map((day) => ({ day, tasks: sortTimelineTasks(dateGroups.get(day) ?? []) })),
-      overdue: sortTimelineTasks(overdue),
-      undated: sortTimelineTasks(undated),
+      dateGroups: dateKeys.map((day) => ({ day, tasks: sortTimelineTasks(dateGroups.get(day) ?? [], 'dated') })),
+      overdue: sortTimelineTasks(overdue, 'overdue'),
+      undated: sortTimelineTasks(undated, 'undated'),
     }
   }, [dateKeys, loadedStart, tasks])
 
@@ -409,6 +410,8 @@ export function TasksScreen() {
       title,
       body_md: null,
       priority: null,
+      due_precision: 'date',
+      due_on: todayInVietnam(),
       due_at: null,
       is_private: false,
     })
@@ -535,7 +538,7 @@ const filterLabels: Record<TaskFilter, string> = {
   all: 'Tất cả',
 }
 
-function formatDue(value: string): string {
+function formatDateTimeDue(value: string): string {
   return new Intl.DateTimeFormat('vi-VN', {
     timeZone: VIETNAM_TIME_ZONE,
     day: '2-digit',
@@ -546,27 +549,23 @@ function formatDue(value: string): string {
 }
 
 function isOverdue(task: Task): boolean {
-  return (
-    task.status === 'open' &&
-    task.due_at !== null &&
-    new Date(task.due_at).getTime() < Date.now()
-  )
+  return task.status === 'open' && isTaskScheduleOverdue(task)
+}
+
+function formatSchedule(task: Task): string {
+  if (task.due_precision === 'date' && task.due_on) {
+    const [year, month, day] = task.due_on.split('-')
+    return `${day}/${month}/${year}`
+  }
+  if (task.due_precision === 'datetime' && task.due_at) {
+    return formatDateTimeDue(task.due_at)
+  }
+  return 'Chưa xếp lịch'
 }
 
 const listFilterLabels: Record<ListView, string> = {
   ...filterLabels,
   overdue: 'Trễ hạn',
-}
-
-function vietnamDateKey(value: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: VIETNAM_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date(value))
-  const values = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]))
-  return `${values.year}-${values.month}-${values.day}`
 }
 
 type TaskTimelineResponse = {
@@ -623,10 +622,10 @@ const TaskCard = memo(function TaskCard({
     void queryClient.invalidateQueries({ queryKey: ['calendar'] })
   }
   const reschedule = useMutation({
-    mutationFn: (variables: { next: string | null; previous: string | null }) =>
+    mutationFn: (variables: { next: TaskSchedule; previous: TaskSchedule }) =>
       apiRequest<Task>(`/api/tasks/${task.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ due_at: variables.next }),
+        body: JSON.stringify(variables.next),
       }),
     onSuccess: (_data, variables) => {
       refresh()
@@ -639,7 +638,7 @@ const TaskCard = memo(function TaskCard({
           action: {
             label: 'Hoàn tác',
             onClick: () =>
-              reschedule.mutate({ next: variables.previous, previous: null }),
+              reschedule.mutate({ next: variables.previous, previous: variables.next }),
           },
         },
       )
@@ -756,9 +755,17 @@ const TaskCard = memo(function TaskCard({
   }
 
   function rescheduleTo(daysFromNow: number) {
+    const previous: TaskSchedule = {
+      due_precision: task.due_precision,
+      due_on: task.due_on,
+      due_at: task.due_at,
+    }
     reschedule.mutate({
-      next: endOfDayVietnam(addVietnamDays(todayInVietnam(), daysFromNow)),
-      previous: task.due_at,
+      next: rescheduleTaskSchedule(
+        previous,
+        addVietnamDays(todayInVietnam(), daysFromNow),
+      ),
+      previous,
     })
   }
 
@@ -858,14 +865,10 @@ const TaskCard = memo(function TaskCard({
             </div>
 
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              {task.due_at ? (
-                <span className={isOverdue(task) ? 'font-bold text-bad' : ''}>
-                  {isOverdue(task) ? 'Trễ · ' : 'Hạn '}
-                  {formatDue(task.due_at)}
-                </span>
-              ) : (
-                <span>Không hạn</span>
-              )}
+              <span className={isOverdue(task) ? 'font-bold text-bad' : ''}>
+                {isOverdue(task) ? 'Trễ · ' : task.due_precision === 'none' ? '' : 'Hạn '}
+                {formatSchedule(task)}
+              </span>
               {task.items.length > 0 ? (
                 <span className="tabular-nums">
                   {completedItems}/{task.items.length} mục nhỏ
@@ -1054,8 +1057,8 @@ const TaskCard = memo(function TaskCard({
                 <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                   Hạn
                 </p>
-                <p className={task.due_at && isOverdue(task) ? 'font-bold text-bad' : ''}>
-                  {task.due_at ? formatDue(task.due_at) : 'Không đặt hạn'}
+                <p className={isOverdue(task) ? 'font-bold text-bad' : ''}>
+                  {formatSchedule(task)}
                 </p>
               </div>
 
@@ -1321,6 +1324,8 @@ export function LegacyTasksScreen() {
         title,
         body_md: null,
         priority: null,
+        due_precision: 'date',
+        due_on: todayInVietnam(),
         due_at: null,
         is_private: false,
       },
