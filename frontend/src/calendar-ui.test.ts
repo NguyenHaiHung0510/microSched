@@ -7,6 +7,9 @@ import {
   eventDialogErrorMessage,
   groupEvents,
   rangeQuery,
+  SOURCE_COLOR_KEYS,
+  SOURCE_COLOR_LABELS,
+  SOURCE_COLORS,
   sourceColorToken,
   vietnamInputToIso,
 } from '@/calendar-ui'
@@ -52,6 +55,16 @@ describe('calendar UI helpers', () => {
   it('falls back to slate for an unknown or missing source color', () => {
     expect(sourceColorToken(null)).toBe('var(--n-500)')
     expect(sourceColorToken('unknown')).toBe('var(--n-500)')
+  })
+
+  it('provides expanded curated color palette with labels', () => {
+    expect(SOURCE_COLOR_KEYS).toContain('teal')
+    expect(SOURCE_COLOR_KEYS).toContain('indigo')
+    expect(SOURCE_COLOR_KEYS).toContain('orange')
+    expect(SOURCE_COLOR_KEYS).toContain('cyan')
+    expect(SOURCE_COLORS.teal).toBe('#0d9488')
+    expect(SOURCE_COLOR_LABELS.teal).toBe('Xanh mòng két')
+    expect(sourceColorToken('teal')).toBe('#0d9488')
   })
 
   it('groups event cards by their Vietnam calendar day', () => {

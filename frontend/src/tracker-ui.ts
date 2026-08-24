@@ -110,6 +110,74 @@ export function sortTrackersForGrid(trackers: Tracker[]): Tracker[] {
   })
 }
 
+export type GroupedTrackersResult = {
+  grouped: Array<{ group: TrackerGroup; trackers: Tracker[] }>
+  unassigned: Tracker[]
+}
+
+/** Group trackers by their assigned group, preserving group positions and sorting unassigned. */
+export function groupTrackersByGroup(
+  trackers: Tracker[],
+  groups: TrackerGroup[],
+): GroupedTrackersResult {
+  const groupMap = new Map<string, Tracker[]>()
+  const unassigned: Tracker[] = []
+
+  for (const group of groups) {
+    groupMap.set(group.id, [])
+  }
+
+  for (const tracker of trackers) {
+    if (tracker.group_id && groupMap.has(tracker.group_id)) {
+      const list = groupMap.get(tracker.group_id)
+      if (list) list.push(tracker)
+    } else {
+      unassigned.push(tracker)
+    }
+  }
+
+  const grouped = groups.map((group) => ({
+    group,
+    trackers: groupMap.get(group.id) ?? [],
+  }))
+
+  return { grouped, unassigned }
+}
+
+export type HourReminderGroup = {
+  time: string
+  trackers: Tracker[]
+  previewText: string
+}
+
+/** Cluster health trackers with configured reminder_time by hour for aggregated notifications. */
+export function groupRemindersByHour(trackers: Tracker[]): HourReminderGroup[] {
+  const timeMap = new Map<string, Tracker[]>()
+  for (const tracker of trackers) {
+    if (tracker.reminder_time) {
+      const current = timeMap.get(tracker.reminder_time) ?? []
+      current.push(tracker)
+      timeMap.set(tracker.reminder_time, current)
+    }
+  }
+
+  const times = [...timeMap.keys()].sort()
+  return times.map((time) => {
+    const items = timeMap.get(time) ?? []
+    const names = items.map((item) => item.name).join(', ')
+    const customTexts = items
+      .map((item) => item.reminder_text)
+      .filter((t): t is string => Boolean(t && t.trim()))
+    const previewText =
+      customTexts.length > 0 ? customTexts.join(' · ') : 'Nhắc uống: ' + names
+    return {
+      time,
+      trackers: items,
+      previewText,
+    }
+  })
+}
+
 /** Accept digits only; separators are stripped before the server ever sees them. */
 export function digitsOnly(value: string): string {
   return value.replace(/\D/g, '')

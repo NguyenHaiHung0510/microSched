@@ -40,6 +40,23 @@ export const SOURCE_COLORS: Record<string, string> = {
   sky: 'var(--primary)',
   violet: 'var(--rose-700)',
   slate: 'var(--n-500)',
+  teal: '#0d9488',
+  indigo: '#4f46e5',
+  orange: '#ea580c',
+  cyan: '#0891b2',
+}
+
+export const SOURCE_COLOR_LABELS: Record<string, string> = {
+  rose: 'Hồng ấm',
+  amber: 'Vàng hổ phách',
+  emerald: 'Xanh lục bảo',
+  sky: 'Hồng đậm (Chính)',
+  violet: 'Mận tím',
+  slate: 'Xám ấm',
+  teal: 'Xanh mòng két',
+  indigo: 'Chàm hoàng gia',
+  orange: 'Cam san hô',
+  cyan: 'Xanh lơ biển',
 }
 
 export const SOURCE_COLOR_KEYS = Object.keys(SOURCE_COLORS)

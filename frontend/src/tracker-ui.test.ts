@@ -11,10 +11,13 @@ import {
   formatLastSeen,
   formatQuantity,
   formatVnd,
+  groupRemindersByHour,
+  groupTrackersByGroup,
   quantityToNumber,
   quietAgo,
   sortTrackersForGrid,
   type Tracker,
+  type TrackerGroup,
 } from '@/tracker-ui'
 
 function tracker(overrides: Partial<Tracker> = {}): Tracker {
@@ -54,6 +57,43 @@ describe('tracker grid order (§5.2)', () => {
     const input = [tracker({ id: 'z' }), tracker({ id: 'a' })]
     sortTrackersForGrid(input)
     expect(input.map((item) => item.id)).toEqual(['z', 'a'])
+  })
+
+  it('groups trackers by group ID and isolates unassigned trackers', () => {
+    const groups: TrackerGroup[] = [
+      { id: 'g1', name: 'Thuốc sáng', kind: 'health', color: null, position: 0, tracker_count: 2, created_at: null, updated_at: null },
+      { id: 'g2', name: 'Chi tiêu', kind: 'finance', color: null, position: 1, tracker_count: 0, created_at: null, updated_at: null },
+    ]
+    const trackers: Tracker[] = [
+      tracker({ id: 't1', name: 'Thuốc A', group_id: 'g1' }),
+      tracker({ id: 't2', name: 'Thuốc B', group_id: 'g1' }),
+      tracker({ id: 't3', name: 'Hút thuốc', group_id: null }),
+    ]
+
+    const result = groupTrackersByGroup(trackers, groups)
+    expect(result.grouped.length).toBe(2)
+    expect(result.grouped[0].group.name).toBe('Thuốc sáng')
+    expect(result.grouped[0].trackers.map((t) => t.id)).toEqual(['t1', 't2'])
+    expect(result.grouped[1].group.name).toBe('Chi tiêu')
+    expect(result.grouped[1].trackers.length).toBe(0)
+    expect(result.unassigned.map((t) => t.id)).toEqual(['t3'])
+  })
+
+  it('clusters health reminders by scheduled time for batch preview', () => {
+    const trackers: Tracker[] = [
+      tracker({ id: 't1', name: 'Thuốc dạ dày', reminder_time: '08:00', reminder_text: 'Uống trước ăn' }),
+      tracker({ id: 't2', name: 'Vitamin C', reminder_time: '08:00', reminder_text: null }),
+      tracker({ id: 't3', name: 'Thuốc bổ mắt', reminder_time: '20:00', reminder_text: null }),
+      tracker({ id: 't4', name: 'Không hẹn giờ', reminder_time: null }),
+    ]
+
+    const reminderGroups = groupRemindersByHour(trackers)
+    expect(reminderGroups.length).toBe(2)
+    expect(reminderGroups[0].time).toBe('08:00')
+    expect(reminderGroups[0].trackers.map((t) => t.id)).toEqual(['t1', 't2'])
+    expect(reminderGroups[0].previewText).toBe('Uống trước ăn')
+    expect(reminderGroups[1].time).toBe('20:00')
+    expect(reminderGroups[1].previewText).toBe('Nhắc uống: Thuốc bổ mắt')
   })
 })
 

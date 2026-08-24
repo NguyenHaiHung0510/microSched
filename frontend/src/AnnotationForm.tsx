@@ -1,6 +1,11 @@
 import { type FormEvent, useState } from 'react'
 
-import { SOURCE_COLOR_KEYS, todayInVietnam } from '@/calendar-ui'
+import {
+  SOURCE_COLOR_KEYS,
+  SOURCE_COLOR_LABELS,
+  SOURCE_COLORS,
+  todayInVietnam,
+} from '@/calendar-ui'
 import type { DayAnnotation } from '@/calendar-scroll'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -104,13 +109,29 @@ export function AnnotationForm({
           onValueChange={(value) => setColor(value === NO_COLOR ? null : value)}
         >
           <SelectTrigger className="h-10 w-full bg-card" aria-label="Màu dấu ngày">
-            <span>{color ?? 'Không màu'}</span>
+            <span className="flex items-center gap-2">
+              {color ? (
+                <span
+                  className="inline-block size-3 rounded-full shrink-0"
+                  style={{ backgroundColor: SOURCE_COLORS[color] ?? SOURCE_COLORS.slate }}
+                  aria-hidden="true"
+                />
+              ) : null}
+              <span>{color ? (SOURCE_COLOR_LABELS[color] ?? color) : 'Không màu'}</span>
+            </span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={NO_COLOR}>Không màu</SelectItem>
             {SOURCE_COLOR_KEYS.map((key) => (
               <SelectItem key={key} value={key}>
-                {key}
+                <span className="flex items-center gap-2">
+                  <span
+                    className="inline-block size-3 rounded-full shrink-0"
+                    style={{ backgroundColor: SOURCE_COLORS[key] }}
+                    aria-hidden="true"
+                  />
+                  <span>{SOURCE_COLOR_LABELS[key] ?? key}</span>
+                </span>
               </SelectItem>
             ))}
           </SelectContent>

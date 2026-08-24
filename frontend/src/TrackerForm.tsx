@@ -59,7 +59,7 @@ export function TrackerForm({
 
   const kindGroups = groups.filter((group) => group.kind === kind)
   const needsUnit = inputMode === 'quantity'
-  const canConfigureReminder = Boolean(initial) && kind === 'health' && inputMode === 'event'
+  const canConfigureReminder = kind === 'health' && inputMode === 'event'
   const canSubmit = name.trim().length > 0 && (!needsUnit || unit.trim().length > 0) && !pending
 
   function submit(event: FormEvent) {
