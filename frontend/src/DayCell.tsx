@@ -1,4 +1,5 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState } from 'react'
+import { Check } from 'lucide-react'
 
 import type { CalendarEvent } from '@/calendar-ui'
 import {
@@ -7,7 +8,7 @@ import {
   type DayAnnotation,
   type TaskSummary,
 } from '@/calendar-scroll'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 export type DropTaskPayload =
@@ -47,13 +48,6 @@ export function DayCell({
   const hiddenAnnotations = Math.max(0, annotations.length - 2)
   const dayNumber = Number(day.slice(8, 10))
 
-  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      onSelect(day)
-    }
-  }
-
   function handleDragOver(e: React.DragEvent) {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
@@ -80,18 +74,16 @@ export function DayCell({
   }
 
   return (
-    <div
+    <Button
       data-testid="calendar-day-cell"
       data-day={day}
-      role="button"
-      tabIndex={0}
+      variant="ghost"
       onClick={() => onSelect(day)}
-      onKeyDown={handleKeyDown}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       className={cn(
-        'flex h-auto min-h-16 w-full cursor-pointer select-none flex-col items-stretch justify-start gap-0.5 rounded-lg border p-1 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-24 md:min-h-28',
+        'flex h-auto min-h-16 w-full flex-col items-stretch justify-start gap-0.5 rounded-lg border p-1 text-left transition-colors sm:min-h-24 md:min-h-28',
         isToday ? 'border-primary bg-accent' : 'border-transparent',
         isDragOver && 'border-primary bg-primary/10 ring-2 ring-primary/30',
       )}
@@ -172,20 +164,29 @@ export function DayCell({
                 {chip.task.title}
               </span>
               {onToggleTask ? (
-                <div
-                  className="shrink-0"
-                  onClick={(e) => e.stopPropagation()}
+                <span
+                  role="checkbox"
+                  aria-checked={chip.task.status === 'completed'}
+                  data-testid="calendar-chip-task-toggle"
+                  aria-label={`Đổi trạng thái ${chip.task.title}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleTask(
+                      chip.task.id,
+                      chip.task.status === 'completed' ? 'open' : 'completed',
+                    )
+                  }}
+                  className={cn(
+                    'flex size-3.5 shrink-0 items-center justify-center rounded border border-input transition-colors hover:border-primary',
+                    chip.task.status === 'completed'
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'bg-background',
+                  )}
                 >
-                  <Checkbox
-                    data-testid="calendar-chip-task-toggle"
-                    aria-label={`Đổi trạng thái ${chip.task.title}`}
-                    checked={chip.task.status === 'completed'}
-                    onCheckedChange={(checked) => {
-                      onToggleTask(chip.task.id, checked === true ? 'completed' : 'open')
-                    }}
-                    className="size-3.5 rounded-sm"
-                  />
-                </div>
+                  {chip.task.status === 'completed' ? (
+                    <Check className="size-2.5 stroke-[3]" />
+                  ) : null}
+                </span>
               ) : null}
             </div>
           ),
@@ -199,6 +200,6 @@ export function DayCell({
           </span>
         ) : null}
       </div>
-    </div>
+    </Button>
   )
 }
