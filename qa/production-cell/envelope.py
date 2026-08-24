@@ -401,12 +401,16 @@ class CommandEnvelope:
 
         normalized = self._assert_argv(args)
         self._assert_docker_argv(normalized)
-        if self._context is not None:
-            normalized = ["--context", self._context.context_name, *normalized]
-        elif tuple(normalized) == CONTEXT_LIST_ARGS:
+        if tuple(normalized) == CONTEXT_LIST_ARGS:
+            # Context discovery is metadata-only.  It must not inherit a
+            # previously-attested context, otherwise a changed current daemon
+            # could influence the evidence used to decide whether cleanup may
+            # mutate anything.
             pass
         elif self._pending_context_name is not None and tuple(normalized) == INFO_ARGS:
             normalized = ["--context", self._pending_context_name, *normalized]
+        elif self._context is not None:
+            normalized = ["--context", self._context.context_name, *normalized]
         else:
             raise GuardDenied("Docker context has not been attested")
         self.receipt.docker_call_count += 1
@@ -463,10 +467,9 @@ class CommandEnvelope:
             input_bytes=input_bytes,
         )
 
-    def discover_and_attest_context(self) -> DockerTarget:
-        """Select the fixed platform context/endpoint pair and attest a Linux daemon."""
+    def _attest_context_candidate(self) -> DockerTarget:
+        """Read one local context/daemon pair without changing the trusted target."""
 
-        self._context = None
         self._pending_context_name = None
         result = self.run_docker(list(CONTEXT_LIST_ARGS), timeout=30)
         if result.returncode != 0:
@@ -507,7 +510,11 @@ class CommandEnvelope:
         endpoint_kind = "npipe" if selected_endpoint.startswith("npipe:") else "unix"
 
         self._pending_context_name = selected_name
-        info = self.run_docker(list(INFO_ARGS), timeout=30)
+        try:
+            info = self.run_docker(list(INFO_ARGS), timeout=30)
+        finally:
+            # A failed candidate attestation must not affect later commands.
+            self._pending_context_name = None
         if info.returncode != 0:
             raise BlockedPrerequisite("allowlisted local Docker daemon is unavailable")
         try:
@@ -549,18 +556,26 @@ class CommandEnvelope:
             os_type=os_type,
             daemon_identity_sha256=identity_hash,
         )
+        return target
+
+    def discover_and_attest_context(self) -> DockerTarget:
+        """Attest the initial local target and make it usable for run commands."""
+
+        target = self._attest_context_candidate()
         self._context = target
-        self._pending_context_name = None
         return target
 
     def reattest_context(self, expected: DockerTarget) -> DockerTarget:
-        current = self.discover_and_attest_context()
+        # Do not assign the candidate to ``_context`` until equality succeeds:
+        # any mismatch must leave cleanup with no mutating Docker path.
+        current = self._attest_context_candidate()
         if current != expected:
             from contract import CleanupGuardDenied
 
             raise CleanupGuardDenied(
                 "Docker context or daemon identity changed during the run"
             )
+        self._context = expected
         return current
 
     def verify_git_worktree(

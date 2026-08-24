@@ -243,6 +243,28 @@ class MigrationGateTests(unittest.TestCase):
         with self.assertRaises(AssertionFailure):
             assert_migration_gate(None, "app")
 
+    def test_m17_nonzero_receipt_records_fault_and_real_exit(self) -> None:
+        from cell import CellRun, _record_migration_nonzero
+
+        run = object.__new__(CellRun)
+        run.migration_exit_code = None
+        run.receipt = {"migration_gate": {}}
+        _record_migration_nonzero(run, 17)
+        self.assertEqual(run.migration_exit_code, 17)
+        self.assertEqual(
+            run.receipt["migration_gate"],
+            {
+                "status": "FAIL_ASSERTION",
+                "fault_case": "migration_nonzero",
+                "exit_code": 17,
+                "service_completed_successfully": False,
+                "app_create_command_issued": False,
+                "app_created_before_success": False,
+                "app_container_created": False,
+                "app_container_running": False,
+            },
+        )
+
 
 class RuntimeTaxonomyTests(unittest.TestCase):
     def test_image_expose_metadata_with_null_binding_is_allowed(self) -> None:

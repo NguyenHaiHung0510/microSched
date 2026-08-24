@@ -20,9 +20,19 @@ SHA256 = "0" * 64
 
 
 def workspace_temporary_directory() -> tempfile.TemporaryDirectory[str]:
-    parent = CELL_ROOT / ".runs" / "unit-tests"
-    parent.mkdir(parents=True, exist_ok=True)
-    return tempfile.TemporaryDirectory(dir=parent)
+    # Each test receives a fresh system-temp root.  Do not reuse the cell
+    # runtime ``.runs/unit-tests`` tree: Windows can retain an ACL-denied
+    # residue there, and touching it would both mask the blocker and make
+    # unrelated tests fail before their assertions run.
+    temporary_root = Path(tempfile.gettempdir()).resolve()
+    try:
+        temporary_root.relative_to(REPO_ROOT)
+    except ValueError:
+        return tempfile.TemporaryDirectory(prefix="msqa025-unit-")
+    raise RuntimeError(
+        "QA025 unit-test blocker: system temporary root resolves inside the "
+        "worktree; refusing to create test artifacts beside cell runs"
+    )
 
 
 def compose_config() -> dict[str, Any]:

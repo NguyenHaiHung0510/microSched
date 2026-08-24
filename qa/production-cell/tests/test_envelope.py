@@ -127,6 +127,44 @@ class CommandEnvelopeTests(unittest.TestCase):
             envelope.run_docker(["context", "use", "remote"])
         seam.assert_not_called()
 
+    def test_reattest_mismatch_keeps_original_context_and_issues_no_delete(self) -> None:
+        expected = DockerTarget(
+            context_name="desktop-linux" if os.name == "nt" else "default",
+            endpoint="npipe:////./pipe/dockerDesktopLinuxEngine"
+            if os.name == "nt"
+            else "unix:///var/run/docker.sock",
+            endpoint_kind="npipe" if os.name == "nt" else "unix",
+            endpoint_sha256="0" * 64,
+            daemon_id="expected-daemon",
+            daemon_name="expected-daemon",
+            server_version="28.0.0",
+            os_type="linux",
+            daemon_identity_sha256="0" * 64,
+        )
+        changed = DockerTarget(
+            context_name=expected.context_name,
+            endpoint=expected.endpoint,
+            endpoint_kind=expected.endpoint_kind,
+            endpoint_sha256=expected.endpoint_sha256,
+            daemon_id="changed-daemon",
+            daemon_name="changed-daemon",
+            server_version=expected.server_version,
+            os_type="linux",
+            daemon_identity_sha256="1" * 64,
+        )
+        envelope = CommandEnvelope(
+            REPO_ROOT, CELL_ROOT, dict(os.environ), self.temp_path
+        )
+        envelope._context = expected
+        with (
+            patch.object(envelope, "_attest_context_candidate", return_value=changed),
+            patch.object(envelope, "_run") as seam,
+            self.assertRaisesRegex(Exception, "changed during the run"),
+        ):
+            envelope.reattest_context(expected)
+        self.assertIs(envelope._context, expected)
+        seam.assert_not_called()
+
     def test_docker_prune_is_denied_before_subprocess(self) -> None:
         envelope = CommandEnvelope(
             REPO_ROOT, CELL_ROOT, dict(os.environ), self.temp_path

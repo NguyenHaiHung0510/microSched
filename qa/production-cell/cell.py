@@ -136,6 +136,7 @@ class CellRun:
     secret_values: dict[str, str] = field(default_factory=dict)
     manifest_exists: bool = False
     cleanup_delete_count: int = 0
+    cleanup_delete_permitted: bool = False
     migration_exit_code: int | None = None
     fixture_labels: tuple[str, ...] = ()
 
@@ -146,6 +147,7 @@ class CellRun:
     @property
     def image_tags(self) -> dict[str, str]:
         return {
+            "db": f"{self.run_id}-db:candidate",
             "app": f"{self.run_id}-app:candidate",
             "helper": f"{self.run_id}-helper:candidate",
             "browser": f"{self.run_id}-browser:candidate",
@@ -264,7 +266,15 @@ def _generated_override(run: CellRun) -> dict[str, Any]:
         )
     }
     services: dict[str, Any] = {
-        "db": {"labels": labels},
+        "db": {
+            "image": tags["db"],
+            "labels": labels,
+            "build": {
+                "context": str(run.repo_root),
+                "dockerfile": "qa/production-cell/db/Dockerfile",
+                "labels": labels,
+            },
+        },
         "bootstrap": {
             "image": tags["helper"],
             "labels": labels,
@@ -486,6 +496,7 @@ def _image_id(run: CellRun, tag: str) -> str:
 
 def build_images_and_pull_database(run: CellRun) -> None:
     for service, tag in (
+        ("db", run.image_tags["db"]),
         ("app", run.image_tags["app"]),
         ("bootstrap", run.image_tags["helper"]),
         ("browser", run.image_tags["browser"]),
@@ -499,9 +510,6 @@ def build_images_and_pull_database(run: CellRun) -> None:
         run.add_resource("images", image_id)
         if service == "app":
             run.app_image_id = image_id
-    pull = run.docker(["pull", BASE_DB_IMAGE], timeout=BUILD_TIMEOUT, mutable=True)
-    if pull.returncode != 0:
-        raise BlockedPrerequisite("pgvector PostgreSQL 18 image could not be pulled")
 
 
 def _sentinel_config_hash(run: CellRun, container_id: str) -> str:
@@ -639,6 +647,46 @@ def start_one_shot(
     exit_code = state.get("ExitCode")
     if result.returncode != 0 or exit_code != 0:
         raise AssertionFailure(f"one-shot service {service} exited nonzero")
+    return result.stdout
+
+
+def _record_migration_nonzero(run: CellRun, exit_code: int) -> None:
+    """Persist the actual migration fault before blocking every dependent service."""
+
+    if exit_code == 0:
+        raise ValueError("migration fault receipt requires a nonzero exit code")
+    run.migration_exit_code = exit_code
+    run.receipt["migration_gate"].update(
+        {
+            "status": "FAIL_ASSERTION",
+            "fault_case": "migration_nonzero",
+            "exit_code": exit_code,
+            "service_completed_successfully": False,
+            "app_create_command_issued": False,
+            "app_created_before_success": False,
+            "app_container_created": False,
+            "app_container_running": False,
+        }
+    )
+
+
+def start_migration(run: CellRun) -> bytes:
+    """Run migrate once and make its container exit code the gate receipt."""
+
+    container_id = run.service_containers["migrate"]
+    result = run.docker(
+        ["start", "--attach", container_id], timeout=SETUP_TIMEOUT, mutable=True
+    )
+    state = _container_state(run, container_id)
+    exit_code = state.get("ExitCode")
+    if not isinstance(exit_code, int):
+        raise AssertionFailure("migration container did not report an integer exit code")
+    if exit_code != 0:
+        _record_migration_nonzero(run, exit_code)
+        raise AssertionFailure("migration service exited nonzero")
+    if result.returncode != 0:
+        raise AssertionFailure("migration attach command failed despite zero exit code")
+    run.migration_exit_code = 0
     return result.stdout
 
 
@@ -813,6 +861,8 @@ def _resource_labels(run: CellRun, kind: str, resource_id: str) -> dict[str, str
         args = ["inspect", "--format", "{{json .Config.Labels}}", resource_id]
     elif kind == "networks":
         args = ["network", "inspect", "--format", "{{json .Labels}}", resource_id]
+    elif kind == "volumes":
+        args = ["volume", "inspect", "--format", "{{json .Labels}}", resource_id]
     elif kind == "images":
         args = ["image", "inspect", "--format", "{{json .Config.Labels}}", resource_id]
     else:
@@ -830,7 +880,7 @@ def _resource_labels(run: CellRun, kind: str, resource_id: str) -> dict[str, str
 
 
 def _verify_cleanup_ownership(run: CellRun, payload: dict[str, Any]) -> None:
-    for kind in ("containers", "networks", "images"):
+    for kind in ("containers", "networks", "volumes", "images"):
         for resource_id in payload["resources"][kind]:
             labels = _resource_labels(run, kind, resource_id)
             if labels.get("com.docker.compose.project") != run.run_id:
@@ -875,6 +925,7 @@ def cleanup_cell(run: CellRun) -> None:
         run.envelope.reattest_context(run.docker_target)
         payload = run._verify_manifest()
         _verify_cleanup_ownership(run, payload)
+        run.cleanup_delete_permitted = True
         if time.monotonic() - started > CLEANUP_TIMEOUT:
             raise subprocess.TimeoutExpired("cleanup-attestation", CLEANUP_TIMEOUT)
 
@@ -944,7 +995,7 @@ def cleanup_cell(run: CellRun) -> None:
 
 def cleanup_sentinel(run: CellRun) -> None:
     sentinel = run.sentinel
-    if sentinel is None:
+    if sentinel is None or not run.cleanup_delete_permitted:
         return
     try:
         if not _resource_absent(run, "containers", sentinel.container_id):
@@ -965,6 +1016,35 @@ def cleanup_sentinel(run: CellRun) -> None:
         sentinel.separate_cleanup_status = "PASS"
     except Exception:  # noqa: BLE001 - sentinel cleanup must never mask the cell verdict
         sentinel.separate_cleanup_status = "NOT_RUN"
+
+
+def remove_run_temp_directory(path: Path, *, label: str) -> None:
+    """Delete an owned runtime directory and prove that it is gone."""
+
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise CellError("INFRA_ERROR", f"{label} could not be removed") from error
+    if path.exists():
+        raise CellError("INFRA_ERROR", f"{label} remains after removal")
+
+
+def remove_runtime_temp_directories(run: CellRun) -> None:
+    """Attempt both cleanup paths; any residue makes the run non-PASS."""
+
+    failures: list[str] = []
+    for path, label in (
+        (run.secret_directory, "secret directory"),
+        (run.command_temp, "command temporary directory"),
+    ):
+        try:
+            remove_run_temp_directory(path, label=label)
+        except CellError as error:
+            failures.append(str(error))
+    if failures:
+        raise CellError("INFRA_ERROR", "; ".join(failures))
 
 
 def _finalize_sentinel_receipt(run: CellRun) -> None:
@@ -1030,7 +1110,7 @@ def run_full_cell(run: CellRun) -> int:
 
         run.phases.start("migrate")
         create_service(run, "migrate")
-        migrate_output = start_one_shot(run, "migrate")
+        migrate_output = start_migration(run)
         del migrate_output
         run.migration_exit_code = 0
         run.receipt["migration_gate"].update(
@@ -1112,36 +1192,54 @@ def run_full_cell(run: CellRun) -> int:
         run.phases.fail_current("INFRA_ERROR", 60)
     finally:
         run.phases.start("cleanup")
+        cleanup_succeeded = False
         try:
             cleanup_cell(run)
-            run.phases.finish()
+            cleanup_succeeded = True
         except subprocess.TimeoutExpired:
             cleanup_timeout_status = timeout_status_for_phase("cleanup")
             final_error = CellError(cleanup_timeout_status, "cleanup timeout")
-            run.phases.fail_current(cleanup_timeout_status, None)
             run.receipt["cleanup"]["status"] = cleanup_timeout_status
         except CleanupGuardDenied:
             final_error = CleanupGuardDenied(
                 "cleanup manifest/daemon/resource guard denied"
             )
-            run.phases.fail_current("CLEANUP_GUARD_DENIED", 41)
             run.receipt["cleanup"].update(
                 {"status": "CLEANUP_GUARD_DENIED", "tamper_detected": True}
             )
         except CellError as error:
             final_error = error
-            run.phases.fail_current(error.status, error.exit_code)
             run.receipt["cleanup"]["status"] = error.status
         except Exception as error:  # noqa: BLE001 - cleanup must emit a stable taxonomy
             final_error = CellError("INFRA_ERROR", f"cleanup {type(error).__name__}")
-            run.phases.fail_current("INFRA_ERROR", 60)
             run.receipt["cleanup"]["status"] = "INFRA_ERROR"
         finally:
             cleanup_sentinel(run)
+            if (
+                cleanup_succeeded
+                and run.sentinel is not None
+                and run.sentinel.separate_cleanup_status != "PASS"
+            ):
+                final_error = CellError("INFRA_ERROR", "foreign sentinel cleanup failed")
+                cleanup_succeeded = False
+                run.receipt["cleanup"]["status"] = "INFRA_ERROR"
+            try:
+                remove_runtime_temp_directories(run)
+            except CellError as error:
+                # A secret/temp deletion failure is a terminal cleanup failure;
+                # it cannot leave a PASS receipt even if Docker cleanup passed.
+                if cleanup_succeeded:
+                    final_error = error
+                    cleanup_succeeded = False
+                    run.receipt["cleanup"]["status"] = error.status
             _finalize_sentinel_receipt(run)
-            shutil.rmtree(run.secret_directory, ignore_errors=True)
-            shutil.rmtree(run.command_temp, ignore_errors=True)
             run.secret_values.clear()
+            if run.phases.current_name == "cleanup":
+                if cleanup_succeeded:
+                    run.phases.finish()
+                else:
+                    failure = final_error or CellError("INFRA_ERROR", "cleanup failed")
+                    run.phases.fail_current(failure.status, failure.exit_code)
 
     success = final_error is None and run.receipt["cleanup"]["status"] == "PASS"
     run.receipt["final_status"] = (
@@ -1254,8 +1352,7 @@ def run_preflight_only(repo_root: Path, parent_env: dict[str, str]) -> int:
         )
         return error.exit_code
     finally:
-        shutil.rmtree(run.secret_directory, ignore_errors=True)
-        shutil.rmtree(run.command_temp, ignore_errors=True)
+        remove_runtime_temp_directories(run)
 
 
 def write_guard_receipt(

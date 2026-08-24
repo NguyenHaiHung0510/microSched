@@ -4,6 +4,16 @@
 > Executor: T2 Codex · Bậc: high · Effort: high · Skill gợi ý: Playwright · MCP: không cần.
 > Target: PR nhỏ vào `develop`; không merge, deploy, migration production hoặc đổi ruleset.
 
+> **Amendment 2026-08-24 — ✅ CHỐT · pre-activation receipt v1 erratum:** canonical `run_id`
+> khớp chính xác `^msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$`; `t`/`z` là separator
+> lowercase literal. Semantic validator phải parse ID chính xác trong `fixtures.prefix` và fixture
+> label ledger, rồi so byte-for-byte với root/Compose/cleanup; regex schema đơn lẻ không là proof
+> cross-field. `project_name` phải bằng `run_id` byte-for-byte trên Compose, manifest, labels,
+> receipt và cleanup; không sinh derived Compose ID. Không có compatibility alias cho `T`/`Z`
+> uppercase: ID dạng cũ phải bị từ chối trước subprocess/resource creation. Amendment giữ nguyên
+> `microsched.qa025.receipt.v1`; artifact lịch sử dạng uppercase, nếu có, không được rewrite và chỉ
+> được đối chiếu bằng schema tại commit lịch sử của artifact đó.
+
 ## 0. Kết quả cần có
 
 Dựng một QA cell dùng **đúng production Docker image build từ candidate SHA**, nhưng chạy hoàn toàn
@@ -58,7 +68,8 @@ workflow và Alembic revisions là read-only trong task này.
   `http://127.0.0.1:<ephemeral-port>` và chỉ forward tới service cố định `app:8000`; không có option
   `--base-url` và không publish app ra host.
 - DB: service DNS cố định `db:5432` bên trong run-scoped Compose network; **không publish DB port**.
-- Docker resources: project name `msqa025-<UTC timestamp>-<8 hex>` do runner sinh; mọi thao tác dọn
+- Docker resources: runner sinh một `run_id`/project name duy nhất dạng
+  `msqa025-20260824t000000z-00000000`, khớp chính xác canonical regex ở amendment; mọi thao tác dọn
   chỉ dùng exact resource IDs trong hash-bound manifest ở §5.3, không discover-xoá theo prefix.
 - Image: build từ root `Dockerfile` của exact `git rev-parse HEAD`, với
   `--build-arg GIT_SHA=<full SHA>`. Không bind-mount source vào app container.
@@ -267,9 +278,15 @@ làm named guard test đỏ.
 
 ## 4. Synthetic fixture và smoke contract
 
-Mọi label có prefix `[QA025:<run_id>]`; email là `qa025-<suffix>@example.invalid`. ID do fixture sinh
-và ghi vào receipt; không dùng tên/email/ngày thật. Browser/API phải đi qua real app, **không
-`page.route` mock response**.
+Mọi label có prefix `[QA025:<run_id>]`; email là `qa025-<suffix>@example.invalid`. Trước subprocess
+hay acceptance/resource mutation đầu tiên, runner phải lập fixture label ledger và parse chính xác ID
+trong `fixtures.prefix` (literal form `[QA025:<run_id>]`) cùng mọi label ledger entry. Nó phải so raw
+UTF-8 bytes với root `run_id`, `compose.project_name`, `cleanup.run_id` và `cleanup.project_name`;
+không `.lower()`, Unicode normalization, replace hay derived Compose ID. Một ID lowercase vẫn hợp lệ
+về grammar nhưng khác byte, ví dụ đổi duy nhất suffix `00000000` thành `00000001`, phải trả exit 40
+`GUARD_DENIED` trước subprocess/resource creation và trước mutation acceptance. Receipt chỉ giữ
+`fixtures.prefix` compact; ledger runtime có thể không ghi vào receipt. Không dùng tên/email/ngày thật.
+Browser/API phải đi qua real app, **không `page.route` mock response**.
 
 Luồng tối thiểu:
 
@@ -380,13 +397,20 @@ python qa/production-cell/validate_receipt.py \
 ```
 
 Validator phải dùng `Draft202012Validator.check_schema()` + `FormatChecker`, rồi validate instance.
-Schema và semantic validator checklist phải cùng enforce allowlisted pair ở §2.4; cụ thể
-`context_name=desktop-linux` ⇒ `endpoint_kind=npipe`, và fixture `desktop-linux+unix` phải fail.
-Sau schema, semantic pass còn bắt buộc kiểm:
-`ended_at >= started_at`; phase name không lặp và PASS có đủ chín phase; Compose file roles đúng một
-`base` + một `generated_override`; root/Compose/cleanup `run_id`/project bằng nhau; daemon identity ở
-target/cleanup bằng nhau; foreign-sentinel before/after config hash bằng nhau. Recursive redaction
-scan phải reject key (case-insensitive)
+Draft 2020-12 ở schema v1 chỉ chứng minh grammar cục bộ của từng field; `description` trong schema
+phải nói rõ nó không chứng minh cross-field equality. Schema và semantic validator checklist phải
+cùng enforce allowlisted pair ở §2.4; cụ thể `context_name=desktop-linux` ⇒
+`endpoint_kind=npipe`, và fixture `desktop-linux+unix` phải fail. Sau schema, semantic pass bắt buộc
+parse exact embedded ID từ `fixtures.prefix` và từng fixture label ledger entry, rồi so raw UTF-8
+bytes (không case-fold/coerce/derive) để assert bằng root `run_id`, `compose.project_name`,
+`cleanup.run_id` và `cleanup.project_name`; `fixtures.prefix` không chỉ pass regex. Semantic pass còn
+bắt buộc kiểm: `ended_at >= started_at`; phase name không lặp và PASS có đủ chín phase; Compose file
+roles đúng một `base` + một `generated_override`; daemon identity ở target/cleanup bằng nhau;
+foreign-sentinel before/after config hash bằng nhau. Test negative bắt buộc copy receipt hợp lệ rồi
+đổi duy nhất embedded fixture ID sang canonical lowercase khác (`...-00000001` khi root là
+`...-00000000`): schema grammar có thể pass, nhưng semantic validator phải nonzero. Test preflight
+label-ledger tương tự phải exit 40 `GUARD_DENIED`, không subprocess/resource/acceptance mutation.
+Recursive redaction scan phải reject key (case-insensitive)
 `database_url|owner_url|migrator_url|password|session_token|pin|aes_key|cookie|authorization|`
 `container_env|env_dump` và string chứa `postgres://|postgresql://|*.neon.tech|*.fly.dev` hoặc email
 ngoài `example.invalid`. Khi hợp lệ, in đúng
@@ -398,7 +422,7 @@ contract field/enum/required/conditional chính xác; PASS-shaped receipt có đ
 ```json
 {
   "schema": "microsched.qa025.receipt.v1",
-  "run_id": "msqa025-20260824T000000Z-00000000",
+  "run_id": "msqa025-20260824t000000z-00000000",
   "target_class": "local_disposable",
   "git_sha": "0000000000000000000000000000000000000000",
   "image_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -436,7 +460,7 @@ contract field/enum/required/conditional chính xác; PASS-shaped receipt có đ
     "all_compose_calls_used_exact_project": true, "all_calls_used_shell_false": true
   },
   "compose": {
-    "project_name": "msqa025-20260824T000000Z-00000000",
+    "project_name": "msqa025-20260824t000000z-00000000",
     "project_directory_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "files": [
       {"role": "base", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
@@ -459,7 +483,7 @@ contract field/enum/required/conditional chính xác; PASS-shaped receipt có đ
     "ddl_denied": true, "alembic_write_denied": true, "app_role_only": true
   },
   "fixtures": {
-    "status": "PASS", "prefix": "[QA025:msqa025-20260824T000000Z-00000000]",
+    "status": "PASS", "prefix": "[QA025:msqa025-20260824t000000z-00000000]",
     "task_count": 2, "note_count": 1, "synthetic_domain": "example.invalid"
   },
   "migration_gate": {
@@ -481,8 +505,8 @@ contract field/enum/required/conditional chính xác; PASS-shaped receipt có đ
     "manifest_schema": "microsched.qa025.run-manifest.v1",
     "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "manifest_resource_ids_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "run_id": "msqa025-20260824T000000Z-00000000",
-    "project_name": "msqa025-20260824T000000Z-00000000",
+    "run_id": "msqa025-20260824t000000z-00000000",
+    "project_name": "msqa025-20260824t000000z-00000000",
     "daemon_identity_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "delete_selection": "exact_manifest_resource_ids", "delete_command_count": 6,
     "tamper_detected": false,
@@ -519,7 +543,8 @@ Riêng physical-iPhone sub-receipt có enum `PASS|FAIL|NOT_RUN` theo dated polic
 - **025-SAFE-07 — Local Docker only:** remote/ambient daemon, context, BuildKit, proxy và Compose
   project/file/profile injection bị từ chối trước resource creation; mọi call dùng sanitized
   allowlist, trusted absolute executable, explicit attested local context, owned absolute files +
-  exact project. Git/path indirection bị loại theo §2.3.
+  exact canonical lowercase `run_id` làm project. `T`/`Z` uppercase bị từ chối trước subprocess/
+  resource creation. Git/path indirection bị loại theo §2.3.
 - **025-SAFE-02 — No ambient secret:** `.env` bị vô hiệu; secrets mỗi run không vào argv/log/git/
   receipt; gitleaks + receipt validator pass.
 - **025-SAFE-03 — Network boundary:** mọi service có 0 published port, đúng một internal network và
@@ -540,7 +565,9 @@ Riêng physical-iPhone sub-receipt có enum `PASS|FAIL|NOT_RUN` theo dated polic
   inventory exact-ID về 0; hash-bound manifest/daemon/resource labels khớp; foreign sentinel sống nguyên;
   tamper trả `CLEANUP_GUARD_DENIED` với 0 delete.
 - **025-CELL-05 — Receipt:** committed schema + executable validator pass, đủ required fields/enums,
-  canonical `NOT_RUN`, phase/duration/daemon/migration/network/acceptance/cleanup, không secret/PII.
+  canonical lowercase `run_id`; semantic parser bind byte-for-byte root/Compose/cleanup với exact ID
+  trong `fixtures.prefix`/fixture label ledger (một lowercase ID khác phải đỏ); canonical `NOT_RUN`,
+  phase/duration/daemon/migration/network/acceptance/cleanup, không secret/PII.
 - **025-CELL-06 — Migration gate:** Compose khai báo `service_completed_successfully`; orchestrator
   không issue app-create trước migrate exit 0; injected exit non-zero chứng minh app absent/not running.
 - **025-RED-01 — Guard biết đỏ:** chạy mutation matrix trong QA spec, lưu raw RED rồi restore GREEN;
