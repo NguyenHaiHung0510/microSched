@@ -46,6 +46,9 @@
 - **Auth (locked 2026-07-20, `auth-brief.md`):** Google OAuth + env allowlist via Authlib (login-only OIDC); server-side `session` table (opaque token cookie, hash stored); private unlock = separate PIN opening the session for a TTL (a *display* gate — the encryption master key stays app-held; live and QA-verified as of `016`, 2026-07-31). **AI follows the session's private gate (R1–R7):** locked ⇒ agent tools filter `is_private`; unlocked ⇒ full read (write comes with Bước 2); encrypted columns still never enter pgvector/FTS; private-in-context ⇒ force zdr/no-train for the whole cascade; background/cron AI is public-only.
 - **AI tool layer is Pydantic-typed and MCP-ready by construction**, but MCP protocol itself is deferred until there's a second consumer beyond the internal agent — don't wire an MCP server prematurely.
 
+
+- **QA & Staging trên Neon Ephemeral Branch (Post-Cutover Standard):** Sau cut-over, QA dữ liệu thật và Migration Rehearsal áp dụng mô hình 3 tầng (`docs/devops-brief.md` §8.3, `docs/qa-framework.md` §2.1 và `AGENTS.md` §9): tạo ephemeral branch từ `main`, chạy `scripts.prepare_qa_branch` để scramble text 1:1, re-encrypt private data, đặt test PIN `123456` và inject session `ms_session=qa_token` bypass OAuth an toàn, sau đó xóa branch.
+
 ## Hard boundaries (do not cross)
 
 - The old app at `C:\Users\os\Desktop\old_prj\VC_QuanLyThoiGian` is **reference only**. Its `main` branch (v1 desktop) and the real SQLite DB at `C:\Users\os\Desktop\Tools\VC_microSchedule_home\todo.db` are **do-not-touch** (they are the rollback path). Read old stores **read-only** only.

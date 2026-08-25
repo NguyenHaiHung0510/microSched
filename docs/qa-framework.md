@@ -69,6 +69,16 @@ timeout, fault injection hoặc bộ dữ liệu hàng loạt. Từ `025`, áp p
    vẫn giữ verdict riêng của nó. Cụ thể, nếu `017` chưa chạy A18 trên iPhone thì báo
    `017 = PARTIAL / A18 = NOT_RUN`, dù release gate cấp sản phẩm có thể là `GO` theo policy này.
 
+5. **Post-cutover High-Fidelity & Migration Rehearsal trên Ephemeral Neon Branch (📝 2026-08-25):**
+   Sau cut-over, khi cần kiểm thử migration trên dữ liệu thật hoặc QA giao diện với số lượng bản ghi thật (51 notes, 223 tasks):
+   - Tạo branch tạm thời từ production: `neonctl branches create --name qa-<task> --parent main`.
+   - Bắt buộc chạy `python -m scripts.prepare_qa_branch` để Data Scrubbing toàn diện:
+     * Scramble text/markdown bảo tồn độ dài 1:1, khoảng trắng, định dạng danh sách và CJK/tiếng Việt.
+     * Re-encrypt các trường private bằng `QA_ENCRYPTION_MASTER_KEY` và đặt test PIN `123456`.
+     * Truncate `push_subscription` & `reminder_dispatch` (zero blast radius tới điện thoại thật).
+     * Inject session cookie `ms_session=qa_token` cho `owner@test.local` (bypass Google OAuth an toàn).
+   - Xóa branch ngay sau khi hoàn thành phiên QA (`neonctl branches delete qa-<task>`).
+
 Task `025` là spec thi công + QA độc lập cho cell nói trên. Nó không cho phép auth-bypass route,
 không chạm Neon/host DB/`.env`, không tự bật recurring outbound, không chạy deploy migration, và
 không hấp thụ implementation hay acceptance của `017`.

@@ -1,4 +1,4 @@
-﻿# DevOps / repo & CI — microSched
+# DevOps / repo & CI — microSched
 
 > **Trạng thái:** ✅ CHỐT phần nền (2026-07-19). Phần auto-review PR = ⏸ DEFER tới khi có code.
 > **Tra cứu giá/chính sách: 2026-07-19** — mục §4 phụ thuộc chính sách vendor, **soi lại ~3 tháng** (giống `cost-brief.md`; không để pricing drift làm hỏng quyết định).
@@ -679,3 +679,22 @@ Bối cảnh: snapshot này ghi nhận thời điểm dự án chuyển sang **C
 | DeepSeek V4 Flash 0731 | #3 | #2 | #3 |
 
 **Điểm cần xem lại khi Sol quay lại làm T1:** đánh giá lại toàn bộ handoff Codex Desktop/OpenCodex — routing thực tế, skill/plugin có thể tự áp, rubric chất lượng T3, format receipt và độ tin cậy của từng lane. Đây là review mở có chủ ý; không mặc định hoá workflow tạm này thành policy vĩnh viễn.
+
+
+
+### 8.3 📝 Chuẩn hóa 2026-08-25: Ephemeral Neon Branching & Data Scrubbing cho Post-Cutover QA
+
+Sau khi dự án đã cut-over lên Neon production (chứa 51 notes, 223 tasks, calendar events, AES-GCM private data), mô hình QA được chuẩn hóa thành 3 tầng:
+
+1. **Tầng 1 (Local / CI):** Docker Postgres throwaway (`pgvector:pg18` service). Dành cho unit test nhanh, linting, round-trip migration (`downgrade base -> upgrade head`). Chi phí $0, 0 CU-hours.
+2. **Tầng 2 (Staging / Ephemeral Rehearsal trên Neon):**
+   - Mỗi đợt QA hoặc Migration Rehearsal tạo một nhánh tạm Copy-on-Write: `neonctl branches create --name qa-<task> --parent main`.
+   - Chạy script làm sạch `python -m scripts.prepare_qa_branch` để bảo vệ quyền riêng tư:
+     * Scramble text/markdown (bảo tồn độ dài 1:1, khoảng trắng, markdown structure, CJK, glyph tiếng Việt).
+     * Re-encrypt các cột nhạy cảm bằng `QA_ENCRYPTION_MASTER_KEY`.
+     * Đặt test PIN `123456` (Argon2 hash), xóa throttle.
+     * Truncate `push_subscription` và `reminder_dispatch` (cô lập 100%, không gửi push về điện thoại thật).
+     * Bơm session token `qa_token` (`owner@test.local`) để Playwright/Agent bypass Google OAuth.
+   - Chạy kiểm thử migration, API hoặc Playwright UI trên branch QA.
+   - Dọn dẹp: `neonctl branches delete qa-<task>`.
+3. **Tầng 3 (Production Live):** Fly.io + Neon branch `main`. Áp migration sau khi đã rehearse thành công ở Tầng 2.
