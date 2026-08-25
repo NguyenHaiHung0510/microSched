@@ -446,17 +446,17 @@ export function CalendarScrollView() {
         ref={containerRef}
         onScroll={handleScroll}
         className="relative h-[calc(100dvh-13rem)] min-h-80 min-w-0 flex-1 overflow-y-auto rounded-xl border bg-card shadow-1"
-      >
-        <div
-          className={cn(
-            'sticky top-0 z-10 border-b bg-background px-3 py-2',
-            isDesktop ? 'flex flex-col gap-2' : 'flex items-center justify-between gap-2',
-          )}
-        >
-          <div className={cn('flex items-center justify-between gap-2', isDesktop && 'w-full')}>
-            <h3 data-testid="calendar-month-header" className="text-base font-extrabold">
-              {monthLabel(headerMonth.year, headerMonth.month)}
-            </h3>
+     >
+       <div
+         className={cn(
+           'sticky top-0 z-10 border-b bg-background px-3 py-2',
+            'flex flex-col gap-2',
+         )}
+       >
+          <div className="flex items-center justify-between gap-2 w-full">
+           <h3 data-testid="calendar-month-header" className="text-base font-extrabold">
+             {monthLabel(headerMonth.year, headerMonth.month)}
+           </h3>
             <Button
               data-testid="calendar-today-button"
               size="sm"
@@ -523,13 +523,22 @@ export function CalendarScrollView() {
                 className="h-8 px-2.5 text-xs font-semibold"
               >
                 <Plus data-icon="inline-start" className="size-3.5" />
-                Thêm
-              </Button>
-            </form>
-          ) : null}
-        </div>
+               Thêm
+             </Button>
+           </form>
+         ) : null}
 
-        {staleWithData ? (
+          {/* Sticky Weekday Labels Grid (T2–CN) */}
+          <div className="grid grid-cols-7 gap-0.5 px-0.5 pt-1 text-center">
+            {WEEKDAY_LABELS.map((label) => (
+              <span key={label} className="text-xs font-bold text-muted-foreground">
+                {label}
+              </span>
+            ))}
+          </div>
+       </div>
+
+       {staleWithData ? (
           <p
             data-testid="calendar-stale-indicator"
             className="border-b bg-warn-bg px-3 py-2 text-sm font-semibold text-warn"
