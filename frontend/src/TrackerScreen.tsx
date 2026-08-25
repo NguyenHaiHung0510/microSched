@@ -167,8 +167,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [lockedIds, setLockedIds] = useState<ReadonlySet<string>>(new Set())
   const [capturingIds, setCapturingIds] = useState<ReadonlySet<string>>(new Set())
-  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(new Set())
-  const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set(groups.map((g) => g.id)))
+  const [unassignedCollapsed, setUnassignedCollapsed] = useState(true)
+  const [entriesCollapsed, setEntriesCollapsed] = useState(true)
+  const [rhythmCollapsed, setRhythmCollapsed] = useState(true)
   const createReturnRef = useRef<HTMLButtonElement | null>(null)
   const unlockTimers = useRef<Map<string, number>>(new Map())
 
@@ -417,77 +419,33 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         </Card>
       ) : null}
 
-      {reminderGroups.length > 0 ? (
-        <Card className="gap-3 p-4 shadow-1 ring-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Bell className="size-4 text-primary" />
-              <h3 className="text-base font-bold">Lịch nhắc nhở trong ngày</h3>
-            </div>
-            <span className="text-xs text-muted-foreground">
-              {reminderGroups.length} khung giờ
-            </span>
-          </div>
-          <div className="space-y-2 pt-1">
-            {reminderGroups.map((group) => (
-              <div
-                key={group.time}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-muted/40 p-3 border border-border/60"
-              >
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary">
-                      {group.time}
-                    </span>
-                    <span className="text-sm font-semibold truncate">
-                      {group.previewText}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Mục: {group.trackers.map((t) => t.name).join(', ')}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {group.trackers.map((tracker) => (
-                    <Button
-                      key={tracker.id}
-                      size="xs"
-                      variant="outline"
-                      className="text-xs min-h-8"
-                      disabled={lockedIds.has(tracker.id)}
-                      onClick={() => capture(tracker)}
-                    >
-                      <CheckCircle2 className="size-3 text-ok mr-1" />
-                      Ghi {tracker.name}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : null}
-
-      <Card className="gap-3 p-4 shadow-1 ring-0">
+      {/* 1. Tài chính tháng X năm Y lên đầu */}
+      <Card className="gap-3 p-4 shadow-1 ring-0 bg-gradient-to-br from-brand-50/60 to-card border-brand-200">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
-            <h3 className="text-base font-bold">Đăng ký định kỳ</h3>
-            <p className="text-sm text-muted-foreground">Theo dõi hạn và chi phí cố định.</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-primary">
+              Tài chính {monthLabel(month)}
+            </p>
+            <h3 className="text-lg font-extrabold text-foreground mt-0.5">
+              Đăng ký · {subscriptionsQuery.data?.items.length ?? 0} khoản
+            </h3>
           </div>
           <Button
             data-testid="subscription-entry"
             size="lg"
             variant="outline"
-            className="min-h-11"
+            className="min-h-11 bg-card"
             onClick={() => navigate('/subscription')}
           >
-            Đăng ký · {subscriptionsQuery.data?.items.length ?? 0} khoản
+            Đăng ký định kỳ
           </Button>
         </div>
       </Card>
 
+      {/* 2. Lưới ghi nhanh (Phân theo nhóm, mặc định mở rộng) */}
       <CaptureGrid
         trackers={frozenOrder}
+        groups={groups}
         locked={lockedIds}
         pendingTrackerId={capturingIds.size === 1 ? [...capturingIds][0] : null}
         loading={trackersQuery.isPending}
@@ -501,6 +459,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         }}
       />
 
+      {/* 3. Quản lý nhóm & Tracker (Mặc định thu gọn) */}
       <Card className="gap-4 p-4 shadow-1 ring-0">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -749,12 +708,75 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         )}
       </Card>
 
+      {reminderGroups.length > 0 ? (
+        <Card className="gap-3 p-4 shadow-1 ring-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Bell className="size-4 text-primary" />
+              <h3 className="text-base font-bold">Lịch nhắc nhở trong ngày</h3>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {reminderGroups.length} khung giờ
+            </span>
+          </div>
+          <div className="space-y-2 pt-1">
+            {reminderGroups.map((group) => (
+              <div
+                key={group.time}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-muted/40 p-3 border border-border/60"
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary">
+                      {group.time}
+                    </span>
+                    <span className="text-sm font-semibold truncate">
+                      {group.previewText}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Mục: {group.trackers.map((t) => t.name).join(', ')}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {group.trackers.map((tracker) => (
+                    <Button
+                      key={tracker.id}
+                      size="xs"
+                      variant="outline"
+                      className="text-xs min-h-8"
+                      disabled={lockedIds.has(tracker.id)}
+                      onClick={() => capture(tracker)}
+                    >
+                      <CheckCircle2 className="size-3 text-ok mr-1" />
+                      Ghi {tracker.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       <Card className="gap-3 p-4 shadow-1 ring-0">
-        <div className="flex items-baseline justify-between gap-3">
-          <h3 className="text-base font-bold">Bản ghi gần đây</h3>
-          <span className="text-xs text-muted-foreground">20 bản ghi mới nhất</span>
-        </div>
-        {entriesQuery.data?.items.length ? (
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none"
+          onClick={() => setEntriesCollapsed(!entriesCollapsed)}
+        >
+          <div className="flex items-baseline gap-2">
+            <h3 className="text-base font-bold">Bản ghi gần đây</h3>
+            <span className="text-xs text-muted-foreground">20 bản ghi mới nhất</span>
+          </div>
+        {entriesCollapsed ? (
+          <ChevronDown className="size-4 text-muted-foreground" />
+        ) : (
+          <ChevronUp className="size-4 text-muted-foreground" />
+        )}
+      </button>
+      {!entriesCollapsed ? (
+        entriesQuery.data?.items.length ? (
           <div className="space-y-2">
             {entriesQuery.data.items.map((entry) => {
               const tracker = trackers.find((item) => item.id === entry.tracker_id)
@@ -822,9 +844,27 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">Chưa có bản ghi nào.</p>
-        )}
+        )
+      ) : null}
       </Card>
 
+      <Card className="gap-3 p-4 shadow-1 ring-0">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none"
+          onClick={() => setRhythmCollapsed(!rhythmCollapsed)}
+        >
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-bold">Nhịp ghi & Báo cáo</h3>
+          </div>
+          {rhythmCollapsed ? (
+            <ChevronDown className="size-4 text-muted-foreground" />
+          ) : (
+            <ChevronUp className="size-4 text-muted-foreground" />
+          )}
+        </button>
+        {!rhythmCollapsed ? (
+          <div className="pt-2">
       <DashboardPanel
         dashboard={dashboardQuery.data ?? null}
         monthLabel={monthLabel(month)}
@@ -838,6 +878,9 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         queryStatus={dashboardQuery.status}
         onRetry={() => void refresh()}
       />
+          </div>
+        ) : null}
+      </Card>
 
       <Dialog open={createOpen} onOpenChange={(open) => !open && setCreateOpen(false)}>
         <DialogContent

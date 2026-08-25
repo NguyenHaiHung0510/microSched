@@ -1,17 +1,17 @@
 import { type FormEvent, useState } from 'react'
+import { Check } from 'lucide-react'
 
 import {
-  SOURCE_COLOR_KEYS,
+  CURATED_COLOR_SWATCHES,
   SOURCE_COLOR_LABELS,
-  SOURCE_COLORS,
   todayInVietnam,
 } from '@/calendar-ui'
 import type { DayAnnotation } from '@/calendar-scroll'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
 
 export type AnnotationFormValue = {
   starts_on: string
@@ -21,8 +21,6 @@ export type AnnotationFormValue = {
   color: string | null
   is_private: boolean
 }
-
-const NO_COLOR = 'none'
 
 export function AnnotationForm({
   initial,
@@ -103,39 +101,46 @@ export function AnnotationForm({
       </div>
 
       <div className="space-y-1.5 text-sm font-semibold">
-        <span>Màu</span>
-        <Select
-          value={color ?? NO_COLOR}
-          onValueChange={(value) => setColor(value === NO_COLOR ? null : value)}
-        >
-          <SelectTrigger className="h-10 w-full bg-card" aria-label="Màu dấu ngày">
-            <span className="flex items-center gap-2">
-              {color ? (
-                <span
-                  className="inline-block size-3 rounded-full shrink-0"
-                  style={{ backgroundColor: SOURCE_COLORS[color] ?? SOURCE_COLORS.slate }}
-                  aria-hidden="true"
-                />
-              ) : null}
-              <span>{color ? (SOURCE_COLOR_LABELS[color] ?? color) : 'Không màu'}</span>
-            </span>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={NO_COLOR}>Không màu</SelectItem>
-            {SOURCE_COLOR_KEYS.map((key) => (
-              <SelectItem key={key} value={key}>
-                <span className="flex items-center gap-2">
-                  <span
-                    className="inline-block size-3 rounded-full shrink-0"
-                    style={{ backgroundColor: SOURCE_COLORS[key] }}
-                    aria-hidden="true"
-                  />
-                  <span>{SOURCE_COLOR_LABELS[key] ?? key}</span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <span>Màu nhận diện</span>
+        <div data-testid="color-swatch-picker" className="flex flex-wrap items-center gap-3 pt-1">
+          <button
+            type="button"
+            data-testid="color-swatch-none"
+            aria-label="Không màu"
+            onClick={() => setColor(null)}
+            className={cn(
+              'flex size-8 cursor-pointer items-center justify-center rounded-full border-2 border-dashed border-input bg-card transition-all hover:scale-110',
+              !color ? 'border-primary ring-2 ring-primary/40 ring-offset-1 scale-105' : '',
+            )}
+          >
+            {!color ? <Check className="size-4 stroke-[3] text-primary" /> : null}
+          </button>
+
+          {CURATED_COLOR_SWATCHES.map((swatch) => {
+            const isSelected = color === swatch.key
+            return (
+              <button
+                type="button"
+                key={swatch.key}
+                data-testid={`color-swatch-${swatch.key}`}
+                aria-label={swatch.label}
+                onClick={() => setColor(swatch.key)}
+                className={cn(
+                  'flex size-8 cursor-pointer items-center justify-center rounded-full border-2 transition-all hover:scale-110',
+                  isSelected
+                    ? 'border-foreground ring-2 ring-primary/40 ring-offset-1 scale-105'
+                    : 'border-transparent hover:border-border',
+                )}
+                style={{ backgroundColor: swatch.hex }}
+              >
+                {isSelected ? <Check className="size-4 stroke-[3] text-white" /> : null}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {color ? (SOURCE_COLOR_LABELS[color] ?? color) : 'Không màu (Mặc định)'}
+        </p>
       </div>
 
       <label className="block space-y-1.5 text-sm font-semibold">

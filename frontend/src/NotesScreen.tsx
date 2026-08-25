@@ -2,6 +2,7 @@ import {
   type FormEvent,
   type MouseEvent,
   memo,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -14,6 +15,7 @@ import {
   Clock,
   Edit3,
   LockKeyhole,
+  Pencil,
   Pin,
   Plus,
   Sparkles,
@@ -42,7 +44,10 @@ import { NoteForm } from '@/NoteForm'
 import { standardRefetchInterval } from '@/query-polling'
 import {
   appendFutureReflection,
+  deleteFutureReflection,
   formatNoteTime,
+  parseNoteBody,
+  updateFutureReflection,
   type Note,
   type NoteItem,
   type NotePayload,
@@ -68,6 +73,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const [reflectionText, setReflectionText] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingItemContent, setEditingItemContent] = useState('')
+  const [editingReflectionIdx, setEditingReflectionIdx] = useState<number | null>(null)
+  const [editingReflectionText, setEditingReflectionText] = useState('')
+  const parsedBody = useMemo(() => parseNoteBody(note.body_md), [note.body_md])
   const detailsReturnRef = useRef<HTMLButtonElement | null>(null)
   const label = noteLabel(note)
 
@@ -236,10 +244,60 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               ) : null}
             </div>
 
-            {note.body_md ? (
+            {parsedBody.baseText ? (
               <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
-                {note.body_md}
+                {parsedBody.baseText}
               </p>
+            ) : null}
+
+            {parsedBody.reflections.length > 0 ? (
+              <div className="space-y-2 pt-1">
+                {parsedBody.reflections.map((refl, idx) => (
+                  <div
+                    key={refl.id}
+                    data-testid="note-reflection-box"
+                    className="rounded-md border border-amber-200/90 bg-amber-50/70 p-2.5 text-xs text-foreground space-y-1 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-amber-900">
+                      <span className="flex items-center gap-1">
+                        <span>💬 Lời nhắn từ tương lai</span>
+                        <span className="font-semibold text-muted-foreground">({refl.time})</span>
+                      </span>
+                      <div className="flex items-center gap-0.5">
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="size-6 p-0 hover:bg-amber-200/60"
+                          aria-label="Sửa lời nhắn"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setEditingReflectionIdx(idx)
+                            setEditingReflectionText(refl.text)
+                          }}
+                        >
+                          <Pencil className="size-3" />
+                        </Button>
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="size-6 p-0 text-bad hover:bg-amber-200/60 hover:text-bad"
+                          aria-label="Xoá lời nhắn"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const newBody = deleteFutureReflection(note.body_md, idx)
+                            update.mutate({ body_md: newBody })
+                          }}
+                        >
+                          <Trash2 className="size-3" />
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="whitespace-pre-wrap break-words text-xs text-foreground">
+                      {refl.text}
+                    </p>
+                  </div>
+                ))}
+              </div>
             ) : null}
 
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -261,7 +319,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 }}
               >
                 <Sparkles className="size-3 text-primary" />
-                Lời nhắn từ tương lai
+                💬 Gửi lời nhắn tương lai
               </Button>
             </div>
           </div>
@@ -407,21 +465,68 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 </Badge>
               ) : null}
 
-              <div className="space-y-1">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Nội dung
-                  </p>
-                  {note.created_at ? (
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Clock className="size-3" /> {formatNoteTime(note.created_at)}
-                    </span>
-                  ) : null}
-                </div>
-                <p className="whitespace-pre-wrap break-words text-sm">
-                  {note.body_md || 'Chưa có nội dung.'}
-                </p>
-              </div>
+             <div className="space-y-1">
+               <div className="flex items-center justify-between gap-2">
+                 <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                   Nội dung
+                 </p>
+                 {note.created_at ? (
+                   <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                     <Clock className="size-3" /> {formatNoteTime(note.created_at)}
+                   </span>
+                 ) : null}
+               </div>
+               <p className="whitespace-pre-wrap break-words text-sm">
+                  {parsedBody.baseText || (parsedBody.reflections.length === 0 ? 'Chưa có nội dung.' : '')}
+               </p>
+                {parsedBody.reflections.length > 0 ? (
+                  <div className="space-y-2 pt-2">
+                    {parsedBody.reflections.map((refl, idx) => (
+                      <div
+                        key={refl.id}
+                        data-testid="note-reflection-box-detail"
+                        className="rounded-md border border-amber-200/90 bg-amber-50/70 p-3 text-xs text-foreground space-y-1.5 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-amber-900">
+                          <span className="flex items-center gap-1">
+                            <span>💬 Lời nhắn từ tương lai</span>
+                            <span className="font-semibold text-muted-foreground">({refl.time})</span>
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              className="size-6 p-0 hover:bg-amber-200/60"
+                              aria-label="Sửa lời nhắn"
+                              onClick={() => {
+                                setEditingReflectionIdx(idx)
+                                setEditingReflectionText(refl.text)
+                              }}
+                            >
+                              <Pencil className="size-3" />
+                            </Button>
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              className="size-6 p-0 text-bad hover:bg-amber-200/60 hover:text-bad"
+                              aria-label="Xoá lời nhắn"
+                              onClick={() => {
+                                const newBody = deleteFutureReflection(note.body_md, idx)
+                                update.mutate({ body_md: newBody })
+                              }}
+                            >
+                              <Trash2 className="size-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="whitespace-pre-wrap break-words text-xs text-foreground">
+                          {refl.text}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+             </div>
 
               <div className="space-y-3">
                 <div>
@@ -665,9 +770,66 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           </form>
         </DialogContent>
       </Dialog>
-    </>
-  )
-})
+
+      <Dialog
+        open={editingReflectionIdx !== null}
+        onOpenChange={(open) => !open && setEditingReflectionIdx(null)}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sửa lời nhắn từ tương lai · {label}</DialogTitle>
+            <DialogDescription>
+              Cập nhật nội dung lời nhắn này.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (editingReflectionIdx === null) return
+              const trimmed = editingReflectionText.trim()
+              if (!trimmed || update.isPending) return
+              const newBody = updateFutureReflection(note.body_md, editingReflectionIdx, trimmed)
+              update.mutate(
+                { body_md: newBody },
+                {
+                  onSuccess: () => {
+                    setEditingReflectionIdx(null)
+                    setEditingReflectionText('')
+                    toast.success('Đã sửa lời nhắn từ tương lai')
+                  },
+                },
+              )
+            }}
+          >
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Nội dung lời nhắn
+              </label>
+              <Textarea
+                className="min-h-28 bg-card text-sm"
+                value={editingReflectionText}
+                onChange={(e) => setEditingReflectionText(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditingReflectionIdx(null)}
+              >
+                Huỷ
+              </Button>
+              <Button type="submit" disabled={!editingReflectionText.trim() || update.isPending}>
+                {update.isPending ? 'Đang lưu…' : 'Lưu thay đổi'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+     </>
+   )
+ })
 
 export function NotesScreen() {
   const queryClient = useQueryClient()

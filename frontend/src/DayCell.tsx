@@ -86,11 +86,11 @@ export function DayCell({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={cn(
-        'flex h-auto min-h-16 w-full flex-col items-stretch justify-start gap-0.5 rounded-lg border p-1 text-left transition-colors sm:min-h-24 md:min-h-28',
-        isToday ? 'border-primary bg-accent' : 'border-transparent',
-        isDragOver && 'border-primary bg-primary/10 ring-2 ring-primary/30',
-      )}
+     className={cn(
+       'flex h-auto min-h-16 w-full flex-col items-stretch justify-start gap-0.5 rounded-lg border p-1 text-left transition-colors sm:min-h-24 md:min-h-28',
+        isToday ? 'border-primary bg-accent' : 'border-border/60 hover:border-primary/50',
+       isDragOver && 'border-primary bg-primary/10 ring-2 ring-primary/30',
+     )}
     >
       <div className="flex flex-col gap-0.5">
         {visibleAnnotations.map((annotation) => (

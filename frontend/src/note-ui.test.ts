@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest'
 import {
   appendFutureReflection,
   canSubmitNote,
+  deleteFutureReflection,
   formatNoteTime,
   notePayload,
+  parseNoteBody,
+  updateFutureReflection,
   type NoteFormState,
 } from '@/note-ui'
 
@@ -85,5 +88,36 @@ describe('future reflection formatting', () => {
     const result = appendFutureReflection(null, reflection, nowIso)
     expect(result).toContain('Dòng 1')
     expect(result).toContain('Dòng 2')
+  })
+
+  it('parses, edits and deletes future reflections cleanly', () => {
+    const rawBody = `Kế hoạch ban đầu.
+
+---
+> 💬 **Lời nhắn từ tương lai** (21:24 · 24/08/2026):
+> we're doing kinda good, deployed our first app.
+
+---
+> 💬 **Lời nhắn từ tương lai** (21:25 · 24/08/2026):
+> hala madrid!`
+
+    const parsed = parseNoteBody(rawBody)
+    expect(parsed.baseText).toBe('Kế hoạch ban đầu.')
+    expect(parsed.reflections.length).toBe(2)
+    expect(parsed.reflections[0].time).toBe('21:24 · 24/08/2026')
+    expect(parsed.reflections[0].text).toBe("we're doing kinda good, deployed our first app.")
+    expect(parsed.reflections[1].text).toBe('hala madrid!')
+
+    // Edit reflection 1
+    const editedBody = updateFutureReflection(rawBody, 1, 'hala madrid y nada mas!')
+    const reParsed = parseNoteBody(editedBody)
+    expect(reParsed.reflections[1].text).toBe('hala madrid y nada mas!')
+
+    // Delete reflection 0
+    const deletedBody = deleteFutureReflection(editedBody, 0)
+    const afterDelete = parseNoteBody(deletedBody)
+    expect(afterDelete.reflections.length).toBe(1)
+    expect(afterDelete.reflections[0].text).toBe('hala madrid y nada mas!')
+    expect(afterDelete.baseText).toBe('Kế hoạch ban đầu.')
   })
 })

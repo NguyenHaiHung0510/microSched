@@ -152,6 +152,7 @@ export function CalendarScreen() {
   const [sourceConflict, setSourceConflict] = useState<ReturnType<typeof importConflict>>(null)
   const [importReport, setImportReport] = useState<ImportReport | null>(null)
   const [confirm, setConfirm] = useState<ConfirmState>(null)
+  const [editingSource, setEditingSource] = useState<CalendarSource | null>(null)
   const [eventDialogOpen, setEventDialogOpen] = useState(false)
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | undefined>()
   const [eventError, setEventError] = useState<string | null>(null)
@@ -221,12 +222,28 @@ export function CalendarScreen() {
   })
 
   const updateSource = useMutation({
-    mutationFn: ({ sourceId, isVisible }: { sourceId: string; isVisible: boolean }) =>
-      apiRequest<CalendarSource>(`/api/calendar/sources/${sourceId}`, {
+    mutationFn: ({
+      sourceId,
+      isVisible,
+      name,
+      color,
+    }: {
+      sourceId: string
+      isVisible?: boolean
+      name?: string
+      color?: string | null
+    }) => {
+      const body: Record<string, unknown> = {}
+      if (isVisible !== undefined) body.is_visible = isVisible
+      if (name !== undefined) body.name = name
+      if (color !== undefined) body.color = color
+      return apiRequest<CalendarSource>(`/api/calendar/sources/${sourceId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ is_visible: isVisible }),
-      }),
+        body: JSON.stringify(body),
+      })
+    },
     onSuccess: () => {
+      setEditingSource(null)
       refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
@@ -470,6 +487,15 @@ export function CalendarScreen() {
                   />
                 ) : null}
                 <Button
+                  data-testid="calendar-source-edit"
+                  size="icon-lg"
+                  variant="ghost"
+                  aria-label={`Sửa nguồn ${source.name}`}
+                  onClick={() => setEditingSource(source)}
+                >
+                  <Edit3 />
+                </Button>
+                <Button
                   data-testid="calendar-source-delete"
                   size="icon-lg"
                   variant="ghost"
@@ -662,6 +688,32 @@ export function CalendarScreen() {
               Huỷ
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editingSource !== null}
+        onOpenChange={(open) => !open && setEditingSource(null)}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sửa nguồn lịch</DialogTitle>
+            <DialogDescription>
+              Đổi tên và màu nhận diện của nguồn lịch này.
+            </DialogDescription>
+          </DialogHeader>
+          {editingSource ? (
+            <SourceForm
+              kind={editingSource.kind === 'ics' ? 'ics' : 'manual'}
+              initialName={editingSource.name}
+              initialColor={editingSource.color}
+              pending={updateSource.isPending}
+              onSubmit={({ name, color }) =>
+                updateSource.mutate({ sourceId: editingSource.id, name, color })
+              }
+              onCancel={() => setEditingSource(null)}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
