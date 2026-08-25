@@ -41,6 +41,7 @@ def _decrypt_value(key_bytes: bytes, ciphertext: str) -> str:
     plaintext_bytes = cipher.decrypt(nonce, encrypted, None)
     return plaintext_bytes.decode("utf-8")
 
+
 def _decrypt_or_synthesize(key_bytes: bytes, ciphertext: str, salt: str) -> str:
     """Decrypt and scramble, or synthesize format-preserving text if key differs."""
     if not ciphertext:
@@ -58,8 +59,18 @@ def _decrypt_or_synthesize(key_bytes: bytes, ciphertext: str, salt: str) -> str:
         except Exception:
             target_len = 16
         base_words = [
-            "Ghi", "chú", "công", "việc", "kế", "hoạch",
-            "tháng", "chi", "tiêu", "khoản", "mục", "mẫu",
+            "Ghi",
+            "chú",
+            "công",
+            "việc",
+            "kế",
+            "hoạch",
+            "tháng",
+            "chi",
+            "tiêu",
+            "khoản",
+            "mục",
+            "mẫu",
         ]
         res = []
         curr = 0
@@ -78,6 +89,7 @@ def _decrypt_or_synthesize(key_bytes: bytes, ciphertext: str, salt: str) -> str:
                 curr += rem
             idx += 1
         return "".join(res)
+
 
 def _encrypt_value(key_bytes: bytes, plaintext: str) -> str:
     """Encrypt a plaintext string with AES-GCM and format as enc:v1:..."""
@@ -401,13 +413,9 @@ def main() -> None:
         (make_url(settings.database_url).host or "").lower() if settings.database_url else ""
     )
     if prod_host and host == prod_host:
-        raise ValueError(
-            f"CRITICAL SAFETY VIOLATION: refusing to scrub production host {host!r}."
-        )
+        raise ValueError(f"CRITICAL SAFETY VIOLATION: refusing to scrub production host {host!r}.")
     if "prod" in host:
-        raise ValueError(
-            f"Refusing to run data scrubbing on host containing 'prod': {host!r}."
-        )
+        raise ValueError(f"Refusing to run data scrubbing on host containing 'prod': {host!r}.")
     declared_dev = settings.neon_develop_branch_key
     declared_dev_host = (make_url(declared_dev).host or "").lower() if declared_dev else ""
     if not declared_dev_host or host != declared_dev_host:

@@ -244,6 +244,7 @@ async def logout(
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
     return response
 
+
 @router.get("/dev-session")
 async def dev_session(
     request: Request,

@@ -75,7 +75,7 @@ def test_mem_total_uses_smaller_cgroup_or_proc_reading() -> None:
         cgroup_v1 = work_dir / "memory.limit_in_bytes"
         cgroup_v1.write_text(str(1024 * 1024))
         meminfo = work_dir / "meminfo"
-        meminfo.write_text('MemTotal:       512 kB\n')
+        meminfo.write_text("MemTotal:       512 kB\n")
 
         assert (
             read_mem_total_kb(
