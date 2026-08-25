@@ -707,6 +707,7 @@ export function CalendarScreen() {
               kind={editingSource.kind === 'ics' ? 'ics' : 'manual'}
               initialName={editingSource.name}
               initialColor={editingSource.color}
+              submitLabel="Lưu thay đổi"
               pending={updateSource.isPending}
               onSubmit={({ name, color }) =>
                 updateSource.mutate({ sourceId: editingSource.id, name, color })

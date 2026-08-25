@@ -10,6 +10,7 @@ export function SourceForm({
   kind,
   initialName = '',
   initialColor = 'sky',
+  submitLabel = 'Tạo nguồn',
   pending,
   onSubmit,
   onCancel,
@@ -17,6 +18,7 @@ export function SourceForm({
   kind: 'ics' | 'manual'
   initialName?: string
   initialColor?: string | null
+  submitLabel?: string
   pending: boolean
   onSubmit: (value: { name: string; color: string }) => void
   onCancel: () => void
@@ -79,7 +81,7 @@ export function SourceForm({
       </p>
       <div className="flex flex-wrap gap-2">
         <Button size="lg" type="submit" disabled={!name.trim() || pending}>
-          {pending ? 'Đang lưu…' : initialName ? 'Lưu thay đổi' : 'Tạo nguồn'}
+          {pending ? 'Đang lưu…' : submitLabel}
         </Button>
         <Button size="lg" variant="outline" type="button" onClick={onCancel}>
           Huỷ
