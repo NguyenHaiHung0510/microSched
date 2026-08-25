@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { apiRequest } from '@/api'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
 import { navigate } from '@/lib/route'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -420,24 +421,54 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       ) : null}
 
       {/* 1. Tài chính tháng X năm Y lên đầu */}
-      <Card className="gap-3 p-4 shadow-1 ring-0 bg-gradient-to-br from-brand-50/60 to-card border-brand-200">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
+      <Card data-testid="tracker-finance-overview" className="gap-3 p-4 shadow-1 ring-0 bg-gradient-to-br from-brand-50/60 to-card border-brand-200">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1 min-w-0 flex-1">
             <p className="text-xs font-bold uppercase tracking-wider text-primary">
               Tài chính {monthLabel(month)}
             </p>
-            <h3 className="text-lg font-extrabold text-foreground mt-0.5">
-              Đăng ký · {subscriptionsQuery.data?.items.length ?? 0} khoản
-            </h3>
+            {dashboardQuery.isPending ? (
+              <p className="text-sm text-muted-foreground">Đang tải số liệu chi tiêu…</p>
+            ) : dashboardQuery.data ? (
+              <div className="space-y-1">
+                <div className="flex items-baseline gap-2">
+                  <span data-testid="tracker-finance-total" className="text-2xl font-extrabold text-foreground tabular-nums">
+                    {formatVnd(dashboardQuery.data.f1_total)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">đã chi</span>
+                </div>
+                {dashboardQuery.data.f2_previous > 0 || dashboardQuery.data.f2_current > 0 ? (
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                    <span>So cùng kỳ tháng trước:</span>
+                    {(() => {
+                      const delta = dashboardQuery.data.f2_current - dashboardQuery.data.f2_previous
+                      const dir = delta > 0 ? 'tăng' : delta < 0 ? 'giảm' : 'bằng'
+                      const colorClass = delta > 0 ? 'text-bad' : delta < 0 ? 'text-ok' : 'text-foreground'
+                      return (
+                        <span data-testid="tracker-finance-compare" className={cn('font-bold tabular-nums', colorClass)}>
+                          {dir} {formatVnd(Math.abs(delta))}
+                        </span>
+                      )
+                    })()}
+                  </p>
+                ) : (
+                  <p className="text-xs font-medium text-muted-foreground">
+                    So cùng kỳ tháng trước: <span data-testid="tracker-finance-compare" className="font-bold tabular-nums text-foreground">bằng 0 ₫</span>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm font-semibold text-foreground">Chưa có chi tiêu tháng này</p>
+            )}
           </div>
           <Button
             data-testid="subscription-entry"
-            size="lg"
+            size="default"
             variant="outline"
-            className="min-h-11 bg-card"
+            className="min-h-11 bg-card shrink-0"
             onClick={() => navigate('/subscription')}
           >
-            Đăng ký định kỳ
+            Đăng ký · {subscriptionsQuery.data?.items.length ?? 0} khoản
           </Button>
         </div>
       </Card>

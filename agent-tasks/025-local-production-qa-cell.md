@@ -14,6 +14,8 @@
 > `microsched.qa025.receipt.v1`; artifact lịch sử dạng uppercase, nếu có, không được rewrite và chỉ
 > được đối chiếu bằng schema tại commit lịch sử của artifact đó.
 
+> **📝 Cập nhật 2026-08-25:** Task 025 cung cấp hạ tầng disposable cell chạy local container. Đối với các đợt QA sau cut-over cần snapshot dữ liệu thật hoặc Migration Rehearsal, sử dụng thêm lane Ephemeral Neon Branch kết hợp `scripts.prepare_qa_branch` theo `AGENTS.md` §9.
+
 ## 0. Kết quả cần có
 
 Dựng một QA cell dùng **đúng production Docker image build từ candidate SHA**, nhưng chạy hoàn toàn
