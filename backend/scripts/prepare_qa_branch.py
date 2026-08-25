@@ -14,7 +14,6 @@ import asyncio
 import base64
 import hashlib
 import os
-import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -25,6 +24,7 @@ from sqlalchemy.engine import make_url
 from app.core.database_urls import asyncpg_dsn
 from app.core.private_pin import hash_pin
 from app.core.scrambler import scramble_text
+from app.core.settings import get_settings
 
 CIPHERTEXT_PREFIX = "enc:v1:"
 _NONCE_BYTES = 12
@@ -41,6 +41,43 @@ def _decrypt_value(key_bytes: bytes, ciphertext: str) -> str:
     plaintext_bytes = cipher.decrypt(nonce, encrypted, None)
     return plaintext_bytes.decode("utf-8")
 
+def _decrypt_or_synthesize(key_bytes: bytes, ciphertext: str, salt: str) -> str:
+    """Decrypt and scramble, or synthesize format-preserving text if key differs."""
+    if not ciphertext:
+        return ciphertext
+    if not ciphertext.startswith(CIPHERTEXT_PREFIX):
+        return scramble_text(ciphertext, salt)
+    try:
+        plain = _decrypt_value(key_bytes, ciphertext)
+        return scramble_text(plain, salt)
+    except Exception:
+        # Prod key unavailable locally: synthesize exact-length text
+        try:
+            payload = base64.urlsafe_b64decode(ciphertext[len(CIPHERTEXT_PREFIX) :])
+            target_len = max(1, len(payload) - 28)
+        except Exception:
+            target_len = 16
+        base_words = [
+            "Ghi", "chú", "công", "việc", "kế", "hoạch",
+            "tháng", "chi", "tiêu", "khoản", "mục", "mẫu",
+        ]
+        res = []
+        curr = 0
+        idx = int(hashlib.md5((ciphertext + salt).encode()).hexdigest(), 16) % len(base_words)
+        while curr < target_len:
+            word = base_words[idx % len(base_words)]
+            if curr + len(word) <= target_len:
+                res.append(word)
+                curr += len(word)
+                if curr < target_len:
+                    res.append(" ")
+                    curr += 1
+            else:
+                rem = target_len - curr
+                res.append("a" * rem)
+                curr += rem
+            idx += 1
+        return "".join(res)
 
 def _encrypt_value(key_bytes: bytes, plaintext: str) -> str:
     """Encrypt a plaintext string with AES-GCM and format as enc:v1:..."""
@@ -63,7 +100,7 @@ async def scrub_branch_data(
     if qa_key_b64:
         qa_key = base64.urlsafe_b64decode(qa_key_b64)
     else:
-        qa_key = secrets.token_bytes(32)
+        qa_key = prod_key
 
     conn = await asyncpg.connect(dsn, timeout=30)
     counts: dict[str, int] = {}
@@ -81,11 +118,13 @@ async def scrub_branch_data(
                 t_body = t["body_md"]
                 is_priv = t["is_private"]
                 if is_priv:
-                    title_plain = _decrypt_value(prod_key, t_title)
-                    body_plain = _decrypt_value(prod_key, t_body) if t_body else ""
-                    new_title = _encrypt_value(qa_key, scramble_text(title_plain, salt))
+                    new_title = _encrypt_value(
+                        qa_key, _decrypt_or_synthesize(prod_key, t_title, salt)
+                    )
                     new_body = (
-                        _encrypt_value(qa_key, scramble_text(body_plain, salt)) if t_body else None
+                        _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, t_body, salt))
+                        if t_body
+                        else None
                     )
                 else:
                     new_title = scramble_text(t_title, salt)
@@ -108,8 +147,9 @@ async def scrub_branch_data(
                 content_raw = ti["content"]
                 is_priv = ti["is_private"]
                 if is_priv:
-                    content_plain = _decrypt_value(prod_key, content_raw)
-                    new_content = _encrypt_value(qa_key, scramble_text(content_plain, salt))
+                    new_content = _encrypt_value(
+                        qa_key, _decrypt_or_synthesize(prod_key, content_raw, salt)
+                    )
                 else:
                     new_content = scramble_text(content_raw, salt)
                 await conn.execute(
@@ -127,11 +167,13 @@ async def scrub_branch_data(
                 n_body = n["body_md"]
                 is_priv = n["is_private"]
                 if is_priv:
-                    title_plain = _decrypt_value(prod_key, n_title)
-                    body_plain = _decrypt_value(prod_key, n_body) if n_body else ""
-                    new_title = _encrypt_value(qa_key, scramble_text(title_plain, salt))
+                    new_title = _encrypt_value(
+                        qa_key, _decrypt_or_synthesize(prod_key, n_title, salt)
+                    )
                     new_body = (
-                        _encrypt_value(qa_key, scramble_text(body_plain, salt)) if n_body else None
+                        _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, n_body, salt))
+                        if n_body
+                        else None
                     )
                 else:
                     new_title = scramble_text(n_title, salt)
@@ -167,8 +209,9 @@ async def scrub_branch_data(
             trackers = await conn.fetch("SELECT id, name, reminder_text FROM microsched.tracker")
             counts["trackers"] = len(trackers)
             for tr in trackers:
-                name_plain = _decrypt_value(prod_key, tr["name"])
-                new_name = _encrypt_value(qa_key, scramble_text(name_plain, salt))
+                new_name = _encrypt_value(
+                    qa_key, _decrypt_or_synthesize(prod_key, tr["name"], salt)
+                )
                 rem_text = scramble_text(tr["reminder_text"], salt) if tr["reminder_text"] else None
                 await conn.execute(
                     "UPDATE microsched.tracker SET name = $1, reminder_text = $2 WHERE id = $3",
@@ -183,25 +226,15 @@ async def scrub_branch_data(
             )
             counts["subscriptions"] = len(subs)
             for s in subs:
-                s_name = _encrypt_value(
-                    qa_key, scramble_text(_decrypt_value(prod_key, s["name"]), salt)
-                )
-                s_amt = _encrypt_value(
-                    qa_key, scramble_text(_decrypt_value(prod_key, s["amount"]), salt)
-                )
+                s_name = _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, s["name"], salt))
+                s_amt = _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, s["amount"], salt))
                 s_list = (
-                    _encrypt_value(
-                        qa_key,
-                        scramble_text(_decrypt_value(prod_key, s["list_amount"]), salt),
-                    )
+                    _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, s["list_amount"], salt))
                     if s["list_amount"]
                     else None
                 )
                 s_note = (
-                    _encrypt_value(
-                        qa_key,
-                        scramble_text(_decrypt_value(prod_key, s["note_md"]), salt),
-                    )
+                    _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, s["note_md"], salt))
                     if s["note_md"]
                     else None
                 )
@@ -217,26 +250,17 @@ async def scrub_branch_data(
             counts["entries"] = len(entries)
             for e in entries:
                 e_amt = (
-                    _encrypt_value(
-                        qa_key,
-                        scramble_text(_decrypt_value(prod_key, e["amount"]), salt),
-                    )
+                    _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, e["amount"], salt))
                     if e["amount"]
                     else None
                 )
                 e_list = (
-                    _encrypt_value(
-                        qa_key,
-                        scramble_text(_decrypt_value(prod_key, e["list_amount"]), salt),
-                    )
+                    _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, e["list_amount"], salt))
                     if e["list_amount"]
                     else None
                 )
                 e_note = (
-                    _encrypt_value(
-                        qa_key,
-                        scramble_text(_decrypt_value(prod_key, e["note_md"]), salt),
-                    )
+                    _encrypt_value(qa_key, _decrypt_or_synthesize(prod_key, e["note_md"], salt))
                     if e["note_md"]
                     else None
                 )
@@ -247,12 +271,12 @@ async def scrub_branch_data(
                 await conn.execute(entry_sql, e_amt, e_list, e_note, e["id"])
 
             # 7. Scramble Calendar & Day Annotations
-            sources = await conn.fetch("SELECT id, display_name FROM microsched.calendar_source")
+            sources = await conn.fetch("SELECT id, name FROM microsched.calendar_source")
             counts["calendar_sources"] = len(sources)
             for src in sources:
-                s_name = scramble_text(src["display_name"], salt)
+                s_name = scramble_text(src["name"], salt)
                 await conn.execute(
-                    "UPDATE microsched.calendar_source SET display_name = $1 WHERE id = $2",
+                    "UPDATE microsched.calendar_source SET name = $1 WHERE id = $2",
                     s_name,
                     src["id"],
                 )
@@ -327,15 +351,26 @@ async def scrub_branch_data(
 
 
 def main() -> None:
+    settings = get_settings()
     parser = argparse.ArgumentParser(
         description="Prepare Neon QA branch with format-preserving scrambled data."
     )
     parser.add_argument(
-        "--branch-url", required=True, help="Connection URL to the target Neon QA branch"
+        "--branch-url",
+        default=(
+            settings.neon_develop_branch_key
+            or os.environ.get("NEON_DEVELOP_BRANCH_KEY")
+            or os.environ.get("DATABASE_URL_DEVELOP")
+        ),
+        help="Connection URL to the target Neon QA branch",
     )
     parser.add_argument(
         "--prod-key",
-        default=os.environ.get("ENCRYPTION_MASTER_KEY") or os.environ.get("PROD_KEY"),
+        default=(
+            settings.encryption_master_key
+            or os.environ.get("ENCRYPTION_MASTER_KEY")
+            or os.environ.get("PROD_KEY")
+        ),
         help="Production master key (base64) to decrypt existing ciphertext",
     )
     parser.add_argument(
@@ -349,20 +384,36 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if not args.branch_url:
+        raise ValueError(
+            "Missing branch URL (pass --branch-url or set NEON_DEVELOP_BRANCH_KEY in environment)"
+        )
     if not args.prod_key:
         raise ValueError(
             "Missing production master key (pass --prod-key or set ENCRYPTION_MASTER_KEY)"
         )
 
     host = (make_url(args.branch_url).host or "").lower()
-    # Strict fail-closed guard: host must look like QA and must not be production
-    is_safe_qa_host = (
-        "qa" in host or "test" in host or host.startswith("ep-qa-")
-    ) and "prod" not in host
-    if not is_safe_qa_host:
+    # Fail-closed guard for a destructive script (it truncates session/audit/
+    # push tables): the host must be the declared develop branch, must never
+    # equal the production host, and positive allowlist beats substring luck.
+    prod_host = (
+        (make_url(settings.database_url).host or "").lower() if settings.database_url else ""
+    )
+    if prod_host and host == prod_host:
         raise ValueError(
-            f"Refusing to run data scrubbing on unsafe host {host!r}. "
-            "Target host must be an ephemeral QA branch (e.g. ep-qa-* or contain qa/test)."
+            f"CRITICAL SAFETY VIOLATION: refusing to scrub production host {host!r}."
+        )
+    if "prod" in host:
+        raise ValueError(
+            f"Refusing to run data scrubbing on host containing 'prod': {host!r}."
+        )
+    declared_dev = settings.neon_develop_branch_key
+    declared_dev_host = (make_url(declared_dev).host or "").lower() if declared_dev else ""
+    if not declared_dev_host or host != declared_dev_host:
+        raise ValueError(
+            "Host is not the declared NEON_DEVELOP_BRANCH_KEY target; pass --branch-url "
+            "pointing at the declared develop branch."
         )
 
     print(f"Starting data scrubbing on target branch host: {host}...")

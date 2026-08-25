@@ -132,6 +132,50 @@ def complete_login(
     return client.get(f"/auth/callback?code=x&state={state}", follow_redirects=False)
 
 
+class _FixedScopeClient:
+    """Wrap the ASGI app and pin a fixed client address into every scope."""
+
+    def __init__(self, app, host: str, port: int = 51000):
+        self._app = app
+        self._host = host
+        self._port = port
+
+    async def __call__(self, scope, receive, send):
+        scope = dict(scope)
+        scope["client"] = (self._host, self._port)
+        await self._app(scope, receive, send)
+
+
+def _dev_session_client(monkeypatch, *, local: bool):
+    """Build an auth-test client with settings forced to the given environment."""
+    if local:
+        monkeypatch.setenv("APP_ENV", "local")
+    else:
+        monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("OAUTH_STATE_SECRET", "state-secret-used-only-by-tests")
+    get_settings.cache_clear()
+    store = InMemorySessionStore()
+    app = create_app()
+    app.dependency_overrides[get_session_store] = lambda: store
+    return TestClient(_FixedScopeClient(app, "203.0.113.7"), follow_redirects=False)
+
+
+def test_dev_session_is_unreachable_from_non_loopback(monkeypatch) -> None:
+    """The QA shortcut must 404 for any client address outside 127.0.0.1/::1."""
+    client = _dev_session_client(monkeypatch, local=True)
+    response = client.get("/auth/dev-session")
+    assert response.status_code == 404
+
+
+def test_dev_session_stays_local_only_even_when_production_reachable(
+    monkeypatch,
+) -> None:
+    """A production deployment must never serve the QA shortcut."""
+    client = _dev_session_client(monkeypatch, local=False)
+    response = client.get("/auth/dev-session")
+    assert response.status_code == 404
+
+
 def test_allowlisted_email_gets_a_session_and_reaches_the_api(monkeypatch) -> None:
     """The happy path: Google says who you are, the allowlist says you may in."""
     store = InMemorySessionStore()

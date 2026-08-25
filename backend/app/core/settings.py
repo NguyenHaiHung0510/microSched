@@ -1,5 +1,6 @@
 """Application settings loaded from the environment."""
 
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     git_sha: str = "unknown"
     database_url: str | None = None
+    neon_develop_branch_key: str | None = None
 
     google_client_id: str | None = None
     google_client_secret: str | None = None
@@ -54,6 +56,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
+        if not self.is_production and self.neon_develop_branch_key:
+            self.database_url = async_postgres_url(self.neon_develop_branch_key)
+        if self.is_production:
+            # Production cookies are always Secure; no env override can weaken this.
+            self.session_cookie_secure = True
+        elif "SESSION_COOKIE_SECURE" not in os.environ:
+            # Unconfigured local runs over plain http, where Secure cookies are
+            # dropped by the browser. An explicit local value is still respected.
+            self.session_cookie_secure = False
         if self.is_production and self.enable_inprocess_cron:
             if not self.database_url:
                 raise ValueError(

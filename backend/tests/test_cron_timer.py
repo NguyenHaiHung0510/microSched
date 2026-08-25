@@ -4,6 +4,7 @@ import asyncio
 import heapq
 import logging
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -208,6 +209,8 @@ def test_build_cron_timer_uses_real_session_factory(monkeypatch):
 
 def test_build_cron_timer_fails_fast_without_database(monkeypatch):
     """F3: no DB configured with the flag on ⇒ loud RuntimeError, not a silent timer."""
+    # The contract is "DATABASE_URL absent"; keep the developer's real .env out.
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.delenv("DATABASE_URL", raising=False)
