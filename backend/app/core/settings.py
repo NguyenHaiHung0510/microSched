@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # Deliberate escape hatch for the rare case of inspecting the real prod DB
     # from a laptop. Any other local-vs-production host collision refuses boot.
     allow_prod_db_in_local: bool = False
+    # Production host references for the fail-closed local guard. The runtime
+    # never connects through them; they only define which hosts are prod.
+    neon_owner_url: str | None = None
+    neon_migrator_url: str | None = None
 
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
@@ -71,13 +75,15 @@ class Settings(BaseSettings):
             # whether it came from the OS env or from backend/.env.
             self.session_cookie_secure = False
         if not self.is_production and self.database_url:
-            # Fail-closed host check: local must never sit on the declared
-            # production database unless the operator opts in explicitly. The raw
-            # DATABASE_URL env var is the production reference on purpose.
+            # Fail-closed host check: local must never sit on any declared prod
+            # host (raw DATABASE_URL env, NEON_OWNER_URL, NEON_MIGRATOR_URL)
+            # unless the operator opts in explicitly. The raw env var is kept as a
+            # reference because .env values do not land in os.environ.
             raw_prod_url = os.environ.get("DATABASE_URL", "")
-            raw_prod_host = (make_url(raw_prod_url).host or "").lower() if raw_prod_url else ""
             current_host = (make_url(self.database_url).host or "").lower()
-            if raw_prod_host and current_host == raw_prod_host and not self.allow_prod_db_in_local:
+            declared_hosts = [raw_prod_url, self.neon_owner_url, self.neon_migrator_url]
+            prod_hosts = {(make_url(url).host or "").lower() for url in declared_hosts if url}
+            if current_host in prod_hosts and not self.allow_prod_db_in_local:
                 raise ValueError(
                     "APP_ENV=local refuses to start with the production DATABASE_URL; "
                     "point NEON_DEVELOP_BRANCH_KEY at the develop branch or set "

@@ -15,6 +15,9 @@ def _settings(monkeypatch, **env: str) -> Settings:
     monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("NEON_DEVELOP_BRANCH_KEY", raising=False)
+    monkeypatch.delenv("ALLOW_PROD_DB_IN_LOCAL", raising=False)
+    monkeypatch.delenv("NEON_OWNER_URL", raising=False)
+    monkeypatch.delenv("NEON_MIGRATOR_URL", raising=False)
     monkeypatch.delenv("SESSION_COOKIE_SECURE", raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
