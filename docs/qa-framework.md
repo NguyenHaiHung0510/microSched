@@ -79,6 +79,18 @@ timeout, fault injection hoặc bộ dữ liệu hàng loạt. Từ `025`, áp p
      * Truncate `push_subscription` & `reminder_dispatch` (zero blast radius tới điện thoại thật).
      * Nạp session `owner@test.local`, cho phép truy cập qua nút "Đăng nhập QA" (`/auth/dev-session`) trên local server.
 
+#### Local QA quickstart — thứ tự khởi động chuẩn (📝 2026-08-26)
+
+> Áp dụng ngay sau khi Owner sync `develop` và Agent chạy scrub xong. **Nút "Đăng nhập QA"
+> chỉ tồn tại khi backend chạy với `APP_ENV=local`**; trên production `/auth/dev-session` cố ý
+> trả 404 (fail-closed). Truy cập thẳng `http://127.0.0.1:8000` mà không qua các bước dưới sẽ
+> KHÔNG đăng nhập được — đây là hành vi đúng của guard, không phải lỗi.
+
+1. **Backend trước:** `cd backend && uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000` — tự đọc `.env` (`APP_ENV=local`, redirect sang nhánh Neon develop qua `NEON_DEVELOP_BRANCH_KEY`).
+2. **Frontend sau:** `cd frontend && npm install && npm run dev` → mở `http://localhost:5173` (Vite proxy `/api` về :8000). Vào thẳng `:8000` cũng được (backend tự serve SPA từ `frontend/dist`) nhưng thiếu hot-reload.
+3. **Đăng nhập QA:** ở trang login bấm **"Đăng nhập QA (Bypass OAuth)"** (gọi `GET /auth/dev-session`, chỉ nhận request loopback khi `APP_ENV=local`) → vào thẳng `owner@test.local`, PIN test `123456`.
+4. **Không đăng nhập được? Soi theo thứ tự:** (a) đã scrub chưa — chưa scrub thì session test không tồn tại; (b) backend sống chưa — `curl http://127.0.0.1:8000/api/healthz`; (c) đúng cổng chưa — `:5173` cần Vite đang chạy, `:8000` dùng ngay; (d) `APP_ENV=local` có thật trong env tiến trình backend không.
+
 Task `025` là spec thi công + QA độc lập cho cell nói trên. Nó không cho phép auth-bypass route,
 không chạm Neon/host DB/`.env`, không tự bật recurring outbound, không chạy deploy migration, và
 không hấp thụ implementation hay acceptance của `017`.
