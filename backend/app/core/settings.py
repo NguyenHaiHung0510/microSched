@@ -84,7 +84,7 @@ class Settings(BaseSettings):
             # into the process environment.
             raw_prod_url = os.environ.get("DATABASE_URL", "")
             current_host = (make_url(self.database_url).host or "").lower()
-            env_file = Path(__file__).resolve().parents[1] / ".env"
+            env_file = Path(__file__).resolve().parent / ".env"
             if not raw_prod_url and env_file.exists():
                 raw_prod_url = dotenv_values(env_file).get("DATABASE_URL") or ""
             declared_hosts = [raw_prod_url, self.neon_owner_url, self.neon_migrator_url]
