@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 from app.core.database_urls import async_postgres_url
 
@@ -53,6 +54,9 @@ class Settings(BaseSettings):
     # Left as its own switch on purpose: it answers "how are cookies transported",
     # not "where am I running". Ask `is_production` for the latter.
     session_cookie_secure: bool = True
+    # Deliberate escape hatch for the rare case of inspecting the real prod DB
+    # from a laptop. Any other local-vs-production host collision refuses boot.
+    allow_prod_db_in_local: bool = False
 
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
@@ -61,10 +65,24 @@ class Settings(BaseSettings):
         if self.is_production:
             # Production cookies are always Secure; no env override can weaken this.
             self.session_cookie_secure = True
-        elif "SESSION_COOKIE_SECURE" not in os.environ:
-            # Unconfigured local runs over plain http, where Secure cookies are
-            # dropped by the browser. An explicit local value is still respected.
+        elif "session_cookie_secure" not in self.model_fields_set:
+            # Unconfigured local runs over plain http, where a Secure cookie is
+            # dropped by the browser. An explicit local value is still respected,
+            # whether it came from the OS env or from backend/.env.
             self.session_cookie_secure = False
+        if not self.is_production and self.database_url:
+            # Fail-closed host check: local must never sit on the declared
+            # production database unless the operator opts in explicitly. The raw
+            # DATABASE_URL env var is the production reference on purpose.
+            raw_prod_url = os.environ.get("DATABASE_URL", "")
+            raw_prod_host = (make_url(raw_prod_url).host or "").lower() if raw_prod_url else ""
+            current_host = (make_url(self.database_url).host or "").lower()
+            if raw_prod_host and current_host == raw_prod_host and not self.allow_prod_db_in_local:
+                raise ValueError(
+                    "APP_ENV=local refuses to start with the production DATABASE_URL; "
+                    "point NEON_DEVELOP_BRANCH_KEY at the develop branch or set "
+                    "ALLOW_PROD_DB_IN_LOCAL=true explicitly."
+                )
         if self.is_production and self.enable_inprocess_cron:
             if not self.database_url:
                 raise ValueError(
