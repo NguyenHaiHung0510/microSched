@@ -1003,6 +1003,11 @@ def _normalize_catalog_sql(value: Any) -> str:
     result = re.sub(r"\s*~~\s*", " like ", result)
     result = re.sub(r"\s*::(?:text|boolean|jsonb|numeric)\b", "", result)
     result = re.sub(r"=\s*any\s*\(\s*array\[(.*?)\]\s*\)", r"in(\1)", result)
+    result = re.sub(
+        r"^\(([^()]*)\)\s+or\s*\(([^()]*)\)$",
+        r"\1 or \2",
+        result,
+    )
     # The deparser drops redundant grouping around a conjunction under OR.
     # Keep grouping when the first term itself contains OR, where it changes
     # precedence; only canonicalize the unambiguous display variant.
@@ -1016,17 +1021,17 @@ def _normalize_catalog_sql(value: Any) -> str:
         r"or \1 and(\2)",
         result,
     )
+    result = re.sub(
+        r"\bor\s*\((?![^()]*\bor\b)([^()]+?)\s+and\s*([^()]+?)\)",
+        r"or \1 and \2",
+        result,
+    )
     # PostgreSQL also removes grouping around a single IN term after OR and
     # around the two AND terms in this exact unit-match CHECK.  Both sides
     # contain no OR, so AND precedence makes these removals AST-equivalent.
     result = re.sub(
         r"\bor\s*\(([^()]*\bin\s*\([^()]*\))\)",
         r"or \1",
-        result,
-    )
-    result = re.sub(
-        r"^\(([^()]*)\)\s+or\s*\(([^()]*)\)$",
-        r"\1 or \2",
         result,
     )
     result = re.sub(r"\$\$", "$function$", result)

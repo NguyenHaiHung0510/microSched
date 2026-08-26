@@ -1,5 +1,0 @@
- test(migration): cập nhật version_num head trong test_task_temporal_precision_pg sang 0011
-
- - Cập nhật version_num kỳ vọng sau upgrade head từ 0010 sang 0011 để Migration QA CI xanh.
-
- Co-Authored-By: McClintock <agent-mcclintock@microsched.local>
