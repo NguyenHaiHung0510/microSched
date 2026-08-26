@@ -79,9 +79,9 @@ export function ReminderConfirmScreen() {
     },
     onSuccess: (data) => {
       if (data.created) {
-        toast.success('Đã ghi nhận uống thuốc', { duration: 10000 })
+        toast.success('Đã ghi nhận thành công', { duration: 10000 })
       } else {
-        toast.info('Lần uống này đã được ghi từ trước', { duration: 10000 })
+        toast.info('Lần nhắc này đã được ghi nhận từ trước', { duration: 10000 })
       }
       navigate('/')
     },
@@ -150,7 +150,7 @@ export function ReminderConfirmScreen() {
   return (
     <Card className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0" role="status">
       <h1 className="text-xl font-extrabold tracking-tight text-primary">microSched</h1>
-      <p className="text-sm text-muted-foreground">Đang xác nhận lời nhắc uống thuốc…</p>
+      <p className="text-sm text-muted-foreground">Đang xác nhận lời nhắc…</p>
       {confirmMutation.isError ? (
         <Button
           data-testid="reminder-confirm-retry"
@@ -167,7 +167,7 @@ export function ReminderConfirmScreen() {
           <DialogHeader>
             <DialogTitle>Mở dữ liệu riêng tư</DialogTitle>
             <DialogDescription>
-              Khoản mục nhắc nhở đang riêng tư — mở khoá để xác nhận lần uống này.
+              Khoản mục nhắc nhở đang riêng tư — mở khoá để xác nhận lần nhắc này.
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={submitUnlock}>

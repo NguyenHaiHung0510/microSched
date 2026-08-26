@@ -1,0 +1,10 @@
+ feat(ui): hỗ trợ loại tracker Chung, cấu hình nhắc nhở đa chế độ và deep-link (031B)
+
+ - Thêm lựa chọn loại nhóm và loại tracker Chung (general) trên GroupForm và TrackerForm.
+ - Tái cấu trúc fieldset Nhắc nhở cho mọi loại tracker: lịch cố định (fixed) vs sau lần ghi gần nhất (after_entry).
+ - Ràng buộc giao diện: tracker money/quantity chỉ cho phép hành động Mở tracker để nhập số liệu (open_tracker).
+ - Cập nhật TrackerScreen hiển thị badge lịch nhắc, chuẩn hóa 4 thẻ button disclosure bằng UI component chuẩn.
+ - Chuẩn hóa thông điệp toast ReminderConfirmScreen sang định dạng chung (không hardcode uống thuốc).
+ - Bổ sung hỗ trợ deep-link /trackers từ Web Push notification.
+
+ Co-Authored-By: McClintock <agent-mcclintock@microsched.local>

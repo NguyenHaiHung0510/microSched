@@ -8,7 +8,7 @@ import { expect, test as base } from './tasks'
 export type FixtureTracker = {
   id: string
   name: string
-  kind: 'health' | 'finance'
+  kind: 'health' | 'finance' | 'general'
   direction: 'in' | 'out'
   input_mode: 'event' | 'money' | 'quantity'
   group_id: string | null
@@ -16,6 +16,9 @@ export type FixtureTracker = {
   color: string | null
   reminder_time: string | null
   reminder_text: string | null
+  reminder_mode: 'fixed' | 'after_entry' | null
+  reminder_interval_days: number | null
+  reminder_action: 'confirm_event' | 'open_tracker' | null
   is_private: boolean
   last_entry_at: string | null
   entry_count_30d: number
@@ -51,6 +54,9 @@ function tracker(overrides: Partial<FixtureTracker>): FixtureTracker {
     color: null,
     reminder_time: null,
     reminder_text: null,
+    reminder_mode: null,
+    reminder_interval_days: null,
+    reminder_action: null,
     is_private: false,
     last_entry_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
     entry_count_30d: 3,
