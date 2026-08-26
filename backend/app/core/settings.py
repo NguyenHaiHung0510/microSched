@@ -1,5 +1,6 @@
 """Application settings loaded from the environment."""
 
+import ipaddress
 from functools import lru_cache
 from typing import Literal
 
@@ -8,6 +9,36 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
 from app.core.database_urls import async_postgres_url
+
+
+def _is_loopback_host(raw_host: str) -> bool:
+    """Canonicalize a URL host and answer whether it can only be this machine."""
+    host = raw_host.rstrip(".").lower()
+    if host == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
+
+
+def _neon_known_hosts(url: object) -> frozenset[str]:
+    """Expand a Neon endpoint host to cover both direct and -pooler spellings."""
+    host = (getattr(url, "host", "") or "").rstrip(".").lower()
+    hosts = {host}
+    if host.endswith(".neon.tech"):
+        # Neon inserts "-pooler" right after the endpoint id, which sits
+        # somewhere before the region labels, so normalize by removing the
+        # first "-pooler." occurrence and admit both spellings.
+        canonical = host.replace("-pooler.", ".", 1)
+        hosts.add(canonical)
+        parts = canonical.split(".")
+        if len(parts) > 1 and not parts[0].endswith("-pooler"):
+            hosts.add(f"{parts[0]}-pooler.{'.'.join(parts[1:])}")
+    return frozenset(hosts)
 
 
 class Settings(BaseSettings):
@@ -80,33 +111,43 @@ class Settings(BaseSettings):
             # whether it came from the OS env or from backend/.env.
             self.session_cookie_secure = False
         if not self.is_production:
-            # Fail-closed host check for every local boot. Production hosts are
-            # known ONLY through explicit references (NEON_OWNER_URL,
-            # NEON_MIGRATOR_URL) plus a declared non-loopback DATABASE_URL.
-            # The check judges the EFFECTIVE runtime host, so a branch key
-            # mis-pointed at prod cannot launder its way past, and a missing
-            # declared URL cannot switch the guard off either.
-            loopback_hosts = {
-                "localhost",
-                "127.0.0.1",
-                "::1",
-                "host.docker.internal",
-                "postgres",
-                "db",
-            }
+            # Fail-closed host check for every local boot. Production hosts
+            # are known ONLY through the dedicated Neon references
+            # (NEON_OWNER_URL, NEON_MIGRATOR_URL): a remote DATABASE_URL could
+            # be staging just as well, so it must never define what "prod"
+            # means. With a branch key present but zero prod references the guard
+            # would be a silent no-op, so refuse to boot instead. The check judges
+            # the EFFECTIVE runtime host (post-redirect), so a branch key pointed
+            # back at prod - direct or pooler spelling - cannot sneak past.
+            simple_local_hosts = {"host.docker.internal", "postgres", "db"}
             declared_host = ""
             if declared_database_url:
                 declared_host = (make_url(declared_database_url).host or "").lower()
+            declared_is_local = (
+                _is_loopback_host(declared_host) or declared_host in simple_local_hosts
+            )
+            if declared_database_url and not declared_is_local and not self.allow_prod_db_in_local:
+                ref_hosts: set[str] = set()
+                for ref in (self.neon_owner_url, self.neon_migrator_url):
+                    if ref:
+                        ref_hosts |= _neon_known_hosts(make_url(ref))
+                if declared_host not in ref_hosts:
+                    raise ValueError(
+                        "APP_ENV=local only accepts a loopback DATABASE_URL; point "
+                        "NEON_DEVELOP_BRANCH_KEY at the develop branch or set "
+                        "ALLOW_PROD_DB_IN_LOCAL=true explicitly."
+                    )
             prod_refs = [self.neon_owner_url, self.neon_migrator_url]
-            if declared_database_url and declared_host not in loopback_hosts:
-                prod_refs.append(declared_database_url)
             if self.neon_develop_branch_key and not any(prod_refs):
                 raise ValueError(
                     "NEON_DEVELOP_BRANCH_KEY requires at least one production "
                     "reference (NEON_OWNER_URL or NEON_MIGRATOR_URL) so the "
                     "fail-closed local guard can recognize a production host."
                 )
-            prod_hosts = {(make_url(url).host or "").lower() for url in prod_refs if url}
+            prod_hosts: set[str] = set()
+            for ref in prod_refs:
+                if ref:
+                    prod_hosts |= _neon_known_hosts(make_url(ref))
             current_host = ""
             if self.database_url:
                 current_host = (make_url(self.database_url).host or "").lower()

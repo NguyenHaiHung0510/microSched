@@ -10,6 +10,8 @@ ro vao receipt va xin xac nhan truoc khi dung profile khac).
 - PR #175 da merge vao develop VA deploy production hoan tat (kiem /api/readyz
   tren fly.dev tra db=up dung commit moi). Endpoint /auth/dev-session chi ton
   tai o ban code nay.
+  Bat buoc ghi receipt: gia tri exact cua readyz.commit va db=up.
+  Bat buoc ghi receipt: gia tri exact cua readyz.commit va db=up.
 - Local backend chay duoc: APP_ENV=local, NEON_DEVELOP_BRANCH_KEY tro nhanh Neon
   develop (chu sync tay tu prod truoc khi QA), uvicorn lang nghe 127.0.0.1:8000;
   frontend Vite o localhost:5173 proxy sang backend.
@@ -24,6 +26,24 @@ Cach chay: tam go branch key (hoac dat DATABASE_URL ve URL prod), khoi dong
 uvicorn local, ky vong process thoat ngay voi ValidationError chua chuoi
 "refuses to start with the production DATABASE_URL". Ghi lai stderr 5 dong cuoi.
 Sau do khoi phuc cau hinh develop NGAY LAP TUC.
+Cac buoc mo rong (mo phong dung cac case guard moi, khong can mang):
+- loopback DATABASE_URL + branch key tro prod: tu choi voi
+  "production DATABASE_URL";
+- khong co DATABASE_URL + branch key tro prod + NEON_OWNER_URL=prod:
+  tu choi voi "production DATABASE_URL";
+- co branch key nhung thieu NEON_OWNER_URL/NEON_MIGRATOR_URL:
+  tu choi voi "requires at least one production reference";
+- DATABASE_URL remote (vi du staging) khong duoc reference nao xac nhan:
+  tu choi voi "only accepts a loopback".
+Cac buoc mo rong (mo phong dung cac case guard moi, khong can mang):
+- loopback DATABASE_URL + branch key tro prod: tu choi voi
+  "production DATABASE_URL";
+- khong co DATABASE_URL + branch key tro prod + NEON_OWNER_URL=prod:
+  tu choi voi "production DATABASE_URL";
+- co branch key nhung thieu NEON_OWNER_URL/NEON_MIGRATOR_URL:
+  tu choi voi "requires at least one production reference";
+- DATABASE_URL remote (vi du staging) khong duoc reference nao xac nhan:
+  tu choi voi "only accepts a loopback".
 Buoc con (chi chay khi chu dong y): ALLOW_PROD_DB_IN_LOCAL=true cho server boot
 duoc - luu y no ket noi prod that tu may local.
 
@@ -47,8 +67,9 @@ khong con trang thai dang nhap; goi lai mot API protected bat ky tra 401.
 
 ### TC5 - Truy cap dev-session tu IP ngoai loopback (negative)
 
-Neu moi truong cho phep go endpoint local qua IP LAN cua may: ky vong 404.
-Khong bat buoc neu firewall chan - ghi NOT RUN kem ly do thay vi tat firewall.
+NOT RUN by design: backend bind 127.0.0.1 theo tien de, safety boundary chi
+cho phep localhost/fly.dev nen case LAN khong bao gio duoc thuc thi trong QA;
+case da duoc test don vi test_dev_session_is_unreachable_from_non_loopback phu.
 
 ## Rang buoc an toan khi thuc thi
 
@@ -62,10 +83,10 @@ Khong bat buoc neu firewall chan - ghi NOT RUN kem ly do thay vi tat firewall.
 ## Bien lai can thu
 
 - TC1: stderr guard (da chay / NOT RUN + ly do).
-- TC2: screenshot trang chu sau redirect + DevTools network dong 303 + cookie
-  flags (HttpOnly/SameSite/Secure).
-- TC3: status code + body dau tien tu fly.dev.
-- TC4: screenshot sau logout + ket qua 401.
+- TC2: screenshot trang chu sau redirect + dong 303; cookie flags chi ghi TEN
+  cookie va thuoc tinh (HttpOnly/SameSite/Secure) - TUYET DOI redact gia tri
+  token, khong chup nguyen header Set-Cookie vao artifact.
+- TC3: status code + body dau tien tu fly.dev + readyz.commit exact + db=up.
 - TC5: status code hoac NOT RUN.
 - Nhan dinh chu ve "du lieu GIA cua nhanh develop" o TC2 la BAT BUOC de dong
   muc nay (agent khong tu biet du lieu nao la that).

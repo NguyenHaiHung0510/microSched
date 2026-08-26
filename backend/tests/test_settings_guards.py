@@ -9,6 +9,7 @@ from app.core.settings import Settings
 DEVELOP_URL = "postgresql://dev:pw@ep-develop-pooler.example.neon.tech/db?sslmode=require"
 PROD_URL = "postgresql://prod:pw@ep-prod.example.neon.tech/db?sslmode=require"
 LOOPBACK_DB_URL = "postgresql://user:pass@localhost:5432/microsched"
+STAGING_URL = "postgresql://dev@ep-staging.example.neon.tech/db"
 
 
 def _settings(monkeypatch, **env: str) -> Settings:
@@ -32,13 +33,14 @@ def test_local_redirects_database_to_develop_branch(monkeypatch) -> None:
         APP_ENV="local",
         DATABASE_URL=PROD_URL,
         NEON_DEVELOP_BRANCH_KEY=DEVELOP_URL,
+        NEON_OWNER_URL=PROD_URL,
     )
     assert settings.database_url == async_postgres_url(DEVELOP_URL)
 
 
 def test_local_without_branch_key_refuses_declared_prod_url(monkeypatch) -> None:
     """Local boot must fail closed when the only URL is the production host."""
-    with pytest.raises(ValidationError, match="production DATABASE_URL"):
+    with pytest.raises(ValidationError, match="only accepts a loopback"):
         _settings(monkeypatch, APP_ENV="local", DATABASE_URL=PROD_URL)
 
 
@@ -71,7 +73,7 @@ def test_local_allows_prod_db_only_with_explicit_opt_in(monkeypatch) -> None:
 
 def test_local_branch_host_equal_to_prod_host_still_fails_closed(monkeypatch) -> None:
     """A mis-declared branch key pointing at prod must not sneak past the guard."""
-    with pytest.raises(ValidationError, match="production DATABASE_URL"):
+    with pytest.raises(ValidationError, match="only accepts a loopback"):
         _settings(
             monkeypatch,
             APP_ENV="local",
@@ -128,3 +130,51 @@ def test_local_prod_key_over_loopback_db_fails_closed(monkeypatch) -> None:
             NEON_DEVELOP_BRANCH_KEY=PROD_URL,
             NEON_OWNER_URL=PROD_URL,
         )
+
+
+def test_local_staging_url_with_prod_key_fails_closed(monkeypatch) -> None:
+    """A staging DATABASE_URL must never define what prod means for the key."""
+    with pytest.raises(ValidationError, match="only accepts a loopback"):
+        _settings(
+            monkeypatch,
+            APP_ENV="local",
+            DATABASE_URL=STAGING_URL,
+            NEON_DEVELOP_BRANCH_KEY=PROD_URL,
+        )
+
+
+def test_local_pooler_spelling_of_prod_key_is_caught(monkeypatch) -> None:
+    """The -pooler spelling of a referenced prod endpoint must still fail."""
+    with pytest.raises(ValidationError, match="production DATABASE_URL"):
+        _settings(
+            monkeypatch,
+            APP_ENV="local",
+            NEON_DEVELOP_BRANCH_KEY=("postgresql://prod@ep-prod-pooler.example.neon.tech/db"),
+            NEON_OWNER_URL=PROD_URL,
+        )
+
+
+def test_local_declared_prod_with_develop_redirect_passes(monkeypatch) -> None:
+    """The owner-standard flow: prod declared in .env, key redirects to develop."""
+    settings = _settings(
+        monkeypatch,
+        APP_ENV="local",
+        DATABASE_URL=PROD_URL,
+        NEON_DEVELOP_BRANCH_KEY=DEVELOP_URL,
+        NEON_OWNER_URL=PROD_URL,
+    )
+    assert settings.database_url == async_postgres_url(DEVELOP_URL)
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["::ffff:127.0.0.1", "0:0:0:0:0:0:0:1"],
+)
+def test_local_ipv6_mapped_loopback_urls_are_accepted(monkeypatch, host) -> None:
+    """Canonical IPv6 loopback spellings count as local, not as prod refs."""
+    settings = _settings(
+        monkeypatch,
+        APP_ENV="local",
+        DATABASE_URL=f"postgresql://u:p@[{host}]:5432/db",
+    )
+    assert "5432/db" in settings.database_url

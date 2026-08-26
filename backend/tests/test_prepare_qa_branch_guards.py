@@ -19,6 +19,10 @@ def _run_main(monkeypatch, *, database_url: str, branch_key: str):
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("NEON_DEVELOP_BRANCH_KEY", branch_key)
+    # The real .env always declares the owner reference next to the prod URL;
+    # the guard needs it to recognize which remote hosts are production.
+    monkeypatch.setenv("NEON_OWNER_URL", PROD_URL)
+    monkeypatch.delenv("ALLOW_PROD_DB_IN_LOCAL", raising=False)
     monkeypatch.setenv("ENCRYPTION_MASTER_KEY", "AAAA")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "x" * 32)
     monkeypatch.setattr(sys, "argv", ["prepare_qa_branch.py"])
