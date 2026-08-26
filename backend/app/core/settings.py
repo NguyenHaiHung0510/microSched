@@ -16,6 +16,10 @@ def _is_loopback_host(raw_host: str) -> bool:
     host = raw_host.rstrip(".").lower()
     if host == "localhost":
         return True
+    if host in {"host.docker.internal", "postgres", "db"}:
+        # Docker Compose / service-container aliases: always local-scoped,
+        # so they can never anchor a production host definition.
+        return True
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:

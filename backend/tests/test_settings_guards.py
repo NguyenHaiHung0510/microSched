@@ -144,6 +144,19 @@ def test_local_trailing_dot_prod_key_fails_closed(monkeypatch) -> None:
         )
 
 
+@pytest.mark.parametrize("alias", ["postgres", "db", "host.docker.internal"])
+def test_local_container_alias_anchor_with_prod_key_fails(monkeypatch, alias) -> None:
+    """A service-alias reference is not a prod anchor and must not launder one."""
+    with pytest.raises(ValidationError, match="requires at least one production"):
+        _settings(
+            monkeypatch,
+            APP_ENV="local",
+            DATABASE_URL=LOOPBACK_DB_URL,
+            NEON_DEVELOP_BRANCH_KEY=PROD_URL,
+            NEON_MIGRATOR_URL=f"postgresql://u:p@{alias}:5432/microsched_ci",
+        )
+
+
 def test_local_staging_url_with_prod_key_fails_closed(monkeypatch) -> None:
     """A staging DATABASE_URL must never define what prod means for the key."""
     with pytest.raises(ValidationError, match="only accepts a loopback"):
