@@ -371,7 +371,7 @@ def test_expand_downgrade_refuses_to_discard_date_only_task(pg_dsn):
                 )
                 assert (
                     await conn.fetchval("SELECT version_num FROM microsched.alembic_version")
-                    == "0010"
+                    == "0011"
                 )
             finally:
                 await conn.close()

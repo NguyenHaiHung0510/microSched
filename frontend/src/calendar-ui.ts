@@ -61,6 +61,14 @@ export const SOURCE_COLOR_LABELS: Record<string, string> = {
 
 export const SOURCE_COLOR_KEYS = Object.keys(SOURCE_COLORS)
 
+export const CURATED_COLOR_SWATCHES = [
+  { key: 'rose', label: 'Hồng ấm', hex: '#e8698c' },
+  { key: 'teal', label: 'Xanh mòng két', hex: '#0d9488' },
+  { key: 'indigo', label: 'Chàm hoàng gia', hex: '#4f46e5' },
+  { key: 'orange', label: 'Cam san hô', hex: '#ea580c' },
+  { key: 'emerald', label: 'Xanh lục bảo', hex: '#10b981' },
+] as const
+
 export function sourceColorToken(color: string | null): string {
   return SOURCE_COLORS[color ?? 'slate'] ?? SOURCE_COLORS.slate
 }

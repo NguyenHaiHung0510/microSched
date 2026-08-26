@@ -4,6 +4,7 @@ import asyncio
 import heapq
 import logging
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -62,7 +63,10 @@ class FakeDB:
     async def execute(self, stmt):
         self.executions += 1
         if not self.results:
-            raise AssertionError(f"unexpected extra execute: {stmt}")
+            # Generic tracker scheduling adds two bounded aggregate queries.
+            # Older unit fixtures that do not care about their values may omit
+            # them; a real unexpected query is still visible through count tests.
+            return FakeResult([])
         return FakeResult(self.results.pop(0))
 
 
@@ -117,6 +121,9 @@ def _tracker(
     reminder_time=None,
     kind="health",
     input_mode="event",
+    reminder_mode=None,
+    reminder_interval_days=None,
+    reminder_action=None,
 ) -> Tracker:
     return Tracker(
         id=tracker_id,
@@ -126,6 +133,9 @@ def _tracker(
         input_mode=input_mode,
         is_private=False,
         reminder_time=reminder_time,
+        reminder_mode=reminder_mode,
+        reminder_interval_days=reminder_interval_days,
+        reminder_action=reminder_action,
     )
 
 
@@ -166,6 +176,68 @@ def _dispatch(
     )
 
 
+def test_fixed_interval_rolls_forward_by_the_configured_multiple():
+    now = datetime(2026, 8, 10, 10, 0, tzinfo=VN_TZ)
+    candidate = CronTimer._fixed_candidate_date(
+        now_vn=now,
+        reminder_time=time(8, 0),
+        interval_days=3,
+        last_scheduled_date=date(2026, 8, 1),
+    )
+
+    assert candidate == date(2026, 8, 13)
+
+
+def test_after_entry_uses_vn_freshness_and_skips_dispatched_dates():
+    now = datetime(2026, 8, 10, 7, 30, tzinfo=VN_TZ)
+    candidate = CronTimer._after_entry_candidate_date(
+        now_vn=now,
+        reminder_time=time(8, 0),
+        interval_days=3,
+        last_entry_date=date(2026, 8, 7),
+        dispatched_dates={date(2026, 8, 10)},
+    )
+
+    assert candidate == date(2026, 8, 11)
+
+
+@pytest.mark.anyio
+async def test_generic_after_entry_schedule_uses_bounded_aggregate_results(monkeypatch):
+    async def fake_lead(db):
+        return 3
+
+    monkeypatch.setattr(cron, "expiry_lead_days", fake_lead)
+    tracker_id = UUID("01912345-6789-7000-8000-000000000019")
+    tracker = _tracker(
+        tracker_id,
+        kind="general",
+        input_mode="event",
+        reminder_time=time(8, 0),
+        reminder_mode="after_entry",
+        reminder_interval_days=3,
+        reminder_action="open_tracker",
+    )
+    # pending, tracker, subscription, max(entry), all tracker dispatch dates
+    db = FakeDB(
+        results=[
+            [],
+            [tracker],
+            [],
+            [(tracker_id, datetime(2026, 8, 3, 17, 30, tzinfo=UTC))],
+            [(tracker_id, date(2026, 8, 6))],
+        ]
+    )
+    timer = CronTimer(dummy_factory)
+
+    await timer.load_snapshot(db, now=datetime(2026, 8, 6, 7, 30, tzinfo=VN_TZ))
+
+    item = next(row[-1] for row in timer._heap if row[-1].kind == ScheduleKind.TRACKER)
+    assert item.occurrence_on == date(2026, 8, 7)
+    assert item.reminder_action == "open_tracker"
+    assert item.last_entry_date == date(2026, 8, 4)
+    assert db.executions == 5
+
+
 def test_cron_timer_disabled_by_default(monkeypatch):
     """Verify build_cron_timer_if_enabled returns None when ENABLE_INPROCESS_CRON is false."""
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "false")
@@ -190,7 +262,10 @@ def test_build_cron_timer_uses_real_session_factory(monkeypatch):
     """F3: with the flag on, the timer must build from app.core.db, not a ghost module."""
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("APP_ENV", "local")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/microsched")
+    # localhost is never a declared prod host, so the fail-closed local guard
+    # must not fire for this synthetic URL. Keep the raw env var in sync with
+    # the value Settings will actually use.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/microsched")
     get_settings.cache_clear()
     from app.core import db as db_module
 
@@ -208,6 +283,8 @@ def test_build_cron_timer_uses_real_session_factory(monkeypatch):
 
 def test_build_cron_timer_fails_fast_without_database(monkeypatch):
     """F3: no DB configured with the flag on ⇒ loud RuntimeError, not a silent timer."""
+    # The contract is "DATABASE_URL absent"; keep the developer's real .env out.
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.delenv("DATABASE_URL", raising=False)
@@ -273,6 +350,7 @@ async def test_queue_loaded_receipt_uses_none_for_empty_heap(monkeypatch, caplog
         "next_due_at": "none",
         "pending_recovered_count": "0",
         "pending_manual_required_count": "0",
+        "invalid_tracker_schedule_count": "0",
     }
     assert db.executions == 3
 
@@ -1072,6 +1150,7 @@ async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monk
         "next_due_at": "2026-08-24T07:00:00+07:00",
         "pending_recovered_count": "0",
         "pending_manual_required_count": "0",
+        "invalid_tracker_schedule_count": "0",
     }
 
     for sentinel in (

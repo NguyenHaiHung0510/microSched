@@ -20,6 +20,14 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 | **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase; policy live ở `docs/devops-brief.md` §7 buộc scheduled follow-up, mốc agent 3/6/10/15/20 rồi 10 phút. Mọi poll timer, kể cả PR/deploy, tối thiểu 3 phút; terminal/blocker notification vẫn wake ngay. |
 | **OPEN QA DEBT** | `010a`: iPhone file picker / FileReader. `011a`: Lane 4 iPhone vật lý. `011`: mutation reload, controlled dispatch/không duplicate, Web Push iPhone và quan sát Neon idle. `016`: iPhone/Safari vật lý và tương phản throttled badge trên production chưa verify. |
 
+## QA & Migration Rehearsal Protocol (Post-Cutover Standard)
+
+Mọi tác vụ QA sau cut-over (cần dữ liệu snapshot thật) hoặc Migration Rehearsal được thực hiện theo `AGENTS.md` §9:
+1. Tạo branch tạm: `neonctl branches create --name qa-<task_id> --parent main`
+2. Chạy Data Scrubbing: `uv run python -m scripts.prepare_qa_branch --branch-url "<QA_DSN>" --prod-key "<PROD_KEY>" --pin 123456`
+3. Thực hiện QA: Test PIN `123456`, Session Cookie `ms_session=qa_token`, flag `NEON_QA_BRANCH=1`.
+4. Dọn dẹp: `neonctl branches delete qa-<task_id>` sau khi xuất receipt.
+
 ## Cách dùng
 1. Mở một task Codex Desktop mới trong repo này.
 2. Ra lệnh: *"Đọc `agent-tasks/001-precommit-gitleaks.md` và thực hiện đúng spec đó."*

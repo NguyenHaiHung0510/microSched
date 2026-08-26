@@ -20,7 +20,7 @@ import { CalendarScreen } from '@/CalendarScreen'
 import { NotesScreen } from '@/NotesScreen'
 import { PrivateGate } from '@/PrivateGate'
 import type { PrivateSessionState } from '@/private-gate'
-import { queryParams, useLocation } from '@/lib/route'
+import { navigate, queryParams, useLocation } from '@/lib/route'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { SubscriptionScreen } from '@/SubscriptionScreen'
 import { TasksScreen } from '@/TasksScreen'
@@ -82,6 +82,13 @@ function LoginScreen() {
             Đăng nhập bằng Google
           </a>
         </Button>
+        {import.meta.env.DEV && (
+          <Button asChild variant="outline" size="sm" className="mt-2">
+            <a href="/auth/dev-session" data-testid="qa-dev-login-link">
+              Đăng nhập QA (Bypass OAuth)
+            </a>
+          </Button>
+        )}
       </Card>
     </div>
   )
@@ -92,9 +99,20 @@ function SignedIn({ session }: { session: SessionResponse }) {
   // keeps the URL "/" and activeScreen stays a useState (tabs do NOT own URLs).
   const location = useLocation()
   const reminderDispatchKey = queryParams(location).get('dispatch') ?? ''
+  const isTrackersRoute = location.startsWith('/trackers')
   const [activeScreen, setActiveScreen] = useState<
     'tasks' | 'notes' | 'calendar' | 'tracker'
-  >('tasks')
+  >(() => (isTrackersRoute ? 'tracker' : 'tasks'))
+
+  const currentTab = isTrackersRoute ? 'tracker' : activeScreen
+
+  function selectTab(tab: 'tasks' | 'notes' | 'calendar' | 'tracker') {
+    if (isTrackersRoute) {
+      navigate('/')
+    }
+    setActiveScreen(tab)
+  }
+
   // A private visibility transition is a local-state boundary as well as a
   // query-cache boundary. Remount the two views that can hold private task
   // rows in dialog/history state after lock, expiry, or unlock.
@@ -146,9 +164,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'tasks' ? 'selected' : 'ghost'}
-            aria-selected={activeScreen === 'tasks'}
-            onClick={() => setActiveScreen('tasks')}
+            variant={currentTab === 'tasks' ? 'selected' : 'ghost'}
+            aria-selected={currentTab === 'tasks'}
+            onClick={() => selectTab('tasks')}
           >
             <ListTodo data-icon="inline-start" />
             Task
@@ -156,9 +174,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'notes' ? 'selected' : 'ghost'}
-            aria-selected={activeScreen === 'notes'}
-            onClick={() => setActiveScreen('notes')}
+            variant={currentTab === 'notes' ? 'selected' : 'ghost'}
+            aria-selected={currentTab === 'notes'}
+            onClick={() => selectTab('notes')}
           >
             <NotebookPen data-icon="inline-start" />
             Ghi chú
@@ -166,9 +184,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'calendar' ? 'selected' : 'ghost'}
-            aria-selected={activeScreen === 'calendar'}
-            onClick={() => setActiveScreen('calendar')}
+            variant={currentTab === 'calendar' ? 'selected' : 'ghost'}
+            aria-selected={currentTab === 'calendar'}
+            onClick={() => selectTab('calendar')}
           >
             <CalendarDays data-icon="inline-start" />
             Lịch
@@ -176,19 +194,19 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <Button
             role="tab"
             size="lg"
-            variant={activeScreen === 'tracker' ? 'selected' : 'ghost'}
-            aria-selected={activeScreen === 'tracker'}
-            onClick={() => setActiveScreen('tracker')}
+            variant={currentTab === 'tracker' ? 'selected' : 'ghost'}
+            aria-selected={currentTab === 'tracker'}
+            onClick={() => selectTab('tracker')}
           >
             <Activity data-icon="inline-start" />
             Theo dõi
           </Button>
         </div>
         <div role="tabpanel">
-          {activeScreen === 'tasks' ? <TasksScreen key={`tasks-${privateScopeVersion}`} /> : null}
-          {activeScreen === 'notes' ? <NotesScreen /> : null}
-          {activeScreen === 'calendar' ? <CalendarScreen key={`calendar-${privateScopeVersion}`} /> : null}
-          {activeScreen === 'tracker' ? (
+          {currentTab === 'tasks' ? <TasksScreen key={`tasks-${privateScopeVersion}`} /> : null}
+          {currentTab === 'notes' ? <NotesScreen /> : null}
+          {currentTab === 'calendar' ? <CalendarScreen key={`calendar-${privateScopeVersion}`} /> : null}
+          {currentTab === 'tracker' ? (
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}
         </div>

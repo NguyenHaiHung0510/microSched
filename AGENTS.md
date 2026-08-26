@@ -35,3 +35,23 @@ Thêm cho agent thi công (vai T2 theo `docs/devops-brief.md` §7):
   - **Không dán địa chỉ email thật vào PR/commit/docs.** Repo này **public** và threat model của chủ là **social engineering** (`docs/devops-brief.md` §1) — danh sách tài khoản là vật liệu dựng pretext. Viết theo vai: *"tài khoản trong allowlist"* / *"tài khoản ngoài allowlist"*. **Không viết địa chỉ thật vào file này, kể cả dạng che một phần** — phần lộ ra vẫn đủ làm mồi dựng pretext, mà file này thì nằm trên repo public.
   - Xong việc: đăng xuất khỏi app, đóng tab, **không để lại phiên đang mở**.
 - **Text tiếng Việt phải đi qua file UTF-8, không qua tham số inline.** Mô tả PR: ghi ra file `.md` rồi `gh pr create --body-file <file>` — **không bao giờ** `--body "..."`. Commit message dài: `git commit -F <file>`. *Lý do (sự cố thật, PR #5 ngày 2026-07-20): truyền inline qua PowerShell làm mất toàn bộ dấu tiếng Việt (→ `?`) và nuốt ký tự `"` trong output JSON dán kèm. Mất dấu là **mất hẳn**, không decode ngược được — phải viết lại tay.*
+
+
+
+## 9. QA & Migration Rehearsal trên Neon Develop/Staging Branch (Post-Cutover Standard)
+
+Từ ngày 2026-08-25 (sau khi cut-over sang Neon production), mọi tác vụ QA giao diện với dữ liệu lớn, kiểm thử migration rehearsal, hoặc test API high-fidelity **phải tuân theo quy trình chuẩn hóa 3 tầng**:
+
+1. **Tầng 1 (Local / CI fast test):** Unit test, Linting, Migration round-trip (`downgrade base -> upgrade head`) chạy trên local container / CI service (`pgvector:pg18`). Chi phí $0, 0 CU-h.
+2. **Tầng 2 (Neon Staging/Develop Branch QA — Bền vững & Duyệt thủ công):**
+   - **🔒 Điểm dừng bắt buộc (Stop & Request Owner):** Agent **không có quyền** và **không được tự chạy lệnh** tạo/xóa/restore nhánh Neon (`neonctl`). Trước khi bắt đầu phiên QA trên dữ liệu mẫu, Agent **bắt buộc phải dừng lại và yêu cầu Owner**:
+     > *"Vui lòng lên Neon Console đồng bộ (Restore/Sync) nhánh `develop` từ `main` (Production) và xác nhận sau khi hoàn tất để tiếp tục."*
+   - **Data Scrubbing tự động:** Sau khi Owner xác nhận đã sync xong nhánh `develop`, Agent chạy:
+     ```bash
+     uv run python -m scripts.prepare_qa_branch
+     ```
+     * Cơ chế: Format-preserving scramble text/markdown 1:1, re-encrypt cột private bằng QA Key (hoặc synthesize dummy text), gán test PIN `123456`, xóa sạch push token/audit log và nạp session `owner@test.local`. Script tự đối chiếu positive allowlist `NEON_DEVELOP_BRANCH_KEY` để chống chạy nhầm production.
+   - **Chạy QA / Test Local:**
+     * Migration Rehearsal: `uv run alembic upgrade head`
+     * Browser QA: Chạy backend (`APP_ENV=local`, uvicorn tự đọc `NEON_DEVELOP_BRANCH_KEY`) và frontend (`npm run dev`). Mở `http://localhost:5173`, bấm **"Đăng nhập QA (Bypass OAuth)"** (`/auth/dev-session`) để vào thẳng tài khoản test `owner@test.local` với PIN `123456`.
+3. **Tầng 3 (Production Live):** Fly.io + Neon branch `main`. Tuyệt đối không chạy test phá hủy hay automation lặp trực tiếp lên Production.

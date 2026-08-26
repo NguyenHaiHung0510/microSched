@@ -1,14 +1,16 @@
 import { type FormEvent, useState } from 'react'
+import { Check } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
-import { SOURCE_COLOR_KEYS, SOURCE_COLOR_LABELS, SOURCE_COLORS } from '@/calendar-ui'
+import { CURATED_COLOR_SWATCHES, SOURCE_COLOR_LABELS } from '@/calendar-ui'
+import { cn } from '@/lib/utils'
 
 export function SourceForm({
   kind,
   initialName = '',
   initialColor = 'sky',
+  submitLabel = 'Tạo nguồn',
   pending,
   onSubmit,
   onCancel,
@@ -16,6 +18,7 @@ export function SourceForm({
   kind: 'ics' | 'manual'
   initialName?: string
   initialColor?: string | null
+  submitLabel?: string
   pending: boolean
   onSubmit: (value: { name: string; color: string }) => void
   onCancel: () => void
@@ -43,33 +46,33 @@ export function SourceForm({
         />
       </label>
       <div className="space-y-1.5 text-sm font-semibold">
-        <span>Màu nguồn</span>
-        <Select value={color} onValueChange={setColor}>
-          <SelectTrigger className="h-11 w-full bg-card" aria-label="Màu nguồn">
-            <span className="flex items-center gap-2">
-              <span
-                className="inline-block size-3 rounded-full shrink-0"
-                style={{ backgroundColor: SOURCE_COLORS[color] ?? SOURCE_COLORS.slate }}
-                aria-hidden="true"
-              />
-              <span>{SOURCE_COLOR_LABELS[color] ?? color}</span>
-            </span>
-          </SelectTrigger>
-          <SelectContent>
-            {SOURCE_COLOR_KEYS.map((key) => (
-              <SelectItem key={key} value={key}>
-                <span className="flex items-center gap-2">
-                  <span
-                    className="inline-block size-3 rounded-full shrink-0"
-                    style={{ backgroundColor: SOURCE_COLORS[key] }}
-                    aria-hidden="true"
-                  />
-                  <span>{SOURCE_COLOR_LABELS[key] ?? key}</span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <span>Màu nhận diện</span>
+        <div data-testid="source-color-swatch-picker" className="flex flex-wrap items-center gap-3 pt-1">
+          {CURATED_COLOR_SWATCHES.map((swatch) => {
+            const isSelected = color === swatch.key
+            return (
+              <button
+                type="button"
+                key={swatch.key}
+                data-testid={`source-color-swatch-${swatch.key}`}
+                aria-label={swatch.label}
+                onClick={() => setColor(swatch.key)}
+                className={cn(
+                  'flex size-8 cursor-pointer items-center justify-center rounded-full border-2 transition-all hover:scale-110',
+                  isSelected
+                    ? 'border-foreground ring-2 ring-primary/40 ring-offset-1 scale-105'
+                    : 'border-transparent hover:border-border',
+                )}
+                style={{ backgroundColor: swatch.hex }}
+              >
+                {isSelected ? <Check className="size-4 stroke-[3] text-white" /> : null}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {SOURCE_COLOR_LABELS[color] ?? color}
+        </p>
       </div>
       <p className="text-sm text-muted-foreground">
         {kind === 'ics'
@@ -78,7 +81,7 @@ export function SourceForm({
       </p>
       <div className="flex flex-wrap gap-2">
         <Button size="lg" type="submit" disabled={!name.trim() || pending}>
-          {pending ? 'Đang lưu…' : kind === 'ics' ? 'Tạo nguồn' : 'Tạo nguồn'}
+          {pending ? 'Đang lưu…' : submitLabel}
         </Button>
         <Button size="lg" variant="outline" type="button" onClick={onCancel}>
           Huỷ

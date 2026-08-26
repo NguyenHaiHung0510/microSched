@@ -321,6 +321,46 @@ def test_reminder_dispatch_check_constraint_metadata_names_match_migration() -> 
     }
 
 
+def test_tracker_0011_generic_reminder_metadata_matches_migration() -> None:
+    tracker = table("tracker")
+    group = table("tracker_group")
+    assert all(
+        tracker.c[column].nullable
+        for column in ("reminder_mode", "reminder_interval_days", "reminder_action")
+    )
+    assert all(
+        tracker.c[column].server_default is None
+        for column in ("reminder_mode", "reminder_interval_days", "reminder_action")
+    )
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in tracker.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert checks["ck_tracker_kind_values"] == "kind IN ('health', 'finance', 'general')"
+    assert checks["ck_tracker_reminder_mode_values"] == (
+        "reminder_mode IS NULL OR reminder_mode IN ('fixed', 'after_entry')"
+    )
+    assert checks["ck_tracker_reminder_interval_days_positive"] == (
+        "reminder_interval_days IS NULL OR reminder_interval_days > 0"
+    )
+    assert checks["ck_tracker_reminder_action_values"] == (
+        "reminder_action IS NULL OR reminder_action IN ('confirm_event', 'open_tracker')"
+    )
+    assert checks["ck_tracker_reminder_action_input_mode"] == (
+        "reminder_action IS NULL OR reminder_action = 'open_tracker' OR "
+        "(reminder_action = 'confirm_event' AND input_mode = 'event')"
+    )
+    group_checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in group.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert group_checks["ck_tracker_group_kind_values"] == (
+        "kind IN ('health', 'finance', 'general')"
+    )
+
+
 @pytest.mark.pg
 def test_day_annotation_physical_constraint_name_is_day_range(pg_dsn: str) -> None:
     """Migration 0006 yields exact physical pg_constraint conname 'day_range'."""

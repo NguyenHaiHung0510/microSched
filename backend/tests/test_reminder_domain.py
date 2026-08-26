@@ -9,6 +9,7 @@ from app.domain.models import Subscription, Tracker
 from app.domain.reminder import (
     build_medication_payload,
     build_subscription_expiry_payload,
+    build_tracker_reminder_payload,
     confirm_reminder_dispatch,
 )
 
@@ -36,7 +37,7 @@ def test_medication_payload_private_tracker_without_text():
     payload = build_medication_payload(tracker, DISPATCH_ID)
 
     assert payload["title"] == "Nhắc nhở microSched"
-    assert payload["body"] == "Đã tới giờ uống thuốc"
+    assert payload["body"] == "Đã tới hạn ghi nhận."
     assert "secretname" not in payload["body"]
     assert "enc:v1:" not in payload["body"]
     assert payload["url"] == f"/reminder-confirm?dispatch={DISPATCH_ID}"
@@ -72,7 +73,7 @@ def test_medication_payload_public_tracker():
     payload = build_medication_payload(tracker, DISPATCH_ID)
 
     assert payload["title"] == "Nhắc nhở microSched"
-    assert payload["body"] == "Đã tới giờ: Thuốc Huyết Áp"
+    assert payload["body"] == "Đã tới hạn: Thuốc Huyết Áp"
 
 
 def test_medication_payload_decrypts_public_tracker_name(monkeypatch):
@@ -88,7 +89,51 @@ def test_medication_payload_decrypts_public_tracker_name(monkeypatch):
     monkeypatch.setattr(reminder_module.crypto, "decrypt", lambda _: "Thuốc Huyết Áp")
     payload = build_medication_payload(tracker, DISPATCH_ID)
 
-    assert payload["body"] == "Đã tới giờ: Thuốc Huyết Áp"
+    assert payload["body"] == "Đã tới hạn: Thuốc Huyết Áp"
+
+
+def test_generic_open_tracker_payload_never_uses_confirmation_url():
+    tracker = Tracker(
+        id=UUID("01912345-6789-7000-8000-000000000016"),
+        name="Việc chung",
+        kind="general",
+        input_mode="money",
+        is_private=False,
+    )
+
+    payload = build_tracker_reminder_payload(
+        tracker,
+        DISPATCH_ID,
+        reminder_mode="fixed",
+        reminder_interval_days=3,
+        reminder_action="open_tracker",
+        today_vn=date(2026, 8, 26),
+    )
+
+    assert payload["url"] == "/trackers"
+    assert "reminder-confirm" not in payload["url"]
+
+
+def test_after_entry_payload_uses_vn_freshness_for_public_tracker():
+    tracker = Tracker(
+        id=UUID("01912345-6789-7000-8000-000000000017"),
+        name="Tập luyện",
+        kind="general",
+        input_mode="event",
+        is_private=False,
+    )
+    payload = build_tracker_reminder_payload(
+        tracker,
+        DISPATCH_ID,
+        reminder_mode="after_entry",
+        reminder_interval_days=3,
+        reminder_action="confirm_event",
+        today_vn=date(2026, 8, 26),
+        last_entry_date=date(2026, 8, 20),
+    )
+
+    assert payload["body"] == "Đã 6 ngày chưa ghi nhận: Tập luyện"
+    assert payload["url"] == f"/reminder-confirm?dispatch={DISPATCH_ID}"
     assert "enc:v1:" not in payload["body"]
 
 

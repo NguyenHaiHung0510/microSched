@@ -139,8 +139,8 @@ def test_public_tracker_name_is_ciphertext_at_rest(pg_dsn: str):
     asyncio.run(scenario())
 
 
-def test_reminder_configuration_is_exposed_and_rejects_ineligible_tracker(pg_dsn: str):
-    """011b: only health/event trackers can configure a public reminder payload."""
+def test_generic_reminder_configuration_is_canonical_and_validated(pg_dsn: str):
+    """031: all kinds can schedule; only event may confirm an entry."""
 
     async def scenario():
         auth_state = {"value": _auth()}
@@ -151,21 +151,56 @@ def test_reminder_configuration_is_exposed_and_rejects_ineligible_tracker(pg_dsn
             tracker_ids.append(UUID(health["id"]))
             enabled = await client.patch(
                 f"/api/tracker/trackers/{health['id']}",
-                json={"reminder_time": "08:30:00", "reminder_text": "Uống thuốc sau ăn"},
+                json={
+                    "reminder_mode": "fixed",
+                    "reminder_interval_days": 3,
+                    "reminder_action": "confirm_event",
+                    "reminder_time": "08:30:00",
+                    "reminder_text": "Uống thuốc sau ăn",
+                },
             )
             assert enabled.status_code == 200, enabled.text
             assert enabled.json()["reminder_time"] == "08:30:00"
             assert enabled.json()["reminder_text"] == "Uống thuốc sau ăn"
+            assert enabled.json()["reminder_interval_days"] == 3
 
-            finance = await _create_tracker(
-                client, name="Không được nhắc", kind="finance", input_mode="money"
+            general_money = await _create_tracker(
+                client, name="Nhắc nhập tiền", kind="general", input_mode="money"
             )
-            tracker_ids.append(UUID(finance["id"]))
+            tracker_ids.append(UUID(general_money["id"]))
+            enabled_money = await client.patch(
+                f"/api/tracker/trackers/{general_money['id']}",
+                json={
+                    "reminder_mode": "after_entry",
+                    "reminder_action": "open_tracker",
+                    "reminder_time": "08:30:00",
+                },
+            )
+            assert enabled_money.status_code == 200, enabled_money.text
+            assert enabled_money.json()["reminder_interval_days"] == 1
+            assert enabled_money.json()["reminder_action"] == "open_tracker"
+
             rejected = await client.patch(
-                f"/api/tracker/trackers/{finance['id']}",
-                json={"reminder_time": "08:30:00"},
+                f"/api/tracker/trackers/{general_money['id']}",
+                json={"reminder_action": "confirm_event"},
             )
             assert rejected.status_code == 422, rejected.text
+
+            disabled = await client.patch(
+                f"/api/tracker/trackers/{health['id']}",
+                json={"reminder_time": None},
+            )
+            assert disabled.status_code == 200, disabled.text
+            assert all(
+                disabled.json()[field] is None
+                for field in (
+                    "reminder_time",
+                    "reminder_text",
+                    "reminder_mode",
+                    "reminder_interval_days",
+                    "reminder_action",
+                )
+            )
         finally:
             await client.aclose()
             await _cleanup(pg_dsn, "tracker", tracker_ids)

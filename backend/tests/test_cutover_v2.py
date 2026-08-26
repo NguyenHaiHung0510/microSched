@@ -139,6 +139,18 @@ NATIVE_FLY_STOPPED = {
             "input_mode = 'quantity' and unit is not null or "
             "input_mode <> 'quantity' and unit is null",
         ),
+        (
+            "CHECK ((reminder_action IS NULL OR reminder_action = 'open_tracker'::text OR "
+            "(reminder_action = 'confirm_event'::text AND input_mode = 'event'::text)))",
+            "reminder_action is null or reminder_action = 'open_tracker' or "
+            "reminder_action = 'confirm_event' and input_mode = 'event'",
+        ),
+        (
+            "reminder_action IS NULL OR reminder_action = 'open_tracker' OR "
+            "(reminder_action = 'confirm_event' AND input_mode = 'event')",
+            "reminder_action is null or reminder_action = 'open_tracker' or "
+            "reminder_action = 'confirm_event' and input_mode = 'event'",
+        ),
     ],
 )
 def test_catalog_constraint_normalization_matches_pg_get_constraintdef(

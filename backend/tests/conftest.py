@@ -20,7 +20,8 @@ Three guards, on purpose:
     ``alembic downgrade`` against production, stripping the privacy triggers. CI
     points the variable at the localhost pgvector service, so host-based refusal
     costs nothing there and turns the accident into a loud red instead of silent
-    damage. Set ``ALLOW_REMOTE_PG_TESTS=1`` to override deliberately.
+    damage. Set ``NEON_QA_BRANCH=1`` (with a verified QA branch host) or
+    ``ALLOW_REMOTE_PG_TESTS=1`` to override deliberately.
 """
 
 import asyncio
@@ -49,11 +50,21 @@ def pg_dsn() -> str:
             "NEON_MIGRATOR_URL is unset; DB-backed (@pytest.mark.pg) tests need a live Postgres"
         )
     host = (make_url(url).host or "").lower()
-    if host not in EPHEMERAL_HOSTS and os.environ.get("ALLOW_REMOTE_PG_TESTS") != "1":
+    is_qa_branch = (
+        os.environ.get("NEON_QA_BRANCH") == "1"
+        and ("qa" in host or "test" in host or host.startswith("ep-qa-"))
+        and "prod" not in host
+    )
+    if (
+        host not in EPHEMERAL_HOSTS
+        and not is_qa_branch
+        and os.environ.get("ALLOW_REMOTE_PG_TESTS") != "1"
+    ):
         pytest.fail(
             f"refusing to run destructive DB-backed tests against non-local host {host!r}. "
             "These tests delete rows and downgrade the schema; point NEON_MIGRATOR_URL at a "
-            "throwaway Postgres, or set ALLOW_REMOTE_PG_TESTS=1 if you really mean it.",
+            "throwaway Postgres, set NEON_QA_BRANCH=1 for an ephemeral QA branch, "
+            "or set ALLOW_REMOTE_PG_TESTS=1 if you really mean it.",
             pytrace=False,
         )
     return asyncpg_dsn(url)

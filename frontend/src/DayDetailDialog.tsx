@@ -32,6 +32,7 @@ import {
 import { EventForm } from '@/EventForm'
 import { TaskForm } from '@/TaskForm'
 import { cn } from '@/lib/utils'
+import { restoreTask } from '@/task-undo'
 import {
   rescheduleTaskSchedule,
   scheduleDay,
@@ -95,6 +96,7 @@ export function DayDetailDialog({
   const [moveError, setMoveError] = useState<string | null>(null)
   const [annotationError, setAnnotationError] = useState<string | null>(null)
   const [eventError, setEventError] = useState<string | null>(null)
+  const [deleteEventConfirm, setDeleteEventConfirm] = useState<CalendarEvent | null>(null)
 
   const refreshCalendar = () =>
     void queryClient.invalidateQueries({ queryKey: CALENDAR_FAMILY_KEY })
@@ -195,6 +197,39 @@ export function DayDetailDialog({
     onSuccess: () => {
       refreshAll()
     },
+  })
+
+  const deleteTask = useMutation({
+    mutationFn: (taskId: string) =>
+      apiRequest<void>('/api/tasks/' + taskId, { method: 'DELETE' }),
+    onSuccess: (_data, taskId) => {
+      refreshAll()
+      const task = tasks.find((t) => t.id === taskId)
+      toast(
+        <span className="block min-w-0 max-w-full break-words">
+          Đã xoá &quot;{task?.title ?? 'task'}&quot;
+        </span>,
+        {
+          duration: 8000,
+          action: {
+            label: 'Hoàn tác',
+            onClick: () => void restoreTask(taskId, refreshAll),
+          },
+        },
+      )
+    },
+  })
+
+  const deleteEvent = useMutation({
+    mutationFn: (eventId: string) =>
+      apiRequest<void>('/api/calendar/events/' + eventId, { method: 'DELETE' }),
+    onSuccess: () => {
+      setDeleteEventConfirm(null)
+      setEventForm(null)
+      refreshCalendar()
+      toast.success('Đã xoá buổi')
+    },
+    onError: (error) => setEventError(importErrorMessage(error)),
   })
 
   const rescheduleTask = useMutation({
@@ -424,34 +459,47 @@ export function DayDetailDialog({
                 {events.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Không có buổi nào.</p>
                 ) : (
-                  events.map((event) => {
-                    const source = sourceById.get(event.source_id)
-                    return (
-                      <Button
-                        data-testid="calendar-day-event"
-                        data-event-id={event.id}
+                 events.map((event) => {
+                   const source = sourceById.get(event.source_id)
+                   return (
+                      <div
                         key={event.id}
-                        variant="ghost"
-                        className="h-auto w-full justify-start gap-3 rounded-lg border p-3 text-left"
-                        onClick={() => setEventForm({ mode: 'edit', event })}
+                        className="flex items-center gap-2 rounded-lg border p-1 pr-2"
                       >
-                        <span
-                          aria-hidden="true"
-                          className="size-3 shrink-0 rounded-full"
-                          style={{
-                            backgroundColor: sourceColorToken(source?.color ?? null),
-                          }}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-bold">
-                            {event.title}
+                        <Button
+                          data-testid="calendar-day-event"
+                          data-event-id={event.id}
+                          variant="ghost"
+                          className="h-auto min-w-0 flex-1 justify-start gap-3 rounded-md p-2 text-left hover:bg-muted/50"
+                          onClick={() => setEventForm({ mode: 'edit', event })}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="size-3 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor: sourceColorToken(source?.color ?? null),
+                            }}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-bold">
+                              {event.title}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {formatVietnamTime(event)}
+                              {event.location ? ` · ${event.location}` : ''}
+                            </span>
                           </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {formatVietnamTime(event)}
-                            {event.location ? ` · ${event.location}` : ''}
-                          </span>
-                        </span>
-                      </Button>
+                        </Button>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          className="text-bad hover:text-bad"
+                          aria-label={`Xoá ${event.title}`}
+                          onClick={() => setDeleteEventConfirm(event)}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </div>
                     )
                   })
                 )}
@@ -467,37 +515,48 @@ export function DayDetailDialog({
                 {tasks.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Không có task đến hạn hôm nay.</p>
                 ) : (
-                  tasks.map((task) => (
-                    <div
-                      data-testid="calendar-day-task"
-                      data-task-id={task.id}
-                      key={task.id}
-                      className={cn(
-                        'flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50',
-                        task.status === 'completed' && 'opacity-70',
-                      )}
-                    >
-                      <Checkbox
-                        data-testid="calendar-day-task-toggle"
-                        aria-label={`Đổi trạng thái ${task.title}`}
-                        checked={task.status === 'completed'}
-                        onCheckedChange={(checked) => {
-                          toggleTaskStatus.mutate({
-                            taskId: task.id,
-                            status: checked === true ? 'completed' : 'open',
-                          })
-                        }}
-                        className="size-4 rounded-sm"
+                 tasks.map((task) => (
+                   <div
+                     data-testid="calendar-day-task"
+                     data-task-id={task.id}
+                     key={task.id}
+                     className={cn(
+                        'flex items-center gap-2 rounded-lg border p-2 text-left transition-colors hover:bg-muted/50',
+                       task.status === 'completed' && 'opacity-70',
+                     )}
+                   >
+                     <Checkbox
+                       data-testid="calendar-day-task-toggle"
+                       aria-label={`Đổi trạng thái ${task.title}`}
+                       checked={task.status === 'completed'}
+                       onCheckedChange={(checked) => {
+                         toggleTaskStatus.mutate({
+                           taskId: task.id,
+                           status: checked === true ? 'completed' : 'open',
+                         })
+                       }}
+                        className="size-4 rounded-sm ml-1"
                       />
                       <Button
                         variant="ghost"
                         className={cn(
-                          'h-auto min-w-0 flex-1 justify-start p-0 text-left text-sm font-semibold hover:bg-transparent hover:underline',
-                          task.status === 'completed' && 'line-through',
+                          'h-auto min-w-0 flex-1 justify-start p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
+                         task.status === 'completed' && 'line-through',
                         )}
                         onClick={() => setTaskEdit(task)}
                       >
                         {task.title}
+                      </Button>
+                      <Button
+                        data-testid="calendar-day-task-delete"
+                        size="icon-sm"
+                        variant="ghost"
+                        className="text-bad hover:text-bad"
+                        aria-label={`Xoá ${task.title}`}
+                        disabled={deleteTask.isPending}
+                        onClick={() => deleteTask.mutate(task.id)}
+                      >
+                        <Trash2 />
                       </Button>
                     </div>
                   ))
@@ -640,6 +699,32 @@ export function DayDetailDialog({
           }}
         />
       ) : null}
+
+      <Dialog open={deleteEventConfirm !== null} onOpenChange={(open) => !open && setDeleteEventConfirm(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Xoá buổi?</DialogTitle>
+            <DialogDescription>
+              {deleteEventConfirm ? `Xoá buổi “${deleteEventConfirm.title}”? Không thể hoàn tác.` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="lg"
+              variant="destructive"
+              disabled={deleteEvent.isPending}
+              onClick={() => {
+                if (deleteEventConfirm) deleteEvent.mutate(deleteEventConfirm.id)
+              }}
+            >
+              {deleteEvent.isPending ? 'Đang xoá…' : 'Xoá buổi'}
+            </Button>
+            <Button size="lg" variant="outline" onClick={() => setDeleteEventConfirm(null)}>
+              Huỷ
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

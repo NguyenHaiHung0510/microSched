@@ -62,7 +62,7 @@ TRANSFORM_VERSION = "012-cutover-v2-2026-08-20"
 # 026A is an expand migration: the cutover attestation must reject a target
 # that has not yet received its compatible temporal triad and legacy writer
 # triggers, even though source data is still legacy due_at-only.
-EXPECTED_ALEMBIC_REVISION = "0010"
+EXPECTED_ALEMBIC_REVISION = "0011"
 SOURCE_DB_NAME = "microschedule_v2"
 SOURCE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
 TARGET_APP_ROLE = "microsched_app"
@@ -216,6 +216,9 @@ TARGET_FIELDS: dict[str, tuple[str, ...]] = {
         "color",
         "reminder_time",
         "reminder_text",
+        "reminder_mode",
+        "reminder_interval_days",
+        "reminder_action",
         "is_private",
         "deleted_at",
         "created_at",
@@ -1000,6 +1003,11 @@ def _normalize_catalog_sql(value: Any) -> str:
     result = re.sub(r"\s*~~\s*", " like ", result)
     result = re.sub(r"\s*::(?:text|boolean|jsonb|numeric)\b", "", result)
     result = re.sub(r"=\s*any\s*\(\s*array\[(.*?)\]\s*\)", r"in(\1)", result)
+    result = re.sub(
+        r"^\(([^()]*)\)\s+or\s*\(([^()]*)\)$",
+        r"\1 or \2",
+        result,
+    )
     # The deparser drops redundant grouping around a conjunction under OR.
     # Keep grouping when the first term itself contains OR, where it changes
     # precedence; only canonicalize the unambiguous display variant.
@@ -1013,17 +1021,17 @@ def _normalize_catalog_sql(value: Any) -> str:
         r"or \1 and(\2)",
         result,
     )
+    result = re.sub(
+        r"\bor\s*\((?![^()]*\bor\b)([^()]+?)\s+and\s*([^()]+?)\)",
+        r"or \1 and \2",
+        result,
+    )
     # PostgreSQL also removes grouping around a single IN term after OR and
     # around the two AND terms in this exact unit-match CHECK.  Both sides
     # contain no OR, so AND precedence makes these removals AST-equivalent.
     result = re.sub(
         r"\bor\s*\(([^()]*\bin\s*\([^()]*\))\)",
         r"or \1",
-        result,
-    )
-    result = re.sub(
-        r"^\(([^()]*)\)\s+or\s*\(([^()]*)\)$",
-        r"\1 or \2",
         result,
     )
     result = re.sub(r"\$\$", "$function$", result)

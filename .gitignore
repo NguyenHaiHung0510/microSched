@@ -50,6 +50,11 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.pytest-basetemp-*/
+.pytest_tmp/
+backend/pytest-of-os/
+backend/pytest-temp-codex/
+backend/UsersosDesktopai_eng_pathmicrosched.pytest-basetemp-*/
 cover/
 
 # Translations
@@ -221,3 +226,5 @@ gl-files.txt
 **/*gitleaks*report*.json
 /harness-tools/
 /agent-tasks/screenshots
+backend/pytest-tmp/
+/microsched-backups
