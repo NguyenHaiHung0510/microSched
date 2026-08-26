@@ -407,11 +407,12 @@ def main() -> None:
 
     host = (make_url(args.branch_url).host or "").lower()
     # Fail-closed guard for a destructive script (it truncates session/audit/
-    # push tables): the host must be the declared develop branch, must never
-    # equal the production host, and positive allowlist beats substring luck.
-    prod_host = (
-        (make_url(settings.database_url).host or "").lower() if settings.database_url else ""
-    )
+    # push tables): the host must be the declared develop branch. The raw
+    # DATABASE_URL env var is the production reference on purpose: in local
+    # mode Settings redirects database_url to the develop branch, so comparing
+    # against settings.database_url here would compare develop with itself.
+    raw_database_url = os.environ.get("DATABASE_URL")
+    prod_host = (make_url(raw_database_url).host or "").lower() if raw_database_url else ""
     if prod_host and host == prod_host:
         raise ValueError(f"CRITICAL SAFETY VIOLATION: refusing to scrub production host {host!r}.")
     if "prod" in host:
