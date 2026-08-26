@@ -2,8 +2,10 @@
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
+from dotenv import dotenv_values
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -77,10 +79,14 @@ class Settings(BaseSettings):
         if not self.is_production and self.database_url:
             # Fail-closed host check: local must never sit on any declared prod
             # host (raw DATABASE_URL env, NEON_OWNER_URL, NEON_MIGRATOR_URL)
-            # unless the operator opts in explicitly. The raw env var is kept as a
-            # reference because .env values do not land in os.environ.
+            # unless the operator opts in explicitly. The raw env var is read via
+            # dotenv (not os.environ) because pydantic does not push .env values
+            # into the process environment.
             raw_prod_url = os.environ.get("DATABASE_URL", "")
             current_host = (make_url(self.database_url).host or "").lower()
+            env_file = Path(".env")
+            if not raw_prod_url and env_file.exists():
+                raw_prod_url = dotenv_values(env_file).get("DATABASE_URL") or ""
             declared_hosts = [raw_prod_url, self.neon_owner_url, self.neon_migrator_url]
             prod_hosts = {(make_url(url).host or "").lower() for url in declared_hosts if url}
             if current_host in prod_hosts and not self.allow_prod_db_in_local:
