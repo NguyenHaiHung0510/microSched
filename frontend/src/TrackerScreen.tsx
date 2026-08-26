@@ -50,10 +50,12 @@ import {
   capturePayload,
   currentVietnamMonth,
   formatQuantity,
+  formatReminderSummary,
   formatVnd,
   groupRemindersByHour,
   groupTrackersByGroup,
   sortTrackersForGrid,
+  trackerKindLabel,
   trackerInvalidationKey,
   trackerQueryKey,
   useTrackerWrites,
@@ -263,8 +265,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   }
 
   function submitTracker(payload: TrackerWritePayload) {
+    const { ensure_push: ensurePush, ...trackerPayload } = payload
     if (editingTracker) {
-      const { ensure_push: ensurePush, ...trackerPayload } = payload
       const saveTracker = () =>
         writes.updateTracker.mutate(
           { trackerId: editingTracker.id, payload: trackerPayload },
@@ -284,10 +286,20 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       }
       return
     }
-    writes.createTracker.mutate(payload, {
-      onSuccess: () => setCreateOpen(false),
-      onError: (error) => toast.error(errorMessage(error)),
-    })
+    const saveTracker = () =>
+      writes.createTracker.mutate(trackerPayload, {
+        onSuccess: () => setCreateOpen(false),
+        onError: (error) => toast.error(errorMessage(error)),
+      })
+    if (ensurePush) {
+      void ensurePushSubscription()
+        .then(saveTracker)
+        .catch((error: unknown) =>
+          toast.error(error instanceof Error ? error.message : errorMessage(error)),
+        )
+    } else {
+      saveTracker()
+    }
   }
 
   function submitEntry(entryId: string, payload: EntryEditPayload) {
@@ -539,9 +551,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   className="rounded-lg border border-border/80 bg-card p-3 shadow-sm transition-all"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <button
+                    <Button
                       type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold cursor-pointer select-none"
+                      variant="ghost"
+                      className="flex min-w-0 flex-1 items-center justify-start gap-2 text-left font-semibold cursor-pointer select-none h-auto p-0 hover:bg-transparent"
                       onClick={() => toggleGroupCollapse(group.id)}
                     >
                       <Folder className="size-4 text-primary shrink-0" />
@@ -549,32 +562,32 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                         {group.name}
                       </span>
                       <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                        {group.kind === 'health' ? 'Sức khoẻ' : 'Tài chính'} · {groupTrackers.length} tracker
+                        {trackerKindLabel(group.kind)} · {groupTrackers.length} tracker
                       </span>
                       {isCollapsed ? (
                         <ChevronDown className="size-4 text-muted-foreground ml-auto" />
                       ) : (
                         <ChevronUp className="size-4 text-muted-foreground ml-auto" />
                       )}
-                    </button>
+                    </Button>
 
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon-lg"
-                        className="size-9"
-                        aria-label={`Sửa nhóm ${group.name}`}
-                        onClick={() => setEditingGroup(group)}
-                      >
-                        <Pencil className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-lg"
-                        className="size-9"
-                        aria-label={`Xoá nhóm ${group.name}`}
-                        onClick={() => setDeletingGroup(group)}
-                      >
+                   <div className="flex items-center gap-1">
+                     <Button
+                       variant="ghost"
+                       size="icon-lg"
+                        className="size-11 min-h-11 min-w-11"
+                       aria-label={`Sửa nhóm ${group.name}`}
+                       onClick={() => setEditingGroup(group)}
+                     >
+                       <Pencil className="size-3.5" />
+                     </Button>
+                     <Button
+                       variant="ghost"
+                       size="icon-lg"
+                        className="size-11 min-h-11 min-w-11"
+                       aria-label={`Xoá nhóm ${group.name}`}
+                       onClick={() => setDeletingGroup(group)}
+                     >
                         <Trash2 className="size-3.5" />
                       </Button>
                     </div>
@@ -598,7 +611,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                   : tracker.input_mode === 'money'
                                     ? 'Số tiền'
                                     : `Số lượng (${tracker.unit ?? 'đơn vị'})`}
-                                {tracker.reminder_time ? ` · Nhắc ${tracker.reminder_time}` : ''}
+                                {tracker.reminder_time ? ` · ${formatReminderSummary(tracker) ?? `Nhắc ${tracker.reminder_time}`}` : ''}
                               </p>
                             </div>
                             <div className="flex items-center gap-2">
@@ -616,26 +629,26 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                     )
                                   }
                                 />
-                                Riêng tư
-                              </label>
-                              <Button
-                                variant="ghost"
-                                size="icon-lg"
-                                className="size-9"
-                                aria-label={`Sửa ${tracker.name}`}
-                                onClick={() => setEditingTracker(tracker)}
-                              >
-                                <Pencil className="size-3.5" />
-                              </Button>
-                              <Button
-                                data-testid="tracker-archive"
-                                data-tracker-id={tracker.id}
-                                variant="ghost"
-                                size="icon-lg"
-                                className="size-9"
-                                aria-label={`Lưu trữ ${tracker.name}`}
-                                onClick={() => setArchiveFor(tracker)}
-                              >
+                               Riêng tư
+                             </label>
+                             <Button
+                               variant="ghost"
+                               size="icon-lg"
+                                className="size-11 min-h-11 min-w-11"
+                               aria-label={`Sửa ${tracker.name}`}
+                               onClick={() => setEditingTracker(tracker)}
+                             >
+                               <Pencil className="size-3.5" />
+                             </Button>
+                             <Button
+                               data-testid="tracker-archive"
+                               data-tracker-id={tracker.id}
+                               variant="ghost"
+                               size="icon-lg"
+                                className="size-11 min-h-11 min-w-11"
+                               aria-label={`Lưu trữ ${tracker.name}`}
+                               onClick={() => setArchiveFor(tracker)}
+                             >
                                 <Archive className="size-3.5" />
                               </Button>
                             </div>
@@ -653,9 +666,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             {groupedData.unassigned.length > 0 ? (
               <div className="rounded-lg border border-border/80 bg-card p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <button
+                  <Button
                     type="button"
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold cursor-pointer select-none"
+                    variant="ghost"
+                    className="flex min-w-0 flex-1 items-center justify-start gap-2 text-left font-semibold cursor-pointer select-none h-auto p-0 hover:bg-transparent"
                     onClick={() => setUnassignedCollapsed(!unassignedCollapsed)}
                   >
                     <Sparkles className="size-4 text-muted-foreground shrink-0" />
@@ -668,7 +682,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                     ) : (
                       <ChevronUp className="size-4 text-muted-foreground ml-auto" />
                     )}
-                  </button>
+                  </Button>
                 </div>
 
                 {!unassignedCollapsed ? (
@@ -688,7 +702,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                               : tracker.input_mode === 'money'
                                 ? 'Số tiền'
                                 : `Số lượng (${tracker.unit ?? 'đơn vị'})`}
-                            {tracker.reminder_time ? ` · Nhắc ${tracker.reminder_time}` : ''}
+                            {tracker.reminder_time ? ` · ${formatReminderSummary(tracker) ?? `Nhắc ${tracker.reminder_time}`}` : ''}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -706,26 +720,26 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                 )
                               }
                             />
-                            Riêng tư
-                          </label>
-                          <Button
-                            variant="ghost"
-                            size="icon-lg"
-                            className="size-9"
-                            aria-label={`Sửa ${tracker.name}`}
-                            onClick={() => setEditingTracker(tracker)}
-                          >
-                            <Pencil className="size-3.5" />
-                          </Button>
-                          <Button
-                            data-testid="tracker-archive"
-                            data-tracker-id={tracker.id}
-                            variant="ghost"
-                            size="icon-lg"
-                            className="size-9"
-                            aria-label={`Lưu trữ ${tracker.name}`}
-                            onClick={() => setArchiveFor(tracker)}
-                          >
+                           Riêng tư
+                         </label>
+                         <Button
+                           variant="ghost"
+                           size="icon-lg"
+                            className="size-11 min-h-11 min-w-11"
+                           aria-label={`Sửa ${tracker.name}`}
+                           onClick={() => setEditingTracker(tracker)}
+                         >
+                           <Pencil className="size-3.5" />
+                         </Button>
+                         <Button
+                           data-testid="tracker-archive"
+                           data-tracker-id={tracker.id}
+                           variant="ghost"
+                           size="icon-lg"
+                            className="size-11 min-h-11 min-w-11"
+                           aria-label={`Lưu trữ ${tracker.name}`}
+                           onClick={() => setArchiveFor(tracker)}
+                         >
                             <Archive className="size-3.5" />
                           </Button>
                         </div>
@@ -770,19 +784,22 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {group.trackers.map((tracker) => (
-                    <Button
-                      key={tracker.id}
-                      size="xs"
-                      variant="outline"
-                      className="text-xs min-h-8"
-                      disabled={lockedIds.has(tracker.id)}
-                      onClick={() => capture(tracker)}
-                    >
-                      <CheckCircle2 className="size-3 text-ok mr-1" />
-                      Ghi {tracker.name}
-                    </Button>
-                  ))}
+                  {group.trackers.map((tracker) =>
+                    tracker.input_mode === 'event' &&
+                    tracker.reminder_action !== 'open_tracker' ? (
+                      <Button
+                        key={tracker.id}
+                        size="xs"
+                        variant="outline"
+                        className="text-xs min-h-8"
+                        disabled={lockedIds.has(tracker.id)}
+                        onClick={() => capture(tracker)}
+                      >
+                        <CheckCircle2 className="size-3 text-ok mr-1" />
+                        Ghi {tracker.name}
+                      </Button>
+                    ) : null,
+                  )}
                 </div>
               </div>
             ))}
@@ -791,9 +808,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       ) : null}
 
       <Card className="gap-3 p-4 shadow-1 ring-0">
-        <button
+        <Button
           type="button"
-          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none"
+          variant="ghost"
+          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none h-auto p-0 hover:bg-transparent"
           onClick={() => setEntriesCollapsed(!entriesCollapsed)}
         >
           <div className="flex items-baseline gap-2">
@@ -805,7 +823,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         ) : (
           <ChevronUp className="size-4 text-muted-foreground" />
         )}
-      </button>
+        </Button>
       {!entriesCollapsed ? (
         entriesQuery.data?.items.length ? (
           <div className="space-y-2">
@@ -880,9 +898,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       </Card>
 
       <Card className="gap-3 p-4 shadow-1 ring-0">
-        <button
+        <Button
           type="button"
-          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none"
+          variant="ghost"
+          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none h-auto p-0 hover:bg-transparent"
           onClick={() => setRhythmCollapsed(!rhythmCollapsed)}
         >
           <div className="flex items-center gap-2">
@@ -893,7 +912,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           ) : (
             <ChevronUp className="size-4 text-muted-foreground" />
           )}
-        </button>
+        </Button>
         {!rhythmCollapsed ? (
           <div className="pt-2">
       <DashboardPanel

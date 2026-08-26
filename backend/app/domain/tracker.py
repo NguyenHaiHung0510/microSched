@@ -34,9 +34,11 @@ from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
 logger = logging.getLogger(__name__)
 
-Kind = Literal["health", "finance"]
+Kind = Literal["health", "finance", "general"]
 Direction = Literal["in", "out"]
 InputMode = Literal["event", "money", "quantity"]
+ReminderMode = Literal["fixed", "after_entry"]
+ReminderAction = Literal["confirm_event", "open_tracker"]
 NonEmptyText = Annotated[str, Field(min_length=1)]
 
 
@@ -45,6 +47,82 @@ def _clean_name(value: str) -> str:
     if not value:
         raise ValueError("Không được để trống tên.")
     return value
+
+
+def _is_legacy_reminder(
+    *,
+    kind: str,
+    input_mode: str,
+    reminder_time: time | None,
+    reminder_mode: str | None,
+    reminder_interval_days: int | None,
+    reminder_action: str | None,
+) -> bool:
+    """Return whether a pre-031 medication row has the permitted legacy shape."""
+    return (
+        kind == "health"
+        and input_mode == "event"
+        and reminder_time is not None
+        and reminder_mode is None
+        and reminder_interval_days is None
+        and reminder_action is None
+    )
+
+
+def _canonical_reminder(
+    *,
+    kind: str,
+    input_mode: str,
+    reminder_time: time | None,
+    reminder_text: str | None,
+    reminder_mode: str | None,
+    reminder_interval_days: int | None,
+    reminder_action: str | None,
+    allow_legacy: bool,
+    interval_was_omitted: bool,
+) -> tuple[str | None, int | None, str | None, time | None, str | None]:
+    """Normalize one reminder bundle or raise the API-safe invariant error.
+
+    Database checks deliberately leave the rolling old-writer window open. This
+    function is therefore the single canonicalizer for every new writer.
+    """
+    if (
+        reminder_mode is None
+        and reminder_interval_days is None
+        and reminder_action is None
+        and reminder_time is None
+    ):
+        if reminder_text is not None:
+            raise TrackerInvalid("Tắt nhắc nhở phải xoá cả nội dung nhắc.")
+        return None, None, None, None, None
+
+    if (
+        _is_legacy_reminder(
+            kind=kind,
+            input_mode=input_mode,
+            reminder_time=reminder_time,
+            reminder_mode=reminder_mode,
+            reminder_interval_days=reminder_interval_days,
+            reminder_action=reminder_action,
+        )
+        and allow_legacy
+    ):
+        return "fixed", 1, "confirm_event", reminder_time, reminder_text
+
+    if reminder_interval_days is None and interval_was_omitted:
+        reminder_interval_days = 1
+    if (
+        reminder_mode is None
+        or reminder_interval_days is None
+        or reminder_action is None
+        or reminder_time is None
+    ):
+        raise TrackerInvalid("Nhắc nhở bật cần đủ mode, interval, action và time.")
+    if reminder_interval_days <= 0:
+        raise TrackerInvalid("Khoảng ngày nhắc phải lớn hơn 0.")
+    if reminder_action == "confirm_event" and input_mode != "event":
+        raise TrackerInvalid("confirm_event chỉ hợp lệ với tracker kiểu event.")
+    return reminder_mode, reminder_interval_days, reminder_action, reminder_time, reminder_text
 
 
 class GroupCreate(BaseModel):
@@ -115,7 +193,10 @@ class TrackerCreate(BaseModel):
     unit: str | None = None
     color: str | None = None
     reminder_time: time | None = None
-    reminder_text: str | None = None
+    reminder_text: str | None = Field(default=None, max_length=240)
+    reminder_mode: ReminderMode | None = None
+    reminder_interval_days: int | None = None
+    reminder_action: ReminderAction | None = None
     is_private: bool = False
 
     @model_validator(mode="after")
@@ -127,8 +208,33 @@ class TrackerCreate(BaseModel):
             self.unit = self.unit.strip() or None
         if self.reminder_text is not None:
             self.reminder_text = self.reminder_text.strip() or None
-        if self.reminder_time is not None and (self.kind != "health" or self.input_mode != "event"):
-            raise ValueError("reminder_time chỉ dùng cho tracker sức khoẻ một chạm.")
+        try:
+            (
+                self.reminder_mode,
+                self.reminder_interval_days,
+                self.reminder_action,
+                self.reminder_time,
+                self.reminder_text,
+            ) = _canonical_reminder(
+                kind=self.kind,
+                input_mode=self.input_mode,
+                reminder_time=self.reminder_time,
+                reminder_text=self.reminder_text,
+                reminder_mode=self.reminder_mode,
+                reminder_interval_days=self.reminder_interval_days,
+                reminder_action=self.reminder_action,
+                allow_legacy=not any(
+                    field in self.model_fields_set
+                    for field in (
+                        "reminder_mode",
+                        "reminder_interval_days",
+                        "reminder_action",
+                    )
+                ),
+                interval_was_omitted="reminder_interval_days" not in self.model_fields_set,
+            )
+        except TrackerInvalid as error:
+            raise ValueError(str(error)) from error
         if self.id is not None and self.id.version != 7:
             raise ValueError("id must be a UUIDv7")
         return self
@@ -145,7 +251,10 @@ class TrackerUpdate(BaseModel):
     unit: str | None = None
     color: str | None = None
     reminder_time: time | None = None
-    reminder_text: str | None = None
+    reminder_text: str | None = Field(default=None, max_length=240)
+    reminder_mode: ReminderMode | None = None
+    reminder_interval_days: int | None = None
+    reminder_action: ReminderAction | None = None
     is_private: bool | None = None
 
     @model_validator(mode="after")
@@ -180,6 +289,9 @@ class TrackerRead(BaseModel):
     color: str | None
     reminder_time: time | None
     reminder_text: str | None
+    reminder_mode: ReminderMode | None
+    reminder_interval_days: int | None
+    reminder_action: ReminderAction | None
     is_private: bool
     last_entry_at: datetime | None
     entry_count_30d: int
@@ -323,7 +435,7 @@ def _amount_in(raw: str | None) -> Decimal | None:
 
 
 def _kind_label(value: str) -> str:
-    return "sức khoẻ" if value == "health" else "tài chính"
+    return {"health": "sức khoẻ", "finance": "tài chính", "general": "chung"}[value]
 
 
 class TrackerStore:
@@ -391,6 +503,17 @@ class TrackerStore:
         count: dict[UUID, int],
     ) -> TrackerRead:
         """Build a TrackerRead from precomputed batched metadata."""
+        mode, interval, action, _time, _text = _canonical_reminder(
+            kind=tracker.kind,
+            input_mode=tracker.input_mode,
+            reminder_time=tracker.reminder_time,
+            reminder_text=tracker.reminder_text,
+            reminder_mode=tracker.reminder_mode,
+            reminder_interval_days=tracker.reminder_interval_days,
+            reminder_action=tracker.reminder_action,
+            allow_legacy=True,
+            interval_was_omitted=False,
+        )
         return TrackerRead(
             id=tracker.id,
             name=_clear(tracker.name),
@@ -402,6 +525,9 @@ class TrackerStore:
             color=tracker.color,
             reminder_time=tracker.reminder_time,
             reminder_text=tracker.reminder_text,
+            reminder_mode=mode,
+            reminder_interval_days=interval,
+            reminder_action=action,
             is_private=tracker.is_private,
             last_entry_at=last.get(tracker.id),
             entry_count_30d=count.get(tracker.id, 0),
@@ -623,6 +749,9 @@ class TrackerStore:
             # public lock-screen surface, not private tracker content.
             "reminder_time": payload.reminder_time,
             "reminder_text": payload.reminder_text,
+            "reminder_mode": payload.reminder_mode,
+            "reminder_interval_days": payload.reminder_interval_days,
+            "reminder_action": payload.reminder_action,
             "is_private": payload.is_private,
         }
         if payload.id is None:
@@ -663,7 +792,6 @@ class TrackerStore:
         changes = payload.model_dump(exclude_unset=True)
         wants_private = "is_private" in changes and changes["is_private"]
         tracker = await self._tracker(db, auth, tracker_id, for_update=True)
-        old_reminder_time = tracker.reminder_time if tracker else None
         if tracker is None:
             return None
         if wants_private and not can_see_private(auth):
@@ -710,7 +838,6 @@ class TrackerStore:
 
         new_input_mode = changes.get("input_mode", tracker.input_mode)
         new_unit = changes.get("unit", tracker.unit)
-        new_reminder_time = changes.get("reminder_time", tracker.reminder_time)
         if new_input_mode != "quantity":
             if changes.get("unit") is not None:
                 raise TrackerInvalid("unit chỉ được dùng cho tracker kiểu 'quantity'.")
@@ -721,8 +848,58 @@ class TrackerStore:
             if new_unit is None:
                 raise TrackerInvalid("Tracker kiểu 'quantity' phải có đơn vị (unit).")
 
-        if new_reminder_time is not None and (new_kind != "health" or new_input_mode != "event"):
-            raise TrackerInvalid("reminder_time chỉ dùng cho tracker sức khoẻ một chạm.")
+        reminder_fields = (
+            "reminder_mode",
+            "reminder_interval_days",
+            "reminder_action",
+            "reminder_time",
+            "reminder_text",
+        )
+        if any(field in changes for field in reminder_fields) or "input_mode" in changes:
+            old_mode, old_interval, old_action, old_time, old_text = _canonical_reminder(
+                kind=tracker.kind,
+                input_mode=tracker.input_mode,
+                reminder_time=tracker.reminder_time,
+                reminder_text=tracker.reminder_text,
+                reminder_mode=tracker.reminder_mode,
+                reminder_interval_days=tracker.reminder_interval_days,
+                reminder_action=tracker.reminder_action,
+                allow_legacy=True,
+                interval_was_omitted=False,
+            )
+            new_mode = changes.get("reminder_mode", old_mode)
+            new_interval = changes.get("reminder_interval_days", old_interval)
+            new_action = changes.get("reminder_action", old_action)
+            new_time = changes.get("reminder_time", old_time)
+            new_text = changes.get("reminder_text", old_text)
+            # A time-only explicit null is the backwards-compatible UI disable
+            # shape. Clear every hidden field rather than retaining stale action.
+            if (
+                "reminder_time" in changes
+                and changes["reminder_time"] is None
+                and not any(
+                    field in changes
+                    for field in ("reminder_mode", "reminder_interval_days", "reminder_action")
+                )
+            ):
+                new_mode = new_interval = new_action = new_time = new_text = None
+            (
+                changes["reminder_mode"],
+                changes["reminder_interval_days"],
+                changes["reminder_action"],
+                changes["reminder_time"],
+                changes["reminder_text"],
+            ) = _canonical_reminder(
+                kind=new_kind,
+                input_mode=new_input_mode,
+                reminder_time=new_time,
+                reminder_text=new_text,
+                reminder_mode=new_mode,
+                reminder_interval_days=new_interval,
+                reminder_action=new_action,
+                allow_legacy=False,
+                interval_was_omitted="reminder_interval_days" not in changes,
+            )
 
         if "name" in changes:
             if await self._tracker_name_taken(db, auth, changes["name"], exclude_id=tracker.id):
@@ -739,11 +916,14 @@ class TrackerStore:
             "is_private",
             "reminder_time",
             "reminder_text",
+            "reminder_mode",
+            "reminder_interval_days",
+            "reminder_action",
         ):
             if field in changes:
                 setattr(tracker, field, changes[field])
-        if "reminder_time" in changes and tracker.reminder_time != old_reminder_time:
-            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:reminder_time"
+        if any(field in changes for field in reminder_fields):
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "tracker:reminder"
         await db.flush()
         return await self._read_tracker(db, auth, tracker)
 
@@ -889,6 +1069,7 @@ class TrackerStore:
         if payload.id is None:
             entry = Entry(**values)
             db.add(entry)
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "entry:create"
             await db.flush()
             return entry.id, True
 
@@ -917,6 +1098,7 @@ class TrackerStore:
                 # expires_on never moves.
                 raise EntryIdConflict
             return existing.id, False
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "entry:create"
         return inserted_id, True
 
     async def update_entry(
@@ -951,6 +1133,8 @@ class TrackerStore:
                 setattr(entry, field, changes[field])
         if "note_md" in changes:
             entry.note_md = _sealed(changes["note_md"])
+        if "occurred_at" in changes:
+            db.info[CRON_TIMER_RELOAD_INFO_KEY] = "entry:update"
         await db.flush()
         return self._entry_read(entry)
 
@@ -960,6 +1144,7 @@ class TrackerStore:
         if entry is None:
             return False
         entry.deleted_at = datetime.now(UTC)
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "entry:soft_delete"
         await db.flush()
         return True
 
@@ -976,5 +1161,6 @@ class TrackerStore:
         if entry is None:
             return await self._entry(db, auth, entry_id)
         entry.deleted_at = None
+        db.info[CRON_TIMER_RELOAD_INFO_KEY] = "entry:restore"
         await db.flush()
         return entry

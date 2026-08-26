@@ -11,6 +11,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  type ReminderAction,
+  type ReminderMode,
   type Tracker,
   type TrackerDirection,
   type TrackerGroup,
@@ -28,6 +30,9 @@ export type TrackerWritePayload = {
   is_private: boolean
   reminder_time?: string | null
   reminder_text?: string | null
+  reminder_mode?: ReminderMode | null
+  reminder_interval_days?: number | null
+  reminder_action?: ReminderAction | null
   ensure_push?: boolean
 }
 
@@ -54,26 +59,58 @@ export function TrackerForm({
   const [unit, setUnit] = useState(initial?.unit ?? '')
   const [isPrivate, setIsPrivate] = useState(initial?.is_private ?? false)
   const [reminderEnabled, setReminderEnabled] = useState(Boolean(initial?.reminder_time))
+  const [reminderMode, setReminderMode] = useState<ReminderMode>(initial?.reminder_mode ?? 'fixed')
+  const [reminderIntervalDays, setReminderIntervalDays] = useState<string>(
+    String(initial?.reminder_interval_days ?? 1),
+  )
+  const [reminderAction, setReminderAction] = useState<ReminderAction>(
+    initial?.reminder_action ?? (initial?.input_mode === 'event' || !initial ? 'confirm_event' : 'open_tracker'),
+  )
   const [reminderTime, setReminderTime] = useState(initial?.reminder_time ?? '08:00')
   const [reminderText, setReminderText] = useState(initial?.reminder_text ?? '')
 
   const kindGroups = groups.filter((group) => group.kind === kind)
   const needsUnit = inputMode === 'quantity'
-  const canConfigureReminder = kind === 'health' && inputMode === 'event'
   const canSubmit = name.trim().length > 0 && (!needsUnit || unit.trim().length > 0) && !pending
+
+  function handleKindChange(newKind: TrackerKind) {
+    setKind(newKind)
+    const validGroups = groups.filter((g) => g.kind === newKind)
+    if (groupId && !validGroups.some((g) => g.id === groupId)) {
+      setGroupId('')
+    }
+  }
+
+  function handleInputModeChange(newInputMode: TrackerInputMode) {
+    setInputMode(newInputMode)
+    if (newInputMode === 'money' || newInputMode === 'quantity') {
+      setReminderAction('open_tracker')
+    }
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault()
     if (!canSubmit) return
-    const reminderPayload = canConfigureReminder
+    const intervalNum = Math.max(1, parseInt(reminderIntervalDays, 10) || 1)
+    const effectiveAction: ReminderAction =
+      inputMode === 'event' ? reminderAction : 'open_tracker'
+    const reminderPayload = reminderEnabled
       ? {
-          reminder_time: reminderEnabled ? reminderTime : null,
-          reminder_text: reminderEnabled ? reminderText.trim() || null : null,
-          // A tracker reminder can be edited from a device that has never
-          // subscribed. Device state belongs to PushManager, not this tracker.
-          ensure_push: reminderEnabled,
+          reminder_mode: reminderMode,
+          reminder_interval_days: intervalNum,
+          reminder_action: effectiveAction,
+          reminder_time: reminderTime,
+          reminder_text: reminderText.trim() || null,
+          ensure_push: true,
         }
-      : {}
+      : {
+          reminder_mode: null,
+          reminder_interval_days: null,
+          reminder_action: null,
+          reminder_time: null,
+          reminder_text: null,
+          ensure_push: false,
+        }
     onSubmit({
       name: name.trim(),
       kind,
@@ -102,13 +139,14 @@ export function TrackerForm({
       <div className="grid grid-cols-2 gap-3">
         <label className="block space-y-1.5 text-sm font-semibold">
           <span>Loại</span>
-          <Select value={kind} onValueChange={(value) => setKind(value as TrackerKind)}>
+          <Select value={kind} onValueChange={(value) => handleKindChange(value as TrackerKind)}>
             <SelectTrigger className="w-full bg-card">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="health">Sức khoẻ</SelectItem>
               <SelectItem value="finance">Tài chính</SelectItem>
+              <SelectItem value="general">Chung</SelectItem>
             </SelectContent>
           </Select>
         </label>
@@ -116,7 +154,7 @@ export function TrackerForm({
           <span>Cách ghi</span>
           <Select
             value={inputMode}
-            onValueChange={(value) => setInputMode(value as TrackerInputMode)}
+            onValueChange={(value) => handleInputModeChange(value as TrackerInputMode)}
           >
             <SelectTrigger className="w-full bg-card">
               <SelectValue />
@@ -157,44 +195,98 @@ export function TrackerForm({
         </label>
       ) : null}
 
-      {canConfigureReminder ? (
-        <fieldset className="space-y-3 rounded-lg border border-input p-3">
-          <legend className="px-1 text-sm font-semibold">Nhắc uống thuốc</legend>
-          <label className="flex min-h-11 items-center gap-3 text-sm font-semibold">
-            <Checkbox
-              className="size-5 rounded-md"
-              data-testid="tracker-reminder-enabled"
-              checked={reminderEnabled}
-              onCheckedChange={(checked) => setReminderEnabled(checked === true)}
-            />
-            <span>Bật nhắc nhở</span>
-          </label>
-          {reminderEnabled ? (
-            <>
+      <fieldset className="space-y-3 rounded-lg border border-input p-3">
+        <legend className="px-1 text-sm font-semibold">Nhắc nhở</legend>
+        <label className="flex min-h-11 items-center gap-3 text-sm font-semibold">
+          <Checkbox
+            className="size-5 rounded-md"
+            data-testid="tracker-reminder-enabled"
+            checked={reminderEnabled}
+            onCheckedChange={(checked) => setReminderEnabled(checked === true)}
+          />
+          <span>Bật nhắc nhở</span>
+        </label>
+        {reminderEnabled ? (
+          <>
+            <div className="grid grid-cols-2 gap-3">
               <label className="block space-y-1.5 text-sm font-semibold">
-                <span>Giờ nhắc</span>
-                <Input
-                  className="h-10 bg-card"
-                  data-testid="tracker-reminder-time"
-                  type="time"
-                  value={reminderTime}
-                  onChange={(event) => setReminderTime(event.target.value)}
-                />
+                <span>Kiểu nhắc</span>
+                <Select
+                  value={reminderMode}
+                  onValueChange={(value) => setReminderMode(value as ReminderMode)}
+                >
+                  <SelectTrigger data-testid="tracker-reminder-mode" className="w-full bg-card">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fixed">Theo lịch cố định</SelectItem>
+                    <SelectItem value="after_entry">Sau lần ghi gần nhất</SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
               <label className="block space-y-1.5 text-sm font-semibold">
-                <span>Nội dung hiện trên màn hình khoá (không bắt buộc)</span>
+                <span>{reminderMode === 'fixed' ? 'Mỗi N ngày' : 'Nhắc sau N ngày chưa ghi'}</span>
                 <Input
+                  data-testid="tracker-reminder-interval"
                   className="h-10 bg-card"
-                  data-testid="tracker-reminder-text"
-                  value={reminderText}
-                  maxLength={240}
-                  onChange={(event) => setReminderText(event.target.value)}
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={reminderIntervalDays}
+                  onChange={(event) => setReminderIntervalDays(event.target.value)}
                 />
               </label>
-            </>
-          ) : null}
-        </fieldset>
-      ) : null}
+            </div>
+            <label className="block space-y-1.5 text-sm font-semibold">
+              <span>Giờ nhắc</span>
+              <Input
+                className="h-10 bg-card"
+                data-testid="tracker-reminder-time"
+                type="time"
+                value={reminderTime}
+                onChange={(event) => setReminderTime(event.target.value)}
+              />
+            </label>
+            {inputMode === 'event' ? (
+              <label className="block space-y-1.5 text-sm font-semibold">
+                <span>Hành động khi bấm nhắc</span>
+                <Select
+                  value={reminderAction}
+                  onValueChange={(value) => setReminderAction(value as ReminderAction)}
+                >
+                  <SelectTrigger data-testid="tracker-reminder-action" className="w-full bg-card">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="confirm_event">Xác nhận và ghi một chạm</SelectItem>
+                    <SelectItem value="open_tracker">Mở tracker để ghi</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+            ) : (
+              <div className="space-y-1.5 text-sm font-semibold">
+                <span>Hành động khi bấm nhắc</span>
+                <div className="rounded-md border border-input bg-muted/40 p-2.5 text-xs font-normal text-muted-foreground">
+                  Mở tracker để nhập số liệu
+                </div>
+              </div>
+            )}
+            <label className="block space-y-1.5 text-sm font-semibold">
+              <span>Nội dung hiện trên màn hình khoá (không bắt buộc)</span>
+              <Input
+                className="h-10 bg-card"
+                data-testid="tracker-reminder-text"
+                value={reminderText}
+                maxLength={240}
+                onChange={(event) => setReminderText(event.target.value)}
+              />
+              <span className="block text-xs font-normal text-muted-foreground">
+                Nội dung này hiển thị công khai trên màn hình khoá thiết bị.
+              </span>
+            </label>
+          </>
+        ) : null}
+      </fieldset>
 
       <label className="block space-y-1.5 text-sm font-semibold">
         <span>Nhóm</span>

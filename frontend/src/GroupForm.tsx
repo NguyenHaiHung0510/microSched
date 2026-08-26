@@ -59,6 +59,7 @@ export function GroupForm({
           <SelectContent>
             <SelectItem value="health">Sức khoẻ</SelectItem>
             <SelectItem value="finance">Tài chính</SelectItem>
+            <SelectItem value="general">Chung</SelectItem>
           </SelectContent>
         </Select>
       </label>

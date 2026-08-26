@@ -10,12 +10,15 @@ import {
   digitsOnly,
   formatLastSeen,
   formatQuantity,
+  formatReminderSchedule,
+  formatReminderSummary,
   formatVnd,
   groupRemindersByHour,
   groupTrackersByGroup,
   quantityToNumber,
   quietAgo,
   sortTrackersForGrid,
+  trackerKindLabel,
   type Tracker,
   type TrackerGroup,
 } from '@/tracker-ui'
@@ -32,6 +35,9 @@ function tracker(overrides: Partial<Tracker> = {}): Tracker {
     color: null,
     reminder_time: null,
     reminder_text: null,
+    reminder_mode: null,
+    reminder_interval_days: null,
+    reminder_action: null,
     is_private: false,
     last_entry_at: null,
     entry_count_30d: 0,
@@ -93,7 +99,78 @@ describe('tracker grid order (§5.2)', () => {
     expect(reminderGroups[0].trackers.map((t) => t.id)).toEqual(['t1', 't2'])
     expect(reminderGroups[0].previewText).toBe('Uống trước ăn')
     expect(reminderGroups[1].time).toBe('20:00')
-    expect(reminderGroups[1].previewText).toBe('Nhắc uống: Thuốc bổ mắt')
+    expect(reminderGroups[1].previewText).toBe('Nhắc nhở: Thuốc bổ mắt')
+  })
+})
+
+describe('tracker kind & reminder helpers', () => {
+  it('maps tracker kinds to accurate Vietnamese labels', () => {
+    expect(trackerKindLabel('health')).toBe('Sức khoẻ')
+    expect(trackerKindLabel('finance')).toBe('Tài chính')
+    expect(trackerKindLabel('general')).toBe('Chung')
+  })
+
+  it('formats reminder schedules for fixed and after_entry modes', () => {
+    expect(
+      formatReminderSchedule({
+        reminder_mode: 'fixed',
+        reminder_interval_days: 1,
+        reminder_time: '08:00',
+      }),
+    ).toBe('Mỗi 1 ngày lúc 08:00')
+
+    expect(
+      formatReminderSchedule({
+        reminder_mode: 'fixed',
+        reminder_interval_days: 3,
+        reminder_time: '09:00',
+      }),
+    ).toBe('Mỗi 3 ngày lúc 09:00')
+
+    expect(
+      formatReminderSchedule({
+        reminder_mode: 'after_entry',
+        reminder_interval_days: 3,
+        reminder_time: '20:30',
+      }),
+    ).toBe('Sau 3 ngày chưa ghi lúc 20:30')
+
+    expect(
+      formatReminderSchedule({
+        reminder_mode: null,
+        reminder_interval_days: null,
+        reminder_time: null,
+      }),
+    ).toBeNull()
+  })
+
+  it('formats reminder summary badges with mode, interval, time, and action', () => {
+    expect(
+      formatReminderSummary({
+        reminder_mode: 'fixed',
+        reminder_interval_days: 3,
+        reminder_time: '09:00',
+        reminder_action: 'open_tracker',
+      }),
+    ).toBe('Mỗi 3 ngày · 09:00 · Mở tracker')
+
+    expect(
+      formatReminderSummary({
+        reminder_mode: 'after_entry',
+        reminder_interval_days: 3,
+        reminder_time: '09:00',
+        reminder_action: 'confirm_event',
+      }),
+    ).toBe('Sau 3 ngày chưa ghi · 09:00 · Xác nhận một chạm')
+
+    expect(
+      formatReminderSummary({
+        reminder_mode: null,
+        reminder_interval_days: null,
+        reminder_time: null,
+        reminder_action: null,
+      }),
+    ).toBeNull()
   })
 })
 

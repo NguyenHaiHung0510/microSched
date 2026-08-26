@@ -10,18 +10,18 @@ from enum import StrEnum
 from typing import Any, Callable
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.process_stats import read_rss_kb, read_uptime_s
 from app.core.settings import get_settings
-from app.domain.models import ReminderDispatch, Subscription, Tracker
+from app.domain.models import Entry, ReminderDispatch, Subscription, Tracker
 from app.domain.reminder import (
     DispatchOutcome,
     DispatchTelemetry,
     ReminderDispatcher,
-    build_medication_payload,
     build_subscription_expiry_payload,
+    build_tracker_reminder_payload,
 )
 from app.domain.settings import expiry_lead_days
 
@@ -76,6 +76,10 @@ class TimerItem:
     kind: ScheduleKind
     subject_id: UUID
     reminder_time: time | None = None
+    reminder_mode: str | None = None
+    reminder_interval_days: int | None = None
+    reminder_action: str | None = None
+    last_entry_date: date | None = None
     expires_on: date | None = None
     retry_count: int = 0
     dispatch_id: UUID | None = None
@@ -129,6 +133,7 @@ class CronTimer:
             "ineligible": 0,
         }
         self._pending_recovered_count = 0
+        self._invalid_tracker_schedule_count = 0
         self._stale_logged = False
 
     @property
@@ -179,11 +184,86 @@ class CronTimer:
             "pending_exhausted_count": self._pending_manual_required["exhausted"],
             "pending_manual_required_count": sum(self._pending_manual_required.values()),
             "pending_manual_required": dict(self._pending_manual_required),
+            "invalid_tracker_schedule_count": self._invalid_tracker_schedule_count,
             "degraded": effective_status in ("degraded", "stale"),
             "stale": is_stale,
             "uptime_s": read_uptime_s(),
             "rss_kb": read_rss_kb(),
         }
+
+    @staticmethod
+    def _effective_tracker_config(
+        tracker: Tracker,
+    ) -> tuple[str, int, str, time] | None:
+        """Return an enabled config, including the rolling legacy writer shape."""
+        if tracker.reminder_time is None:
+            return None
+        if (
+            tracker.kind == "health"
+            and tracker.input_mode == "event"
+            and tracker.reminder_mode is None
+            and tracker.reminder_interval_days is None
+            and tracker.reminder_action is None
+        ):
+            return "fixed", 1, "confirm_event", tracker.reminder_time
+        if (
+            tracker.reminder_mode not in {"fixed", "after_entry"}
+            or tracker.reminder_interval_days is None
+            or tracker.reminder_interval_days <= 0
+            or tracker.reminder_action not in {"confirm_event", "open_tracker"}
+            or (tracker.reminder_action == "confirm_event" and tracker.input_mode != "event")
+        ):
+            return None
+        return (
+            tracker.reminder_mode,
+            tracker.reminder_interval_days,
+            tracker.reminder_action,
+            tracker.reminder_time,
+        )
+
+    @staticmethod
+    def _fixed_candidate_date(
+        *,
+        now_vn: datetime,
+        reminder_time: time,
+        interval_days: int,
+        last_scheduled_date: date | None,
+    ) -> date:
+        """Choose the next fixed cadence date without burst catch-up."""
+        if last_scheduled_date is None:
+            candidate = now_vn.date()
+            if datetime.combine(candidate, reminder_time, tzinfo=VN_TZ) < now_vn - GRACE_WINDOW:
+                candidate += timedelta(days=1)
+            return candidate
+        candidate = last_scheduled_date + timedelta(days=interval_days)
+        while datetime.combine(candidate, reminder_time, tzinfo=VN_TZ) < now_vn - GRACE_WINDOW:
+            candidate += timedelta(days=interval_days)
+        return candidate
+
+    @staticmethod
+    def _after_entry_candidate_date(
+        *,
+        now_vn: datetime,
+        reminder_time: time,
+        interval_days: int,
+        last_entry_date: date | None,
+        dispatched_dates: set[date],
+    ) -> date:
+        """Choose a civil VN date, using entry freshness rather than notifications."""
+        freshness = (
+            last_entry_date + timedelta(days=interval_days) if last_entry_date is not None else None
+        )
+        if freshness is not None and datetime.combine(freshness, reminder_time, tzinfo=VN_TZ) >= (
+            now_vn - GRACE_WINDOW
+        ):
+            candidate = freshness
+        else:
+            candidate = now_vn.date()
+            if datetime.combine(candidate, reminder_time, tzinfo=VN_TZ) < now_vn - GRACE_WINDOW:
+                candidate += timedelta(days=1)
+        while candidate in dispatched_dates:
+            candidate += timedelta(days=1)
+        return candidate
 
     async def load_snapshot(self, db: AsyncSession, *, now: datetime | None = None) -> None:
         """Load active tracker and subscription schedules and pending recoveries into RAM.
@@ -226,15 +306,28 @@ class CronTimer:
                 continue
             pending_meta.append((p, kind, last_at_vn))
 
-        # 2. Load active tracker medication schedules
+        # 2. Load active generic tracker schedules. Validation stays in Python:
+        # old writers are allowed during the expand window, while malformed
+        # hybrid rows must be skipped rather than guessed or crashing the timer.
         stmt_trackers = select(Tracker).where(
             Tracker.deleted_at.is_(None),
             Tracker.reminder_time.is_not(None),
-            Tracker.kind == "health",
-            Tracker.input_mode == "event",
         )
         res_trackers = await db.execute(stmt_trackers)
-        trackers = res_trackers.scalars().all()
+        tracker_rows = res_trackers.scalars().all()
+        tracker_configs: dict[UUID, tuple[str, int, str, time]] = {}
+        for tracker in tracker_rows:
+            config = self._effective_tracker_config(tracker)
+            if config is None:
+                self._invalid_tracker_schedule_count += 1
+                logger.warning(
+                    "cron_timer_invalid_tracker_schedule kind=%s mode=%s",
+                    tracker.kind,
+                    tracker.reminder_mode,
+                )
+                continue
+            tracker_configs[tracker.id] = config
+        trackers = [tracker for tracker in tracker_rows if tracker.id in tracker_configs]
         tracker_ids = {t.id for t in trackers}
 
         for p, kind, last_at_vn in pending_meta:
@@ -257,29 +350,6 @@ class CronTimer:
             pending_keys.add((kind, p.subject_id, p.dispatched_on))
             self._pending_recovered_count += 1
             heapq.heappush(new_heap, item.heap_tuple())
-
-        for t in trackers:
-            r_time = t.reminder_time
-            if r_time is None:
-                continue
-
-            candidate_date = today_vn
-            due_at = datetime.combine(candidate_date, r_time, tzinfo=VN_TZ)
-
-            if due_at < (now_vn - GRACE_WINDOW):
-                candidate_date = today_vn + timedelta(days=1)
-                due_at = datetime.combine(candidate_date, r_time, tzinfo=VN_TZ)
-
-            key = (ScheduleKind.TRACKER, t.id, candidate_date)
-            if key not in pending_keys:
-                item = TimerItem(
-                    due_at=due_at,
-                    occurrence_on=candidate_date,
-                    kind=ScheduleKind.TRACKER,
-                    subject_id=t.id,
-                    reminder_time=r_time,
-                )
-                heapq.heappush(new_heap, item.heap_tuple())
 
         # 3. Load active subscription expiry schedules
         lead_days = await expiry_lead_days(db)
@@ -319,6 +389,73 @@ class CronTimer:
             self._pending_recovered_count += 1
             heapq.heappush(new_heap, item.heap_tuple())
 
+        # 4. Bounded tracker aggregates. Both queries are constant regardless
+        # of tracker count; reminder history is kept as at most 30 civil dates
+        # per tracker in RAM for O(1) after-entry de-duplication.
+        last_entries: dict[UUID, date] = {}
+        dispatch_dates: dict[UUID, set[date]] = {tracker_id: set() for tracker_id in tracker_ids}
+        last_dispatch: dict[UUID, date] = {}
+        if tracker_ids:
+            entry_rows = await db.execute(
+                select(Entry.tracker_id, func.max(Entry.occurred_at))
+                .where(
+                    Entry.tracker_id.in_(tracker_ids),
+                    Entry.deleted_at.is_(None),
+                    Entry.occurred_at.is_not(None),
+                )
+                .group_by(Entry.tracker_id)
+            )
+            for tracker_id, occurred_at in entry_rows:
+                if occurred_at is not None:
+                    if occurred_at.tzinfo is None:
+                        occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+                    last_entries[tracker_id] = occurred_at.astimezone(VN_TZ).date()
+            dispatch_rows = await db.execute(
+                select(ReminderDispatch.subject_id, ReminderDispatch.dispatched_on).where(
+                    ReminderDispatch.subject_type == "tracker",
+                    ReminderDispatch.subject_id.in_(tracker_ids),
+                )
+            )
+            recent_cutoff = today_vn - timedelta(days=30)
+            for tracker_id, dispatched_on in dispatch_rows:
+                prior = last_dispatch.get(tracker_id)
+                if prior is None or dispatched_on > prior:
+                    last_dispatch[tracker_id] = dispatched_on
+                if dispatched_on >= recent_cutoff:
+                    dispatch_dates[tracker_id].add(dispatched_on)
+
+        for tracker in trackers:
+            mode, interval_days, action, reminder_time = tracker_configs[tracker.id]
+            if mode == "fixed":
+                candidate_date = self._fixed_candidate_date(
+                    now_vn=now_vn,
+                    reminder_time=reminder_time,
+                    interval_days=interval_days,
+                    last_scheduled_date=last_dispatch.get(tracker.id),
+                )
+            else:
+                candidate_date = self._after_entry_candidate_date(
+                    now_vn=now_vn,
+                    reminder_time=reminder_time,
+                    interval_days=interval_days,
+                    last_entry_date=last_entries.get(tracker.id),
+                    dispatched_dates=dispatch_dates[tracker.id],
+                )
+            key = (ScheduleKind.TRACKER, tracker.id, candidate_date)
+            if key not in pending_keys:
+                item = TimerItem(
+                    due_at=datetime.combine(candidate_date, reminder_time, tzinfo=VN_TZ),
+                    occurrence_on=candidate_date,
+                    kind=ScheduleKind.TRACKER,
+                    subject_id=tracker.id,
+                    reminder_time=reminder_time,
+                    reminder_mode=mode,
+                    reminder_interval_days=interval_days,
+                    reminder_action=action,
+                    last_entry_date=last_entries.get(tracker.id),
+                )
+                heapq.heappush(new_heap, item.heap_tuple())
+
         for sub, tr in sub_tuples:
             first_date = max(today_vn, sub.expires_on - timedelta(days=lead_days))
             if first_date > sub.expires_on:
@@ -347,7 +484,7 @@ class CronTimer:
         logger.warning(
             "cron_timer_queue_loaded reason=%s tracker_count=%d subscription_count=%d "
             "lead_days=%d queue_size=%d next_due_at=%s pending_recovered_count=%d "
-            "pending_manual_required_count=%d",
+            "pending_manual_required_count=%d invalid_tracker_schedule_count=%d",
             self._reload_reason,
             len(trackers),
             len(sub_tuples),
@@ -356,6 +493,7 @@ class CronTimer:
             next_due_at,
             self._pending_recovered_count,
             sum(self._pending_manual_required.values()),
+            self._invalid_tracker_schedule_count,
         )
 
     def _log_pending_manual_required(
@@ -409,9 +547,12 @@ class CronTimer:
         if item.kind == ScheduleKind.TRACKER:
             if item.reminder_time is None:
                 return
+            step_days = item.reminder_interval_days or 1
+            if item.reminder_mode == "fixed":
+                next_date = item.occurrence_on + timedelta(days=step_days)
             next_due = datetime.combine(next_date, item.reminder_time, tzinfo=VN_TZ)
-            if next_due < (now - GRACE_WINDOW):
-                next_date += timedelta(days=1)
+            while next_due < (now - GRACE_WINDOW):
+                next_date += timedelta(days=step_days if item.reminder_mode == "fixed" else 1)
                 next_due = datetime.combine(next_date, item.reminder_time, tzinfo=VN_TZ)
             next_item = TimerItem(
                 due_at=next_due,
@@ -419,6 +560,10 @@ class CronTimer:
                 kind=ScheduleKind.TRACKER,
                 subject_id=item.subject_id,
                 reminder_time=item.reminder_time,
+                reminder_mode=item.reminder_mode,
+                reminder_interval_days=item.reminder_interval_days,
+                reminder_action=item.reminder_action,
+                last_entry_date=item.last_entry_date,
             )
         else:
             if item.expires_on is None:
@@ -462,18 +607,42 @@ class CronTimer:
                 stmt = select(Tracker).where(
                     Tracker.id == item.subject_id,
                     Tracker.deleted_at.is_(None),
-                    Tracker.reminder_time.is_not(None),
-                    Tracker.kind == "health",
-                    Tracker.input_mode == "event",
                 )
                 res = await db.execute(stmt)
                 tracker = res.scalar_one_or_none()
 
                 if tracker is None:
                     return
+                config = self._effective_tracker_config(tracker)
+                if config is None:
+                    self._invalid_tracker_schedule_count += 1
+                    return
+                mode, interval_days, action, reminder_time = config
+                if (
+                    item.reminder_mode is not None
+                    and (
+                        item.reminder_mode,
+                        item.reminder_interval_days,
+                        item.reminder_action,
+                        item.reminder_time,
+                    )
+                    != config
+                ):
+                    # A reload normally removes stale heap items. This second
+                    # check closes the mutation-vs-dispatch race without sending
+                    # an old occurrence under a newly edited action or cadence.
+                    return
 
                 def payload_builder(d_id: UUID) -> dict:
-                    return build_medication_payload(tracker, d_id)
+                    return build_tracker_reminder_payload(
+                        tracker,
+                        d_id,
+                        reminder_mode=mode,
+                        reminder_interval_days=interval_days,
+                        reminder_action=action,
+                        today_vn=today_vn,
+                        last_entry_date=item.last_entry_date,
+                    )
 
                 outcome = await self._dispatcher.dispatch_item(
                     db,
@@ -496,7 +665,11 @@ class CronTimer:
                         occurrence_on=item.occurrence_on,
                         kind=ScheduleKind.TRACKER,
                         subject_id=tracker.id,
-                        reminder_time=tracker.reminder_time,
+                        reminder_time=reminder_time,
+                        reminder_mode=mode,
+                        reminder_interval_days=interval_days,
+                        reminder_action=action,
+                        last_entry_date=item.last_entry_date,
                         retry_count=item.retry_count + 1,
                         dispatch_id=item.dispatch_id,
                         is_pending_recovery=True,
@@ -506,14 +679,20 @@ class CronTimer:
                     # F10: the next occurrence is scheduled even when the last
                     # retry failed terminally — a dead attempt must not swallow
                     # tomorrow's reminder.
-                    next_date = item.occurrence_on + timedelta(days=1)
-                    next_due = datetime.combine(next_date, tracker.reminder_time, tzinfo=VN_TZ)
+                    next_date = item.occurrence_on + timedelta(
+                        days=interval_days if mode == "fixed" else 1
+                    )
+                    next_due = datetime.combine(next_date, reminder_time, tzinfo=VN_TZ)
                     next_item = TimerItem(
                         due_at=next_due,
                         occurrence_on=next_date,
                         kind=ScheduleKind.TRACKER,
                         subject_id=tracker.id,
-                        reminder_time=tracker.reminder_time,
+                        reminder_time=reminder_time,
+                        reminder_mode=mode,
+                        reminder_interval_days=interval_days,
+                        reminder_action=action,
+                        last_entry_date=item.last_entry_date,
                     )
                     heapq.heappush(self._heap, next_item.heap_tuple())
 

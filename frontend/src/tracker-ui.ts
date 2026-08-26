@@ -12,9 +12,31 @@ import { apiRequest } from '@/api'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
 import { uuidv7 } from '@/lib/uuidv7'
 
-export type TrackerKind = 'health' | 'finance'
+export type TrackerKind = 'health' | 'finance' | 'general'
 export type TrackerDirection = 'in' | 'out'
 export type TrackerInputMode = 'event' | 'money' | 'quantity'
+export type ReminderMode = 'fixed' | 'after_entry'
+export type ReminderAction = 'confirm_event' | 'open_tracker'
+
+export const TRACKER_KIND_LABELS: Record<TrackerKind, string> = {
+  health: 'Sức khoẻ',
+  finance: 'Tài chính',
+  general: 'Chung',
+}
+
+export function trackerKindLabel(kind: TrackerKind): string {
+  return TRACKER_KIND_LABELS[kind] ?? kind
+}
+
+export const REMINDER_MODE_LABELS: Record<ReminderMode, string> = {
+  fixed: 'Theo lịch cố định',
+  after_entry: 'Sau lần ghi gần nhất',
+}
+
+export const REMINDER_ACTION_LABELS: Record<ReminderAction, string> = {
+  confirm_event: 'Xác nhận một chạm',
+  open_tracker: 'Mở tracker',
+}
 
 export type TrackerGroup = {
   id: string
@@ -38,6 +60,9 @@ export type Tracker = {
   color: string | null
   reminder_time: string | null
   reminder_text: string | null
+  reminder_mode: ReminderMode | null
+  reminder_interval_days: number | null
+  reminder_action: ReminderAction | null
   is_private: boolean
   last_entry_at: string | null
   entry_count_30d: number
@@ -169,13 +194,48 @@ export function groupRemindersByHour(trackers: Tracker[]): HourReminderGroup[] {
       .map((item) => item.reminder_text)
       .filter((t): t is string => Boolean(t && t.trim()))
     const previewText =
-      customTexts.length > 0 ? customTexts.join(' · ') : 'Nhắc uống: ' + names
+      customTexts.length > 0 ? customTexts.join(' · ') : 'Nhắc nhở: ' + names
     return {
       time,
       trackers: items,
       previewText,
     }
   })
+}
+
+/** Format reminder schedule, e.g. "Mỗi N ngày lúc HH:mm" hoặc "Sau N ngày chưa ghi lúc HH:mm". */
+export function formatReminderSchedule(
+  tracker: Pick<Tracker, 'reminder_mode' | 'reminder_interval_days' | 'reminder_time'>,
+): string | null {
+  if (!tracker.reminder_time) return null
+  const mode = tracker.reminder_mode ?? 'fixed'
+  const interval = tracker.reminder_interval_days ?? 1
+  if (mode === 'fixed') {
+    return `Mỗi ${interval} ngày lúc ${tracker.reminder_time}`
+  }
+  return `Sau ${interval} ngày chưa ghi lúc ${tracker.reminder_time}`
+}
+
+/** Format reminder summary badge, e.g. "Mỗi 3 ngày · 09:00 · Mở tracker". */
+export function formatReminderSummary(
+  tracker: Pick<
+    Tracker,
+    | 'reminder_mode'
+    | 'reminder_interval_days'
+    | 'reminder_time'
+    | 'reminder_action'
+  >,
+): string | null {
+  if (!tracker.reminder_time) return null
+  const mode = tracker.reminder_mode ?? 'fixed'
+  const interval = tracker.reminder_interval_days ?? 1
+  const actionLabel =
+    tracker.reminder_action === 'confirm_event'
+      ? 'Xác nhận một chạm'
+      : 'Mở tracker'
+  const prefix =
+    mode === 'fixed' ? `Mỗi ${interval} ngày` : `Sau ${interval} ngày chưa ghi`
+  return `${prefix} · ${tracker.reminder_time} · ${actionLabel}`
 }
 
 /** Accept digits only; separators are stripped before the server ever sees them. */
@@ -365,6 +425,9 @@ export function useTrackerWrites(refresh: () => void) {
       unit?: string | null
       reminder_time?: string | null
       reminder_text?: string | null
+      reminder_mode?: ReminderMode | null
+      reminder_interval_days?: number | null
+      reminder_action?: ReminderAction | null
       is_private?: boolean
     }) =>
       apiRequest<Tracker>('/api/tracker/trackers', {
@@ -391,6 +454,9 @@ export function useTrackerWrites(refresh: () => void) {
           | 'is_private'
           | 'reminder_time'
           | 'reminder_text'
+          | 'reminder_mode'
+          | 'reminder_interval_days'
+          | 'reminder_action'
         >
       >
     }) =>

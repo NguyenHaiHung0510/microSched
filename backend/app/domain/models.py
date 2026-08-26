@@ -332,7 +332,7 @@ class TrackerGroup(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.NONE
     __delete_gate__: ClassVar[Gate] = Gate.NONE
     __table_args__ = (
-        CheckConstraint("kind IN ('health', 'finance')", name="kind_values"),
+        CheckConstraint("kind IN ('health', 'finance', 'general')", name="kind_values"),
         CheckConstraint("position >= 0", name="position_nonnegative"),
         UniqueConstraint("id", "kind", name="uq_tracker_group_id_kind"),
         {"schema": SCHEMA},
@@ -348,14 +348,14 @@ class TrackerGroup(UUIDTimestampModel, table=True):
 
 
 class Tracker(UUIDTimestampModel, table=True):
-    """A health or finance stream whose sensitive name is always ciphertext."""
+    """A health, finance, or general stream whose name is always ciphertext."""
 
     __tablename__ = "tracker"
     __privacy_gate__: ClassVar[Gate] = Gate.APPLIES
     __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
         CheckConstraint("name LIKE 'enc:v1:%'", name="name_ciphertext"),
-        CheckConstraint("kind IN ('health', 'finance')", name="kind_values"),
+        CheckConstraint("kind IN ('health', 'finance', 'general')", name="kind_values"),
         CheckConstraint("direction IN ('in', 'out')", name="direction_values"),
         CheckConstraint(
             "input_mode IN ('event', 'money', 'quantity')",
@@ -365,6 +365,23 @@ class Tracker(UUIDTimestampModel, table=True):
             "(input_mode = 'quantity' AND unit IS NOT NULL) OR "
             "(input_mode <> 'quantity' AND unit IS NULL)",
             name="unit_matches_input_mode",
+        ),
+        CheckConstraint(
+            "reminder_mode IS NULL OR reminder_mode IN ('fixed', 'after_entry')",
+            name="reminder_mode_values",
+        ),
+        CheckConstraint(
+            "reminder_interval_days IS NULL OR reminder_interval_days > 0",
+            name="reminder_interval_days_positive",
+        ),
+        CheckConstraint(
+            "reminder_action IS NULL OR reminder_action IN ('confirm_event', 'open_tracker')",
+            name="reminder_action_values",
+        ),
+        CheckConstraint(
+            "reminder_action IS NULL OR reminder_action = 'open_tracker' OR "
+            "(reminder_action = 'confirm_event' AND input_mode = 'event')",
+            name="reminder_action_input_mode",
         ),
         ForeignKeyConstraint(
             ["group_id", "kind"],
@@ -393,6 +410,12 @@ class Tracker(UUIDTimestampModel, table=True):
     color: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     reminder_time: time | None = Field(default=None, sa_column=Column(Time, nullable=True))
     reminder_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    reminder_mode: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    reminder_interval_days: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True),
+    )
+    reminder_action: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     is_private: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),

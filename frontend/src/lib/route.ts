@@ -1,7 +1,7 @@
-/** Minimal routing seam (011c §5.1): pathname + search, no react-router.
+/** Minimal routing seam: pathname + search, no react-router.
  *
- * The app has exactly two deep links — ``/subscription?highlight=id`` (011c)
- * and ``/reminder-confirm?dispatch=…`` (011b) — so a one-file seam beats a new
+ * The app has deep links — ``/subscription?highlight=id``, ``/trackers``,
+ * and ``/reminder-confirm?dispatch=…`` — so a one-file seam beats a new
  * runtime dependency. The snapshot MUST include ``search``: going from
  * ``/subscription`` to ``/subscription?highlight=id`` is a state change even
  * though the pathname is identical, and ``useSyncExternalStore`` only re-renders

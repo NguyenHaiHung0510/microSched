@@ -46,8 +46,21 @@ class DispatchTelemetry:
     outcome: DispatchOutcome | None = None
 
 
-def build_medication_payload(tracker: Tracker, dispatch_id: UUID) -> dict:
-    """Build the public-safe Web Push notification payload for a medication tracker."""
+def build_tracker_reminder_payload(
+    tracker: Tracker,
+    dispatch_id: UUID,
+    *,
+    reminder_mode: str,
+    reminder_interval_days: int,
+    reminder_action: str,
+    today_vn: date,
+    last_entry_date: date | None = None,
+) -> dict:
+    """Build the one generic, public-safe tracker reminder notification.
+
+    ``last_entry_date`` is scheduling metadata only. It is never included for a
+    private tracker and is deliberately not inferred from dispatch history.
+    """
     title = "Nhắc nhở microSched"
 
     # Privacy rule: if reminder_text is provided by user, use it directly (public surface).
@@ -55,13 +68,33 @@ def build_medication_payload(tracker: Tracker, dispatch_id: UUID) -> dict:
     if tracker.reminder_text and tracker.reminder_text.strip():
         body = tracker.reminder_text.strip()
     elif tracker.is_private:
-        body = "Đã tới giờ uống thuốc"
+        body = "Đã tới hạn ghi nhận."
     else:
         name = _public_name(tracker.name)
-        body = f"Đã tới giờ: {name}" if name else "Đã tới giờ uống thuốc"
+        if reminder_mode == "after_entry" and last_entry_date is not None and name:
+            days_overdue = max(reminder_interval_days, (today_vn - last_entry_date).days)
+            body = f"Đã {days_overdue} ngày chưa ghi nhận: {name}"
+        else:
+            body = f"Đã tới hạn: {name}" if name else "Đã tới hạn ghi nhận."
 
-    url = f"/reminder-confirm?dispatch={dispatch_id}"
+    url = (
+        f"/reminder-confirm?dispatch={dispatch_id}"
+        if reminder_action == "confirm_event"
+        else "/trackers"
+    )
     return {"title": title, "body": body, "url": url}
+
+
+def build_medication_payload(tracker: Tracker, dispatch_id: UUID) -> dict:
+    """Compatibility wrapper for the pre-031 medication payload call site."""
+    return build_tracker_reminder_payload(
+        tracker,
+        dispatch_id,
+        reminder_mode="fixed",
+        reminder_interval_days=1,
+        reminder_action="confirm_event",
+        today_vn=datetime.now(VN_TZ).date(),
+    )
 
 
 def build_subscription_expiry_payload(
@@ -287,7 +320,7 @@ async def confirm_reminder_dispatch(
     occurred_at: datetime,
     auth: AuthSession,
 ) -> tuple[object, bool]:
-    """Confirm a medication reminder dispatch and idempotently record an Entry.
+    """Confirm an eligible tracker reminder and idempotently record an Entry.
 
     ``auth`` is always the real verified session from the router. The private
     unlock fact is derived here, at the domain boundary, so no caller can
@@ -343,11 +376,22 @@ async def confirm_reminder_dispatch(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "code": "PRIVATE_UNLOCK_REQUIRED",
-                "message": "Unlock private mode to confirm this medication reminder",
+                "message": "Unlock private mode to confirm this tracker reminder",
             },
         )
 
-    if tracker.kind != "health" or tracker.input_mode != "event":
+    action = tracker.reminder_action
+    if (
+        action is None
+        and tracker.kind == "health"
+        and tracker.input_mode == "event"
+        and tracker.reminder_time is not None
+        and tracker.reminder_mode is None
+        and tracker.reminder_interval_days is None
+    ):
+        # Old notifications remain confirmable through the rolling deploy window.
+        action = "confirm_event"
+    if action != "confirm_event" or tracker.input_mode != "event":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Tracker configuration is no longer eligible for one-tap reminder confirmation",
