@@ -218,6 +218,21 @@ def test_tracker_type_guard_and_reverse_guard(pg_dsn: str):
             assert resp.status_code == 422, resp.text
             assert "tài chính nhập số tiền" in resp.json()["detail"]
 
+            general_money = await _create_tracker(client, kind="general", input_mode="money")
+            tracker_ids.append(UUID(general_money["id"]))
+            resp = await client.post(
+                "/api/subscriptions",
+                json={
+                    "name": "Sub chung bị chặn",
+                    "tracker_id": general_money["id"],
+                    "amount": "100000",
+                    "started_on": _today_vn(),
+                    "expires_on": _today_vn(),
+                },
+            )
+            assert resp.status_code == 422, resp.text
+            assert "tài chính nhập số tiền" in resp.json()["detail"]
+
             money_tracker = await _create_tracker(client)
             tracker_ids.append(UUID(money_tracker["id"]))
             sub = await _create_subscription(client, money_tracker["id"], auto_renew=True)

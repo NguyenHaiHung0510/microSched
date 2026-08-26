@@ -239,6 +239,14 @@ def _today_vn() -> str:
 
 async def _create_tracker(client, *, kind="finance", input_mode="money", **overrides):
     payload = {"name": f"Tracker {_uuid7()}", "kind": kind, "input_mode": input_mode, **overrides}
+    if kind == "health" and input_mode == "event":
+        payload = {
+            **payload,
+            "reminder_mode": "fixed",
+            "reminder_interval_days": 1,
+            "reminder_action": "confirm_event",
+            "reminder_time": "08:00:00",
+        }
     resp = await client.post("/api/tracker/trackers", json=payload)
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -418,6 +426,68 @@ def test_two_devices_confirm_same_dispatch_create_one_entry(pg_dsn: str):
                     UUID(tracker["id"]),
                 )
                 assert count == 1
+            finally:
+                await conn.close()
+        finally:
+            await client.aclose()
+            await engine.dispose()
+            await _cleanup(pg_dsn, tracker_ids=tracker_ids, dispatch_ids=dispatch_ids)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+def test_confirm_link_is_rejected_after_tracker_action_changes(pg_dsn: str):
+    """A stale confirm URL cannot create an event after its action becomes open_tracker."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        dispatch_ids = []
+        try:
+            tracker = await _create_tracker(client, kind="general", input_mode="event")
+            tracker_ids.append(UUID(tracker["id"]))
+            dispatch_id = _uuid7()
+            dispatch_ids.append(dispatch_id)
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO microsched.reminder_dispatch
+                        (id, subject_type, subject_id, dispatched_on, status,
+                         attempt_count, created_at)
+                    VALUES ($1, 'tracker', $2, CURRENT_DATE, 'pending', 0, NOW())
+                    """,
+                    dispatch_id,
+                    UUID(tracker["id"]),
+                )
+            finally:
+                await conn.close()
+            changed = await client.patch(
+                f"/api/tracker/trackers/{tracker['id']}",
+                json={
+                    "reminder_mode": "fixed",
+                    "reminder_interval_days": 1,
+                    "reminder_action": "open_tracker",
+                    "reminder_time": "08:00:00",
+                },
+            )
+            assert changed.status_code == 200, changed.text
+            response = await client.post(
+                f"/api/reminder-dispatch/{dispatch_id}/confirm",
+                json={"entry_id": str(_uuid7()), "occurred_at": datetime.now(UTC).isoformat()},
+            )
+            assert response.status_code == 409, response.text
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                assert (
+                    await conn.fetchval(
+                        "SELECT count(*) FROM microsched.entry WHERE tracker_id = $1",
+                        UUID(tracker["id"]),
+                    )
+                    == 0
+                )
             finally:
                 await conn.close()
         finally:

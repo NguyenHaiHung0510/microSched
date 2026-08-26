@@ -62,7 +62,7 @@ TRANSFORM_VERSION = "012-cutover-v2-2026-08-20"
 # 026A is an expand migration: the cutover attestation must reject a target
 # that has not yet received its compatible temporal triad and legacy writer
 # triggers, even though source data is still legacy due_at-only.
-EXPECTED_ALEMBIC_REVISION = "0010"
+EXPECTED_ALEMBIC_REVISION = "0011"
 SOURCE_DB_NAME = "microschedule_v2"
 SOURCE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
 TARGET_APP_ROLE = "microsched_app"
@@ -216,6 +216,9 @@ TARGET_FIELDS: dict[str, tuple[str, ...]] = {
         "color",
         "reminder_time",
         "reminder_text",
+        "reminder_mode",
+        "reminder_interval_days",
+        "reminder_action",
         "is_private",
         "deleted_at",
         "created_at",
