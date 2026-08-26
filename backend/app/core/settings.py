@@ -140,6 +140,16 @@ class Settings(BaseSettings):
                         "ALLOW_PROD_DB_IN_LOCAL=true explicitly."
                     )
             prod_refs = [self.neon_owner_url, self.neon_migrator_url]
+            # A loopback production reference is meaningless: production can
+            # never live on the developer laptop or a CI service container.
+            # Drop such refs (CI sets NEON_MIGRATOR_URL to localhost Postgres),
+            # but keep the refusal below when no real anchor remains, so the
+            # guard cannot be silently disabled by a bogus local ref.
+            prod_refs = [
+                ref
+                for ref in prod_refs
+                if ref and not _is_loopback_host((make_url(ref).host or "").rstrip(".").lower())
+            ]
             if self.neon_develop_branch_key and not any(prod_refs):
                 raise ValueError(
                     "NEON_DEVELOP_BRANCH_KEY requires at least one production "
