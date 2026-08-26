@@ -1,5 +1,0 @@
- fix(ui): tăng touch target icon buttons lên 44px (size-11) chuẩn UI brief §6
-
- - Thay thế className size-9 thành size-11 min-h-11 min-w-11 cho các nút sửa/xoá nhóm và sửa/lưu trữ tracker trên TrackerScreen.
-
- Co-Authored-By: McClintock <agent-mcclintock@microsched.local>
