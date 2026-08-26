@@ -8,6 +8,7 @@ from app.core.settings import Settings
 
 DEVELOP_URL = "postgresql://dev:pw@ep-develop-pooler.example.neon.tech/db?sslmode=require"
 PROD_URL = "postgresql://prod:pw@ep-prod.example.neon.tech/db?sslmode=require"
+LOOPBACK_DB_URL = "postgresql://user:pass@localhost:5432/microsched"
 
 
 def _settings(monkeypatch, **env: str) -> Settings:
@@ -76,4 +77,54 @@ def test_local_branch_host_equal_to_prod_host_still_fails_closed(monkeypatch) ->
             APP_ENV="local",
             DATABASE_URL=PROD_URL,
             NEON_DEVELOP_BRANCH_KEY=PROD_URL,
+        )
+
+
+def test_local_loopback_database_needs_no_prod_reference(monkeypatch) -> None:
+    """A plain developer Postgres on loopback boots without any Neon reference."""
+    settings = _settings(
+        monkeypatch,
+        APP_ENV="local",
+        DATABASE_URL=LOOPBACK_DB_URL,
+    )
+    assert settings.database_url.endswith("localhost:5432/microsched")
+
+
+def test_local_redirect_with_owner_reference_passes_guard(monkeypatch) -> None:
+    """Branch redirect with an explicit prod reference lands on the develop host."""
+    settings = _settings(
+        monkeypatch,
+        APP_ENV="local",
+        NEON_DEVELOP_BRANCH_KEY=DEVELOP_URL,
+        NEON_OWNER_URL=PROD_URL,
+    )
+    assert settings.database_url == async_postgres_url(DEVELOP_URL)
+
+
+def test_local_branch_key_without_any_prod_reference_fails_closed(monkeypatch) -> None:
+    """With no prod reference the guard cannot recognize prod, so it refuses."""
+    with pytest.raises(ValidationError, match="requires at least one production"):
+        _settings(monkeypatch, APP_ENV="local", NEON_DEVELOP_BRANCH_KEY=DEVELOP_URL)
+
+
+def test_local_missing_declared_url_with_prod_key_still_fails(monkeypatch) -> None:
+    """No DATABASE_URL plus a mis-pointed branch key must not reach prod."""
+    with pytest.raises(ValidationError, match="production DATABASE_URL"):
+        _settings(
+            monkeypatch,
+            APP_ENV="local",
+            NEON_DEVELOP_BRANCH_KEY=PROD_URL,
+            NEON_OWNER_URL=PROD_URL,
+        )
+
+
+def test_local_prod_key_over_loopback_db_fails_closed(monkeypatch) -> None:
+    """A loopback DATABASE_URL must not launder a prod-pointed branch key."""
+    with pytest.raises(ValidationError, match="production DATABASE_URL"):
+        _settings(
+            monkeypatch,
+            APP_ENV="local",
+            DATABASE_URL=LOOPBACK_DB_URL,
+            NEON_DEVELOP_BRANCH_KEY=PROD_URL,
+            NEON_OWNER_URL=PROD_URL,
         )

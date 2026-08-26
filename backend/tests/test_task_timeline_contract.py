@@ -39,6 +39,9 @@ def _isolate_local_env(monkeypatch):
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("DATABASE_URL", _TEST_DB_URL)
     monkeypatch.delenv("ALLOW_PROD_DB_IN_LOCAL", raising=False)
+    monkeypatch.delenv("NEON_DEVELOP_BRANCH_KEY", raising=False)
+    monkeypatch.delenv("NEON_OWNER_URL", raising=False)
+    monkeypatch.delenv("NEON_MIGRATOR_URL", raising=False)
 
 
 def test_cursor_is_opaque_signed_and_scope_bound(monkeypatch):

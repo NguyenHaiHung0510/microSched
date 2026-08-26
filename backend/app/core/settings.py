@@ -79,19 +79,37 @@ class Settings(BaseSettings):
             # dropped by the browser. An explicit local value is still respected,
             # whether it came from the OS env or from backend/.env.
             self.session_cookie_secure = False
-        if not self.is_production and declared_database_url:
-            # Fail-closed host check: the EFFECTIVE runtime host must never sit
-            # on a declared production host unless the operator opts in
-            # explicitly. The declared URL itself is a prod reference, so a
-            # missing branch key with a prod URL fails here, and a branch key
-            # mis-pointed at prod cannot launder the host past this check.
-            declared_hosts = [
-                declared_database_url,
-                self.neon_owner_url,
-                self.neon_migrator_url,
-            ]
-            prod_hosts = {(make_url(url).host or "").lower() for url in declared_hosts if url}
-            current_host = (make_url(self.database_url).host or "").lower()
+        if not self.is_production:
+            # Fail-closed host check for every local boot. Production hosts are
+            # known ONLY through explicit references (NEON_OWNER_URL,
+            # NEON_MIGRATOR_URL) plus a declared non-loopback DATABASE_URL.
+            # The check judges the EFFECTIVE runtime host, so a branch key
+            # mis-pointed at prod cannot launder its way past, and a missing
+            # declared URL cannot switch the guard off either.
+            loopback_hosts = {
+                "localhost",
+                "127.0.0.1",
+                "::1",
+                "host.docker.internal",
+                "postgres",
+                "db",
+            }
+            declared_host = ""
+            if declared_database_url:
+                declared_host = (make_url(declared_database_url).host or "").lower()
+            prod_refs = [self.neon_owner_url, self.neon_migrator_url]
+            if declared_database_url and declared_host not in loopback_hosts:
+                prod_refs.append(declared_database_url)
+            if self.neon_develop_branch_key and not any(prod_refs):
+                raise ValueError(
+                    "NEON_DEVELOP_BRANCH_KEY requires at least one production "
+                    "reference (NEON_OWNER_URL or NEON_MIGRATOR_URL) so the "
+                    "fail-closed local guard can recognize a production host."
+                )
+            prod_hosts = {(make_url(url).host or "").lower() for url in prod_refs if url}
+            current_host = ""
+            if self.database_url:
+                current_host = (make_url(self.database_url).host or "").lower()
             if current_host in prod_hosts and not self.allow_prod_db_in_local:
                 raise ValueError(
                     "APP_ENV=local refuses to start with the production DATABASE_URL; "
