@@ -191,7 +191,10 @@ def test_build_cron_timer_uses_real_session_factory(monkeypatch):
     """F3: with the flag on, the timer must build from app.core.db, not a ghost module."""
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("APP_ENV", "local")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/microsched")
+    # localhost is never a declared prod host, so the fail-closed local guard
+    # must not fire for this synthetic URL. Keep the raw env var in sync with
+    # the value Settings will actually use.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/microsched")
     get_settings.cache_clear()
     from app.core import db as db_module
 
