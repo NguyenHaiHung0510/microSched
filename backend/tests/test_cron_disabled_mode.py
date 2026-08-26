@@ -133,9 +133,9 @@ async def test_enabled_lifespan_builds_one_timer_task(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "cron-enabled-test-secret")
-    monkeypatch.setenv(
-        "DATABASE_URL", "postgresql+asyncpg://test:test@127.0.0.1:5432/microsched_test"
-    )
+    # localhost is never a declared prod host, so the fail-closed local guard
+    # must not fire for this synthetic URL.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@127.0.0.1:5432/microsched_test")
     get_settings.cache_clear()
 
     class Timer:
