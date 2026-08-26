@@ -1,11 +1,8 @@
 """Application settings loaded from the environment."""
 
-import os
 from functools import lru_cache
-from pathlib import Path
 from typing import Literal
 
-from dotenv import dotenv_values
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -66,6 +63,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
+        # Capture the DECLARED database URL (OS env or .env) before the develop
+        # branch redirect below swaps in the runtime value. The local guard
+        # judges the declared intent: a prod URL plus a valid develop key is
+        # remedied by the redirect, while a prod URL without any key (or a key
+        # pointing back at prod) must still fail closed.
+        declared_database_url = self.database_url
         if not self.is_production and self.neon_develop_branch_key:
             self.database_url = async_postgres_url(self.neon_develop_branch_key)
         if self.is_production:
@@ -76,19 +79,19 @@ class Settings(BaseSettings):
             # dropped by the browser. An explicit local value is still respected,
             # whether it came from the OS env or from backend/.env.
             self.session_cookie_secure = False
-        if not self.is_production and self.database_url:
-            # Fail-closed host check: local must never sit on any declared prod
-            # host (raw DATABASE_URL env, NEON_OWNER_URL, NEON_MIGRATOR_URL)
-            # unless the operator opts in explicitly. The raw env var is read via
-            # dotenv (not os.environ) because pydantic does not push .env values
-            # into the process environment.
-            raw_prod_url = os.environ.get("DATABASE_URL", "")
-            current_host = (make_url(self.database_url).host or "").lower()
-            env_file = Path(__file__).resolve().parent / ".env"
-            if not raw_prod_url and env_file.exists():
-                raw_prod_url = dotenv_values(env_file).get("DATABASE_URL") or ""
-            declared_hosts = [raw_prod_url, self.neon_owner_url, self.neon_migrator_url]
+        if not self.is_production and declared_database_url:
+            # Fail-closed host check: the EFFECTIVE runtime host must never sit
+            # on a declared production host unless the operator opts in
+            # explicitly. The declared URL itself is a prod reference, so a
+            # missing branch key with a prod URL fails here, and a branch key
+            # mis-pointed at prod cannot launder the host past this check.
+            declared_hosts = [
+                declared_database_url,
+                self.neon_owner_url,
+                self.neon_migrator_url,
+            ]
             prod_hosts = {(make_url(url).host or "").lower() for url in declared_hosts if url}
+            current_host = (make_url(self.database_url).host or "").lower()
             if current_host in prod_hosts and not self.allow_prod_db_in_local:
                 raise ValueError(
                     "APP_ENV=local refuses to start with the production DATABASE_URL; "
