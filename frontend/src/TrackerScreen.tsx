@@ -571,23 +571,23 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                       )}
                     </Button>
 
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon-lg"
-                        className="size-9"
-                        aria-label={`Sửa nhóm ${group.name}`}
-                        onClick={() => setEditingGroup(group)}
-                      >
-                        <Pencil className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-lg"
-                        className="size-9"
-                        aria-label={`Xoá nhóm ${group.name}`}
-                        onClick={() => setDeletingGroup(group)}
-                      >
+                   <div className="flex items-center gap-1">
+                     <Button
+                       variant="ghost"
+                       size="icon-lg"
+                        className="size-11 min-h-11 min-w-11"
+                       aria-label={`Sửa nhóm ${group.name}`}
+                       onClick={() => setEditingGroup(group)}
+                     >
+                       <Pencil className="size-3.5" />
+                     </Button>
+                     <Button
+                       variant="ghost"
+                       size="icon-lg"
+                        className="size-11 min-h-11 min-w-11"
+                       aria-label={`Xoá nhóm ${group.name}`}
+                       onClick={() => setDeletingGroup(group)}
+                     >
                         <Trash2 className="size-3.5" />
                       </Button>
                     </div>
@@ -629,26 +629,26 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                     )
                                   }
                                 />
-                                Riêng tư
-                              </label>
-                              <Button
-                                variant="ghost"
-                                size="icon-lg"
-                                className="size-9"
-                                aria-label={`Sửa ${tracker.name}`}
-                                onClick={() => setEditingTracker(tracker)}
-                              >
-                                <Pencil className="size-3.5" />
-                              </Button>
-                              <Button
-                                data-testid="tracker-archive"
-                                data-tracker-id={tracker.id}
-                                variant="ghost"
-                                size="icon-lg"
-                                className="size-9"
-                                aria-label={`Lưu trữ ${tracker.name}`}
-                                onClick={() => setArchiveFor(tracker)}
-                              >
+                               Riêng tư
+                             </label>
+                             <Button
+                               variant="ghost"
+                               size="icon-lg"
+                                className="size-11 min-h-11 min-w-11"
+                               aria-label={`Sửa ${tracker.name}`}
+                               onClick={() => setEditingTracker(tracker)}
+                             >
+                               <Pencil className="size-3.5" />
+                             </Button>
+                             <Button
+                               data-testid="tracker-archive"
+                               data-tracker-id={tracker.id}
+                               variant="ghost"
+                               size="icon-lg"
+                                className="size-11 min-h-11 min-w-11"
+                               aria-label={`Lưu trữ ${tracker.name}`}
+                               onClick={() => setArchiveFor(tracker)}
+                             >
                                 <Archive className="size-3.5" />
                               </Button>
                             </div>
@@ -720,26 +720,26 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                 )
                               }
                             />
-                            Riêng tư
-                          </label>
-                          <Button
-                            variant="ghost"
-                            size="icon-lg"
-                            className="size-9"
-                            aria-label={`Sửa ${tracker.name}`}
-                            onClick={() => setEditingTracker(tracker)}
-                          >
-                            <Pencil className="size-3.5" />
-                          </Button>
-                          <Button
-                            data-testid="tracker-archive"
-                            data-tracker-id={tracker.id}
-                            variant="ghost"
-                            size="icon-lg"
-                            className="size-9"
-                            aria-label={`Lưu trữ ${tracker.name}`}
-                            onClick={() => setArchiveFor(tracker)}
-                          >
+                           Riêng tư
+                         </label>
+                         <Button
+                           variant="ghost"
+                           size="icon-lg"
+                            className="size-11 min-h-11 min-w-11"
+                           aria-label={`Sửa ${tracker.name}`}
+                           onClick={() => setEditingTracker(tracker)}
+                         >
+                           <Pencil className="size-3.5" />
+                         </Button>
+                         <Button
+                           data-testid="tracker-archive"
+                           data-tracker-id={tracker.id}
+                           variant="ghost"
+                           size="icon-lg"
+                            className="size-11 min-h-11 min-w-11"
+                           aria-label={`Lưu trữ ${tracker.name}`}
+                           onClick={() => setArchiveFor(tracker)}
+                         >
                             <Archive className="size-3.5" />
                           </Button>
                         </div>
