@@ -40,7 +40,7 @@
 ### Vấn đề 4: Thuộc tính `session_cookie_secure` khi chạy HTTP Plain ở Local
 - Trong `backend/app/core/settings.py`, mặc định `session_cookie_secure: bool = True` (bắt buộc HTTPS).
 - Khi trình duyệt truy cập qua `http://localhost:5173` (HTTP thường, không có chứng chỉ SSL), trình duyệt Chromium/Safari sẽ tự động **drop (loại bỏ)** cookie có cờ `Secure`.
-- Dẫn đến việc sau khi gọi `/api/auth/dev-session`, cookie không được lưu vào trình duyệt và các API sau đó đều trả về `401 Unauthorized`.
+ - Dẫn đến việc sau khi gọi `/auth/dev-session`, cookie không được lưu vào trình duyệt và các API sau đó đều trả về `401 Unauthorized`.
 
 ---
 
@@ -96,4 +96,4 @@ RuntimeError: Event loop is closed
 2. **Khóa cứng chốt chặn an toàn (Fail-closed Guard):**
    - Ở môi trường local (`APP_ENV=local`), nếu phát hiện `database_url` trùng với host Production, ứng dụng phải từ chối khởi động ngay lập tức để tránh rò rỉ dữ liệu thật.
 3. **Hoàn thiện luồng QA Session:**
-   - Đảm bảo `/api/auth/dev-session` tạo session hợp lệ trong bảng `microsched.session` của nhánh `develop` và gắn cookie `ms_session` không có cờ `Secure` khi ở local.
+   - Đảm bảo `/auth/dev-session` tạo session hợp lệ trong bảng `microsched.session` của nhánh `develop` và gắn cookie `ms_session` không có cờ `Secure` khi ở local.

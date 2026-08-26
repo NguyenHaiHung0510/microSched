@@ -46,4 +46,6 @@ def test_local_scrub_of_declared_branch_is_allowed(monkeypatch) -> None:
 def test_scrub_refuses_the_raw_production_host(monkeypatch) -> None:
     """A prod-host target must be rejected before any network attempt."""
     error = _run_main(monkeypatch, database_url=PROD_URL, branch_key=PROD_URL)
-    assert error is not None and "production host" in str(error)
+    # Either guard may catch it first: settings boot check or script refusal.
+    message = str(error) if error else ""
+    assert ("production DATABASE_URL" in message) or ("production host" in message)

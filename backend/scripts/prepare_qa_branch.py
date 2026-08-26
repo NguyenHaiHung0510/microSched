@@ -112,7 +112,9 @@ async def scrub_branch_data(
     if qa_key_b64:
         qa_key = base64.urlsafe_b64decode(qa_key_b64)
     else:
-        qa_key = prod_key
+        # Keep the QA/prod key boundary: without an explicit --qa-key the branch
+        # gets a fresh random key instead of silently reusing the prod key.
+        qa_key = os.urandom(32)
 
     conn = await asyncpg.connect(dsn, timeout=30)
     counts: dict[str, int] = {}
