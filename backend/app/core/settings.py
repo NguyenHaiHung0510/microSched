@@ -119,10 +119,12 @@ class Settings(BaseSettings):
             # would be a silent no-op, so refuse to boot instead. The check judges
             # the EFFECTIVE runtime host (post-redirect), so a branch key pointed
             # back at prod - direct or pooler spelling - cannot sneak past.
-            simple_local_hosts = {"host.docker.internal", "postgres", "db"}
+            simple_local_hosts = {
+                h.rstrip(".") for h in ("host.docker.internal.", "postgres.", "db.")
+            }
             declared_host = ""
             if declared_database_url:
-                declared_host = (make_url(declared_database_url).host or "").lower()
+                declared_host = (make_url(declared_database_url).host or "").rstrip(".").lower()
             declared_is_local = (
                 _is_loopback_host(declared_host) or declared_host in simple_local_hosts
             )
@@ -148,9 +150,10 @@ class Settings(BaseSettings):
             for ref in prod_refs:
                 if ref:
                     prod_hosts |= _neon_known_hosts(make_url(ref))
-            current_host = ""
-            if self.database_url:
-                current_host = (make_url(self.database_url).host or "").lower()
+        current_host = ""
+        if self.database_url:
+            current_host = (make_url(self.database_url).host or "").rstrip(".").lower()
+        if not self.is_production and self.database_url:
             if current_host in prod_hosts and not self.allow_prod_db_in_local:
                 raise ValueError(
                     "APP_ENV=local refuses to start with the production DATABASE_URL; "

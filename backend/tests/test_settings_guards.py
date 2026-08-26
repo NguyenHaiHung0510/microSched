@@ -132,6 +132,18 @@ def test_local_prod_key_over_loopback_db_fails_closed(monkeypatch) -> None:
         )
 
 
+def test_local_trailing_dot_prod_key_fails_closed(monkeypatch) -> None:
+    """An FQDN trailing dot must not hide a production host from the guard."""
+    with pytest.raises(ValidationError, match="production DATABASE_URL"):
+        _settings(
+            monkeypatch,
+            APP_ENV="local",
+            DATABASE_URL=LOOPBACK_DB_URL,
+            NEON_DEVELOP_BRANCH_KEY="postgresql://prod@ep-prod.example.neon.tech./db",
+            NEON_OWNER_URL=PROD_URL,
+        )
+
+
 def test_local_staging_url_with_prod_key_fails_closed(monkeypatch) -> None:
     """A staging DATABASE_URL must never define what prod means for the key."""
     with pytest.raises(ValidationError, match="only accepts a loopback"):

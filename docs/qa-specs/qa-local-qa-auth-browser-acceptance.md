@@ -11,9 +11,10 @@ ro vao receipt va xin xac nhan truoc khi dung profile khac).
   tren fly.dev tra db=up dung commit moi). Endpoint /auth/dev-session chi ton
   tai o ban code nay.
   Bat buoc ghi receipt: gia tri exact cua readyz.commit va db=up.
-  Bat buoc ghi receipt: gia tri exact cua readyz.commit va db=up.
 - Local backend chay duoc: APP_ENV=local, NEON_DEVELOP_BRANCH_KEY tro nhanh Neon
-  develop (chu sync tay tu prod truoc khi QA), uvicorn lang nghe 127.0.0.1:8000;
+  develop VA co it nhat mot tham chieu prod (NEON_OWNER_URL hoac
+  NEON_MIGRATOR_URL) de guard nhan dien duoc host production;
+  chu sync tay tu prod truoc khi QA; uvicorn lang nghe 127.0.0.1:8000;
   frontend Vite o localhost:5173 proxy sang backend.
 - KHONG doc, sao chep hay hien thi noi dung backend/.env. Chi chu so huu tu
   dam bao bien moi truong; agent chi quan sat hanh vi HTTP/trinh duyet.
@@ -35,7 +36,6 @@ Cac buoc mo rong (mo phong dung cac case guard moi, khong can mang):
   tu choi voi "requires at least one production reference";
 - DATABASE_URL remote (vi du staging) khong duoc reference nao xac nhan:
   tu choi voi "only accepts a loopback".
-Cac buoc mo rong (mo phong dung cac case guard moi, khong can mang):
 - loopback DATABASE_URL + branch key tro prod: tu choi voi
   "production DATABASE_URL";
 - khong co DATABASE_URL + branch key tro prod + NEON_OWNER_URL=prod:
