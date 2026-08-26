@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1"})
 AUTHLIB_GOOGLE_STATE_PREFIX = "_state_google_"
+DEV_SESSION_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 # Deliberately static: never reflect the submitted address back into the page, and
 # never offer a way to request access. There is no sign-up for a single-user app.
@@ -241,4 +242,27 @@ async def logout(
 
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return response
+
+
+@router.get("/dev-session")
+async def dev_session(
+    request: Request,
+    store: SessionStore | None = Depends(get_session_store),
+) -> Response:
+    """Dev/QA only: generate a valid local session for owner@test.local and redirect home."""
+    settings = get_settings()
+    if settings.app_env != "local":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not available")
+    client_host = request.client.host if request.client else ""
+    if client_host not in DEV_SESSION_LOOPBACK_HOSTS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not available")
+    if store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not configured",
+        )
+    token = await store.create("owner@test.local")
+    response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    _set_session_cookie(response, token)
     return response

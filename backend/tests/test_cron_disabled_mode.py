@@ -7,18 +7,35 @@ from pathlib import Path
 
 import pytest
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+def _probe_env(**overrides: str) -> dict[str, str]:
+    """Build a child env that can never see the developer's real backend/.env."""
+    env = os.environ.copy()
+    env.pop("DATABASE_URL", None)
+    env.pop("NEON_DEVELOP_BRANCH_KEY", None)
+    env.update(overrides)
+    # The repo root holds no .env file; PYTHONPATH still makes `app` importable.
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(BACKEND_DIR) + ((os.pathsep + existing) if existing else "")
+    return env
+
+
+def _run_probe(probe: str, **overrides: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=REPO_ROOT,
+        env=_probe_env(**overrides),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
 
 def test_disabled_create_app_does_not_load_or_construct_cron_runtime() -> None:
     """A fresh disabled process creates no timer, dispatcher singleton, or Event."""
-    backend_dir = Path(__file__).resolve().parents[1]
-    env = os.environ.copy()
-    env.update(
-        {
-            "APP_ENV": "local",
-            "ENABLE_INPROCESS_CRON": "false",
-            "OAUTH_STATE_SECRET": "cron-disabled-test-secret",
-        }
-    )
     probe = """
 import asyncio
 import sys
@@ -37,13 +54,11 @@ assert not hasattr(app.state, 'cron_timer_task')
 assert not hasattr(reminder, 'dispatcher')
 """
 
-    result = subprocess.run(
-        [sys.executable, "-c", probe],
-        cwd=backend_dir,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_probe(
+        probe,
+        APP_ENV="local",
+        ENABLE_INPROCESS_CRON="false",
+        OAUTH_STATE_SECRET="cron-disabled-test-secret",
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -51,16 +66,6 @@ assert not hasattr(reminder, 'dispatcher')
 
 def test_local_enabled_without_database_starts_as_disabled_noop() -> None:
     """Local true-mode stays usable without DB and creates no cron task."""
-    backend_dir = Path(__file__).resolve().parents[1]
-    env = os.environ.copy()
-    env.pop("DATABASE_URL", None)
-    env.update(
-        {
-            "APP_ENV": "local",
-            "ENABLE_INPROCESS_CRON": "true",
-            "OAUTH_STATE_SECRET": "cron-local-no-db-test-secret",
-        }
-    )
     probe = """
 import asyncio
 import sys
@@ -83,13 +88,11 @@ assert not hasattr(app.state, 'cron_timer')
 assert not hasattr(app.state, 'cron_timer_task')
 """
 
-    result = subprocess.run(
-        [sys.executable, "-c", probe],
-        cwd=backend_dir,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_probe(
+        probe,
+        APP_ENV="local",
+        ENABLE_INPROCESS_CRON="true",
+        OAUTH_STATE_SECRET="cron-local-no-db-test-secret",
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -104,6 +107,8 @@ def test_production_enabled_without_database_still_fails_fast(monkeypatch) -> No
     from app.core.settings import get_settings
     from app.main import create_app
 
+    # Keep the developer's real backend/.env out of this contract.
+    monkeypatch.chdir(REPO_ROOT)
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "cron-production-test-secret")
@@ -128,9 +133,9 @@ async def test_enabled_lifespan_builds_one_timer_task(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "cron-enabled-test-secret")
-    monkeypatch.setenv(
-        "DATABASE_URL", "postgresql+asyncpg://test:test@127.0.0.1:5432/microsched_test"
-    )
+    # localhost is never a declared prod host, so the fail-closed local guard
+    # must not fire for this synthetic URL.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@127.0.0.1:5432/microsched_test")
     get_settings.cache_clear()
 
     class Timer:

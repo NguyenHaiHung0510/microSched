@@ -31,8 +31,21 @@ def test_task_due_write_rejects_naive_datetime():
         TaskUpdate(due_at=datetime(2026, 8, 16, 12, 0))
 
 
-def test_cursor_is_opaque_signed_and_scope_bound(monkeypatch):
+_TEST_DB_URL = "postgresql://user:pass@localhost:5432/microsched"
+
+
+def _isolate_local_env(monkeypatch):
+    """Pin APP_ENV/DATABASE_URL so Settings() never falls back to backend/.env."""
     monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("DATABASE_URL", _TEST_DB_URL)
+    monkeypatch.delenv("ALLOW_PROD_DB_IN_LOCAL", raising=False)
+    monkeypatch.delenv("NEON_DEVELOP_BRANCH_KEY", raising=False)
+    monkeypatch.delenv("NEON_OWNER_URL", raising=False)
+    monkeypatch.delenv("NEON_MIGRATOR_URL", raising=False)
+
+
+def test_cursor_is_opaque_signed_and_scope_bound(monkeypatch):
+    _isolate_local_env(monkeypatch)
     monkeypatch.setenv("OAUTH_STATE_SECRET", "timeline-test-secret")
     get_settings.cache_clear()
     token = _cursor_encode(
@@ -80,7 +93,7 @@ def test_cursor_is_opaque_signed_and_scope_bound(monkeypatch):
 
 
 def test_cursor_v1_and_due_at_only_positions_are_rejected(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "local")
+    _isolate_local_env(monkeypatch)
     monkeypatch.setenv("OAUTH_STATE_SECRET", "timeline-test-secret")
     get_settings.cache_clear()
     scope = {
@@ -118,7 +131,7 @@ def test_cursor_v1_and_due_at_only_positions_are_rejected(monkeypatch):
 
 
 def test_cursor_rejects_mismatched_group_precision_and_null_shapes(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "local")
+    _isolate_local_env(monkeypatch)
     monkeypatch.setenv("OAUTH_STATE_SECRET", "timeline-test-secret")
     get_settings.cache_clear()
     scope = {

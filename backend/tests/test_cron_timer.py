@@ -4,6 +4,7 @@ import asyncio
 import heapq
 import logging
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -261,7 +262,10 @@ def test_build_cron_timer_uses_real_session_factory(monkeypatch):
     """F3: with the flag on, the timer must build from app.core.db, not a ghost module."""
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("APP_ENV", "local")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/microsched")
+    # localhost is never a declared prod host, so the fail-closed local guard
+    # must not fire for this synthetic URL. Keep the raw env var in sync with
+    # the value Settings will actually use.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/microsched")
     get_settings.cache_clear()
     from app.core import db as db_module
 
@@ -279,6 +283,8 @@ def test_build_cron_timer_uses_real_session_factory(monkeypatch):
 
 def test_build_cron_timer_fails_fast_without_database(monkeypatch):
     """F3: no DB configured with the flag on ⇒ loud RuntimeError, not a silent timer."""
+    # The contract is "DATABASE_URL absent"; keep the developer's real .env out.
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])
     monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.delenv("DATABASE_URL", raising=False)

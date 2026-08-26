@@ -82,6 +82,13 @@ function LoginScreen() {
             Đăng nhập bằng Google
           </a>
         </Button>
+        {import.meta.env.DEV && (
+          <Button asChild variant="outline" size="sm" className="mt-2">
+            <a href="/auth/dev-session" data-testid="qa-dev-login-link">
+              Đăng nhập QA (Bypass OAuth)
+            </a>
+          </Button>
+        )}
       </Card>
     </div>
   )
