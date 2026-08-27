@@ -5,7 +5,9 @@
 [![Latest release](https://img.shields.io/github/v/release/NguyenHaiHung0510/microSched?display_name=tag)](https://github.com/NguyenHaiHung0510/microSched/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**microSched** là personal software laboratory và app toàn năng phục vụ nhu cầu thật của mình: quản lý task, ghi chú, lịch, tracker sức khỏe/tài chính và các đăng ký định kỳ trong một PWA. Đây là dự án trục nối nền tảng ngành Công nghệ phần mềm PTIT với con đường AI Engineer — đã cut-over để dùng thật từ **21/07/2026** và tiếp tục cải tiến theo feedback thực tế.
+**microSched** là app cá nhân toàn năng và personal software laboratory của mình — chặng thứ ba, cũng là phiên bản trưởng thành nhất hiện tại, trong hành trình xây công cụ cá nhân.
+
+Hành trình đi từ [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap) (CLI C++ sơ khai từ năm nhất), qua [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian) (desktop Python/Flet, vibe-coded, đóng gói `.exe`), đến microSched (harness engineering + AI engineering). Đây là sự trưởng thành trong tư duy sản phẩm, kỹ thuật và cách mình cộng tác với AI; microSched đã được dùng thật từ **21/07/2026** và tiếp tục cải tiến theo feedback thực tế.
 
 > Đây là dự án cá nhân đang phát triển. Tài liệu này mô tả những gì code hiện có; không phải mọi ý tưởng trong roadmap đều đã shipped.
 
