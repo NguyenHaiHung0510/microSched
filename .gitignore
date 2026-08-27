@@ -228,3 +228,8 @@ gl-files.txt
 /agent-tasks/screenshots
 backend/pytest-tmp/
 /microsched-backups
+
+# Local Codex worktrees are checkouts, not source artifacts; never stage them.
+/worktrees/
+# QA/build outputs may contain screenshots, traces or generated reports; keep them local.
+/output/
