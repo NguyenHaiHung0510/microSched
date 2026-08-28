@@ -7,10 +7,10 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from enum import StrEnum
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.process_stats import read_rss_kb, read_uptime_s
@@ -37,10 +37,28 @@ LOOP_FAILURE_BACKOFF_SECONDS = 30
 # A failed DB snapshot is a known recovery path, not a poller. After these
 # three bounded retries the task must fail so lifespan supervision restarts it.
 SNAPSHOT_RETRY_BACKOFF_SECONDS = (30, 120, 600)
+PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS = 20.0
+# 035A: one deployment-wide, session-level ownership fence.  The two positive
+# int32 values deliberately form an opaque namespace/key pair; they are safe to
+# query from pg_locks without disclosing a connection, PID, or user data.
+SCHEDULER_ADVISORY_LOCK_NAMESPACE = 35_035
+SCHEDULER_ADVISORY_LOCK_KEY = 1
+SCHEDULER_ADVISORY_LOCK_REF = "scheduler_035_v1"
+# Standby processes do not inspect schedules while they wait.  These values are
+# a bounded takeover backoff, not a database polling interval.
+OWNERSHIP_ACQUIRE_BACKOFF_SECONDS = (1, 2, 5, 10, 30)
 
 
 class CronTimerReloadFailure(RuntimeError):
     """Raised after the bounded snapshot-reload retries are exhausted."""
+
+
+class CronTimerOwnershipLost(RuntimeError):
+    """Raised when the dedicated session-level advisory-lock connection dies."""
+
+
+class CronTimerOwnershipError(RuntimeError):
+    """Raised when a timer cannot safely establish or verify ownership."""
 
 
 def _backoff_seconds(attempt_count: int) -> int:
@@ -109,13 +127,26 @@ class ReloadSink:
 
 
 class CronTimer:
-    """Single in-process async timer maintaining an in-memory priority queue."""
+    """Single-owner in-process timer maintaining an in-memory priority queue."""
 
-    def __init__(self, session_factory: Any, reminder_dispatcher: Any | None = None):
+    def __init__(
+        self,
+        session_factory: Any,
+        reminder_dispatcher: Any | None = None,
+        *,
+        lock_connection_factory: Callable[[], Awaitable[Any]] | None = None,
+    ):
         self.session_factory = session_factory
         # The dispatcher owns process-local delivery locks, so it belongs to
         # this enabled timer instance rather than module import state.
         self._dispatcher = reminder_dispatcher or ReminderDispatcher()
+        self._lock_connection_factory = lock_connection_factory
+        self._lock_connection: Any | None = None
+        self._ownership_active = False
+        self._ownership_lost_event = asyncio.Event()
+        self._ownership_wake_event = asyncio.Event()
+        self._dispatch_task: asyncio.Task[None] | None = None
+        self._snapshot_task: asyncio.Task[None] | None = None
         self._heap: list[tuple[datetime, int, int, date, int, TimerItem]] = []
         self.reload_event = asyncio.Event()
         self._stop_event = asyncio.Event()
@@ -124,7 +155,6 @@ class CronTimer:
         self._last_reload_at: datetime | None = None
         self._last_dispatch_at: datetime | None = None
         self._last_dispatch_outcome: str | None = None
-        self._loop_task: asyncio.Task[None] | None = None
         self._is_stopped = False
         self._loop_failures = 0
         self._pending_manual_required: dict[str, int] = {
@@ -140,10 +170,208 @@ class CronTimer:
     def status(self) -> str:
         return self._status
 
+    def _log_ownership_transition(self, state: str, *, level: int = logging.INFO) -> None:
+        """Emit a privacy-safe ownership receipt without connection identity."""
+        logger.log(
+            level,
+            "cron_timer_ownership_transition state=%s lock_ref=%s commit=%s",
+            state,
+            SCHEDULER_ADVISORY_LOCK_REF,
+            get_settings().git_sha,
+        )
+
     def request_reload(self, reason: str) -> None:
         """Signal the timer loop to reload the schedule snapshot from DB."""
         self._reload_reason = reason
         self.reload_event.set()
+
+    async def _default_lock_connection(self) -> Any:
+        """Open a dedicated asyncpg connection outside the session pool.
+
+        Session-level advisory locks only remain held while this exact physical
+        connection lives.  A pooled SQLAlchemy session cannot prove that, so the
+        fence deliberately uses a direct connection configured from the same
+        application URL only when the scheduler is enabled.
+        """
+        import asyncpg
+
+        from app.core.database_urls import asyncpg_dsn
+
+        database_url = get_settings().database_url
+        if database_url is None:
+            raise CronTimerOwnershipError("scheduler ownership requires a database URL")
+        return await asyncpg.connect(asyncpg_dsn(database_url))
+
+    def _on_lock_connection_terminated(self, connection: Any) -> None:
+        """Fail closed if the sole ownership proof disappears."""
+        if (
+            connection is not self._lock_connection
+            or self._is_stopped
+            or self._ownership_lost_event.is_set()
+        ):
+            return
+        self._status = "ownership_lost"
+        self._ownership_lost_event.set()
+        self._ownership_wake_event.set()
+        self.reload_event.set()
+        dispatch_task = self._dispatch_task
+        if dispatch_task is not None and not dispatch_task.done():
+            # A provider may already have accepted the current request; that
+            # remains the documented at-least-once window.  Cancelling now
+            # prevents the task from beginning any later provider call.
+            dispatch_task.cancel()
+        snapshot_task = self._snapshot_task
+        if snapshot_task is not None and not snapshot_task.done():
+            snapshot_task.cancel()
+        self._log_ownership_transition("ownership_lost", level=logging.ERROR)
+
+    async def _acquire_ownership(self) -> bool:
+        """Acquire the session lock, or enter standby without touching schedule state."""
+        attempt = 0
+        while not self._is_stopped:
+            attempt += 1
+            delay = OWNERSHIP_ACQUIRE_BACKOFF_SECONDS[
+                min(attempt - 1, len(OWNERSHIP_ACQUIRE_BACKOFF_SECONDS) - 1)
+            ]
+            if self._is_stopped:
+                return False
+            factory = self._lock_connection_factory or self._default_lock_connection
+            connection: Any | None = None
+            try:
+                connection = await factory()
+                acquired = await connection.fetchval(
+                    "SELECT pg_try_advisory_lock($1::integer, $2::integer)",
+                    SCHEDULER_ADVISORY_LOCK_NAMESPACE,
+                    SCHEDULER_ADVISORY_LOCK_KEY,
+                )
+            except Exception as exc:
+                if connection is not None:
+                    await self._close_lock_connection(connection)
+                self._status = "standby"
+                logger.error(
+                    "cron_timer_ownership_acquire_failed attempt=%d retry_in_seconds=%d "
+                    "lock_ref=%s error_type=%s",
+                    attempt,
+                    delay,
+                    SCHEDULER_ADVISORY_LOCK_REF,
+                    type(exc).__name__,
+                )
+                if await self._wait_for_ownership_wake(delay):
+                    return False
+                continue
+
+            if acquired:
+                self._lock_connection = connection
+                self._ownership_active = True
+                add_listener = getattr(connection, "add_termination_listener", None)
+                if add_listener is not None:
+                    add_listener(self._on_lock_connection_terminated)
+                self._status = "owner"
+                self._log_ownership_transition("owner", level=logging.WARNING)
+                return True
+
+            await self._close_lock_connection(connection)
+            self._status = "standby"
+            self._log_ownership_transition("standby")
+            if await self._wait_for_ownership_wake(delay):
+                return False
+        return False
+
+    async def _wait_for_ownership_wake(self, timeout: float) -> bool:
+        """Wake standby on stop/reload, not on a database tick."""
+        if self._is_stopped:
+            return True
+        stop_wait = asyncio.create_task(self._stop_event.wait())
+        reload_wait = asyncio.create_task(self.reload_event.wait())
+        ownership_wait = asyncio.create_task(self._ownership_wake_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {stop_wait, reload_wait, ownership_wait},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if not done:
+                return False
+            if stop_wait in done:
+                return True
+            if reload_wait in done:
+                self.reload_event.clear()
+            if ownership_wait in done:
+                self._ownership_wake_event.clear()
+            return False
+        finally:
+            for task in (stop_wait, reload_wait, ownership_wait):
+                if not task.done():
+                    task.cancel()
+
+    async def _close_lock_connection(self, connection: Any) -> None:
+        close = getattr(connection, "close", None)
+        if close is not None:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+
+    async def _release_ownership(self) -> None:
+        """Release only after the sender has quiesced during graceful shutdown."""
+        connection = self._lock_connection
+        self._lock_connection = None
+        self._ownership_active = False
+        if connection is None:
+            return
+        try:
+            if not self._ownership_lost_event.is_set():
+                await connection.execute(
+                    "SELECT pg_advisory_unlock($1::integer, $2::integer)",
+                    SCHEDULER_ADVISORY_LOCK_NAMESPACE,
+                    SCHEDULER_ADVISORY_LOCK_KEY,
+                )
+        finally:
+            await self._close_lock_connection(connection)
+
+    async def _wait_for_provider_workers(self) -> None:
+        """Retain scheduler ownership until real Web Push workers are finished."""
+        provider_work = getattr(self._dispatcher, "provider_work", None)
+        if provider_work is None:
+            return
+        if await provider_work.wait_for_idle(PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS):
+            return
+        raise CronTimerOwnershipLost("provider worker exceeded shutdown timeout")
+
+    async def _assert_owner(self, phase: str) -> None:
+        """Reject snapshot, recovery, or provider work without a live fence."""
+        connection = self._lock_connection
+        if self._ownership_lost_event.is_set() or connection is None:
+            raise CronTimerOwnershipLost(f"scheduler ownership lost before {phase}")
+        is_closed = getattr(connection, "is_closed", None)
+        if callable(is_closed) and is_closed():
+            self._on_lock_connection_terminated(connection)
+            raise CronTimerOwnershipLost(f"scheduler ownership lost before {phase}")
+        try:
+            still_held = await connection.fetchval(
+                "SELECT EXISTS ("
+                "SELECT 1 FROM pg_locks "
+                "WHERE locktype = 'advisory' AND pid = pg_backend_pid() "
+                "AND classid = $1::oid AND objid = $2::oid AND objsubid = 2 "
+                "AND granted"
+                ")",
+                SCHEDULER_ADVISORY_LOCK_NAMESPACE,
+                SCHEDULER_ADVISORY_LOCK_KEY,
+            )
+        except Exception as exc:
+            self._on_lock_connection_terminated(connection)
+            raise CronTimerOwnershipLost(
+                f"scheduler ownership liveness failed before {phase}"
+            ) from exc
+        if not still_held:
+            self._on_lock_connection_terminated(connection)
+            raise CronTimerOwnershipLost(f"scheduler ownership missing before {phase}")
+
+    async def _guard_provider_attempt(self) -> None:
+        """Check the fence at the last safe point before Web Push I/O."""
+        await self._assert_owner("provider_attempt")
 
     def health_snapshot(self) -> dict[str, Any]:
         """Return RAM-only observability snapshot."""
@@ -157,7 +385,7 @@ class CronTimer:
             next_due_iso = self._heap[0][0].isoformat()
 
         effective_status = self._status
-        if is_stale and effective_status == "running":
+        if is_stale and effective_status == "owner":
             effective_status = "stale"
 
         if is_stale and not self._stale_logged:
@@ -168,7 +396,7 @@ class CronTimer:
 
         return {
             "enabled": True,
-            "running": effective_status == "running",
+            "running": effective_status == "owner",
             "status": effective_status,
             "queue_size": len(self._heap),
             "next_due_at": next_due_iso,
@@ -185,7 +413,7 @@ class CronTimer:
             "pending_manual_required_count": sum(self._pending_manual_required.values()),
             "pending_manual_required": dict(self._pending_manual_required),
             "invalid_tracker_schedule_count": self._invalid_tracker_schedule_count,
-            "degraded": effective_status in ("degraded", "stale"),
+            "degraded": self._loop_failures > 0 or effective_status == "stale",
             "stale": is_stale,
             "uptime_s": read_uptime_s(),
             "rss_kb": read_rss_kb(),
@@ -276,6 +504,15 @@ class CronTimer:
         new_heap: list[tuple[datetime, int, int, date, int, TimerItem]] = []
         pending_keys: set[tuple[ScheduleKind, UUID, date]] = set()
 
+        # 035A must stay safe when a later batching release has already
+        # committed membership.  PostgreSQL cannot plan a reference to a table
+        # that does not exist, so probe first and only add the anti-join on
+        # schemas that actually carry the future table.
+        batch_item_table = await db.execute(
+            text("SELECT to_regclass('microsched.tracker_reminder_batch_item')")
+        )
+        has_batch_items = batch_item_table.scalar_one_or_none() is not None
+
         # 1. Load every pending reminder_dispatch row; dead rows (>24h old or
         #    attempt_count >= 4) are NOT silently dropped — 011d §1.4.3/§5.3
         #    requires a structured manual-handling receipt (F11). Eligibility
@@ -283,6 +520,15 @@ class CronTimer:
         #    queries below.
         cutoff = now_vn - PENDING_RECOVERY_TIMEOUT
         stmt_pending = select(ReminderDispatch).where(ReminderDispatch.status == "pending")
+        if has_batch_items:
+            stmt_pending = stmt_pending.where(
+                text(
+                    "NOT EXISTS ("
+                    "SELECT 1 FROM microsched.tracker_reminder_batch_item AS batch_item "
+                    "WHERE batch_item.dispatch_id = reminder_dispatch.id"
+                    ")"
+                )
+            )
         res_pending = await db.execute(stmt_pending)
         pending_rows = list(res_pending.scalars().all())
 
@@ -586,6 +832,8 @@ class CronTimer:
 
     async def _process_due_item(self, item: TimerItem, *, now: datetime | None = None) -> None:
         """Execute a single due item from the heap."""
+        if self._ownership_active:
+            await self._assert_owner("due_item")
         now_vn = now or datetime.now(VN_TZ)
         today_vn = now_vn.date()
 
@@ -651,6 +899,9 @@ class CronTimer:
                     item.occurrence_on,
                     payload_builder,
                     telemetry=self._dispatch_telemetry(item),
+                    ownership_guard=self._guard_provider_attempt
+                    if self._ownership_active
+                    else None,
                 )
                 self._last_dispatch_at = datetime.now(VN_TZ)
                 self._last_dispatch_outcome = outcome.value
@@ -727,6 +978,9 @@ class CronTimer:
                     item.occurrence_on,
                     sub_payload_builder,
                     telemetry=self._dispatch_telemetry(item),
+                    ownership_guard=self._guard_provider_attempt
+                    if self._ownership_active
+                    else None,
                 )
                 self._last_dispatch_at = datetime.now(VN_TZ)
                 self._last_dispatch_outcome = outcome.value
@@ -796,13 +1050,19 @@ class CronTimer:
         self._reload_reason = phase
         for attempt, delay in enumerate(SNAPSHOT_RETRY_BACKOFF_SECONDS, start=1):
             try:
-                async with self.session_factory() as db:
-                    await self.load_snapshot(db)
+                await self._assert_owner("snapshot")
+                self._snapshot_task = asyncio.create_task(
+                    self._load_snapshot_once(), name="microsched-cron-snapshot"
+                )
+                await self._await_ownership_or_task(self._snapshot_task, phase="snapshot")
             except asyncio.CancelledError:
+                if self._is_stopped:
+                    return False
+                raise
+            except CronTimerOwnershipLost:
                 raise
             except Exception as exc:
                 self._loop_failures += 1
-                self._status = "degraded"
                 logger.error(
                     "cron_timer_snapshot_failed phase=%s attempt=%d retry_in_seconds=%d error=%s",
                     phase,
@@ -814,7 +1074,6 @@ class CronTimer:
                     self._status = "stopped"
                     return False
             else:
-                self._status = "running"
                 self._loop_failures = 0
                 return True
 
@@ -823,13 +1082,19 @@ class CronTimer:
             return False
 
         try:
-            async with self.session_factory() as db:
-                await self.load_snapshot(db)
+            await self._assert_owner("snapshot")
+            self._snapshot_task = asyncio.create_task(
+                self._load_snapshot_once(), name="microsched-cron-snapshot"
+            )
+            await self._await_ownership_or_task(self._snapshot_task, phase="snapshot")
         except asyncio.CancelledError:
+            if self._is_stopped:
+                return False
+            raise
+        except CronTimerOwnershipLost:
             raise
         except Exception as exc:
             self._loop_failures += 1
-            self._status = "degraded"
             logger.error(
                 "cron_timer_loop_failed phase=reload failures=%d error=%s",
                 self._loop_failures,
@@ -837,37 +1102,90 @@ class CronTimer:
             )
             raise CronTimerReloadFailure("CronTimer snapshot reload retries exhausted") from exc
         else:
-            self._status = "running"
             self._loop_failures = 0
             return True
 
+    async def _load_snapshot_once(self) -> None:
+        """Run the bounded database rebuild in a separately supervised task."""
+        try:
+            async with self.session_factory() as db:
+                await self.load_snapshot(db)
+        finally:
+            self._snapshot_task = None
+
+    async def _await_with_ownership(self, awaitable: Awaitable[Any], *, phase: str) -> Any:
+        """Race a blocking recovery operation against loss of the lock session."""
+        work_task = asyncio.create_task(awaitable, name=f"microsched-cron-{phase}")
+        return await self._await_ownership_or_task(work_task, phase=phase)
+
+    async def _await_ownership_or_task(self, task: asyncio.Task[Any], *, phase: str) -> Any:
+        """Make lock loss preempt blocked snapshot or recovery work promptly."""
+        ownership_wait = asyncio.create_task(self._ownership_lost_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {task, ownership_wait}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if ownership_wait in done:
+                if not task.done():
+                    task.cancel()
+                    # Do not leave a cancelled snapshot/recovery coroutine
+                    # running behind the fatal lifespan error.  In particular,
+                    # a session-context cleanup could otherwise begin later
+                    # recovery work after the dedicated lock is gone.
+                    await asyncio.gather(task, return_exceptions=True)
+                raise CronTimerOwnershipLost(f"scheduler ownership lost during {phase}")
+            return await task
+        finally:
+            if not ownership_wait.done():
+                ownership_wait.cancel()
+                await asyncio.gather(ownership_wait, return_exceptions=True)
+
     async def run(self) -> None:
-        """Main timer loop."""
-        self._status = "running"
-        logger.warning("cron_timer_started mode=inprocess")
-        if not await self._load_snapshot_with_retries("startup"):
-            return
+        """Run only while this process owns the PostgreSQL scheduler lock."""
+        self._log_ownership_transition("starting", level=logging.WARNING)
+        try:
+            if not await self._acquire_ownership():
+                return
+            if not await self._await_with_ownership(
+                self._load_snapshot_with_retries("startup"), phase="recovery"
+            ):
+                return
 
-        while not self._is_stopped:
-            try:
-                if self.reload_event.is_set():
-                    self.reload_event.clear()
-                    if not await self._load_snapshot_with_retries("reload"):
-                        break
+            while not self._is_stopped:
+                if self._ownership_lost_event.is_set():
+                    raise CronTimerOwnershipLost("scheduler ownership lost during timer loop")
+                try:
+                    if self.reload_event.is_set():
+                        self.reload_event.clear()
+                        if not await self._await_with_ownership(
+                            self._load_snapshot_with_retries("reload"), phase="recovery"
+                        ):
+                            break
 
-                now_vn = datetime.now(VN_TZ)
+                    now_vn = datetime.now(VN_TZ)
+                    due_items: list[TimerItem] = []
+                    while self._heap and self._heap[0][0] <= now_vn:
+                        _, _, _, _, _, item = heapq.heappop(self._heap)
+                        due_items.append(item)
 
-                # Pop all items that are due now
-                due_items: list[TimerItem] = []
-                while self._heap and self._heap[0][0] <= now_vn:
-                    _, _, _, _, _, item = heapq.heappop(self._heap)
-                    due_items.append(item)
-
-                if due_items:
                     for item in due_items:
+                        if self._is_stopped:
+                            break
+                        self._dispatch_task = asyncio.create_task(
+                            self._process_due_item(item),
+                            name="microsched-cron-dispatch",
+                        )
                         try:
-                            await self._process_due_item(item)
+                            await self._dispatch_task
                         except asyncio.CancelledError:
+                            if self._ownership_lost_event.is_set():
+                                raise CronTimerOwnershipLost(
+                                    "scheduler ownership lost during provider dispatch"
+                                )
+                            if self._is_stopped:
+                                break
+                            raise
+                        except CronTimerOwnershipLost:
                             raise
                         except Exception as exc:
                             logger.error(
@@ -878,49 +1196,70 @@ class CronTimer:
                                 _occurrence_ref(item.kind, item.subject_id, item.occurrence_on),
                                 type(exc).__name__,
                             )
-                            # A DB failure before a durable claim must not drop
-                            # the occurrence. Reload immediately: a claimed row
-                            # rehydrates as pending; an unclaimed item remains
-                            # eligible through the 15-minute grace window.
                             self.request_reload("dispatch_error")
+                        finally:
+                            self._dispatch_task = None
 
-                # Calculate sleep duration to next item, or wait forever for a
-                # reload event when the heap is empty (no tick, no query).
-                now_vn = datetime.now(VN_TZ)
-                if self._heap:
-                    sleep_sec = max(0.0, (self._heap[0][0] - now_vn).total_seconds())
-                    await asyncio.wait_for(self.reload_event.wait(), timeout=sleep_sec)
-                else:
-                    await self.reload_event.wait()
-            except asyncio.CancelledError:
-                logger.info("CronTimer loop cancelled")
-                raise
-            except CronTimerReloadFailure:
-                raise
-            except TimeoutError:
-                # Normal wake-up: the wait-for-next-due deadline elapsed.
-                pass
-            except Exception as exc:
-                # Bacon-F2 (011d §5.3): an unexpected top-level failure must
-                # never kill the task silently while the app thinks reminders
-                # are running. Log, go DEGRADED, wait a bounded backoff, then
-                # continue the loop.
-                self._loop_failures += 1
-                self._status = "degraded"
-                logger.error(
-                    "cron_timer_loop_failed failures=%d error=%s",
-                    self._loop_failures,
-                    type(exc).__name__,
-                )
-                if await self._wait_for_stop(LOOP_FAILURE_BACKOFF_SECONDS):
-                    break
+                    if self._is_stopped:
+                        break
+                    now_vn = datetime.now(VN_TZ)
+                    if self._heap:
+                        sleep_sec = max(0.0, (self._heap[0][0] - now_vn).total_seconds())
+                        await asyncio.wait_for(self.reload_event.wait(), timeout=sleep_sec)
+                    else:
+                        await self.reload_event.wait()
+                except asyncio.CancelledError:
+                    logger.info("CronTimer loop cancelled")
+                    raise
+                except CronTimerOwnershipLost, CronTimerReloadFailure:
+                    raise
+                except TimeoutError:
+                    pass
+                except Exception as exc:
+                    self._loop_failures += 1
+                    logger.error(
+                        "cron_timer_loop_failed failures=%d error=%s",
+                        self._loop_failures,
+                        type(exc).__name__,
+                    )
+                    if await self._wait_for_stop(LOOP_FAILURE_BACKOFF_SECONDS):
+                        break
+        except CronTimerOwnershipLost:
+            if self._status != "ownership_lost":
+                self._status = "ownership_lost"
+                self._log_ownership_transition("ownership_lost", level=logging.ERROR)
+            raise
+        finally:
+            if not self._is_stopped and self._status != "ownership_lost":
+                self._status = "stopping"
+                self._log_ownership_transition("stopping")
+            await self._wait_for_provider_workers()
+            await self._release_ownership()
+            self._status = "stopped"
+            self._log_ownership_transition("stopped")
 
     async def stop(self) -> None:
         """Clean shutdown for the timer loop."""
+        if self._status == "stopped":
+            return
+        self._status = "stopping"
+        self._log_ownership_transition("stopping")
         self._is_stopped = True
         self.reload_event.set()
         self._stop_event.set()
+        self._ownership_wake_event.set()
+        dispatch_task = self._dispatch_task
+        if dispatch_task is not None and not dispatch_task.done():
+            dispatch_task.cancel()
+            await asyncio.gather(dispatch_task, return_exceptions=True)
+        snapshot_task = self._snapshot_task
+        if snapshot_task is not None and not snapshot_task.done():
+            snapshot_task.cancel()
+            await asyncio.gather(snapshot_task, return_exceptions=True)
+        await self._wait_for_provider_workers()
+        await self._release_ownership()
         self._status = "stopped"
+        self._log_ownership_transition("stopped")
 
 
 def build_cron_timer_if_enabled(session_factory: Any = None) -> CronTimer | None:

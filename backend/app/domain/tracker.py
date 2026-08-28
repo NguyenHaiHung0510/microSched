@@ -472,7 +472,9 @@ class TrackerStore:
         stmt = readable(stmt, Tracker, auth)  # privacy + soft-delete of the PARENT
         stmt = not_deleted(stmt, Entry)  # soft-delete of the entry itself
         if for_update:
-            stmt = stmt.with_for_update()
+            # Callers acquire Tracker before Entry.  Lock only the child here
+            # so PostgreSQL does not silently lock the joined parent first.
+            stmt = stmt.with_for_update(of=Entry)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -1106,11 +1108,17 @@ class TrackerStore:
     ) -> EntryRead | None:
         """Patch an entry's enrichable fields; never reparent (no tracker_id in DTO)."""
         changes = payload.model_dump(exclude_unset=True)
-        entry = await self._entry(db, auth, entry_id, for_update=True)
-        if entry is None:
+        # Probe only for identity, then obey the global reminder/freshness lock
+        # order Tracker → Entry.  The locked re-read closes the race with a
+        # scheduler that uses the same tracker row as its boundary.
+        probe = await self._entry(db, auth, entry_id)
+        if probe is None:
             return None
-        tracker = await self._tracker(db, auth, entry.tracker_id, for_update=True)
+        tracker = await self._tracker(db, auth, probe.tracker_id, for_update=True)
         if tracker is None:
+            return None
+        entry = await self._entry(db, auth, entry_id, for_update=True)
+        if entry is None or entry.tracker_id != tracker.id:
             return None
         if "tracker_id" in changes:
             raise EntryInvalid("entry.tracker_id là trường bất biến.")
@@ -1140,8 +1148,14 @@ class TrackerStore:
 
     async def soft_delete_entry(self, db: AsyncSession, auth: AuthSession, entry_id: UUID) -> bool:
         """Soft-delete an entry — this is the undo button of a one-tap capture."""
-        entry = await self._entry(db, auth, entry_id)
-        if entry is None:
+        probe = await self._entry(db, auth, entry_id)
+        if probe is None:
+            return False
+        tracker = await self._tracker(db, auth, probe.tracker_id, for_update=True)
+        if tracker is None:
+            return False
+        entry = await self._entry(db, auth, entry_id, for_update=True)
+        if entry is None or entry.tracker_id != tracker.id:
             return False
         entry.deleted_at = datetime.now(UTC)
         db.info[CRON_TIMER_RELOAD_INFO_KEY] = "entry:soft_delete"
@@ -1160,6 +1174,18 @@ class TrackerStore:
         entry = (await db.execute(stmt)).scalar_one_or_none()
         if entry is None:
             return await self._entry(db, auth, entry_id)
+        tracker = await self._tracker(db, auth, entry.tracker_id, for_update=True)
+        if tracker is None:
+            return None
+        locked_stmt = (
+            select(Entry)
+            .join(Tracker, Entry.tracker_id == Tracker.id)
+            .where(Entry.id == entry_id, Entry.deleted_at.is_not(None))
+        )
+        locked_stmt = with_privacy_gate(locked_stmt, Tracker, auth).with_for_update(of=Entry)
+        entry = (await db.execute(locked_stmt)).scalar_one_or_none()
+        if entry is None or entry.tracker_id != tracker.id:
+            return None
         entry.deleted_at = None
         db.info[CRON_TIMER_RELOAD_INFO_KEY] = "entry:restore"
         await db.flush()

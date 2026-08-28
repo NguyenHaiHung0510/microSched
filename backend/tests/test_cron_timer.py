@@ -3,6 +3,7 @@
 import asyncio
 import heapq
 import logging
+import threading
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -20,6 +21,7 @@ from app.core.cron_timer import (
 )
 from app.core.settings import get_settings
 from app.domain.models import ReminderDispatch, Subscription, Tracker
+from app.domain.push import ProviderWorkTracker
 from app.domain.reminder import DispatchOutcome, DispatchTelemetry
 from app.web import deps
 
@@ -62,6 +64,10 @@ class FakeDB:
 
     async def execute(self, stmt):
         self.executions += 1
+        if "to_regclass" in str(stmt):
+            # 035A probes the future batch-item table before choosing the
+            # recovery query.  Unit fixtures model the pre-0012 schema.
+            return FakeResult([])
         if not self.results:
             # Generic tracker scheduling adds two bounded aggregate queries.
             # Older unit fixtures that do not care about their values may omit
@@ -90,6 +96,42 @@ class FakeFactory:
         return Ctx(self.db)
 
 
+class FakeLockConnection:
+    """Dedicated advisory-lock test double, isolated from schedule queries."""
+
+    def __init__(self):
+        self.closed = False
+        self.listener = None
+        self.unlock_calls = 0
+
+    async def fetchval(self, query, *args):
+        if "pg_try_advisory_lock" in query:
+            return True
+        if "pg_locks" in query:
+            return not self.closed
+        raise AssertionError(f"unexpected lock query: {query}")
+
+    async def execute(self, query, *args):
+        assert "pg_advisory_unlock" in query
+        self.unlock_calls += 1
+
+    def add_termination_listener(self, listener):
+        self.listener = listener
+
+    async def close(self):
+        self.closed = True
+
+
+@pytest.fixture(autouse=True)
+def fake_scheduler_lock(monkeypatch):
+    """Keep legacy unit tests DB-free while production uses asyncpg directly."""
+
+    async def open_connection():
+        return FakeLockConnection()
+
+    monkeypatch.setattr(CronTimer, "_default_lock_connection", lambda self: open_connection())
+
+
 class StubDispatcher:
     """Dispatcher double recording calls and returning a fixed outcome."""
 
@@ -107,8 +149,11 @@ class StubDispatcher:
         payload_builder,
         *,
         telemetry=None,
+        ownership_guard=None,
     ):
         self.calls.append((subject_type, subject_id, dispatched_on))
+        if ownership_guard is not None:
+            await ownership_guard()
         if telemetry is not None:
             telemetry(DispatchTelemetry(attempt_count=self.attempt_count))
             telemetry(DispatchTelemetry(attempt_count=self.attempt_count, outcome=self.outcome))
@@ -151,6 +196,269 @@ def _subscription(sub_id: UUID, tracker_id: UUID, *, expires_on, canceled_at=Non
         expires_on=expires_on,
         auto_renew=True,
         canceled_at=canceled_at,
+    )
+
+
+@pytest.mark.anyio
+async def test_standby_never_loads_snapshot_or_dispatches(monkeypatch):
+    """035A: a lock standby must not touch schedule recovery or delivery state."""
+
+    class StandbyLockConnection(FakeLockConnection):
+        async def fetchval(self, query, *args):
+            if "pg_try_advisory_lock" in query:
+                return False
+            raise AssertionError(f"standby must not run lock liveness query: {query}")
+
+    connection = StandbyLockConnection()
+
+    async def open_connection():
+        return connection
+
+    monkeypatch.setattr(cron, "OWNERSHIP_ACQUIRE_BACKOFF_SECONDS", (3600,))
+    db = FakeDB(results=[])
+    dispatcher = StubDispatcher(DispatchOutcome.SENT)
+    timer = CronTimer(
+        FakeFactory(db),
+        reminder_dispatcher=dispatcher,
+        lock_connection_factory=open_connection,
+    )
+    task = asyncio.create_task(timer.run())
+    try:
+        for _ in range(100):
+            if timer.status == "standby":
+                break
+            await asyncio.sleep(0)
+        else:
+            pytest.fail("timer did not enter standby")
+        assert db.executions == 0
+        assert dispatcher.calls == []
+    finally:
+        await timer.stop()
+        await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.anyio
+async def test_lock_connection_loss_is_fatal_before_another_snapshot(monkeypatch):
+    """035A: loss of the dedicated connection fails lifespan supervision closed."""
+
+    connection = FakeLockConnection()
+    loaded = asyncio.Event()
+
+    async def open_connection():
+        return connection
+
+    timer = CronTimer(FakeFactory(object()), lock_connection_factory=open_connection)
+
+    async def snapshot(db):
+        loaded.set()
+
+    monkeypatch.setattr(timer, "load_snapshot", snapshot)
+    task = asyncio.create_task(timer.run())
+    await asyncio.wait_for(loaded.wait(), timeout=1)
+    assert connection.listener is not None
+    connection.listener(connection)
+    with pytest.raises(cron.CronTimerOwnershipLost):
+        await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.anyio
+async def test_lock_loss_cancels_inflight_sender_before_a_second_provider_call():
+    """035A: the lost-lock callback cancels the active sender immediately."""
+
+    connection = FakeLockConnection()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    timer = CronTimer(FakeFactory(object()))
+    timer._lock_connection = connection
+    timer._ownership_active = True
+    timer._status = "owner"
+    connection.add_termination_listener(timer._on_lock_connection_terminated)
+
+    async def blocked_sender():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    timer._dispatch_task = asyncio.create_task(blocked_sender())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert connection.listener is not None
+    connection.listener(connection)
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    assert timer.status == "ownership_lost"
+    assert timer._ownership_lost_event.is_set()
+
+
+@pytest.mark.anyio
+async def test_graceful_stop_cancels_sender_before_unlock():
+    """035A: shutdown never relinquishes ownership while a sender still runs."""
+
+    connection = FakeLockConnection()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    timer = CronTimer(FakeFactory(object()))
+    timer._lock_connection = connection
+    timer._ownership_active = True
+    timer._status = "owner"
+
+    async def blocked_sender():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    timer._dispatch_task = asyncio.create_task(blocked_sender())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await timer.stop()
+
+    assert cancelled.is_set()
+    assert connection.unlock_calls == 1
+    assert connection.closed is True
+
+
+@pytest.mark.anyio
+async def test_graceful_stop_waits_for_uncancellable_provider_thread(monkeypatch):
+    """035A P1: cancellation must not unlock while the worker thread still runs."""
+
+    class Dispatcher:
+        def __init__(self):
+            self.provider_work = ProviderWorkTracker()
+
+    connection = FakeLockConnection()
+    dispatcher = Dispatcher()
+    timer = CronTimer(FakeFactory(object()), reminder_dispatcher=dispatcher)
+    timer._lock_connection = connection
+    timer._ownership_active = True
+    timer._status = "owner"
+
+    worker_started = asyncio.Event()
+    release_worker = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def blocking_provider_call():
+        loop.call_soon_threadsafe(worker_started.set)
+        release_worker.wait()
+
+    worker = asyncio.create_task(asyncio.to_thread(blocking_provider_call))
+    dispatcher.provider_work.track(worker)
+    await asyncio.wait_for(worker_started.wait(), timeout=1)
+    stop_task = asyncio.create_task(timer.stop())
+    try:
+        await asyncio.sleep(0)
+        assert connection.unlock_calls == 0
+        assert connection.closed is False
+    finally:
+        release_worker.set()
+        await asyncio.wait_for(stop_task, timeout=1)
+    assert connection.unlock_calls == 1
+    assert connection.closed is True
+
+
+@pytest.mark.anyio
+async def test_lock_loss_preempts_blocked_snapshot(monkeypatch):
+    """035A P1: a lost lock interrupts snapshot work before a second recovery."""
+
+    connection = FakeLockConnection()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def open_connection():
+        return connection
+
+    timer = CronTimer(FakeFactory(object()), lock_connection_factory=open_connection)
+
+    async def blocked_snapshot(db):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(timer, "load_snapshot", blocked_snapshot)
+    task = asyncio.create_task(timer.run())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert connection.listener is not None
+    connection.listener(connection)
+    with pytest.raises(cron.CronTimerOwnershipLost):
+        await asyncio.wait_for(task, timeout=1)
+    assert cancelled.is_set()
+
+
+@pytest.mark.anyio
+async def test_lock_loss_preempts_blocked_reload_recovery(monkeypatch):
+    """035A P1: reload recovery cannot continue after a dedicated-lock loss."""
+
+    connection = FakeLockConnection()
+    startup_done = asyncio.Event()
+    reload_started = asyncio.Event()
+    reload_cancelled = asyncio.Event()
+
+    async def open_connection():
+        return connection
+
+    timer = CronTimer(FakeFactory(object()), lock_connection_factory=open_connection)
+    loads = 0
+
+    async def snapshot(db):
+        nonlocal loads
+        loads += 1
+        if loads == 1:
+            startup_done.set()
+            return
+        reload_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            reload_cancelled.set()
+            raise
+
+    monkeypatch.setattr(timer, "load_snapshot", snapshot)
+    task = asyncio.create_task(timer.run())
+    await asyncio.wait_for(startup_done.wait(), timeout=1)
+    timer.request_reload("test")
+    await asyncio.wait_for(reload_started.wait(), timeout=1)
+    assert connection.listener is not None
+    connection.listener(connection)
+    with pytest.raises(cron.CronTimerOwnershipLost):
+        await asyncio.wait_for(task, timeout=1)
+    assert reload_cancelled.is_set()
+    assert loads == 2
+
+
+@pytest.mark.anyio
+async def test_future_batch_schema_adds_pending_recovery_antijoin(monkeypatch):
+    """035A: post-0012 linked pending rows never enter legacy recovery."""
+
+    class FutureSchemaDB(FakeDB):
+        def __init__(self):
+            super().__init__([[], [], []])
+            self.statements = []
+
+        async def execute(self, stmt):
+            self.executions += 1
+            self.statements.append(str(stmt))
+            if "to_regclass" in str(stmt):
+                return FakeResult(["microsched.tracker_reminder_batch_item"])
+            if not self.results:
+                return FakeResult([])
+            return FakeResult(self.results.pop(0))
+
+    async def fake_lead(db):
+        return 3
+
+    monkeypatch.setattr(cron, "expiry_lead_days", fake_lead)
+    db = FutureSchemaDB()
+    timer = CronTimer(dummy_factory)
+    await timer.load_snapshot(db, now=datetime(2026, 8, 6, 7, 0, tzinfo=VN_TZ))
+
+    assert any(
+        "tracker_reminder_batch_item" in statement and "NOT EXISTS" in statement
+        for statement in db.statements
     )
 
 
@@ -235,7 +543,7 @@ async def test_generic_after_entry_schedule_uses_bounded_aggregate_results(monke
     assert item.occurrence_on == date(2026, 8, 7)
     assert item.reminder_action == "open_tracker"
     assert item.last_entry_date == date(2026, 8, 4)
-    assert db.executions == 5
+    assert db.executions == 6
 
 
 def test_cron_timer_disabled_by_default(monkeypatch):
@@ -352,7 +660,7 @@ async def test_queue_loaded_receipt_uses_none_for_empty_heap(monkeypatch, caplog
         "pending_manual_required_count": "0",
         "invalid_tracker_schedule_count": "0",
     }
-    assert db.executions == 3
+    assert db.executions == 4
 
 
 def test_timer_item_heap_ordering():
@@ -880,10 +1188,10 @@ async def test_empty_heap_waits_without_queries(monkeypatch):
     timer = CronTimer(FakeFactory(db))
     task = asyncio.create_task(timer.run())
     await asyncio.sleep(0.1)
-    assert db.executions == 3, "exactly the one startup snapshot, no polling"
+    assert db.executions == 4, "exactly the one startup snapshot, no polling"
     timer.request_reload("test")
     await asyncio.sleep(0.1)
-    assert db.executions == 6, "reload after the commit marker"
+    assert db.executions == 8, "reload after the commit marker"
     await timer.stop()
     await asyncio.wait_for(task, timeout=2)
     assert task.done()
@@ -907,7 +1215,7 @@ async def test_snapshot_reload_retries_then_recovers(monkeypatch):
     task = asyncio.create_task(timer.run())
     await asyncio.sleep(0.05)
     assert attempts == 3
-    assert timer.status == "running"
+    assert timer.status == "owner"
     await timer.stop()
     await asyncio.wait_for(task, timeout=2)
     assert task.done()
@@ -930,7 +1238,7 @@ async def test_snapshot_reload_fails_after_three_retries(monkeypatch):
     with pytest.raises(cron.CronTimerReloadFailure):
         await timer.run()
     assert attempts == 4
-    assert timer.status == "degraded"
+    assert timer.status == "stopped"
 
 
 @pytest.mark.anyio
@@ -978,8 +1286,9 @@ async def test_stop_interrupts_long_top_level_failure_backoff(monkeypatch):
     timer.reload_event = BrokenReloadEvent()
     task = asyncio.create_task(timer.run())
     await asyncio.wait_for(loop_failed.wait(), timeout=1)
-    while timer.status != "degraded":
+    while timer._loop_failures != 1:
         await asyncio.sleep(0)
+    assert timer.status == "owner"
 
     await timer.stop()
     await asyncio.wait_for(task, timeout=0.25)
@@ -1122,8 +1431,10 @@ async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monk
         await asyncio.wait_for(task, timeout=1)
 
     timer_records = [record for record in caplog.records if record.name == cron.__name__]
-    started_records = [
-        record for record in timer_records if record.getMessage().startswith("cron_timer_started")
+    ownership_records = [
+        record
+        for record in timer_records
+        if record.getMessage().startswith("cron_timer_ownership_transition")
     ]
     queue_records = [
         record
@@ -1131,9 +1442,12 @@ async def test_cron_timer_run_emits_warning_startup_and_safe_queue_receipts(monk
         if record.getMessage().startswith("cron_timer_queue_loaded")
     ]
 
-    assert len(started_records) == 1
-    assert started_records[0].levelno == logging.WARNING
-    assert started_records[0].getMessage() == "cron_timer_started mode=inprocess"
+    assert len(ownership_records) == 2
+    assert [record.levelno for record in ownership_records] == [logging.WARNING, logging.WARNING]
+    assert [record.getMessage() for record in ownership_records] == [
+        "cron_timer_ownership_transition state=starting lock_ref=scheduler_035_v1 commit=unknown",
+        "cron_timer_ownership_transition state=owner lock_ref=scheduler_035_v1 commit=unknown",
+    ]
 
     assert len(queue_records) == 1
     assert queue_records[0].levelno == logging.WARNING

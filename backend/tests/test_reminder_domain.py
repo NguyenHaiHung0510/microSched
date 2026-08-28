@@ -1,11 +1,14 @@
 """Pure unit tests for reminder payload generation and privacy rules."""
 
 import inspect
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
+import pytest
+from fastapi import HTTPException
+
 import app.domain.reminder as reminder_module
-from app.domain.models import Subscription, Tracker
+from app.domain.models import AuthSession, ReminderDispatch, Subscription, Tracker
 from app.domain.reminder import (
     build_medication_payload,
     build_subscription_expiry_payload,
@@ -22,6 +25,69 @@ def test_confirmation_requires_the_verified_auth_session() -> None:
 
     assert "is_private_unlocked" not in parameters
     assert parameters["auth"].default is inspect.Parameter.empty
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("terminal_status", ("no_device", "cancelled", "exhausted", "future"))
+async def test_confirmation_rejects_terminal_or_unknown_dispatch_before_entry_creation(
+    terminal_status,
+):
+    """035A: rollback must never reopen a terminal future-schema confirmation link."""
+
+    tracker_id = UUID("01912345-6789-7000-8000-000000000018")
+    dispatch = ReminderDispatch(
+        id=DISPATCH_ID,
+        subject_type="tracker",
+        subject_id=tracker_id,
+        dispatched_on=date(2026, 8, 27),
+        status=terminal_status,
+    )
+    tracker = Tracker(
+        id=tracker_id,
+        name="Nhắc việc",
+        kind="general",
+        input_mode="event",
+        is_private=False,
+        reminder_time=None,
+    )
+
+    class Result:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+    class Database:
+        def __init__(self):
+            self.values = [dispatch, tracker, dispatch]
+            self.commits = 0
+
+        async def execute(self, stmt):
+            return Result(self.values.pop(0))
+
+        async def commit(self):
+            self.commits += 1
+
+    auth = AuthSession(
+        id=UUID("01912345-6789-7000-8000-000000000019"),
+        token_hash="test",
+        user_email="owner@test.local",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    database = Database()
+
+    with pytest.raises(HTTPException) as error:
+        await confirm_reminder_dispatch(
+            database,
+            DISPATCH_ID,
+            UUID("01912345-6789-7000-8000-000000000020"),
+            datetime.now(UTC),
+            auth,
+        )
+
+    assert error.value.status_code == 409
+    assert database.commits == 0
 
 
 def test_medication_payload_private_tracker_without_text():
