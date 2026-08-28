@@ -125,23 +125,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const trackers = trackersQuery.data?.items ?? EMPTY_TRACKERS
   const groups = groupsQuery.data?.items ?? EMPTY_GROUPS
 
-  // C1: the private gate lives in PrivateGate (shared with other screens); the
-  // tracker query family is this screen's own cache, so IT must react to the
-  // lock/unlock transition. On lock, cached tracker names / entries / dashboard
-  // numbers are erased BEFORE any refetch can paint the previous result while
-  // the request is pending (same R6 order PrivateGate uses for tasks). On
-  // unlock, the queries refetch so private rows come back.
-  useEffect(() => {
-    const previous = wasUnlocked.current
-    if (previous && !privateUnlocked) {
-      queryClient.removeQueries({ queryKey: trackerInvalidationKey })
-      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
-    } else if (!previous && privateUnlocked) {
-      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
-    }
-    wasUnlocked.current = privateUnlocked
-  }, [privateUnlocked, queryClient])
-
   // §5.2: order is computed once per membership change and then frozen — a capture
   // must never re-sort the grid under the finger.
   const membershipKey = trackers.map((tracker) => tracker.id).sort().join(',')
@@ -177,6 +160,35 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
  const createReturnRef = useRef<HTMLButtonElement | null>(null)
   const editReturnRef = useRef<HTMLButtonElement | null>(null)
  const unlockTimers = useRef<Map<string, number>>(new Map())
+
+  // C1: lock is a local-state boundary as well as a query-cache boundary.
+  // TrackerForm owns its draft internally, so neither create nor edit can tell
+  // whether an unsaved field has become private while the dialog is open.
+  // Close every tracker-related dialog on a lock transition to unmount those
+  // drafts fail-closed before a tracker refetch can paint.
+  useEffect(() => {
+    const previous = wasUnlocked.current
+    if (previous && !privateUnlocked) {
+      setCreateOpen(false)
+      setEditingTracker(null)
+      setGroupOpen(false)
+      setEditingGroup(null)
+      setDeletingGroup(null)
+      setBackdateFor(null)
+      setBackdateChoice('yesterday')
+      setBackdateCustom('')
+      setArchiveFor(null)
+      setEditingEntry(null)
+      setLockedIds(new Set())
+      setCapturingIds(new Set())
+      editReturnRef.current = null
+      queryClient.removeQueries({ queryKey: trackerInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+    } else if (!previous && privateUnlocked) {
+      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+    }
+    wasUnlocked.current = privateUnlocked
+  }, [privateUnlocked, queryClient])
 
  useEffect(() => {
     const timers = unlockTimers.current

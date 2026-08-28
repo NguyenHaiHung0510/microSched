@@ -1,8 +1,31 @@
-import { test, expect } from './fixtures/tracker'
+import { test, expect, type FixtureTracker } from './fixtures/tracker'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as crypto from 'node:crypto'
 import { fixturePrivatePin } from './fixtures/tasks'
+
+function privateTrackerSentinel(): FixtureTracker {
+  return {
+    id: 'tracker-private-edit-sentinel',
+    name: 'Private Tracker Edit Dialog Sentinel',
+    kind: 'health',
+    direction: 'out',
+    input_mode: 'event',
+    group_id: null,
+    unit: null,
+    color: null,
+    reminder_time: '08:00',
+    reminder_text: 'Private reminder sentinel',
+    reminder_mode: 'fixed',
+    reminder_interval_days: 1,
+    reminder_action: 'confirm_event',
+    is_private: true,
+    last_entry_at: null,
+    entry_count_30d: 0,
+    created_at: '2026-08-01T08:00:00Z',
+    updated_at: '2026-08-01T08:00:00Z',
+  }
+}
 
 test.describe('Task 036 Dogfooding UI/UX verification', () => {
   test.beforeEach(async ({ page, trackerApi, taskApi }) => {
@@ -1131,6 +1154,106 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await page.getByRole('tab', { name: 'Ghi chú' }).click()
     await expect(page.getByText('Private Note Secret Sentinel')).toHaveCount(0)
     await expect(page.getByText('Ghi chú công khai hiển thị mọi lúc')).toBeVisible()
+  })
+
+  test('Private tracker edit dialog closes and purges its draft on immediate lock', async ({ page, trackerApi, taskApi }) => {
+    const privateTracker = privateTrackerSentinel()
+    trackerApi.trackers.push(privateTracker)
+    await page.route('**/api/tracker/trackers**', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback()
+      const privateOpen = Boolean(
+        taskApi.privateUntil && Date.parse(taskApi.privateUntil) > Date.now(),
+      )
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: trackerApi.trackers.filter((tracker) => !tracker.is_private || privateOpen),
+        }),
+      })
+    })
+
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Theo dõi' }).click()
+    await page.getByRole('button', { name: 'Mở rộng tất cả' }).click()
+    await expect(
+      page.locator(`[data-testid="tracker-edit"][data-tracker-id="${privateTracker.id}"]`),
+    ).toBeVisible()
+
+    await page
+      .locator(`[data-testid="tracker-edit"][data-tracker-id="${privateTracker.id}"]`)
+      .click()
+    const dialog = page.getByTestId('tracker-dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByTestId('tracker-name-input')).toHaveValue(privateTracker.name)
+
+    // The modal overlay correctly blocks pointer input to the header. Invoke the
+    // button handler directly to simulate an immediate security transition that
+    // arrives while the dialog is active.
+    await page.getByTestId('private-lock-now').evaluate((element) => element.click())
+    await expect(page.getByTestId('private-badge')).toContainText('đang khoá')
+    await expect(dialog).toHaveCount(0)
+    await expect(
+      page.locator(`[data-testid="tracker-edit"][data-tracker-id="${privateTracker.id}"]`),
+    ).toHaveCount(0)
+  })
+
+  test('Private tracker edit dialog closes and purges its draft on TTL expiry', async ({ page, trackerApi, taskApi }) => {
+    const privateTracker = privateTrackerSentinel()
+    taskApi.privateUntil = new Date(Date.now() + 10_000).toISOString()
+    trackerApi.trackers.push(privateTracker)
+    await page.route('**/api/me', async (route) => {
+      const privateUntil =
+        taskApi.privateUntil && Date.parse(taskApi.privateUntil) > Date.now()
+          ? taskApi.privateUntil
+          : null
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          email: 'qa@example.test',
+          signed_in_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+          private_until: privateUntil,
+          private_locked_until: null,
+          pin_is_set: true,
+          pin_is_bootstrap: false,
+        }),
+      })
+    })
+    await page.route('**/api/tracker/trackers**', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback()
+      const privateOpen = Boolean(
+        taskApi.privateUntil && Date.parse(taskApi.privateUntil) > Date.now(),
+      )
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: trackerApi.trackers.filter((tracker) => !tracker.is_private || privateOpen),
+        }),
+      })
+    })
+
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Theo dõi' }).click()
+    await page.getByRole('button', { name: 'Mở rộng tất cả' }).click()
+    await expect(
+      page.locator(`[data-testid="tracker-edit"][data-tracker-id="${privateTracker.id}"]`),
+    ).toBeVisible()
+
+    await page
+      .locator(`[data-testid="tracker-edit"][data-tracker-id="${privateTracker.id}"]`)
+      .click()
+    const dialog = page.getByTestId('tracker-dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByTestId('tracker-name-input')).toHaveValue(privateTracker.name)
+
+    await expect(dialog).toHaveCount(0, { timeout: 20_000 })
+    await expect(page.getByTestId('private-badge')).toContainText('đang khoá')
+    await expect(
+      page.locator(`[data-testid="tracker-edit"][data-tracker-id="${privateTracker.id}"]`),
+    ).toHaveCount(0)
   })
 
   test('Notes layout & sort contract: default alphabet, created/updated sort, pinned partition, persistence', async ({ page }) => {
