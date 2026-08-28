@@ -2,6 +2,9 @@ import type { QueryClient } from '@tanstack/react-query'
 
 import { ApiError, apiRequest } from '@/api'
 import { taskInvalidationKey } from '@/task-ui'
+import { noteInvalidationKey } from '@/note-ui'
+import { trackerInvalidationKey } from '@/tracker-ui'
+import { subscriptionInvalidationKey } from '@/subscription-ui'
 
 export type PrivateSessionState = {
   email: string
@@ -69,7 +72,7 @@ export function countdownLabel(seconds: number): string {
 }
 
 /**
- * Remove all task responses at the instant the hard server deadline expires.
+ * Remove all task, calendar, note, and tracker responses at the instant the hard server deadline expires.
  * The boolean lets the component flip its badge without making this pure seam
  * depend on React or a DOM clock.
  */
@@ -81,5 +84,8 @@ export function expirePrivateSession(
   if (!privateUntil || remainingSeconds(privateUntil, now) > 0) return false
   queryClient.removeQueries({ queryKey: taskInvalidationKey })
   queryClient.removeQueries({ queryKey: ['calendar'] })
+  queryClient.removeQueries({ queryKey: noteInvalidationKey })
+  queryClient.removeQueries({ queryKey: trackerInvalidationKey })
+  queryClient.removeQueries({ queryKey: subscriptionInvalidationKey })
   return true
 }

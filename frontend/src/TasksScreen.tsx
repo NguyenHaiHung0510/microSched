@@ -261,7 +261,7 @@ export function TasksScreen() {
     mutationFn: (payload: TaskPayload) =>
       apiRequest<Task>('/api/tasks', {
         method: 'POST',
-        body: JSON.stringify({ ...payload, items: [] }),
+        body: JSON.stringify({ ...payload, items: payload.items ?? [] }),
       }),
     onSuccess: () => {
       setQuickTitle('')
@@ -1276,7 +1276,7 @@ export function LegacyTasksScreen() {
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       apiRequest<Task>('/api/tasks', {
         method: 'POST',
-        body: JSON.stringify({ ...payload, items: [] }),
+        body: JSON.stringify({ ...payload, items: payload.items ?? [] }),
       }),
     // Cùng luật với `refresh()` của TaskCard, và đây mới là chỗ bug được BÁO:
     // nút "Đang thêm…" đọc `create.isPending`, mà React Query giữ `isPending` cho

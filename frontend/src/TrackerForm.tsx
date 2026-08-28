@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  buildTrackerWritePayload,
   type ReminderAction,
   type ReminderMode,
   type Tracker,
@@ -18,23 +19,10 @@ import {
   type TrackerGroup,
   type TrackerInputMode,
   type TrackerKind,
+  type TrackerWritePayload,
 } from '@/tracker-ui'
 
-export type TrackerWritePayload = {
-  name: string
-  kind: TrackerKind
-  direction: TrackerDirection
-  input_mode: TrackerInputMode
-  group_id: string | null
-  unit: string | null
-  is_private: boolean
-  reminder_time?: string | null
-  reminder_text?: string | null
-  reminder_mode?: ReminderMode | null
-  reminder_interval_days?: number | null
-  reminder_action?: ReminderAction | null
-  ensure_push?: boolean
-}
+export type { TrackerWritePayload }
 
 export function TrackerForm({
   initial,
@@ -67,7 +55,6 @@ export function TrackerForm({
     initial?.reminder_action ?? (initial?.input_mode === 'event' || !initial ? 'confirm_event' : 'open_tracker'),
   )
   const [reminderTime, setReminderTime] = useState(initial?.reminder_time ?? '08:00')
-  const [reminderText, setReminderText] = useState(initial?.reminder_text ?? '')
 
   const kindGroups = groups.filter((group) => group.kind === kind)
   const needsUnit = inputMode === 'quantity'
@@ -92,35 +79,22 @@ export function TrackerForm({
     event.preventDefault()
     if (!canSubmit) return
     const intervalNum = Math.max(1, parseInt(reminderIntervalDays, 10) || 1)
-    const effectiveAction: ReminderAction =
-      inputMode === 'event' ? reminderAction : 'open_tracker'
-    const reminderPayload = reminderEnabled
-      ? {
-          reminder_mode: reminderMode,
-          reminder_interval_days: intervalNum,
-          reminder_action: effectiveAction,
-          reminder_time: reminderTime,
-          reminder_text: reminderText.trim() || null,
-          ensure_push: true,
-        }
-      : {
-          reminder_mode: null,
-          reminder_interval_days: null,
-          reminder_action: null,
-          reminder_time: null,
-          reminder_text: null,
-          ensure_push: false,
-        }
-    onSubmit({
-      name: name.trim(),
+    const payload = buildTrackerWritePayload({
+      name,
       kind,
       direction,
       input_mode: inputMode,
-      group_id: groupId || null,
-      unit: needsUnit ? unit.trim() : null,
+      group_id: groupId,
+      unit,
       is_private: isPrivate,
-      ...reminderPayload,
+      reminder_enabled: reminderEnabled,
+      reminder_mode: reminderMode,
+      reminder_interval_days: intervalNum,
+      reminder_action: reminderAction,
+      reminder_time: reminderTime,
+      is_edit: Boolean(initial),
     })
+    onSubmit(payload)
   }
 
   return (
@@ -136,7 +110,7 @@ export function TrackerForm({
         />
       </label>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="block space-y-1.5 text-sm font-semibold">
           <span>Loại</span>
           <Select value={kind} onValueChange={(value) => handleKindChange(value as TrackerKind)}>
@@ -208,7 +182,7 @@ export function TrackerForm({
         </label>
         {reminderEnabled ? (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block space-y-1.5 text-sm font-semibold">
                 <span>Kiểu nhắc</span>
                 <Select
@@ -225,7 +199,7 @@ export function TrackerForm({
                 </Select>
               </label>
               <label className="block space-y-1.5 text-sm font-semibold">
-                <span>{reminderMode === 'fixed' ? 'Mỗi N ngày' : 'Nhắc sau N ngày chưa ghi'}</span>
+                <span>{reminderMode === 'fixed' ? 'Lặp lại mỗi (ngày)' : 'Số ngày chưa ghi'}</span>
                 <Input
                   data-testid="tracker-reminder-interval"
                   className="h-10 bg-card"
@@ -271,19 +245,6 @@ export function TrackerForm({
                 </div>
               </div>
             )}
-            <label className="block space-y-1.5 text-sm font-semibold">
-              <span>Nội dung hiện trên màn hình khoá (không bắt buộc)</span>
-              <Input
-                className="h-10 bg-card"
-                data-testid="tracker-reminder-text"
-                value={reminderText}
-                maxLength={240}
-                onChange={(event) => setReminderText(event.target.value)}
-              />
-              <span className="block text-xs font-normal text-muted-foreground">
-                Nội dung này hiển thị công khai trên màn hình khoá thiết bị.
-              </span>
-            </label>
           </>
         ) : null}
       </fieldset>

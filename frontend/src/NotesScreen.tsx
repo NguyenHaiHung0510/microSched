@@ -37,6 +37,13 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { uuidv7 } from '@/lib/uuidv7'
@@ -45,12 +52,16 @@ import { standardRefetchInterval } from '@/query-polling'
 import {
   appendFutureReflection,
   deleteFutureReflection,
+  fetchAllNotes,
   formatNoteTime,
+  NotePageLimitError,
   parseNoteBody,
+  sortNotes,
   updateFutureReflection,
   type Note,
   type NoteItem,
   type NotePayload,
+  type NoteSortMode,
   type NoteWritePayload,
   noteInvalidationKey,
   noteQueryKey,
@@ -218,9 +229,10 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         onClick={openDetailsFromCard}
         className="gap-3 overflow-visible rounded-lg bg-card px-4 py-4 shadow-2 ring-0 transition-shadow"
       >
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1 space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div className="min-w-0 flex-1 space-y-2 w-full">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
               {note.pinned ? (
                 <Badge data-testid="note-pinned-badge-card" variant="default" className="gap-1 px-1.5 py-0 text-xs">
                   <Pin className="size-3 fill-current" />
@@ -242,32 +254,33 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                   Riêng tư
                 </Badge>
               ) : null}
+              </div>
             </div>
 
             {parsedBody.baseText ? (
-              <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+              <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground w-full">
                 {parsedBody.baseText}
               </p>
             ) : null}
 
             {parsedBody.reflections.length > 0 ? (
-              <div className="space-y-2 pt-1">
+              <div className="space-y-2 pt-1 w-full">
                 {parsedBody.reflections.map((refl, idx) => (
-                  <div
-                    key={refl.id}
-                    data-testid="note-reflection-box"
-                    className="rounded-md border border-amber-200/90 bg-amber-50/70 p-2.5 text-xs text-foreground space-y-1 shadow-sm"
-                  >
-                    <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-amber-900">
-                      <span className="flex items-center gap-1">
+                 <div
+                   key={refl.id}
+                   data-testid="note-reflection-box"
+                   className="rounded-md border border-warn/30 bg-warn-bg p-2.5 text-xs text-foreground space-y-1 shadow-sm w-full"
+                 >
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-bold text-foreground">
+                      <span className="flex flex-wrap items-center gap-1 min-w-0">
                         <span>💬 Lời nhắn từ tương lai</span>
                         <span className="font-semibold text-muted-foreground">({refl.time})</span>
                       </span>
-                      <div className="flex items-center gap-0.5">
+                      <div className="flex items-center gap-0.5 shrink-0">
                         <Button
                           size="icon-xs"
                           variant="ghost"
-                          className="size-6 p-0 hover:bg-amber-200/60"
+                          className="size-8 min-h-8 min-w-8 p-0 hover:bg-warn/20"
                           aria-label="Sửa lời nhắn"
                           onClick={(e) => {
                             e.stopPropagation()
@@ -280,7 +293,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                         <Button
                           size="icon-xs"
                           variant="ghost"
-                          className="size-6 p-0 text-bad hover:bg-amber-200/60 hover:text-bad"
+                          className="size-8 min-h-8 min-w-8 p-0 text-bad hover:bg-warn/20 hover:text-bad"
                           aria-label="Xoá lời nhắn"
                           onClick={(e) => {
                             e.stopPropagation()
@@ -312,7 +325,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 data-testid="note-future-reflection-trigger"
                 size="xs"
                 variant="outline"
-                className="gap-1 text-xs"
+                className="gap-1 text-xs min-h-8"
                 onClick={(e) => {
                   e.stopPropagation()
                   setReflectionOpen(true)
@@ -324,12 +337,12 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
             </div>
           </div>
 
-          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-2">
             <Button
               data-testid="note-pin"
               size="icon-lg"
               variant="ghost"
-              className={cn('size-11', note.pinned ? 'text-primary' : 'text-muted-foreground')}
+              className={cn('size-11 min-h-11 min-w-11', note.pinned ? 'text-primary' : 'text-muted-foreground')}
               aria-label={note.pinned ? `Bỏ ghim ${label}` : `Ghim ${label}`}
               disabled={update.isPending}
               onClick={(e) => {
@@ -343,6 +356,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               data-testid="note-edit"
               size="icon-lg"
               variant="ghost"
+              className="size-11 min-h-11 min-w-11"
               aria-label={`Sửa ${label}`}
               onClick={openEditor}
             >
@@ -352,7 +366,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               data-testid="note-delete"
               size="icon-lg"
               variant="ghost"
-              className="text-bad hover:text-bad"
+              className="size-11 min-h-11 min-w-11 text-bad hover:text-bad"
               aria-label={`Xoá ${label}`}
               disabled={remove.isPending}
               onClick={() => remove.mutate()}
@@ -482,13 +496,13 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 {parsedBody.reflections.length > 0 ? (
                   <div className="space-y-2 pt-2">
                     {parsedBody.reflections.map((refl, idx) => (
-                      <div
-                        key={refl.id}
-                        data-testid="note-reflection-box-detail"
-                        className="rounded-md border border-amber-200/90 bg-amber-50/70 p-3 text-xs text-foreground space-y-1.5 shadow-sm"
-                      >
-                        <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-amber-900">
-                          <span className="flex items-center gap-1">
+                     <div
+                       key={refl.id}
+                       data-testid="note-reflection-box-detail"
+                       className="rounded-md border border-warn/30 bg-warn-bg p-3 text-xs text-foreground space-y-1.5 shadow-sm"
+                     >
+                        <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-bold text-foreground">
+                          <span className="flex flex-wrap items-center gap-1">
                             <span>💬 Lời nhắn từ tương lai</span>
                             <span className="font-semibold text-muted-foreground">({refl.time})</span>
                           </span>
@@ -496,7 +510,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                             <Button
                               size="icon-xs"
                               variant="ghost"
-                              className="size-6 p-0 hover:bg-amber-200/60"
+                              className="size-8 min-h-8 min-w-8 p-0 hover:bg-warn/20"
                               aria-label="Sửa lời nhắn"
                               onClick={() => {
                                 setEditingReflectionIdx(idx)
@@ -508,7 +522,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                             <Button
                               size="icon-xs"
                               variant="ghost"
-                              className="size-6 p-0 text-bad hover:bg-amber-200/60 hover:text-bad"
+                              className="size-8 min-h-8 min-w-8 p-0 text-bad hover:bg-warn/20 hover:text-bad"
                               aria-label="Xoá lời nhắn"
                               onClick={() => {
                                 const newBody = deleteFutureReflection(note.body_md, idx)
@@ -540,13 +554,13 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                   ) : null}
                 </div>
 
-                {note.items.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Chưa có mục nhỏ.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {note.items.map((item, index) => (
-                      <div
-                        className="flex min-h-11 items-center gap-2"
+               {note.items.length === 0 ? (
+                 <p className="text-sm text-muted-foreground">Chưa có mục nhỏ.</p>
+               ) : (
+                 <div className="space-y-2">
+                   {note.items.map((item, index) => (
+                     <div
+                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 rounded-md bg-muted/40 p-2 sm:px-2.5 sm:py-1.5"
                         data-testid="note-item"
                         data-note-item-id={item.id}
                         key={item.id}
@@ -576,10 +590,12 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                           </>
                         ) : (
                           <>
+                            <div className="flex min-w-0 flex-1 items-start sm:items-center gap-2.5">
                             <Checkbox
                               data-testid="note-item-checkbox"
                               aria-label={`Đánh dấu ${item.content} hoàn thành`}
                               checked={item.is_completed}
+                              className="mt-0.5 sm:mt-0"
                               disabled={changeItem.isPending}
                               onCheckedChange={(checked) =>
                                 changeItem.mutate({
@@ -596,11 +612,13 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                             >
                               {item.content}
                             </span>
+                            </div>
+                            <div className="flex shrink-0 items-center justify-end gap-1 self-end sm:self-auto pt-1 sm:pt-0">
                             <Button
                               data-testid="note-item-up"
                               size="icon-lg"
                               variant="ghost"
-                              className="size-11"
+                              className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8"
                               aria-label={`Đưa ${item.content} lên`}
                               disabled={index === 0 || reorderItems.isPending}
                               onClick={() => moveItem(index, -1)}
@@ -611,7 +629,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               data-testid="note-item-down"
                               size="icon-lg"
                               variant="ghost"
-                              className="size-11"
+                              className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8"
                               aria-label={`Đưa ${item.content} xuống`}
                               disabled={index === note.items.length - 1 || reorderItems.isPending}
                               onClick={() => moveItem(index, 1)}
@@ -622,7 +640,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               data-testid="note-item-edit"
                               size="icon-lg"
                               variant="ghost"
-                              className="size-11"
+                              className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8"
                               aria-label={`Sửa mục ${item.content}`}
                               onClick={() => startEditingItem(item)}
                             >
@@ -632,13 +650,14 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               data-testid="note-item-delete"
                               size="icon-lg"
                               variant="ghost"
-                              className="size-11 text-bad hover:text-bad"
+                              className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8 text-bad hover:text-bad"
                               aria-label={`Xoá mục ${item.content}`}
                               disabled={removeItem.isPending}
                               onClick={() => removeItem.mutate(item)}
                             >
                               <Trash2 />
                             </Button>
+                            </div>
                           </>
                         )}
                       </div>
@@ -836,14 +855,44 @@ export function NotesScreen() {
   const quickInputRef = useRef<HTMLInputElement>(null)
   const [quickTitle, setQuickTitle] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
+  const [sortMode, setSortMode] = useState<NoteSortMode>(() => {
+    try {
+      const stored = window.localStorage.getItem('microsched_notes_sort_mode')
+      if (stored === 'alphabet' || stored === 'created' || stored === 'updated') {
+        return stored
+      }
+    } catch {
+      // ignore storage access errors
+    }
+    return 'alphabet'
+  })
+
+  function handleSortChange(mode: NoteSortMode) {
+    setSortMode(mode)
+    try {
+      window.localStorage.setItem('microsched_notes_sort_mode', mode)
+    } catch {
+      // ignore storage write errors
+    }
+  }
 
   const notes = useQuery({
     queryKey: noteQueryKey,
-    queryFn: () => apiRequest<{ items: Note[] }>('/api/notes?limit=100&offset=0'),
+    queryFn: () =>
+      fetchAllNotes((limit, offset) =>
+        apiRequest<{ items: Note[] }>(`/api/notes?limit=${limit}&offset=${offset}`),
+      ),
     refetchInterval: standardRefetchInterval,
     retry: (failureCount, error) =>
-      !(error instanceof UnauthenticatedError) && failureCount < 2,
+      !(error instanceof UnauthenticatedError) &&
+      !(error instanceof NotePageLimitError) &&
+      failureCount < 2,
   })
+
+  const sortedNotes = useMemo(
+    () => sortNotes(notes.data ?? [], sortMode),
+    [notes.data, sortMode],
+  )
 
   const create = useMutation({
     mutationFn: ({ payload }: { payload: NotePayload; source: CreateSource }) =>
@@ -950,28 +999,53 @@ export function NotesScreen() {
       </section>
 
       <section aria-labelledby="note-list-heading" className="space-y-3">
-        <h2 className="sr-only" id="note-list-heading">
-          Danh sách ghi chú
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base font-bold" id="note-list-heading">
+            Danh sách ghi chú
+          </h2>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Sắp xếp:</span>
+            <Select value={sortMode} onValueChange={(val) => handleSortChange(val as NoteSortMode)}>
+              <SelectTrigger data-testid="note-sort" size="sm" className="w-[160px] bg-card text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="alphabet">Bảng chữ cái</SelectItem>
+                <SelectItem value="created">Thời gian tạo</SelectItem>
+                <SelectItem value="updated">Thời gian sửa</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
         {notes.isPending ? (
           <p className="text-sm text-muted-foreground">Đang tải ghi chú…</p>
         ) : null}
         {notes.isError ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-bad">{errorMessage(notes.error)}</p>
-            <Button variant="outline" size="lg" onClick={() => void notes.refetch()}>
-              Thử lại
-            </Button>
-          </div>
+          notes.error instanceof NotePageLimitError ? (
+            <div data-testid="note-page-limit-error" className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-bad">Không tải đủ ghi chú để sắp xếp. Thử lại.</p>
+              <Button variant="outline" size="lg" onClick={() => void notes.refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-bad">{errorMessage(notes.error)}</p>
+              <Button variant="outline" size="lg" onClick={() => void notes.refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          )
         ) : null}
-        {notes.data && notes.data.items.length === 0 ? (
+        {notes.data && notes.data.length === 0 ? (
           <Card className="rounded-lg border border-dashed bg-transparent p-6 text-center text-sm text-muted-foreground shadow-none">
             Chưa có ghi chú.
           </Card>
         ) : null}
 
         <div data-testid="note-list" className="space-y-3">
-          {notes.data?.items.map((note) => <NoteCard note={note} key={note.id} />)}
+          {sortedNotes.map((note) => <NoteCard note={note} key={note.id} />)}
         </div>
       </section>
     </div>
