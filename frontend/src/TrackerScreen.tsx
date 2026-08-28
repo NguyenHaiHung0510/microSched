@@ -466,15 +466,16 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                     Mục: {group.trackers.map((t) => t.name).join(', ')}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center justify-start lg:justify-end gap-2 min-w-0 max-w-full lg:max-w-[50%]">
+                <div data-testid="tracker-reminder-actions" className="flex flex-wrap items-center justify-start lg:justify-end gap-2 min-w-0 max-w-full lg:max-w-[50%]">
                   {group.trackers.map((tracker) =>
                     tracker.input_mode === 'event' &&
                     tracker.reminder_action !== 'open_tracker' ? (
                       <Button
                         key={tracker.id}
+                        data-testid="tracker-reminder-action"
                         size="sm"
                         variant="outline"
-                        className="h-auto min-h-11 sm:min-h-8 min-w-0 max-w-full text-xs whitespace-normal break-words justify-start sm:justify-center"
+                        className="h-auto min-h-11 w-full min-w-0 max-w-full text-xs whitespace-normal break-words justify-start sm:min-h-8 sm:w-auto sm:justify-center"
                         disabled={lockedIds.has(tracker.id)}
                         onClick={() => capture(tracker)}
                       >

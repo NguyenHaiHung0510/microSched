@@ -229,6 +229,8 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     const geometry = await page.evaluate(() => {
       const card = document.querySelector('[data-testid="tracker-reminders-overview"]')
       const rect = card?.getBoundingClientRect()
+      const actionArea = document.querySelector('[data-testid="tracker-reminder-actions"]')
+      const actionRect = actionArea?.getBoundingClientRect()
       const buttons = Array.from(card?.querySelectorAll('button') ?? [])
       const btnMetrics = buttons.map((b) => {
         const r = b.getBoundingClientRect()
@@ -245,6 +247,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
         cardLeft: rect?.left ?? 0,
         cardRight: rect?.right ?? 0,
         cardWidth: rect?.width ?? 0,
+        actionWidth: actionRect?.width ?? 0,
         btnMetrics,
       }
     })
@@ -257,7 +260,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
       expect(btn.right).toBeLessThanOrEqual(geometry.cardRight + 2)
       if (geometry.innerWidth <= 450) {
         expect(btn.height).toBeGreaterThanOrEqual(44)
-        expect(btn.width).toBeGreaterThanOrEqual(geometry.cardWidth * 0.75)
+        expect(btn.width).toBeGreaterThanOrEqual(geometry.actionWidth - 1)
       } else {
         expect(btn.height).toBeGreaterThanOrEqual(32)
       }
@@ -603,6 +606,10 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await createDialog.getByRole('button', { name: 'Tạo task' }).click()
     // Assert: dialog stays visible and drafts are preserved
     await expect(createDialog).toBeVisible()
+    const createError = createDialog.getByTestId('task-create-error')
+    await expect(createError).toBeVisible()
+    await expect(createError).toContainText('Lỗi tạo task thử nghiệm')
+    await expect(page.getByTestId('quick-add-error')).toHaveCount(0)
     await expect(createDialog.getByText('Mục 1')).toBeVisible()
     await expect(createDialog.getByText('Mục 2 đã sửa')).toBeVisible()
 
@@ -1285,6 +1292,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
    await page.getByRole('tab', { name: 'Ghi chú' }).click()
    await expect(page.getByTestId('note-page-limit-error')).toBeVisible()
    await expect(page.getByTestId('note-page-limit-error')).toContainText('Không tải đủ ghi chú để sắp xếp. Thử lại.')
+   await expect(page.getByTestId('note-list')).toHaveCount(0)
  })
 
   test('Notes detail dialog checklist responsive layout, geometry assertions, and no overflow at 390px and 1280px', async ({ page }) => {

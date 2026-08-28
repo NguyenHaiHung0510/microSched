@@ -1038,15 +1038,17 @@ export function NotesScreen() {
             </div>
           )
         ) : null}
-        {notes.data && notes.data.length === 0 ? (
+        {!notes.isError && notes.data && notes.data.length === 0 ? (
           <Card className="rounded-lg border border-dashed bg-transparent p-6 text-center text-sm text-muted-foreground shadow-none">
             Chưa có ghi chú.
           </Card>
         ) : null}
 
-        <div data-testid="note-list" className="space-y-3">
-          {sortedNotes.map((note) => <NoteCard note={note} key={note.id} />)}
-        </div>
+        {!notes.isError ? (
+          <div data-testid="note-list" className="space-y-3">
+            {sortedNotes.map((note) => <NoteCard note={note} key={note.id} />)}
+          </div>
+        ) : null}
       </section>
     </div>
   )
