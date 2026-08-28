@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { taskInvalidationKey } from '@/task-ui'
+import { noteInvalidationKey } from '@/note-ui'
+import { trackerInvalidationKey } from '@/tracker-ui'
+import { subscriptionInvalidationKey } from '@/subscription-ui'
 import {
   countdownLabel,
   expirePrivateSession,
@@ -23,9 +26,21 @@ describe('private gate expiry controller', () => {
     const queryClient = { removeQueries: vi.fn() }
 
     expect(expirePrivateSession(queryClient, '2026-07-31T00:01:01Z', now)).toBe(true)
-    expect(queryClient.removeQueries).toHaveBeenCalledTimes(2)
+    expect(queryClient.removeQueries).toHaveBeenCalledTimes(5)
     expect(queryClient.removeQueries).toHaveBeenCalledWith({
       queryKey: taskInvalidationKey,
+    })
+    expect(queryClient.removeQueries).toHaveBeenCalledWith({
+      queryKey: ['calendar'],
+    })
+    expect(queryClient.removeQueries).toHaveBeenCalledWith({
+      queryKey: noteInvalidationKey,
+    })
+    expect(queryClient.removeQueries).toHaveBeenCalledWith({
+      queryKey: trackerInvalidationKey,
+    })
+    expect(queryClient.removeQueries).toHaveBeenCalledWith({
+      queryKey: subscriptionInvalidationKey,
     })
   })
 })

@@ -90,6 +90,13 @@ class TaskItemCreate(BaseModel):
     content: str = Field(min_length=1)
     position: int = Field(default=0, ge=0)
 
+    @field_validator("content")
+    @classmethod
+    def reject_blank_content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content must not be blank")
+        return value
+
 
 class TaskItemUpdate(BaseModel):
     """Optional checklist changes; ``task_id`` exists only to reject reparenting."""
@@ -98,6 +105,13 @@ class TaskItemUpdate(BaseModel):
     is_completed: bool | None = None
     position: int | None = Field(default=None, ge=0)
     task_id: UUID | None = None
+
+    @field_validator("content")
+    @classmethod
+    def reject_blank_content(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("content must not be blank")
+        return value
 
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> "TaskItemUpdate":
@@ -146,6 +160,14 @@ class TaskCreate(BaseModel):
     def require_aware_due_at(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.tzinfo is None:
             raise _schedule_error("due_at must include a timezone offset")
+        return value
+
+    @field_validator("items")
+    @classmethod
+    def reject_blank_items(cls, value: list[str]) -> list[str]:
+        for idx, item in enumerate(value):
+            if not item.strip():
+                raise ValueError(f"items[{idx}] must not be blank")
         return value
 
     @field_validator("title")

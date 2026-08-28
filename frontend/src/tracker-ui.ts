@@ -18,6 +18,85 @@ export type TrackerInputMode = 'event' | 'money' | 'quantity'
 export type ReminderMode = 'fixed' | 'after_entry'
 export type ReminderAction = 'confirm_event' | 'open_tracker'
 
+export type TrackerWritePayload = {
+  name: string
+  kind: TrackerKind
+  direction: TrackerDirection
+  input_mode: TrackerInputMode
+  group_id: string | null
+  unit: string | null
+  is_private: boolean
+  reminder_time?: string | null
+  reminder_text?: string | null
+  reminder_mode?: ReminderMode | null
+  reminder_interval_days?: number | null
+  reminder_action?: ReminderAction | null
+  ensure_push?: boolean
+}
+
+export function buildTrackerWritePayload({
+  name,
+  kind,
+  direction,
+  input_mode,
+  group_id,
+  unit,
+  is_private,
+  reminder_enabled,
+  reminder_mode,
+  reminder_interval_days,
+  reminder_action,
+  reminder_time,
+  is_edit,
+}: {
+  name: string
+  kind: TrackerKind
+  direction: TrackerDirection
+  input_mode: TrackerInputMode
+  group_id: string | null
+  unit: string | null
+  is_private: boolean
+  reminder_enabled: boolean
+  reminder_mode: ReminderMode
+  reminder_interval_days: number
+  reminder_action: ReminderAction
+  reminder_time: string
+  is_edit: boolean
+}): TrackerWritePayload {
+  const needsUnit = input_mode === 'quantity'
+  const effectiveAction: ReminderAction =
+    input_mode === 'event' ? reminder_action : 'open_tracker'
+
+  const reminderPayload: Partial<TrackerWritePayload> = reminder_enabled
+    ? {
+        reminder_mode,
+        reminder_interval_days: Math.max(1, reminder_interval_days || 1),
+        reminder_action: effectiveAction,
+        reminder_time,
+        ...(is_edit ? {} : { reminder_text: null }),
+        ensure_push: true,
+      }
+    : {
+        reminder_mode: null,
+        reminder_interval_days: null,
+        reminder_action: null,
+        reminder_time: null,
+        reminder_text: null,
+        ensure_push: false,
+      }
+
+  return {
+    name: name.trim(),
+    kind,
+    direction,
+    input_mode,
+    group_id: group_id || null,
+    unit: needsUnit ? (unit?.trim() || null) : null,
+    is_private,
+    ...reminderPayload,
+  }
+}
+
 export const TRACKER_KIND_LABELS: Record<TrackerKind, string> = {
   health: 'Sức khoẻ',
   finance: 'Tài chính',

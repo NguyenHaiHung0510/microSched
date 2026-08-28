@@ -125,23 +125,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const trackers = trackersQuery.data?.items ?? EMPTY_TRACKERS
   const groups = groupsQuery.data?.items ?? EMPTY_GROUPS
 
-  // C1: the private gate lives in PrivateGate (shared with other screens); the
-  // tracker query family is this screen's own cache, so IT must react to the
-  // lock/unlock transition. On lock, cached tracker names / entries / dashboard
-  // numbers are erased BEFORE any refetch can paint the previous result while
-  // the request is pending (same R6 order PrivateGate uses for tasks). On
-  // unlock, the queries refetch so private rows come back.
-  useEffect(() => {
-    const previous = wasUnlocked.current
-    if (previous && !privateUnlocked) {
-      queryClient.removeQueries({ queryKey: trackerInvalidationKey })
-      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
-    } else if (!previous && privateUnlocked) {
-      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
-    }
-    wasUnlocked.current = privateUnlocked
-  }, [privateUnlocked, queryClient])
-
   // §5.2: order is computed once per membership change and then frozen — a capture
   // must never re-sort the grid under the finger.
   const membershipKey = trackers.map((tracker) => tracker.id).sort().join(',')
@@ -171,13 +154,43 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [lockedIds, setLockedIds] = useState<ReadonlySet<string>>(new Set())
   const [capturingIds, setCapturingIds] = useState<ReadonlySet<string>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set(groups.map((g) => g.id)))
-  const [unassignedCollapsed, setUnassignedCollapsed] = useState(true)
-  const [entriesCollapsed, setEntriesCollapsed] = useState(true)
-  const [rhythmCollapsed, setRhythmCollapsed] = useState(true)
-  const createReturnRef = useRef<HTMLButtonElement | null>(null)
-  const unlockTimers = useRef<Map<string, number>>(new Map())
+ const [unassignedCollapsed, setUnassignedCollapsed] = useState(true)
+ const [entriesCollapsed, setEntriesCollapsed] = useState(true)
+ const [rhythmCollapsed, setRhythmCollapsed] = useState(true)
+ const createReturnRef = useRef<HTMLButtonElement | null>(null)
+  const editReturnRef = useRef<HTMLButtonElement | null>(null)
+ const unlockTimers = useRef<Map<string, number>>(new Map())
 
+  // C1: lock is a local-state boundary as well as a query-cache boundary.
+  // TrackerForm owns its draft internally, so neither create nor edit can tell
+  // whether an unsaved field has become private while the dialog is open.
+  // Close every tracker-related dialog on a lock transition to unmount those
+  // drafts fail-closed before a tracker refetch can paint.
   useEffect(() => {
+    const previous = wasUnlocked.current
+    if (previous && !privateUnlocked) {
+      setCreateOpen(false)
+      setEditingTracker(null)
+      setGroupOpen(false)
+      setEditingGroup(null)
+      setDeletingGroup(null)
+      setBackdateFor(null)
+      setBackdateChoice('yesterday')
+      setBackdateCustom('')
+      setArchiveFor(null)
+      setEditingEntry(null)
+      setLockedIds(new Set())
+      setCapturingIds(new Set())
+      editReturnRef.current = null
+      queryClient.removeQueries({ queryKey: trackerInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+    } else if (!previous && privateUnlocked) {
+      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+    }
+    wasUnlocked.current = privateUnlocked
+  }, [privateUnlocked, queryClient])
+
+ useEffect(() => {
     const timers = unlockTimers.current
     return () => {
       for (const timer of timers.values()) window.clearTimeout(timer)
@@ -432,6 +445,64 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         </Card>
       ) : null}
 
+      {reminderGroups.length > 0 ? (
+        <Card data-testid="tracker-reminders-overview" className="gap-3 p-4 shadow-1 ring-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Bell className="size-4 text-primary" />
+              <h3 className="text-base font-bold">Lịch nhắc nhở trong ngày</h3>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {reminderGroups.length} khung giờ
+            </span>
+          </div>
+          <div className="space-y-2 pt-1">
+          {reminderGroups.map((group) => (
+            <div
+              key={group.time}
+                className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 rounded-lg bg-muted/40 p-3 border border-border/60"
+            >
+               <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <span className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary">
+                      {group.time}
+                    </span>
+                    <span
+                      data-testid="tracker-reminder-preview"
+                      className="block min-w-0 flex-1 break-words text-sm font-semibold"
+                    >
+                      {group.previewText}
+                    </span>
+                  </div>
+                  <p className="break-words text-xs text-muted-foreground">
+                    Mục: {group.trackers.map((t) => t.name).join(', ')}
+                  </p>
+                </div>
+                <div data-testid="tracker-reminder-actions" className="flex flex-wrap items-center justify-start lg:justify-end gap-2 min-w-0 max-w-full lg:max-w-[50%]">
+                  {group.trackers.map((tracker) =>
+                    tracker.input_mode === 'event' &&
+                    tracker.reminder_action !== 'open_tracker' ? (
+                      <Button
+                        key={tracker.id}
+                        data-testid="tracker-reminder-action"
+                        size="sm"
+                        variant="outline"
+                        className="h-auto min-h-11 w-full min-w-0 max-w-full text-xs whitespace-normal break-words justify-start sm:min-h-8 sm:w-auto sm:justify-center"
+                        disabled={lockedIds.has(tracker.id)}
+                        onClick={() => capture(tracker)}
+                      >
+                        <CheckCircle2 className="size-4 shrink-0 text-ok mr-1" />
+                        <span className="break-all sm:break-words">Ghi {tracker.name}</span>
+                      </Button>
+                    ) : null,
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       {/* 1. Tài chính tháng X năm Y lên đầu */}
       <Card data-testid="tracker-finance-overview" className="gap-3 p-4 shadow-1 ring-0 bg-gradient-to-br from-brand-50/60 to-card border-brand-200">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -628,18 +699,23 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                       { onError: (error) => toast.error(errorMessage(error)) },
                                     )
                                   }
-                                />
-                               Riêng tư
-                             </label>
-                             <Button
-                               variant="ghost"
-                               size="icon-lg"
-                                className="size-11 min-h-11 min-w-11"
-                               aria-label={`Sửa ${tracker.name}`}
-                               onClick={() => setEditingTracker(tracker)}
-                             >
-                               <Pencil className="size-3.5" />
-                             </Button>
+                               />
+                              Riêng tư
+                            </label>
+                           <Button
+                             data-testid="tracker-edit"
+                             data-tracker-id={tracker.id}
+                             variant="ghost"
+                             size="icon-lg"
+                              className="size-11 min-h-11 min-w-11"
+                             aria-label={`Sửa ${tracker.name}`}
+                             onClick={(e) => {
+                               editReturnRef.current = e.currentTarget
+                               setEditingTracker(tracker)
+                             }}
+                           >
+                             <Pencil className="size-3.5" />
+                           </Button>
                              <Button
                                data-testid="tracker-archive"
                                data-tracker-id={tracker.id}
@@ -717,20 +793,25 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                 writes.updateTracker.mutate(
                                   { trackerId: tracker.id, payload: { is_private: checked === true } },
                                   { onError: (error) => toast.error(errorMessage(error)) },
-                                )
-                              }
-                            />
-                           Riêng tư
-                         </label>
-                         <Button
-                           variant="ghost"
-                           size="icon-lg"
-                            className="size-11 min-h-11 min-w-11"
-                           aria-label={`Sửa ${tracker.name}`}
-                           onClick={() => setEditingTracker(tracker)}
-                         >
-                           <Pencil className="size-3.5" />
-                         </Button>
+                               )
+                             }
+                           />
+                          Riêng tư
+                        </label>
+                       <Button
+                         data-testid="tracker-edit"
+                         data-tracker-id={tracker.id}
+                         variant="ghost"
+                         size="icon-lg"
+                          className="size-11 min-h-11 min-w-11"
+                         aria-label={`Sửa ${tracker.name}`}
+                         onClick={(e) => {
+                           editReturnRef.current = e.currentTarget
+                           setEditingTracker(tracker)
+                         }}
+                       >
+                         <Pencil className="size-3.5" />
+                       </Button>
                          <Button
                            data-testid="tracker-archive"
                            data-tracker-id={tracker.id}
@@ -752,60 +833,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           </div>
         )}
       </Card>
-
-      {reminderGroups.length > 0 ? (
-        <Card className="gap-3 p-4 shadow-1 ring-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Bell className="size-4 text-primary" />
-              <h3 className="text-base font-bold">Lịch nhắc nhở trong ngày</h3>
-            </div>
-            <span className="text-xs text-muted-foreground">
-              {reminderGroups.length} khung giờ
-            </span>
-          </div>
-          <div className="space-y-2 pt-1">
-            {reminderGroups.map((group) => (
-              <div
-                key={group.time}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-muted/40 p-3 border border-border/60"
-              >
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary">
-                      {group.time}
-                    </span>
-                    <span className="text-sm font-semibold truncate">
-                      {group.previewText}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Mục: {group.trackers.map((t) => t.name).join(', ')}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {group.trackers.map((tracker) =>
-                    tracker.input_mode === 'event' &&
-                    tracker.reminder_action !== 'open_tracker' ? (
-                      <Button
-                        key={tracker.id}
-                        size="xs"
-                        variant="outline"
-                        className="text-xs min-h-8"
-                        disabled={lockedIds.has(tracker.id)}
-                        onClick={() => capture(tracker)}
-                      >
-                        <CheckCircle2 className="size-3 text-ok mr-1" />
-                        Ghi {tracker.name}
-                      </Button>
-                    ) : null,
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : null}
 
       <Card className="gap-3 p-4 shadow-1 ring-0">
         <Button
@@ -935,6 +962,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       <Dialog open={createOpen} onOpenChange={(open) => !open && setCreateOpen(false)}>
         <DialogContent
           data-testid="tracker-dialog"
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
           onCloseAutoFocus={(event) => {
             const opener = createReturnRef.current
             if (!opener?.isConnected) return
@@ -956,9 +984,18 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editingTracker !== null} onOpenChange={(open) => !open && setEditingTracker(null)}>
-        <DialogContent data-testid="tracker-dialog">
-          <DialogHeader>
+     <Dialog open={editingTracker !== null} onOpenChange={(open) => !open && setEditingTracker(null)}>
+       <DialogContent
+         data-testid="tracker-dialog"
+         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+         onCloseAutoFocus={(event) => {
+           const opener = editReturnRef.current
+           if (!opener?.isConnected) return
+           event.preventDefault()
+           opener.focus()
+         }}
+       >
+         <DialogHeader>
             <DialogTitle>Sửa tracker</DialogTitle>
             <DialogDescription>Cập nhật thông tin của tracker này.</DialogDescription>
           </DialogHeader>

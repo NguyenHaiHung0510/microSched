@@ -539,6 +539,7 @@ export function DayDetailDialog({
                       />
                       <Button
                         variant="ghost"
+                        data-testid="calendar-day-task-edit-trigger"
                         className={cn(
                           'h-auto min-w-0 flex-1 justify-start p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                          task.status === 'completed' && 'line-through',

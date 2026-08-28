@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   amountToNumber,
   backdateOptions,
+  buildTrackerWritePayload,
   canSubmitAmount,
   capturePayload,
   currentVietnamMonth,
@@ -238,6 +239,72 @@ describe('Vietnam-time helpers', () => {
 
   it('formats the current month key as YYYY-MM', () => {
     expect(currentVietnamMonth(new Date('2026-08-05T12:00:00Z'))).toBe('2026-08')
+  })
+})
+
+describe('tracker write payload builder and legacy reminder_text preservation', () => {
+  it('sends reminder_text: null on create tracker', () => {
+    const payload = buildTrackerWritePayload({
+      name: 'Uống thuốc',
+      kind: 'health',
+      direction: 'out',
+      input_mode: 'event',
+      group_id: null,
+      unit: null,
+      is_private: false,
+      reminder_enabled: true,
+      reminder_mode: 'fixed',
+      reminder_interval_days: 1,
+      reminder_action: 'confirm_event',
+      reminder_time: '08:00',
+      is_edit: false,
+    })
+    expect(payload.reminder_text).toBeNull()
+    expect('reminder_text' in payload).toBe(true)
+  })
+
+  it('omits reminder_text key on edit tracker with reminder enabled to preserve legacy text', () => {
+    const payload = buildTrackerWritePayload({
+      name: 'Uống thuốc (đã sửa)',
+      kind: 'health',
+      direction: 'out',
+      input_mode: 'event',
+      group_id: null,
+      unit: null,
+      is_private: false,
+      reminder_enabled: true,
+      reminder_mode: 'fixed',
+      reminder_interval_days: 2,
+      reminder_action: 'confirm_event',
+      reminder_time: '09:00',
+      is_edit: true,
+    })
+    expect('reminder_text' in payload).toBe(false)
+    expect(payload.reminder_time).toBe('09:00')
+  })
+
+  it('sends reminder_text: null and null reminder fields when reminder is disabled on edit', () => {
+    const payload = buildTrackerWritePayload({
+      name: 'Uống thuốc',
+      kind: 'health',
+      direction: 'out',
+      input_mode: 'event',
+      group_id: null,
+      unit: null,
+      is_private: false,
+      reminder_enabled: false,
+      reminder_mode: 'fixed',
+      reminder_interval_days: 1,
+      reminder_action: 'confirm_event',
+      reminder_time: '08:00',
+      is_edit: true,
+    })
+    expect(payload.reminder_text).toBeNull()
+    expect(payload.reminder_time).toBeNull()
+    expect(payload.reminder_mode).toBeNull()
+    expect(payload.reminder_interval_days).toBeNull()
+    expect(payload.reminder_action).toBeNull()
+    expect(payload.ensure_push).toBe(false)
   })
 })
 
