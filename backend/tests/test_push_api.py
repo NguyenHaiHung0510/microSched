@@ -746,7 +746,9 @@ def test_dispatch_item_never_sends_concurrently(pg_dsn: str, monkeypatch):
 
             calls = {"n": 0}
 
-            async def slow_send(db, subscription, payload, timeout_seconds=20.0):
+            async def slow_send(
+                db, subscription, payload, timeout_seconds=20.0, provider_work_tracker=None
+            ):
                 calls["n"] += 1
                 await asyncio.sleep(0.4)
                 return PushResult.SENT
@@ -852,7 +854,9 @@ def test_dispatch_receipts_cover_durable_outcomes(
                 finally:
                     await conn.close()
 
-                async def fake_send(db, subscription, payload, timeout_seconds=20.0):
+                async def fake_send(
+                    db, subscription, payload, timeout_seconds=20.0, provider_work_tracker=None
+                ):
                     return push_result
 
                 monkeypatch.setattr(reminder_module, "send_push", fake_send)
@@ -962,7 +966,9 @@ def test_terminal_dispatch_reentry_receipts_without_attempt_or_network(pg_dsn: s
 
             network_calls = 0
 
-            async def unexpected_send(db, subscription, payload, timeout_seconds=20.0):
+            async def unexpected_send(
+                db, subscription, payload, timeout_seconds=20.0, provider_work_tracker=None
+            ):
                 nonlocal network_calls
                 network_calls += 1
                 return PushResult.SENT
@@ -1038,7 +1044,9 @@ def test_dispatch_exception_keeps_started_without_fake_finished(pg_dsn: str, mon
             finally:
                 await conn.close()
 
-            async def failing_send(db, subscription, payload, timeout_seconds=20.0):
+            async def failing_send(
+                db, subscription, payload, timeout_seconds=20.0, provider_work_tracker=None
+            ):
                 raise RuntimeError("provider-response-private-sentinel")
 
             monkeypatch.setattr(reminder_module, "send_push", failing_send)

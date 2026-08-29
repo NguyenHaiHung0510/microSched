@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from enum import StrEnum
-from typing import Callable
+from typing import Awaitable, Callable
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -21,7 +21,7 @@ from app.domain.models import (
     Subscription,
     Tracker,
 )
-from app.domain.push import PushResult, send_push
+from app.domain.push import ProviderWorkTracker, PushResult, send_push
 from app.domain.tracker import EntryCreate, TrackerStore
 
 logger = logging.getLogger(__name__)
@@ -154,6 +154,12 @@ class ReminderDispatcher:
         # connection or row lock across Web Push; durable dispatch state still
         # covers crash/redeploy recovery.
         self._delivery_locks: dict[tuple[str, UUID, date], asyncio.Lock] = {}
+        self._provider_work = ProviderWorkTracker()
+
+    @property
+    def provider_work(self) -> ProviderWorkTracker:
+        """Expose only bounded shutdown coordination, never provider details."""
+        return self._provider_work
 
     async def claim_or_get_dispatch(
         self,
@@ -206,6 +212,7 @@ class ReminderDispatcher:
         payload_builder: Callable[[UUID], dict],
         *,
         telemetry: Callable[[DispatchTelemetry], None] | None = None,
+        ownership_guard: Callable[[], Awaitable[None]] | None = None,
     ) -> DispatchOutcome:
         """Execute one occurrence without keeping a database lock over network I/O."""
         key = (subject_type, subject_id, dispatched_on)
@@ -266,11 +273,25 @@ class ReminderDispatcher:
                     )
                 return DispatchOutcome.NO_DEVICE
 
+            # 035A checks the dedicated session-level advisory-lock connection
+            # at the final boundary before any provider I/O.  A loss after a
+            # provider accepts remains the documented at-least-once window;
+            # a loss before this guard must not begin a new call.
+            if ownership_guard is not None:
+                await ownership_guard()
+
             sent_count = 0
             temp_fail_count = 0
 
             for sub in subscriptions:
-                res = await send_push(db, sub, payload)
+                if ownership_guard is not None:
+                    await ownership_guard()
+                res = await send_push(
+                    db,
+                    sub,
+                    payload,
+                    provider_work_tracker=self._provider_work,
+                )
                 if res == PushResult.SENT:
                     sent_count += 1
                 elif res == PushResult.TEMPORARY_FAILURE:
@@ -329,9 +350,11 @@ async def confirm_reminder_dispatch(
     now_utc = datetime.now(UTC)
     is_private_unlocked = bool(auth.private_until and auth.private_until > now_utc)
 
-    # Lock dispatch row
-    stmt = select(ReminderDispatch).where(ReminderDispatch.id == dispatch_id).with_for_update()
-    res = await db.execute(stmt)
+    # Probe identity without a row lock.  The 035A global lock order is
+    # tracker → dispatch → entry, so taking this dispatch lock first would
+    # deadlock against pre-send code that already owns the tracker row.
+    probe_stmt = select(ReminderDispatch).where(ReminderDispatch.id == dispatch_id)
+    res = await db.execute(probe_stmt)
     dispatch = res.scalar_one_or_none()
 
     if dispatch is None:
@@ -357,9 +380,13 @@ async def confirm_reminder_dispatch(
         if existing_entry is not None:
             return existing_entry, False
 
-    # Fetch parent tracker for an unconfirmed occurrence.
-    tracker_stmt = select(Tracker).where(
-        Tracker.id == dispatch.subject_id, Tracker.deleted_at.is_(None)
+    # Lock the parent before the dispatch and then re-read the dispatch under
+    # that order.  No writer may commit a freshness/configuration mutation
+    # between this boundary and the entry creation below.
+    tracker_stmt = (
+        select(Tracker)
+        .where(Tracker.id == dispatch.subject_id, Tracker.deleted_at.is_(None))
+        .with_for_update()
     )
     tracker_res = await db.execute(tracker_stmt)
     tracker = tracker_res.scalar_one_or_none()
@@ -368,6 +395,42 @@ async def confirm_reminder_dispatch(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Tracker has been deleted or is unavailable",
+        )
+
+    dispatch_stmt = (
+        select(ReminderDispatch)
+        .where(ReminderDispatch.id == dispatch_id)
+        .with_for_update()
+        # The unlocked identity probe above may already have placed an old
+        # row in this session's identity map.  The lock-order re-read is the
+        # authority boundary, so it must overwrite that snapshot after a
+        # competing confirmation commits while this request waits on Tracker.
+        .execution_options(populate_existing=True)
+    )
+    dispatch_res = await db.execute(dispatch_stmt)
+    dispatch = dispatch_res.scalar_one_or_none()
+    if dispatch is None or dispatch.subject_type != "tracker" or dispatch.subject_id != tracker.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Reminder dispatch changed or is unavailable",
+        )
+
+    # Re-check the fast path after the ordered lock.  Another confirmation may
+    # have committed between the unlocked probe and the tracker lock.
+    if dispatch.confirmed_entry_id is not None:
+        entry_stmt = select(Entry).where(Entry.id == dispatch.confirmed_entry_id)
+        entry_res = await db.execute(entry_stmt)
+        existing_entry = entry_res.scalar_one_or_none()
+        if existing_entry is not None:
+            return existing_entry, False
+
+    # Only a not-yet-terminal occurrence can create an entry.  Unknown future
+    # statuses intentionally fail closed so rollback to this binary cannot
+    # reopen cancelled/exhausted links created by a later schema release.
+    if dispatch.status not in {"pending", "sent"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Reminder dispatch is no longer eligible for confirmation",
         )
 
     # Write gate check
@@ -415,4 +478,4 @@ async def confirm_reminder_dispatch(
     entry_stmt = select(Entry).where(Entry.id == confirmed_entry_id)
     entry_res = await db.execute(entry_stmt)
     entry = entry_res.scalar_one()
-    return entry, True
+    return entry, created
