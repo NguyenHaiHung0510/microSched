@@ -79,6 +79,8 @@ async def test_collect_receipt_is_select_only_stable_and_closes_connection(monke
 
         async def fetchval(self, query):
             self.queries.append(query)
+            if "to_regclass" in query:
+                return None
             return 2
 
         async def fetch(self, query, *args):
@@ -118,7 +120,7 @@ async def test_collect_receipt_is_select_only_stable_and_closes_connection(monke
     )
 
     assert connection.closed is True
-    assert len(connection.queries) == 2
+    assert len(connection.queries) == 3
     assert all(query.lstrip().upper().startswith("SELECT") for query in connection.queries)
     assert list(result) == [
         "commit",
@@ -126,7 +128,8 @@ async def test_collect_receipt_is_select_only_stable_and_closes_connection(monke
         "window_started_at",
         "window_minutes",
         "push_subscription_count",
-        "dispatch_groups",
+        "batch_groups",
+        "legacy_unlinked_dispatch_groups",
     ]
     assert result == {
         "commit": "abc123",
@@ -134,7 +137,8 @@ async def test_collect_receipt_is_select_only_stable_and_closes_connection(monke
         "window_started_at": "2026-08-16T11:45:00Z",
         "window_minutes": 15,
         "push_subscription_count": 2,
-        "dispatch_groups": [
+        "batch_groups": [],
+        "legacy_unlinked_dispatch_groups": [
             {
                 "kind": "tracker",
                 "occurrence_on": "2026-08-16",
@@ -225,7 +229,8 @@ def test_cli_success_prints_exactly_one_json_object(monkeypatch, capsys):
             "window_started_at": receipt_module._utc_rfc3339(kwargs["window_started_at"]),
             "window_minutes": kwargs["window_minutes"],
             "push_subscription_count": 0,
-            "dispatch_groups": [],
+            "batch_groups": [],
+            "legacy_unlinked_dispatch_groups": [],
         }
 
     monkeypatch.setattr(receipt_module, "collect_receipt", fake_collect)
@@ -239,7 +244,8 @@ def test_cli_success_prints_exactly_one_json_object(monkeypatch, capsys):
     assert result["commit"] == "cli-test-sha"
     assert result["window_minutes"] == 15
     assert result["push_subscription_count"] == 0
-    assert result["dispatch_groups"] == []
+    assert result["batch_groups"] == []
+    assert result["legacy_unlinked_dispatch_groups"] == []
 
 
 @pytest.mark.pg
@@ -310,7 +316,7 @@ def test_pg_aggregate_groups_are_exact_deterministic_and_cleaned_up(pg_dsn: str)
             assert result["push_subscription_count"] == 1
             target_groups = [
                 group
-                for group in result["dispatch_groups"]
+                for group in result["legacy_unlinked_dispatch_groups"]
                 if group["occurrence_on"] in {"2026-08-16", "2026-08-17"}
             ]
             assert target_groups == [

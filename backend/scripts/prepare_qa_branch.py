@@ -323,11 +323,30 @@ async def scrub_branch_data(
                     da["id"],
                 )
 
-            # 8. Truncate Audit Logs & Push Subscriptions (Zero blast radius)
-            trunc_sql = (
-                "TRUNCATE TABLE microsched.audit_log, microsched.push_subscription, "
-                "microsched.reminder_dispatch, microsched.session"
+            # 8. Truncate delivery data without assuming migration 0012 exists.
+            # Batch tables are parent/child linked to reminder_dispatch, so the
+            # post-0012 order is item -> batch -> dispatch. Pre-0012 deliberately
+            # skips both optional tables.
+            batch_table = await conn.fetchval(
+                "SELECT to_regclass('microsched.tracker_reminder_batch')"
             )
+            batch_item_table = await conn.fetchval(
+                "SELECT to_regclass('microsched.tracker_reminder_batch_item')"
+            )
+            delivery_tables = []
+            if batch_item_table is not None:
+                delivery_tables.append("microsched.tracker_reminder_batch_item")
+            if batch_table is not None:
+                delivery_tables.append("microsched.tracker_reminder_batch")
+            delivery_tables.extend(
+                [
+                    "microsched.reminder_dispatch",
+                    "microsched.push_subscription",
+                    "microsched.audit_log",
+                    "microsched.session",
+                ]
+            )
+            trunc_sql = "TRUNCATE TABLE " + ", ".join(delivery_tables)
             await conn.execute(trunc_sql)
 
             # 9. Set PIN to 123456 & reset throttle

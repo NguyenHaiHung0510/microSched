@@ -15,11 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.process_stats import read_rss_kb, read_uptime_s
 from app.core.settings import get_settings
-from app.domain.models import Entry, ReminderDispatch, Subscription, Tracker
+from app.domain.models import Entry, ReminderDispatch, Subscription, Tracker, TrackerReminderBatch
 from app.domain.reminder import (
     DispatchOutcome,
     DispatchTelemetry,
     ReminderDispatcher,
+    TrackerBatchCandidate,
+    TrackerBatchDispatcher,
     build_subscription_expiry_payload,
     build_tracker_reminder_payload,
 )
@@ -103,6 +105,7 @@ class TimerItem:
     expires_on: date | None = None
     retry_count: int = 0
     dispatch_id: UUID | None = None
+    batch_id: UUID | None = None
     is_pending_recovery: bool = False
 
     def heap_tuple(self) -> tuple[datetime, int, int, date, int, "TimerItem"]:
@@ -136,12 +139,14 @@ class CronTimer:
         session_factory: Any,
         reminder_dispatcher: Any | None = None,
         *,
+        tracker_batch_dispatcher: Any | None = None,
         lock_connection_factory: Callable[[], Awaitable[Any]] | None = None,
     ):
         self.session_factory = session_factory
         # The dispatcher owns process-local delivery locks, so it belongs to
         # this enabled timer instance rather than module import state.
         self._dispatcher = reminder_dispatcher or ReminderDispatcher()
+        self._batch_dispatcher = tracker_batch_dispatcher or TrackerBatchDispatcher()
         self._lock_connection_factory = lock_connection_factory
         self._lock_connection: Any | None = None
         self._ownership_active = False
@@ -381,23 +386,25 @@ class CronTimer:
 
     async def _wait_for_provider_workers(self) -> None:
         """Retain scheduler ownership until real Web Push workers are finished."""
-        provider_work = getattr(self._dispatcher, "provider_work", None)
-        if provider_work is None:
-            return
-        if await provider_work.wait_for_idle(PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS):
-            return
-        # A synchronous provider call in ``asyncio.to_thread`` survives task
-        # cancellation.  The bounded wait is observability only: releasing the
-        # session-level lock here would let a standby send while that old worker
-        # can still complete.  Keep the process in shutdown and retain ownership
-        # until the real worker exits (or process termination closes the session).
-        logger.error(
-            "cron_timer_provider_worker_shutdown_timeout timeout_seconds=%s "
-            "lock_ref=%s action=retain_ownership",
-            PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS,
-            SCHEDULER_ADVISORY_LOCK_REF,
-        )
-        await provider_work.wait_for_idle(None)
+        for dispatcher in (self._dispatcher, self._batch_dispatcher):
+            provider_work = getattr(dispatcher, "provider_work", None)
+            if provider_work is None:
+                continue
+            if await provider_work.wait_for_idle(PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS):
+                continue
+            # A synchronous provider call in ``asyncio.to_thread`` survives task
+            # cancellation.  The bounded wait is observability only: releasing
+            # the session-level lock here would let a standby send while that old
+            # worker can still complete.  Keep the process in shutdown and retain
+            # ownership until the real worker exits (or process termination
+            # closes the session).
+            logger.error(
+                "cron_timer_provider_worker_shutdown_timeout timeout_seconds=%s "
+                "lock_ref=%s action=retain_ownership",
+                PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS,
+                SCHEDULER_ADVISORY_LOCK_REF,
+            )
+            await provider_work.wait_for_idle(None)
 
     async def _assert_owner(self, phase: str) -> None:
         """Reject snapshot, recovery, or provider work without a live fence."""
@@ -595,6 +602,45 @@ class CronTimer:
             )
         res_pending = await db.execute(stmt_pending)
         pending_rows = list(res_pending.scalars().all())
+
+        # 035B recovery authority is the pending batch, never one linked
+        # dispatch per member. A single heap item therefore carries the durable
+        # batch id and preserves the committed membership across restart.
+        if has_batch_items:
+            batch_rows = await db.execute(
+                select(TrackerReminderBatch).where(TrackerReminderBatch.status == "pending")
+            )
+            for batch in batch_rows.scalars().all():
+                last_at = batch.last_attempt_at or batch.created_at
+                if last_at is None:
+                    continue
+                if last_at.tzinfo is None:
+                    last_at = last_at.replace(tzinfo=timezone.utc)
+                last_at_vn = last_at.astimezone(VN_TZ)
+                if last_at_vn < cutoff:
+                    continue
+                heapq.heappush(
+                    new_heap,
+                    TimerItem(
+                        due_at=(
+                            now_vn
+                            if batch.attempt_count >= 4
+                            else max(
+                                now_vn,
+                                last_at_vn
+                                + timedelta(seconds=_backoff_seconds(batch.attempt_count)),
+                            )
+                        ),
+                        occurrence_on=batch.occurrence_on,
+                        kind=ScheduleKind.TRACKER,
+                        subject_id=batch.id,
+                        reminder_time=batch.reminder_time,
+                        retry_count=batch.attempt_count,
+                        batch_id=batch.id,
+                        is_pending_recovery=True,
+                    ).heap_tuple(),
+                )
+                self._pending_recovered_count += 1
 
         pending_meta: list[tuple[ReminderDispatch, ScheduleKind, datetime]] = []
         for p in pending_rows:
@@ -894,12 +940,108 @@ class CronTimer:
 
         heapq.heappush(self._heap, next_item.heap_tuple())
 
+    async def _process_due_tracker_batch(
+        self, items: list[TimerItem], *, now: datetime | None = None
+    ) -> None:
+        """Claim all same-key tracker candidates and send one aggregate payload."""
+        if self._ownership_active:
+            await self._assert_owner("due_tracker_batch")
+        now_vn = now or datetime.now(VN_TZ)
+        candidates: list[TrackerBatchCandidate] = []
+        for item in items:
+            if item.due_at < (now_vn - GRACE_WINDOW):
+                self._schedule_next_after_stale_item(item, now=now_vn)
+                continue
+            if (
+                item.reminder_time is None
+                or item.reminder_mode is None
+                or item.reminder_interval_days is None
+                or item.reminder_action is None
+            ):
+                continue
+            candidates.append(
+                TrackerBatchCandidate(
+                    tracker_id=item.subject_id,
+                    occurrence_on=item.occurrence_on,
+                    reminder_time=item.reminder_time,
+                    reminder_mode=item.reminder_mode,
+                    reminder_interval_days=item.reminder_interval_days,
+                    reminder_action=item.reminder_action,
+                )
+            )
+        if not candidates:
+            return
+
+        async with self.session_factory() as db:
+            batch_id = await self._batch_dispatcher.claim_batch(db, candidates)
+            if batch_id is None:
+                self.request_reload("tracker_batch_already_claimed")
+                return
+            outcome = await self._batch_dispatcher.dispatch_batch(
+                db,
+                batch_id,
+                telemetry=self._dispatch_telemetry(items[0]),
+                ownership_guard=self._guard_provider_attempt if self._ownership_active else None,
+            )
+        self._last_dispatch_at = datetime.now(VN_TZ)
+        self._last_dispatch_outcome = outcome.value
+        if outcome == DispatchOutcome.TEMPORARY_FAILURE:
+            heapq.heappush(
+                self._heap,
+                TimerItem(
+                    due_at=now_vn + timedelta(seconds=_backoff_seconds(1)),
+                    occurrence_on=items[0].occurrence_on,
+                    kind=ScheduleKind.TRACKER,
+                    subject_id=batch_id,
+                    reminder_time=items[0].reminder_time,
+                    retry_count=1,
+                    batch_id=batch_id,
+                    is_pending_recovery=True,
+                ).heap_tuple(),
+            )
+        else:
+            if outcome == DispatchOutcome.EXHAUSTED:
+                self._log_pending_manual_required_exhausted(ScheduleKind.TRACKER, items[0])
+            self.request_reload("tracker_batch_terminal")
+
     async def _process_due_item(self, item: TimerItem, *, now: datetime | None = None) -> None:
         """Execute a single due item from the heap."""
         if self._ownership_active:
             await self._assert_owner("due_item")
         now_vn = now or datetime.now(VN_TZ)
         today_vn = now_vn.date()
+
+        if item.batch_id is not None:
+            async with self.session_factory() as db:
+                outcome = await self._batch_dispatcher.dispatch_batch(
+                    db,
+                    item.batch_id,
+                    telemetry=self._dispatch_telemetry(item),
+                    ownership_guard=self._guard_provider_attempt
+                    if self._ownership_active
+                    else None,
+                )
+            self._last_dispatch_at = datetime.now(VN_TZ)
+            self._last_dispatch_outcome = outcome.value
+            if outcome == DispatchOutcome.TEMPORARY_FAILURE and item.retry_count < 3:
+                heapq.heappush(
+                    self._heap,
+                    TimerItem(
+                        due_at=now_vn + timedelta(seconds=_backoff_seconds(item.retry_count + 1)),
+                        occurrence_on=item.occurrence_on,
+                        kind=ScheduleKind.TRACKER,
+                        subject_id=item.subject_id,
+                        reminder_time=item.reminder_time,
+                        retry_count=item.retry_count + 1,
+                        batch_id=item.batch_id,
+                        is_pending_recovery=True,
+                    ).heap_tuple(),
+                )
+            else:
+                if outcome == DispatchOutcome.EXHAUSTED:
+                    self._log_pending_manual_required_exhausted(ScheduleKind.TRACKER, item)
+                self.request_reload("tracker_batch_terminal")
+            return
 
         # Check grace window for non-pending items
         if not item.is_pending_recovery and item.due_at < (now_vn - GRACE_WINDOW):
@@ -1232,11 +1374,32 @@ class CronTimer:
                         _, _, _, _, _, item = heapq.heappop(self._heap)
                         due_items.append(item)
 
+                    grouped_tracker_items: dict[tuple[date, time], list[TimerItem]] = {}
+                    individual_items: list[TimerItem] = []
                     for item in due_items:
+                        if (
+                            item.kind == ScheduleKind.TRACKER
+                            and item.batch_id is None
+                            and item.reminder_time is not None
+                        ):
+                            grouped_tracker_items.setdefault(
+                                (item.occurrence_on, item.reminder_time), []
+                            ).append(item)
+                        else:
+                            individual_items.append(item)
+                    work_items: list[TimerItem | list[TimerItem]] = [
+                        grouped_tracker_items[key] for key in sorted(grouped_tracker_items)
+                    ]
+                    work_items.extend(individual_items)
+
+                    for work_item in work_items:
                         if self._is_stopped:
                             break
+                        item = work_item[0] if isinstance(work_item, list) else work_item
                         self._dispatch_task = asyncio.create_task(
-                            self._process_due_item(item),
+                            self._process_due_tracker_batch(work_item)
+                            if isinstance(work_item, list)
+                            else self._process_due_item(item),
                             name="microsched-cron-dispatch",
                         )
                         try:

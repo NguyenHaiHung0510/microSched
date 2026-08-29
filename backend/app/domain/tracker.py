@@ -945,7 +945,7 @@ class TrackerStore:
         self, db: AsyncSession, auth: AuthSession, tracker_id: UUID
     ) -> bool:
         """Archive a tracker (soft-delete); its history is preserved for F1–F5."""
-        tracker = await self._tracker(db, auth, tracker_id)
+        tracker = await self._tracker(db, auth, tracker_id, for_update=True)
         if tracker is None:
             return False
         sub_count = (
@@ -970,7 +970,7 @@ class TrackerStore:
         deleted_stmt = with_privacy_gate(
             select(Tracker).where(Tracker.id == tracker_id), Tracker, auth
         ).where(Tracker.deleted_at.is_not(None))
-        tracker = (await db.execute(deleted_stmt)).scalar_one_or_none()
+        tracker = (await db.execute(deleted_stmt.with_for_update())).scalar_one_or_none()
         if tracker is None:
             return await self._tracker(db, auth, tracker_id)
         tracker.deleted_at = None
