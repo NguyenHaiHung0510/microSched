@@ -1,7 +1,22 @@
 # 040 — Adaptive harness workflow cho issue cluster và review loop
 
 > **Trạng thái:** ✅ CHỐT 2026-08-29 — owner yêu cầu áp dụng
-> **Loại:** docs/policy + bounded infra guard · **Executor:** T1 · **Review:** adversarial PR review
+> **Loại:** docs/policy + bounded infra guard
+> **Executor:** T1 cho policy/docs; owner-approved exception cho đúng config/test patch ở §4
+> **Model + effort đề xuất:** Sol/max cho policy judgment; bounded config patch deterministic, không cần route riêng
+> **Skill/MCP:** không bắt buộc
+> **Review posture:** một independent adversarial PR review, consolidated ledger
+
+**Task contract:**
+
+- **Outcome:** đổi raw issue cluster thành owner-negotiated adaptive lifecycle và khôi phục canonical Fly swap guard.
+- **Scope:** bảy file policy/task/config/test trong PR #189; không product feature hoặc runtime mutation.
+- **Dependency/hard start:** exact `develop` base; owner decision ở task này; review + CI là merge gate.
+- **Report:** một strategic terminal packet cho owner; raw receipt nằm trong PR; không heartbeat/monitor.
+- **Loop budget:** một independent review + tối đa một consolidated fix batch; sau đó dừng cho owner decision,
+  không tự mở review thứ hai.
+- **Stop/re-scope:** dừng nếu cần deploy/secret/live Machine, đổi authority, mở rộng khỏi bounded config guard,
+  hoặc ledger sau fix vẫn cần product/architecture decision.
 
 ## 1. Vấn đề
 
@@ -42,6 +57,10 @@ chi tiết phù hợp từng lane/model.
 Owner đã bật 512MB swap nhưng canonical `fly.toml` bị ghi đè về trạng thái không có swap. PR này giữ
 `swap_size_mb = 512` ở top-level theo Fly config contract, ghi rationale trong `architecture-brief.md` và
 thêm một static test để CI đỏ nếu key bị mất/di chuyển/sai giá trị. Không deploy hoặc gọi production.
+
+Owner trực tiếp yêu cầu T1 gắn correction này vào cùng PR sau policy commit. Đây là exception hẹp cho
+config + guard deterministic, không thay đổi policy phân vai, không cấp merge/deploy/production authority
+và không trở thành precedent cho T1 tự thi công app code.
 
 ## 5. Acceptance
 
