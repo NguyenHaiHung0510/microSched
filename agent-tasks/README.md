@@ -17,7 +17,7 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 | **BLOCKED / OWNER DECISION** | #118 CSP đã đóng theo quyết định chủ — chưa có CSP replacement. Không còn owner decision mở cho Task 020. |
 | **SECURITY CAVEAT** | Không merge CSP “restrictive” mà vẫn có `unsafe-inline`/`unsafe-eval`. Nếu làm lại, cần task riêng: threat-model scope, UI/OAuth/PWA compatibility inventory và browser acceptance. |
 | **NEXT** | Đóng exact-head CI/review/deploy cho #134, reconcile WIP 017 lên `develop` mới rồi tiếp tục implementation theo QA contract đã merge. **Không mở 012 trong nhịp này.** QA thực tế còn lại của 010/011 và release `develop → main` vẫn là các gate riêng. |
-| **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase; policy live ở `docs/devops-brief.md` §7 buộc scheduled follow-up, mốc agent 3/6/10/15/20 rồi 10 phút. Mọi poll timer, kể cả PR/deploy, tối thiểu 3 phút; terminal/blocker notification vẫn wake ngay. |
+| **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase. Cadence 3/6/10/15/20 rồi 10 phút là receipt lịch sử, **không** còn là policy. Policy live ở `docs/devops-brief.md` §7 là event-driven; recurring monitor/heartbeat chỉ tồn tại khi owner yêu cầu, có frequency + stop condition. Task 040 bổ sung adaptive task contract và efficiency gate. |
 | **OPEN QA DEBT** | `010a`: iPhone file picker / FileReader. `011a`: Lane 4 iPhone vật lý. `011`: mutation reload, controlled dispatch/không duplicate, Web Push iPhone và quan sát Neon idle. `016`: iPhone/Safari vật lý và tương phản throttled badge trên production chưa verify. |
 
 ## QA & Migration Rehearsal Protocol (Post-Cutover Standard)

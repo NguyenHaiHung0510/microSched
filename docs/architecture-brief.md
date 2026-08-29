@@ -137,6 +137,12 @@ phải kiểm live count riêng. Các cấu hình `suspend`/`min_machines_runnin
 trên là hồ sơ quyết định cũ, không còn là chỉ dẫn hiện hành; giữ nguyên số đo vì chúng chứng minh đường
 đảo lại nếu waiver biến mất hoặc chi phí vượt ngưỡng.
 
+**Swap hiện hành:** `swap_size_mb = 512` ở top-level `fly.toml`. Đây là vùng đệm cho spike ngắn để giảm
+nguy cơ OOM trên Machine RAM 256MB, **không** phải RAM thay thế: swap chậm, nên sustained pressure vẫn
+phải xử lý bằng giảm footprint hoặc tăng memory. Owner từng bật 512MB swap ngoài canonical config nhưng
+lần ghi đè `fly.toml` sau đó làm mất cấu hình; vì vậy `backend/tests/test_fly_config.py` giữ exact key/value
+trong CI. Sau deploy vẫn phải verify Machine live nhận swap; config/test không phải runtime receipt.
+
 📝 **2026-08-06 — ĐẢO LẠI scheduler: GCS bị loại bỏ, in-process timer thay thế.** Always-on biến in-process timer thành khả thi. Đổi lấy khả năng nhắc đúng từng phút chính xác và loại bỏ external target, ta chọn xoá hẳn GCS và mọi endpoint liên quan. Không có dual-run, không có job/fallback ngoài.
 
 ## 6. Truy cập & domain — ✅ `*.fly.dev` trước, domain riêng khi cần bền
