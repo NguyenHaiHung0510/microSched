@@ -62,7 +62,7 @@ TRANSFORM_VERSION = "012-cutover-v2-2026-08-20"
 # 026A is an expand migration: the cutover attestation must reject a target
 # that has not yet received its compatible temporal triad and legacy writer
 # triggers, even though source data is still legacy due_at-only.
-EXPECTED_ALEMBIC_REVISION = "0011"
+EXPECTED_ALEMBIC_REVISION = "0012"
 SOURCE_DB_NAME = "microschedule_v2"
 SOURCE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
 TARGET_APP_ROLE = "microsched_app"
@@ -105,6 +105,8 @@ PURGE_ONLY_COMPONENTS = (
     "entry",
     "subscription",
     "reminder_dispatch",
+    "tracker_reminder_batch",
+    "tracker_reminder_batch_item",
     "message",
     "audit_log",
 )
@@ -264,6 +266,29 @@ TARGET_FIELDS: dict[str, tuple[str, ...]] = {
         "last_attempt_at",
         "confirmed_entry_id",
         "confirmed_at",
+        "created_at",
+        "updated_at",
+    ),
+    "tracker_reminder_batch": (
+        "id",
+        "occurrence_on",
+        "reminder_time",
+        "generation",
+        "status",
+        "attempt_count",
+        "last_attempt_at",
+        "created_at",
+        "updated_at",
+    ),
+    "tracker_reminder_batch_item": (
+        "id",
+        "batch_id",
+        "dispatch_id",
+        "reminder_mode",
+        "reminder_interval_days",
+        "reminder_action",
+        "input_mode",
+        "state",
         "created_at",
         "updated_at",
     ),
@@ -1002,6 +1027,10 @@ def _normalize_catalog_sql(value: Any) -> str:
     result = re.sub(r'"([a-z_][a-z0-9_]*)"', r"\1", result)
     result = re.sub(r"\s*~~\s*", " like ", result)
     result = re.sub(r"\s*::(?:text|boolean|jsonb|numeric)\b", "", result)
+    # PostgreSQL 18 renders the integer literal on the right of ``%`` with
+    # an explicit bigint cast after the left operand has been cast.  The
+    # model/migration SQL leaves the inference implicit; both are identical.
+    result = re.sub(r"\b([0-9]+)::bigint\b", r"\1", result)
     result = re.sub(r"=\s*any\s*\(\s*array\[(.*?)\]\s*\)", r"in(\1)", result)
     result = re.sub(
         r"^\(([^()]*)\)\s+or\s*\(([^()]*)\)$",
@@ -2402,6 +2431,8 @@ async def purge_import_assert(
     transformed: Mapping[str, Sequence[Mapping[str, Any]]],
 ) -> None:
     for component in (
+        "tracker_reminder_batch_item",
+        "tracker_reminder_batch",
         "reminder_dispatch",
         "entry",
         "subscription",

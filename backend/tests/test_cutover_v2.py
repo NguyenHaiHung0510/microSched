@@ -447,6 +447,8 @@ def test_manifest_digest_unsigned_and_expiry_gates(monkeypatch) -> None:
             "entry",
             "subscription",
             "reminder_dispatch",
+            "tracker_reminder_batch",
+            "tracker_reminder_batch_item",
             "message",
             "audit_log",
             "app_setting",
@@ -766,6 +768,8 @@ def test_failure_receipt_signature_and_expiry_are_enforced() -> None:
                 "entry",
                 "subscription",
                 "reminder_dispatch",
+                "tracker_reminder_batch",
+                "tracker_reminder_batch_item",
                 "message",
                 "audit_log",
             )
