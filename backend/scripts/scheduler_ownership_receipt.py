@@ -65,7 +65,7 @@ def main() -> int:
         print("error_type=RuntimeError", file=sys.stderr)
         return 1
     commit = os.environ.get("GIT_SHA", "unknown")
-    if commit == "unknown":
+    if not commit.strip() or commit == "unknown":
         print("error_type=RuntimeError", file=sys.stderr)
         return 1
     try:

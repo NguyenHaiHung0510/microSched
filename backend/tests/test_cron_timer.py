@@ -714,6 +714,39 @@ async def test_future_batch_schema_adds_pending_recovery_antijoin(monkeypatch):
     )
 
 
+@pytest.mark.anyio
+async def test_load_snapshot_skips_fractional_database_reminder_time(monkeypatch, caplog):
+    """035A fails closed for an old/direct-SQL fractional tracker row."""
+
+    async def fake_lead(db):
+        return 3
+
+    tracker = _tracker(
+        UUID("01912345-6789-7000-8000-000000000099"),
+        kind="general",
+        input_mode="event",
+        reminder_time=time(8, 30, 0, 1),
+        reminder_mode="fixed",
+        reminder_interval_days=1,
+        reminder_action="open_tracker",
+    )
+    monkeypatch.setattr(cron, "expiry_lead_days", fake_lead)
+    timer = CronTimer(dummy_factory)
+    caplog.set_level(logging.WARNING, logger=cron.__name__)
+
+    await timer.load_snapshot(
+        FakeDB(results=[[], [tracker], []]),
+        now=datetime(2026, 8, 6, 7, 0, tzinfo=VN_TZ),
+    )
+
+    assert timer._heap == []
+    assert timer.health_snapshot()["invalid_tracker_schedule_count"] == 1
+    assert any(
+        record.getMessage().startswith("cron_timer_invalid_tracker_schedule")
+        for record in caplog.records
+    )
+
+
 def _dispatch(
     dispatch_id: UUID,
     *,

@@ -474,6 +474,11 @@ class CronTimer:
         """Return an enabled config, including the rolling legacy writer shape."""
         if tracker.reminder_time is None:
             return None
+        if tracker.reminder_time.microsecond:
+            # 035A is deployed before the database CHECK arrives.  An old or
+            # direct-SQL writer can still leave a fractional row, which must
+            # never become a rounded or fractional batch key in RAM.
+            return None
         if (
             tracker.kind == "health"
             and tracker.input_mode == "event"

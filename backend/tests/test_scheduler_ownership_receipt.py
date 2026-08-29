@@ -64,9 +64,14 @@ async def test_collect_receipt_counts_only_the_named_advisory_lock(monkeypatch):
     }
 
 
-def test_main_rejects_unknown_commit_without_connecting(monkeypatch, capsys):
+@pytest.mark.parametrize("commit", ("unknown", "", " \t\n"))
+def test_main_rejects_unusable_commit_without_connecting(monkeypatch, capsys, commit):
     """A receipt without an exact deployed commit cannot be used as evidence."""
-    monkeypatch.setattr(receipt_module.os, "environ", {"DATABASE_URL": "postgresql://fixture"})
+    monkeypatch.setattr(
+        receipt_module.os,
+        "environ",
+        {"DATABASE_URL": "postgresql://fixture", "GIT_SHA": commit},
+    )
     monkeypatch.setattr(
         receipt_module.asyncpg,
         "connect",
