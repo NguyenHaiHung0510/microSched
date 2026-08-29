@@ -222,14 +222,15 @@ backup-receipt.schema.json
 migration-receipt.schema.json
 ```
 
-Frozen SHA-256 (lowercase) của expected authority hiện tại:
+Frozen SHA-256 (lowercase) của expected authority hiện tại được tính trên UTF-8 sau khi chuẩn hóa mọi
+line ending về LF (`\n`), để checkout Windows CRLF không làm drift authority:
 
 ```text
 authority-receipts.schema.json          b69adfadd267667f7da8a81d786f9738500a89b29a4826bf1a244aa2e93dc52d
 review-envelope.schema.json             3b01043108c6908edf67004c97a9a3e54bea547ea63b67515ac644ff9e4ad74d
 expected-authority-review.schema.json   c810e8f79fa9758b68b0090e241d84706cf168f1d956817369b59d551fc51266
 strategy-approval-source.schema.json    81ebdb861839cbb66c7c62e64a5251ca0806f0e8265aa462444c73966916f7e4
-command-contract.v1.json                40b04efb47fc223536b072e998fdfea7e9fe2403cab9894074a030fd07086eed
+command-contract.v1.json                6fea8c93d69ee946e860ff606eeec19ce2ceeb374ada213118f06c38aadff510
 matrix-inventory.v1.json                605b8a51e97af23031424110f660e8087113c5d91fab6dda45858aa409b2ffd1
 expected-catalog-fixtures.v1.json       19b3f49a3cbee094754123d6d380502a6c37d56a933ddd750575fd829603e92d
 catalog-queries.v1.sql                  9d497dfcc5d2123876d44b6618d8b9504ae0871a52a296c175a7193d449c6d0a
