@@ -449,8 +449,9 @@ async def test_graceful_stop_cancels_sender_before_unlock():
 
 
 @pytest.mark.anyio
-async def test_graceful_stop_waits_for_uncancellable_provider_thread(monkeypatch):
-    """035A P1: cancellation must not unlock while the worker thread still runs."""
+@pytest.mark.parametrize("dispatcher_kw", ["reminder_dispatcher", "tracker_batch_dispatcher"])
+async def test_graceful_stop_waits_for_uncancellable_provider_thread(monkeypatch, dispatcher_kw):
+    """035A/035B P1: neither delivery path may outlive scheduler ownership."""
 
     class Dispatcher:
         def __init__(self):
@@ -458,7 +459,7 @@ async def test_graceful_stop_waits_for_uncancellable_provider_thread(monkeypatch
 
     connection = FakeLockConnection()
     dispatcher = Dispatcher()
-    timer = CronTimer(FakeFactory(object()), reminder_dispatcher=dispatcher)
+    timer = CronTimer(FakeFactory(object()), **{dispatcher_kw: dispatcher})
     timer._lock_connection = connection
     timer._ownership_active = True
     timer._status = "owner"

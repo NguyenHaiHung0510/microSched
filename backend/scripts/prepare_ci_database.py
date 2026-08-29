@@ -3,24 +3,11 @@
 import argparse
 import asyncio
 import os
-from pathlib import Path
 
 import asyncpg
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
 from app.core.database_urls import asyncpg_dsn
-
-
-class PrepareSettings(BaseSettings):
-    """CI database URL; local fallback is useful for reproducing the job."""
-
-    model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parents[1] / ".env",
-        extra="ignore",
-    )
-
-    neon_migrator_url: str
 
 
 async def prepare(*, bootstrap_url: str, migrator_password: str, app_password: str) -> None:
@@ -87,15 +74,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _parser().parse_args()
-    settings = PrepareSettings()
     bootstrap_url = args.bootstrap_url or os.environ.get("CI_PG_BOOTSTRAP_URL")
-    if bootstrap_url is None:
-        # Backward-compatible local seam: a superuser NEON_MIGRATOR_URL can
-        # bootstrap itself. CI 035B passes CI_PG_BOOTSTRAP_URL explicitly and
-        # then rewrites Alembic's URL to the dedicated role below.
-        bootstrap_url = settings.neon_migrator_url
-    migrator_password = os.environ.get("CI_MIGRATOR_PASSWORD", "synthetic-migrator")
-    app_password = os.environ.get("CI_APP_PASSWORD", "synthetic-app")
+    migrator_password = os.environ.get("CI_MIGRATOR_PASSWORD")
+    app_password = os.environ.get("CI_APP_PASSWORD")
+    if not bootstrap_url or not migrator_password or not app_password:
+        raise SystemExit(
+            "explicit synthetic bootstrap inputs required: --bootstrap-url/"
+            "CI_PG_BOOTSTRAP_URL, CI_MIGRATOR_PASSWORD, CI_APP_PASSWORD"
+        )
     asyncio.run(
         prepare(
             bootstrap_url=bootstrap_url,
