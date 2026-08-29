@@ -248,18 +248,20 @@ def test_pg_connection_termination_preempts_snapshot_and_dispatch(pg_dsn: str) -
             dispatch_tracker_id = uuid4()
             await _insert_after_entry_tracker(terminator, dispatch_tracker_id)
 
-            class BlockingProviderDispatcher:
-                async def dispatch_item(
+            class BlockingBatchDispatcher:
+                async def claim_batch(self, db, candidates):
+                    assert candidates
+                    return uuid4()
+
+                async def dispatch_batch(
                     self,
                     db,
-                    subject_type,
-                    subject_id,
-                    dispatched_on,
-                    payload_builder,
+                    batch_id,
                     *,
                     telemetry=None,
                     ownership_guard=None,
                 ):
+                    assert batch_id is not None
                     assert ownership_guard is not None
                     await ownership_guard()
                     started.set()
@@ -271,7 +273,7 @@ def test_pg_connection_termination_preempts_snapshot_and_dispatch(pg_dsn: str) -
 
             timer = CronTimer(
                 maker,
-                reminder_dispatcher=BlockingProviderDispatcher(),
+                tracker_batch_dispatcher=BlockingBatchDispatcher(),
                 lock_connection_factory=lock_factory,
             )
 
@@ -424,13 +426,11 @@ def test_pg_future_batch_antijoin_excludes_linked_pending_dispatch(pg_dsn: str) 
         unlinked_tracker_id = uuid4()
         linked_dispatch_id = uuid4()
         unlinked_dispatch_id = uuid4()
+        batch_id = uuid4()
         connection = await asyncpg.connect(pg_dsn)
         engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         try:
-            await connection.execute(
-                "CREATE TABLE microsched.tracker_reminder_batch_item (dispatch_id uuid PRIMARY KEY)"
-            )
             for tracker_id in (linked_tracker_id, unlinked_tracker_id):
                 await connection.execute(
                     """
@@ -457,7 +457,21 @@ def test_pg_future_batch_antijoin_excludes_linked_pending_dispatch(pg_dsn: str) 
                     tracker_id,
                 )
             await connection.execute(
-                "INSERT INTO microsched.tracker_reminder_batch_item (dispatch_id) VALUES ($1)",
+                """
+                INSERT INTO microsched.tracker_reminder_batch
+                    (id, occurrence_on, reminder_time, generation)
+                VALUES ($1, CURRENT_DATE, '08:00:00', 1000000)
+                """,
+                batch_id,
+            )
+            await connection.execute(
+                """
+                INSERT INTO microsched.tracker_reminder_batch_item
+                    (batch_id, dispatch_id, reminder_mode, reminder_interval_days,
+                     reminder_action, input_mode)
+                VALUES ($1, $2, 'fixed', 1, 'open_tracker', 'event')
+                """,
+                batch_id,
                 linked_dispatch_id,
             )
 
@@ -470,7 +484,9 @@ def test_pg_future_batch_antijoin_excludes_linked_pending_dispatch(pg_dsn: str) 
             assert unlinked_dispatch_id in recovered_dispatches
             assert linked_dispatch_id not in recovered_dispatches
         finally:
-            await connection.execute("DROP TABLE IF EXISTS microsched.tracker_reminder_batch_item")
+            await connection.execute(
+                "DELETE FROM microsched.tracker_reminder_batch WHERE id = $1", batch_id
+            )
             await connection.execute(
                 "DELETE FROM microsched.reminder_dispatch WHERE id = ANY($1::uuid[])",
                 [linked_dispatch_id, unlinked_dispatch_id],
@@ -496,17 +512,6 @@ def test_pg_future_terminal_confirmation_statuses_fail_closed(pg_dsn: str) -> No
         engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         try:
-            await connection.execute(
-                "ALTER TABLE microsched.reminder_dispatch "
-                "DROP CONSTRAINT ck_reminder_dispatch_status"
-            )
-            await connection.execute(
-                """
-                ALTER TABLE microsched.reminder_dispatch
-                ADD CONSTRAINT ck_reminder_dispatch_status
-                CHECK (status IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted'))
-                """
-            )
             await connection.execute(
                 """
                 INSERT INTO microsched.tracker
@@ -547,17 +552,6 @@ def test_pg_future_terminal_confirmation_statuses_fail_closed(pg_dsn: str) -> No
                 "DELETE FROM microsched.reminder_dispatch WHERE subject_id = $1", tracker_id
             )
             await connection.execute("DELETE FROM microsched.tracker WHERE id = $1", tracker_id)
-            await connection.execute(
-                "ALTER TABLE microsched.reminder_dispatch "
-                "DROP CONSTRAINT ck_reminder_dispatch_status"
-            )
-            await connection.execute(
-                """
-                ALTER TABLE microsched.reminder_dispatch
-                ADD CONSTRAINT ck_reminder_dispatch_status
-                CHECK (status IN ('pending', 'sent', 'no_device'))
-                """
-            )
             await connection.close()
             await engine.dispose()
 
@@ -603,7 +597,7 @@ def test_pg_confirmation_matrix_pre_and_post_future_schema(pg_dsn: str) -> None:
                         _auth(),
                     )
 
-            # The current 0011 schema can represent pending/sent/no_device.
+            # The 0012 schema preserves the 0011 pending/sent/no_device behavior.
             for day_offset, status_value in enumerate(("pending", "sent"), start=1):
                 dispatch_id = await insert_dispatch(status_value, day_offset)
                 first_entry_id = uuid7()
@@ -632,8 +626,8 @@ def test_pg_confirmation_matrix_pre_and_post_future_schema(pg_dsn: str) -> None:
                 )
             ) == entry_count_before
 
-            # Simulate only the post-0012 status expansion locally; 035A does
-            # not ship that migration, but rollback must still deny its rows.
+            # Add one unknown later terminal locally; the rollback binary must
+            # continue to fail closed beyond 0012's known terminal set.
             await connection.execute(
                 "ALTER TABLE microsched.reminder_dispatch "
                 "DROP CONSTRAINT ck_reminder_dispatch_status"
@@ -678,7 +672,9 @@ def test_pg_confirmation_matrix_pre_and_post_future_schema(pg_dsn: str) -> None:
                     """
                     ALTER TABLE microsched.reminder_dispatch
                     ADD CONSTRAINT ck_reminder_dispatch_status
-                    CHECK (status IN ('pending', 'sent', 'no_device'))
+                    CHECK (
+                        status IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted')
+                    )
                     """
                 )
             await connection.close()

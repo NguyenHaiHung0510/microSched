@@ -1,15 +1,16 @@
 """Domain logic for reminder payloads, dispatcher execution, and confirmation."""
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from enum import StrEnum
 from typing import Awaitable, Callable
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
@@ -20,6 +21,8 @@ from app.domain.models import (
     ReminderDispatch,
     Subscription,
     Tracker,
+    TrackerReminderBatch,
+    TrackerReminderBatchItem,
 )
 from app.domain.push import ProviderWorkTracker, PushResult, send_push
 from app.domain.tracker import EntryCreate, TrackerStore
@@ -36,6 +39,7 @@ class DispatchOutcome(StrEnum):
     TEMPORARY_FAILURE = "temporary_failure"
     NO_DEVICE = "no_device"
     EXHAUSTED = "exhausted"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +48,35 @@ class DispatchTelemetry:
 
     attempt_count: int
     outcome: DispatchOutcome | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrackerBatchCandidate:
+    """Heap snapshot passed into the transactional tracker-batch claim."""
+
+    tracker_id: UUID
+    occurrence_on: date
+    reminder_time: time
+    reminder_mode: str
+    reminder_interval_days: int
+    reminder_action: str
+
+
+@dataclass(frozen=True, slots=True)
+class BatchFanout:
+    """Provider result counts for one aggregate payload attempt."""
+
+    current_count: int = 0
+    sent_count: int = 0
+    temporary_failure_count: int = 0
+    dead_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ActiveBatchMember:
+    item: TrackerReminderBatchItem
+    dispatch: ReminderDispatch
+    tracker: Tracker
 
 
 def build_tracker_reminder_payload(
@@ -332,6 +365,608 @@ class ReminderDispatcher:
                     )
                 )
             return DispatchOutcome.NO_DEVICE
+
+
+class TrackerBatchDispatcher:
+    """Durably claim and fan out one payload per current push endpoint.
+
+    Membership is immutable after :meth:`claim_batch` commits. Retry and restart
+    always address the batch id, never reconstruct a group from the current heap.
+    """
+
+    _ADVISORY_NAMESPACE = 0x35B01201
+    _TERMINAL = frozenset({"sent", "no_device", "cancelled", "exhausted"})
+
+    def __init__(self) -> None:
+        self._delivery_locks: dict[UUID, asyncio.Lock] = {}
+        self._provider_work = ProviderWorkTracker()
+
+    @property
+    def provider_work(self) -> ProviderWorkTracker:
+        return self._provider_work
+
+    @staticmethod
+    def _effective_config(tracker: Tracker) -> tuple[str, int, str, time] | None:
+        if tracker.reminder_time is None or tracker.reminder_time.microsecond:
+            return None
+        if (
+            tracker.kind == "health"
+            and tracker.input_mode == "event"
+            and tracker.reminder_mode is None
+            and tracker.reminder_interval_days is None
+            and tracker.reminder_action is None
+        ):
+            return "fixed", 1, "confirm_event", tracker.reminder_time
+        if (
+            tracker.reminder_mode not in {"fixed", "after_entry"}
+            or tracker.reminder_interval_days is None
+            or tracker.reminder_interval_days < 1
+            or tracker.reminder_action not in {"confirm_event", "open_tracker"}
+            or (tracker.reminder_action == "confirm_event" and tracker.input_mode != "event")
+        ):
+            return None
+        return (
+            tracker.reminder_mode,
+            tracker.reminder_interval_days,
+            tracker.reminder_action,
+            tracker.reminder_time,
+        )
+
+    @staticmethod
+    def _signed_int32(value: int) -> int:
+        return value - (1 << 32) if value >= (1 << 31) else value
+
+    @classmethod
+    def _advisory_key(cls, occurrence_on: date, reminder_time: time) -> int:
+        canonical = f"{occurrence_on.isoformat()}\x1f{reminder_time.strftime('%H:%M:%S')}"
+        raw = int.from_bytes(hashlib.sha256(canonical.encode("utf-8")).digest()[:4], "big")
+        return cls._signed_int32(raw)
+
+    @staticmethod
+    def _batch_ref(batch_id: UUID) -> str:
+        return hashlib.sha256(batch_id.bytes).hexdigest()[:20]
+
+    @staticmethod
+    def _notification_tag(batch_id: UUID) -> str:
+        return f"msb-{hashlib.sha256(batch_id.bytes).hexdigest()[:24]}"
+
+    async def _lock_entries_and_latest_dates(
+        self, db: AsyncSession, tracker_ids: list[UUID]
+    ) -> dict[UUID, date]:
+        if not tracker_ids:
+            return {}
+        rows = await db.execute(
+            select(Entry)
+            .where(
+                Entry.tracker_id.in_(tracker_ids),
+                Entry.deleted_at.is_(None),
+                Entry.occurred_at.is_not(None),
+            )
+            .order_by(Entry.id)
+            .with_for_update()
+        )
+        latest: dict[UUID, date] = {}
+        for entry in rows.scalars().all():
+            occurred_at = entry.occurred_at
+            if occurred_at is None:
+                continue
+            if occurred_at.tzinfo is None:
+                occurred_at = occurred_at.replace(tzinfo=UTC)
+            occurred_on = occurred_at.astimezone(VN_TZ).date()
+            previous = latest.get(entry.tracker_id)
+            if previous is None or occurred_on > previous:
+                latest[entry.tracker_id] = occurred_on
+        return latest
+
+    @staticmethod
+    def _candidate_is_due(
+        *, candidate: TrackerBatchCandidate, tracker: Tracker, latest_entry_on: date | None
+    ) -> bool:
+        config = TrackerBatchDispatcher._effective_config(tracker)
+        expected = (
+            candidate.reminder_mode,
+            candidate.reminder_interval_days,
+            candidate.reminder_action,
+            candidate.reminder_time,
+        )
+        if config != expected:
+            return False
+        if candidate.reminder_mode != "after_entry" or latest_entry_on is None:
+            return True
+        return latest_entry_on + timedelta(days=candidate.reminder_interval_days) <= (
+            candidate.occurrence_on
+        )
+
+    async def claim_batch(
+        self,
+        db: AsyncSession,
+        candidates: list[TrackerBatchCandidate],
+    ) -> UUID | None:
+        """Claim valid candidates under one key lock and commit immutable membership."""
+        if not candidates:
+            return None
+        occurrence_on = candidates[0].occurrence_on
+        reminder_time = candidates[0].reminder_time
+        if reminder_time.microsecond:
+            raise ValueError("batch reminder_time must be a whole second")
+        if any(
+            candidate.occurrence_on != occurrence_on or candidate.reminder_time != reminder_time
+            for candidate in candidates
+        ):
+            raise ValueError("all batch candidates must share one exact civil key")
+
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:namespace, :key_hash)"),
+            {
+                "namespace": self._signed_int32(self._ADVISORY_NAMESPACE),
+                "key_hash": self._advisory_key(occurrence_on, reminder_time),
+            },
+        )
+        candidate_by_id = {candidate.tracker_id: candidate for candidate in candidates}
+        tracker_ids = sorted(candidate_by_id)
+        result = await db.execute(
+            select(Tracker)
+            .where(Tracker.id.in_(tracker_ids))
+            .order_by(Tracker.id)
+            .with_for_update()
+        )
+        trackers = {tracker.id: tracker for tracker in result.scalars().all()}
+        latest_dates = await self._lock_entries_and_latest_dates(db, tracker_ids)
+
+        claimed: list[tuple[Tracker, TrackerBatchCandidate, UUID]] = []
+        for tracker_id in tracker_ids:
+            tracker = trackers.get(tracker_id)
+            candidate = candidate_by_id[tracker_id]
+            if (
+                tracker is None
+                or tracker.deleted_at is not None
+                or not self._candidate_is_due(
+                    candidate=candidate,
+                    tracker=tracker,
+                    latest_entry_on=latest_dates.get(tracker_id),
+                )
+            ):
+                continue
+            dispatch_id = (
+                await db.execute(
+                    text(
+                        """
+                        INSERT INTO microsched.reminder_dispatch
+                            (id, subject_type, subject_id, dispatched_on, status,
+                             attempt_count, created_at)
+                        VALUES (uuidv7(), 'tracker', :tracker_id, :occurrence_on,
+                                'pending', 0, NOW())
+                        ON CONFLICT (subject_type, subject_id, dispatched_on) DO NOTHING
+                        RETURNING id
+                        """
+                    ),
+                    {"tracker_id": tracker_id, "occurrence_on": occurrence_on},
+                )
+            ).scalar_one_or_none()
+            if dispatch_id is not None:
+                claimed.append((tracker, candidate, dispatch_id))
+
+        if not claimed:
+            await db.commit()
+            return None
+
+        max_generation = (
+            await db.execute(
+                select(func.max(TrackerReminderBatch.generation)).where(
+                    TrackerReminderBatch.occurrence_on == occurrence_on,
+                    TrackerReminderBatch.reminder_time == reminder_time,
+                )
+            )
+        ).scalar_one()
+        batch = TrackerReminderBatch(
+            occurrence_on=occurrence_on,
+            reminder_time=reminder_time,
+            generation=(max_generation or 0) + 1,
+        )
+        db.add(batch)
+        await db.flush()
+        for tracker, candidate, dispatch_id in claimed:
+            db.add(
+                TrackerReminderBatchItem(
+                    batch_id=batch.id,
+                    dispatch_id=dispatch_id,
+                    reminder_mode=candidate.reminder_mode,
+                    reminder_interval_days=candidate.reminder_interval_days,
+                    reminder_action=candidate.reminder_action,
+                    input_mode=tracker.input_mode,
+                )
+            )
+        await db.commit()
+        return batch.id
+
+    async def select_current_push_subscriptions(self, db: AsyncSession) -> list[PushSubscription]:
+        """Return exactly the rows that still exist at selector snapshot time."""
+        result = await db.execute(select(PushSubscription).order_by(PushSubscription.id))
+        subscriptions = list(result.scalars().all())
+        await db.commit()
+        return subscriptions
+
+    async def fanout_current_subscriptions(
+        self,
+        db: AsyncSession,
+        *,
+        batch_status: str,
+        payload: dict,
+        ownership_guard: Callable[[], Awaitable[None]] | None = None,
+    ) -> BatchFanout:
+        """Send once per current row; terminal batches perform zero selector/network work."""
+        if batch_status in self._TERMINAL:
+            return BatchFanout()
+        subscriptions = await self.select_current_push_subscriptions(db)
+        sent = temporary = dead = 0
+        for subscription in subscriptions:
+            if ownership_guard is not None:
+                await ownership_guard()
+            outcome = await send_push(
+                db,
+                subscription,
+                payload,
+                provider_work_tracker=self._provider_work,
+            )
+            if outcome == PushResult.SENT:
+                sent += 1
+            elif outcome == PushResult.TEMPORARY_FAILURE:
+                temporary += 1
+            else:
+                dead += 1
+        return BatchFanout(
+            current_count=len(subscriptions),
+            sent_count=sent,
+            temporary_failure_count=temporary,
+            dead_count=dead,
+        )
+
+    def _build_payload(
+        self,
+        batch: TrackerReminderBatch,
+        active: list[_ActiveBatchMember],
+    ) -> dict:
+        title = "Hi, it's microSched 🌸"
+        if len(active) > 1:
+            body = f"Bạn có {len(active)} thông báo từ app"
+            url = "/trackers"
+        else:
+            member = active[0]
+            if member.tracker.is_private:
+                body = "Bạn có 1 thông báo từ app"
+            else:
+                try:
+                    body = crypto.decrypt(member.tracker.name)
+                except Exception:
+                    body = "Bạn có 1 thông báo từ app"
+                    logger.warning(
+                        "tracker_reminder_batch_receipt batch_ref=%s occurrence_on=%s "
+                        "reminder_time=%s outcome=public_name_decrypt_fallback",
+                        self._batch_ref(batch.id),
+                        batch.occurrence_on,
+                        batch.reminder_time.isoformat(),
+                    )
+            url = (
+                f"/reminder-confirm?dispatch={member.dispatch.id}"
+                if member.item.reminder_action == "confirm_event"
+                else "/trackers"
+            )
+        return {
+            "title": title,
+            "body": body,
+            "url": url,
+            "tag": self._notification_tag(batch.id),
+        }
+
+    async def _lock_members_for_send(
+        self, db: AsyncSession, batch_id: UUID
+    ) -> tuple[TrackerReminderBatch | None, list[_ActiveBatchMember]]:
+        probe = await db.execute(
+            select(TrackerReminderBatchItem.dispatch_id, ReminderDispatch.subject_id)
+            .join(ReminderDispatch, ReminderDispatch.id == TrackerReminderBatchItem.dispatch_id)
+            .where(TrackerReminderBatchItem.batch_id == batch_id)
+            .order_by(TrackerReminderBatchItem.dispatch_id)
+        )
+        probed = list(probe.all())
+        tracker_ids = sorted({subject_id for _dispatch_id, subject_id in probed})
+        trackers_result = await db.execute(
+            select(Tracker)
+            .where(Tracker.id.in_(tracker_ids))
+            .order_by(Tracker.id)
+            .with_for_update()
+        )
+        trackers = {tracker.id: tracker for tracker in trackers_result.scalars().all()}
+        latest_dates = await self._lock_entries_and_latest_dates(db, tracker_ids)
+
+        batch = (
+            await db.execute(
+                select(TrackerReminderBatch)
+                .where(TrackerReminderBatch.id == batch_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if batch is None:
+            return None, []
+        items = list(
+            (
+                await db.execute(
+                    select(TrackerReminderBatchItem)
+                    .where(TrackerReminderBatchItem.batch_id == batch_id)
+                    .order_by(TrackerReminderBatchItem.dispatch_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        dispatch_result = await db.execute(
+            select(ReminderDispatch)
+            .where(ReminderDispatch.id.in_([item.dispatch_id for item in items]))
+            .order_by(ReminderDispatch.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        dispatches = {dispatch.id: dispatch for dispatch in dispatch_result.scalars().all()}
+
+        active: list[_ActiveBatchMember] = []
+        for item in items:
+            dispatch = dispatches.get(item.dispatch_id)
+            if dispatch is None:
+                item.state = "cancelled"
+                continue
+            tracker = trackers.get(dispatch.subject_id)
+            valid = False
+            if tracker is not None and tracker.deleted_at is None:
+                candidate = TrackerBatchCandidate(
+                    tracker_id=tracker.id,
+                    occurrence_on=batch.occurrence_on,
+                    reminder_time=batch.reminder_time,
+                    reminder_mode=item.reminder_mode,
+                    reminder_interval_days=item.reminder_interval_days,
+                    reminder_action=item.reminder_action,
+                )
+                valid = tracker.input_mode == item.input_mode and self._candidate_is_due(
+                    candidate=candidate,
+                    tracker=tracker,
+                    latest_entry_on=latest_dates.get(tracker.id),
+                )
+            if not valid:
+                item.state = "cancelled"
+                dispatch.status = "cancelled"
+            elif item.state == "pending" and dispatch.status == "pending":
+                active.append(_ActiveBatchMember(item=item, dispatch=dispatch, tracker=tracker))
+        return batch, active
+
+    async def _lock_terminal_rows(
+        self, db: AsyncSession, batch_id: UUID
+    ) -> tuple[TrackerReminderBatch, list[tuple[TrackerReminderBatchItem, ReminderDispatch]]]:
+        """Lock Batch → Items → Dispatches explicitly in the global order."""
+        batch = (
+            await db.execute(
+                select(TrackerReminderBatch)
+                .where(TrackerReminderBatch.id == batch_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+        items = list(
+            (
+                await db.execute(
+                    select(TrackerReminderBatchItem)
+                    .where(TrackerReminderBatchItem.batch_id == batch_id)
+                    .order_by(TrackerReminderBatchItem.dispatch_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        dispatch_result = await db.execute(
+            select(ReminderDispatch)
+            .where(ReminderDispatch.id.in_([item.dispatch_id for item in items]))
+            .order_by(ReminderDispatch.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        dispatches = {dispatch.id: dispatch for dispatch in dispatch_result.scalars().all()}
+        return batch, [
+            (item, dispatches[item.dispatch_id]) for item in items if item.dispatch_id in dispatches
+        ]
+
+    async def _mirror_terminal(
+        self,
+        db: AsyncSession,
+        *,
+        batch_id: UUID,
+        tracker_ids: list[UUID],
+        status_value: str,
+    ) -> None:
+        if tracker_ids:
+            await db.execute(
+                select(Tracker)
+                .where(Tracker.id.in_(sorted(tracker_ids)))
+                .order_by(Tracker.id)
+                .with_for_update()
+            )
+        batch, rows = await self._lock_terminal_rows(db, batch_id)
+        batch.status = status_value
+        for item, dispatch in rows:
+            if item.state != "cancelled":
+                item.state = status_value
+                dispatch.status = status_value
+        await db.commit()
+
+    async def exhaust_stale_batch(
+        self,
+        db: AsyncSession,
+        batch_id: UUID,
+        *,
+        stale_before: datetime,
+    ) -> bool:
+        """Close a recovery-window-expired batch without starting provider work.
+
+        The actual provider-attempt count is preserved. ``exhausted`` here
+        means automatic recovery is exhausted and manual handling is required;
+        it must not fabricate a fourth network attempt.
+        """
+        if stale_before.tzinfo is None or stale_before.utcoffset() is None:
+            raise ValueError("stale_before must include a timezone offset")
+        probe = await db.execute(
+            select(ReminderDispatch.subject_id)
+            .join(
+                TrackerReminderBatchItem,
+                TrackerReminderBatchItem.dispatch_id == ReminderDispatch.id,
+            )
+            .where(TrackerReminderBatchItem.batch_id == batch_id)
+            .order_by(ReminderDispatch.subject_id)
+        )
+        tracker_ids = sorted(set(probe.scalars().all()))
+        if tracker_ids:
+            await db.execute(
+                select(Tracker)
+                .where(Tracker.id.in_(tracker_ids))
+                .order_by(Tracker.id)
+                .with_for_update()
+            )
+        batch, rows = await self._lock_terminal_rows(db, batch_id)
+        last_at = batch.last_attempt_at or batch.created_at
+        if last_at.tzinfo is None or last_at.utcoffset() is None:
+            last_at = last_at.replace(tzinfo=UTC)
+        if batch.status != "pending" or last_at.astimezone(UTC) >= stale_before.astimezone(UTC):
+            await db.commit()
+            return False
+
+        active_count = 0
+        cancelled_count = 0
+        batch.status = "exhausted"
+        for item, dispatch in rows:
+            if item.state == "cancelled":
+                cancelled_count += 1
+                continue
+            item.state = "exhausted"
+            dispatch.status = "exhausted"
+            active_count += 1
+        await db.commit()
+        logger.warning(
+            "tracker_reminder_batch_receipt batch_ref=%s occurrence_on=%s "
+            "reminder_time=%s attempt_count=%d active_member_count=%d "
+            "cancelled_member_count=%d reason=recovery_window_expired "
+            "outcome=manual_required",
+            self._batch_ref(batch_id),
+            batch.occurrence_on,
+            batch.reminder_time.isoformat(),
+            batch.attempt_count,
+            active_count,
+            cancelled_count,
+        )
+        return True
+
+    async def dispatch_batch(
+        self,
+        db: AsyncSession,
+        batch_id: UUID,
+        *,
+        telemetry: Callable[[DispatchTelemetry], None] | None = None,
+        ownership_guard: Callable[[], Awaitable[None]] | None = None,
+    ) -> DispatchOutcome:
+        """Revalidate, consume one attempt, fan out once, and mirror terminal state."""
+        lock = self._delivery_locks.setdefault(batch_id, asyncio.Lock())
+        async with lock:
+            probe = (
+                await db.execute(
+                    select(TrackerReminderBatch).where(TrackerReminderBatch.id == batch_id)
+                )
+            ).scalar_one_or_none()
+            if probe is None:
+                raise RuntimeError("tracker reminder batch disappeared")
+            if probe.status in self._TERMINAL:
+                return DispatchOutcome(probe.status)
+
+            batch, active = await self._lock_members_for_send(db, batch_id)
+            if batch is None:
+                raise RuntimeError("tracker reminder batch disappeared")
+            if batch.status in self._TERMINAL:
+                await db.commit()
+                return DispatchOutcome(batch.status)
+            if not active:
+                batch.status = "cancelled"
+                await db.commit()
+                return DispatchOutcome.CANCELLED
+            if batch.attempt_count >= 4:
+                for member in active:
+                    member.item.state = "exhausted"
+                    member.dispatch.status = "exhausted"
+                batch.status = "exhausted"
+                await db.commit()
+                logger.warning(
+                    "tracker_reminder_batch_receipt batch_ref=%s occurrence_on=%s "
+                    "reminder_time=%s attempt_count=%d sent_count=0 "
+                    "temporary_failure_count=0 dead_count=0 outcome=manual_required",
+                    self._batch_ref(batch_id),
+                    batch.occurrence_on,
+                    batch.reminder_time.isoformat(),
+                    batch.attempt_count,
+                )
+                return DispatchOutcome.EXHAUSTED
+
+            payload = self._build_payload(batch, active)
+            tracker_ids = [member.tracker.id for member in active]
+            batch.attempt_count += 1
+            batch.last_attempt_at = datetime.now(UTC)
+            attempt_count = batch.attempt_count
+            await db.commit()
+            if telemetry is not None:
+                telemetry(DispatchTelemetry(attempt_count=attempt_count))
+            if ownership_guard is not None:
+                await ownership_guard()
+
+            fanout = await self.fanout_current_subscriptions(
+                db,
+                batch_status="pending",
+                payload=payload,
+                ownership_guard=ownership_guard,
+            )
+            if fanout.sent_count:
+                terminal = "sent"
+                outcome = DispatchOutcome.SENT
+            elif fanout.temporary_failure_count and attempt_count < 4:
+                await db.commit()
+                outcome = DispatchOutcome.TEMPORARY_FAILURE
+                if telemetry is not None:
+                    telemetry(DispatchTelemetry(attempt_count=attempt_count, outcome=outcome))
+                return outcome
+            elif fanout.temporary_failure_count:
+                terminal = "exhausted"
+                outcome = DispatchOutcome.EXHAUSTED
+            else:
+                terminal = "no_device"
+                outcome = DispatchOutcome.NO_DEVICE
+
+            await self._mirror_terminal(
+                db,
+                batch_id=batch_id,
+                tracker_ids=tracker_ids,
+                status_value=terminal,
+            )
+            if terminal == "exhausted":
+                logger.warning(
+                    "tracker_reminder_batch_receipt batch_ref=%s occurrence_on=%s "
+                    "reminder_time=%s attempt_count=%d sent_count=%d "
+                    "temporary_failure_count=%d dead_count=%d outcome=manual_required",
+                    self._batch_ref(batch_id),
+                    batch.occurrence_on,
+                    batch.reminder_time.isoformat(),
+                    attempt_count,
+                    fanout.sent_count,
+                    fanout.temporary_failure_count,
+                    fanout.dead_count,
+                )
+            if telemetry is not None:
+                telemetry(DispatchTelemetry(attempt_count=attempt_count, outcome=outcome))
+            return outcome
 
 
 async def confirm_reminder_dispatch(

@@ -7,7 +7,10 @@
 ## 0. Kết quả người dùng phải nhận được
 
 Trong failure-free path, ở một ngày theo múi giờ `Asia/Ho_Chi_Minh`, các tracker thật sự đến hạn ở
-cùng `reminder_time` chính xác tới giây tạo **một provider send trên mỗi thiết bị**.
+cùng `reminder_time` chính xác tới giây tạo **một provider call trên mỗi active
+`push_subscription` endpoint**. Một thiết bị vật lý có thể để lại nhiều row/endpoint hoặc thay endpoint;
+vì schema không có durable physical-device identity, “mỗi thiết bị” chỉ là kỳ vọng device acceptance
+best-effort, không phải invariant máy kiểm được.
 
 - Title: `Hi, it's microSched 🌸`.
 - Một tracker public: body chỉ là tên tracker.
@@ -128,10 +131,11 @@ của `0012`, rồi mới upgrade lại và so canonical schema; chỉ drop sche
 `pending|sent|no_device` thành `pending|sent|no_device|cancelled|exhausted`; không đổi default
 `pending`. Domain model và schema drift test phải cùng phản ánh tập giá trị này.
 
-Không silently round fractional seconds. DTO/API tracker phải reject `reminder_time` có
-microseconds; migration preflight fail-closed nếu catalog đã có row fractional-second. DB thêm named
-CHECK dùng fractional microseconds để direct SQL/old writer cũng fail; scheduler gặp row vi phạm phải
-fail-closed, không round.
+Không silently round fractional seconds. **Guard DTO/API/domain reject `reminder_time` có microseconds
+phải vào 035A, có RED → GREEN và được deploy/verify trước khi apply `0012`**; đây là hard rollout gate,
+không được để 035A còn nhận write fractional trong cửa sổ migration → 035B. Migration preflight
+fail-closed nếu catalog đã có row fractional-second. DB thêm named CHECK dùng fractional microseconds để
+direct SQL/old writer cũng fail; scheduler gặp row vi phạm phải fail-closed, không round.
 
 ### 2.2 Claim và membership
 
@@ -206,7 +210,9 @@ Sau revalidation, `active_members` quyết định payload:
 ```text
 len == 1 và public:
   title = "Hi, it's microSched 🌸"
-  body = public tracker name
+  body = public tracker name nếu decrypt thành công
+  nếu ciphertext hỏng hoặc key/decrypt unavailable:
+    body = "Bạn có 1 thông báo từ app"
   url = existing action URL
 
 len == 1 và private:
@@ -224,12 +230,27 @@ Private/multi path không được gọi decrypt/name/custom-text helper. Multi 
 hoặc chọn ngầm một tracker để confirm. Single `confirm_event` vẫn dùng member `dispatch_id` và
 giữ idempotency nhiều thiết bị.
 
+Public-single decrypt failure là failure-safe generic, không cancel member và không bao giờ đưa
+ciphertext/error detail vào payload. Structured receipt chỉ ghi opaque batch ref, occurrence/time và
+outcome `public_name_decrypt_fallback`; không tracker/dispatch UUID thô, name/text/ciphertext hay key
+metadata. Unit test bắt buộc phủ ciphertext corrupt và key/decrypt unavailable, assert exact generic body,
+URL/action giữ nguyên và artifact/log không chứa ciphertext.
+
 Payload thêm `tag` opaque từ `batch_id` cho service worker dùng làm best-effort collapse khi
 provider retry; tag không chứa ngày, tên hoặc count. Đây không phải exactly-once proof.
 
 ### 2.4 Delivery outcome
 
 Một batch attempt chạy một vòng qua push subscriptions, không chạy một vòng/member.
+
+Selection endpoint phải có **unit/contract test riêng**, không được chỉ dựa vào integration acceptance
+hai endpoint ở §4. Schema hiện hành của `push_subscription` không có cột status/`deleted_at`: “active”
+chính xác là row còn tồn tại tại thời điểm selector query; explicit unsubscribe và provider `404/410`
+hard-delete row nên là inactive/revoked equivalent. `exhausted` là trạng thái batch/dispatch, không phải
+trạng thái subscription và không được dùng để phát minh thêm cột/schema trong 035B. Fixture unit bắt buộc
+có hai row hiện hành cộng các endpoint đã bị unsubscribe/dead-delete trước snapshot; oracle là selector
+trả đúng hai endpoint hiện hành và provider mock nhận đúng hai endpoint đó, **zero call** cho mọi endpoint
+đã bị xoá. Một batch đã terminal, gồm `exhausted`, vẫn phải qua terminal guard và tạo zero network call.
 
 - Ít nhất một device `SENT` ⇒ batch `sent`.
 - Không device sent nhưng có temporary failure ⇒ giữ `pending`, schedule đúng một retry chain.
@@ -279,7 +300,7 @@ dispatch UUID, tracker name/text, endpoint hoặc subscription key.
 - `backend/scripts/prepare_qa_branch.py` + guard tests để truncate hai batch table cùng delivery data
 - `backend/scripts/reminder_delivery_receipt.py` + tests để report batch authority và legacy unlinked
 - `backend/scripts/scheduler_ownership_receipt.py` + tests cho one-shot advisory-lock holder count
-- `frontend/src/sw.ts` cho opaque notification tag
+- `frontend/src/sw.ts` + unit test cho opaque notification tag đi tới `showNotification`
 - test reminder/cron/migration/schema tương ứng
 
 Không sửa note/task/calendar UI trong task này. Không chạm `.env`, production, Neon hay push
@@ -287,10 +308,14 @@ subscription thật trong implementation PR.
 
 ## 4. Acceptance và RED → GREEN
 
-1. Hai tracker cùng VN date/time + hai devices ⇒ 1 batch, 2 members, đúng 2 provider calls,
-   không phải 4.
+1. Hai tracker cùng VN date/time + hai active `push_subscription` endpoints ⇒ 1 batch, 2 members, đúng
+   2 provider calls, không phải 4. Unit contract riêng
+   `test_batch_selects_only_current_push_subscription_rows` phải chứng minh selector chỉ lấy row hiện
+   hành và endpoint đã unsubscribe/dead-delete nhận 0 provider call; batch terminal `exhausted` cũng
+   nhận 0 provider call. Physical-device uniqueness chỉ best-effort acceptance.
 2. Khác một giây hoặc khác VN date ⇒ hai batch.
-3. Public single/private single/public+private/two public có đúng title/body/url; không có
+3. Public single/private single/public+private/two public có đúng title/body/url; public-single
+   decrypt corrupt/unavailable dùng exact generic fallback + structured receipt an toàn; không có
    plaintext/ciphertext/custom text trong generic payload.
 4. Crash sau membership commit trước send ⇒ restart dùng cùng batch/member IDs; crash sau provider
    accept trước terminal commit chứng minh có thể duplicate và không được claim exactly-once.
@@ -310,6 +335,8 @@ subscription thật trong implementation PR.
     Catalog tại revision `0011` sau downgrade không còn whole-second CHECK/table/trigger/index của `0012`.
 12. RED proof tối thiểu:
     - cố ý send per-member ⇒ provider-call assertion đỏ;
+    - cố ý đưa endpoint đã unsubscribe/dead-delete vào selector hoặc bỏ terminal guard của batch
+      `exhausted` ⇒ unit endpoint-selection assertion đỏ; restore ⇒ đúng hai active calls và zero inactive;
     - bỏ privacy generic gate ⇒ leak test đỏ;
     - dùng UTC date hoặc round seconds ⇒ boundary test đỏ;
     - hai CronTimer trên PG thật: đúng một owner, standby zero snapshot/recovery/send, handoff sau close;
@@ -335,8 +362,13 @@ subscription thật trong implementation PR.
 ```text
 backend: uv run ruff check .
 backend: uv run ruff format --check .
+backend: uv run pytest tests/test_reminder_batching.py::test_batch_selects_only_current_push_subscription_rows
 backend: uv run pytest -m "not pg"
 backend: uv run pytest -m pg   # Docker prerequisite
+frontend: npm run lint
+frontend: npm run test         # unit test phải assert tag tới showNotification
+frontend: npm run build
+frontend: npm run e2e          # canonical full Playwright command
 root:    uvx pre-commit run --all-files
 ```
 
@@ -374,6 +406,11 @@ hai PR/deploy tuần tự:
       với chính binary 035A/rollback cho `cancelled|exhausted`; không để rollback mở lại stale link.
       Implementation phải chuyển confirmation sang global lock order `tracker → dispatch → create Entry`
       và re-read dispatch dưới lock, không giữ pattern hiện hành `dispatch → tracker`.
+   - Whole-second writer guard cũng phải vào 035A: create/PATCH legacy lẫn canonical reject
+     `reminder_time.microsecond != 0` trước flush. RED dùng fractional API payload thấy `422` đúng
+     invariant; restore thấy whole-second payload xanh. Exact 035A head có guard này phải được
+     independent-review, CI xanh, deploy và verify trước khi `0012` thêm/validate DB CHECK; thiếu receipt
+     thì dừng trước migration.
    - Observable receipt: structured transition log chứa commit, scheduler state và opaque lock constant
      (không DB URL/PID/UUID người dùng), cộng one-shot read-only
      `scripts/scheduler_ownership_receipt.py` đếm exact advisory-lock holders từ `pg_locks`. Không expose
