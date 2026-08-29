@@ -62,3 +62,16 @@ async def test_collect_receipt_counts_only_the_named_advisory_lock(monkeypatch):
         "lock_ref": SCHEDULER_ADVISORY_LOCK_REF,
         "holder_count": 1,
     }
+
+
+def test_main_rejects_unknown_commit_without_connecting(monkeypatch, capsys):
+    """A receipt without an exact deployed commit cannot be used as evidence."""
+    monkeypatch.setattr(receipt_module.os, "environ", {"DATABASE_URL": "postgresql://fixture"})
+    monkeypatch.setattr(
+        receipt_module.asyncpg,
+        "connect",
+        lambda *_args, **_kwargs: pytest.fail("unknown commit must not connect"),
+    )
+
+    assert receipt_module.main() == 1
+    assert capsys.readouterr().err == "error_type=RuntimeError\n"

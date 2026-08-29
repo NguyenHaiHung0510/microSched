@@ -64,12 +64,16 @@ def main() -> int:
     if not database_url:
         print("error_type=RuntimeError", file=sys.stderr)
         return 1
+    commit = os.environ.get("GIT_SHA", "unknown")
+    if commit == "unknown":
+        print("error_type=RuntimeError", file=sys.stderr)
+        return 1
     try:
         receipt = asyncio.run(
             collect_receipt(
                 database_url,
                 observed_at=datetime.now(UTC),
-                commit=os.environ.get("GIT_SHA", "unknown"),
+                commit=commit,
             )
         )
     except Exception as exc:

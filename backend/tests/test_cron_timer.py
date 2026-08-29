@@ -313,6 +313,83 @@ async def test_lock_connection_loss_is_fatal_before_another_snapshot(monkeypatch
 
 
 @pytest.mark.anyio
+async def test_abrupt_owner_loss_allows_standby_takeover(monkeypatch):
+    """A stopped owner releases the shared fence so the standby alone loads work."""
+
+    class SharedFence:
+        owner = None
+
+    class SharedLockConnection(FakeLockConnection):
+        def __init__(self, fence: SharedFence):
+            super().__init__()
+            self.fence = fence
+
+        async def fetchval(self, query, *args):
+            if "pg_try_advisory_lock" in query:
+                if self.fence.owner is None:
+                    self.fence.owner = self
+                    return True
+                return False
+            if "pg_locks" in query:
+                return self.fence.owner is self and not self.closed
+            raise AssertionError(f"unexpected lock query: {query}")
+
+        async def close(self):
+            self.closed = True
+            if self.fence.owner is self:
+                self.fence.owner = None
+
+    fence = SharedFence()
+    first_connection = SharedLockConnection(fence)
+    second_connections: list[SharedLockConnection] = []
+    first_loaded = asyncio.Event()
+    second_loaded = asyncio.Event()
+
+    async def first_factory():
+        return first_connection
+
+    async def second_factory():
+        connection = SharedLockConnection(fence)
+        second_connections.append(connection)
+        return connection
+
+    first = CronTimer(FakeFactory(object()), lock_connection_factory=first_factory)
+    second = CronTimer(FakeFactory(object()), lock_connection_factory=second_factory)
+
+    async def first_snapshot(db):
+        first_loaded.set()
+
+    async def second_snapshot(db):
+        second_loaded.set()
+
+    first.load_snapshot = first_snapshot
+    second.load_snapshot = second_snapshot
+    monkeypatch.setattr(cron, "OWNERSHIP_ACQUIRE_BACKOFF_SECONDS", (0.01,))
+    first_task = asyncio.create_task(first.run())
+    second_task = asyncio.create_task(second.run())
+    try:
+        await asyncio.wait_for(first_loaded.wait(), timeout=1)
+        for _ in range(100):
+            if second.status == "standby":
+                break
+            await asyncio.sleep(0)
+        else:
+            pytest.fail("second timer did not enter standby")
+
+        assert first_connection.listener is not None
+        first_connection.listener(first_connection)
+        with pytest.raises(cron.CronTimerOwnershipLost):
+            await asyncio.wait_for(first_task, timeout=1)
+        await asyncio.wait_for(second_loaded.wait(), timeout=1)
+        assert second.status == "owner"
+        assert second_connections
+    finally:
+        await first.stop()
+        await second.stop()
+        await asyncio.gather(first_task, second_task, return_exceptions=True)
+
+
+@pytest.mark.anyio
 async def test_lock_loss_cancels_inflight_sender_before_a_second_provider_call():
     """035A: the lost-lock callback cancels the active sender immediately."""
 
@@ -407,6 +484,130 @@ async def test_graceful_stop_waits_for_uncancellable_provider_thread(monkeypatch
         await asyncio.wait_for(stop_task, timeout=1)
     assert connection.unlock_calls == 1
     assert connection.closed is True
+
+
+@pytest.mark.anyio
+async def test_shutdown_provider_wait_failure_still_releases_ownership():
+    """A failed worker drain cannot strand the advisory lock after shutdown."""
+
+    class FailingProviderWork:
+        async def wait_for_idle(self, timeout: float) -> bool:
+            raise RuntimeError("test-only provider wait failure")
+
+    class Dispatcher:
+        provider_work = FailingProviderWork()
+
+    connection = FakeLockConnection()
+    timer = CronTimer(FakeFactory(object()), reminder_dispatcher=Dispatcher())
+    timer._lock_connection = connection
+    timer._ownership_active = True
+    timer._status = "owner"
+
+    with pytest.raises(RuntimeError, match="provider wait failure"):
+        await timer.stop()
+
+    assert timer.status == "stopped"
+    assert connection.unlock_calls == 1
+    assert connection.closed is True
+
+
+@pytest.mark.anyio
+async def test_run_loss_transitions_through_stopping_to_stopped(caplog):
+    """A fatal ownership loss still emits the complete terminal state sequence."""
+    connection = FakeLockConnection()
+    loaded = asyncio.Event()
+
+    async def open_connection():
+        return connection
+
+    timer = CronTimer(FakeFactory(object()), lock_connection_factory=open_connection)
+
+    async def snapshot(db):
+        loaded.set()
+
+    timer.load_snapshot = snapshot
+    caplog.set_level(logging.INFO, logger=cron.__name__)
+    task = asyncio.create_task(timer.run())
+    await asyncio.wait_for(loaded.wait(), timeout=1)
+    assert connection.listener is not None
+    connection.listener(connection)
+
+    with pytest.raises(cron.CronTimerOwnershipLost):
+        await asyncio.wait_for(task, timeout=1)
+
+    states = [
+        record.getMessage().split()[1].split("=", 1)[1]
+        for record in caplog.records
+        if record.name == cron.__name__
+        and record.getMessage().startswith("cron_timer_ownership_transition")
+    ]
+    assert states[-3:] == ["ownership_lost", "stopping", "stopped"]
+    assert timer.status == "stopped"
+
+
+@pytest.mark.anyio
+async def test_stop_cancels_hung_lock_connection_attempt(monkeypatch):
+    """Shutdown cancels an in-flight connect rather than waiting for its timeout."""
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def hanging_factory():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(cron, "OWNERSHIP_CONNECTION_TIMEOUT_SECONDS", 3600)
+    timer = CronTimer(FakeFactory(object()), lock_connection_factory=hanging_factory)
+    task = asyncio.create_task(timer.run())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(timer.stop(), timeout=1)
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    await asyncio.wait_for(task, timeout=1)
+    assert timer.status == "stopped"
+
+
+@pytest.mark.anyio
+async def test_acquire_timeout_closes_connection_and_enters_standby(monkeypatch):
+    """A hung pg_try_advisory_lock is bounded, closed, and never treated as owner."""
+
+    class HangingLockConnection(FakeLockConnection):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def fetchval(self, query, *args):
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    connection = HangingLockConnection()
+
+    async def open_connection():
+        return connection
+
+    monkeypatch.setattr(cron, "OWNERSHIP_CONNECTION_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(cron, "OWNERSHIP_ACQUIRE_BACKOFF_SECONDS", (3600,))
+    timer = CronTimer(FakeFactory(object()), lock_connection_factory=open_connection)
+    task = asyncio.create_task(timer.run())
+    await asyncio.wait_for(connection.started.wait(), timeout=1)
+    await asyncio.wait_for(connection.cancelled.wait(), timeout=1)
+    for _ in range(100):
+        if timer.status == "standby":
+            break
+        await asyncio.sleep(0)
+    else:
+        pytest.fail("timer did not enter standby after bounded acquisition timeout")
+    assert connection.closed is True
+    assert timer._ownership_active is False
+    await timer.stop()
+    await asyncio.wait_for(task, timeout=1)
 
 
 @pytest.mark.anyio

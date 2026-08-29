@@ -47,6 +47,8 @@ SCHEDULER_ADVISORY_LOCK_REF = "scheduler_035_v1"
 # Standby processes do not inspect schedules while they wait.  These values are
 # a bounded takeover backoff, not a database polling interval.
 OWNERSHIP_ACQUIRE_BACKOFF_SECONDS = (1, 2, 5, 10, 30)
+# A hung TCP connect or lock query must not keep lifespan shutdown hostage.
+OWNERSHIP_CONNECTION_TIMEOUT_SECONDS = 10.0
 
 
 class CronTimerReloadFailure(RuntimeError):
@@ -244,12 +246,26 @@ class CronTimer:
             factory = self._lock_connection_factory or self._default_lock_connection
             connection: Any | None = None
             try:
-                connection = await factory()
-                acquired = await connection.fetchval(
-                    "SELECT pg_try_advisory_lock($1::integer, $2::integer)",
-                    SCHEDULER_ADVISORY_LOCK_NAMESPACE,
-                    SCHEDULER_ADVISORY_LOCK_KEY,
+                stopped, connection = await self._await_acquisition_or_stop(
+                    factory(), phase="connect"
                 )
+                if stopped:
+                    return False
+                stopped, acquired = await self._await_acquisition_or_stop(
+                    connection.fetchval(
+                        "SELECT pg_try_advisory_lock($1::integer, $2::integer)",
+                        SCHEDULER_ADVISORY_LOCK_NAMESPACE,
+                        SCHEDULER_ADVISORY_LOCK_KEY,
+                    ),
+                    phase="lock",
+                )
+                if stopped:
+                    await self._close_lock_connection(connection)
+                    return False
+            except asyncio.CancelledError:
+                if connection is not None:
+                    await self._close_lock_connection(connection)
+                raise
             except Exception as exc:
                 if connection is not None:
                     await self._close_lock_connection(connection)
@@ -282,6 +298,32 @@ class CronTimer:
             if await self._wait_for_ownership_wake(delay):
                 return False
         return False
+
+    async def _await_acquisition_or_stop(
+        self, awaitable: Awaitable[Any], *, phase: str
+    ) -> tuple[bool, Any]:
+        """Bound one acquisition stage and let shutdown cancel it immediately."""
+        work = asyncio.create_task(awaitable, name=f"microsched-cron-acquire-{phase}")
+        stop_wait = asyncio.create_task(self._stop_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {work, stop_wait},
+                timeout=OWNERSHIP_CONNECTION_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                work.cancel()
+                await asyncio.gather(work, return_exceptions=True)
+                raise TimeoutError(f"scheduler ownership {phase} timed out")
+            if stop_wait in done:
+                work.cancel()
+                await asyncio.gather(work, return_exceptions=True)
+                return True, None
+            return False, await work
+        finally:
+            if not stop_wait.done():
+                stop_wait.cancel()
+                await asyncio.gather(stop_wait, return_exceptions=True)
 
     async def _wait_for_ownership_wake(self, timeout: float) -> bool:
         """Wake standby on stop/reload, not on a database tick."""
@@ -1236,13 +1278,17 @@ class CronTimer:
                 self._log_ownership_transition("ownership_lost", level=logging.ERROR)
             raise
         finally:
-            if not self._is_stopped and self._status != "ownership_lost":
+            if self._status != "stopped":
                 self._status = "stopping"
                 self._log_ownership_transition("stopping")
-            await self._wait_for_provider_workers()
-            await self._release_ownership()
-            self._status = "stopped"
-            self._log_ownership_transition("stopped")
+            try:
+                await self._wait_for_provider_workers()
+            finally:
+                try:
+                    await self._release_ownership()
+                finally:
+                    self._status = "stopped"
+                    self._log_ownership_transition("stopped")
 
     async def stop(self) -> None:
         """Clean shutdown for the timer loop."""
@@ -1262,10 +1308,14 @@ class CronTimer:
         if snapshot_task is not None and not snapshot_task.done():
             snapshot_task.cancel()
             await asyncio.gather(snapshot_task, return_exceptions=True)
-        await self._wait_for_provider_workers()
-        await self._release_ownership()
-        self._status = "stopped"
-        self._log_ownership_transition("stopped")
+        try:
+            await self._wait_for_provider_workers()
+        finally:
+            try:
+                await self._release_ownership()
+            finally:
+                self._status = "stopped"
+                self._log_ownership_transition("stopped")
 
 
 def build_cron_timer_if_enabled(session_factory: Any = None) -> CronTimer | None:
