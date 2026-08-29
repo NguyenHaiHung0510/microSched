@@ -48,9 +48,14 @@ sau baseline 037.
 
 ## 4. External-model file handoff protocol — EXPERIMENT, chưa thành policy
 
-Pilot hiện nằm ở `agent-tasks/temp/qa037-tier2-external-model-handoff-v0/`: Owner chuyển `prompt.md`
-một lần, sau đó T1 và model ngoài trao đổi qua `control.json`, `status.json`, `blocker.md` và
-`report.md` dưới một heartbeat duy nhất.
+Pilot `qa037-tier2-external-model-handoff-v0` là artifact external/local temporary, không phải
+tracked source of truth của PR/repo; path `agent-tasks/temp/qa037-tier2-external-model-handoff-v0/`
+chỉ là vị trí local đã dùng cho pilot, không được giả định tồn tại hay tái sử dụng như contract.
+Permanent backlog này chỉ giữ decision/contract: protocol thực tế (`prompt.md`, `control.json`,
+`status.json`, `blocker.md`, `report.md`) phải được materialize và review trước mỗi lần reuse.
+
+Pilot đó dùng một heartbeat duy nhất sau manual handoff của Owner. Đây chỉ là owner-requested
+experimental behavior; không tự promote thành harness policy hay cadence mặc định cho lane khác.
 
 Chưa được promote vào harness vì:
 
