@@ -42,7 +42,7 @@ async def test_collect_receipt_counts_only_the_named_advisory_lock(monkeypatch):
     receipt = await receipt_module.collect_receipt(
         "postgresql://microsched@localhost:5432/microsched",
         observed_at=observed_at,
-        commit="fcdacdf7a0ef0cca8e47bbac0878ec0b3e9b53db",
+        commit="c5f6530f4dc972999ef6bc53458d32f28c8b5583",
     )
 
     assert "pg_locks" in connection.query
@@ -56,7 +56,7 @@ async def test_collect_receipt_counts_only_the_named_advisory_lock(monkeypatch):
     )
     assert connection.closed is True
     assert receipt == {
-        "commit": "fcdacdf7a0ef0cca8e47bbac0878ec0b3e9b53db",
+        "commit": "c5f6530f4dc972999ef6bc53458d32f28c8b5583",
         "observed_at": "2026-08-28T01:02:03Z",
         "scheduler_state": "observed",
         "lock_ref": SCHEDULER_ADVISORY_LOCK_REF,
@@ -64,7 +64,21 @@ async def test_collect_receipt_counts_only_the_named_advisory_lock(monkeypatch):
     }
 
 
-@pytest.mark.parametrize("commit", ("unknown", "", " \t\n"))
+@pytest.mark.parametrize(
+    "commit",
+    (
+        "unknown",
+        " unknown ",
+        "",
+        " \t\n",
+        "c5f6530f4dc972999ef6bc53458d32f28c8b558",
+        "c5f6530f4dc972999ef6bc53458d32f28c8b55830",
+        "C5F6530F4DC972999EF6BC53458D32F28C8B5583",
+        "c5f6530f4dc972999ef6bc53458d32f28c8b558g",
+        " c5f6530f4dc972999ef6bc53458d32f28c8b5583",
+        "c5f6530f4dc972999ef6bc53458d32f28c8b5583 ",
+    ),
+)
 def test_main_rejects_unusable_commit_without_connecting(monkeypatch, capsys, commit):
     """A receipt without an exact deployed commit cannot be used as evidence."""
     monkeypatch.setattr(
@@ -80,3 +94,20 @@ def test_main_rejects_unusable_commit_without_connecting(monkeypatch, capsys, co
 
     assert receipt_module.main() == 1
     assert capsys.readouterr().err == "error_type=RuntimeError\n"
+
+
+@pytest.mark.anyio
+async def test_collect_receipt_rejects_invalid_oid_before_connecting(monkeypatch):
+    """The callable API preserves the same pre-connect immutable-ID guard."""
+    monkeypatch.setattr(
+        receipt_module.asyncpg,
+        "connect",
+        lambda *_args, **_kwargs: pytest.fail("invalid commit must not connect"),
+    )
+
+    with pytest.raises(RuntimeError, match="40-character lowercase"):
+        await receipt_module.collect_receipt(
+            "postgresql://fixture",
+            observed_at=datetime(2026, 8, 28, tzinfo=UTC),
+            commit="not-an-oid",
+        )

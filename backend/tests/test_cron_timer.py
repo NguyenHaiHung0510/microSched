@@ -463,6 +463,7 @@ async def test_graceful_stop_waits_for_uncancellable_provider_thread(monkeypatch
     timer._ownership_active = True
     timer._status = "owner"
 
+    monkeypatch.setattr(cron, "PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
     worker_started = asyncio.Event()
     release_worker = threading.Event()
     loop = asyncio.get_running_loop()
@@ -476,9 +477,10 @@ async def test_graceful_stop_waits_for_uncancellable_provider_thread(monkeypatch
     await asyncio.wait_for(worker_started.wait(), timeout=1)
     stop_task = asyncio.create_task(timer.stop())
     try:
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
         assert connection.unlock_calls == 0
         assert connection.closed is False
+        assert not stop_task.done()
     finally:
         release_worker.set()
         await asyncio.wait_for(stop_task, timeout=1)
@@ -487,8 +489,8 @@ async def test_graceful_stop_waits_for_uncancellable_provider_thread(monkeypatch
 
 
 @pytest.mark.anyio
-async def test_shutdown_provider_wait_failure_still_releases_ownership():
-    """A failed worker drain cannot strand the advisory lock after shutdown."""
+async def test_shutdown_provider_wait_failure_retains_ownership():
+    """An unprovable worker drain fails closed instead of handing off the lock."""
 
     class FailingProviderWork:
         async def wait_for_idle(self, timeout: float) -> bool:
@@ -506,9 +508,9 @@ async def test_shutdown_provider_wait_failure_still_releases_ownership():
     with pytest.raises(RuntimeError, match="provider wait failure"):
         await timer.stop()
 
-    assert timer.status == "stopped"
-    assert connection.unlock_calls == 1
-    assert connection.closed is True
+    assert timer.status == "stopping"
+    assert connection.unlock_calls == 0
+    assert connection.closed is False
 
 
 @pytest.mark.anyio

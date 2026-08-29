@@ -56,8 +56,8 @@ class ProviderWorkTracker:
     def pending_count(self) -> int:
         return len(self._tasks)
 
-    async def wait_for_idle(self, timeout_seconds: float) -> bool:
-        """Wait for every registered worker, returning false at the hard bound."""
+    async def wait_for_idle(self, timeout_seconds: float | None) -> bool:
+        """Wait for every registered worker, optionally only through a diagnostic bound."""
         if not self._tasks:
             return True
         _, pending = await asyncio.wait(set(self._tasks), timeout=timeout_seconds)

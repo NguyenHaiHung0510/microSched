@@ -28,6 +28,8 @@ from app.domain.reminder import confirm_reminder_dispatch
 from app.domain.tracker import EntryCreate, EntryUpdate, TrackerStore
 from scripts.scheduler_ownership_receipt import collect_receipt
 
+RECEIPT_TEST_COMMIT = "c5f6530f4dc972999ef6bc53458d32f28c8b5583"
+
 
 async def _wait_for_state(timer: CronTimer, expected: str) -> None:
     for _ in range(200):
@@ -99,7 +101,7 @@ def test_pg_receipt_counts_only_current_database_exclusive_exact_lock(pg_dsn: st
             receipt = await collect_receipt(
                 pg_dsn,
                 observed_at=datetime.now(UTC),
-                commit="test",
+                commit=RECEIPT_TEST_COMMIT,
             )
             assert receipt["holder_count"] == 0
             await shared.close()
@@ -114,7 +116,7 @@ def test_pg_receipt_counts_only_current_database_exclusive_exact_lock(pg_dsn: st
             receipt = await collect_receipt(
                 pg_dsn,
                 observed_at=datetime.now(UTC),
-                commit="test",
+                commit=RECEIPT_TEST_COMMIT,
             )
             assert receipt["holder_count"] == 0
 
@@ -127,7 +129,7 @@ def test_pg_receipt_counts_only_current_database_exclusive_exact_lock(pg_dsn: st
             receipt = await collect_receipt(
                 pg_dsn,
                 observed_at=datetime.now(UTC),
-                commit="test",
+                commit=RECEIPT_TEST_COMMIT,
             )
             assert receipt["holder_count"] == 0
 
@@ -140,7 +142,7 @@ def test_pg_receipt_counts_only_current_database_exclusive_exact_lock(pg_dsn: st
             receipt = await collect_receipt(
                 pg_dsn,
                 observed_at=datetime.now(UTC),
-                commit="test",
+                commit=RECEIPT_TEST_COMMIT,
             )
             assert receipt["holder_count"] == 1
         finally:
@@ -188,7 +190,7 @@ def test_pg_only_one_owner_receipt_and_handoff(pg_dsn: str, monkeypatch) -> None
             assert second_calls == 0
 
             first_receipt = await collect_receipt(
-                pg_dsn, observed_at=datetime.now(UTC), commit="test"
+                pg_dsn, observed_at=datetime.now(UTC), commit=RECEIPT_TEST_COMMIT
             )
             assert first_receipt["holder_count"] == 1
 
@@ -198,7 +200,7 @@ def test_pg_only_one_owner_receipt_and_handoff(pg_dsn: str, monkeypatch) -> None
             await _wait_for_state(second, "owner")
 
             handoff_receipt = await collect_receipt(
-                pg_dsn, observed_at=datetime.now(UTC), commit="test"
+                pg_dsn, observed_at=datetime.now(UTC), commit=RECEIPT_TEST_COMMIT
             )
             assert handoff_receipt["holder_count"] == 1
             assert second_calls == 1
@@ -312,10 +314,13 @@ def test_pg_connection_termination_preempts_snapshot_and_dispatch(pg_dsn: str) -
 
 
 @pytest.mark.pg
-def test_pg_graceful_stop_retains_lock_for_real_uncancellable_provider_worker(pg_dsn: str) -> None:
+def test_pg_graceful_stop_retains_lock_for_real_uncancellable_provider_worker(
+    pg_dsn: str, monkeypatch
+) -> None:
     """A real thread-backed provider worker completes before the owner unlocks PG."""
 
     async def scenario() -> None:
+        monkeypatch.setattr(cron, "PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
         engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         release_worker = asyncio.Event()
@@ -388,7 +393,7 @@ def test_pg_graceful_stop_retains_lock_for_real_uncancellable_provider_worker(pg
             receipt = await collect_receipt(
                 pg_dsn,
                 observed_at=datetime.now(UTC),
-                commit="test",
+                commit=RECEIPT_TEST_COMMIT,
             )
             assert receipt["holder_count"] == 1
             assert not stop_task.done()
@@ -398,7 +403,7 @@ def test_pg_graceful_stop_retains_lock_for_real_uncancellable_provider_worker(pg
             final_receipt = await collect_receipt(
                 pg_dsn,
                 observed_at=datetime.now(UTC),
-                commit="test",
+                commit=RECEIPT_TEST_COMMIT,
             )
             assert final_receipt["holder_count"] == 0
         finally:

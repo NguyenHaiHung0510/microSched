@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import UTC, datetime
 
@@ -26,6 +27,18 @@ WHERE locktype = 'advisory'
   AND mode = 'ExclusiveLock'
   AND granted
 """
+FULL_LOWERCASE_GIT_OID = re.compile(r"[0-9a-f]{40}\Z")
+
+
+def _require_full_git_oid(commit: str) -> str:
+    """Accept only the canonical 40-character lowercase immutable Git OID.
+
+    Uppercase and surrounding whitespace are rejected rather than normalized so
+    an ownership receipt always records the exact deployed revision identity.
+    """
+    if not FULL_LOWERCASE_GIT_OID.fullmatch(commit):
+        raise RuntimeError("GIT_SHA must be a 40-character lowercase Git OID")
+    return commit
 
 
 def _utc_rfc3339(value: datetime) -> str:
@@ -37,6 +50,7 @@ async def collect_receipt(
     database_url: str, *, observed_at: datetime, commit: str
 ) -> dict[str, object]:
     """Count exactly this advisory lock and close the one-shot connection."""
+    commit = _require_full_git_oid(commit)
     connection = None
     try:
         connection = await asyncpg.connect(asyncpg_dsn(database_url))
@@ -65,7 +79,9 @@ def main() -> int:
         print("error_type=RuntimeError", file=sys.stderr)
         return 1
     commit = os.environ.get("GIT_SHA", "unknown")
-    if not commit.strip() or commit == "unknown":
+    try:
+        commit = _require_full_git_oid(commit)
+    except RuntimeError:
         print("error_type=RuntimeError", file=sys.stderr)
         return 1
     try:

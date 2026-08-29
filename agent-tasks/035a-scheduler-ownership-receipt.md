@@ -200,3 +200,56 @@ uv run pytest -m pg 2>&1 | Tee-Object -FilePath agent-tasks/035a-full-pg-output.
 
 This is local throwaway-PG evidence only; it is not CI, deployment, topology,
 Neon, production, device, or provider acceptance.
+
+## BLOCK_PR_REVIEW P1 closure (2026-08-29)
+
+The bounded provider-worker shutdown wait is now diagnostic-only.  If an
+`asyncio.to_thread` Web Push worker outlives that wait, the scheduler logs the
+bounded event and stays `stopping` while retaining the dedicated advisory-lock
+connection; it only unlocks/closes after the actual worker becomes idle (or
+process termination closes the session).  A worker-drain error likewise keeps
+the lock rather than handing it to a standby.
+
+The ownership receipt now accepts only an exact 40-character lowercase Git
+OID.  It rejects unknown, empty/whitespace, surrounding whitespace, short,
+long, uppercase and non-hex values before `asyncpg.connect`; uppercase is
+intentionally rejected rather than normalized so the receipt records one
+canonical immutable revision identity.
+
+Deliberate RED → restored GREEN for the ownership closure:
+
+```text
+# temporary removal of the post-timeout worker drain
+uv run pytest tests/test_cron_timer.py -m "not pg" -k graceful_stop_waits_for_uncancellable_provider_thread -vv -s
+
+FAILED
+E           assert 1 == 0
+E            +  where 1 = <FakeLockConnection ...>.unlock_calls
+
+# restored worker drain
+1 passed, 47 deselected in 0.55s
+```
+
+Focused restored-green after the diagnostic timeout was forced to 10ms:
+
+```text
+uv run pytest -m "not pg" tests/test_cron_timer.py tests/test_scheduler_ownership_receipt.py -vv -s --log-cli-level=ERROR
+60 passed in 1.14s
+```
+
+The full non-PG gate on this P1 working state was:
+
+```text
+uv run pytest -m "not pg"
+352 passed, 176 deselected, 1 warning in 10.86s
+```
+
+Docker Desktop was unavailable before the new local-PG P1 run:
+
+```text
+failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
+```
+
+Thus the new local PG rerun is `NOT_RUN`; exact-head CI Migration QA remains
+the required PG gate.  No Neon, production, deploy, provider, browser or
+device action was run.

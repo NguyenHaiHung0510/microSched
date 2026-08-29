@@ -386,7 +386,18 @@ class CronTimer:
             return
         if await provider_work.wait_for_idle(PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS):
             return
-        raise CronTimerOwnershipLost("provider worker exceeded shutdown timeout")
+        # A synchronous provider call in ``asyncio.to_thread`` survives task
+        # cancellation.  The bounded wait is observability only: releasing the
+        # session-level lock here would let a standby send while that old worker
+        # can still complete.  Keep the process in shutdown and retain ownership
+        # until the real worker exits (or process termination closes the session).
+        logger.error(
+            "cron_timer_provider_worker_shutdown_timeout timeout_seconds=%s "
+            "lock_ref=%s action=retain_ownership",
+            PROVIDER_WORKER_SHUTDOWN_TIMEOUT_SECONDS,
+            SCHEDULER_ADVISORY_LOCK_REF,
+        )
+        await provider_work.wait_for_idle(None)
 
     async def _assert_owner(self, phase: str) -> None:
         """Reject snapshot, recovery, or provider work without a live fence."""
@@ -1286,14 +1297,10 @@ class CronTimer:
             if self._status != "stopped":
                 self._status = "stopping"
                 self._log_ownership_transition("stopping")
-            try:
-                await self._wait_for_provider_workers()
-            finally:
-                try:
-                    await self._release_ownership()
-                finally:
-                    self._status = "stopped"
-                    self._log_ownership_transition("stopped")
+            await self._wait_for_provider_workers()
+            await self._release_ownership()
+            self._status = "stopped"
+            self._log_ownership_transition("stopped")
 
     async def stop(self) -> None:
         """Clean shutdown for the timer loop."""
@@ -1313,14 +1320,10 @@ class CronTimer:
         if snapshot_task is not None and not snapshot_task.done():
             snapshot_task.cancel()
             await asyncio.gather(snapshot_task, return_exceptions=True)
-        try:
-            await self._wait_for_provider_workers()
-        finally:
-            try:
-                await self._release_ownership()
-            finally:
-                self._status = "stopped"
-                self._log_ownership_transition("stopped")
+        await self._wait_for_provider_workers()
+        await self._release_ownership()
+        self._status = "stopped"
+        self._log_ownership_transition("stopped")
 
 
 def build_cron_timer_if_enabled(session_factory: Any = None) -> CronTimer | None:
