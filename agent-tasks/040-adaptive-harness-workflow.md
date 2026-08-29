@@ -1,7 +1,7 @@
 # 040 — Adaptive harness workflow cho issue cluster và review loop
 
 > **Trạng thái:** ✅ CHỐT 2026-08-29 — owner yêu cầu áp dụng
-> **Loại:** docs/policy · **Executor:** T1 · **Review:** adversarial docs review
+> **Loại:** docs/policy + bounded infra guard · **Executor:** T1 · **Review:** adversarial PR review
 
 ## 1. Vấn đề
 
@@ -37,11 +37,18 @@ chi tiết phù hợp từng lane/model.
 - Không ép mọi task dùng đủ mọi QA axis hoặc cùng số review round.
 - Không thay authority, merge/deploy, Neon/production hay data-boundary gate hiện có.
 
-## 4. Acceptance
+## 4. Bounded Fly swap correction
+
+Owner đã bật 512MB swap nhưng canonical `fly.toml` bị ghi đè về trạng thái không có swap. PR này giữ
+`swap_size_mb = 512` ở top-level theo Fly config contract, ghi rationale trong `architecture-brief.md` và
+thêm một static test để CI đỏ nếu key bị mất/di chuyển/sai giá trị. Không deploy hoặc gọi production.
+
+## 5. Acceptance
 
 - `docs/devops-brief.md` §7 chứa lifecycle intake → task contract → execution/review → adaptive stop.
 - `CLAUDE.md` trỏ ngắn tới policy mới; không copy toàn bộ chi tiết.
 - `AGENTS.md` buộc executor dừng khi thiếu contract làm đổi hướng và buộc reviewer trả consolidated ledger trên
   immutable target.
 - Policy phân biệt product/evidence/runtime gates và không có universal loop cap.
+- `fly.toml` parse/validate với top-level `swap_size_mb = 512`; focused config test pass.
 - `git diff --check` và repository hooks pass; PR docs vào `develop`, không tự merge/deploy.

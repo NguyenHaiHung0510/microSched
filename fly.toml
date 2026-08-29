@@ -5,6 +5,7 @@
 
 app = 'microsched'
 primary_region = 'sin'
+swap_size_mb = 512
 
 [env]
   APP_ENV = 'production'
