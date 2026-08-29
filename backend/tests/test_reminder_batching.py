@@ -2,17 +2,19 @@
 
 import asyncio
 import logging
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from types import SimpleNamespace
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.cron_timer import VN_TZ, CronTimer
 from app.core.database_urls import async_postgres_url
 from app.domain import reminder as reminder_module
 from app.domain.models import (
+    AuthSession,
     Entry,
     PushSubscription,
     ReminderDispatch,
@@ -25,7 +27,9 @@ from app.domain.reminder import (
     TrackerBatchCandidate,
     TrackerBatchDispatcher,
     _ActiveBatchMember,
+    confirm_reminder_dispatch,
 )
+from app.domain.tracker import EntryCreate, EntryUpdate, TrackerStore
 
 
 class _ScalarRows:
@@ -89,6 +93,17 @@ async def _cleanup_batch_domain(session_factory, tracker_ids, subscription_ids=(
             )
         await db.execute(Tracker.__table__.delete().where(Tracker.id.in_(tracker_ids)))
         await db.commit()
+
+
+def _auth() -> AuthSession:
+    now = datetime.now(UTC)
+    return AuthSession(
+        id=uuid4(),
+        token_hash=f"reminder-batching-test-{uuid4()}",
+        user_email="owner@test.local",
+        expires_at=now + timedelta(hours=1),
+        private_until=now + timedelta(hours=1),
+    )
 
 
 def test_batch_selects_only_current_push_subscription_rows(monkeypatch) -> None:
@@ -552,6 +567,145 @@ def test_batch_retry_reuses_membership_and_fourth_temporary_exhausts(
 
 
 @pytest.mark.pg
+def test_restart_exhausts_batch_older_than_recovery_window_without_network(
+    pg_dsn: str, monkeypatch
+) -> None:
+    """A >24h outage closes linked pending rows once and emits manual-required telemetry."""
+
+    async def scenario() -> None:
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        tracker_id, subscription_id = uuid4(), uuid4()
+        provider_calls = 0
+        warning_receipts: list[str] = []
+        now_vn = datetime(2026, 9, 4, 8, 0, tzinfo=VN_TZ)
+
+        async def forbidden_send(*_args, **_kwargs):
+            nonlocal provider_calls
+            provider_calls += 1
+            raise AssertionError("expired recovery must not start provider work")
+
+        monkeypatch.setattr(reminder_module, "send_push", forbidden_send)
+        monkeypatch.setattr(
+            reminder_module.logger,
+            "warning",
+            lambda template, *args: warning_receipts.append(template % args),
+        )
+        try:
+            async with session_factory() as db:
+                db.add(
+                    Tracker(
+                        id=tracker_id,
+                        name="enc:v1:stale-recovery-fixture",
+                        kind="general",
+                        input_mode="event",
+                        reminder_time=time(8),
+                        reminder_mode="fixed",
+                        reminder_interval_days=1,
+                        reminder_action="open_tracker",
+                        is_private=True,
+                    )
+                )
+                db.add(
+                    PushSubscription(
+                        id=subscription_id,
+                        endpoint="https://push.example/stale-recovery",
+                        p256dh="fixture",
+                        auth="fixture",
+                    )
+                )
+                await db.commit()
+                dispatcher = TrackerBatchDispatcher()
+                batch_id = await dispatcher.claim_batch(
+                    db,
+                    [
+                        TrackerBatchCandidate(
+                            tracker_id=tracker_id,
+                            occurrence_on=now_vn.date(),
+                            reminder_time=time(8),
+                            reminder_mode="fixed",
+                            reminder_interval_days=1,
+                            reminder_action="open_tracker",
+                        )
+                    ],
+                )
+                assert batch_id is not None
+                batch = await db.get(TrackerReminderBatch, batch_id)
+                assert batch is not None
+                batch.attempt_count = 1
+                batch.last_attempt_at = (now_vn - timedelta(hours=25)).astimezone(UTC)
+                await db.commit()
+
+                timer = CronTimer(session_factory, tracker_batch_dispatcher=dispatcher)
+                await timer.load_snapshot(db, now=now_vn)
+                assert timer._pending_manual_required["exhausted"] == 1
+                assert all(item[5].batch_id != batch_id for item in timer._heap)
+
+                terminal = (
+                    await db.execute(
+                        select(
+                            TrackerReminderBatch.status,
+                            TrackerReminderBatch.attempt_count,
+                            TrackerReminderBatchItem.state,
+                            ReminderDispatch.status,
+                            ReminderDispatch.attempt_count,
+                        )
+                        .join(
+                            TrackerReminderBatchItem,
+                            TrackerReminderBatchItem.batch_id == TrackerReminderBatch.id,
+                        )
+                        .join(
+                            ReminderDispatch,
+                            ReminderDispatch.id == TrackerReminderBatchItem.dispatch_id,
+                        )
+                        .where(TrackerReminderBatch.id == batch_id)
+                    )
+                ).one()
+                assert terminal == ("exhausted", 1, "exhausted", "exhausted", 0)
+                linked_pending = (
+                    await db.execute(
+                        select(func.count(ReminderDispatch.id))
+                        .join(
+                            TrackerReminderBatchItem,
+                            TrackerReminderBatchItem.dispatch_id == ReminderDispatch.id,
+                        )
+                        .where(
+                            TrackerReminderBatchItem.batch_id == batch_id,
+                            ReminderDispatch.status == "pending",
+                        )
+                    )
+                ).scalar_one()
+                assert linked_pending == 0
+                assert provider_calls == 0
+
+                receipt_count = sum(
+                    "reason=recovery_window_expired" in receipt for receipt in warning_receipts
+                )
+                assert receipt_count == 1
+                log_text = "\n".join(warning_receipts)
+                assert "outcome=manual_required" in log_text
+                assert str(batch_id) not in log_text
+                assert str(tracker_id) not in log_text
+
+                restarted = CronTimer(
+                    session_factory,
+                    tracker_batch_dispatcher=TrackerBatchDispatcher(),
+                )
+                await restarted.load_snapshot(db, now=now_vn + timedelta(minutes=1))
+                assert restarted._pending_manual_required["exhausted"] == 0
+                assert provider_calls == 0
+                assert (
+                    sum("reason=recovery_window_expired" in receipt for receipt in warning_receipts)
+                    == receipt_count
+                )
+        finally:
+            await _cleanup_batch_domain(session_factory, [tracker_id], [subscription_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
 def test_presend_revalidation_cancels_changed_member_and_uses_current_privacy(
     pg_dsn: str, monkeypatch
 ) -> None:
@@ -728,85 +882,174 @@ def test_concurrent_same_key_claim_commits_one_generation(pg_dsn: str) -> None:
 
 
 @pytest.mark.pg
-def test_after_entry_created_after_claim_cancels_without_network(pg_dsn: str, monkeypatch) -> None:
-    """The pre-send latest-Entry recompute can invalidate committed membership."""
+@pytest.mark.parametrize(
+    ("mutation_case", "expected_outcome", "expected_provider_calls"),
+    [
+        ("create", "cancelled", 0),
+        ("update_occurred_at", "cancelled", 0),
+        ("soft_delete", "sent", 1),
+        ("restore", "cancelled", 0),
+        ("confirmation", "cancelled", 0),
+    ],
+    ids=[
+        "entry-create-before-presend",
+        "entry-update-occurred-at-before-presend",
+        "entry-soft-delete-before-presend",
+        "entry-restore-before-presend",
+        "confirmation-before-presend",
+    ],
+)
+def test_entry_mutation_commit_before_presend_controls_delivery(
+    pg_dsn: str,
+    monkeypatch,
+    mutation_case: str,
+    expected_outcome: str,
+    expected_provider_calls: int,
+) -> None:
+    """Each freshness writer commits before pre-send and determines the observed outcome."""
 
     async def scenario() -> None:
         engine = create_async_engine(async_postgres_url(pg_dsn))
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        tracker_id, subscription_id = uuid4(), uuid4()
-        calls = 0
+        tracker_id, subscription_id, entry_id = uuid4(), uuid4(), uuid4()
+        occurrence_on = date(2026, 9, 6)
+        old_at = datetime(2026, 9, 4, 1, tzinfo=UTC)
+        fresh_at = datetime(2026, 9, 6, 1, tzinfo=UTC)
+        reminder_action = "confirm_event" if mutation_case == "confirmation" else "open_tracker"
+        provider_calls: list[dict] = []
 
-        async def forbidden_send(*_args, **_kwargs):
-            nonlocal calls
-            calls += 1
-            raise AssertionError("no active member means zero provider calls")
+        async def sent(_db, _subscription, payload, **_kwargs):
+            provider_calls.append(payload)
+            return PushResult.SENT
 
-        monkeypatch.setattr(reminder_module, "send_push", forbidden_send)
+        monkeypatch.setattr(reminder_module, "send_push", sent)
         try:
             async with session_factory() as db:
                 db.add(
                     Tracker(
                         id=tracker_id,
-                        name="enc:v1:after-entry-fixture",
+                        name="enc:v1:entry-race-fixture",
                         kind="general",
                         input_mode="event",
-                        reminder_time=time(11),
+                        reminder_time=time(12),
                         reminder_mode="after_entry",
                         reminder_interval_days=1,
-                        reminder_action="open_tracker",
+                        reminder_action=reminder_action,
                         is_private=True,
                     )
                 )
                 db.add(
                     PushSubscription(
                         id=subscription_id,
-                        endpoint="https://push.example/after-entry",
+                        endpoint=f"https://push.example/entry-race-{mutation_case}",
                         p256dh="fixture",
                         auth="fixture",
                     )
                 )
                 await db.commit()
-                candidate = TrackerBatchCandidate(
-                    tracker_id=tracker_id,
-                    occurrence_on=date(2026, 9, 3),
-                    reminder_time=time(11),
-                    reminder_mode="after_entry",
-                    reminder_interval_days=1,
-                    reminder_action="open_tracker",
-                )
-                dispatcher = TrackerBatchDispatcher()
-                batch_id = await dispatcher.claim_batch(db, [candidate])
-                assert batch_id is not None
-                db.add(
-                    Entry(
-                        tracker_id=tracker_id,
-                        occurred_at=datetime(2026, 9, 3, 1, tzinfo=UTC),
+                if mutation_case in {"update_occurred_at", "soft_delete"}:
+                    db.add(Entry(id=entry_id, tracker_id=tracker_id, occurred_at=old_at))
+                elif mutation_case == "restore":
+                    db.add(
+                        Entry(
+                            id=entry_id,
+                            tracker_id=tracker_id,
+                            occurred_at=fresh_at,
+                            deleted_at=fresh_at + timedelta(minutes=1),
+                        )
                     )
-                )
                 await db.commit()
-
-                assert (await dispatcher.dispatch_batch(db, batch_id)).value == "cancelled"
-                assert calls == 0
-                batch_status = (
+                batch_id = await TrackerBatchDispatcher().claim_batch(
+                    db,
+                    [
+                        TrackerBatchCandidate(
+                            tracker_id=tracker_id,
+                            occurrence_on=occurrence_on,
+                            reminder_time=time(12),
+                            reminder_mode="after_entry",
+                            reminder_interval_days=1,
+                            reminder_action=reminder_action,
+                        )
+                    ],
+                )
+                assert batch_id is not None
+                dispatch_id = (
                     await db.execute(
-                        select(TrackerReminderBatch.status).where(
-                            TrackerReminderBatch.id == batch_id
+                        select(TrackerReminderBatchItem.dispatch_id).where(
+                            TrackerReminderBatchItem.batch_id == batch_id
                         )
                     )
                 ).scalar_one()
-                linked = (
-                    await db.execute(
-                        select(TrackerReminderBatchItem.state, ReminderDispatch.status)
+
+            store = TrackerStore()
+            auth = _auth()
+            async with session_factory() as writer_db:
+                if mutation_case == "create":
+                    _created_id, created = await store.create_entry(
+                        writer_db,
+                        auth,
+                        EntryCreate(tracker_id=tracker_id, occurred_at=fresh_at),
+                    )
+                    assert created is True
+                    await writer_db.commit()
+                elif mutation_case == "update_occurred_at":
+                    updated = await store.update_entry(
+                        writer_db,
+                        auth,
+                        entry_id,
+                        EntryUpdate(occurred_at=fresh_at),
+                    )
+                    assert updated is not None
+                    await writer_db.commit()
+                elif mutation_case == "soft_delete":
+                    assert await store.soft_delete_entry(writer_db, auth, entry_id) is True
+                    await writer_db.commit()
+                elif mutation_case == "restore":
+                    restored = await store.restore_entry(writer_db, auth, entry_id)
+                    assert restored is not None
+                    await writer_db.commit()
+                else:
+                    _entry, created = await confirm_reminder_dispatch(
+                        writer_db,
+                        dispatch_id,
+                        uuid7(),
+                        fresh_at,
+                        auth,
+                    )
+                    assert created is True
+
+            # A new session and dispatcher make the writer commit the exact
+            # authority boundary before pre-send revalidation begins.
+            async with session_factory() as send_db:
+                outcome = await TrackerBatchDispatcher().dispatch_batch(send_db, batch_id)
+                terminal = (
+                    await send_db.execute(
+                        select(
+                            TrackerReminderBatch.status,
+                            TrackerReminderBatch.attempt_count,
+                            TrackerReminderBatchItem.state,
+                            ReminderDispatch.status,
+                        )
+                        .join(
+                            TrackerReminderBatchItem,
+                            TrackerReminderBatchItem.batch_id == TrackerReminderBatch.id,
+                        )
                         .join(
                             ReminderDispatch,
                             ReminderDispatch.id == TrackerReminderBatchItem.dispatch_id,
                         )
-                        .where(TrackerReminderBatchItem.batch_id == batch_id)
+                        .where(TrackerReminderBatch.id == batch_id)
                     )
                 ).one()
-                assert batch_status == "cancelled"
-                assert linked == ("cancelled", "cancelled")
+            assert outcome.value == expected_outcome
+            assert len(provider_calls) == expected_provider_calls
+            expected_attempts = 1 if expected_outcome == "sent" else 0
+            assert terminal == (
+                expected_outcome,
+                expected_attempts,
+                expected_outcome,
+                expected_outcome,
+            )
         finally:
             await _cleanup_batch_domain(session_factory, [tracker_id], [subscription_id])
             await engine.dispose()

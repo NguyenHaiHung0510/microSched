@@ -718,6 +718,51 @@ async def test_future_batch_schema_adds_pending_recovery_antijoin(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_stale_pending_batch_is_terminalized_and_receipted(monkeypatch):
+    """035B: a batch beyond the recovery window cannot remain pending forever."""
+
+    class FutureSchemaDB(FakeDB):
+        async def execute(self, stmt):
+            self.executions += 1
+            if "to_regclass" in str(stmt):
+                return FakeResult(["microsched.tracker_reminder_batch_item"])
+            if not self.results:
+                return FakeResult([])
+            return FakeResult(self.results.pop(0))
+
+    class StaleBatchDispatcher:
+        def __init__(self):
+            self.calls = []
+
+        async def exhaust_stale_batch(self, db, batch_id, *, stale_before):
+            self.calls.append((db, batch_id, stale_before))
+            return True
+
+    async def fake_lead(db):
+        return 3
+
+    monkeypatch.setattr(cron, "expiry_lead_days", fake_lead)
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=VN_TZ)
+    batch = SimpleNamespace(
+        id=UUID("019d0000-0000-7000-8000-000000000035"),
+        occurrence_on=date(2026, 8, 28),
+        reminder_time=time(8),
+        attempt_count=1,
+        last_attempt_at=(now - timedelta(hours=25)).astimezone(UTC),
+        created_at=(now - timedelta(hours=26)).astimezone(UTC),
+    )
+    dispatcher = StaleBatchDispatcher()
+    db = FutureSchemaDB([[], [batch]])
+    timer = CronTimer(dummy_factory, tracker_batch_dispatcher=dispatcher)
+
+    await timer.load_snapshot(db, now=now)
+
+    assert dispatcher.calls == [(db, batch.id, now - cron.PENDING_RECOVERY_TIMEOUT)]
+    assert timer._pending_manual_required["exhausted"] == 1
+    assert all(item[5].batch_id != batch.id for item in timer._heap)
+
+
+@pytest.mark.anyio
 async def test_load_snapshot_skips_fractional_database_reminder_time(monkeypatch, caplog):
     """035A fails closed for an old/direct-SQL fractional tracker row."""
 

@@ -3,6 +3,7 @@
 import asyncio
 import os
 from pathlib import Path
+from uuid import uuid4
 
 import asyncpg
 import pytest
@@ -205,6 +206,97 @@ def test_0012_downgrade_nonempty_fails_before_ddl(pg_dsn: str) -> None:
         asyncio.run(assert_unchanged())
     finally:
         asyncio.run(cleanup(batch_id))
+        command.upgrade(_config(), "head")
+
+
+@pytest.mark.parametrize("terminal_status", ["cancelled", "exhausted"])
+def test_0012_downgrade_terminal_dispatch_fails_before_ddl(
+    pg_dsn: str, terminal_status: str
+) -> None:
+    """A lone widened terminal dispatch blocks downgrade with zero catalog drift."""
+
+    dispatch_id = uuid4()
+
+    async def seed_and_snapshot() -> dict[str, object]:
+        conn = await asyncpg.connect(pg_dsn)
+        try:
+            await conn.execute(
+                """
+                INSERT INTO microsched.reminder_dispatch
+                    (id, subject_type, subject_id, dispatched_on, status,
+                     attempt_count, created_at)
+                VALUES ($1, 'tracker', $2, DATE '2026-09-07', $3, 0, NOW())
+                """,
+                dispatch_id,
+                uuid4(),
+                terminal_status,
+            )
+            return await catalog_snapshot(conn)
+        finally:
+            await conn.close()
+
+    async def catalog_snapshot(conn: asyncpg.Connection) -> dict[str, object]:
+        return {
+            "revision": await conn.fetchval("SELECT version_num FROM microsched.alembic_version"),
+            "batch_table": str(
+                await conn.fetchval("SELECT to_regclass('microsched.tracker_reminder_batch')")
+            ),
+            "item_table": str(
+                await conn.fetchval("SELECT to_regclass('microsched.tracker_reminder_batch_item')")
+            ),
+            "tracker_whole_second": await conn.fetchval(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = 'microsched.tracker'::regclass
+                  AND conname = 'ck_tracker_reminder_time_whole_second'
+                """
+            ),
+            "dispatch_status_check": await conn.fetchval(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = 'microsched.reminder_dispatch'::regclass
+                  AND conname = 'ck_reminder_dispatch_status'
+                """
+            ),
+            "dispatch_row": tuple(
+                await conn.fetchrow(
+                    """
+                    SELECT id, status, attempt_count
+                    FROM microsched.reminder_dispatch
+                    WHERE id = $1
+                    """,
+                    dispatch_id,
+                )
+            ),
+        }
+
+    async def read_snapshot() -> dict[str, object]:
+        conn = await asyncpg.connect(pg_dsn)
+        try:
+            return await catalog_snapshot(conn)
+        finally:
+            await conn.close()
+
+    async def cleanup() -> None:
+        conn = await asyncpg.connect(pg_dsn)
+        try:
+            await conn.execute(
+                "DELETE FROM microsched.reminder_dispatch WHERE id = $1", dispatch_id
+            )
+        finally:
+            await conn.close()
+
+    before = asyncio.run(seed_and_snapshot())
+    try:
+        with pytest.raises(DBAPIError) as exc_info:
+            command.downgrade(_config(), "0011")
+        assert getattr(exc_info.value.orig, "sqlstate", None) == "23514"
+        assert "batching or terminal data would be lost" in str(exc_info.value)
+        assert asyncio.run(read_snapshot()) == before
+    finally:
+        asyncio.run(cleanup())
         command.upgrade(_config(), "head")
 
 

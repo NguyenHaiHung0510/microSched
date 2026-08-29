@@ -799,6 +799,71 @@ class TrackerBatchDispatcher:
                 dispatch.status = status_value
         await db.commit()
 
+    async def exhaust_stale_batch(
+        self,
+        db: AsyncSession,
+        batch_id: UUID,
+        *,
+        stale_before: datetime,
+    ) -> bool:
+        """Close a recovery-window-expired batch without starting provider work.
+
+        The actual provider-attempt count is preserved. ``exhausted`` here
+        means automatic recovery is exhausted and manual handling is required;
+        it must not fabricate a fourth network attempt.
+        """
+        if stale_before.tzinfo is None or stale_before.utcoffset() is None:
+            raise ValueError("stale_before must include a timezone offset")
+        probe = await db.execute(
+            select(ReminderDispatch.subject_id)
+            .join(
+                TrackerReminderBatchItem,
+                TrackerReminderBatchItem.dispatch_id == ReminderDispatch.id,
+            )
+            .where(TrackerReminderBatchItem.batch_id == batch_id)
+            .order_by(ReminderDispatch.subject_id)
+        )
+        tracker_ids = sorted(set(probe.scalars().all()))
+        if tracker_ids:
+            await db.execute(
+                select(Tracker)
+                .where(Tracker.id.in_(tracker_ids))
+                .order_by(Tracker.id)
+                .with_for_update()
+            )
+        batch, rows = await self._lock_terminal_rows(db, batch_id)
+        last_at = batch.last_attempt_at or batch.created_at
+        if last_at.tzinfo is None or last_at.utcoffset() is None:
+            last_at = last_at.replace(tzinfo=UTC)
+        if batch.status != "pending" or last_at.astimezone(UTC) >= stale_before.astimezone(UTC):
+            await db.commit()
+            return False
+
+        active_count = 0
+        cancelled_count = 0
+        batch.status = "exhausted"
+        for item, dispatch in rows:
+            if item.state == "cancelled":
+                cancelled_count += 1
+                continue
+            item.state = "exhausted"
+            dispatch.status = "exhausted"
+            active_count += 1
+        await db.commit()
+        logger.warning(
+            "tracker_reminder_batch_receipt batch_ref=%s occurrence_on=%s "
+            "reminder_time=%s attempt_count=%d active_member_count=%d "
+            "cancelled_member_count=%d reason=recovery_window_expired "
+            "outcome=manual_required",
+            self._batch_ref(batch_id),
+            batch.occurrence_on,
+            batch.reminder_time.isoformat(),
+            batch.attempt_count,
+            active_count,
+            cancelled_count,
+        )
+        return True
+
     async def dispatch_batch(
         self,
         db: AsyncSession,

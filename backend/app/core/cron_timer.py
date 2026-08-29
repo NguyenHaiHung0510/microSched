@@ -618,6 +618,25 @@ class CronTimer:
                     last_at = last_at.replace(tzinfo=timezone.utc)
                 last_at_vn = last_at.astimezone(VN_TZ)
                 if last_at_vn < cutoff:
+                    terminalized = await self._batch_dispatcher.exhaust_stale_batch(
+                        db,
+                        batch.id,
+                        stale_before=cutoff,
+                    )
+                    if terminalized:
+                        self._log_pending_manual_required_exhausted(
+                            ScheduleKind.TRACKER,
+                            TimerItem(
+                                due_at=now_vn,
+                                occurrence_on=batch.occurrence_on,
+                                kind=ScheduleKind.TRACKER,
+                                subject_id=batch.id,
+                                reminder_time=batch.reminder_time,
+                                retry_count=batch.attempt_count,
+                                batch_id=batch.id,
+                                is_pending_recovery=True,
+                            ),
+                        )
                     continue
                 heapq.heappush(
                     new_heap,
