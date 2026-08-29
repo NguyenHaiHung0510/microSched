@@ -195,12 +195,18 @@ class CronTimer:
         """
         import asyncpg
 
-        from app.core.database_urls import asyncpg_dsn
+        from app.core.database_urls import SchedulerLockUrlError, scheduler_lock_dsn
 
         database_url = get_settings().database_url
         if database_url is None:
             raise CronTimerOwnershipError("scheduler ownership requires a database URL")
-        return await asyncpg.connect(asyncpg_dsn(database_url))
+        try:
+            lock_dsn = scheduler_lock_dsn(database_url)
+        except SchedulerLockUrlError as exc:
+            raise CronTimerOwnershipError(
+                "scheduler ownership requires a supported direct endpoint"
+            ) from exc
+        return await asyncpg.connect(lock_dsn)
 
     def _on_lock_connection_terminated(self, connection: Any) -> None:
         """Fail closed if the sole ownership proof disappears."""

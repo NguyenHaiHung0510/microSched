@@ -3,9 +3,11 @@
 import asyncio
 import heapq
 import logging
+import sys
 import threading
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -24,6 +26,8 @@ from app.domain.models import ReminderDispatch, Subscription, Tracker
 from app.domain.push import ProviderWorkTracker
 from app.domain.reminder import DispatchOutcome, DispatchTelemetry
 from app.web import deps
+
+DEFAULT_LOCK_CONNECTION = CronTimer._default_lock_connection
 
 
 def dummy_factory():
@@ -235,6 +239,53 @@ async def test_standby_never_loads_snapshot_or_dispatches(monkeypatch):
     finally:
         await timer.stop()
         await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.anyio
+async def test_default_lock_connection_uses_matching_neon_direct_endpoint(monkeypatch):
+    """035A never asks a Neon pooler to hold the session advisory lock."""
+    connected_dsns: list[str] = []
+    connection = object()
+
+    async def connect(dsn: str):
+        connected_dsns.append(dsn)
+        return connection
+
+    monkeypatch.setattr(
+        cron,
+        "get_settings",
+        lambda: SimpleNamespace(
+            database_url=(
+                "postgresql+asyncpg://app_role:fixture-password@"
+                "ep-blue-pooler.aws.neon.tech/appdb?ssl=require"
+            )
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(CronTimer, "_default_lock_connection", DEFAULT_LOCK_CONNECTION)
+
+    result = await CronTimer(dummy_factory)._default_lock_connection()
+
+    assert result is connection
+    assert len(connected_dsns) == 1
+    assert "ep-blue.aws.neon.tech" in connected_dsns[0]
+    assert "-pooler" not in connected_dsns[0]
+
+
+@pytest.mark.anyio
+async def test_default_lock_connection_rejects_unsupported_pooler(monkeypatch):
+    """A non-Neon pooler cannot become an accidental ownership authority."""
+    monkeypatch.setattr(
+        cron,
+        "get_settings",
+        lambda: SimpleNamespace(
+            database_url="postgresql://app_role:fixture-password@pooler.example.invalid/appdb"
+        ),
+    )
+    monkeypatch.setattr(CronTimer, "_default_lock_connection", DEFAULT_LOCK_CONNECTION)
+
+    with pytest.raises(cron.CronTimerOwnershipError, match="supported direct endpoint"):
+        await CronTimer(dummy_factory)._default_lock_connection()
 
 
 @pytest.mark.anyio

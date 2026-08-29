@@ -69,6 +69,12 @@ def _is_legacy_reminder(
     )
 
 
+def _require_whole_second_reminder_time(reminder_time: time | None) -> None:
+    """Reject sub-second schedules until the database constraint arrives."""
+    if reminder_time is not None and reminder_time.microsecond:
+        raise TrackerInvalid("Giờ nhắc phải chính xác đến giây.")
+
+
 def _canonical_reminder(
     *,
     kind: str,
@@ -86,6 +92,7 @@ def _canonical_reminder(
     Database checks deliberately leave the rolling old-writer window open. This
     function is therefore the single canonicalizer for every new writer.
     """
+    _require_whole_second_reminder_time(reminder_time)
     if (
         reminder_mode is None
         and reminder_interval_days is None
@@ -267,6 +274,11 @@ class TrackerUpdate(BaseModel):
             self.unit = self.unit.strip() or None
         if "reminder_text" in self.model_fields_set and self.reminder_text is not None:
             self.reminder_text = self.reminder_text.strip() or None
+        if "reminder_time" in self.model_fields_set:
+            try:
+                _require_whole_second_reminder_time(self.reminder_time)
+            except TrackerInvalid as error:
+                raise ValueError(str(error)) from error
         # Explicit null on a non-nullable patch field must 422 (M5), not silently
         # fall back to "not in payload" semantics; only group_id/unit/color may be
         # explicitly nulled (that is how the UI clears them).
