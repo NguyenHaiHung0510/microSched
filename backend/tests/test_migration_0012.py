@@ -236,39 +236,368 @@ def test_0012_downgrade_terminal_dispatch_fails_before_ddl(
             await conn.close()
 
     async def catalog_snapshot(conn: asyncpg.Connection) -> dict[str, object]:
+        async def rows(query: str, *args: object) -> tuple[tuple[object, ...], ...]:
+            return tuple(tuple(row) for row in await conn.fetch(query, *args))
+
         return {
             "revision": await conn.fetchval("SELECT version_num FROM microsched.alembic_version"),
-            "batch_table": str(
-                await conn.fetchval("SELECT to_regclass('microsched.tracker_reminder_batch')")
-            ),
-            "item_table": str(
-                await conn.fetchval("SELECT to_regclass('microsched.tracker_reminder_batch_item')")
-            ),
-            "tracker_whole_second": await conn.fetchval(
+            "relations": await rows(
                 """
-                SELECT pg_get_constraintdef(oid)
-                FROM pg_constraint
-                WHERE conrelid = 'microsched.tracker'::regclass
-                  AND conname = 'ck_tracker_reminder_time_whole_second'
-                """
-            ),
-            "dispatch_status_check": await conn.fetchval(
-                """
-                SELECT pg_get_constraintdef(oid)
-                FROM pg_constraint
-                WHERE conrelid = 'microsched.reminder_dispatch'::regclass
-                  AND conname = 'ck_reminder_dispatch_status'
-                """
-            ),
-            "dispatch_row": tuple(
-                await conn.fetchrow(
-                    """
-                    SELECT id, status, attempt_count
-                    FROM microsched.reminder_dispatch
-                    WHERE id = $1
-                    """,
-                    dispatch_id,
+                WITH target_tables AS (
+                    SELECT c.oid
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'microsched'
+                      AND c.relname IN (
+                        'tracker', 'reminder_dispatch',
+                        'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                      )
+                      AND c.relkind IN ('r', 'p')
+                ),
+                target_sequences AS (
+                    SELECT DISTINCT sequence.oid
+                    FROM pg_class AS sequence
+                    JOIN pg_namespace AS n ON n.oid = sequence.relnamespace
+                    JOIN pg_depend AS dependency
+                      ON dependency.classid = 'pg_class'::regclass
+                     AND dependency.objid = sequence.oid
+                     AND dependency.refclassid = 'pg_class'::regclass
+                    WHERE n.nspname = 'microsched'
+                      AND sequence.relkind = 'S'
+                      AND dependency.refobjid IN (SELECT oid FROM target_tables)
+                      AND dependency.deptype IN ('a', 'i')
+                ),
+                target_relations AS (
+                    SELECT oid FROM target_tables
+                    UNION
+                    SELECT oid FROM target_sequences
                 )
+                SELECT n.nspname, c.relname, c.relkind::text, c.relpersistence::text
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE c.oid IN (SELECT oid FROM target_relations)
+                ORDER BY n.nspname, c.relname
+                """
+            ),
+            "sequence_properties": await rows(
+                """
+                WITH target_tables AS (
+                    SELECT c.oid
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'microsched'
+                      AND c.relname IN (
+                        'tracker', 'reminder_dispatch',
+                        'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                      )
+                      AND c.relkind IN ('r', 'p')
+                )
+                SELECT n.nspname, c.relname, format_type(s.seqtypid, NULL),
+                       s.seqstart, s.seqincrement, s.seqmax, s.seqmin,
+                       s.seqcache, s.seqcycle
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                JOIN pg_sequence AS s ON s.seqrelid = c.oid
+                JOIN pg_depend AS dependency
+                  ON dependency.classid = 'pg_class'::regclass
+                 AND dependency.objid = c.oid
+                 AND dependency.refclassid = 'pg_class'::regclass
+                WHERE n.nspname = 'microsched'
+                  AND c.relkind = 'S'
+                  AND dependency.refobjid IN (SELECT oid FROM target_tables)
+                  AND dependency.deptype IN ('a', 'i')
+                ORDER BY n.nspname, c.relname
+                """
+            ),
+            "columns": await rows(
+                """
+                SELECT n.nspname, c.relname, a.attnum, a.attname,
+                       format_type(a.atttypid, a.atttypmod), a.attnotnull,
+                       pg_get_expr(d.adbin, d.adrelid),
+                       a.attidentity::text, a.attgenerated::text
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                JOIN pg_attribute AS a ON a.attrelid = c.oid
+                LEFT JOIN pg_attrdef AS d
+                  ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                WHERE n.nspname = 'microsched'
+                  AND c.relname IN (
+                    'tracker', 'reminder_dispatch',
+                    'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                  )
+                  AND c.relkind IN ('r', 'p')
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped
+                ORDER BY n.nspname, c.relname, a.attnum
+                """
+            ),
+            "constraints": await rows(
+                """
+                SELECT n.nspname, c.relname, constraint_row.conname,
+                       constraint_row.contype::text, constraint_row.convalidated,
+                       constraint_row.condeferrable, constraint_row.condeferred,
+                       pg_get_constraintdef(constraint_row.oid, true)
+                FROM pg_constraint AS constraint_row
+                JOIN pg_class AS c ON c.oid = constraint_row.conrelid
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'microsched'
+                  AND c.relname IN (
+                    'tracker', 'reminder_dispatch',
+                    'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                  )
+                ORDER BY n.nspname, c.relname, constraint_row.conname
+                """
+            ),
+            "indexes": await rows(
+                """
+                SELECT n.nspname, table_row.relname, index_row.relname,
+                       index_catalog.indisunique, index_catalog.indisprimary,
+                       index_catalog.indisvalid, index_catalog.indisready,
+                       index_catalog.indislive,
+                       pg_get_indexdef(index_row.oid)
+                FROM pg_index AS index_catalog
+                JOIN pg_class AS table_row ON table_row.oid = index_catalog.indrelid
+                JOIN pg_class AS index_row ON index_row.oid = index_catalog.indexrelid
+                JOIN pg_namespace AS n ON n.oid = table_row.relnamespace
+                WHERE n.nspname = 'microsched'
+                  AND table_row.relname IN (
+                    'tracker', 'reminder_dispatch',
+                    'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                  )
+                ORDER BY n.nspname, table_row.relname, index_row.relname
+                """
+            ),
+            "triggers": await rows(
+                """
+                SELECT n.nspname, c.relname, trigger_row.tgname,
+                       trigger_row.tgenabled::text,
+                       pg_get_triggerdef(trigger_row.oid, true)
+                FROM pg_trigger AS trigger_row
+                JOIN pg_class AS c ON c.oid = trigger_row.tgrelid
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'microsched'
+                  AND c.relname IN (
+                    'tracker', 'reminder_dispatch',
+                    'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                  )
+                  AND NOT trigger_row.tgisinternal
+                ORDER BY n.nspname, c.relname, trigger_row.tgname
+                """
+            ),
+            "owners": await rows(
+                """
+                WITH target_tables AS (
+                    SELECT c.oid
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'microsched'
+                      AND c.relname IN (
+                        'tracker', 'reminder_dispatch',
+                        'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                      )
+                      AND c.relkind IN ('r', 'p')
+                ),
+                target_relations AS (
+                    SELECT oid FROM target_tables
+                    UNION
+                    SELECT DISTINCT sequence.oid
+                    FROM pg_class AS sequence
+                    JOIN pg_namespace AS n ON n.oid = sequence.relnamespace
+                    JOIN pg_depend AS dependency
+                      ON dependency.classid = 'pg_class'::regclass
+                     AND dependency.objid = sequence.oid
+                     AND dependency.refclassid = 'pg_class'::regclass
+                    WHERE n.nspname = 'microsched'
+                      AND sequence.relkind = 'S'
+                      AND dependency.refobjid IN (SELECT oid FROM target_tables)
+                      AND dependency.deptype IN ('a', 'i')
+                )
+                SELECT n.nspname, c.relname, c.relkind::text,
+                       pg_get_userbyid(c.relowner)
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE c.oid IN (SELECT oid FROM target_relations)
+                ORDER BY n.nspname, c.relname
+                """
+            ),
+            "relation_acls": await rows(
+                """
+                WITH target_tables AS (
+                    SELECT c.oid
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'microsched'
+                      AND c.relname IN (
+                        'tracker', 'reminder_dispatch',
+                        'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                      )
+                      AND c.relkind IN ('r', 'p')
+                ),
+                target_relations AS (
+                    SELECT oid FROM target_tables
+                    UNION
+                    SELECT DISTINCT sequence.oid
+                    FROM pg_class AS sequence
+                    JOIN pg_namespace AS n ON n.oid = sequence.relnamespace
+                    JOIN pg_depend AS dependency
+                      ON dependency.classid = 'pg_class'::regclass
+                     AND dependency.objid = sequence.oid
+                     AND dependency.refclassid = 'pg_class'::regclass
+                    WHERE n.nspname = 'microsched'
+                      AND sequence.relkind = 'S'
+                      AND dependency.refobjid IN (SELECT oid FROM target_tables)
+                      AND dependency.deptype IN ('a', 'i')
+                )
+                SELECT n.nspname, c.relname, c.relkind::text, c.relacl::text
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE c.oid IN (SELECT oid FROM target_relations)
+                ORDER BY n.nspname, c.relname
+                """
+            ),
+            "table_grants": await rows(
+                """
+                WITH target_tables AS (
+                    SELECT c.oid
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'microsched'
+                      AND c.relname IN (
+                        'tracker', 'reminder_dispatch',
+                        'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                      )
+                      AND c.relkind IN ('r', 'p')
+                ),
+                target_relations AS (
+                    SELECT oid FROM target_tables
+                    UNION
+                    SELECT DISTINCT sequence.oid
+                    FROM pg_class AS sequence
+                    JOIN pg_namespace AS n ON n.oid = sequence.relnamespace
+                    JOIN pg_depend AS dependency
+                      ON dependency.classid = 'pg_class'::regclass
+                     AND dependency.objid = sequence.oid
+                     AND dependency.refclassid = 'pg_class'::regclass
+                    WHERE n.nspname = 'microsched'
+                      AND sequence.relkind = 'S'
+                      AND dependency.refobjid IN (SELECT oid FROM target_tables)
+                      AND dependency.deptype IN ('a', 'i')
+                )
+                SELECT n.nspname, c.relname,
+                       pg_get_userbyid(grant_row.grantor),
+                       CASE WHEN grant_row.grantee = 0 THEN 'PUBLIC'
+                            ELSE pg_get_userbyid(grant_row.grantee) END,
+                       grant_row.privilege_type, grant_row.is_grantable
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                CROSS JOIN LATERAL aclexplode(
+                    COALESCE(
+                        c.relacl,
+                        acldefault(
+                            (CASE WHEN c.relkind = 'S' THEN 'S' ELSE 'r' END)::"char",
+                            c.relowner
+                        )
+                    )
+                ) AS grant_row
+                WHERE c.oid IN (SELECT oid FROM target_relations)
+                ORDER BY n.nspname, c.relname, 4, 5, 3
+                """
+            ),
+            "column_acls": await rows(
+                """
+                SELECT n.nspname, c.relname, a.attnum, a.attname, a.attacl::text
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                JOIN pg_attribute AS a ON a.attrelid = c.oid
+                WHERE n.nspname = 'microsched'
+                  AND c.relname IN (
+                    'tracker', 'reminder_dispatch',
+                    'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                  )
+                  AND c.relkind IN ('r', 'p')
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped
+                ORDER BY n.nspname, c.relname, a.attnum
+                """
+            ),
+            "column_grants": await rows(
+                """
+                SELECT n.nspname, c.relname, a.attnum, a.attname,
+                       pg_get_userbyid(grant_row.grantor),
+                       CASE WHEN grant_row.grantee = 0 THEN 'PUBLIC'
+                            ELSE pg_get_userbyid(grant_row.grantee) END,
+                       grant_row.privilege_type, grant_row.is_grantable
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                JOIN pg_attribute AS a ON a.attrelid = c.oid
+                CROSS JOIN LATERAL aclexplode(a.attacl) AS grant_row
+                WHERE n.nspname = 'microsched'
+                  AND c.relname IN (
+                    'tracker', 'reminder_dispatch',
+                    'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                  )
+                  AND c.relkind IN ('r', 'p')
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped
+                ORDER BY n.nspname, c.relname, a.attnum, 6, 7, 5
+                """
+            ),
+            "default_acls": await rows(
+                """
+                WITH target_owners AS (
+                    SELECT DISTINCT c.relowner
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'microsched'
+                      AND c.relname IN (
+                        'tracker', 'reminder_dispatch',
+                        'tracker_reminder_batch', 'tracker_reminder_batch_item'
+                      )
+                      AND c.relkind IN ('r', 'p')
+                )
+                SELECT pg_get_userbyid(default_row.defaclrole),
+                       COALESCE(n.nspname, ''), default_row.defaclobjtype::text,
+                       default_row.defaclacl::text,
+                       pg_get_userbyid(grant_row.grantor),
+                       CASE WHEN grant_row.grantee = 0 THEN 'PUBLIC'
+                            ELSE pg_get_userbyid(grant_row.grantee) END,
+                       grant_row.privilege_type, grant_row.is_grantable
+                FROM pg_default_acl AS default_row
+                LEFT JOIN pg_namespace AS n ON n.oid = default_row.defaclnamespace
+                LEFT JOIN LATERAL aclexplode(default_row.defaclacl) AS grant_row ON true
+                WHERE default_row.defaclrole IN (SELECT relowner FROM target_owners)
+                  AND (default_row.defaclnamespace = 0 OR n.nspname = 'microsched')
+                  AND default_row.defaclobjtype IN ('r', 'S')
+                ORDER BY 1, 2, 3, 6, 7, 5
+                """
+            ),
+            "dispatch_rows": await rows(
+                """
+                SELECT id, subject_type, subject_id, dispatched_on, status,
+                       attempt_count, last_attempt_at, confirmed_entry_id,
+                       confirmed_at, created_at, updated_at
+                FROM microsched.reminder_dispatch
+                WHERE id = $1
+                ORDER BY id
+                """,
+                dispatch_id,
+            ),
+            "batch_rows": await rows(
+                """
+                SELECT id, occurrence_on, reminder_time, generation, status,
+                       attempt_count, last_attempt_at, created_at, updated_at
+                FROM microsched.tracker_reminder_batch
+                ORDER BY id
+                """
+            ),
+            "batch_item_rows": await rows(
+                """
+                SELECT id, batch_id, dispatch_id, reminder_mode,
+                       reminder_interval_days, reminder_action, input_mode,
+                       state, created_at, updated_at
+                FROM microsched.tracker_reminder_batch_item
+                ORDER BY id
+                """
             ),
         }
 
@@ -288,12 +617,40 @@ def test_0012_downgrade_terminal_dispatch_fails_before_ddl(
         finally:
             await conn.close()
 
-    before = asyncio.run(seed_and_snapshot())
     try:
+        before = asyncio.run(seed_and_snapshot())
+        assert tuple(row[1] for row in before["relations"] if row[2] in {"r", "p"}) == (
+            "reminder_dispatch",
+            "tracker",
+            "tracker_reminder_batch",
+            "tracker_reminder_batch_item",
+        )
+        assert tuple(before) == (
+            "revision",
+            "relations",
+            "sequence_properties",
+            "columns",
+            "constraints",
+            "indexes",
+            "triggers",
+            "owners",
+            "relation_acls",
+            "table_grants",
+            "column_acls",
+            "column_grants",
+            "default_acls",
+            "dispatch_rows",
+            "batch_rows",
+            "batch_item_rows",
+        )
         with pytest.raises(DBAPIError) as exc_info:
             command.downgrade(_config(), "0011")
         assert getattr(exc_info.value.orig, "sqlstate", None) == "23514"
-        assert "batching or terminal data would be lost" in str(exc_info.value)
+        driver_error = exc_info.value.orig.__cause__
+        assert driver_error is not None
+        assert str(driver_error) == (
+            "cannot downgrade 0012: batching or terminal data would be lost"
+        )
         assert asyncio.run(read_snapshot()) == before
     finally:
         asyncio.run(cleanup())
