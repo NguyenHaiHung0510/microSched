@@ -1,0 +1,68 @@
+{
+  "schema_version": "037-owner-strategy-approval-source/v1",
+  "receipt_id": "037-owner-strategy-approval-20260828",
+  "approval_type": "baseline_strategy_scope_and_order_only",
+  "source": {
+    "thread_id": "01a0439a-145f-7740-a33e-bff6e0b97661",
+    "turn_id": "01a04653-da34-7503-9ee8-747967734936",
+    "message_id": "01a04655-0e97-7560-94dd-47cb95d9fbe2",
+    "message_created_at_utc": "2026-08-28T03:06:14.551Z",
+    "message_uuidv7_unix_ms": 1787886374551,
+    "exact_text": "duyệt chiến lược QA trên",
+    "exact_text_sha256_utf8": "3e31b34b4b5f39540f508c25a67b103d9adf6e9f8235e174169309ea9408b858",
+    "capture_method": "codex_app.read_thread+uuidv7_timestamp"
+  },
+  "structured_consent": {
+    "decision": "APPROVE_BASELINE_STRATEGY_SCOPE_AND_ORDER_ONLY",
+    "scope_ids": [
+      "037.strategy.risk_based_baseline",
+      "037.order.freeze_review_then_tier1_then_owner_gate_then_tier2",
+      "037.tier1.local_ci_synthetic",
+      "037.tier2.owner_sync_then_scrubbed_neon_develop",
+      "037.tier3.narrow_read_only_smoke_when_separately_authorized",
+      "037.physical_iphone.separate_acceptance"
+    ],
+    "execution_authority": false,
+    "requires_runtime_binding": true
+  },
+  "approved_scope": {
+    "scope_ids": [
+      "037.strategy.risk_based_baseline",
+      "037.order.freeze_review_then_tier1_then_owner_gate_then_tier2",
+      "037.tier1.local_ci_synthetic",
+      "037.tier2.owner_sync_then_scrubbed_neon_develop",
+      "037.tier3.narrow_read_only_smoke_when_separately_authorized",
+      "037.physical_iphone.separate_acceptance"
+    ],
+    "meaning": "Owner approves the product/assurance scope and execution order only. A run-time binding must still bind this source receipt to the exact run, candidate and spec hashes.",
+    "expires": null
+  },
+  "required_runtime_binding": {
+    "artifact_pointer": "output/qa-runs/<run_id>/run-manifest.json#/strategy_approval_binding",
+    "required_exact_fields": [
+      "source_receipt_sha256",
+      "source_message_id",
+      "run_id",
+      "candidate_sha",
+      "spec_037_sha256",
+      "scope_ids"
+    ],
+    "missing_or_mismatch": "BLOCK_BEFORE_FIRST_TEST_COMMAND"
+  },
+  "explicitly_denied_authorities": [
+    "neon_create_delete_restore_sync",
+    "neon_scrub_or_query",
+    "production_access",
+    "production_mutation",
+    "real_device_control",
+    "real_web_push",
+    "git_commit",
+    "git_push",
+    "pr_merge",
+    "deploy",
+    "migration_apply_outside_disposable_tier1"
+  ],
+  "qa_execution_status": "NOT_RUN",
+  "audit_only": true,
+  "manual_gate_required": true
+}

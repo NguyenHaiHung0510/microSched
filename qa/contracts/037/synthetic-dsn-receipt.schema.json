@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/synthetic-dsn-receipt.schema.json",
+  "title": "Task 037 dual-context synthetic DSN receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "candidate_sha", "network", "pg_container", "host_binding", "container_binding", "docker_binding", "validated_at_utc", "dotenv_loaded", "process_db_env_present"],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "database", "role"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "database": { "type": "string", "pattern": "^microsched_qa_[a-z0-9]+$" },
+        "role": { "enum": ["postgres", "microsched_migrator", "microsched_app"] }
+      }
+    },
+    "targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["CI_PG_BOOTSTRAP_URL", "NEON_MIGRATOR_URL", "CI_APP_DATABASE_URL", "DATABASE_URL"],
+      "properties": {
+        "CI_PG_BOOTSTRAP_URL": { "$ref": "#/$defs/target" },
+        "NEON_MIGRATOR_URL": { "$ref": "#/$defs/target" },
+        "CI_APP_DATABASE_URL": { "$ref": "#/$defs/target" },
+        "DATABASE_URL": { "$ref": "#/$defs/target" }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": { "const": "037-synthetic-dsn-receipt/v2" },
+    "run_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "network": { "type": "string", "pattern": "^microsched-qa-[0-9a-f-]{36}$" },
+    "pg_container": { "type": "string", "pattern": "^microsched-qa-pg-[0-9a-f-]{36}$" },
+    "host_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context", "env_file_path", "env_file_sha256", "loopback_host", "published_port", "targets"],
+      "properties": {
+        "context": { "const": "host-loopback" },
+        "env_file_path": { "type": "string", "minLength": 3 },
+        "env_file_sha256": { "$ref": "#/$defs/sha256" },
+        "loopback_host": { "const": "127.0.0.1" },
+        "published_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "targets": { "$ref": "#/$defs/targets" }
+      }
+    },
+    "container_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context", "env_file_path", "env_file_sha256", "network_host", "container_port", "targets"],
+      "properties": {
+        "context": { "const": "container-network" },
+        "env_file_path": { "type": "string", "minLength": 3 },
+        "env_file_sha256": { "$ref": "#/$defs/sha256" },
+        "network_host": { "type": "string", "pattern": "^microsched-qa-pg-[0-9a-f-]{36}$" },
+        "container_port": { "const": 5432 },
+        "targets": { "$ref": "#/$defs/targets" }
+      }
+    },
+    "docker_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["container_id_sha256", "network_id_sha256"],
+      "properties": {
+        "container_id_sha256": { "$ref": "#/$defs/sha256" },
+        "network_id_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "validated_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "dotenv_loaded": { "const": false },
+    "process_db_env_present": { "const": false }
+  }
+}

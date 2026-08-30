@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/commands.schema.json",
+  "title": "Task 037 materialized commands",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "candidate_sha", "candidate_worktree", "contract_command_version", "command_contract_sha256", "generated_at_utc", "commands", "command_bindings"],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "status": { "enum": ["FAIL", "FAIL_P0", "BLOCKED"] }
+  },
+  "properties": {
+    "schema_version": { "const": "037-commands/v1" },
+    "run_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "candidate_worktree": { "type": "string", "minLength": 3 },
+    "contract_command_version": { "const": "037-command-contract/v1" },
+    "command_contract_sha256": { "$ref": "#/$defs/sha256" },
+    "generated_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command_id", "contract_command_version", "cwd", "resolved_cwd", "argv", "argv_sha256", "env_names", "timeout_seconds", "capability", "required", "expected_exit_codes", "oracle_ids", "failure_status", "failure_severity", "stdout_path", "stderr_path"],
+        "properties": {
+          "command_id": { "type": "string", "pattern": "^[A-Za-z0-9.-]+$" },
+          "contract_command_version": { "const": "037-command-contract/v1" },
+          "cwd": { "enum": [".", "backend", "frontend"] },
+          "resolved_cwd": { "type": "string", "minLength": 3 },
+          "argv": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+          "argv_sha256": { "$ref": "#/$defs/sha256" },
+          "env_names": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" } },
+          "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 7200 },
+          "capability": { "enum": ["host", "docker", "neon-read-after-owner-sync", "neon-scrub", "production-read", "physical-device", "real-web-push"] },
+          "required": { "type": "boolean" },
+          "expected_exit_codes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0, "maximum": 255 } },
+          "oracle_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "failure_status": { "$ref": "#/$defs/status" },
+          "failure_severity": { "enum": ["P0", "P1"] },
+          "stdout_path": { "type": "string", "pattern": "^raw/commands/[^/]+\\.stdout$" },
+          "stderr_path": { "type": "string", "pattern": "^raw/commands/[^/]+\\.stderr$" }
+        }
+      }
+    },
+    "command_bindings": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["phase", "required", "conditional", "activation", "depends_on"],
+        "properties": {
+          "phase": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" },
+          "conditional": { "type": "string", "minLength": 1 },
+          "activation": { "type": "string", "minLength": 1 },
+          "depends_on": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9.-]+$" } },
+          "depends_on_terminal": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9.-]+$" } }
+        }
+      }
+    }
+  }
+}

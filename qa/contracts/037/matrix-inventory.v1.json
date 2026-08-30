@@ -1,0 +1,147 @@
+{
+  "schema_version": "037-matrix-inventory/v1",
+  "authority_status": "PENDING_INDEPENDENT_REVIEW",
+  "executor_may_modify": false,
+  "expansion": {
+    "operator": "ORTHOGONAL_UNION",
+    "framework_cells": "surface x framework_state_profile x viewport_device_profile with domain_state=NONE",
+    "domain_cells": "surface x required_domain_states x viewport_device_profile with framework_state=loaded for UI or NONE for non-UI",
+    "acceptance_id_format": "037-s{scenario_id}-{group_id}-{surface}-fw-{framework_state}-domain-{domain_state}-{viewport}-{device_token}",
+    "duplicate_policy": "ERROR",
+    "missing_policy": "ERROR",
+    "extra_policy": "ERROR"
+  },
+  "state_axes": {
+    "framework_state_field": "framework_state",
+    "domain_state_field": "domain_state",
+    "none_token": "NONE",
+    "ui_domain_pair_framework_state": "loaded",
+    "non_ui_framework_state": "NONE",
+    "forbid_single_state_column": true
+  },
+  "state_profiles": {
+    "qa_framework_ui_v13": ["empty", "loading", "load_error", "submitting", "submit_error", "offline", "long_content", "many_30plus"],
+    "non_ui": []
+  },
+  "viewport_device_profiles": {
+    "local_both": [
+      { "viewport": "390x844", "device_token": "LOCAL_CHROMIUM" },
+      { "viewport": "1280x800", "device_token": "LOCAL_CHROMIUM" }
+    ],
+    "local_ci_both": [
+      { "viewport": "390x844", "device_token": "LOCAL_CHROMIUM" },
+      { "viewport": "1280x800", "device_token": "LOCAL_CHROMIUM" },
+      { "viewport": "390x844", "device_token": "CI_CHROMIUM" },
+      { "viewport": "1280x800", "device_token": "CI_CHROMIUM" }
+    ],
+    "non_ui": [
+      { "viewport": "NONE", "device_token": "NONE" }
+    ]
+  },
+  "scenarios": [
+    {
+      "scenario_id": "01",
+      "groups": [
+        { "group_id": "auth-ui", "surfaces": ["login", "app-shell"], "state_profile": "qa_framework_ui_v13", "required_states": ["logged_out", "return_to", "authenticated", "session_expired", "logout"], "viewport_device_profile": "local_ci_both", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "02",
+      "groups": [
+        { "group_id": "private-gate-ui", "surfaces": ["private-gate", "tasks-list", "notes-list", "tracker-list"], "state_profile": "qa_framework_ui_v13", "required_states": ["locked", "public_read", "unlock_submitting", "unlock_error", "unlocked", "lock_now", "relocked", "locked_after_private_cache"], "viewport_device_profile": "local_both", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "03",
+      "groups": [
+        { "group_id": "task-ui", "surfaces": ["tasks-list", "task-dialog"], "state_profile": "qa_framework_ui_v13", "required_states": ["long_create", "draft_3_items", "create_error_retains_draft", "persisted_edit", "child_edit", "child_tick", "child_delete", "reopen", "parent_error_visible", "completed", "deleted_undo", "overdue", "private", "pinned"], "viewport_device_profile": "local_both", "required": true },
+        { "group_id": "task-api", "surfaces": ["task-api"], "state_profile": "non_ui", "required_states": ["whitespace_rejected", "atomic_create", "child_error_no_parent_overwrite"], "viewport_device_profile": "non_ui", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "04",
+      "groups": [
+        { "group_id": "calendar-ui", "surfaces": ["calendar-grid", "day-dialog", "calendar-task-dialog"], "state_profile": "qa_framework_ui_v13", "required_states": ["previous_month", "next_month", "inert_placeholder", "open_task", "edit_task", "subtask_add", "subtask_edit", "subtask_tick", "subtask_delete", "move_task", "overdue", "private", "completed", "deleted_undo"], "viewport_device_profile": "local_both", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "05",
+      "groups": [
+        { "group_id": "notes-ui", "surfaces": ["notes-list", "note-card", "note-dialog"], "state_profile": "qa_framework_ui_v13", "required_states": ["alphabet", "created", "updated", "pinned_partition", "null_title", "long_reflection", "page_101", "page_2000", "page_2001", "private", "completed", "deleted_undo"], "viewport_device_profile": "local_both", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "06",
+      "groups": [
+        { "group_id": "tracker-ui", "surfaces": ["tracker-list", "tracker-dialog"], "state_profile": "qa_framework_ui_v13", "required_states": ["event", "money_zero", "money_large", "quantity", "vietnamese", "emoji", "long_dialog", "reminder_before_finance", "private", "deleted_undo"], "viewport_device_profile": "local_both", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "07",
+      "groups": [
+        { "group_id": "single-reminder-api", "surfaces": ["reminder-api"], "state_profile": "non_ui", "required_states": ["single_public_payload", "single_provider_send", "public_click"], "viewport_device_profile": "non_ui", "required": true },
+        { "group_id": "single-reminder-ui", "surfaces": ["today-reminders"], "state_profile": "qa_framework_ui_v13", "required_states": ["single_public_name", "action_bounds"], "viewport_device_profile": "local_both", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "08",
+      "groups": [
+        { "group_id": "grouped-reminder-api", "surfaces": ["reminder-api"], "state_profile": "non_ui", "required_states": ["private_single_generic", "multi_public_generic", "mixed_private_generic", "exact_N", "one_send_per_device"], "viewport_device_profile": "non_ui", "required": true },
+        { "group_id": "grouped-reminder-ui", "surfaces": ["today-reminders"], "state_profile": "qa_framework_ui_v13", "required_states": ["same_time_group", "no_horizontal_overflow"], "viewport_device_profile": "local_both", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "09",
+      "groups": [
+        { "group_id": "scheduler-dispatch", "surfaces": ["scheduler", "dispatch-api"], "state_profile": "non_ui", "required_states": ["stale_pending", "retry", "restart", "partial_devices", "provider_accept_crash", "confirmation_idempotent", "no_duplicate_entry", "ownership_loss"], "viewport_device_profile": "non_ui", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "10",
+      "groups": [
+        { "group_id": "subscription-ui", "surfaces": ["subscription-list", "subscription-dialog"], "state_profile": "qa_framework_ui_v13", "required_states": ["renew", "cancel", "restore", "highlight", "settings_invalid", "deleted_undo"], "viewport_device_profile": "local_both", "required": true },
+        { "group_id": "subscription-api", "surfaces": ["subscription-api"], "state_profile": "non_ui", "required_states": ["crud_invariants"], "viewport_device_profile": "non_ui", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "11",
+      "groups": [
+        { "group_id": "outbox-ui", "surfaces": ["tasks-list", "notes-list"], "state_profile": "qa_framework_ui_v13", "required_states": ["offline_public_read", "offline_public_write", "reconnect", "idempotent_replay"], "viewport_device_profile": "local_both", "required": true, "condition": "source_capability_receipt.outbox_017_implemented=true", "false_status": "NOT_RUN" }
+      ]
+    },
+    {
+      "scenario_id": "12",
+      "groups": [
+        { "group_id": "private-cache-ui", "surfaces": ["notes-list", "tracker-list"], "state_profile": "qa_framework_ui_v13", "required_states": ["private_loaded", "lock_while_mounted", "lock_while_unmounted", "return_no_plaintext_flash", "refetch_public_only"], "viewport_device_profile": "local_both", "required": true },
+        { "group_id": "private-outbox-conditional", "surfaces": ["outbox"], "state_profile": "non_ui", "required_states": ["pending_private_preserved_without_flash"], "viewport_device_profile": "non_ui", "required": false, "condition": "source_capability_receipt.outbox_017_implemented=true", "false_status": "SKIPPED_OPTIONAL" }
+      ]
+    },
+    {
+      "scenario_id": "13",
+      "groups": [
+        { "group_id": "database-assurance", "surfaces": ["postgres-catalog", "migration", "backup"], "state_profile": "non_ui", "required_states": ["role_bootstrap", "upgrade", "drift", "downgrade_negative_batch", "downgrade_negative_item", "downgrade_negative_cancelled", "downgrade_negative_exhausted", "revision_0011_catalog", "reupgrade", "backup_encrypt_list_restore", "row_invariant_compare"], "viewport_device_profile": "non_ui", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "14",
+      "groups": [
+        { "group_id": "large-hostile-ui", "surfaces": ["tasks-list", "notes-list", "tracker-list", "calendar-grid", "last-card-dialog", "last-card-popover"], "state_profile": "qa_framework_ui_v13", "required_states": ["records_30", "long_70_no_space", "vietnamese_150", "uppercase_diacritic", "emoji", "whitespace_only", "last_item", "overdue", "private", "pinned", "completed", "deleted_undo"], "viewport_device_profile": "local_both", "required": true }
+      ]
+    },
+    {
+      "scenario_id": "15",
+      "groups": [
+        { "group_id": "lifecycle-ui", "surfaces": ["app-shell", "tasks-list", "notes-list", "tracker-list", "calendar-grid"], "state_profile": "qa_framework_ui_v13", "required_states": ["reload", "focus", "background", "second_use", "empty_heap"], "viewport_device_profile": "local_both", "required": true },
+        { "group_id": "scheduler-loop", "surfaces": ["scheduler"], "state_profile": "non_ui", "required_states": ["bounded_poll", "no_hot_loop"], "viewport_device_profile": "non_ui", "required": true }
+      ]
+    }
+  ],
+  "production_device_cells": [
+    { "acceptance_id": "037-prod-readyz", "scenario_id": "01", "surface": "readyz", "framework_state": "NONE", "domain_state": "deployed_candidate", "viewport": "NONE", "device_token": "NONE", "command_id": "prod.readyz", "required": false, "authority_type": "production_read_only_smoke" },
+    { "acceptance_id": "037-prod-topology", "scenario_id": "15", "surface": "fly-machine-topology", "framework_state": "NONE", "domain_state": "one_healthy_machine_sin", "viewport": "NONE", "device_token": "NONE", "command_id": "prod.fly-topology", "required": false, "authority_type": "production_read_only_smoke" },
+    { "acceptance_id": "037-device-iphone-layout", "scenario_id": "14", "surface": "physical-iphone", "framework_state": "NONE", "domain_state": "safe_area_keyboard_dialog_scroll", "viewport": "PHYSICAL", "device_token": "IPHONE_PHYSICAL", "command_id": "device.iphone-acceptance", "required": false, "authority_type": "physical_iphone_layout_acceptance" },
+    { "acceptance_id": "037-device-ios-pwa", "scenario_id": "11", "surface": "ios-home-screen-pwa", "framework_state": "NONE", "domain_state": "offline_reload_reconnect", "viewport": "PHYSICAL", "device_token": "IOS_PWA", "command_id": "device.ios-pwa-acceptance", "required": false, "authority_type": "ios_pwa_acceptance" },
+    { "acceptance_id": "037-device-real-push-single", "scenario_id": "07", "surface": "ios-notification", "framework_state": "NONE", "domain_state": "single_title_body_click", "viewport": "PHYSICAL", "device_token": "REAL_WEB_PUSH", "command_id": "device.real-web-push", "required": false, "authority_type": "real_web_push_acceptance" },
+    { "acceptance_id": "037-device-real-push-grouped", "scenario_id": "08", "surface": "ios-notification", "framework_state": "NONE", "domain_state": "grouped_title_body_count_click", "viewport": "PHYSICAL", "device_token": "REAL_WEB_PUSH", "command_id": "device.real-web-push", "required": false, "authority_type": "real_web_push_acceptance" }
+  ]
+}

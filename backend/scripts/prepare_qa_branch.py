@@ -15,6 +15,7 @@ import base64
 import hashlib
 import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
@@ -25,6 +26,8 @@ from app.core.database_urls import asyncpg_dsn
 from app.core.private_pin import hash_pin
 from app.core.scrambler import scramble_text
 from app.core.settings import get_settings
+from scripts.qa_contracts import find_repo_root, load_json, validate_schema
+from scripts.validate_qa_run import validate_owner_sync
 
 CIPHERTEXT_PREFIX = "enc:v1:"
 _NONCE_BYTES = 12
@@ -376,6 +379,21 @@ async def scrub_branch_data(
                 now,
                 now + timedelta(days=30),
             )
+            for table, key in (
+                ("push_subscription", "push_subscriptions_after"),
+                ("reminder_dispatch", "reminder_dispatches_after"),
+                ("audit_log", "audit_logs_after"),
+                ("tracker_reminder_batch", "reminder_batches_after"),
+                ("tracker_reminder_batch_item", "reminder_batch_items_after"),
+            ):
+                exists = await conn.fetchval("SELECT to_regclass($1)", f"microsched.{table}")
+                counts[key] = (
+                    (await conn.fetchval(f"SELECT count(*) FROM microsched.{table}") or 0)
+                    if exists is not None
+                    else 0
+                )
+            if any(counts[key] != 0 for key in counts if key.endswith("_after")):
+                raise RuntimeError("scrub delivery/audit zero invariant failed")
 
     finally:
         await conn.close()
@@ -383,83 +401,79 @@ async def scrub_branch_data(
     return counts
 
 
-def main() -> None:
-    settings = get_settings()
-    parser = argparse.ArgumentParser(
-        description="Prepare Neon QA branch with format-preserving scrambled data."
-    )
-    parser.add_argument(
-        "--branch-url",
-        default=(
-            settings.neon_develop_branch_key
-            or os.environ.get("NEON_DEVELOP_BRANCH_KEY")
-            or os.environ.get("DATABASE_URL_DEVELOP")
-        ),
-        help="Connection URL to the target Neon QA branch",
-    )
-    parser.add_argument(
-        "--prod-key",
-        default=(
-            settings.encryption_master_key
-            or os.environ.get("ENCRYPTION_MASTER_KEY")
-            or os.environ.get("PROD_KEY")
-        ),
-        help="Production master key (base64) to decrypt existing ciphertext",
-    )
-    parser.add_argument(
-        "--qa-key",
-        default=os.environ.get("QA_ENCRYPTION_MASTER_KEY"),
-        help="QA master key (base64) for re-encrypting",
-    )
-    parser.add_argument("--pin", default="123456", help="Test PIN to set for private unlock")
-    parser.add_argument(
-        "--salt", default="microsched_qa_salt", help="Salt for deterministic scrambling"
-    )
-    args = parser.parse_args()
-
-    if not args.branch_url:
-        raise ValueError(
-            "Missing branch URL (pass --branch-url or set NEON_DEVELOP_BRANCH_KEY in environment)"
-        )
-    if not args.prod_key:
-        raise ValueError(
-            "Missing production master key (pass --prod-key or set ENCRYPTION_MASTER_KEY)"
-        )
-
-    host = (make_url(args.branch_url).host or "").lower()
-    # Fail-closed guard for a destructive script (it truncates session/audit/
-    # push tables): the host must be the declared develop branch. The raw
-    # DATABASE_URL env var is the production reference on purpose: in local
-    # mode Settings redirects database_url to the develop branch, so comparing
-    # against settings.database_url here would compare develop with itself.
+def validate_declared_target(branch_url: str, declared_dev: str | None) -> None:
+    """Reject production and every target outside the declared develop branch."""
+    host = (make_url(branch_url).host or "").lower()
     raw_database_url = os.environ.get("DATABASE_URL")
     prod_host = (make_url(raw_database_url).host or "").lower() if raw_database_url else ""
     if prod_host and host == prod_host:
-        raise ValueError(f"CRITICAL SAFETY VIOLATION: refusing to scrub production host {host!r}.")
+        raise ValueError("CRITICAL SAFETY VIOLATION: refusing to scrub production host.")
     if "prod" in host:
-        raise ValueError(f"Refusing to run data scrubbing on host containing 'prod': {host!r}.")
-    declared_dev = settings.neon_develop_branch_key
+        raise ValueError(
+            "Refusing to run data scrubbing on a host containing the production marker."
+        )
     declared_dev_host = (make_url(declared_dev).host or "").lower() if declared_dev else ""
     if not declared_dev_host or host != declared_dev_host:
         raise ValueError(
-            "Host is not the declared NEON_DEVELOP_BRANCH_KEY target; pass --branch-url "
-            "pointing at the declared develop branch."
+            "Host is not the declared NEON_DEVELOP_BRANCH_KEY target; "
+            "the develop target is required."
         )
 
-    print(f"Starting data scrubbing on target branch host: {host}...")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Prepare Neon QA branch with format-preserving scrambled data."
+    )
+    parser.add_argument("--authority-receipt", required=True)
+    parser.add_argument("--manifest-core-sha256", required=True)
+    args = parser.parse_args()
+
+    # Authority is validated before Settings may read dotenv and before the
+    # first DB connection/statement. The audit receipt does not prove actor
+    # identity; T1's separately recorded manual process check remains required.
+    repo_root = find_repo_root()
+    contract_dir = repo_root / "qa" / "contracts" / "037"
+    receipt_path = Path(args.authority_receipt).resolve(strict=True)
+    receipt = load_json(receipt_path)
+    validate_schema(receipt, contract_dir / "authority-receipts.schema.json", label="owner-sync")
+    run_id = receipt.get("run_binding", {}).get("run_id", "")
+    manifest_path = repo_root / "output" / "qa-runs" / run_id / "run-manifest.json"
+    manifest = load_json(manifest_path)
+    if manifest.get("manifest_core_sha256") != args.manifest_core_sha256:
+        raise ValueError("Owner-sync receipt does not bind the supplied manifest core.")
+    validate_owner_sync(receipt, manifest, contract_dir)
+
+    settings = get_settings()
+    branch_url = (
+        settings.neon_develop_branch_key
+        or os.environ.get("NEON_DEVELOP_BRANCH_KEY")
+        or os.environ.get("DATABASE_URL_DEVELOP")
+    )
+    prod_key = settings.encryption_master_key or os.environ.get("ENCRYPTION_MASTER_KEY")
+    qa_key = os.environ.get("QA_ENCRYPTION_MASTER_KEY")
+
+    if not branch_url:
+        raise ValueError(
+            "Missing declared NEON_DEVELOP_BRANCH_KEY in the local owner-controlled environment"
+        )
+    if not prod_key:
+        raise ValueError("Missing encryption master key in the local owner-controlled environment")
+
+    declared_dev = settings.neon_develop_branch_key
+    validate_declared_target(branch_url, declared_dev)
+
     res = asyncio.run(
         scrub_branch_data(
-            dsn=asyncpg_dsn(args.branch_url),
-            prod_key_b64=args.prod_key,
-            qa_key_b64=args.qa_key,
-            test_pin=args.pin,
-            salt=args.salt,
+            dsn=asyncpg_dsn(branch_url),
+            prod_key_b64=prod_key,
+            qa_key_b64=qa_key,
+            test_pin="123456",
+            salt="microsched_qa_salt",
         )
     )
-    print("Data scrubbing completed successfully! Counts summary:")
+    print("qa_branch_scrub=PASS")
     for k, v in res.items():
-        print(f"  - {k}: {v}")
-    print("Pre-seeded QA Session cookie: ms_session=qa_token (user: owner@test.local, PIN: 123456)")
+        print(f"count.{k}={v}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/expected-authority-review.schema.json",
+  "title": "Independent review plus direct Owner or narrowly delegated T1 approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "approval_mode", "run_binding", "contract_hashes", "approved_command_ids", "approved_command_ids_sha256", "independent_review", "executor_identity", "t1_process_check", "audit_only", "manual_gate_required"],
+  "properties": {
+    "schema_version": { "const": "037-expected-authority-review/v1" },
+    "approval_mode": { "enum": ["DIRECT_OWNER", "T1_DELEGATED"] },
+    "run_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "candidate_sha", "spec_037_sha256"],
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+        "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "spec_037_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "contract_hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_contract_sha256", "matrix_inventory_sha256", "expected_catalog_fixtures_sha256", "catalog_queries_sha256"],
+      "properties": {
+        "command_contract_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "matrix_inventory_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "expected_catalog_fixtures_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "catalog_queries_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "approved_command_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9.-]+$" }
+    },
+    "approved_command_ids_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "independent_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewer_identity", "model", "reasoning_effort", "verdict", "reviewed_at_utc", "raw_review_sha256"],
+      "properties": {
+        "reviewer_identity": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "reasoning_effort": { "enum": ["high", "xhigh", "max", "ultra"] },
+        "verdict": { "const": "PASS_EXPECTED_AUTHORITY" },
+        "reviewed_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "raw_review_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "owner_review": { "$ref": "#/$defs/owner_review" },
+    "owner_delegation": { "$ref": "#/$defs/owner_delegation" },
+    "t1_technical_decision": { "$ref": "#/$defs/t1_technical_decision" },
+    "executor_identity": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Audit identity string only; validator enforces cross-field separation without claiming platform actor authentication."
+    },
+    "t1_process_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recorded", "t1_identity", "checked_reviewer_distinct_from_executor", "checked_reviewer_distinct_from_t1", "checked_authority_source", "checked_at_utc", "audit_only"],
+      "properties": {
+        "recorded": { "const": true },
+        "t1_identity": { "type": "string", "minLength": 1 },
+        "checked_reviewer_distinct_from_executor": { "const": true },
+        "checked_reviewer_distinct_from_t1": { "const": true },
+        "checked_authority_source": { "const": true },
+        "checked_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "audit_only": { "const": true }
+      }
+    },
+    "audit_only": { "const": true },
+    "manual_gate_required": { "const": true }
+  },
+  "oneOf": [
+    {
+      "properties": { "approval_mode": { "const": "DIRECT_OWNER" } },
+      "required": ["owner_review"],
+      "not": { "anyOf": [{ "required": ["owner_delegation"] }, { "required": ["t1_technical_decision"] }] }
+    },
+    {
+      "properties": { "approval_mode": { "const": "T1_DELEGATED" } },
+      "required": ["owner_delegation", "t1_technical_decision"],
+      "not": { "required": ["owner_review"] }
+    }
+  ],
+  "$defs": {
+    "owner_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thread_id", "turn_id", "message_id", "created_at_utc", "exact_text_sha256_utf8", "capture_method", "verdict", "structured_consent"],
+      "properties": {
+        "thread_id": { "type": "string", "minLength": 1 },
+        "turn_id": { "type": "string", "minLength": 1 },
+        "message_id": { "type": "string", "minLength": 1 },
+        "created_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "exact_text_sha256_utf8": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "capture_method": { "const": "codex_app.read_thread+uuidv7_timestamp" },
+        "verdict": { "const": "APPROVE_EXPECTED_AUTHORITY_ONLY" },
+        "structured_consent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decision", "run_id", "candidate_sha", "spec_037_sha256", "approved_command_ids_sha256"],
+          "properties": {
+            "decision": { "const": "APPROVE_EXPECTED_AUTHORITY_ONLY" },
+            "run_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+            "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "spec_037_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "approved_command_ids_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      }
+    },
+    "owner_delegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thread_id", "turn_id", "message_id", "created_at_utc", "exact_text_sha256_utf8", "capture_method", "decision", "scope", "audit_only"],
+      "properties": {
+        "thread_id": { "const": "01a0439a-145f-7740-a33e-bff6e0b97661" },
+        "turn_id": { "const": "01a051df-bda3-7d52-a3e5-101b93ff0f25" },
+        "message_id": { "const": "msg_01a051df-bdfa-72c3-80d9-7ae6248315e6" },
+        "created_at_utc": { "const": "2026-08-30T08:53:32.794Z" },
+        "exact_text_sha256_utf8": { "const": "7170603cc9f7dbcb75b65419e3bddb6dba3899f75ce9461e4ef30bd1a405031a" },
+        "capture_method": { "const": "codex_app.read_thread+uuidv7_timestamp" },
+        "decision": { "const": "DELEGATE_EXPECTED_AUTHORITY_DECISION_TO_T1" },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task_id", "authority_scope", "delegated_role", "explicitly_excluded"],
+          "properties": {
+            "task_id": { "const": "037" },
+            "authority_scope": { "const": "EXPECTED_AUTHORITY_TECHNICAL_APPROVAL_ONLY" },
+            "delegated_role": { "const": "T1" },
+            "explicitly_excluded": {
+              "const": ["COMMAND_EXECUTION", "NEON", "PRODUCTION", "DEVICE", "MERGE", "DEPLOY"]
+            }
+          }
+        },
+        "audit_only": { "const": true }
+      }
+    },
+    "t1_technical_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t1_identity", "decision", "decided_at_utc", "run_id", "candidate_sha", "spec_037_sha256", "approved_command_ids_sha256", "independent_review_raw_sha256", "audit_only"],
+      "properties": {
+        "t1_identity": { "type": "string", "minLength": 1 },
+        "decision": { "const": "APPROVE_EXPECTED_AUTHORITY_ONLY" },
+        "decided_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "run_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+        "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "spec_037_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "approved_command_ids_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "independent_review_raw_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "audit_only": { "const": true }
+      }
+    }
+  }
+}

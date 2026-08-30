@@ -1,0 +1,16 @@
+{
+  "schema_version": "037-redaction-rules/v1",
+  "artifact_scope": "output/qa-runs/<run-id>",
+  "encoding": "UTF-8",
+  "binary_policy": "ONLY_DECLARED_SCREENSHOT_IMAGES",
+  "rules": [
+    { "id": "dsn-userinfo", "severity": "P0", "pattern": "(?i)postgres(?:ql)?(?:\\+[a-z0-9]+)?://[^\\s:/]+:[^\\s@]+@", "allow": [] },
+    { "id": "cookie-value", "severity": "P0", "pattern": "(?i)(?:set-cookie|cookie|ms_session)\\s*[:=]\\s*[^\\s;,]+", "allow": [] },
+    { "id": "private-key-material", "severity": "P0", "pattern": "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", "allow": [] },
+    { "id": "secret-env-value", "severity": "P0", "pattern": "(?i)(?:DATABASE_URL|NEON_[A-Z0-9_]*URL|ENCRYPTION_MASTER_KEY|QA_ENCRYPTION_MASTER_KEY|OAUTH_STATE_SECRET|VAPID_PRIVATE_KEY)\\s*=\\s*[^<\\s][^\\r\\n]*", "allow": [] },
+    { "id": "email-address", "severity": "P0", "pattern": "(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\b", "allow": ["owner@example.test"] },
+    { "id": "literal-pin", "severity": "P0", "pattern": "(?i)(?:pin|test_pin)[\"']?\\s*[:=]\\s*[\"']?[0-9]{6}", "allow": [] },
+    { "id": "push-endpoint", "severity": "P0", "pattern": "(?i)https://[^\\s\"]+/(?:push|send|wp)/[^\\s\"]+", "allow": [] },
+    { "id": "plaintext-backup", "severity": "P0", "path_pattern": "(?i)(?:^|/)(?:dump|backup).*(?:\\.sql|\\.dump|\\.tar)$", "allow": [] }
+  ]
+}

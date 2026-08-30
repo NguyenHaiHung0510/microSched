@@ -12,14 +12,15 @@ from app.core.settings import get_settings
 from scripts.prepare_qa_branch import (  # noqa: E402
     main,
     scrub_branch_data,
+    validate_declared_target,
 )
 
 PROD_URL = "postgresql://u:p@ep-prod-fake.example.neon.tech/db"
 DEV_URL = "postgresql://u:p@ep-dev-fake-pooler.example.neon.tech/db"
 
 
-def _run_main(monkeypatch, *, database_url: str, branch_key: str):
-    """Drive main() with fake hosts so no real network is ever touched."""
+def _set_target_env(monkeypatch, *, database_url: str, branch_key: str) -> None:
+    """Set fake hosts without reading or touching a real target."""
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("NEON_DEVELOP_BRANCH_KEY", branch_key)
@@ -29,34 +30,29 @@ def _run_main(monkeypatch, *, database_url: str, branch_key: str):
     monkeypatch.delenv("ALLOW_PROD_DB_IN_LOCAL", raising=False)
     monkeypatch.setenv("ENCRYPTION_MASTER_KEY", "AAAA")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "x" * 32)
-    monkeypatch.setattr(sys, "argv", ["prepare_qa_branch.py"])
     get_settings.cache_clear()
-    try:
+
+
+def test_main_without_exact_authority_args_fails_closed(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["prepare_qa_branch.py"])
+    with pytest.raises(SystemExit) as error:
         main()
-    except ValueError as error:
-        return error
-    finally:
-        get_settings.cache_clear()
+    assert error.value.code == 2
 
 
 def test_local_scrub_of_declared_branch_is_allowed(monkeypatch) -> None:
-    """The develop target must pass every guard and reach the network layer."""
-    # Guards pass, then the fake DNS host fails inside asyncpg - that exact
-    # failure point is the receipt that no guard blocked a legitimate target.
-    with pytest.raises(OSError) as exc_info:
-        _run_main(monkeypatch, database_url=PROD_URL, branch_key=DEV_URL)
-    # CI and local DNS report different gaierror codes (-5 vs 11001); both
-    # prove the failure happened at name resolution, not at a guard.
-    message = str(exc_info.value)
-    assert "No address associated with hostname" in message or "getaddrinfo failed" in message
+    """The declared develop target passes the host guard without connecting."""
+    _set_target_env(monkeypatch, database_url=PROD_URL, branch_key=DEV_URL)
+    validate_declared_target(DEV_URL, DEV_URL)
+    get_settings.cache_clear()
 
 
 def test_scrub_refuses_the_raw_production_host(monkeypatch) -> None:
     """A prod-host target must be rejected before any network attempt."""
-    error = _run_main(monkeypatch, database_url=PROD_URL, branch_key=PROD_URL)
-    # Either guard may catch it first: settings boot check or script refusal.
-    message = str(error) if error else ""
-    assert ("production DATABASE_URL" in message) or ("production host" in message)
+    _set_target_env(monkeypatch, database_url=PROD_URL, branch_key=PROD_URL)
+    with pytest.raises(ValueError, match="production host"):
+        validate_declared_target(PROD_URL, PROD_URL)
+    get_settings.cache_clear()
 
 
 def test_scrub_delivery_truncate_is_pre_and_post_0012_safe(monkeypatch) -> None:

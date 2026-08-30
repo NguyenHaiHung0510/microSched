@@ -1,9 +1,12 @@
 # 037 — Comprehensive QA baseline sau cut-over
 
 > Trạng thái: **DRAFT 2026-08-28 — Owner đã duyệt strategy/scope/order; technical spec còn chờ independent ad-review; Tầng 2 vẫn BLOCKED bởi conflict policy + Owner gate.**
+
+> Authority correction 2026-08-30: Owner cho phép đúng một delta sửa các finding đã được independent review xác minh; delta này không phải technical approval, không mở Neon/production/device gate và không đổi trạng thái `DRAFT`.
 >
 > T3 executor: Gemini 3.7/high hoặc Luna/xhigh theo lane; backend/data lane Terra/xhigh.
-> T1 chỉ viết matrix, đọc receipt và reconcile; không làm thao tác QA lặp.
+> T1 viết matrix, đọc receipt, reconcile và có thể ghi technical decision đúng scope khi Owner delegation
+> bên dưới áp dụng; T1 không tự mở execution/Neon/production/device/merge/deploy authority.
 
 ## 0. Có cần “QA toàn bộ hệ thống” không?
 
@@ -65,14 +68,17 @@ Owner+T1 process gate đã được T1 kiểm; receipt một mình không mở l
 Candidate provenance là tracked-schema artifact `candidate-provenance.json` trong run, không được suy từ
 working tree hiện tại. Nó bắt buộc có canonical GitHub `repo`, remote URL, `candidate_ref`,
 `candidate_sha`, `candidate_tree_sha`, UTC query và ba dependency records `035A|035B|036`. Mỗi record có
-spec path/hash; exact local command IDs + stdout/stderr digests; independent review envelope validated
-by `qa/contracts/037/review-envelope.schema.json`; PR number/URL; `headRefName/headRefOid`;
+spec path/hash của exact dependency Git blob; independent review envelope validated bằng
+`qa/contracts/037/review-envelope.schema.json`; PR number/URL; `headRefName/headRefOid`;
 `baseRefName=develop/baseRefOid`; state, `isDraft=false`, required-check list và query UTC lấy live bằng
 `gh pr view --json`. Review envelope bắt buộc `reviewed_head_oid`, `base_oid`, reviewer identity/model/
 reasoning effort, verdict/time, raw review digest và raw GitHub/API receipt digest; cả head/base
 phải equal PR receipt và dependency record. Candidate PR riêng
 phải có `headRefOid=candidate_sha`; `git merge-base --is-ancestor` phải trả 0 cho từng dependency head
-trong candidate. Exact dependency IDs/argv nằm trong immutable
+trong candidate. Historical provenance **không có** `command_receipts`: GitHub/review/CI summary chỉ chứng minh
+lineage, review và terminal check của historical PR, không thể thay stdout/stderr của command chạy trên current
+candidate. Sau provenance và authority gate hợp lệ, chính Task037 run phải rerun mọi dependency command/argv trong
+immutable
 `qa/contracts/037/command-contract.v1.json`: 035A dùng
 `dep.035A.ruff-check|ruff-format|pytest-non-pg|pytest-pg|precommit`; 035B dùng cùng năm backend/root IDs,
 `dep.035B.active-endpoints-unit` cho exact unit selector chỉ row `push_subscription` hiện hành (endpoint
@@ -85,8 +91,10 @@ trong candidate. Exact dependency IDs/argv nằm trong immutable
 active-endpoints unit chỉ PASS khi assert endpoint đã unsubscribe/dead-delete và batch terminal
 `exhausted` đều zero provider call; 035B frontend unit chỉ PASS khi test assert opaque notification
 `tag` đi tới `showNotification`. Exit 0 thiếu assertion tương ứng không thỏa oracle; 035B phải cung cấp
-cả hai exact receipts này. Task 036 vẫn chỉ reconcile/rerun exact command riêng của 036 trước 037.
-Command thiếu, review không bind đúng head, PR/check không terminal-success, base không phải `develop`,
+cả hai exact current-run receipts này. Task 036 vẫn chỉ reconcile/rerun exact command riêng của 036 trước 037.
+Mỗi current-run dependency command bắt buộc có terminal `command-results.json` và acceptance bind exact exit/oracle,
+stdout/stderr path + SHA-256; historical prose/CI summary không được nhập vào các field này. Current command thiếu,
+review không bind đúng spec/head, raw PR/check không terminal-success, base không phải `develop`,
 hoặc lineage fail ⇒ BLOCKED trước baseline.
 
 Review envelope/raw digest là audit evidence. T1 phải thủ công kiểm reviewer thực sự khác executor và
@@ -220,20 +228,21 @@ screenshot-checkpoints.v1.json
 catalog-receipt.schema.json
 backup-receipt.schema.json
 migration-receipt.schema.json
+synthetic-dsn-receipt.schema.json
 ```
 
 Frozen SHA-256 (lowercase) của expected authority hiện tại được tính trên UTF-8 sau khi chuẩn hóa mọi
 line ending về LF (`\n`), để checkout Windows CRLF không làm drift authority:
 
 ```text
-authority-receipts.schema.json          b69adfadd267667f7da8a81d786f9738500a89b29a4826bf1a244aa2e93dc52d
+authority-receipts.schema.json          6d70251c57b1f1e5f82113583005e4307523874db596c98a64fc2c7a7bda7266
 review-envelope.schema.json             3b01043108c6908edf67004c97a9a3e54bea547ea63b67515ac644ff9e4ad74d
-expected-authority-review.schema.json   c810e8f79fa9758b68b0090e241d84706cf168f1d956817369b59d551fc51266
-strategy-approval-source.schema.json    81ebdb861839cbb66c7c62e64a5251ca0806f0e8265aa462444c73966916f7e4
-command-contract.v1.json                6fea8c93d69ee946e860ff606eeec19ce2ceeb374ada213118f06c38aadff510
+expected-authority-review.schema.json   c80d46278c633e1dda576141ff45618379ed4c97c92fcb0fbc773d921541e700
+strategy-approval-source.schema.json    f373d408735c9661719837620981755c11911cc166ab76c251239e469c30b4af
+command-contract.v1.json                76702fc352a13f8b8ad79d523025060ba82ffc3d2d5af72ad878e244c90d7f83
 matrix-inventory.v1.json                605b8a51e97af23031424110f660e8087113c5d91fab6dda45858aa409b2ffd1
-expected-catalog-fixtures.v1.json       19b3f49a3cbee094754123d6d380502a6c37d56a933ddd750575fd829603e92d
-catalog-queries.v1.sql                  9d497dfcc5d2123876d44b6618d8b9504ae0871a52a296c175a7193d449c6d0a
+expected-catalog-fixtures.v1.json       fa43eaeb8026fb131f99008bd1108a05d558099c8cdd2a2afdd52c92b5c31470
+catalog-queries.v1.sql                  dd61cd02e2d2fcfeeaba04ca6d12677fc9c58f3165499c43e518b1daf2418b9c
 ```
 
 Manifest/preflight phải re-hash đủ tám file và equal bảng này; đổi một byte ⇒ spec phải re-review, không
@@ -260,15 +269,34 @@ dependency 035B và dependency 036 đều dùng exact `npm run e2e`; không còn
 `backend/scripts/prepare_ci_database.py` cùng CI/local harness để bootstrap exact migrator/app roles ở
 §3.1 trước Alembic.
 
-Ngoài object command, `command_bindings` materialize cho **mọi** command ID năm field
-`phase|required|conditional|activation|depends_on`; key set phải exact-bijection với `commands[]` và mọi
-dependency phải PASS trước start. Runtime `commands.json` không được tự hạ `required`, đổi condition,
-activation hay dependency. Tất cả PG/Alembic command bind `pg.synthetic-dsn-provenance`; wrapper phải
-re-read receipt ngay trước process start và thay toàn bộ DB env bằng synthetic allowlist. Bất kỳ
-`DATABASE_URL`/migrator/app URL từ process env, repo/user `.env`, host ngoài exact run container/network,
+Ngoài object command, `command_bindings` materialize cho **mọi** command ID năm field bắt buộc
+`phase|required|conditional|activation|depends_on`; cleanup có thể thêm field thứ sáu
+`depends_on_terminal`. Key set phải exact-bijection với `commands[]`; `depends_on` phải PASS trước start,
+còn `depends_on_terminal` chỉ chứng minh dependency đã có terminal attempt và không biến FAIL thành PASS.
+Runtime `commands.json` không được tự hạ `required`, đổi condition, activation hay dependency. Tất cả
+PG/Alembic command bind `pg.synthetic-dsn-provenance`; wrapper phải re-read receipt ngay trước process
+start, bind candidate hiện tại và thay toàn bộ DB env bằng host-side synthetic allowlist. Bất kỳ
+`DATABASE_URL`/migrator/app URL từ process env, repo/user `.env`, host ngoài exact loopback/container
+context của run,
 Neon hostname/project/branch marker, production target hoặc provenance không bắt nguồn từ
 `docker.synthetic-env-create` ⇒ `FAIL_P0` **trước Alembic/pytest/SQL**. Không được coi việc một validator
 đã PASS từ đầu run là đủ nếu env đổi sau đó.
+
+Mặc định wrapper truyền exact host env đã validate với `NEON_MIGRATOR_URL` là role migrator
+least-privilege cho Alembic, catalog, backup và migration oracle. Chỉ ba command
+`backend.pytest-pg|dep.035A.pytest-pg|dep.035B.pytest-pg` được mang flag boolean
+`--pytest-use-validated-bootstrap-as-migrator`; flag này không nhận URL, chỉ chấp nhận exact argv
+`uv run pytest -m pg`, rồi đặt child `NEON_MIGRATOR_URL` bằng chính `CI_PG_BOOTSTRAP_URL` đã validate,
+khớp lane Migration QA của CI. Dùng flag cho command khác, thiếu bootstrap đã validate hoặc truyền URL
+tuỳ ý phải fail-closed trước khi spawn child; không mở privilege cho migration/catalog/oracle.
+
+Negative fixture 0012 phải decode typed authority JSON trước `asyncpg`: các cột UUID thành `UUID`,
+`occurrence_on|dispatched_on` bằng `date.fromisoformat`, `reminder_time` bằng `time.fromisoformat`.
+Typed value malformed, không phải string hoặc type không được hỗ trợ ⇒ `FAIL_P0` trước INSERT.
+
+Execution layer chỉ resolve canonical executable `argv[0]` (kể cả Windows `.cmd`) ở runtime; materialized
+`argv` và `argv_sha256` không đổi. Launch `OSError` hoặc timeout phải sinh terminal command-result với
+stdout/stderr digest và failure mapping, không được crash trước ledger.
 
 `verify_qa_catalog.py`, `verify_synthetic_backup_roundtrip.py`, `validate_qa_run.py` và browser suite nếu
 chưa tồn tại là deliverable của Task 037; không được silently bỏ command. `scheduler_ownership_receipt`
@@ -293,22 +321,51 @@ command results và required acceptance coverage; command thừa/thiếu/chạy 
 
 ### 3.4 Deterministic PG/catalog/backup/migration contract
 
-`expected-catalog-fixtures.v1.json` literalize exact table→column list, constraint/index/trigger list,
+`expected-catalog-fixtures.v1.json` literalize exact table→column list gồm type/not-null/default, full
+constraint type/validated/definition, mọi index definition kể cả PK/UNIQUE backing index, trigger
+function/schema/enabled/definition,
 role/grant set, deterministic UUID/row cho bốn negative fixture và empty round-trip; file còn lưu RFC8785
 SHA-256 riêng của `catalog_expected` và `fixtures`. `catalog-queries.v1.sql` là exact read-only SQL target
 cho role/object/column/constraint/index/trigger/grant/default-ACL/revision. Hai file là expected authority,
 không sinh từ DB/ORM/migration đang test.
 
-Trước implementation/run, một **independent reviewer và Owner** phải ký
-`agent-tasks/037-expected-authority-review.json` theo
-`qa/contracts/037/expected-authority-review.schema.json`, bind exact hash của command/matrix/catalog/query
-files, exact candidate/spec/run và SHA-256 của sorted exact approved command-ID set. Owner section phải
-có exact `APPROVE_EXPECTED_AUTHORITY_ONLY` structured consent. T1 thủ công kiểm Owner message, reviewer
-thực sự khác executor và review đúng bytes/head, rồi ghi `t1_process_check`; validator kiểm binding/hash/
-identity-string nhất quán nhưng không claim platform identity hay actor authenticity. Local envelope chỉ
-là audit evidence và không tự cấp execution authority. Approval strategy hiện tại
-không thay approval kỹ thuật này. Executor identity phải khác reviewer;
-executor không được sửa expected files hoặc tự ký cả expected lẫn implementation. Thiếu envelope,
+Sau khi `materialize_qa_run` đã tạo immutable manifest/commands cho exact clean candidate HEAD, nhưng trước
+`qa.preflight`, một **independent reviewer** và authority mode hợp lệ phải hoàn tất runtime receipt tại
+`output/qa-runs/<run-id>/authority/expected-authority-review.json` theo
+`qa/contracts/037/expected-authority-review.schema.json`. Receipt bind exact hash của
+command/matrix/catalog/query files, exact candidate/spec/run và SHA-256 của sorted exact approved
+command-ID set. Receipt không được tracked trong repo vì candidate SHA tự tham chiếu: thêm tracked receipt
+sẽ đổi HEAD mà chính receipt đang bind. `materialize_qa_run` chỉ tạo thư mục `authority/`, không tự tạo hay
+tự điền approval receipt.
+
+Hai authority mode tách biệt, không được trộn field:
+
+1. `DIRECT_OWNER`: một Owner message **sau materialization** có exact structured decision
+   `APPROVE_EXPECTED_AUTHORITY_ONLY` bind run/candidate/spec/approved-command digest. Message delegation
+   bên dưới không được gắn nhãn lại thành direct hash approval; exact message ID hoặc text hash đó ở
+   `owner_review` phải BLOCK.
+2. `T1_DELEGATED`: Owner delegation được capture **trước materialization** từ thread
+   `01a0439a-145f-7740-a33e-bff6e0b97661`, turn
+   `01a051df-bda3-7d52-a3e5-101b93ff0f25`, message
+   `msg_01a051df-bdfa-72c3-80d9-7ae6248315e6`, timestamp
+   `2026-08-30T08:53:32.794Z`, exact UTF-8 text SHA-256
+   `7170603cc9f7dbcb75b65419e3bddb6dba3899f75ce9461e4ef30bd1a405031a`, decision
+   `DELEGATE_EXPECTED_AUTHORITY_DECISION_TO_T1`. Scope duy nhất là Task037
+   `EXPECTED_AUTHORITY_TECHNICAL_APPROVAL_ONLY`; explicit exclusions bắt buộc giữ nguyên
+   `COMMAND_EXECUTION|NEON|PRODUCTION|DEVICE|MERGE|DEPLOY`. Sau materialization và independent review,
+   `t1_technical_decision` mới được ghi `APPROVE_EXPECTED_AUTHORITY_ONLY`, bind exact
+   run/candidate/spec/approved-command digest và raw independent-review digest.
+
+Trong cả hai mode, T1 thủ công kiểm authority source, reviewer thực sự khác executor lẫn T1 và review đúng
+bytes/head, rồi ghi `t1_process_check`; decision/check timestamp phải sau các prerequisite tương ứng.
+Validator chỉ load exact runtime path bên trong cùng `run_dir`, kiểm
+binding/hash/identity-string nhất quán nhưng không claim platform identity hay actor authenticity. Một
+repo-root/untracked receipt không thể thay runtime receipt. Local envelope chỉ là audit evidence và không
+tự cấp execution authority. Delegation này không thay Owner sync/activation gate và không cấp execution
+authority. Approval strategy hiện tại không thay approval kỹ thuật này. Executor và T1 identity đều phải
+khác independent reviewer;
+ngoài bounded authority-correction delta được Owner mở ngày 2026-08-30, executor không được sửa expected
+files hoặc tự ký cả expected lẫn implementation. Thiếu envelope,
 manual Owner+T1 review gate chưa recorded, hash/version drift hay một bên chưa PASS ⇒ `qa.preflight`
 BLOCKED. `catalog-receipt.schema.json` ghi raw-query digest và normalized rows với exact fields, sort ổn định:
 
@@ -385,14 +442,29 @@ Order required trong `command-contract.v1.json`:
    network và image đều có `microsched.qa.run_id=<run-id>`. Mismatch tag/label/readyz commit ⇒ `FAIL_P0`.
 2. `docker.network-create`; `docker.pg-pull` + `docker.pg-inspect` resolve
    `pgvector/pgvector:pg18` sang immutable image ID/RepoDigest `<pgvector-pg18-ref>` trong manifest;
-   `docker.pg-create` dùng exact ref, tmpfs, healthcheck bounded và **không host port**.
-3. `docker.synthetic-env-create` tạo env mới từ exact container/network của run (không load process env
-   hay `.env`), rồi `pg.synthetic-dsn-provenance` bind host/network/database/role/run và reject mọi Neon/
-   production target. Chỉ sau receipt đó `pg.bootstrap-roles` mới tạo database/schema/
+   `docker.pg-create` dùng exact ref và một tmpfs duy nhất tại `/var/lib/postgresql` (PG18 tự đặt data ở
+   `/var/lib/postgresql/18/docker`; cấm volume/mount cũ tại `/var/lib/postgresql/data`), healthcheck bounded
+   và publish Postgres duy nhất qua dynamic port bind exact `127.0.0.1::5432`; cấm `0.0.0.0`, LAN address
+   và fixed shared port. `docker.pg-health` không dùng exit 0 của plain `docker inspect` làm oracle: helper
+   poll tối đa 90 giây, bind exact container name/run label/sole network, immutable RepoDigest + resolved
+   image ID, yêu cầu `Running=true`, health `healthy`, không OOM/restarting/exited/dead, và đúng một binding
+   `5432/tcp` tới `127.0.0.1:<dynamic numeric port>`; terminal exit fail ngay, stdout không chứa credential.
+3. `docker.synthetic-env-create` tạo **hai** env mới cùng credential từ exact container/network của run
+   (không load process env hay `.env`): `synthetic-host.env` dùng `127.0.0.1:<dynamic-port>` cho Python,
+   pytest và Alembic chạy trên Windows host; `synthetic-container.env` dùng exact PG container:5432 cho
+   app container trên run network. `pg.synthetic-dsn-provenance` schema-validate và bind độc lập exact
+   run/candidate/container/network, published loopback port, hai env path+SHA, container/network ID hash,
+   database/role/context redacted; receipt không chứa DSN/password/key. Nó reject mọi Neon/production
+   target, process DB env, dotenv, LAN/wildcard bind, stale/cross-context env. Command này re-use cùng
+   exact health/identity validator ngay trước khi lấy host port, không lặp một oracle `inspect` yếu hơn.
+   Chỉ sau receipt đó
+   `pg.bootstrap-roles` mới tạo database/schema/
    `microsched_migrator`/`microsched_app` tên bind `run_id`, rồi catalog oracle. Mọi PG/Alembic command
-   revalidate same receipt immediately before start. `docker.app-create` chỉ nhận synthetic env file nằm
-   trong run artifact; redaction scan cấm production/Neon DSN. `docker.app-readyz` phải trả status ok,
-   db up, exact candidate SHA.
+   revalidate same receipt immediately before start và chỉ nhận host env; `docker.app-create` chỉ nhận
+   container env nằm trong run artifact. Redaction scan cấm production/Neon DSN. `docker.app-readyz` dùng
+   bounded startup wait tối đa 90 giây, chỉ retry connection refused hoặc HTTP 503 startup unavailable;
+   sai commit, payload malformed, health terminal hoặc HTTP status khác phải fail ngay mà không in payload.
+   PASS chỉ khi trả status ok, db up, exact candidate SHA.
 4. Trước xóa, `docker.cleanup-scope` enumerate exact candidate tag, names và labels; nếu một target thiếu
    exact `run_id`, có label run khác hoặc selector có thể match nhiều run thì BLOCK và retain để Owner
    xử lý. `pg.cleanup-db-roles` phụ thuộc cả `docker.cleanup-scope` và
@@ -407,6 +479,27 @@ Order required trong `command-contract.v1.json`:
 Docker timeout không có nghĩa resource chưa tạo: trước retry/cleanup phải inspect exact run labels/names và
 ghi trạng thái thật. Không được xoá resource không mang exact `run_id`; không dùng prefix/glob/filter có
 thể chạm resource run khác.
+
+`pg.cleanup-db-roles` luôn xóa hai credential env sau khi exact target/receipt đã validate, kể cả SQL
+cleanup terminal FAIL. `docker.cleanup-pg` phụ thuộc PASS của cleanup scope/app nhưng chỉ phụ thuộc
+**terminal attempt** của DB cleanup, nên disposable tmpfs PG rồi network/image vẫn được exact-label/name/
+revision verified và xóa; `docker.cleanup-zero` vẫn phải chứng minh zero. Resource của run cũ bị strand
+không được xóa tự động: T1 phải tạo receipt riêng dưới
+`output/qa-runs/<run-id>/recovery/authorization.json`, rồi mới được gọi
+`scripts.recover_qa_docker_resources --execute`; không có receipt exact run/candidate/decision thì script
+chỉ cho phép dry-run plan. Recovery enumerate exact run labels, từ chối unexpected resource và ghi
+`recovery/recovery-receipt.json`; việc merge code không phải authority để chạy recovery.
+
+Recovery riêng cho blocked run `01a051d6-13ab-7446-8538-8b40d005867c`, candidate
+`dd76c0b76e3ef1214704c797c22fb3dfcdcee9f8`, **chưa được phép chạy trong implementation batch này**.
+Sau independent review và T1 authorization receipt, canonical command từ `backend/` là:
+
+```text
+uv run python -m scripts.recover_qa_docker_resources --run-dir ../output/qa-runs/01a051d6-13ab-7446-8538-8b40d005867c --run-id 01a051d6-13ab-7446-8538-8b40d005867c --candidate-sha dd76c0b76e3ef1214704c797c22fb3dfcdcee9f8 --execute --authorization-receipt ../output/qa-runs/01a051d6-13ab-7446-8538-8b40d005867c/recovery/authorization.json
+```
+
+Không có `--execute` thì script chỉ inspect exact-label/name/revision, ghi immutable
+`recovery/recovery-plan.json` và không xóa gì.
 
 ## 4. Tầng 2 — owner-gated scrubbed Neon develop
 
@@ -570,6 +663,7 @@ output/qa-runs/<run-id>/
   candidate-provenance.json
   commands.json
   authority/
+    expected-authority-review.json          # post-materialize; independent + direct Owner/delegated T1
     owner-sync-receipt.json                 # future; absent until Owner actually confirms completed sync
     production-device-activation.json       # future; absent until separately activated
   scope.md
@@ -615,7 +709,8 @@ cleanup command/status và final count. Required cleanup chỉ PASS khi mọi re
 process/tab/login còn sống và không plaintext dump/decrypted backup còn trên đĩa.
 
 `validate_qa_run.py --phase final` kiểm toàn bộ contract trên, command coverage (kể cả validator,
-catalog, backup, screenshot hashes, authority), strategy source+run binding, expected-authority dual review,
+catalog, backup, screenshot hashes, authority), strategy source+run binding, expected-authority independent
+review + direct/delegated technical decision,
 candidate PR/review-envelope lineage, future owner-sync ordering, production/device activation or valid
 coordination record, command/result/acceptance bijection, exact matrix set, Docker image/lifecycle/zero
 cleanup, screenshot sidecar/checkpoint set, catalog/migration/backup digest, run/spec/SHA binding, raw hashes,
