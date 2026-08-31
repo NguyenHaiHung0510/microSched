@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/strategy-approval-binding.schema.json",
+  "title": "Task 037 strategy approval run binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_receipt_path",
+    "source_receipt_sha256",
+    "source_message_id",
+    "run_id",
+    "candidate_sha",
+    "spec_037_sha256",
+    "scope_ids",
+    "source_qa_execution_status",
+    "source_scope_expires",
+    "execution_authority",
+    "manual_owner_t1_process_gate"
+  ],
+  "properties": {
+    "schema_version": { "const": "037-strategy-approval-binding/v1" },
+    "source_receipt_path": { "const": "agent-tasks/037-owner-strategy-approval.json" },
+    "source_receipt_sha256": { "const": "b800bc1a713b914f20f0128ecc5d3296ed649064dc4d5609a4e229346c3329b5" },
+    "source_message_id": { "const": "01a04655-0e97-7560-94dd-47cb95d9fbe2" },
+    "run_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "spec_037_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "scope_ids": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "037.strategy.risk_based_baseline",
+          "037.order.freeze_review_then_tier1_then_owner_gate_then_tier2",
+          "037.tier1.local_ci_synthetic",
+          "037.tier2.owner_sync_then_scrubbed_neon_develop",
+          "037.tier3.narrow_read_only_smoke_when_separately_authorized",
+          "037.physical_iphone.separate_acceptance"
+        ]
+      }
+    },
+    "source_qa_execution_status": { "const": "NOT_RUN" },
+    "source_scope_expires": { "type": "null" },
+    "execution_authority": { "const": false },
+    "manual_owner_t1_process_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recorded", "checked_at_utc", "checked_by", "audit_only"],
+      "properties": {
+        "recorded": { "const": true },
+        "checked_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "checked_by": { "const": "T1" },
+        "audit_only": { "const": true }
+      }
+    }
+  }
+}

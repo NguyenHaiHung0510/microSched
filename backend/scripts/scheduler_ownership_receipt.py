@@ -47,18 +47,36 @@ def _utc_rfc3339(value: datetime) -> str:
 
 
 async def collect_receipt(
-    database_url: str, *, observed_at: datetime, commit: str
+    database_url: str,
+    *,
+    observed_at: datetime,
+    commit: str,
+    acquire_fixture_lock: bool = False,
 ) -> dict[str, object]:
     """Count exactly this advisory lock and close the one-shot connection."""
     commit = _require_full_git_oid(commit)
     connection = None
     try:
         connection = await asyncpg.connect(asyncpg_dsn(database_url))
+        if acquire_fixture_lock:
+            acquired = await connection.fetchval(
+                "SELECT pg_try_advisory_lock($1, $2)",
+                SCHEDULER_ADVISORY_LOCK_NAMESPACE,
+                SCHEDULER_ADVISORY_LOCK_KEY,
+            )
+            if not acquired:
+                raise RuntimeError("synthetic scheduler fixture could not acquire ownership")
         holder_count = await connection.fetchval(
             HOLDER_COUNT_QUERY,
             SCHEDULER_ADVISORY_LOCK_NAMESPACE,
             SCHEDULER_ADVISORY_LOCK_KEY,
         )
+        if acquire_fixture_lock:
+            await connection.fetchval(
+                "SELECT pg_advisory_unlock($1, $2)",
+                SCHEDULER_ADVISORY_LOCK_NAMESPACE,
+                SCHEDULER_ADVISORY_LOCK_KEY,
+            )
     finally:
         if connection is not None:
             await connection.close()
@@ -90,10 +108,14 @@ def main() -> int:
                 database_url,
                 observed_at=datetime.now(UTC),
                 commit=commit,
+                acquire_fixture_lock=bool(os.environ.get("QA_RUN_ID")),
             )
         )
     except Exception as exc:
         print(f"error_type={type(exc).__name__}", file=sys.stderr)
+        return 1
+    if receipt["holder_count"] != 1:
+        print("error_type=SchedulerHolderCount", file=sys.stderr)
         return 1
     print(json.dumps(receipt, ensure_ascii=True, separators=(",", ":")))
     return 0

@@ -153,7 +153,7 @@ jobs:
         working-directory: backend
     env:
       CI_PG_BOOTSTRAP_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
-      NEON_MIGRATOR_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
+      NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       CI_MIGRATOR_PASSWORD: synthetic-migrator
       CI_APP_PASSWORD: synthetic-app
       CI_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@localhost:5432/microsched_ci
@@ -167,23 +167,50 @@ jobs:
           python-version: "3.14"
       - run: uv sync --frozen
       - run: uv run python -m scripts.prepare_ci_database --bootstrap-url "$CI_PG_BOOTSTRAP_URL"
+      - name: Verify exact migrator/app role bootstrap
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import os
+          import asyncpg
+
+          async def main():
+              owner = await asyncpg.connect(os.environ["CI_PG_BOOTSTRAP_URL"])
+              app = await asyncpg.connect(os.environ["CI_APP_DATABASE_URL"])
+              try:
+                  roles = await owner.fetch(
+                      "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+                      "rolreplication, rolbypassrls FROM pg_roles "
+                      "WHERE rolname IN ('microsched_migrator','microsched_app') ORDER BY rolname"
+                  )
+                  assert len(roles) == 2
+                  for role in roles:
+                      assert role["rolcanlogin"] is True
+                      assert all(role[name] is False for name in (
+                          "rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"
+                      ))
+                  try:
+                      await app.execute("CREATE TABLE microsched.qa_ci_forbidden (id integer)")
+                  except asyncpg.InsufficientPrivilegeError:
+                      pass
+                  else:
+                      raise AssertionError("microsched_app unexpectedly has DDL authority")
+              finally:
+                  await app.close()
+                  await owner.close()
+
+          asyncio.run(main())
+          print("ci_role_bootstrap=PASS")
+          PY
       - run: uv run python -m scripts.check_migration_drops
       - run: uv run alembic upgrade head
-        env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       - run: uv run python -m scripts.check_migration_drift
-        env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       - run: uv run alembic downgrade base
-        env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       - run: uv run alembic upgrade head
-        env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       - run: uv run python -m scripts.check_migration_drift
-        env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       # DB-backed tests run here, reusing this job's migrated pgvector service instead
       # of standing up a second Postgres in the backend job (spec §0.4, least
       # duplication). The schema is at head from the step above.
       - run: uv run pytest -m pg
+        env:
+          NEON_MIGRATOR_URL: ${{ env.CI_PG_BOOTSTRAP_URL }}

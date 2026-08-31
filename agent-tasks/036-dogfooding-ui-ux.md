@@ -188,7 +188,7 @@ Fresh worktree: chạy `npm ci` trong `frontend` trước khi diễn giải thi�
 frontend: npm run lint
 frontend: npm run test
 frontend: npm run build
-frontend: npm run test:e2e
+frontend: npm run e2e
 root:     uvx pre-commit run --all-files
 ```
 

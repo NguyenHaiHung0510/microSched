@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/strategy-approval-source.schema.json",
+  "title": "Task 037 Owner strategy approval source",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "receipt_id", "approval_type", "source", "structured_consent", "approved_scope", "required_runtime_binding", "explicitly_denied_authorities", "qa_execution_status", "audit_only", "manual_gate_required"],
+  "properties": {
+    "schema_version": { "const": "037-owner-strategy-approval-source/v1" },
+    "receipt_id": { "const": "037-owner-strategy-approval-20260828" },
+    "approval_type": { "const": "baseline_strategy_scope_and_order_only" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thread_id", "turn_id", "message_id", "message_created_at_utc", "message_uuidv7_unix_ms", "exact_text", "exact_text_sha256_utf8", "capture_method"],
+      "properties": {
+        "thread_id": { "const": "01a0439a-145f-7740-a33e-bff6e0b97661" },
+        "turn_id": { "const": "01a04653-da34-7503-9ee8-747967734936" },
+        "message_id": { "const": "01a04655-0e97-7560-94dd-47cb95d9fbe2" },
+        "message_created_at_utc": { "const": "2026-08-28T03:06:14.551Z" },
+        "message_uuidv7_unix_ms": { "const": 1787886374551 },
+        "exact_text": { "const": "duyệt chiến lược QA trên" },
+        "exact_text_sha256_utf8": { "const": "3e31b34b4b5f39540f508c25a67b103d9adf6e9f8235e174169309ea9408b858" },
+        "capture_method": { "const": "codex_app.read_thread+uuidv7_timestamp" }
+      }
+    },
+    "structured_consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "scope_ids", "execution_authority", "requires_runtime_binding"],
+      "properties": {
+        "decision": { "const": "APPROVE_BASELINE_STRATEGY_SCOPE_AND_ORDER_ONLY" },
+        "scope_ids": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "enum": ["037.strategy.risk_based_baseline", "037.order.freeze_review_then_tier1_then_owner_gate_then_tier2", "037.tier1.local_ci_synthetic", "037.tier2.owner_sync_then_scrubbed_neon_develop", "037.tier3.narrow_read_only_smoke_when_separately_authorized", "037.physical_iphone.separate_acceptance"] },
+          "allOf": [
+            { "contains": { "const": "037.strategy.risk_based_baseline" } },
+            { "contains": { "const": "037.order.freeze_review_then_tier1_then_owner_gate_then_tier2" } },
+            { "contains": { "const": "037.tier1.local_ci_synthetic" } },
+            { "contains": { "const": "037.tier2.owner_sync_then_scrubbed_neon_develop" } },
+            { "contains": { "const": "037.tier3.narrow_read_only_smoke_when_separately_authorized" } },
+            { "contains": { "const": "037.physical_iphone.separate_acceptance" } }
+          ]
+        },
+        "execution_authority": { "const": false },
+        "requires_runtime_binding": { "const": true }
+      }
+    },
+    "approved_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope_ids", "meaning", "expires"],
+      "properties": {
+        "scope_ids": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "enum": ["037.strategy.risk_based_baseline", "037.order.freeze_review_then_tier1_then_owner_gate_then_tier2", "037.tier1.local_ci_synthetic", "037.tier2.owner_sync_then_scrubbed_neon_develop", "037.tier3.narrow_read_only_smoke_when_separately_authorized", "037.physical_iphone.separate_acceptance"] },
+          "allOf": [
+            { "contains": { "const": "037.strategy.risk_based_baseline" } },
+            { "contains": { "const": "037.order.freeze_review_then_tier1_then_owner_gate_then_tier2" } },
+            { "contains": { "const": "037.tier1.local_ci_synthetic" } },
+            { "contains": { "const": "037.tier2.owner_sync_then_scrubbed_neon_develop" } },
+            { "contains": { "const": "037.tier3.narrow_read_only_smoke_when_separately_authorized" } },
+            { "contains": { "const": "037.physical_iphone.separate_acceptance" } }
+          ]
+        },
+        "meaning": { "const": "Owner approves the product/assurance scope and execution order only. A run-time binding must still bind this source receipt to the exact run, candidate and spec hashes." },
+        "expires": { "type": "null" }
+      }
+    },
+    "required_runtime_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_pointer", "required_exact_fields", "missing_or_mismatch"],
+      "properties": {
+        "artifact_pointer": { "const": "output/qa-runs/<run_id>/run-manifest.json#/strategy_approval_binding" },
+        "required_exact_fields": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "enum": ["source_receipt_sha256", "source_message_id", "run_id", "candidate_sha", "spec_037_sha256", "scope_ids"] }
+        },
+        "missing_or_mismatch": { "const": "BLOCK_BEFORE_FIRST_TEST_COMMAND" }
+      }
+    },
+    "explicitly_denied_authorities": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "uniqueItems": true,
+      "items": { "enum": ["neon_create_delete_restore_sync", "neon_scrub_or_query", "production_access", "production_mutation", "real_device_control", "real_web_push", "git_commit", "git_push", "pr_merge", "deploy", "migration_apply_outside_disposable_tier1"] }
+    },
+    "qa_execution_status": { "const": "NOT_RUN" },
+    "audit_only": { "const": true },
+    "manual_gate_required": { "const": true }
+  }
+}

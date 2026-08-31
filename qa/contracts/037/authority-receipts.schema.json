@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/authority-receipts.schema.json",
+  "title": "Task 037 future authority receipts",
+  "oneOf": [
+    { "$ref": "#/$defs/owner_sync_receipt" },
+    { "$ref": "#/$defs/production_device_activation" }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "git_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "source_message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thread_id", "turn_id", "message_id", "created_at_utc", "exact_text_sha256_utf8", "capture_method"],
+      "properties": {
+        "thread_id": { "type": "string", "minLength": 1 },
+        "turn_id": { "type": "string", "minLength": 1 },
+        "message_id": { "type": "string", "minLength": 1 },
+        "created_at_utc": { "$ref": "#/$defs/utc" },
+        "exact_text_sha256_utf8": { "$ref": "#/$defs/sha256" },
+        "capture_method": { "const": "codex_app.read_thread+uuidv7_timestamp" }
+      }
+    },
+    "run_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "candidate_sha", "spec_037_sha256", "manifest_core_sha256"],
+      "properties": {
+        "run_id": { "$ref": "#/$defs/uuid" },
+        "candidate_sha": { "$ref": "#/$defs/git_sha" },
+        "spec_037_sha256": { "$ref": "#/$defs/sha256" },
+        "manifest_core_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "owner_sync_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "receipt_id", "authority_type", "source_message", "structured_consent", "run_binding", "neon_sync", "allowed_next_command_id", "explicitly_denied_authorities", "audit_only", "manual_gate_required"],
+      "properties": {
+        "schema_version": { "const": "037-owner-sync-receipt/v1" },
+        "receipt_id": { "$ref": "#/$defs/uuid" },
+        "authority_type": { "const": "owner_neon_develop_sync_confirmation" },
+        "source_message": { "$ref": "#/$defs/source_message" },
+        "structured_consent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decision", "run_id", "candidate_sha", "spec_037_sha256", "allowed_command_ids"],
+          "properties": {
+            "decision": { "const": "CONFIRM_NEON_MAIN_TO_DEVELOP_SYNC_COMPLETED" },
+            "run_id": { "$ref": "#/$defs/uuid" },
+            "candidate_sha": { "$ref": "#/$defs/git_sha" },
+            "spec_037_sha256": { "$ref": "#/$defs/sha256" },
+            "allowed_command_ids": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "const": "tier2.prepare-qa-branch" } }
+          }
+        },
+        "run_binding": { "$ref": "#/$defs/run_binding" },
+        "neon_sync": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["project_id_sha256", "source_branch_name", "source_branch_id_sha256", "target_branch_name", "target_branch_id_sha256", "production_parent_git_sha", "production_parent_source_receipt_sha256", "sync_completed_at_utc", "console_operation_receipt_sha256"],
+          "properties": {
+            "project_id_sha256": { "$ref": "#/$defs/sha256" },
+            "source_branch_name": { "const": "main" },
+            "source_branch_id_sha256": { "$ref": "#/$defs/sha256" },
+            "target_branch_name": { "const": "develop" },
+            "target_branch_id_sha256": { "$ref": "#/$defs/sha256" },
+            "production_parent_git_sha": { "$ref": "#/$defs/git_sha" },
+            "production_parent_source_receipt_sha256": { "$ref": "#/$defs/sha256" },
+            "sync_completed_at_utc": { "$ref": "#/$defs/utc" },
+            "console_operation_receipt_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "allowed_next_command_id": { "const": "tier2.prepare-qa-branch" },
+        "explicitly_denied_authorities": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "contains": { "const": "production_or_device_activation" },
+          "items": { "enum": ["neon_create_delete_restore_sync", "production_or_device_activation", "real_web_push", "merge", "deploy"] }
+        },
+        "audit_only": { "const": true },
+        "manual_gate_required": { "const": true }
+      }
+    },
+    "production_device_activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "receipt_id", "authority_type", "source_message", "structured_consent", "run_binding", "target", "allowed_command_ids", "executor", "issued_at_utc", "expires_at_utc", "single_use", "read_only", "explicitly_denied_mutations", "audit_only", "manual_gate_required"],
+      "properties": {
+        "schema_version": { "const": "037-production-device-activation/v1" },
+        "receipt_id": { "$ref": "#/$defs/uuid" },
+        "authority_type": { "enum": ["production_read_only_smoke", "physical_iphone_layout_acceptance", "ios_pwa_acceptance", "real_web_push_acceptance"] },
+        "source_message": { "$ref": "#/$defs/source_message" },
+        "structured_consent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decision", "run_id", "candidate_sha", "spec_037_sha256", "allowed_command_ids"],
+          "properties": {
+            "decision": { "enum": ["ACTIVATE_PRODUCTION_READ_ONLY_SMOKE", "ACTIVATE_PHYSICAL_IPHONE_LAYOUT", "ACTIVATE_IOS_PWA", "ACTIVATE_REAL_WEB_PUSH"] },
+            "run_id": { "$ref": "#/$defs/uuid" },
+            "candidate_sha": { "$ref": "#/$defs/git_sha" },
+            "spec_037_sha256": { "$ref": "#/$defs/sha256" },
+            "allowed_command_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^(prod|device)\\." } }
+          }
+        },
+        "run_binding": { "$ref": "#/$defs/run_binding" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["origin", "fly_app", "region", "database_branch_name", "device_token"],
+          "properties": {
+            "origin": { "const": "https://microsched.fly.dev" },
+            "fly_app": { "const": "microsched" },
+            "region": { "const": "sin" },
+            "database_branch_name": { "const": "main" },
+            "device_token": { "enum": ["NONE", "IPHONE_PHYSICAL", "IOS_PWA", "REAL_WEB_PUSH"] }
+          }
+        },
+        "allowed_command_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^(prod|device)\\." } },
+        "executor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lane", "identity", "model", "reasoning_effort"],
+          "properties": {
+            "lane": { "type": "string", "minLength": 1 },
+            "identity": { "type": "string", "minLength": 1 },
+            "model": { "type": "string", "minLength": 1 },
+            "reasoning_effort": { "enum": ["low", "medium", "high", "xhigh", "max", "ultra"] }
+          }
+        },
+        "issued_at_utc": { "$ref": "#/$defs/utc" },
+        "expires_at_utc": { "$ref": "#/$defs/utc", "description": "Validator requires issued_at_utc < now_utc < expires_at_utc and a bounded lifetime <= 4 hours." },
+        "single_use": { "const": true },
+        "read_only": { "const": true },
+        "explicitly_denied_mutations": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "contains": { "const": "production_data_write" },
+          "items": { "enum": ["production_data_write", "production_migration", "production_seed", "fault_injection", "neon_branch_operation", "deploy", "merge", "oauth_permission_change"] }
+        },
+        "audit_only": { "const": true },
+        "manual_gate_required": { "const": true }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "authority_type": { "const": "production_read_only_smoke" } } },
+          "then": {
+            "properties": {
+              "read_only": { "const": true },
+              "allowed_command_ids": {
+                "minItems": 2,
+                "maxItems": 2,
+                "allOf": [
+                  { "contains": { "const": "prod.readyz" } },
+                  { "contains": { "const": "prod.fly-topology" } }
+                ]
+              },
+              "target": { "properties": { "device_token": { "const": "NONE" } } },
+              "structured_consent": {
+                "properties": {
+                  "decision": { "const": "ACTIVATE_PRODUCTION_READ_ONLY_SMOKE" },
+                  "allowed_command_ids": {
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "allOf": [
+                      { "contains": { "const": "prod.readyz" } },
+                      { "contains": { "const": "prod.fly-topology" } }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "authority_type": { "const": "physical_iphone_layout_acceptance" } } },
+          "then": {
+            "properties": {
+              "allowed_command_ids": {
+                "minItems": 1,
+                "maxItems": 1,
+                "contains": { "const": "device.iphone-acceptance" }
+              },
+              "target": { "properties": { "device_token": { "const": "IPHONE_PHYSICAL" } } },
+              "structured_consent": {
+                "properties": {
+                  "decision": { "const": "ACTIVATE_PHYSICAL_IPHONE_LAYOUT" },
+                  "allowed_command_ids": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "contains": { "const": "device.iphone-acceptance" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "authority_type": { "const": "ios_pwa_acceptance" } } },
+          "then": {
+            "properties": {
+              "allowed_command_ids": {
+                "minItems": 1,
+                "maxItems": 1,
+                "contains": { "const": "device.ios-pwa-acceptance" }
+              },
+              "target": { "properties": { "device_token": { "const": "IOS_PWA" } } },
+              "structured_consent": {
+                "properties": {
+                  "decision": { "const": "ACTIVATE_IOS_PWA" },
+                  "allowed_command_ids": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "contains": { "const": "device.ios-pwa-acceptance" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "authority_type": { "const": "real_web_push_acceptance" } } },
+          "then": {
+            "properties": {
+              "allowed_command_ids": {
+                "minItems": 1,
+                "maxItems": 1,
+                "contains": { "const": "device.real-web-push" }
+              },
+              "target": { "properties": { "device_token": { "const": "REAL_WEB_PUSH" } } },
+              "structured_consent": {
+                "properties": {
+                  "decision": { "const": "ACTIVATE_REAL_WEB_PUSH" },
+                  "allowed_command_ids": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "contains": { "const": "device.real-web-push" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

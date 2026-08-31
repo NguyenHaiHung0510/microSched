@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/backup-receipt.schema.json",
+  "title": "Task 037 encrypted synthetic backup round-trip receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "fixture_id", "seed_manifest_sha256", "source_inventory", "source_catalog_sha256", "encrypted_artifact_sha256", "dump_list_sha256", "restore_database_opaque_id", "restore_inventory", "restore_catalog_sha256", "dump_exit", "decrypt_list_exit", "restore_exit", "oracle", "cleanup_link"],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "inventory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["table", "row_count", "pk_set_sha256", "invariant_sha256"],
+        "properties": {
+          "table": { "type": "string", "pattern": "^[a-z_]+$" },
+          "row_count": { "type": "integer", "minimum": 0 },
+          "pk_set_sha256": { "$ref": "#/$defs/sha256" },
+          "invariant_sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": { "const": "037-backup-receipt/v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "fixture_id": { "const": "backup-v1" },
+    "seed_manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "source_inventory": { "$ref": "#/$defs/inventory" },
+    "source_catalog_sha256": { "$ref": "#/$defs/sha256" },
+    "encrypted_artifact_sha256": { "$ref": "#/$defs/sha256" },
+    "dump_list_sha256": { "$ref": "#/$defs/sha256" },
+    "restore_database_opaque_id": { "$ref": "#/$defs/sha256" },
+    "restore_inventory": { "$ref": "#/$defs/inventory" },
+    "restore_catalog_sha256": { "$ref": "#/$defs/sha256" },
+    "dump_exit": { "const": 0 },
+    "decrypt_list_exit": { "const": 0 },
+    "restore_exit": { "const": 0 },
+    "oracle": { "const": "PASS_INVENTORY_AND_CATALOG_BYTE_EQUAL" },
+    "cleanup_link": { "type": "string", "minLength": 1 }
+  }
+}

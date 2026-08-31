@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/catalog-receipt.schema.json",
+  "title": "Task 037 normalized PostgreSQL catalog receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "fixture_id", "revision", "raw_query_sha256", "authority_sha256", "catalog_sha256", "roles", "objects", "columns", "constraints", "indexes", "triggers", "explicit_grants", "schema_grants", "default_grants", "bootstrap_default_acl_raw", "bootstrap_default_acl_residue", "bootstrap_residual_grants", "ddl_denials"],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rolname", "rolcanlogin", "rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"],
+      "properties": {
+        "rolname": { "type": "string", "minLength": 1 },
+        "rolcanlogin": { "type": "boolean" },
+        "rolsuper": { "type": "boolean" },
+        "rolcreatedb": { "type": "boolean" },
+        "rolcreaterole": { "type": "boolean" },
+        "rolreplication": { "type": "boolean" },
+        "rolbypassrls": { "type": "boolean" }
+      }
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_name", "relkind", "relname", "owner"],
+      "properties": {
+        "schema_name": { "const": "microsched" },
+        "relkind": { "enum": ["r", "p", "S"] },
+        "relname": { "type": "string", "minLength": 1 },
+        "owner": { "type": "string", "minLength": 1 }
+      }
+    },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_name", "table_name", "attnum", "attname", "data_type", "attnotnull", "default_expr"],
+      "properties": {
+        "schema_name": { "const": "microsched" },
+        "table_name": { "type": "string", "minLength": 1 },
+        "attnum": { "type": "integer", "minimum": 1 },
+        "attname": { "type": "string", "minLength": 1 },
+        "data_type": { "type": "string", "minLength": 1 },
+        "attnotnull": { "type": "boolean" },
+        "default_expr": { "type": ["string", "null"] }
+      }
+    },
+    "constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_name", "table_name", "conname", "contype", "convalidated", "definition"],
+      "properties": {
+        "schema_name": { "const": "microsched" },
+        "table_name": { "type": "string", "minLength": 1 },
+        "conname": { "type": "string", "minLength": 1 },
+        "contype": { "enum": ["c", "f", "p", "u"] },
+        "convalidated": { "const": true },
+        "definition": { "type": "string", "minLength": 1 }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaname", "tablename", "indexname", "indexdef"],
+      "properties": {
+        "schemaname": { "const": "microsched" },
+        "tablename": { "type": "string", "minLength": 1 },
+        "indexname": { "type": "string", "minLength": 1 },
+        "indexdef": { "type": "string", "minLength": 1 }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_name", "table_name", "tgname", "function_schema", "function_name", "tgenabled", "definition"],
+      "properties": {
+        "schema_name": { "const": "microsched" },
+        "table_name": { "type": "string", "minLength": 1 },
+        "tgname": { "type": "string", "minLength": 1 },
+        "function_schema": { "type": "string", "minLength": 1 },
+        "function_name": { "type": "string", "minLength": 1 },
+        "tgenabled": { "enum": ["O", "D", "R", "A"] },
+        "definition": { "type": "string", "minLength": 1 }
+      }
+    },
+    "explicit_grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_name", "relkind", "relname", "grantee", "privilege_type", "is_grantable"],
+      "properties": {
+        "schema_name": { "const": "microsched" },
+        "relkind": { "enum": ["r", "p", "S"] },
+        "relname": { "type": "string", "minLength": 1 },
+        "grantee": { "type": "string", "minLength": 1 },
+        "privilege_type": { "type": "string", "minLength": 1 },
+        "is_grantable": { "type": "boolean" }
+      }
+    },
+    "schema_grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_name", "grantee", "privilege_type", "is_grantable"],
+      "properties": {
+        "schema_name": { "const": "microsched" },
+        "grantee": { "type": "string", "minLength": 1 },
+        "privilege_type": { "type": "string", "minLength": 1 },
+        "is_grantable": { "type": "boolean" }
+      }
+    },
+    "default_grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "schema_name", "defaclobjtype", "grantee", "privilege_type", "is_grantable"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "schema_name": { "type": "string", "minLength": 1 },
+        "defaclobjtype": { "enum": ["r", "S"] },
+        "grantee": { "type": "string", "minLength": 1 },
+        "privilege_type": { "type": "string", "minLength": 1 },
+        "is_grantable": { "type": "boolean" }
+      }
+    },
+    "bootstrap_tuple": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "schema_name", "object_kind", "acl_item_count", "acl_text"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "schema_name": { "type": "string", "minLength": 1 },
+        "object_kind": { "type": "string", "minLength": 1 },
+        "acl_item_count": { "type": "integer", "minimum": 0 },
+        "acl_text": { "type": "string" }
+      }
+    },
+    "residual_grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acl_source", "schema_name", "object_name", "grantee", "privilege_type", "is_grantable"],
+      "properties": {
+        "acl_source": { "enum": ["schema", "object"] },
+        "schema_name": { "type": "string", "minLength": 1 },
+        "object_name": { "type": ["string", "null"] },
+        "grantee": { "type": "string", "minLength": 1 },
+        "privilege_type": { "type": "string", "minLength": 1 },
+        "is_grantable": { "type": "boolean" }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": { "const": "037-catalog-receipt/v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "fixture_id": { "enum": ["canonical-head", "empty-roundtrip"] },
+    "revision": { "enum": ["0011", "0012"] },
+    "raw_query_sha256": { "$ref": "#/$defs/sha256" },
+    "authority_sha256": { "$ref": "#/$defs/sha256" },
+    "catalog_sha256": { "$ref": "#/$defs/sha256" },
+    "roles": { "type": "array", "items": { "$ref": "#/$defs/role" } },
+    "objects": { "type": "array", "items": { "$ref": "#/$defs/object" } },
+    "columns": { "type": "array", "items": { "$ref": "#/$defs/column" } },
+    "constraints": { "type": "array", "items": { "$ref": "#/$defs/constraint" } },
+    "indexes": { "type": "array", "items": { "$ref": "#/$defs/index" } },
+    "triggers": { "type": "array", "items": { "$ref": "#/$defs/trigger" } },
+    "explicit_grants": { "type": "array", "items": { "$ref": "#/$defs/explicit_grant" } },
+    "schema_grants": { "type": "array", "items": { "$ref": "#/$defs/schema_grant" } },
+    "default_grants": { "type": "array", "items": { "$ref": "#/$defs/default_grant" } },
+    "bootstrap_default_acl_raw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_row_count", "raw_tuples"],
+      "properties": {
+        "raw_row_count": { "type": "integer", "minimum": 0 },
+        "raw_tuples": { "type": "array", "items": { "$ref": "#/$defs/bootstrap_tuple" } }
+      }
+    },
+    "bootstrap_default_acl_residue": { "type": "array", "items": { "$ref": "#/$defs/default_grant" } },
+    "bootstrap_residual_grants": { "type": "array", "items": { "$ref": "#/$defs/residual_grant" } },
+    "ddl_denials": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "sqlstate", "rolled_back"],
+        "properties": {
+          "statement": { "enum": ["CREATE TABLE", "ALTER TABLE", "DROP TABLE"] },
+          "sqlstate": { "const": "42501" },
+          "rolled_back": { "const": true }
+        }
+      }
+    }
+  }
+}

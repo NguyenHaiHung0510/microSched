@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/screenshot-record.schema.json",
+  "title": "Task 037 screenshot sidecar",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["screenshot_id", "checkpoint_id", "run_id", "candidate_sha", "spec_hashes", "scenario_id", "acceptance_id", "matrix_row_sha256", "lane", "device_token", "viewport", "pixel_width", "pixel_height", "app_crop", "image_path", "captured_at_utc", "visible_selector", "accessible_text_sha256", "top_banner_or_heading", "taste_notes", "md5", "sha256", "capture_command_raw_sha256"],
+  "$defs": { "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } },
+  "properties": {
+    "screenshot_id": { "type": "string", "pattern": "^037-shot-[a-z0-9-]+$" },
+    "checkpoint_id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "run_id": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+    "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "spec_hashes": { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/sha256" } },
+    "scenario_id": { "type": "string", "pattern": "^[0-9]{2}$" },
+    "acceptance_id": { "type": "string", "pattern": "^037-" },
+    "matrix_row_sha256": { "$ref": "#/$defs/sha256" },
+    "lane": { "enum": ["local", "ci", "production", "physical-device"] },
+    "device_token": { "enum": ["LOCAL_CHROMIUM", "CI_CHROMIUM", "IPHONE_PHYSICAL", "IOS_PWA", "REAL_WEB_PUSH"] },
+    "viewport": { "enum": ["390x844", "1280x800", "PHYSICAL"] },
+    "pixel_width": { "type": "integer", "minimum": 1 },
+    "pixel_height": { "type": "integer", "minimum": 1 },
+    "app_crop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "image_path": { "type": "string", "pattern": "^screenshots/[^/]+\\.png$" },
+    "captured_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "visible_selector": { "type": "string", "minLength": 1 },
+    "accessible_text_sha256": { "$ref": "#/$defs/sha256" },
+    "top_banner_or_heading": { "type": "string", "minLength": 1 },
+    "taste_notes": { "type": "array", "minItems": 2, "maxItems": 4, "items": { "type": "string", "minLength": 1 } },
+    "md5": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "sha256": { "$ref": "#/$defs/sha256" },
+    "capture_command_raw_sha256": { "$ref": "#/$defs/sha256" }
+  }
+}

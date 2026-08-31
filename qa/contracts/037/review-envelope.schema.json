@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/review-envelope.schema.json",
+  "title": "Task 035/036 independent review envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "dependency_id",
+    "reviewed_head_oid",
+    "base_oid",
+    "reviewed_spec_sha256",
+    "executor_identity",
+    "reviewer",
+    "verdict",
+    "reviewed_at_utc",
+    "source",
+    "t1_process_check",
+    "github_pr_receipt"
+  ],
+  "properties": {
+    "schema_version": { "const": "037-review-envelope/v1" },
+    "dependency_id": { "enum": ["035A", "035B", "036"] },
+    "reviewed_head_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "base_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "reviewed_spec_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "executor_identity": { "type": "string", "minLength": 1 },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "model", "reasoning_effort", "independent_from_executor"],
+      "properties": {
+        "identity": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "reasoning_effort": { "enum": ["low", "medium", "high", "xhigh", "max", "ultra"] },
+        "independent_from_executor": { "const": true }
+      }
+    },
+    "verdict": { "const": "PASS_REVIEW" },
+    "reviewed_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thread_id", "turn_id", "message_id", "created_at_utc", "raw_review_path", "raw_review_sha256", "identity_binding"],
+      "properties": {
+        "thread_id": { "type": "string", "minLength": 1 },
+        "turn_id": { "type": "string", "minLength": 1 },
+        "message_id": { "type": "string", "minLength": 1 },
+        "created_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "raw_review_path": { "type": "string", "pattern": "^raw/reviews/[^/]+\\.json$" },
+        "raw_review_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "identity_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reviewer_identity", "executor_identity", "comparison"],
+          "properties": {
+            "reviewer_identity": { "type": "string", "minLength": 1 },
+            "executor_identity": { "type": "string", "minLength": 1 },
+            "comparison": { "const": "REQUIRE_DISTINCT_EXACT_STRINGS" }
+          }
+        }
+      }
+    },
+    "t1_process_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recorded", "checked_reviewer_distinct_from_executor", "checked_review_bound_to_head", "checked_at_utc", "audit_only"],
+      "properties": {
+        "recorded": { "const": true },
+        "checked_reviewer_distinct_from_executor": { "const": true },
+        "checked_review_bound_to_head": { "const": true },
+        "checked_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "audit_only": { "const": true }
+      }
+    },
+    "github_pr_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queried_at_utc", "raw_api_path", "raw_api_sha256", "pr_number", "state", "is_draft", "head_ref_name", "head_ref_oid", "base_ref_name", "base_ref_oid", "required_checks_terminal_success"],
+      "properties": {
+        "queried_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "raw_api_path": { "type": "string", "pattern": "^raw/github/pr-[0-9]+\\.json$" },
+        "raw_api_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pr_number": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["OPEN", "MERGED"] },
+        "is_draft": { "const": false },
+        "head_ref_name": { "type": "string", "minLength": 1 },
+        "head_ref_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "base_ref_name": { "const": "develop" },
+        "base_ref_oid": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "required_checks_terminal_success": { "const": true }
+      }
+    }
+  }
+}

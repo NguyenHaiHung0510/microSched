@@ -1,0 +1,588 @@
+{
+  "schema_version": "037-expected-catalog-fixtures/v1",
+  "authority_status": "PENDING_OWNER_AND_INDEPENDENT_REVIEW",
+  "executor_may_modify": false,
+  "required_approval_envelope": "037-expected-authority-review/v1",
+  "normalization": "RFC8785_JSON_UTF8_SHA256_LOWERCASE",
+  "expected_set_semantics": {
+    "tables": "EXACT_SET",
+    "sequences": "EXACT_SET",
+    "columns_per_table": "EXACT_ORDERED_BY_ATTNUM_WITH_TYPE_NOT_NULL_AND_DEFAULT",
+    "constraints": "EXACT_SET_WITH_TYPE_VALIDATION_AND_DEFINITION",
+    "indexes": "EXACT_SET_INCLUDING_PK_AND_UNIQUE_BACKING_WITH_DEFINITION",
+    "triggers": "EXACT_SET_WITH_FUNCTION_ENABLED_AND_DEFINITION",
+    "roles": "EXACT_SET_FOR_NAMED_ROLES",
+    "grants": "EXACT_SET"
+  },
+  "catalog_expected": {
+    "schema": "microsched",
+    "alembic_revision": "0012",
+    "roles": [
+      { "name": "microsched_app", "login": true, "superuser": false, "createdb": false, "createrole": false, "replication": false, "bypassrls": false },
+      { "name": "microsched_migrator", "login": true, "superuser": false, "createdb": false, "createrole": false, "replication": false, "bypassrls": false }
+    ],
+    "tables": [
+      {
+        "name": "alembic_version",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "version_num", "data_type": "character varying(32)", "not_null": true, "default_expr": null }
+        ]
+      },
+      {
+        "name": "app_setting",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "key", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "value", "data_type": "jsonb", "not_null": true, "default_expr": null }
+        ]
+      },
+      {
+        "name": "audit_log",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "trace_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "turn_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "action", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "tool", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "entity_type", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "entity_id", "data_type": "uuid", "not_null": false, "default_expr": null },
+          { "name": "payload", "data_type": "jsonb", "not_null": true, "default_expr": "'{}'::jsonb" }
+        ]
+      },
+      {
+        "name": "calendar_event",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "source_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "title", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "location", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "starts_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": null },
+          { "name": "ends_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": null },
+          { "name": "is_hidden", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "description_md", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "all_day", "data_type": "boolean", "not_null": true, "default_expr": "false" }
+        ]
+      },
+      {
+        "name": "calendar_source",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "name", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "kind", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "color", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "is_visible", "data_type": "boolean", "not_null": true, "default_expr": "true" }
+        ]
+      },
+      {
+        "name": "day_annotation",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "starts_on", "data_type": "date", "not_null": true, "default_expr": null },
+          { "name": "ends_on", "data_type": "date", "not_null": true, "default_expr": null },
+          { "name": "label", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "note_md", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "color", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "is_private", "data_type": "boolean", "not_null": true, "default_expr": "false" }
+        ]
+      },
+      {
+        "name": "entry",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "tracker_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "subscription_id", "data_type": "uuid", "not_null": false, "default_expr": null },
+          { "name": "quantity", "data_type": "numeric(10,2)", "not_null": false, "default_expr": null },
+          { "name": "amount", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "list_amount", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "occurred_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "note_md", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "deleted_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null }
+        ]
+      },
+      {
+        "name": "message",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "role", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "content", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "is_private", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "trace_id", "data_type": "uuid", "not_null": true, "default_expr": null }
+        ]
+      },
+      {
+        "name": "note",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "title", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "body_md", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "embedding", "data_type": "vector", "not_null": false, "default_expr": null },
+          { "name": "is_private", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "deleted_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "pinned", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "priority", "data_type": "text", "not_null": false, "default_expr": null }
+        ]
+      },
+      {
+        "name": "note_item",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "note_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "content", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "is_completed", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "position", "data_type": "integer", "not_null": true, "default_expr": "0" }
+        ]
+      },
+      {
+        "name": "push_subscription",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "endpoint", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "p256dh", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "auth", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "user_agent", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "last_seen_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" }
+        ]
+      },
+      {
+        "name": "reminder_dispatch",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "subject_type", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "subject_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "dispatched_on", "data_type": "date", "not_null": true, "default_expr": null },
+          { "name": "status", "data_type": "text", "not_null": true, "default_expr": "'pending'::text" },
+          { "name": "attempt_count", "data_type": "integer", "not_null": true, "default_expr": "0" },
+          { "name": "last_attempt_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "confirmed_entry_id", "data_type": "uuid", "not_null": false, "default_expr": null },
+          { "name": "confirmed_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" }
+        ]
+      },
+      {
+        "name": "session",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "token_hash", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "user_email", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "last_seen_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "expires_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": null },
+          { "name": "private_until", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null }
+        ]
+      },
+      {
+        "name": "subscription",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "name", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "tracker_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "amount", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "list_amount", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "period_count", "data_type": "integer", "not_null": true, "default_expr": "1" },
+          { "name": "period_unit", "data_type": "text", "not_null": true, "default_expr": "'month'::text" },
+          { "name": "started_on", "data_type": "date", "not_null": true, "default_expr": null },
+          { "name": "expires_on", "data_type": "date", "not_null": true, "default_expr": null },
+          { "name": "auto_renew", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "canceled_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "note_md", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "deleted_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null }
+        ]
+      },
+      {
+        "name": "task",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "title", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "body_md", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "status", "data_type": "text", "not_null": true, "default_expr": "'open'::text" },
+          { "name": "priority", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "due_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "is_private", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "deleted_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "pinned", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "completed_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "due_precision", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "due_on", "data_type": "date", "not_null": false, "default_expr": null }
+        ]
+      },
+      {
+        "name": "task_item",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "task_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "content", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "is_completed", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "position", "data_type": "integer", "not_null": true, "default_expr": "0" }
+        ]
+      },
+      {
+        "name": "tracker",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "name", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "kind", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "direction", "data_type": "text", "not_null": true, "default_expr": "'out'::text" },
+          { "name": "input_mode", "data_type": "text", "not_null": true, "default_expr": "'event'::text" },
+          { "name": "group_id", "data_type": "uuid", "not_null": false, "default_expr": null },
+          { "name": "unit", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "color", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "reminder_time", "data_type": "time without time zone", "not_null": false, "default_expr": null },
+          { "name": "reminder_text", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "is_private", "data_type": "boolean", "not_null": true, "default_expr": "false" },
+          { "name": "deleted_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "reminder_mode", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "reminder_interval_days", "data_type": "integer", "not_null": false, "default_expr": null },
+          { "name": "reminder_action", "data_type": "text", "not_null": false, "default_expr": null }
+        ]
+      },
+      {
+        "name": "tracker_group",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "name", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "kind", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "color", "data_type": "text", "not_null": false, "default_expr": null },
+          { "name": "position", "data_type": "integer", "not_null": true, "default_expr": "0" }
+        ]
+      },
+      {
+        "name": "tracker_reminder_batch",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "occurrence_on", "data_type": "date", "not_null": true, "default_expr": null },
+          { "name": "reminder_time", "data_type": "time without time zone", "not_null": true, "default_expr": null },
+          { "name": "generation", "data_type": "integer", "not_null": true, "default_expr": "1" },
+          { "name": "status", "data_type": "text", "not_null": true, "default_expr": "'pending'::text" },
+          { "name": "attempt_count", "data_type": "integer", "not_null": true, "default_expr": "0" },
+          { "name": "last_attempt_at", "data_type": "timestamp with time zone", "not_null": false, "default_expr": null },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" }
+        ]
+      },
+      {
+        "name": "tracker_reminder_batch_item",
+        "owner": "microsched_migrator",
+        "columns": [
+          { "name": "id", "data_type": "uuid", "not_null": true, "default_expr": "uuidv7()" },
+          { "name": "batch_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "dispatch_id", "data_type": "uuid", "not_null": true, "default_expr": null },
+          { "name": "reminder_mode", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "reminder_interval_days", "data_type": "integer", "not_null": true, "default_expr": null },
+          { "name": "reminder_action", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "input_mode", "data_type": "text", "not_null": true, "default_expr": null },
+          { "name": "state", "data_type": "text", "not_null": true, "default_expr": "'pending'::text" },
+          { "name": "created_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" },
+          { "name": "updated_at", "data_type": "timestamp with time zone", "not_null": true, "default_expr": "now()" }
+        ]
+      }
+    ],
+    "sequences": [],
+    "constraints": [
+      { "name": "alembic_version_pkc", "table": "alembic_version", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (version_num)" },
+      { "name": "ck_audit_log_entity_reference_complete", "table": "audit_log", "type": "CHECK", "validated": true, "definition": "CHECK ((entity_type IS NULL) = (entity_id IS NULL))" },
+      { "name": "ck_calendar_event_positive_duration", "table": "calendar_event", "type": "CHECK", "validated": true, "definition": "CHECK (ends_at > starts_at)" },
+      { "name": "ck_calendar_source_kind_values", "table": "calendar_source", "type": "CHECK", "validated": true, "definition": "CHECK (kind IN ('ics', 'excel', 'manual'))" },
+      { "name": "ck_entry_amount_ciphertext", "table": "entry", "type": "CHECK", "validated": true, "definition": "CHECK (amount IS NULL OR amount LIKE 'enc:v1:%')" },
+      { "name": "ck_entry_list_amount_ciphertext", "table": "entry", "type": "CHECK", "validated": true, "definition": "CHECK (list_amount IS NULL OR list_amount LIKE 'enc:v1:%')" },
+      { "name": "ck_entry_note_ciphertext", "table": "entry", "type": "CHECK", "validated": true, "definition": "CHECK (note_md IS NULL OR note_md LIKE 'enc:v1:%')" },
+      { "name": "ck_entry_quantity_positive", "table": "entry", "type": "CHECK", "validated": true, "definition": "CHECK (quantity IS NULL OR quantity > 0)" },
+      { "name": "ck_message_content_ciphertext", "table": "message", "type": "CHECK", "validated": true, "definition": "CHECK (content LIKE 'enc:v1:%')" },
+      { "name": "ck_message_role_values", "table": "message", "type": "CHECK", "validated": true, "definition": "CHECK (role IN ('user', 'assistant'))" },
+      { "name": "ck_note_item_position_nonnegative", "table": "note_item", "type": "CHECK", "validated": true, "definition": "CHECK (position >= 0)" },
+      { "name": "ck_note_priority_values", "table": "note", "type": "CHECK", "validated": true, "definition": "CHECK (priority IS NULL OR priority IN ('p1', 'p2', 'p3'))" },
+      { "name": "ck_note_private_ciphertext", "table": "note", "type": "CHECK", "validated": true, "definition": "CHECK (NOT is_private OR ((title IS NULL OR title LIKE 'enc:v1:%') AND (body_md IS NULL OR body_md LIKE 'enc:v1:%')))" },
+      { "name": "ck_reminder_dispatch_attempt_count", "table": "reminder_dispatch", "type": "CHECK", "validated": true, "definition": "CHECK (attempt_count >= 0)" },
+      { "name": "ck_reminder_dispatch_status", "table": "reminder_dispatch", "type": "CHECK", "validated": true, "definition": "CHECK (status IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted'))" },
+      { "name": "ck_reminder_dispatch_subject_type", "table": "reminder_dispatch", "type": "CHECK", "validated": true, "definition": "CHECK (subject_type IN ('tracker', 'subscription'))" },
+      { "name": "ck_subscription_amount_ciphertext", "table": "subscription", "type": "CHECK", "validated": true, "definition": "CHECK (amount LIKE 'enc:v1:%')" },
+      { "name": "ck_subscription_date_order", "table": "subscription", "type": "CHECK", "validated": true, "definition": "CHECK (expires_on >= started_on)" },
+      { "name": "ck_subscription_list_amount_ciphertext", "table": "subscription", "type": "CHECK", "validated": true, "definition": "CHECK (list_amount IS NULL OR list_amount LIKE 'enc:v1:%')" },
+      { "name": "ck_subscription_name_ciphertext", "table": "subscription", "type": "CHECK", "validated": true, "definition": "CHECK (name LIKE 'enc:v1:%')" },
+      { "name": "ck_subscription_period_count_positive", "table": "subscription", "type": "CHECK", "validated": true, "definition": "CHECK (period_count > 0)" },
+      { "name": "ck_subscription_period_unit_values", "table": "subscription", "type": "CHECK", "validated": true, "definition": "CHECK (period_unit IN ('day', 'week', 'month', 'year'))" },
+      { "name": "ck_task_item_position_nonnegative", "table": "task_item", "type": "CHECK", "validated": true, "definition": "CHECK (position >= 0)" },
+      { "name": "ck_task_priority_values", "table": "task", "type": "CHECK", "validated": true, "definition": "CHECK (priority IS NULL OR priority IN ('p1', 'p2', 'p3'))" },
+      { "name": "ck_task_private_ciphertext", "table": "task", "type": "CHECK", "validated": true, "definition": "CHECK (NOT is_private OR (title LIKE 'enc:v1:%' AND (body_md IS NULL OR body_md LIKE 'enc:v1:%')))" },
+      { "name": "ck_task_status_values", "table": "task", "type": "CHECK", "validated": true, "definition": "CHECK (status IN ('open', 'completed'))" },
+      { "name": "ck_tracker_direction_values", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (direction IN ('in', 'out'))" },
+      { "name": "ck_tracker_group_kind_values", "table": "tracker_group", "type": "CHECK", "validated": true, "definition": "CHECK (kind IN ('health', 'finance', 'general'))" },
+      { "name": "ck_tracker_group_position_nonnegative", "table": "tracker_group", "type": "CHECK", "validated": true, "definition": "CHECK (position >= 0)" },
+      { "name": "ck_tracker_input_mode_values", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (input_mode IN ('event', 'money', 'quantity'))" },
+      { "name": "ck_tracker_kind_values", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (kind IN ('health', 'finance', 'general'))" },
+      { "name": "ck_tracker_name_ciphertext", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (name LIKE 'enc:v1:%')" },
+      { "name": "ck_tracker_reminder_action_input_mode", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (reminder_action IS NULL OR reminder_action = 'open_tracker' OR (reminder_action = 'confirm_event' AND input_mode = 'event'))" },
+      { "name": "ck_tracker_reminder_action_values", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (reminder_action IS NULL OR reminder_action IN ('confirm_event', 'open_tracker'))" },
+      { "name": "ck_tracker_reminder_interval_days_positive", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (reminder_interval_days IS NULL OR reminder_interval_days > 0)" },
+      { "name": "ck_tracker_reminder_mode_values", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (reminder_mode IS NULL OR reminder_mode IN ('fixed', 'after_entry'))" },
+      { "name": "ck_tracker_reminder_time_whole_second", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK (reminder_time IS NULL OR (EXTRACT(MICROSECONDS FROM reminder_time)::bigint % 1000000) = 0)" },
+      { "name": "ck_tracker_unit_matches_input_mode", "table": "tracker", "type": "CHECK", "validated": true, "definition": "CHECK ((input_mode = 'quantity' AND unit IS NOT NULL) OR (input_mode <> 'quantity' AND unit IS NULL))" },
+      { "name": "ck_tracker_reminder_batch_attempt_count", "table": "tracker_reminder_batch", "type": "CHECK", "validated": true, "definition": "CHECK (attempt_count >= 0 AND attempt_count <= 4)" },
+      { "name": "ck_tracker_reminder_batch_generation", "table": "tracker_reminder_batch", "type": "CHECK", "validated": true, "definition": "CHECK (generation >= 1)" },
+      { "name": "ck_tracker_reminder_batch_status", "table": "tracker_reminder_batch", "type": "CHECK", "validated": true, "definition": "CHECK (status IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted'))" },
+      { "name": "ck_tracker_reminder_batch_time_whole_second", "table": "tracker_reminder_batch", "type": "CHECK", "validated": true, "definition": "CHECK ((EXTRACT(MICROSECONDS FROM reminder_time)::bigint % 1000000) = 0)" },
+      { "name": "ck_tracker_reminder_batch_item_input_mode", "table": "tracker_reminder_batch_item", "type": "CHECK", "validated": true, "definition": "CHECK (input_mode IN ('event', 'money', 'quantity'))" },
+      { "name": "ck_tracker_reminder_batch_item_reminder_action", "table": "tracker_reminder_batch_item", "type": "CHECK", "validated": true, "definition": "CHECK (reminder_action IN ('confirm_event', 'open_tracker'))" },
+      { "name": "ck_tracker_reminder_batch_item_reminder_interval_days", "table": "tracker_reminder_batch_item", "type": "CHECK", "validated": true, "definition": "CHECK (reminder_interval_days >= 1)" },
+      { "name": "ck_tracker_reminder_batch_item_reminder_mode", "table": "tracker_reminder_batch_item", "type": "CHECK", "validated": true, "definition": "CHECK (reminder_mode IN ('fixed', 'after_entry'))" },
+      { "name": "ck_tracker_reminder_batch_item_state", "table": "tracker_reminder_batch_item", "type": "CHECK", "validated": true, "definition": "CHECK (state IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted'))" },
+      { "name": "day_range", "table": "day_annotation", "type": "CHECK", "validated": true, "definition": "CHECK (ends_on >= starts_on)" },
+      { "name": "fk_calendar_event_source_id_calendar_source", "table": "calendar_event", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (source_id) REFERENCES microsched.calendar_source(id) ON DELETE CASCADE" },
+      { "name": "fk_entry_subscription_id_subscription", "table": "entry", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (subscription_id) REFERENCES microsched.subscription(id) ON DELETE SET NULL" },
+      { "name": "fk_entry_tracker_id_tracker", "table": "entry", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (tracker_id) REFERENCES microsched.tracker(id) ON DELETE RESTRICT" },
+      { "name": "fk_note_item_note_id_note", "table": "note_item", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (note_id) REFERENCES microsched.note(id) ON DELETE CASCADE" },
+      { "name": "fk_reminder_dispatch_confirmed_entry_id", "table": "reminder_dispatch", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (confirmed_entry_id) REFERENCES microsched.entry(id)" },
+      { "name": "fk_subscription_tracker_id_tracker", "table": "subscription", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (tracker_id) REFERENCES microsched.tracker(id) ON DELETE RESTRICT" },
+      { "name": "fk_task_item_task_id_task", "table": "task_item", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (task_id) REFERENCES microsched.task(id) ON DELETE CASCADE" },
+      { "name": "fk_tracker_group_kind", "table": "tracker", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (group_id, kind) REFERENCES microsched.tracker_group(id, kind) ON DELETE SET NULL (group_id)" },
+      { "name": "fk_tracker_reminder_batch_item_batch_id", "table": "tracker_reminder_batch_item", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (batch_id) REFERENCES microsched.tracker_reminder_batch(id) ON DELETE CASCADE" },
+      { "name": "fk_tracker_reminder_batch_item_dispatch_id", "table": "tracker_reminder_batch_item", "type": "FOREIGN_KEY", "validated": true, "definition": "FOREIGN KEY (dispatch_id) REFERENCES microsched.reminder_dispatch(id) ON DELETE RESTRICT" },
+      { "name": "pk_app_setting", "table": "app_setting", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_audit_log", "table": "audit_log", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_calendar_event", "table": "calendar_event", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_calendar_source", "table": "calendar_source", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_day_annotation", "table": "day_annotation", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_entry", "table": "entry", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_message", "table": "message", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_note", "table": "note", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_note_item", "table": "note_item", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_push_subscription", "table": "push_subscription", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_reminder_dispatch", "table": "reminder_dispatch", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_session", "table": "session", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_subscription", "table": "subscription", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_task", "table": "task", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_task_item", "table": "task_item", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_tracker", "table": "tracker", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_tracker_group", "table": "tracker_group", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_tracker_reminder_batch", "table": "tracker_reminder_batch", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "pk_tracker_reminder_batch_item", "table": "tracker_reminder_batch_item", "type": "PRIMARY_KEY", "validated": true, "definition": "PRIMARY KEY (id)" },
+      { "name": "uq_app_setting_key", "table": "app_setting", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (key)" },
+      { "name": "uq_push_subscription_endpoint", "table": "push_subscription", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (endpoint)" },
+      { "name": "uq_reminder_dispatch_confirmed_entry_id", "table": "reminder_dispatch", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (confirmed_entry_id)" },
+      { "name": "uq_reminder_dispatch_subject_date", "table": "reminder_dispatch", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (subject_type, subject_id, dispatched_on)" },
+      { "name": "uq_session_token_hash", "table": "session", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (token_hash)" },
+      { "name": "uq_tracker_group_id_kind", "table": "tracker_group", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (id, kind)" },
+      { "name": "uq_tracker_reminder_batch_occurrence_time_generation", "table": "tracker_reminder_batch", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (occurrence_on, reminder_time, generation)" },
+      { "name": "uq_tracker_reminder_batch_item_batch_dispatch", "table": "tracker_reminder_batch_item", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (batch_id, dispatch_id)" },
+      { "name": "uq_tracker_reminder_batch_item_dispatch_id", "table": "tracker_reminder_batch_item", "type": "UNIQUE", "validated": true, "definition": "UNIQUE (dispatch_id)" }
+    ],
+    "indexes": [
+      { "name": "alembic_version_pkc", "table": "alembic_version", "definition": "CREATE UNIQUE INDEX alembic_version_pkc ON microsched.alembic_version USING btree (version_num)" },
+      { "name": "pk_app_setting", "table": "app_setting", "definition": "CREATE UNIQUE INDEX pk_app_setting ON microsched.app_setting USING btree (id)" },
+      { "name": "uq_app_setting_key", "table": "app_setting", "definition": "CREATE UNIQUE INDEX uq_app_setting_key ON microsched.app_setting USING btree (key)" },
+      { "name": "ix_audit_log_trace_id", "table": "audit_log", "definition": "CREATE INDEX ix_audit_log_trace_id ON microsched.audit_log USING btree (trace_id)" },
+      { "name": "ix_audit_log_turn_id", "table": "audit_log", "definition": "CREATE INDEX ix_audit_log_turn_id ON microsched.audit_log USING btree (turn_id)" },
+      { "name": "pk_audit_log", "table": "audit_log", "definition": "CREATE UNIQUE INDEX pk_audit_log ON microsched.audit_log USING btree (id)" },
+      { "name": "ix_calendar_event_source_id", "table": "calendar_event", "definition": "CREATE INDEX ix_calendar_event_source_id ON microsched.calendar_event USING btree (source_id)" },
+      { "name": "ix_calendar_event_starts_at", "table": "calendar_event", "definition": "CREATE INDEX ix_calendar_event_starts_at ON microsched.calendar_event USING btree (starts_at)" },
+      { "name": "pk_calendar_event", "table": "calendar_event", "definition": "CREATE UNIQUE INDEX pk_calendar_event ON microsched.calendar_event USING btree (id)" },
+      { "name": "pk_calendar_source", "table": "calendar_source", "definition": "CREATE UNIQUE INDEX pk_calendar_source ON microsched.calendar_source USING btree (id)" },
+      { "name": "uq_calendar_source_name_lower", "table": "calendar_source", "definition": "CREATE UNIQUE INDEX uq_calendar_source_name_lower ON microsched.calendar_source USING btree (lower(name))" },
+      { "name": "ix_day_annotation_ends_on", "table": "day_annotation", "definition": "CREATE INDEX ix_day_annotation_ends_on ON microsched.day_annotation USING btree (ends_on)" },
+      { "name": "ix_day_annotation_starts_on", "table": "day_annotation", "definition": "CREATE INDEX ix_day_annotation_starts_on ON microsched.day_annotation USING btree (starts_on)" },
+      { "name": "pk_day_annotation", "table": "day_annotation", "definition": "CREATE UNIQUE INDEX pk_day_annotation ON microsched.day_annotation USING btree (id)" },
+      { "name": "ix_entry_occurred_at", "table": "entry", "definition": "CREATE INDEX ix_entry_occurred_at ON microsched.entry USING btree (occurred_at)" },
+      { "name": "ix_entry_subscription_id", "table": "entry", "definition": "CREATE INDEX ix_entry_subscription_id ON microsched.entry USING btree (subscription_id)" },
+      { "name": "ix_entry_tracker_occurred_at", "table": "entry", "definition": "CREATE INDEX ix_entry_tracker_occurred_at ON microsched.entry USING btree (tracker_id, occurred_at DESC)" },
+      { "name": "pk_entry", "table": "entry", "definition": "CREATE UNIQUE INDEX pk_entry ON microsched.entry USING btree (id)" },
+      { "name": "ix_message_trace_id", "table": "message", "definition": "CREATE INDEX ix_message_trace_id ON microsched.message USING btree (trace_id)" },
+      { "name": "pk_message", "table": "message", "definition": "CREATE UNIQUE INDEX pk_message ON microsched.message USING btree (id)" },
+      { "name": "pk_note", "table": "note", "definition": "CREATE UNIQUE INDEX pk_note ON microsched.note USING btree (id)" },
+      { "name": "ix_note_item_note_id", "table": "note_item", "definition": "CREATE INDEX ix_note_item_note_id ON microsched.note_item USING btree (note_id)" },
+      { "name": "pk_note_item", "table": "note_item", "definition": "CREATE UNIQUE INDEX pk_note_item ON microsched.note_item USING btree (id)" },
+      { "name": "pk_push_subscription", "table": "push_subscription", "definition": "CREATE UNIQUE INDEX pk_push_subscription ON microsched.push_subscription USING btree (id)" },
+      { "name": "uq_push_subscription_endpoint", "table": "push_subscription", "definition": "CREATE UNIQUE INDEX uq_push_subscription_endpoint ON microsched.push_subscription USING btree (endpoint)" },
+      { "name": "ix_reminder_dispatch_status", "table": "reminder_dispatch", "definition": "CREATE INDEX ix_reminder_dispatch_status ON microsched.reminder_dispatch USING btree (status)" },
+      { "name": "ix_reminder_dispatch_subject", "table": "reminder_dispatch", "definition": "CREATE INDEX ix_reminder_dispatch_subject ON microsched.reminder_dispatch USING btree (subject_type, subject_id)" },
+      { "name": "pk_reminder_dispatch", "table": "reminder_dispatch", "definition": "CREATE UNIQUE INDEX pk_reminder_dispatch ON microsched.reminder_dispatch USING btree (id)" },
+      { "name": "uq_reminder_dispatch_confirmed_entry_id", "table": "reminder_dispatch", "definition": "CREATE UNIQUE INDEX uq_reminder_dispatch_confirmed_entry_id ON microsched.reminder_dispatch USING btree (confirmed_entry_id)" },
+      { "name": "uq_reminder_dispatch_subject_date", "table": "reminder_dispatch", "definition": "CREATE UNIQUE INDEX uq_reminder_dispatch_subject_date ON microsched.reminder_dispatch USING btree (subject_type, subject_id, dispatched_on)" },
+      { "name": "pk_session", "table": "session", "definition": "CREATE UNIQUE INDEX pk_session ON microsched.session USING btree (id)" },
+      { "name": "uq_session_token_hash", "table": "session", "definition": "CREATE UNIQUE INDEX uq_session_token_hash ON microsched.session USING btree (token_hash)" },
+      { "name": "ix_subscription_expires_on", "table": "subscription", "definition": "CREATE INDEX ix_subscription_expires_on ON microsched.subscription USING btree (expires_on)" },
+      { "name": "ix_subscription_tracker_id", "table": "subscription", "definition": "CREATE INDEX ix_subscription_tracker_id ON microsched.subscription USING btree (tracker_id)" },
+      { "name": "pk_subscription", "table": "subscription", "definition": "CREATE UNIQUE INDEX pk_subscription ON microsched.subscription USING btree (id)" },
+      { "name": "ix_task_due_at", "table": "task", "definition": "CREATE INDEX ix_task_due_at ON microsched.task USING btree (due_at)" },
+      { "name": "ix_task_due_on", "table": "task", "definition": "CREATE INDEX ix_task_due_on ON microsched.task USING btree (due_on)" },
+      { "name": "pk_task", "table": "task", "definition": "CREATE UNIQUE INDEX pk_task ON microsched.task USING btree (id)" },
+      { "name": "ix_task_item_task_id", "table": "task_item", "definition": "CREATE INDEX ix_task_item_task_id ON microsched.task_item USING btree (task_id)" },
+      { "name": "pk_task_item", "table": "task_item", "definition": "CREATE UNIQUE INDEX pk_task_item ON microsched.task_item USING btree (id)" },
+      { "name": "ix_tracker_group_id", "table": "tracker", "definition": "CREATE INDEX ix_tracker_group_id ON microsched.tracker USING btree (group_id)" },
+      { "name": "pk_tracker", "table": "tracker", "definition": "CREATE UNIQUE INDEX pk_tracker ON microsched.tracker USING btree (id)" },
+      { "name": "pk_tracker_group", "table": "tracker_group", "definition": "CREATE UNIQUE INDEX pk_tracker_group ON microsched.tracker_group USING btree (id)" },
+      { "name": "uq_tracker_group_id_kind", "table": "tracker_group", "definition": "CREATE UNIQUE INDEX uq_tracker_group_id_kind ON microsched.tracker_group USING btree (id, kind)" },
+      { "name": "uq_tracker_group_name_lower", "table": "tracker_group", "definition": "CREATE UNIQUE INDEX uq_tracker_group_name_lower ON microsched.tracker_group USING btree (lower(name))" },
+      { "name": "ix_tracker_reminder_batch_status", "table": "tracker_reminder_batch", "definition": "CREATE INDEX ix_tracker_reminder_batch_status ON microsched.tracker_reminder_batch USING btree (status)" },
+      { "name": "pk_tracker_reminder_batch", "table": "tracker_reminder_batch", "definition": "CREATE UNIQUE INDEX pk_tracker_reminder_batch ON microsched.tracker_reminder_batch USING btree (id)" },
+      { "name": "uq_tracker_reminder_batch_occurrence_time_generation", "table": "tracker_reminder_batch", "definition": "CREATE UNIQUE INDEX uq_tracker_reminder_batch_occurrence_time_generation ON microsched.tracker_reminder_batch USING btree (occurrence_on, reminder_time, generation)" },
+      { "name": "pk_tracker_reminder_batch_item", "table": "tracker_reminder_batch_item", "definition": "CREATE UNIQUE INDEX pk_tracker_reminder_batch_item ON microsched.tracker_reminder_batch_item USING btree (id)" },
+      { "name": "uq_tracker_reminder_batch_item_batch_dispatch", "table": "tracker_reminder_batch_item", "definition": "CREATE UNIQUE INDEX uq_tracker_reminder_batch_item_batch_dispatch ON microsched.tracker_reminder_batch_item USING btree (batch_id, dispatch_id)" },
+      { "name": "uq_tracker_reminder_batch_item_dispatch_id", "table": "tracker_reminder_batch_item", "definition": "CREATE UNIQUE INDEX uq_tracker_reminder_batch_item_dispatch_id ON microsched.tracker_reminder_batch_item USING btree (dispatch_id)" }
+    ],
+    "triggers": [
+      { "name": "set_updated_at", "table": "app_setting", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.app_setting FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "audit_log", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.audit_log FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "calendar_event", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.calendar_event FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "calendar_source", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.calendar_source FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "day_annotation", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.day_annotation FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "entry", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.entry FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "message", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.message FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "note", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.note FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "note_item", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.note_item FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "push_subscription", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.push_subscription FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "reminder_dispatch", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.reminder_dispatch FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "session", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.session FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "subscription", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.subscription FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "task", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.task FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "trg_task_children_privacy", "table": "task", "function_schema": "microsched", "function_name": "enforce_task_children_privacy", "enabled": "O", "definition": "CREATE TRIGGER trg_task_children_privacy BEFORE UPDATE OF is_private ON microsched.task FOR EACH ROW EXECUTE FUNCTION microsched.enforce_task_children_privacy()" },
+      { "name": "trg_task_due_legacy_insert_v1", "table": "task", "function_schema": "microsched", "function_name": "fn_task_due_legacy_insert_v1", "enabled": "O", "definition": "CREATE TRIGGER trg_task_due_legacy_insert_v1 BEFORE INSERT ON microsched.task FOR EACH ROW EXECUTE FUNCTION microsched.fn_task_due_legacy_insert_v1()" },
+      { "name": "trg_task_due_legacy_update_v1", "table": "task", "function_schema": "microsched", "function_name": "fn_task_due_legacy_update_v1", "enabled": "O", "definition": "CREATE TRIGGER trg_task_due_legacy_update_v1 BEFORE UPDATE OF due_at ON microsched.task FOR EACH ROW EXECUTE FUNCTION microsched.fn_task_due_legacy_update_v1()" },
+      { "name": "set_updated_at", "table": "task_item", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.task_item FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "trg_task_item_privacy", "table": "task_item", "function_schema": "microsched", "function_name": "enforce_task_item_privacy", "enabled": "O", "definition": "CREATE TRIGGER trg_task_item_privacy BEFORE INSERT OR UPDATE ON microsched.task_item FOR EACH ROW EXECUTE FUNCTION microsched.enforce_task_item_privacy()" },
+      { "name": "set_updated_at", "table": "tracker", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.tracker FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "tracker_group", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.tracker_group FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "tracker_reminder_batch", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.tracker_reminder_batch FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" },
+      { "name": "set_updated_at", "table": "tracker_reminder_batch_item", "function_schema": "microsched", "function_name": "set_updated_at", "enabled": "O", "definition": "CREATE TRIGGER set_updated_at BEFORE UPDATE ON microsched.tracker_reminder_batch_item FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()" }
+    ],
+    "grants": {
+      "allowed_object_acl_grantees": ["microsched_app", "microsched_migrator"],
+      "bootstrap_role_names": ["postgres"],
+      "bootstrap_residual_grants": [],
+      "bootstrap_default_acl_residue": [],
+      "bootstrap_default_acl_raw_summary": { "raw_row_count": 0, "raw_tuples": [] },
+      "bootstrap_default_acl_static_red_fixture": {
+        "fixture_id": "bootstrap-default-acl-empty-array-extra-tuple",
+        "inject_raw_summary": {
+          "raw_row_count": 1,
+          "raw_tuples": [
+            { "owner": "postgres", "schema_name": "GLOBAL", "object_kind": "r", "acl_item_count": 0, "acl_text": "{}" }
+          ]
+        },
+        "expected_validator_status": "FAIL_P0_EXTRA_BOOTSTRAP_DEFAULT_ACL_TUPLE"
+      },
+      "schema_acl_exact": [
+        { "grantee": "microsched_app", "privilege": "USAGE", "is_grantable": false },
+        { "grantee": "microsched_migrator", "privilege": "CREATE", "is_grantable": false },
+        { "grantee": "microsched_migrator", "privilege": "USAGE", "is_grantable": false }
+      ],
+      "default_acl_exact": [
+        { "owner": "microsched_app", "schema": "microsched", "object_kind": "sequence", "grantee": "microsched_app", "privileges": ["SELECT", "UPDATE", "USAGE"], "is_grantable": false },
+        { "owner": "microsched_app", "schema": "microsched", "object_kind": "table", "grantee": "microsched_app", "privileges": ["DELETE", "INSERT", "MAINTAIN", "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE"], "is_grantable": false },
+        { "owner": "microsched_migrator", "schema": "microsched", "object_kind": "sequence", "grantee": "microsched_migrator", "privileges": ["SELECT", "UPDATE", "USAGE"], "is_grantable": false },
+        { "owner": "microsched_migrator", "schema": "microsched", "object_kind": "sequence", "grantee": "microsched_app", "privileges": ["SELECT", "USAGE"], "is_grantable": false },
+        { "owner": "microsched_migrator", "schema": "microsched", "object_kind": "table", "grantee": "microsched_migrator", "privileges": ["DELETE", "INSERT", "MAINTAIN", "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE"], "is_grantable": false },
+        { "owner": "microsched_migrator", "schema": "microsched", "object_kind": "table", "grantee": "microsched_app", "privileges": ["DELETE", "INSERT", "SELECT", "UPDATE"], "is_grantable": false },
+        { "owner": "postgres", "schema": "microsched", "object_kind": "sequence", "grantee": "postgres", "privileges": ["SELECT", "UPDATE", "USAGE"], "is_grantable": false },
+        { "owner": "postgres", "schema": "microsched", "object_kind": "table", "grantee": "postgres", "privileges": ["DELETE", "INSERT", "MAINTAIN", "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE"], "is_grantable": false }
+      ],
+      "microsched_migrator_table_privileges": ["DELETE", "INSERT", "MAINTAIN", "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE"],
+      "microsched_migrator_sequence_privileges": ["SELECT", "UPDATE", "USAGE"],
+      "microsched_app_table_privileges": ["DELETE", "INSERT", "SELECT", "UPDATE"],
+      "microsched_app_tables": ["app_setting", "audit_log", "calendar_event", "calendar_source", "day_annotation", "entry", "message", "note", "note_item", "push_subscription", "reminder_dispatch", "session", "subscription", "task", "task_item", "tracker", "tracker_group", "tracker_reminder_batch", "tracker_reminder_batch_item"],
+      "microsched_app_sequence_privileges": ["SELECT", "USAGE"],
+      "microsched_app_sequences": [],
+      "public_schema_privileges": [],
+      "public_table_privileges": [],
+      "public_sequence_privileges": []
+    }
+  },
+  "fixtures": [
+    {
+      "fixture_id": "batch-nonempty",
+      "database_suffix": "batch_nonempty",
+      "rows": [
+        { "table": "tracker_reminder_batch", "id": "019d0000-0000-7000-8000-000000000001", "occurrence_on": "2026-08-28", "reminder_time": "08:00:00", "generation": 1, "status": "pending", "attempt_count": 0 }
+      ],
+      "expected_downgrade_exit": "NONZERO",
+      "expected_sqlstate": "23514"
+    },
+    {
+      "fixture_id": "item-nonempty",
+      "database_suffix": "item_nonempty",
+      "rows": [
+        { "table": "tracker_reminder_batch", "id": "019d0000-0000-7000-8000-000000000011", "occurrence_on": "2026-08-28", "reminder_time": "08:01:00", "generation": 1, "status": "pending", "attempt_count": 0 },
+        { "table": "reminder_dispatch", "id": "019d0000-0000-7000-8000-000000000012", "subject_type": "tracker", "subject_id": "019d0000-0000-7000-8000-000000000013", "dispatched_on": "2026-08-28", "status": "pending", "attempt_count": 0 },
+        { "table": "tracker_reminder_batch_item", "id": "019d0000-0000-7000-8000-000000000014", "batch_id": "019d0000-0000-7000-8000-000000000011", "dispatch_id": "019d0000-0000-7000-8000-000000000012", "reminder_mode": "fixed", "reminder_interval_days": 1, "reminder_action": "open_tracker", "input_mode": "event", "state": "pending" }
+      ],
+      "expected_downgrade_exit": "NONZERO",
+      "expected_sqlstate": "23514"
+    },
+    {
+      "fixture_id": "dispatch-cancelled",
+      "database_suffix": "dispatch_cancelled",
+      "rows": [
+        { "table": "reminder_dispatch", "id": "019d0000-0000-7000-8000-000000000021", "subject_type": "tracker", "subject_id": "019d0000-0000-7000-8000-000000000022", "dispatched_on": "2026-08-28", "status": "cancelled", "attempt_count": 1 }
+      ],
+      "expected_downgrade_exit": "NONZERO",
+      "expected_sqlstate": "23514"
+    },
+    {
+      "fixture_id": "dispatch-exhausted",
+      "database_suffix": "dispatch_exhausted",
+      "rows": [
+        { "table": "reminder_dispatch", "id": "019d0000-0000-7000-8000-000000000031", "subject_type": "tracker", "subject_id": "019d0000-0000-7000-8000-000000000032", "dispatched_on": "2026-08-28", "status": "exhausted", "attempt_count": 4 }
+      ],
+      "expected_downgrade_exit": "NONZERO",
+      "expected_sqlstate": "23514"
+    },
+    {
+      "fixture_id": "empty-roundtrip",
+      "database_suffix": "empty_roundtrip",
+      "rows": [],
+      "expected_revision_sequence": ["0011", "0012", "0011", "0012"],
+      "expected_final_drift": []
+    }
+  ],
+  "catalog_expected_sha256": "e760bc3e32cec70fc2bf558d916a8447b6dc5cbb23597af5f078c75ca8267c91",
+  "fixtures_expected_sha256": "d258a94f825ed5e553d4711525ceba091baecae8a9d9d5eac7cf2d4c2f84bb8d"
+}

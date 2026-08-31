@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsched.local/qa/contracts/037/acceptance.schema.json",
+  "title": "Task 037 acceptance ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "candidate_sha", "manifest_sha256", "generated_at_utc", "cells", "optional_findings", "final_status"],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "status": { "enum": ["PASS", "FAIL", "NOT_RUN", "BLOCKED", "SKIPPED_OPTIONAL"] },
+    "relative_path": { "type": "string", "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$" }
+  },
+  "properties": {
+    "schema_version": { "const": "037-acceptance/v1" },
+    "run_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "generated_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id", "manifest_sha256", "acceptance_id", "candidate_sha", "spec_hashes", "lane", "status", "required", "command_id", "expected_exit", "actual_exit", "expected_oracle_id", "actual_oracle_id", "oracle_result", "failure_status", "failure_severity", "started_at_utc", "ended_at_utc", "stdout_path", "stdout_sha256", "stderr_path", "stderr_sha256", "evidence", "authority_receipt_id", "authority_receipt_sha256", "screenshot_sidecar_ids", "cleanup_link"],
+        "properties": {
+          "run_id": { "type": "string", "minLength": 1 },
+          "manifest_sha256": { "$ref": "#/$defs/sha256" },
+          "acceptance_id": { "type": "string", "pattern": "^037-" },
+          "candidate_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "spec_hashes": { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/sha256" } },
+          "lane": { "type": "string", "minLength": 1 },
+          "status": { "$ref": "#/$defs/status" },
+          "required": { "type": "boolean" },
+          "command_id": { "type": "string", "pattern": "^[A-Za-z0-9.-]+$" },
+          "expected_exit": { "type": "array", "minItems": 1, "items": { "type": "integer" } },
+          "actual_exit": { "type": ["integer", "null"] },
+          "expected_oracle_id": { "type": "string", "minLength": 1 },
+          "actual_oracle_id": { "type": ["string", "null"] },
+          "oracle_result": { "enum": ["PASS", "FAIL", "NOT_RUN", "BLOCKED"] },
+          "failure_status": { "enum": ["FAIL", "FAIL_P0", "BLOCKED"] },
+          "failure_severity": { "enum": ["P0", "P1", "NONE"] },
+          "started_at_utc": { "type": ["string", "null"], "format": "date-time" },
+          "ended_at_utc": { "type": ["string", "null"], "format": "date-time" },
+          "stdout_path": { "$ref": "#/$defs/relative_path" },
+          "stdout_sha256": { "$ref": "#/$defs/sha256" },
+          "stderr_path": { "$ref": "#/$defs/relative_path" },
+          "stderr_sha256": { "$ref": "#/$defs/sha256" },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256", "kind"],
+              "properties": {
+                "path": { "$ref": "#/$defs/relative_path" },
+                "sha256": { "$ref": "#/$defs/sha256" },
+                "kind": { "enum": ["oracle", "selector", "metric", "receipt", "screenshot"] }
+              }
+            }
+          },
+          "authority_receipt_id": { "type": ["string", "null"] },
+          "authority_receipt_sha256": { "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+          "screenshot_sidecar_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "cleanup_link": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "optional_findings": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "final_status": { "enum": ["PASS_BASELINE", "FAIL_P0", "FAIL", "BLOCKED", "PARTIAL_NOT_ACCEPTED"] }
+  }
+}
