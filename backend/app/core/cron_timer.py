@@ -141,6 +141,7 @@ class CronTimer:
         *,
         tracker_batch_dispatcher: Any | None = None,
         lock_connection_factory: Callable[[], Awaitable[Any]] | None = None,
+        auto_reconnect: bool = False,
     ):
         self.session_factory = session_factory
         # The dispatcher owns process-local delivery locks, so it belongs to
@@ -148,6 +149,8 @@ class CronTimer:
         self._dispatcher = reminder_dispatcher or ReminderDispatcher()
         self._batch_dispatcher = tracker_batch_dispatcher or TrackerBatchDispatcher()
         self._lock_connection_factory = lock_connection_factory
+        self.auto_reconnect = auto_reconnect
+        self._has_batch_items = True
         self._lock_connection: Any | None = None
         self._ownership_active = False
         self._ownership_lost_event = asyncio.Event()
@@ -583,6 +586,7 @@ class CronTimer:
             text("SELECT to_regclass('microsched.tracker_reminder_batch_item')")
         )
         has_batch_items = batch_item_table.scalar_one_or_none() is not None
+        self._has_batch_items = has_batch_items
 
         # 1. Load every pending reminder_dispatch row; dead rows (>24h old or
         #    attempt_count >= 4) are NOT silently dropped — 011d §1.4.3/§5.3
@@ -965,6 +969,16 @@ class CronTimer:
         """Claim all same-key tracker candidates and send one aggregate payload."""
         if self._ownership_active:
             await self._assert_owner("due_tracker_batch")
+        if not getattr(self, "_has_batch_items", True):
+            logger.warning(
+                "cron_timer_batch_fallback_individual count=%d reason=missing_batch_schema",
+                len(items),
+            )
+            for item in items:
+                if self._is_stopped:
+                    break
+                await self._process_due_item(item, now=now)
+            return
         now_vn = now or datetime.now(VN_TZ)
         candidates: list[TrackerBatchCandidate] = []
         for item in items:
@@ -991,8 +1005,35 @@ class CronTimer:
         if not candidates:
             return
 
+        batch_id = None
         async with self.session_factory() as db:
-            batch_id = await self._batch_dispatcher.claim_batch(db, candidates)
+            try:
+                batch_id = await self._batch_dispatcher.claim_batch(db, candidates)
+            except Exception as exc:
+                orig = getattr(exc, "orig", None)
+                pgcode = getattr(orig, "pgcode", None) or getattr(exc, "pgcode", None)
+                error_str = str(exc).lower()
+                is_undefined_table = pgcode == "42P01" or (
+                    (
+                        "undefinedtable" in type(exc).__name__.lower()
+                        or "programmingerror" in type(exc).__name__.lower()
+                    )
+                    and "tracker_reminder_batch" in error_str
+                )
+                if is_undefined_table:
+                    self._has_batch_items = False
+                    logger.warning(
+                        "cron_timer_batch_table_missing_fallback count=%d error=%s",
+                        len(items),
+                        type(exc).__name__,
+                    )
+                    for item in items:
+                        if self._is_stopped:
+                            break
+                        await self._process_due_item(item, now=now)
+                    return
+                raise
+
             if batch_id is None:
                 self.request_reload("tracker_batch_already_claimed")
                 return
@@ -1365,115 +1406,155 @@ class CronTimer:
                 ownership_wait.cancel()
                 await asyncio.gather(ownership_wait, return_exceptions=True)
 
+    async def _cleanup_lost_ownership(self) -> None:
+        """Reset state and disconnect when ownership is lost."""
+        self._ownership_active = False
+        self._status = "standby"
+        self._heap = []
+        self._ownership_lost_event.clear()
+        self._ownership_wake_event.clear()
+        conn = self._lock_connection
+        self._lock_connection = None
+        if conn is not None:
+            await self._close_lock_connection(conn)
+
     async def run(self) -> None:
         """Run only while this process owns the PostgreSQL scheduler lock."""
         self._log_ownership_transition("starting", level=logging.WARNING)
         try:
-            if not await self._acquire_ownership():
-                return
-            if not await self._await_with_ownership(
-                self._load_snapshot_with_retries("startup"), phase="recovery"
-            ):
-                return
-
             while not self._is_stopped:
-                if self._ownership_lost_event.is_set():
-                    raise CronTimerOwnershipLost("scheduler ownership lost during timer loop")
+                if not await self._acquire_ownership():
+                    return
                 try:
-                    if self.reload_event.is_set():
-                        self.reload_event.clear()
+                    try:
                         if not await self._await_with_ownership(
-                            self._load_snapshot_with_retries("reload"), phase="recovery"
+                            self._load_snapshot_with_retries(
+                                "startup" if self._last_reload_at is None else "recovery"
+                            ),
+                            phase="recovery",
                         ):
-                            break
+                            return
+                    except CronTimerOwnershipLost:
+                        raise
 
-                    now_vn = datetime.now(VN_TZ)
-                    due_items: list[TimerItem] = []
-                    while self._heap and self._heap[0][0] <= now_vn:
-                        _, _, _, _, _, item = heapq.heappop(self._heap)
-                        due_items.append(item)
-
-                    grouped_tracker_items: dict[tuple[date, time], list[TimerItem]] = {}
-                    individual_items: list[TimerItem] = []
-                    for item in due_items:
-                        if (
-                            item.kind == ScheduleKind.TRACKER
-                            and item.batch_id is None
-                            and item.reminder_time is not None
-                        ):
-                            grouped_tracker_items.setdefault(
-                                (item.occurrence_on, item.reminder_time), []
-                            ).append(item)
-                        else:
-                            individual_items.append(item)
-                    work_items: list[TimerItem | list[TimerItem]] = [
-                        grouped_tracker_items[key] for key in sorted(grouped_tracker_items)
-                    ]
-                    work_items.extend(individual_items)
-
-                    for work_item in work_items:
-                        if self._is_stopped:
-                            break
-                        item = work_item[0] if isinstance(work_item, list) else work_item
-                        self._dispatch_task = asyncio.create_task(
-                            self._process_due_tracker_batch(work_item)
-                            if isinstance(work_item, list)
-                            else self._process_due_item(item),
-                            name="microsched-cron-dispatch",
-                        )
+                    while not self._is_stopped:
+                        if self._ownership_lost_event.is_set():
+                            raise CronTimerOwnershipLost(
+                                "scheduler ownership lost during timer loop"
+                            )
                         try:
-                            await self._dispatch_task
-                        except asyncio.CancelledError:
-                            if self._ownership_lost_event.is_set():
-                                raise CronTimerOwnershipLost(
-                                    "scheduler ownership lost during provider dispatch"
+                            if self.reload_event.is_set():
+                                self.reload_event.clear()
+                                if not await self._await_with_ownership(
+                                    self._load_snapshot_with_retries("reload"), phase="recovery"
+                                ):
+                                    break
+
+                            now_vn = datetime.now(VN_TZ)
+                            due_items: list[TimerItem] = []
+                            while self._heap and self._heap[0][0] <= now_vn:
+                                _, _, _, _, _, item = heapq.heappop(self._heap)
+                                due_items.append(item)
+
+                            grouped_tracker_items: dict[tuple[date, time], list[TimerItem]] = {}
+                            individual_items: list[TimerItem] = []
+                            for item in due_items:
+                                if (
+                                    item.kind == ScheduleKind.TRACKER
+                                    and item.batch_id is None
+                                    and item.reminder_time is not None
+                                ):
+                                    grouped_tracker_items.setdefault(
+                                        (item.occurrence_on, item.reminder_time), []
+                                    ).append(item)
+                                else:
+                                    individual_items.append(item)
+                            work_items: list[TimerItem | list[TimerItem]] = [
+                                grouped_tracker_items[key] for key in sorted(grouped_tracker_items)
+                            ]
+                            work_items.extend(individual_items)
+
+                            for work_item in work_items:
+                                if self._is_stopped:
+                                    break
+                                item = work_item[0] if isinstance(work_item, list) else work_item
+                                self._dispatch_task = asyncio.create_task(
+                                    self._process_due_tracker_batch(work_item)
+                                    if isinstance(work_item, list)
+                                    else self._process_due_item(item),
+                                    name="microsched-cron-dispatch",
                                 )
+                                try:
+                                    await self._dispatch_task
+                                except asyncio.CancelledError:
+                                    if self._ownership_lost_event.is_set():
+                                        raise CronTimerOwnershipLost(
+                                            "scheduler ownership lost during provider dispatch"
+                                        )
+                                    if self._is_stopped:
+                                        break
+                                    raise
+                                except CronTimerOwnershipLost:
+                                    raise
+                                except Exception as exc:
+                                    logger.error(
+                                        "cron_timer_dispatch_failed kind=%s occurrence_on=%s "
+                                        "occurrence_ref=%s error_type=%s",
+                                        item.kind.value,
+                                        item.occurrence_on,
+                                        _occurrence_ref(
+                                            item.kind, item.subject_id, item.occurrence_on
+                                        ),
+                                        type(exc).__name__,
+                                    )
+                                    self.request_reload("dispatch_error")
+                                finally:
+                                    self._dispatch_task = None
+
                             if self._is_stopped:
                                 break
+                            now_vn = datetime.now(VN_TZ)
+                            if self._heap:
+                                sleep_sec = max(0.0, (self._heap[0][0] - now_vn).total_seconds())
+                                await asyncio.wait_for(self.reload_event.wait(), timeout=sleep_sec)
+                            else:
+                                await self.reload_event.wait()
+                        except asyncio.CancelledError:
+                            logger.info("CronTimer loop cancelled")
                             raise
-                        except CronTimerOwnershipLost:
+                        except CronTimerOwnershipLost, CronTimerReloadFailure:
                             raise
+                        except TimeoutError:
+                            pass
                         except Exception as exc:
+                            self._loop_failures += 1
                             logger.error(
-                                "cron_timer_dispatch_failed kind=%s occurrence_on=%s "
-                                "occurrence_ref=%s error_type=%s",
-                                item.kind.value,
-                                item.occurrence_on,
-                                _occurrence_ref(item.kind, item.subject_id, item.occurrence_on),
+                                "cron_timer_loop_failed failures=%d error=%s",
+                                self._loop_failures,
                                 type(exc).__name__,
                             )
-                            self.request_reload("dispatch_error")
-                        finally:
-                            self._dispatch_task = None
-
-                    if self._is_stopped:
-                        break
-                    now_vn = datetime.now(VN_TZ)
-                    if self._heap:
-                        sleep_sec = max(0.0, (self._heap[0][0] - now_vn).total_seconds())
-                        await asyncio.wait_for(self.reload_event.wait(), timeout=sleep_sec)
-                    else:
-                        await self.reload_event.wait()
-                except asyncio.CancelledError:
-                    logger.info("CronTimer loop cancelled")
-                    raise
-                except CronTimerOwnershipLost, CronTimerReloadFailure:
-                    raise
-                except TimeoutError:
-                    pass
-                except Exception as exc:
-                    self._loop_failures += 1
-                    logger.error(
-                        "cron_timer_loop_failed failures=%d error=%s",
-                        self._loop_failures,
-                        type(exc).__name__,
+                            if await self._wait_for_stop(LOOP_FAILURE_BACKOFF_SECONDS):
+                                break
+                except CronTimerOwnershipLost:
+                    await self._cleanup_lost_ownership()
+                    if not self.auto_reconnect:
+                        raise
+                    logger.warning(
+                        "cron_timer_ownership_lost_reconnecting lock_ref=%s action=reacquire",
+                        SCHEDULER_ADVISORY_LOCK_REF,
                     )
-                    if await self._wait_for_stop(LOOP_FAILURE_BACKOFF_SECONDS):
-                        break
+                    continue
         except CronTimerOwnershipLost:
             if self._status != "ownership_lost":
                 self._status = "ownership_lost"
                 self._log_ownership_transition("ownership_lost", level=logging.ERROR)
+            if self.auto_reconnect and not self._is_stopped:
+                await self._cleanup_lost_ownership()
+                logger.warning(
+                    "cron_timer_ownership_lost_reconnecting lock_ref=%s action=reacquire",
+                    SCHEDULER_ADVISORY_LOCK_REF,
+                )
+                return await self.run()
             raise
         finally:
             if self._status != "stopped":
@@ -1524,4 +1605,4 @@ def build_cron_timer_if_enabled(session_factory: Any = None) -> CronTimer | None
                 "(app.core.db.get_sessionmaker() returned None)"
             )
 
-    return CronTimer(session_factory)
+    return CronTimer(session_factory, auto_reconnect=True)
