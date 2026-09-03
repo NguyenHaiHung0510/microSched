@@ -150,7 +150,7 @@ class CronTimer:
         self._batch_dispatcher = tracker_batch_dispatcher or TrackerBatchDispatcher()
         self._lock_connection_factory = lock_connection_factory
         self.auto_reconnect = auto_reconnect
-        self._has_batch_items = False
+        self._has_batch_items = True
         self._lock_connection: Any | None = None
         self._ownership_active = False
         self._ownership_lost_event = asyncio.Event()
@@ -969,7 +969,7 @@ class CronTimer:
         """Claim all same-key tracker candidates and send one aggregate payload."""
         if self._ownership_active:
             await self._assert_owner("due_tracker_batch")
-        if not getattr(self, "_has_batch_items", False):
+        if not getattr(self, "_has_batch_items", True):
             logger.warning(
                 "cron_timer_batch_fallback_individual count=%d reason=missing_batch_schema",
                 len(items),
@@ -1005,17 +1005,35 @@ class CronTimer:
         if not candidates:
             return
 
-        async with self.session_factory() as db:
-            batch_id = await self._batch_dispatcher.claim_batch(db, candidates)
-            if batch_id is None:
-                self.request_reload("tracker_batch_already_claimed")
+        try:
+            async with self.session_factory() as db:
+                batch_id = await self._batch_dispatcher.claim_batch(db, candidates)
+                if batch_id is None:
+                    self.request_reload("tracker_batch_already_claimed")
+                    return
+                outcome = await self._batch_dispatcher.dispatch_batch(
+                    db,
+                    batch_id,
+                    telemetry=self._dispatch_telemetry(items[0]),
+                    ownership_guard=self._guard_provider_attempt
+                    if self._ownership_active
+                    else None,
+                )
+        except Exception as exc:
+            error_str = str(exc).lower()
+            if "tracker_reminder_batch" in error_str or "undefined" in error_str:
+                self._has_batch_items = False
+                logger.warning(
+                    "cron_timer_batch_table_missing_fallback count=%d error=%s",
+                    len(items),
+                    type(exc).__name__,
+                )
+                for item in items:
+                    if self._is_stopped:
+                        break
+                    await self._process_due_item(item, now=now)
                 return
-            outcome = await self._batch_dispatcher.dispatch_batch(
-                db,
-                batch_id,
-                telemetry=self._dispatch_telemetry(items[0]),
-                ownership_guard=self._guard_provider_attempt if self._ownership_active else None,
-            )
+            raise
         self._last_dispatch_at = datetime.now(VN_TZ)
         self._last_dispatch_outcome = outcome.value
         if outcome == DispatchOutcome.TEMPORARY_FAILURE:

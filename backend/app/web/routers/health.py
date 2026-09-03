@@ -35,12 +35,23 @@ async def healthz(request: Request) -> dict[str, str]:
         timer = getattr(request.app.state, "cron_timer", None)
         task = getattr(request.app.state, "cron_timer_task", None)
         if timer is None or task is None:
-            result["cron_timer"] = "missing"
+            result["cron_timer_status"] = "stopped"
+            result["cron_timer"] = "stopped"
         elif task.done():
             result["status"] = "degraded"
-            result["cron_timer"] = "dead"
+            result["cron_timer_status"] = "stopped"
+            result["cron_timer"] = "stopped"
         else:
-            result["cron_timer"] = getattr(timer, "_status", "unknown")
+            status = getattr(timer, "_status", "standby")
+            failures = getattr(timer, "_loop_failures", 0)
+            if failures > 0 or status in ("ownership_lost", "stale"):
+                result["status"] = "degraded"
+                result["cron_timer_status"] = "degraded"
+            elif status == "owner":
+                result["cron_timer_status"] = "owner"
+            else:
+                result["cron_timer_status"] = "standby"
+            result["cron_timer"] = result["cron_timer_status"]
     return result
 
 
