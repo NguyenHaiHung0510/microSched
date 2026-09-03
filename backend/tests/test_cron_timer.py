@@ -1986,3 +1986,45 @@ async def test_process_due_tracker_batch_fallback_without_batch_schema(monkeypat
 
     await timer._process_due_tracker_batch([item1, item2], now=now_vn)
     assert len(processed) == 2
+
+
+@pytest.mark.anyio
+async def test_batch_dispatch_error_never_falls_back_after_claim():
+    """P0 guard: If claim_batch succeeds, dispatch_batch error must not fallback."""
+    import uuid
+
+    timer = CronTimer(FakeFactory(object()))
+    timer._has_batch_items = True
+    processed = []
+
+    async def fake_process_due_item(item, now=None):
+        processed.append(item)
+
+    class FailingDispatcher:
+        async def claim_batch(self, db, candidates):
+            return uuid.uuid4()
+
+        async def dispatch_batch(self, db, batch_id, *, telemetry=None, ownership_guard=None):
+            raise RuntimeError("Database error on tracker_reminder_batch constraint")
+
+    timer._batch_dispatcher = FailingDispatcher()
+    timer._process_due_item = fake_process_due_item
+
+    now_vn = datetime.now(VN_TZ)
+    item = TimerItem(
+        due_at=now_vn,
+        occurrence_on=now_vn.date(),
+        kind=ScheduleKind.TRACKER,
+        subject_id=uuid.uuid4(),
+        reminder_time=time(8, 0, 0),
+        reminder_mode="fixed",
+        reminder_interval_days=1,
+        reminder_action="confirm_event",
+    )
+
+    with pytest.raises(RuntimeError, match="tracker_reminder_batch constraint"):
+        await timer._process_due_tracker_batch([item], now=now_vn)
+
+    # Must NOT have called individual process
+    assert len(processed) == 0
+    assert timer._has_batch_items is True
