@@ -1913,9 +1913,10 @@ async def test_reload_within_grace_terminal_reentry_keeps_same_occurrence_ref(ca
     assert len(set(refs)) == 1
     assert len(stub.calls) == 2
 
+
 @pytest.mark.anyio
 async def test_scheduler_auto_reconnect_on_ownership_loss(monkeypatch):
-    " 041: when auto_reconnect=True, CronTimer re-acquires lock after connection drop."
+    "041: when auto_reconnect=True, CronTimer re-acquires lock after connection drop."
     reconnect_count = 0
     acquired_event = asyncio.Event()
 
@@ -1925,8 +1926,10 @@ async def test_scheduler_auto_reconnect_on_ownership_loss(monkeypatch):
         return FakeLockConnection()
 
     timer = CronTimer(FakeFactory(object()), lock_connection_factory=open_conn, auto_reconnect=True)
+
     async def snapshot(db):
         acquired_event.set()
+
     timer.load_snapshot = snapshot
 
     task = asyncio.create_task(timer.run())
@@ -1950,6 +1953,7 @@ async def test_scheduler_auto_reconnect_on_ownership_loss(monkeypatch):
 @pytest.mark.anyio
 async def test_process_due_tracker_batch_fallback_without_batch_schema(monkeypatch):
     import uuid
+
     timer = CronTimer(FakeFactory(object()))
     timer._has_batch_items = False
     processed = []
@@ -1957,7 +1961,7 @@ async def test_process_due_tracker_batch_fallback_without_batch_schema(monkeypat
     async def fake_process_due_item(item, now=None):
         processed.append(item)
 
-    monkeypatch.setattr(timer, '_process_due_item', fake_process_due_item)
+    monkeypatch.setattr(timer, "_process_due_item", fake_process_due_item)
     now_vn = datetime.now(VN_TZ)
     item1 = TimerItem(
         due_at=now_vn,
@@ -1965,9 +1969,9 @@ async def test_process_due_tracker_batch_fallback_without_batch_schema(monkeypat
         kind=ScheduleKind.TRACKER,
         subject_id=uuid.uuid4(),
         reminder_time=time(8, 0, 0),
-        reminder_mode='fixed',
+        reminder_mode="fixed",
         reminder_interval_days=1,
-        reminder_action='confirm_event',
+        reminder_action="confirm_event",
     )
     item2 = TimerItem(
         due_at=now_vn,
@@ -1975,9 +1979,9 @@ async def test_process_due_tracker_batch_fallback_without_batch_schema(monkeypat
         kind=ScheduleKind.TRACKER,
         subject_id=uuid.uuid4(),
         reminder_time=time(8, 0, 0),
-        reminder_mode='fixed',
+        reminder_mode="fixed",
         reminder_interval_days=1,
-        reminder_action='confirm_event',
+        reminder_action="confirm_event",
     )
 
     await timer._process_due_tracker_batch([item1, item2], now=now_vn)
