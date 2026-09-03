@@ -15,7 +15,7 @@ process actually reach what it depends on", and is therefore allowed to spend a
 query. Never point an automated probe at the readiness path.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.core.db import check_database
 from app.core.settings import get_settings
@@ -24,13 +24,24 @@ router = APIRouter(prefix="/api", tags=["health"])
 
 
 @router.get("/healthz")
-async def healthz() -> dict[str, str]:
+async def healthz(request: Request) -> dict[str, str]:
     """Report process liveness. Must never touch the database - see module docstring."""
     settings = get_settings()
-    return {
+    result: dict[str, str] = {
         "status": "ok",
         "version": settings.app_version,
     }
+    if settings.enable_inprocess_cron:
+        timer = getattr(request.app.state, "cron_timer", None)
+        task = getattr(request.app.state, "cron_timer_task", None)
+        if timer is None or task is None:
+            result["cron_timer"] = "missing"
+        elif task.done():
+            result["status"] = "degraded"
+            result["cron_timer"] = "dead"
+        else:
+            result["cron_timer"] = getattr(timer, "_status", "unknown")
+    return result
 
 
 @router.get("/readyz")
