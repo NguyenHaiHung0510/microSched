@@ -881,10 +881,10 @@ const TaskCard = memo(function TaskCard({
           task.status === 'completed' && !task.is_private ? 'opacity-70' : '',
         )}
       >
-        <div className="flex items-start gap-3">
+        <div className="grid grid-cols-[1.5rem_minmax(0,1fr)] items-start gap-3 sm:flex">
           <Checkbox
             data-testid="task-checkbox"
-            className="mt-1 size-5 rounded-md"
+            className="mt-1 size-6 rounded-md"
             aria-label={`Đánh dấu ${task.title} hoàn thành`}
             checked={task.status === 'completed'}
             disabled={update.isPending}
@@ -1006,7 +1006,7 @@ const TaskCard = memo(function TaskCard({
             ) : null}
           </div>
 
-          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          <div data-testid="task-card-actions" className="col-start-2 flex shrink-0 flex-wrap justify-end gap-2">
             <Button
               data-testid="task-pin"
               size="icon-lg"

@@ -182,7 +182,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <ReminderConfirmScreen key={reminderDispatchKey} />
         ) : (
           <>
-        <div className="mb-4 grid grid-cols-4 gap-1 sm:flex sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
+        <div className="mb-4 grid grid-cols-4 gap-1 sm:flex sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs [&>button]:transition-colors sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
             size="lg"

@@ -17,6 +17,31 @@ test.beforeEach(async ({ page }) => {
 
 const VN_OFFSET_MS = 7 * 3_600_000
 
+test('phone task titles use the card width with actions on a separate row', async ({ page, taskApi }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Phone-specific card layout')
+  taskApi.tasks = [{ ...taskApi.tasks[0], title: 'Lập kế hoạch thiết kế và kiểm thử ứng dụng với nội dung tiếng Việt dài', pinned: false, due_precision: 'date', due_on: vnDay(0), due_at: null }]
+  await page.goto('/')
+  const card = page.getByTestId('task-card').first()
+  const title = card.getByTestId('task-title')
+  const actions = card.getByTestId('task-card-actions')
+  await expect(title).toBeVisible()
+  const titleBox = await title.boundingBox()
+  const actionsBox = await actions.boundingBox()
+  expect(titleBox!.width).toBeGreaterThan(180)
+  expect(actionsBox!.y).toBeGreaterThanOrEqual(titleBox!.y + titleBox!.height)
+  const checkboxBox = await card.getByTestId('task-checkbox').boundingBox()
+  expect(checkboxBox!.width).toBeGreaterThanOrEqual(24)
+  expect(checkboxBox!.height).toBeGreaterThanOrEqual(24)
+  const cardBox = await card.boundingBox()
+  for (const button of await actions.getByRole('button').all()) {
+    const box = await button.boundingBox()
+    expect(box!.width).toBeGreaterThanOrEqual(24)
+    expect(box!.height).toBeGreaterThanOrEqual(24)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width)
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
 function vnDay(offsetDays: number): string {
   return new Date(Date.now() + offsetDays * 86_400_000 + VN_OFFSET_MS)
     .toISOString()
