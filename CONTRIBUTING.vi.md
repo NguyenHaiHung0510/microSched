@@ -7,7 +7,7 @@ microSched là dự án cá nhân, nhưng feedback và pull request có phạm v
 ## Trước khi bắt đầu
 
 - Với thay đổi lớn về product, architecture hoặc data model, hãy mở issue/discussion để thống nhất hướng trước.
-- Đọc `CLAUDE.md`, `AGENTS.md` và decision brief liên quan trước khi sửa.
+- Đọc `AGENTS.md`, decision brief liên quan và `docs/harness-policy.md` cho workflow/authority. `CLAUDE.md` chỉ là compatibility pointer.
 - Không đưa secret, credential, token, dữ liệu cá nhân thật hoặc production payload vào code, fixture, log, issue hay PR.
 
 ## Pull request

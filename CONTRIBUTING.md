@@ -7,7 +7,7 @@ microSched is a personal project, but feedback and clearly scoped pull requests 
 ## Before you start
 
 - For major changes to the product, architecture, or data model, open an issue/discussion to agree on a direction first.
-- Read `CLAUDE.md`, `AGENTS.md`, and the relevant decision brief before making changes.
+- Read `AGENTS.md`, the relevant decision brief, and `docs/harness-policy.md` for workflow/authority. `CLAUDE.md` is a compatibility pointer only.
 - Do not include secrets, credentials, tokens, real personal data, or production payloads in code, fixtures, logs, issues, or PRs.
 
 ## Pull requests
