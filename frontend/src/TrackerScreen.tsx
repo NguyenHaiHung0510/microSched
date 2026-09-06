@@ -474,7 +474,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                     {upcomingReminderDate(group.nextAt)}
                   </p>
                   <div className="flex items-start gap-2 min-w-0">
-                    <span data-testid="tracker-reminder-time" className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary tabular-nums">
+                    <span data-testid="tracker-upcoming-time" className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary tabular-nums">
                       {upcomingReminderTime(group)}
                     </span>
                     <span

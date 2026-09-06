@@ -38,6 +38,58 @@ test('agenda task failures do not look empty and recover through the visible ret
 
 const VN_OFFSET_MS = 7 * 3_600_000
 
+test('agenda starts at its picker and restores the previous grid position', async ({ page }) => {
+  await setupCalendarRoutes(page)
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Lịch' }).click()
+  const container = page.getByTestId('calendar-scroll-container')
+  await expect.poll(() => container.evaluate((node) => node.scrollTop)).toBeGreaterThan(500)
+  const gridTop = await container.evaluate((node) => node.scrollTop)
+  await page.getByTestId('calendar-mode-toggle-agenda').click()
+  await expect.poll(() => container.evaluate((node) => node.scrollTop)).toBe(0)
+  await page.getByTestId('calendar-mode-toggle-grid').click()
+  await expect.poll(() => container.evaluate((node, previousTop) => Math.abs(node.scrollTop - previousTop), gridTop)).toBeLessThan(2)
+})
+
+test('agenda task toggle prevents duplicate requests and explains failure before retry', async ({ page }) => {
+  await setupCalendarRoutes(page)
+  const task = { id: 'agenda-status', title: 'Synthetic status task', status: 'open', due_precision: 'date', due_on: vnDay(0), due_at: null, is_private: false, items: [] }
+  let fail = true
+  let requests = 0
+  let release: (() => void) | undefined
+  await page.route('**/api/tasks**', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      requests++
+      if (fail) {
+        await new Promise<void>((resolve) => { release = resolve })
+        await route.fulfill({ status: 500, json: { detail: 'Synthetic status failure' } })
+      } else {
+        task.status = 'completed'
+        await route.fulfill({ json: task })
+      }
+      return
+    }
+    await route.fulfill({ json: { items: [task] } })
+  })
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Lịch' }).click()
+  await page.getByTestId('calendar-mode-toggle-agenda').click()
+  const toggle = page.getByTestId('calendar-agenda-task-toggle')
+  await toggle.click()
+  await expect.poll(() => requests).toBe(1)
+  try {
+    await expect(toggle).toBeDisabled()
+    await expect(page.getByTestId('calendar-agenda-task-pending')).toBeVisible()
+  } finally { release?.() }
+  await expect(page.getByTestId('calendar-agenda-task-status-error')).toBeVisible()
+  await expect(toggle).not.toBeChecked()
+  fail = false
+  await toggle.click()
+  await expect(toggle).toBeChecked()
+  await expect(page.getByTestId('calendar-agenda-task-status-error')).toHaveCount(0)
+  expect(requests).toBe(2)
+})
+
 function vnDay(offsetDays: number): string {
   return new Date(Date.now() + offsetDays * 86_400_000 + VN_OFFSET_MS)
     .toISOString()

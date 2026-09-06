@@ -76,7 +76,7 @@ test('upcoming reminders keep the actual date, same-hour dates separate, and unk
   await expect(groups).toHaveCount(3)
   await expect(groups.nth(0).getByTestId('tracker-reminder-date')).toContainText('07/09/2026')
   await expect(groups.nth(1).getByTestId('tracker-reminder-date')).toContainText('11/09/2026')
-  await expect(groups.nth(1).getByTestId('tracker-reminder-time')).toHaveText('08:00')
+  await expect(groups.nth(1).getByTestId('tracker-upcoming-time')).toHaveText('08:00')
   await expect(groups.nth(1)).toContainText('Mỗi 5 ngày')
   await expect(groups.nth(2)).toHaveAttribute('data-next-at', '')
   await expect(groups.nth(2).getByTestId('tracker-reminder-date')).toHaveText('Chưa xác định ngày')

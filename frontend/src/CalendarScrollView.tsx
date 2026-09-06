@@ -560,9 +560,12 @@ export function CalendarScrollView() {
   }
 
   useLayoutEffect(() => {
-    if (calendarMode !== 'grid') return
     const container = containerRef.current
     if (!container) return
+    if (calendarMode === 'agenda') {
+      container.scrollTop = 0
+      return
+    }
     if (!hasInitializedRef.current) {
       scrollToToday()
       hasInitializedRef.current = true
@@ -1101,6 +1104,11 @@ export function CalendarScrollView() {
 
               {/* Tasks section */}
               <div data-testid="calendar-agenda-tasks" className="space-y-2">
+                {toggleTaskStatus.isError ? (
+                  <p role="alert" data-testid="calendar-agenda-task-status-error" className="text-sm text-destructive">
+                    Không đổi được trạng thái task. Bấm lại ô trạng thái để thử lại.
+                  </p>
+                ) : null}
                 <div className="flex items-center justify-between">
                   <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                     Task đến hạn ({allTasksQuery.isLoading ? '…' : agendaDayTasks.length})
@@ -1144,6 +1152,7 @@ export function CalendarScrollView() {
                       <Checkbox
                         data-testid="calendar-agenda-task-toggle"
                         checked={task.status === 'completed'}
+                        disabled={toggleTaskStatus.isPending}
                         onCheckedChange={(checked) =>
                           toggleTaskStatus.mutate({
                             taskId: task.id,
@@ -1161,6 +1170,9 @@ export function CalendarScrollView() {
                         )}
                       >
                         {task.title}
+                        {toggleTaskStatus.isPending && toggleTaskStatus.variables?.taskId === task.id ? (
+                          <span role="status" data-testid="calendar-agenda-task-pending" className="mt-1 block text-xs text-muted-foreground">Đang lưu…</span>
+                        ) : null}
                         {task.is_private ? <span className="mt-1 block"><PrivateMarker /></span> : null}
                       </span>
                       {task.due_at ? (

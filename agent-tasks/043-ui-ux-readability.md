@@ -1,6 +1,6 @@
 # Task 043 — UI/UX readability
 
-Status: IN_PROGRESS, 2026-09-06. Owner delegated autonomous T1 delivery in current task, then explicitly allowed starting immediately and requested UI/UX harness skills and Gemini 3.8 delegation. Grant ends on completion; Owner-only boundaries remain. Source: current Codex task 01a0773f-7cc9-7d93-8d2f-25a6c8e55041.
+Status: VALIDATING, 2026-09-06. Owner delegated autonomous T1 delivery in current task, then explicitly allowed starting immediately and requested UI/UX harness skills and Gemini 3.8 delegation. Grant ends on completion; Owner-only boundaries remain. Source: current Codex task 01a0773f-7cc9-7d93-8d2f-25a6c8e55041.
 
 ## Outcome and decisions
 
@@ -35,3 +35,9 @@ Reviewer /root/review_projection reviewed frozen worker 016bf36ea8522e85e641d73c
 ### UI integration 2026-09-06 22:50 VN
 
 Gemini first UI commit 6ec6c44 integrated as 8b6157e. T1 found incomplete agenda month/error/draft handling and delegated a bounded CalendarScrollView-only follow-up, current exec session 31057, logs output/task-043/gemini-agenda-events.jsonl. T1 owns candidate edits to logo/layout, Task empty-date row grouping, shared private markers and calendar day details. Initial integrated focused suite: 19 PASS, 1 desktop-only skip, 2 failures caused by the new test selecting all groups containing the reschedule word 'Hôm nay'. Replaced ambiguous text selector with task-today-label; rerun pending. Added further private Task/calendar regression cases after that run. Final full suite and screenshots still pending.
+
+### Integrated review checkpoint 2026-09-06 23:30 VN
+
+Gemini follow-up 4e9f415 integrated as b1a272b; both workers finished. T1 completed shared presentation, semantic logo navigation, mobile tabs, calendar focus/targets, loading/errors and measured sticky-header centering. Frozen candidate f97c6b9: frontend lint and 116 unit tests PASS, backend Ruff and 394 non-PG tests PASS (197 PG cases deselected), repository hooks PASS. Full synthetic browser suite: 213 PASS, 29 pre-existing/conditional skips, 4 FAIL caused by the new display test ID colliding with the existing tracker editor. Raw receipts: output/task-043/e2e-full.log and associated scoped traces. No required gate was dropped.
+
+Independent read-only UI reviewer /root/review_ui inspected the frozen source and verified all 19 screenshot MD5/SHA256 against f97c6b9. Two P2 findings: grid-to-agenda retained a large scroll offset and hid the picker; new agenda task toggle lacked pending/error feedback. T1 accepted both plus the test-ID collision. New regression tests failed for intended causes (scrollTop 183 versus 0; checkbox enabled during pending request), raw output/task-043/review-red.log. Corrections reset agenda scroll after mount, preserve the grid position, disable duplicate toggles with visible pending/error/retry guidance, and rename only the reminder display test ID. Physical device, production-image local QA, production data QA remain NOT_RUN; no Neon or real-profile operations.
