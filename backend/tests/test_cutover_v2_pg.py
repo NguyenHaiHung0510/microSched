@@ -394,7 +394,9 @@ def rehearsal(pg_dsn: str):
             )
             prepare_pid = await conn.fetchval("SELECT pg_backend_pid()")
             await conn.execute(
-                "TRUNCATE TABLE microsched.reminder_dispatch, microsched.entry, "
+                "TRUNCATE TABLE microsched.tracker_reminder_batch_item, "
+                "microsched.tracker_reminder_batch, microsched.reminder_dispatch, "
+                "microsched.entry, "
                 "microsched.subscription, microsched.tracker, microsched.tracker_group, "
                 "microsched.calendar_event, microsched.calendar_source, microsched.task_item, "
                 "microsched.task, microsched.note_item, microsched.note, "
@@ -694,7 +696,9 @@ def rehearsal(pg_dsn: str):
         cleanup = await asyncpg.connect(admin_url)
         try:
             await cleanup.execute(
-                "TRUNCATE TABLE microsched.reminder_dispatch, microsched.entry, "
+                "TRUNCATE TABLE microsched.tracker_reminder_batch_item, "
+                "microsched.tracker_reminder_batch, microsched.reminder_dispatch, "
+                "microsched.entry, "
                 "microsched.subscription, microsched.tracker, microsched.tracker_group, "
                 "microsched.calendar_event, microsched.calendar_source, microsched.task_item, "
                 "microsched.task, microsched.note_item, microsched.note, "
@@ -1143,8 +1147,20 @@ async def _insert_residual_asyncpg(conn, component: str) -> None:
             uuid4(),
         )
         return
+    if component == "tracker_reminder_batch":
+        await conn.execute(
+            "INSERT INTO microsched.tracker_reminder_batch "
+            "(occurrence_on,reminder_time) VALUES ('2026-08-20','08:00:00')"
+        )
+        return
     group_id, tracker_id = uuid4(), uuid4()
-    if component in {"tracker", "entry", "subscription", "reminder_dispatch"}:
+    if component in {
+        "tracker",
+        "entry",
+        "subscription",
+        "reminder_dispatch",
+        "tracker_reminder_batch_item",
+    }:
         await conn.execute(
             "INSERT INTO microsched.tracker_group (id,name,kind,position) "
             "VALUES ($1,$2,'health',0)",
@@ -1185,6 +1201,29 @@ async def _insert_residual_asyncpg(conn, component: str) -> None:
             tracker_id,
         )
         return
+    if component == "tracker_reminder_batch_item":
+        dispatch_id = uuid4()
+        batch_id = uuid4()
+        await conn.execute(
+            "INSERT INTO microsched.reminder_dispatch "
+            "(id,subject_type,subject_id,dispatched_on) "
+            "VALUES ($1,'tracker',$2,'2026-08-20')",
+            dispatch_id,
+            tracker_id,
+        )
+        await conn.execute(
+            "INSERT INTO microsched.tracker_reminder_batch "
+            "(id,occurrence_on,reminder_time) VALUES ($1,'2026-08-20','08:00:00')",
+            batch_id,
+        )
+        await conn.execute(
+            "INSERT INTO microsched.tracker_reminder_batch_item "
+            "(batch_id,dispatch_id,reminder_mode,reminder_interval_days,"
+            "reminder_action,input_mode) VALUES ($1,$2,'fixed',1,'open_tracker','event')",
+            batch_id,
+            dispatch_id,
+        )
+        return
     if component == "message":
         await conn.execute(
             "INSERT INTO microsched.message (role,content,trace_id) VALUES ('user',$1,$2)",
@@ -1223,8 +1262,22 @@ async def _insert_residual_session(session, component: str) -> None:
             {"id": uuid4()},
         )
         return
+    if component == "tracker_reminder_batch":
+        await session.execute(
+            text(
+                "INSERT INTO microsched.tracker_reminder_batch "
+                "(occurrence_on,reminder_time) VALUES ('2026-08-20','08:00:00')"
+            )
+        )
+        return
     group_id, tracker_id = uuid4(), uuid4()
-    if component in {"tracker", "entry", "subscription", "reminder_dispatch"}:
+    if component in {
+        "tracker",
+        "entry",
+        "subscription",
+        "reminder_dispatch",
+        "tracker_reminder_batch_item",
+    }:
         await session.execute(
             text(
                 "INSERT INTO microsched.tracker_group (id,name,kind,position) "
@@ -1278,6 +1331,35 @@ async def _insert_residual_session(session, component: str) -> None:
                 "VALUES ('tracker',:tracker_id,'2026-08-20')"
             ),
             {"tracker_id": tracker_id},
+        )
+        return
+    if component == "tracker_reminder_batch_item":
+        dispatch_id = uuid4()
+        batch_id = uuid4()
+        await session.execute(
+            text(
+                "INSERT INTO microsched.reminder_dispatch "
+                "(id,subject_type,subject_id,dispatched_on) "
+                "VALUES (:dispatch_id,'tracker',:tracker_id,'2026-08-20')"
+            ),
+            {"dispatch_id": dispatch_id, "tracker_id": tracker_id},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO microsched.tracker_reminder_batch "
+                "(id,occurrence_on,reminder_time) "
+                "VALUES (:batch_id,'2026-08-20','08:00:00')"
+            ),
+            {"batch_id": batch_id},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO microsched.tracker_reminder_batch_item "
+                "(batch_id,dispatch_id,reminder_mode,reminder_interval_days,"
+                "reminder_action,input_mode) "
+                "VALUES (:batch_id,:dispatch_id,'fixed',1,'open_tracker','event')"
+            ),
+            {"batch_id": batch_id, "dispatch_id": dispatch_id},
         )
         return
     if component == "message":
@@ -1783,7 +1865,9 @@ def test_verify_rejects_real_residual_for_each_purge_component(rehearsal, compon
             # The fixture's next parameter starts from a clean state, but this
             # keeps this test independently safe if collection order changes.
             await admin.execute(
-                "TRUNCATE TABLE microsched.reminder_dispatch, microsched.entry, "
+                "TRUNCATE TABLE microsched.tracker_reminder_batch_item, "
+                "microsched.tracker_reminder_batch, microsched.reminder_dispatch, "
+                "microsched.entry, "
                 "microsched.subscription, microsched.tracker, microsched.tracker_group, "
                 "microsched.day_annotation, microsched.message, microsched.audit_log CASCADE"
             )

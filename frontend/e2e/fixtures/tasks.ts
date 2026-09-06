@@ -119,6 +119,7 @@ export const fixtureTasks: FixtureTask[] = [
   task('task-013', 'Học một điều mới', {
     priority: 'p3',
     due_on: taskDateKey(new Date().toISOString()),
+    items: [item('item-013-1', 'Mục lịch ban đầu')],
   }),
   task('task-014', 'Sắp xếp tài liệu'),
   task('task-015', 'Gọi điện'),

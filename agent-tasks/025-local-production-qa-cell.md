@@ -14,7 +14,7 @@
 > `microsched.qa025.receipt.v1`; artifact lịch sử dạng uppercase, nếu có, không được rewrite và chỉ
 > được đối chiếu bằng schema tại commit lịch sử của artifact đó.
 
-> **📝 Cập nhật 2026-08-25:** Task 025 cung cấp hạ tầng disposable cell chạy local container. Đối với các đợt QA sau cut-over cần snapshot dữ liệu thật hoặc Migration Rehearsal, sử dụng thêm lane Ephemeral Neon Branch kết hợp `scripts.prepare_qa_branch` theo `AGENTS.md` §9.
+> **📝 Reconciled 2026-09-06:** Task 025 vẫn là local synthetic disposable cell, không được chạm Neon/real data. Recipe bổ sung ephemeral ngày 2026-08-25 đã superseded: high-fidelity QA là lane riêng theo `docs/qa-framework.md` §2.1, Owner Restore/Sync persistent develop rồi approved scrub. Không tự mở thêm lane này hoặc tạo/xóa/restore branch theo task 025.
 
 ## 0. Kết quả cần có
 

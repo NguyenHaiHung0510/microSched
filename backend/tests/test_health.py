@@ -118,3 +118,66 @@ def test_security_headers_applied(monkeypatch) -> None:
         response.headers.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains"
     )
     assert response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+
+
+def test_healthz_reports_cron_timer_status_contract(monkeypatch) -> None:
+    """Verify cron_timer_status reports owner, standby, degraded, stopped."""
+    import asyncio
+
+    _configure_test_app(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("ENABLE_INPROCESS_CRON", "true")
+    get_settings.cache_clear()
+
+    class FakeTimer:
+        def __init__(self, status="owner", failures=0):
+            self._status = status
+            self._loop_failures = failures
+
+    app = create_app()
+    client = TestClient(app)
+
+    # 1. Timer missing / task missing -> stopped
+    res = client.get("/api/healthz")
+    assert res.status_code == 200
+    assert res.json()["cron_timer_status"] == "stopped"
+    assert res.json()["cron_timer"] == "stopped"
+
+    # 2. Timer owner
+    loop = asyncio.new_event_loop()
+    fake_task = loop.create_future()
+    app.state.cron_timer = FakeTimer(status="owner")
+    app.state.cron_timer_task = fake_task
+    res = client.get("/api/healthz")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+    assert res.json()["cron_timer_status"] == "owner"
+
+    # 3. Timer standby
+    app.state.cron_timer = FakeTimer(status="standby")
+    res = client.get("/api/healthz")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+    assert res.json()["cron_timer_status"] == "standby"
+
+    # 4. Timer degraded (loop failures)
+    app.state.cron_timer = FakeTimer(status="owner", failures=2)
+    res = client.get("/api/healthz")
+    assert res.status_code == 200
+    assert res.json()["status"] == "degraded"
+    assert res.json()["cron_timer_status"] == "degraded"
+
+    # 5. Timer degraded (ownership_lost)
+    app.state.cron_timer = FakeTimer(status="ownership_lost", failures=0)
+    res = client.get("/api/healthz")
+    assert res.status_code == 200
+    assert res.json()["status"] == "degraded"
+    assert res.json()["cron_timer_status"] == "degraded"
+
+    # 6. Task dead -> stopped + degraded
+    fake_task.set_result(None)
+    res = client.get("/api/healthz")
+    assert res.status_code == 200
+    assert res.json()["status"] == "degraded"
+    assert res.json()["cron_timer_status"] == "stopped"
+    loop.close()

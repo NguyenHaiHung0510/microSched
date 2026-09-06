@@ -29,6 +29,8 @@ EXPECTED_TABLES = {
     "tracker_group",
     "push_subscription",
     "reminder_dispatch",
+    "tracker_reminder_batch",
+    "tracker_reminder_batch_item",
 }
 
 GATE_AXES = {
@@ -316,7 +318,9 @@ def test_reminder_dispatch_check_constraint_metadata_names_match_migration() -> 
 
     assert checks == {
         "ck_reminder_dispatch_subject_type": "subject_type IN ('tracker', 'subscription')",
-        "ck_reminder_dispatch_status": "status IN ('pending', 'sent', 'no_device')",
+        "ck_reminder_dispatch_status": (
+            "status IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted')"
+        ),
         "ck_reminder_dispatch_attempt_count": "attempt_count >= 0",
     }
 
@@ -351,6 +355,9 @@ def test_tracker_0011_generic_reminder_metadata_matches_migration() -> None:
         "reminder_action IS NULL OR reminder_action = 'open_tracker' OR "
         "(reminder_action = 'confirm_event' AND input_mode = 'event')"
     )
+    assert checks["ck_tracker_reminder_time_whole_second"] == (
+        "reminder_time IS NULL OR (EXTRACT(MICROSECONDS FROM reminder_time)::bigint % 1000000) = 0"
+    )
     group_checks = {
         constraint.name: str(constraint.sqltext)
         for constraint in group.constraints
@@ -358,6 +365,42 @@ def test_tracker_0011_generic_reminder_metadata_matches_migration() -> None:
     }
     assert group_checks["ck_tracker_group_kind_values"] == (
         "kind IN ('health', 'finance', 'general')"
+    )
+
+
+def test_tracker_reminder_batch_metadata_is_non_sensitive_and_terminal_bounded() -> None:
+    batch = table("tracker_reminder_batch")
+    item = table("tracker_reminder_batch_item")
+    assert {column.name for column in batch.columns} == {
+        "id",
+        "occurrence_on",
+        "reminder_time",
+        "generation",
+        "status",
+        "attempt_count",
+        "last_attempt_at",
+        "created_at",
+        "updated_at",
+    }
+    assert {column.name for column in item.columns} == {
+        "id",
+        "batch_id",
+        "dispatch_id",
+        "reminder_mode",
+        "reminder_interval_days",
+        "reminder_action",
+        "input_mode",
+        "state",
+        "created_at",
+        "updated_at",
+    }
+    batch_checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in batch.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert batch_checks["ck_tracker_reminder_batch_attempt_count"] == (
+        "attempt_count >= 0 AND attempt_count <= 4"
     )
 
 

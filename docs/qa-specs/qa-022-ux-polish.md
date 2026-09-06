@@ -3,7 +3,7 @@
 > **Trạng thái:** DRAFT · Ngày tạo: 2026-08-25
 > **Commit gốc:** bbbd52d (feat/022-dogfooding-ux-polish, PR #173)
 > **Thiết bị mục tiêu:** iPhone Safari (chính), Chrome desktop (phụ)
-> **Quy trình QA:** Post-Cutover Neon Ephemeral Branch (§9 AGENTS.md)
+> **Quy trình QA:** Owner-operated persistent staging (docs/qa-framework.md §2.1); recipe cũ superseded 2026-09-06.
 
 ---
 
@@ -308,36 +308,27 @@ và desktop, không phá vỡ hành vi cũ, và tuân thủ hệ thiết kế đ
 
 ---
 
-### 3.E Quy trình QA — Ephemeral Neon Branch
+### 3.E Quy trình QA — Owner-operated persistent staging
 
-#### E-01 Tạo branch và Data Scrambler
+📝 Reconciled 2026-09-06: bảng create/delete ephemeral và cookie injection cũ đã superseded.
+Không thay trạng thái DRAFT hay mở QA lane. Theo docs/qa-framework.md §2.1:
 
-| Bước | Hành động | Expected |
-|------|-----------|----------|
-| 1 | neonctl branches create --name qa-022-ux-polish --parent main | Branch tạo thành công |
-| 2 | Chạy prepare_qa_branch với branch URL | Text scrambled 1:1, private re-encrypt bằng QA Key |
-| 3 | Kiểm tra PIN | PIN reset thành 123456 |
-| 4 | Kiểm tra push token / audit log | Đã xoá sạch |
-| 5 | Kiểm tra session | owner@test.local sẵn sàng |
+- E-01: Owner Restore/Sync develop từ main, xác nhận; sau đó approved scrub và kiểm target/data boundary.
+- E-02: Backend local + frontend theo quickstart, Đăng nhập QA và test PIN; không tự dùng secret/real profile.
+- E-03: Xuất receipt đã scrub, logout/close task sessions/processes; giữ persistent branch, không neonctl delete.
 
-#### E-02 Bypass OAuth và test PIN
+Acceptance dữ liệu/identity vẫn giữ, chưa chạy không tick PASS:
 
-| Bước | Hành động | Expected |
-|------|-----------|----------|
-| 1 | Bơm cookie ms_session=qa_token | Bypass Google OAuth, vào app thẳng |
-| 2 | Nhập PIN 123456 | Private gate mở khóa thành công |
-| 3 | Dùng PIN sai (000000) | Private gate từ chối |
-| 4 | Đặt env NEON_QA_BRANCH=1 | Test runner guard bật |
-
-#### E-03 Dọn dẹp branch
-
-| Bước | Hành động | Expected |
-|------|-----------|----------|
-| 1 | Xuất receipt nghiệm thu | Ghi lại kết quả test |
-| 2 | neonctl branches delete qa-022-ux-polish | Branch xoá thành công |
-| 3 | Kiểm tra neonctl branches list | Không còn branch qa-022-ux-polish |
-
----
+| Case | Expected sau approved sync/scrub/login |
+|---|---|
+| E-01 text/private | Text scrambled 1:1; private re-encrypt bằng QA Key |
+| E-01 PIN | PIN reset thành 123456 |
+| E-01 push/audit | Push token và audit log test boundary đã được làm sạch |
+| E-01 session | Synthetic owner@test.local sẵn sàng |
+| E-02 QA login | Đăng nhập QA theo local-only route, vào app không Google OAuth thật |
+| E-02 PIN đúng | 123456 mở private gate |
+| E-02 PIN sai | 000000 bị từ chối, private gate không mở |
+| E-02 target guard | Runner xác nhận đúng local/staging target theo canonical QA contract trước mutation |
 
 ## 4. Gating Criteria
 
@@ -416,9 +407,9 @@ và desktop, không phá vỡ hành vi cũ, và tuân thủ hệ thiết kế đ
 
 ### 5.5 Quy trình QA
 
-- [ ] E-01: Ephemeral branch tạo + Data Scrambler chạy xong
+- [ ] E-01: Owner sync xác nhận + approved scrub/target checks xong
 - [ ] E-02: Bypass OAuth + PIN 123456 hoạt động
-- [ ] E-03: Branch dọn dẹp sau khi xuất receipt
+- [ ] E-03: Receipt + logout/close; persistent branch được giữ
 
 ### 5.6 Regression
 

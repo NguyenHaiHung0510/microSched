@@ -3,6 +3,8 @@
 import { createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
 
+import { type PushNotificationPayload, showPushNotification } from './sw-notification'
+
 declare const self: ServiceWorkerGlobalScope
 
 precacheAndRoute(self.__WB_MANIFEST)
@@ -14,26 +16,16 @@ registerRoute(
 )
 
 self.addEventListener('push', (event: PushEvent) => {
-  let data: { title?: string; body?: string; url?: string } = {}
+  let data: PushNotificationPayload = {}
   if (event.data) {
     try {
-      data = event.data.json() as { title?: string; body?: string; url?: string }
+      data = event.data.json() as PushNotificationPayload
     } catch {
       data = {}
     }
   }
 
-  const title = data.title ?? 'microSched'
-  const body = data.body ?? 'Bạn có một lời nhắc.'
-  const url = data.url ?? '/'
-
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: '/microsched.svg',
-      data: { url },
-    })
-  )
+  event.waitUntil(showPushNotification(self.registration, data))
 })
 
 self.addEventListener('notificationclick', (event: NotificationEvent) => {

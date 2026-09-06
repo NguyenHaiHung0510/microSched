@@ -15,7 +15,7 @@ process actually reach what it depends on", and is therefore allowed to spend a
 query. Never point an automated probe at the readiness path.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.core.db import check_database
 from app.core.settings import get_settings
@@ -24,13 +24,35 @@ router = APIRouter(prefix="/api", tags=["health"])
 
 
 @router.get("/healthz")
-async def healthz() -> dict[str, str]:
+async def healthz(request: Request) -> dict[str, str]:
     """Report process liveness. Must never touch the database - see module docstring."""
     settings = get_settings()
-    return {
+    result: dict[str, str] = {
         "status": "ok",
         "version": settings.app_version,
     }
+    if settings.enable_inprocess_cron:
+        timer = getattr(request.app.state, "cron_timer", None)
+        task = getattr(request.app.state, "cron_timer_task", None)
+        if timer is None or task is None:
+            result["cron_timer_status"] = "stopped"
+            result["cron_timer"] = "stopped"
+        elif task.done():
+            result["status"] = "degraded"
+            result["cron_timer_status"] = "stopped"
+            result["cron_timer"] = "stopped"
+        else:
+            status = getattr(timer, "_status", "standby")
+            failures = getattr(timer, "_loop_failures", 0)
+            if failures > 0 or status in ("ownership_lost", "stale"):
+                result["status"] = "degraded"
+                result["cron_timer_status"] = "degraded"
+            elif status == "owner":
+                result["cron_timer_status"] = "owner"
+            else:
+                result["cron_timer_status"] = "standby"
+            result["cron_timer"] = result["cron_timer_status"]
+    return result
 
 
 @router.get("/readyz")

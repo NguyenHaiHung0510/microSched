@@ -152,7 +152,11 @@ jobs:
       run:
         working-directory: backend
     env:
+      CI_PG_BOOTSTRAP_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
       NEON_MIGRATOR_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
+      CI_MIGRATOR_PASSWORD: synthetic-migrator
+      CI_APP_PASSWORD: synthetic-app
+      CI_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@localhost:5432/microsched_ci
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -162,13 +166,23 @@ jobs:
         with:
           python-version: "3.14"
       - run: uv sync --frozen
-      - run: uv run python -m scripts.prepare_ci_database
+      - run: uv run python -m scripts.prepare_ci_database --bootstrap-url "$CI_PG_BOOTSTRAP_URL"
       - run: uv run python -m scripts.check_migration_drops
       - run: uv run alembic upgrade head
+        env:
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       - run: uv run python -m scripts.check_migration_drift
+        env:
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       - run: uv run alembic downgrade base
+        env:
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       - run: uv run alembic upgrade head
+        env:
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       - run: uv run python -m scripts.check_migration_drift
+        env:
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       # DB-backed tests run here, reusing this job's migrated pgvector service instead
       # of standing up a second Postgres in the backend job (spec §0.4, least
       # duplication). The schema is at head from the step above.

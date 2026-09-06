@@ -5,8 +5,10 @@ import ipaddress
 import json
 import logging
 import socket
+from contextlib import suppress
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import Any
 from urllib.parse import urlparse
 
 from pywebpush import WebPushException, webpush
@@ -25,6 +27,41 @@ class PushResult(StrEnum):
     SENT = "sent"
     TEMPORARY_FAILURE = "temporary_failure"
     DEAD_SUBSCRIPTION = "dead_subscription"
+
+
+class ProviderWorkTracker:
+    """Track real worker-thread Web Push calls across coroutine cancellation.
+
+    ``asyncio.to_thread`` cannot stop a synchronous socket call when its awaiter
+    is cancelled.  The scheduler uses this registry during shutdown so it keeps
+    its advisory lock until the actual provider worker is finished.
+    """
+
+    def __init__(self) -> None:
+        self._tasks: set[asyncio.Task[Any]] = set()
+
+    def track(self, task: asyncio.Task[Any]) -> None:
+        self._tasks.add(task)
+
+        def discard(completed: asyncio.Task[Any]) -> None:
+            self._tasks.discard(completed)
+            # A worker that outlived a cancelled sender must not later emit an
+            # unobserved-task warning.  Normal callers still await its result.
+            with suppress(asyncio.CancelledError):
+                completed.exception()
+
+        task.add_done_callback(discard)
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._tasks)
+
+    async def wait_for_idle(self, timeout_seconds: float | None) -> bool:
+        """Wait for every registered worker, optionally only through a diagnostic bound."""
+        if not self._tasks:
+            return True
+        _, pending = await asyncio.wait(set(self._tasks), timeout=timeout_seconds)
+        return not pending
 
 
 def _resolve_endpoint_ips(hostname: str) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
@@ -106,6 +143,7 @@ async def send_push(
     subscription: PushSubscription,
     payload: dict,
     timeout_seconds: float = 20.0,
+    provider_work_tracker: ProviderWorkTracker | None = None,
 ) -> PushResult:
     """Send a Web Push notification to a single PushSubscription with a timeout."""
     settings = get_settings()
@@ -127,16 +165,25 @@ async def send_push(
                     subscription.id,
                 )
                 return PushResult.TEMPORARY_FAILURE
-            status_code = await asyncio.to_thread(
-                _do_webpush_sync,
-                subscription.endpoint,
-                subscription.p256dh,
-                subscription.auth,
-                payload_str,
-                settings.vapid_private_key,
-                settings.vapid_claims_sub,
-                timeout_seconds,
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    _do_webpush_sync,
+                    subscription.endpoint,
+                    subscription.p256dh,
+                    subscription.auth,
+                    payload_str,
+                    settings.vapid_private_key,
+                    settings.vapid_claims_sub,
+                    timeout_seconds,
+                ),
+                name="microsched-web-push-worker",
             )
+            if provider_work_tracker is not None:
+                provider_work_tracker.track(worker)
+            # Shield keeps the worker task alive when a scheduler shutdown or
+            # lost-lock cancellation interrupts this coroutine.  The timer then
+            # waits for the actual worker before it relinquishes ownership.
+            status_code = await asyncio.shield(worker)
             if status_code in (200, 201, 202):
                 subscription.last_seen_at = datetime.now(timezone.utc)
                 await db.commit()

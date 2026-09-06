@@ -28,6 +28,7 @@ export type TaskWritePayload = {
   body_md: string | null
   priority: TaskPriority | null
   is_private: boolean
+  items?: string[]
 } & TaskSchedule
 
 export type TaskPayload = TaskWritePayload & {

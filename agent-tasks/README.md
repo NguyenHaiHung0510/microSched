@@ -4,7 +4,13 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 
 > 📁 **`harness-audit/`** — hồ sơ **RETIRED** của các phép đối soát harness trước đây, đánh số riêng `01`/`02` và **không** thuộc hàng đợi 001–012. Giữ receipt lịch sử; không dùng làm policy hay routing hiện hành. Output lịch sử nằm ở `harness-reports/` (thư mục có trong git, **nội dung thì không** — xem README trong đó).
 
-## Status board — re-query trước khi giao việc
+## Current navigation — re-query trước khi giao việc
+
+Policy đang dùng: [harness-policy](../docs/harness-policy.md), entry point [AGENTS](../AGENTS.md).
+Phiên migration 2026-09-06: [042 — bounded authority](042-harness-authority-v1.md).
+Đọc header/acceptance của task được giao và re-query GitHub/runtime; không suy current queue từ snapshot dưới.
+
+## Historical status snapshot — 2026-08-15, không phải hàng đợi hiện hành
 
 > Bảng này là index trạng thái, **không** thay approval của chủ hay acceptance trong từng spec. “LIVE” chỉ là receipt đã đo; khi cần quyết định, re-query GitHub/production rồi đọc header spec tương ứng.
 
@@ -17,16 +23,17 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 | **BLOCKED / OWNER DECISION** | #118 CSP đã đóng theo quyết định chủ — chưa có CSP replacement. Không còn owner decision mở cho Task 020. |
 | **SECURITY CAVEAT** | Không merge CSP “restrictive” mà vẫn có `unsafe-inline`/`unsafe-eval`. Nếu làm lại, cần task riêng: threat-model scope, UI/OAuth/PWA compatibility inventory và browser acceptance. |
 | **NEXT** | Đóng exact-head CI/review/deploy cho #134, reconcile WIP 017 lên `develop` mới rồi tiếp tục implementation theo QA contract đã merge. **Không mở 012 trong nhịp này.** QA thực tế còn lại của 010/011 và release `develop → main` vẫn là các gate riêng. |
-| **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase; policy live ở `docs/devops-brief.md` §7 buộc scheduled follow-up, mốc agent 3/6/10/15/20 rồi 10 phút. Mọi poll timer, kể cả PR/deploy, tối thiểu 3 phút; terminal/blocker notification vẫn wake ngay. |
+| **PILOT RECEIPT** | Flat orchestration đã chạy qua executor mạnh cho reconciliation và lane nhẹ cho receipt/rebase. Cadence 3/6/10/15/20 rồi 10 phút là receipt lịch sử, **không** còn là policy. Policy live ở `docs/devops-brief.md` §7 là event-driven; recurring monitor/heartbeat chỉ tồn tại khi owner yêu cầu, có frequency + stop condition. Task 040 bổ sung adaptive task contract và efficiency gate. |
 | **OPEN QA DEBT** | `010a`: iPhone file picker / FileReader. `011a`: Lane 4 iPhone vật lý. `011`: mutation reload, controlled dispatch/không duplicate, Web Push iPhone và quan sát Neon idle. `016`: iPhone/Safari vật lý và tương phản throttled badge trên production chưa verify. |
+| **DEFERRED / KHÔNG CHẶN QA037** | Task **039** giữ permanent backlog cho global private-visibility seams, physical iPhone/Web Push, liên kết Task 017 và external-model file-handoff experiment. Source: `agent-tasks/039-deferred-qa-followups.md`; mọi mục vẫn là `DEFER`/`PARTIAL`/`NOT_RUN`, không tự thành PASS hay authority. |
 
 ## QA & Migration Rehearsal Protocol (Post-Cutover Standard)
 
-Mọi tác vụ QA sau cut-over (cần dữ liệu snapshot thật) hoặc Migration Rehearsal được thực hiện theo `AGENTS.md` §9:
-1. Tạo branch tạm: `neonctl branches create --name qa-<task_id> --parent main`
-2. Chạy Data Scrubbing: `uv run python -m scripts.prepare_qa_branch --branch-url "<QA_DSN>" --prod-key "<PROD_KEY>" --pin 123456`
-3. Thực hiện QA: Test PIN `123456`, Session Cookie `ms_session=qa_token`, flag `NEON_QA_BRANCH=1`.
-4. Dọn dẹp: `neonctl branches delete qa-<task_id>` sau khi xuất receipt.
+Theo [qa-framework.md §2.1](../docs/qa-framework.md): local/CI dùng Postgres throwaway; high-fidelity
+Neon staging dùng nhánh develop bền vững. Agent phải yêu cầu Owner Restore/Sync develop từ main và
+chờ xác nhận trước approved scrub, rồi dùng backend local/Vite và Đăng nhập QA. Agent không tự
+tạo/xóa/restore nhánh Neon, không truyền secret qua inline command, không dùng production làm test cell.
+Recipe ephemeral/cookie injection cũ đã được thay thế trong migration 2026-09-06; gate riêng của task vẫn áp dụng.
 
 ## Cách dùng
 1. Mở một task Codex Desktop mới trong repo này.

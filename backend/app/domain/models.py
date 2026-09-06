@@ -383,6 +383,11 @@ class Tracker(UUIDTimestampModel, table=True):
             "(reminder_action = 'confirm_event' AND input_mode = 'event')",
             name="reminder_action_input_mode",
         ),
+        CheckConstraint(
+            "reminder_time IS NULL OR "
+            "(EXTRACT(MICROSECONDS FROM reminder_time)::bigint % 1000000) = 0",
+            name="reminder_time_whole_second",
+        ),
         ForeignKeyConstraint(
             ["group_id", "kind"],
             [f"{SCHEMA}.tracker_group.id", f"{SCHEMA}.tracker_group.kind"],
@@ -654,7 +659,7 @@ class ReminderDispatch(UUIDTimestampModel, table=True):
             name="subject_type",
         ),
         CheckConstraint(
-            "status IN ('pending', 'sent', 'no_device')",
+            "status IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted')",
             name="status",
         ),
         CheckConstraint(
@@ -686,6 +691,106 @@ class ReminderDispatch(UUIDTimestampModel, table=True):
     confirmed_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
+class TrackerReminderBatch(UUIDTimestampModel, table=True):
+    """One immutable tracker-reminder membership generation for a civil instant."""
+
+    __tablename__ = "tracker_reminder_batch"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        UniqueConstraint(
+            "occurrence_on",
+            "reminder_time",
+            "generation",
+            name="uq_tracker_reminder_batch_occurrence_time_generation",
+        ),
+        CheckConstraint("generation >= 1", name="generation"),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted')",
+            name="status",
+        ),
+        CheckConstraint("attempt_count >= 0 AND attempt_count <= 4", name="attempt_count"),
+        CheckConstraint(
+            "(EXTRACT(MICROSECONDS FROM reminder_time)::bigint % 1000000) = 0",
+            name="time_whole_second",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    occurrence_on: date = Field(sa_column=Column(Date, nullable=False))
+    reminder_time: time = Field(sa_column=Column(Time, nullable=False))
+    generation: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
+    status: str = Field(
+        default="pending",
+        sa_column=Column(Text, nullable=False, server_default=text("'pending'")),
+    )
+    attempt_count: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default=text("0")),
+    )
+    last_attempt_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
+class TrackerReminderBatchItem(UUIDTimestampModel, table=True):
+    """Non-sensitive configuration snapshot for one immutable batch member."""
+
+    __tablename__ = "tracker_reminder_batch_item"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        UniqueConstraint(
+            "batch_id",
+            "dispatch_id",
+            name="uq_tracker_reminder_batch_item_batch_dispatch",
+        ),
+        UniqueConstraint(
+            "dispatch_id",
+            name="uq_tracker_reminder_batch_item_dispatch_id",
+        ),
+        ForeignKeyConstraint(
+            ["batch_id"],
+            [f"{SCHEMA}.tracker_reminder_batch.id"],
+            name="fk_tracker_reminder_batch_item_batch_id",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["dispatch_id"],
+            [f"{SCHEMA}.reminder_dispatch.id"],
+            name="fk_tracker_reminder_batch_item_dispatch_id",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("reminder_mode IN ('fixed', 'after_entry')", name="reminder_mode"),
+        CheckConstraint("reminder_interval_days >= 1", name="reminder_interval_days"),
+        CheckConstraint(
+            "reminder_action IN ('confirm_event', 'open_tracker')",
+            name="reminder_action",
+        ),
+        CheckConstraint("input_mode IN ('event', 'money', 'quantity')", name="input_mode"),
+        CheckConstraint(
+            "state IN ('pending', 'sent', 'no_device', 'cancelled', 'exhausted')",
+            name="state",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    batch_id: UUID = Field(sa_column=Column(PGUUID(as_uuid=True), nullable=False))
+    dispatch_id: UUID = Field(sa_column=Column(PGUUID(as_uuid=True), nullable=False))
+    reminder_mode: str = Field(sa_column=Column(Text, nullable=False))
+    reminder_interval_days: int = Field(sa_column=Column(Integer, nullable=False))
+    reminder_action: str = Field(sa_column=Column(Text, nullable=False))
+    input_mode: str = Field(sa_column=Column(Text, nullable=False))
+    state: str = Field(
+        default="pending",
+        sa_column=Column(Text, nullable=False, server_default=text("'pending'")),
     )
 
 
@@ -755,3 +860,4 @@ Index(
     ReminderDispatch.__table__.c.subject_id,
 )
 Index("ix_reminder_dispatch_status", ReminderDispatch.__table__.c.status)
+Index("ix_tracker_reminder_batch_status", TrackerReminderBatch.__table__.c.status)

@@ -24,6 +24,9 @@ import {
   type PrivateSessionState,
 } from '@/private-gate'
 import { taskInvalidationKey } from '@/task-ui'
+import { noteInvalidationKey } from '@/note-ui'
+import { trackerInvalidationKey } from '@/tracker-ui'
+import { subscriptionInvalidationKey } from '@/subscription-ui'
 
 type Props = {
   session: PrivateSessionState
@@ -81,6 +84,9 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
     invalidateStatus()
     void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
     void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+    void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
+    void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+    void queryClient.invalidateQueries({ queryKey: subscriptionInvalidationKey })
     onVisibilityChange?.()
     return true
   }, [invalidateStatus, onVisibilityChange, privateUntil, queryClient])
@@ -151,6 +157,9 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
       invalidateStatus()
       void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
       void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+      void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: subscriptionInvalidationKey })
       onVisibilityChange?.()
     },
     onError: reportError,
@@ -163,10 +172,17 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
       // leave the previous result rendered while the network request is pending.
       queryClient.removeQueries({ queryKey: taskInvalidationKey })
       queryClient.removeQueries({ queryKey: ['calendar'] })
+      queryClient.removeQueries({ queryKey: noteInvalidationKey })
+      queryClient.removeQueries({ queryKey: trackerInvalidationKey })
+      queryClient.removeQueries({ queryKey: subscriptionInvalidationKey })
       setPrivateOverride(null)
       setErrorText(null)
       invalidateStatus()
       void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+      void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: subscriptionInvalidationKey })
       onVisibilityChange?.()
     },
     onError: reportError,

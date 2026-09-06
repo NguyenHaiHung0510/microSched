@@ -18,7 +18,58 @@ SELECT count(*)::bigint
 FROM microsched.push_subscription
 """
 
-DISPATCH_GROUPS_QUERY = """
+BATCH_GROUPS_QUERY = """
+SELECT
+    batch.occurrence_on,
+    batch.reminder_time,
+    batch.generation,
+    batch.status,
+    batch.attempt_count,
+    count(item.id) FILTER (WHERE item.state <> 'cancelled')::bigint AS active_member_count,
+    count(item.id) FILTER (WHERE item.state = 'cancelled')::bigint AS cancelled_member_count,
+    min(batch.created_at) AS earliest_created_at,
+    max(batch.updated_at) AS latest_updated_at,
+    min(batch.last_attempt_at) AS earliest_last_attempt_at,
+    max(batch.last_attempt_at) AS latest_last_attempt_at
+FROM microsched.tracker_reminder_batch AS batch
+LEFT JOIN microsched.tracker_reminder_batch_item AS item ON item.batch_id = batch.id
+WHERE
+    (batch.created_at BETWEEN $1 AND $2)
+    OR (batch.updated_at BETWEEN $1 AND $2)
+    OR (batch.last_attempt_at BETWEEN $1 AND $2)
+GROUP BY batch.id, batch.occurrence_on, batch.reminder_time, batch.generation,
+         batch.status, batch.attempt_count
+ORDER BY batch.occurrence_on, batch.reminder_time, batch.generation,
+         batch.status, batch.attempt_count
+"""
+
+LEGACY_DISPATCH_GROUPS_QUERY = """
+SELECT
+    subject_type AS kind,
+    dispatched_on AS occurrence_on,
+    status,
+    attempt_count,
+    count(*)::bigint AS dispatch_count,
+    min(created_at) AS earliest_created_at,
+    max(created_at) AS latest_created_at,
+    min(last_attempt_at) AS earliest_last_attempt_at,
+    max(last_attempt_at) AS latest_last_attempt_at,
+    count(confirmed_entry_id)::bigint AS confirmed_count
+FROM microsched.reminder_dispatch
+WHERE
+    NOT EXISTS (
+        SELECT 1 FROM microsched.tracker_reminder_batch_item AS batch_item
+        WHERE batch_item.dispatch_id = reminder_dispatch.id
+    )
+    AND (
+        (created_at BETWEEN $1 AND $2)
+        OR (last_attempt_at BETWEEN $1 AND $2)
+    )
+GROUP BY subject_type, dispatched_on, status, attempt_count
+ORDER BY subject_type, dispatched_on, status, attempt_count
+"""
+
+DISPATCH_GROUPS_QUERY_PRE_0012 = """
 SELECT
     subject_type AS kind,
     dispatched_on AS occurrence_on,
@@ -96,6 +147,22 @@ def _format_group(row: Any) -> dict[str, object]:
     }
 
 
+def _format_batch_group(row: Any) -> dict[str, object]:
+    return {
+        "occurrence_on": row["occurrence_on"].isoformat(),
+        "reminder_time": row["reminder_time"].isoformat(),
+        "generation": row["generation"],
+        "status": row["status"],
+        "attempt_count": row["attempt_count"],
+        "active_member_count": row["active_member_count"],
+        "cancelled_member_count": row["cancelled_member_count"],
+        "earliest_created_at": _utc_rfc3339(row["earliest_created_at"]),
+        "latest_updated_at": _utc_rfc3339(row["latest_updated_at"]),
+        "earliest_last_attempt_at": _utc_rfc3339(row["earliest_last_attempt_at"]),
+        "latest_last_attempt_at": _utc_rfc3339(row["latest_last_attempt_at"]),
+    }
+
+
 async def collect_receipt(
     database_url: str,
     *,
@@ -109,8 +176,21 @@ async def collect_receipt(
     try:
         connection = await asyncpg.connect(asyncpg_dsn(database_url))
         push_subscription_count = await connection.fetchval(PUSH_SUBSCRIPTION_COUNT_QUERY)
+        batch_table = await connection.fetchval(
+            "SELECT to_regclass('microsched.tracker_reminder_batch')"
+        )
+        if batch_table is None:
+            batch_rows = []
+            legacy_query = DISPATCH_GROUPS_QUERY_PRE_0012
+        else:
+            batch_rows = await connection.fetch(
+                BATCH_GROUPS_QUERY,
+                window_started_at,
+                observed_at,
+            )
+            legacy_query = LEGACY_DISPATCH_GROUPS_QUERY
         rows = await connection.fetch(
-            DISPATCH_GROUPS_QUERY,
+            legacy_query,
             window_started_at,
             observed_at,
         )
@@ -124,7 +204,8 @@ async def collect_receipt(
         "window_started_at": _utc_rfc3339(window_started_at),
         "window_minutes": window_minutes,
         "push_subscription_count": push_subscription_count,
-        "dispatch_groups": [_format_group(row) for row in rows],
+        "batch_groups": [_format_batch_group(row) for row in batch_rows],
+        "legacy_unlinked_dispatch_groups": [_format_group(row) for row in rows],
     }
 
 

@@ -258,15 +258,18 @@ export function TasksScreen() {
   }, [queryClient, timeline.isSuccess])
 
   const create = useMutation({
-    mutationFn: (payload: TaskPayload) =>
+    mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       apiRequest<Task>('/api/tasks', {
         method: 'POST',
-        body: JSON.stringify({ ...payload, items: [] }),
+        body: JSON.stringify({ ...payload, items: payload.items ?? [] }),
       }),
-    onSuccess: () => {
-      setQuickTitle('')
-      setCreateOpen(false)
-      window.requestAnimationFrame(() => quickInputRef.current?.focus())
+    onSuccess: (_task, variables) => {
+      if (variables.source === 'quick') {
+        setQuickTitle('')
+        window.requestAnimationFrame(() => quickInputRef.current?.focus())
+      } else {
+        setCreateOpen(false)
+      }
       void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
       void queryClient.invalidateQueries({ queryKey: ['calendar'] })
     },
@@ -406,14 +409,17 @@ export function TasksScreen() {
     const title = quickTitle.trim()
     if (!title || create.isPending) return
     create.mutate({
-      id: uuidv7(),
-      title,
-      body_md: null,
-      priority: null,
-      due_precision: 'date',
-      due_on: todayInVietnam(),
-      due_at: null,
-      is_private: false,
+      source: 'quick',
+      payload: {
+        id: uuidv7(),
+        title,
+        body_md: null,
+        priority: null,
+        due_precision: 'date',
+        due_on: todayInVietnam(),
+        due_at: null,
+        is_private: false,
+      },
     })
   }
 
@@ -480,13 +486,29 @@ export function TasksScreen() {
           <Input data-testid="quick-add-input" ref={quickInputRef} className="h-11 flex-1 rounded-lg bg-card px-4 shadow-1" aria-label="Thêm task nhanh" placeholder="Thêm việc rồi lưu…" value={quickTitle} onChange={(event) => setQuickTitle(event.target.value)} />
           <Button data-testid="quick-add-submit" className="h-11 rounded-lg px-5" size="lg" type="submit" disabled={!quickTitle.trim() || create.isPending}>{create.isPending ? 'Đang thêm…' : 'Thêm'}</Button>
         </form>
-        {create.isError ? <p className="mt-2 text-sm text-bad" role="alert">{errorMessage(create.error)}</p> : null}
+        {create.isError && create.variables?.source === 'quick' ? (
+          <p data-testid="quick-add-error" className="mt-2 text-sm text-bad" role="alert">
+            {errorMessage(create.error)}
+          </p>
+        ) : null}
         <div className="mt-2 px-1">
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild><Button className="h-auto py-1 pl-0! pr-0! text-xs" size="sm" variant="link"><Plus data-icon="inline-start" />Thêm chi tiết</Button></DialogTrigger>
             <DialogContent data-testid="task-create-dialog" className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
               <DialogHeader><DialogTitle>Tạo task</DialogTitle><DialogDescription>Thêm ghi chú, ưu tiên, hạn hoặc chế độ riêng tư.</DialogDescription></DialogHeader>
-              <TaskForm submitLabel="Tạo task" pending={create.isPending} onSubmit={(payload) => create.mutate({ ...payload, id: uuidv7() })} onCancel={() => setCreateOpen(false)} />
+              {create.isError && create.variables?.source === 'detail' ? (
+                <p data-testid="task-create-error" className="text-sm text-bad" role="alert">
+                  {errorMessage(create.error)}
+                </p>
+              ) : null}
+              <TaskForm
+                submitLabel="Tạo task"
+                pending={create.isPending}
+                onSubmit={(payload) =>
+                  create.mutate({ payload: { ...payload, id: uuidv7() }, source: 'detail' })
+                }
+                onCancel={() => setCreateOpen(false)}
+              />
             </DialogContent>
           </Dialog>
         </div>
@@ -1276,7 +1298,7 @@ export function LegacyTasksScreen() {
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       apiRequest<Task>('/api/tasks', {
         method: 'POST',
-        body: JSON.stringify({ ...payload, items: [] }),
+        body: JSON.stringify({ ...payload, items: payload.items ?? [] }),
       }),
     // Cùng luật với `refresh()` của TaskCard, và đây mới là chỗ bug được BÁO:
     // nút "Đang thêm…" đọc `create.isPending`, mà React Query giữ `isPending` cho

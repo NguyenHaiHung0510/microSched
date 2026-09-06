@@ -1,57 +1,44 @@
-# AGENTS.md — hướng dẫn cho executor
+# AGENTS.md — microSched
 
-Đọc **`CLAUDE.md`** trước tiên — đó là tài liệu chỉ dẫn dự án, quyết định đã khóa, hard boundaries, và quy ước làm việc của repo này. Mọi điều trong đó áp dụng cho mọi executor.
+Canonical entry point for every actor, including T1. Owner-approved migration: 2026-09-06. CLAUDE.md is compatibility-only.
 
-Nếu `CLAUDE.md` **tự mâu thuẫn** giữa phần current state và một dated update, hoặc mâu thuẫn với cây code đang thấy trên đĩa ⇒ **dừng và nêu đủ hai phía**; không tự chọn phần "có vẻ mới hơn". *(Đã xảy ra thật: đoạn đầu ghi "pre-code, no application code" trong khi cuối cùng đoạn đó ghi "003–007 all DONE" — sống 2 ngày, `harness-audit/02` mới bắt được.)*
+## Read what applies
 
-Thêm cho agent thi công (vai T2 theo `docs/devops-brief.md` §7):
+- [docs/harness-policy.md](docs/harness-policy.md): read for authority, delegation, review, merge/release or harness changes. T1 has bounded inherited authority to work/delegate/merge; no routine coordination-record prerequisite. Elevation needs a holder-issued grant; Owner-only boundaries remain.
+- [docs/project-guide.md](docs/project-guide.md): project discovery and domain reading map. Read the relevant brief and task contract, not every linked file/history.
+- [agent-tasks/README.md](agent-tasks/README.md): navigation/status, not approval. Re-query GitHub/runtime and task headers before current-state decisions.
+- Approved specs/briefs control product meaning. Material requirement gaps or conflicting decisions: present both sides to Owner. Explicit approved migration supersedes the named old rules; history does not reactivate them.
 
-- Việc được giao nằm ở `agent-tasks/NNN-<slug>.md` — spec tự-chứa. Làm **đúng spec, không hơn**; mục "KHÔNG được làm" quan trọng ngang mục "Phải làm".
-- **Mọi thay đổi, kể cả docs**, đều làm trên branch riêng → PR nhỏ vào `develop`. Code task dùng branch **`feat/NNN-<slug>`**; không commit thẳng `develop`, không đụng `main`.
-- `docs/*.md` là decision record **đã chốt** — chỉ sửa đúng mục spec giao. Muốn làm khác điều đã ✅ CHỐT, hoặc thấy 2 brief mâu thuẫn → **dừng, ghi nhận, để chính chủ/T1 quyết** — đừng tự phát minh kiến trúc.
-- **Đụng vào UI thì đọc `docs/ui-brief.md` TRƯỚC KHI viết dòng đầu tiên** — §6 là luật cứng, không phải gợi ý: không viết `<button>`/`<input>`/`<select>` thô (dùng `@/components/ui/*`, thiếu thì thêm component chứ đừng vá tại chỗ); không hardcode màu (mọi màu qua token trong `index.css`); không đặt chiều cao cứng cho thẻ; chữ không nhỏ hơn 12px; không có tương tác nào chỉ sống bằng `hover` (thiết bị chính của chủ là iPhone); light mode, đừng tự thêm dark. *Lý do (đo thật ở 008): executor bắt chước code đang có — nó tự dùng `Button` của shadcn vì `App.tsx` đã dùng, không vì ai bảo. Nhưng **bắt chước không phải luật**: cùng lúc đó nó vẫn để lại 2 thẻ `<button>` thô trong `TaskForm.tsx`. Muốn ràng buộc UI thì phải viết thành luật ở đây — skill của T1 không băng qua được sang harness khác, chỉ văn bản trong repo mới tới nơi.*
-- Không bao giờ hỏi hay echo secret thật; code bằng `.env.example` (giá trị thật do chính chủ đặt tay). pre-commit + gitleaks đang hoạt động — đừng tìm cách vòng qua.
-- Bí quá ~2 vòng thử → dừng + báo cáo kèm log, đừng đoán tiếp.
-- **Lệnh bị timeout ≠ lệnh chưa làm gì.** Exit code chỉ nói "tôi bị giết", không nói "không có gì xảy ra" — `npm install` / `docker build` / `uv sync` thường đã ghi xong phần lớn công việc trước khi bị cắt. **Bắt buộc kiểm tra trạng thái thật trên đĩa** (`npm ls --depth=0`, `ls`, `git status`) trước khi kết luận thất bại. *Sự cố thật 2026-07-20 (task 004): báo "chưa có dependency/lockfile" trong khi lockfile 263KB và `node_modules` đầy đủ đang nằm đó — chỉ là lệnh vượt ngưỡng ~124s.* Với lệnh cài đặt dài: chia nhỏ thay vì một lệnh lớn.
-- **`git add` xong chưa chắc file đã vào index — phải xác nhận.** `.gitignore` ở gốc repo theo khuôn Python và **nuốt im lặng** một số đường dẫn của hệ JS. Sau khi add, chạy `git status --short` + `git ls-files <thư-mục>`; nghi ngờ thì `git check-ignore -v <file>`. *Sự cố thật 2026-07-20 (task 004): mẫu `lib/` (thư mục phân phối Python) nuốt mất `frontend/src/lib/utils.ts` của shadcn → build local xanh (file có trên đĩa) nhưng CI đỏ (file không có trong git).* **Bài học chung: build local xanh không chứng minh gì về thứ bạn đã commit — chỉ CI mới chứng minh.**
-- **Dời file/thư mục thì phải kiểm mọi luật neo vào path cũ.** Sau `git mv` hoặc đổi layout: audit `.gitignore`, CI `paths:`, `CODEOWNERS`, pre-commit `files:`, import path và script hard-code path. **Đọc rule chưa đủ — chạy cơ chế thật để chứng minh nó còn phủ** (`git check-ignore -v <file>`). *Sự cố thật 2026-07-23: `harness-reports/*` có `/` ở giữa nên git neo vào gốc repo; thư mục dời sang `agent-tasks/` là mẫu hết khớp, báo cáo thành untracked-nhưng-không-ignored trên repo public — gitleaks không chặn vì đây không phải secret.*
-- **Chờ CI xong rồi mới báo cáo hoàn thành.** Acceptance ghi "CI xanh" thì phải thật sự thấy xanh: `gh pr checks <PR> --watch`. Verify local pass mà CI đỏ = task **chưa xong**.
-- **Giữ nguyên tên các required check** — `Backend checks` · `Frontend checks` · `Repository hooks` · `Migration QA` · `Production dependency check` (đúng như `.github/workflows/ci.yml`). Đổi tên job làm ruleset `protect-main` **chờ một check không bao giờ tới**, PR treo vô hạn mà không có lỗi đỏ nào để nhìn.
-- **Guardrail/test an toàn mới phải chứng minh được là BIẾT ĐỎ.** Cố ý phá đúng hành vi nó canh → thấy đỏ đúng lý do → hoàn nguyên → thấy xanh. Chạy test ở trạng thái đúng rồi thấy xanh **không chứng minh test đang bảo vệ điều gì**.
-- **Lời khai không phải bằng chứng — biên lai mới là.** Câu "tôi đã làm xong" không đóng được task; thứ đóng task là **biên lai máy kiểm được**: số PR + `gh pr checks <PR>` xanh + diff đọc được. Lý do (đo thật, task 004 ngày 2026-07-20): agent khai sai về chính việc nó vừa làm — báo "chưa có dependency" trong khi lockfile 263KB đang nằm trên đĩa. Cùng họ với luật smoke test của 008b: **kiểm git SHA đã deploy, không kiểm `status: ok`** — một deploy hỏng nửa chừng để lại máy cũ phục vụ vui vẻ. Khi được điều phối bởi một agent khác thay vì bởi chính chủ, luật này là thứ duy nhất còn lại chặn lỗi lan sang bước sau.
-- Commit message tiếng Việt, giải thích *tại sao*, kèm `Co-Authored-By:` của agent thực thi (xem `git log`).
-- **Full-access cho git/Docker (policy hiện hành: `docs/devops-brief.md` §7 ACTIVE):** mặc định bạn chạy `workspace-write` — sandbox Windows chặn cứng `.git` bằng ACL (không sửa được bằng `writable_roots`) và không chạm được Docker. Khi T1 gọi bạn kèm cờ `-s danger-full-access` (hoặc `--dangerously-bypass-approvals-and-sandbox`) cho **một lệnh cụ thể**, cờ đó chỉ có hiệu lực cho đúng lệnh đó — không phải trạng thái bền, không cần ai "tắt lại". Trong lệnh full-access, bạn được:
-  - Tự `git add`/`commit`/`push` sau khi sửa code xong — đúng quy ước commit ở trên (tiếng Việt, qua file UTF-8, `Co-Authored-By`).
-  - Tự `gh pr merge` **CHỈ SAU KHI** T1/T3 đã xác nhận review đạt trong prompt giao việc — **không bao giờ** tự `gh pr merge --auto` hay tự merge khi chưa có xác nhận review; bỏ qua review là bỏ đúng bước đã nhiều lần bắt bug thật trong dự án này.
-  - Chạy migration (`alembic`), `gitleaks`, và lane test cần Docker (PG thật).
-  Mọi luật khác không đổi: dừng sau ~2 vòng bí, chờ `gh pr checks --watch` xanh trước khi báo xong, biên lai vẫn là PR#+CI xanh+diff đọc được (full-access không miễn bạn khỏi luật này, nó chỉ mở thêm việc bạn LÀM được).
-- **Lái trình duyệt = dùng profile Chrome THẬT của chủ.** (Kiểm chứng 2026-07-22: hoạt động tốt, nhiều profile.) Profile đó đang đăng nhập sẵn mọi thứ của một người thật, nên nó **không phải môi trường test** — nó là máy của chủ, chỉ tình cờ có cửa vào. Luật:
-  - **Chỉ dùng đúng những tài khoản Google chủ nêu tên trong prompt giao việc.** Có một tài khoản chính chủ **cấm đụng**; nó được nêu tên trong prompt, không ghi ở đây. Không tự chọn tài khoản khác, không tự đăng nhập tài khoản mới.
-  - **Chọn tài khoản xong phải KHẲNG ĐỊNH, không được liếc.** Sau khi bấm vào một tài khoản trong account chooser, **đọc đúng địa chỉ hiển thị trên màn xác nhận** rồi mới đi tiếp — nhưng trong báo cáo **chỉ nêu "đã xác nhận đúng vai được giao"**, không chép địa chỉ thật vào artifact. Chụp màn hình rồi bấm theo toạ độ là hợp lệ (đó là cách agent "nhìn"), nhưng ảnh chỉ chứng minh *trước khi bấm*; thứ chứng minh *đã bấm đúng* là màn xác nhận. Google sắp lại thứ tự danh sách theo lần dùng gần nhất, nên vị trí không phải hằng số.
-  - **Chỉ điều hướng trong phạm vi app** (`microsched.fly.dev`, `localhost`) và các trang OAuth của Google cần cho luồng đăng nhập. **Không mở Gmail/Drive/GitHub/ngân hàng/tab khác**, kể cả "để kiểm tra cho chắc".
-  - **Không đọc cookie, password store, autofill, history, hay file profile trực tiếp.** Dùng trình duyệt như người dùng, không dùng như kho dữ liệu.
-  - **Không đổi setting tài khoản, không cấp thêm quyền OAuth** ngoài đúng app microSched, không bấm qua consent dialog lạ.
-  - **Ảnh chụp màn hình phải soi trước khi dán vào PR** — thanh bookmark, tên tab khác, tên/avatar profile đều lọt vào ảnh. Cắt về đúng nội dung trang.
-  - **Không dán địa chỉ email thật vào PR/commit/docs.** Repo này **public** và threat model của chủ là **social engineering** (`docs/devops-brief.md` §1) — danh sách tài khoản là vật liệu dựng pretext. Viết theo vai: *"tài khoản trong allowlist"* / *"tài khoản ngoài allowlist"*. **Không viết địa chỉ thật vào file này, kể cả dạng che một phần** — phần lộ ra vẫn đủ làm mồi dựng pretext, mà file này thì nằm trên repo public.
-  - Xong việc: đăng xuất khỏi app, đóng tab, **không để lại phiên đang mở**.
-- **Text tiếng Việt phải đi qua file UTF-8, không qua tham số inline.** Mô tả PR: ghi ra file `.md` rồi `gh pr create --body-file <file>` — **không bao giờ** `--body "..."`. Commit message dài: `git commit -F <file>`. *Lý do (sự cố thật, PR #5 ngày 2026-07-20): truyền inline qua PowerShell làm mất toàn bộ dấu tiếng Việt (→ `?`) và nuốt ký tự `"` trong output JSON dán kèm. Mất dấu là **mất hẳn**, không decode ngược được — phải viết lại tay.*
+## Hard boundaries
 
+- Owner/task scope is the authority ceiling. T1 chooses proportional evidence and risk-based ad-review, including for its own work. Required/committed checks, reviews and acceptance cannot be dropped to make failure pass. Reviewers stay read-only absent a separate grant.
+- No secrets, credentials, real account identifiers or production personal payloads in prompts/logs/fixtures/commits/PRs. Use .env.example; never bypass secret scanning.
+- Changes including docs: separate branch → PR into develop; develop deploys, main is release-label only. Code task branches feat/NNN-slug; other work follows the host branch convention.
+- Fresh exact head/base/diff/gates and `--match-head-commit` before merge; no blind auto-merge. Merge does not authorize cleanup. Retain dirty/active/unique work.
+- No auto-migration on deploy. Never downgrade/round-trip live Neon; destructive migration tests use throwaway local/CI Postgres. Old app/stores are read-only rollback references; see project-guide.
+- Neon branch create/delete/Restore/Sync remains Owner-operated. High-fidelity QA: ask Owner to sync develop from main, await confirmation, then approved scrub. Canonical procedure is [qa-framework](docs/qa-framework.md) §2.1. No production seed/fault/migration-rehearsal/repeated automation.
+- Before UI writes, read [ui-brief](docs/ui-brief.md) and relevant QA contract. Existing shadcn components, no raw button/input/select; CSS tokens, no hardcoded colors; self-hosted Nunito; light-only; no hard card heights; text ≥12px; no hover-only interactions. Skills do not replace these decisions.
+- Significant UI work: prefer full local app preview using existing QA setup. Owner preview ≠ CI/device/production acceptance.
 
+## Browser/data safety
 
-## 9. QA & Migration Rehearsal trên Neon Develop/Staging Branch (Post-Cutover Standard)
+The Owner's real browser profile is not disposable. Read the applicable QA contract first.
 
-Từ ngày 2026-08-25 (sau khi cut-over sang Neon production), mọi tác vụ QA giao diện với dữ liệu lớn, kiểm thử migration rehearsal, hoặc test API high-fidelity **phải tuân theo quy trình chuẩn hóa 3 tầng**:
+- Only explicitly allowed accounts; confirm the selected role on the post-selection screen, not list position. Report role, never real address.
+- Stay in microSched/localhost and necessary Google OAuth pages. No unrelated tabs/apps/account settings/new consent scopes.
+- Never read cookie/password/autofill/history/profile stores directly. No real email, even partly redacted, in public artifacts.
+- Inspect/crop screenshots for unrelated tabs, bookmarks and identity before publication.
+- Synthetic disposable QA uses isolated contexts, not real profiles/copied storage. Physical iPhone is separate from viewport emulation.
+- Log out of the app and close task tabs after use; preserve sanitized receipts.
 
-1. **Tầng 1 (Local / CI fast test):** Unit test, Linting, Migration round-trip (`downgrade base -> upgrade head`) chạy trên local container / CI service (`pgvector:pg18`). Chi phí $0, 0 CU-h.
-2. **Tầng 2 (Neon Staging/Develop Branch QA — Bền vững & Duyệt thủ công):**
-   - **🔒 Điểm dừng bắt buộc (Stop & Request Owner):** Agent **không có quyền** và **không được tự chạy lệnh** tạo/xóa/restore nhánh Neon (`neonctl`). Trước khi bắt đầu phiên QA trên dữ liệu mẫu, Agent **bắt buộc phải dừng lại và yêu cầu Owner**:
-     > *"Vui lòng lên Neon Console đồng bộ (Restore/Sync) nhánh `develop` từ `main` (Production) và xác nhận sau khi hoàn tất để tiếp tục."*
-   - **Data Scrubbing tự động:** Sau khi Owner xác nhận đã sync xong nhánh `develop`, Agent chạy:
-     ```bash
-     uv run python -m scripts.prepare_qa_branch
-     ```
-     * Cơ chế: Format-preserving scramble text/markdown 1:1, re-encrypt cột private bằng QA Key (hoặc synthesize dummy text), gán test PIN `123456`, xóa sạch push token/audit log và nạp session `owner@test.local`. Script tự đối chiếu positive allowlist `NEON_DEVELOP_BRANCH_KEY` để chống chạy nhầm production.
-   - **Chạy QA / Test Local:**
-     * Migration Rehearsal: `uv run alembic upgrade head`
-     * Browser QA: Chạy backend (`APP_ENV=local`, uvicorn tự đọc `NEON_DEVELOP_BRANCH_KEY`) và frontend (`npm run dev`). Mở `http://localhost:5173`, bấm **"Đăng nhập QA (Bypass OAuth)"** (`/auth/dev-session`) để vào thẳng tài khoản test `owner@test.local` với PIN `123456`.
-3. **Tầng 3 (Production Live):** Fly.io + Neon branch `main`. Tuyệt đối không chạy test phá hủy hay automation lặp trực tiếp lên Production.
+## Execution/evidence
+
+- Observed output versus inference must stay distinct; retain relevant raw output/receipt links. Local ≠ committed ≠ CI ≠ runtime/device ≠ production. Unrun is NOT_RUN/UNVERIFIED, not PASS.
+- Timeout ≠ no side effects: inspect disk/process/package/image state before retrying. Split long installs; after ~2 unproductive attempts at one blocker, stop and report logs.
+- After staging, verify `git status --short` and `git ls-files`; use `git check-ignore -v` if files vanish. One writer per worktree, exact scope.
+- Moves require checking ignore/CI filters/CODEOWNERS/hooks/imports/scripts and exercising affected mechanisms. New safety guards need fail-for-intended-violation → restore → PASS proof.
+- Live commands: backend/pyproject.toml, frontend/package.json, workflows. Python/tests in backend, npm in frontend, hooks at root. Ask Owner to start Docker when needed; CLI presence does not prove daemon.
+- Preserve required-check names: Backend checks, Frontend checks, Repository hooks, Migration QA, Production dependency check; honor other configured required gates too.
+- When changing .github configuration, verify which branch each consumer reads and writes (including scheduled workflows, community files and Dependabot target-branch). Default-branch delivery requires the authorized release flow; do not assume merging develop activates every consumer.
+- Vietnamese commit/PR text uses UTF-8 files (`git commit -F`, `gh pr create --body-file`), not inline shell arguments. Commits explain why and include executor Co-Authored-By.
+- Interval/cron/poll/retry changes: inspect finite-resource quotas and configs. Verify fallback/rollback before relying on it. Production proof: exact /api/readyz.commit + db=up, not merely /api/healthz.

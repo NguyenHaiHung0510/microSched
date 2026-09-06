@@ -1,0 +1,83 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.4, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.14.2
+collected 491 items / 315 deselected / 176 selected
+
+tests\test_annotations_api.py ..                                         [  1%]
+tests\test_calendar_api.py .                                             [  1%]
+tests\test_cutover_v2_pg.py ............................................ [ 26%]
+...............                                                          [ 35%]
+tests\test_migration_0007.py ..                                          [ 36%]
+tests\test_migration_0011.py ..                                          [ 37%]
+tests\test_notes_api.py .....                                            [ 40%]
+tests\test_private_api.py ....                                           [ 42%]
+tests\test_private_gate.py ......                                        [ 46%]
+tests\test_push_api.py ..............                                    [ 53%]
+tests\test_reminder_delivery_receipt.py .                                [ 54%]
+tests\test_scheduler_ownership_pg.py ........                            [ 59%]
+tests\test_schema_models.py ....                                         [ 61%]
+tests\test_settings_api.py ...                                           [ 63%]
+tests\test_subscription_api.py .................                         [ 72%]
+tests\test_task_idempotent_create.py .                                   [ 73%]
+tests\test_task_item_trigger.py .......                                  [ 77%]
+tests\test_task_temporal_precision_pg.py ....                            [ 79%]
+tests\test_task_timeline_contract.py ...                                 [ 81%]
+tests\test_tasks_api.py .......                                          [ 85%]
+tests\test_tasks_store.py ..........                                     [ 90%]
+tests\test_tracker_api.py ................                               [100%]
+
+============================== warnings summary ===============================
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+tests/test_annotations_api.py::test_annotation_crud_validation_and_idempotency
+tests/test_calendar_api.py::test_calendar_crud_import_visibility_and_safety
+tests/test_notes_api.py::test_note_privacy_idempotency_and_rejections
+tests/test_tasks_api.py::test_task_http_rejections_cover_401_404_422_and_locked_parent
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\.venv\Lib\site-packages\fastapi\routing.py:352: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    return await dependant.call(**values)
+
+tests/test_subscription_api.py::test_tracker_type_guard_and_reverse_guard
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\app\web\routers\subscription.py:79: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    raise _invalid(error) from error
+
+tests/test_subscription_api.py::test_tracker_type_guard_and_reverse_guard
+tests/test_tracker_api.py::test_generic_reminder_configuration_is_canonical_and_validated
+tests/test_tracker_api.py::test_unit_and_kind_group_traps
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\app\web\routers\tracker.py:187: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    raise _tracker_invalid(error) from error
+
+tests/test_subscription_api.py::test_tracker_type_guard_and_reverse_guard
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\app\web\routers\tracker.py:199: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    raise _tracker_invalid(error) from error
+
+tests/test_subscription_api.py::test_tracker_type_guard_and_reverse_guard
+tests/test_subscription_api.py::test_restore_subscription_checks_kind_even_if_tracker_archived
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\app\web\routers\subscription.py:188: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    raise _invalid(error) from error
+
+tests/test_subscription_api.py::test_renew_requests_reload_only_after_created_commit
+tests/test_subscription_api.py::test_renew_client_expiry_validation
+tests/test_subscription_api.py::test_renew_corrupt_amount_returns_422_guided
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\app\web\routers\subscription.py:158: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    raise _invalid(error) from error
+
+tests/test_subscription_api.py::test_subscription_update_validation_and_name_conflict
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\app\web\routers\subscription.py:117: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    raise _invalid(error) from error
+
+tests/test_subscription_api.py::test_get_subscription_tampered_tag_returns_422
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\app\web\routers\subscription.py:94: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    raise _invalid(error) from error
+
+tests/test_tracker_api.py::test_k8_input_mode_validation
+tests/test_tracker_api.py::test_quantity_nonpositive_rejected
+  C:\Users\os\Desktop\ai_eng_path\microsched\worktrees\035a-scheduler-ownership\backend\app\web\routers\tracker.py:251: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    raise _tracker_invalid(error) from error
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======== 176 passed, 315 deselected, 19 warnings in 106.96s (0:01:46) =========
