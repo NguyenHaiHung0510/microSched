@@ -29,6 +29,11 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -338,41 +343,56 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           </div>
 
           <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-2">
-            <Button
-              data-testid="note-pin"
-              size="icon-lg"
-              variant="ghost"
-              className={cn('size-11 min-h-11 min-w-11', note.pinned ? 'text-primary' : 'text-muted-foreground')}
-              aria-label={note.pinned ? `Bỏ ghim ${label}` : `Ghim ${label}`}
-              disabled={update.isPending}
-              onClick={(e) => {
-                e.stopPropagation()
-                update.mutate({ pinned: !note.pinned })
-              }}
-            >
-              <Pin className={cn('size-4', note.pinned && 'fill-primary')} />
-            </Button>
-            <Button
-              data-testid="note-edit"
-              size="icon-lg"
-              variant="ghost"
-              className="size-11 min-h-11 min-w-11"
-              aria-label={`Sửa ${label}`}
-              onClick={openEditor}
-            >
-              <Edit3 />
-            </Button>
-            <Button
-              data-testid="note-delete"
-              size="icon-lg"
-              variant="ghost"
-              className="size-11 min-h-11 min-w-11 text-bad hover:text-bad"
-              aria-label={`Xoá ${label}`}
-              disabled={remove.isPending}
-              onClick={() => remove.mutate()}
-            >
-              <Trash2 />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  data-testid="note-pin"
+                  size="icon-lg"
+                  variant="ghost"
+                  className={cn('size-11 min-h-11 min-w-11', note.pinned ? 'text-primary' : 'text-muted-foreground')}
+                  aria-label={note.pinned ? `Bỏ ghim ${label}` : `Ghim ${label}`}
+                  disabled={update.isPending}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    update.mutate({ pinned: !note.pinned })
+                  }}
+                >
+                  <Pin className={cn('size-4', note.pinned && 'fill-primary')} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{note.pinned ? 'Bỏ ghim' : 'Ghim'}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  data-testid="note-edit"
+                  size="icon-lg"
+                  variant="ghost"
+                  className="size-11 min-h-11 min-w-11"
+                  aria-label={`Sửa ${label}`}
+                  onClick={openEditor}
+                >
+                  <Edit3 />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Sửa</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  data-testid="note-delete"
+                  size="icon-lg"
+                  variant="ghost"
+                  className="size-11 min-h-11 min-w-11 text-bad hover:text-bad"
+                  aria-label={`Xoá ${label}`}
+                  disabled={remove.isPending}
+                  onClick={() => remove.mutate()}
+                >
+                  <Trash2 />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Xoá</TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
