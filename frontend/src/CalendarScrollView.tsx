@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { apiRequest } from '@/api'
 import {
   formatVietnamTime,
+  VIETNAM_TIME_ZONE,
   sourceColorToken,
   todayInVietnam,
   type CalendarEvent,
@@ -63,6 +64,62 @@ type SessionLite = { private_until: string | null }
 const HEADER_HEIGHT = 56
 const EDGE_EXTEND_PX = 80
 const EXTEND_MONTHS = 6
+const CALENDAR_MODE_KEY = 'microsched:calendar-mode'
+
+function getSavedCalendarMode(): 'grid' | 'agenda' {
+  try {
+    const saved = localStorage.getItem(CALENDAR_MODE_KEY)
+    if (saved === 'agenda' || saved === 'grid') return saved
+  } catch {
+    // Ignore storage errors
+  }
+  return 'grid'
+}
+
+function saveCalendarMode(mode: 'grid' | 'agenda') {
+  try {
+    localStorage.setItem(CALENDAR_MODE_KEY, mode)
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function ensureMonthIncluded(target: YearMonth, currentMonths: YearMonth[]): YearMonth[] {
+  if (currentMonths.length === 0) return [target]
+  const targetIndex = target.year * 12 + (target.month - 1)
+  const firstIndex = currentMonths[0].year * 12 + (currentMonths[0].month - 1)
+  const lastIndex =
+    currentMonths[currentMonths.length - 1].year * 12 +
+    (currentMonths[currentMonths.length - 1].month - 1)
+
+  if (targetIndex >= firstIndex && targetIndex <= lastIndex) {
+    return currentMonths
+  }
+  if (targetIndex < firstIndex) {
+    const prepended: YearMonth[] = []
+    for (let i = targetIndex; i < firstIndex; i++) {
+      prepended.push({ year: Math.floor(i / 12), month: (i % 12) + 1 })
+    }
+    return [...prepended, ...currentMonths]
+  }
+  const appended: YearMonth[] = []
+  for (let i = lastIndex + 1; i <= targetIndex; i++) {
+    appended.push({ year: Math.floor(i / 12), month: (i % 12) + 1 })
+  }
+  return [...currentMonths, ...appended]
+}
+
+function formatTaskDue(dueAt: string): string {
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      timeZone: VIETNAM_TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(dueAt))
+  } catch {
+    return dueAt
+  }
+}
 
 async function getSources(): Promise<Envelope<CalendarSource>> {
   return apiRequest<Envelope<CalendarSource>>('/api/calendar/sources')
@@ -138,7 +195,7 @@ export function CalendarScrollView() {
   const isDesktop = useIsDesktop()
   const containerRef = useRef<HTMLDivElement>(null)
   const [quickTitle, setQuickTitle] = useState('')
-  const [calendarMode, setCalendarMode] = useState<'grid' | 'agenda'>('grid')
+  const [calendarMode, setCalendarMode] = useState<'grid' | 'agenda'>(getSavedCalendarMode)
   const [showMiniNav, setShowMiniNav] = useState(true)
   const [agendaDay, setAgendaDay] = useState(today)
   const [agendaMonth, setAgendaMonth] = useState<YearMonth>(() => ({
@@ -157,6 +214,9 @@ export function CalendarScrollView() {
   const visibleRef = useRef(new Map<string, boolean>())
   const extendingRef = useRef(false)
   const prependScrollRef = useRef<number | null>(null)
+  const gridScrollTopRef = useRef<number | null>(null)
+  const hasInitializedRef = useRef(false)
+  const agendaInputRef = useRef<HTMLInputElement>(null)
 
   const weekRows = useMemo(
     () =>
@@ -291,12 +351,70 @@ export function CalendarScrollView() {
     createQuickTask.mutate({ title: trimmed, due_on: today })
   }
 
+  const createAgendaTask = useMutation({
+    mutationFn: (variables: { title: string; due_on: string }) =>
+      apiRequest<CalendarTask>('/api/tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: variables.title,
+          status: 'open',
+          priority: null,
+          due_precision: 'date',
+          due_on: variables.due_on,
+          due_at: null,
+          is_private: false,
+        }),
+      }),
+    onSuccess: (_data, variables) => {
+      setAgendaQuickTitle('')
+      refreshAll()
+      toast.success(`Đã thêm task vào ${formatShortVietnamDate(variables.due_on)}`)
+      agendaInputRef.current?.focus()
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Không thể tạo task.')
+      agendaInputRef.current?.focus()
+    },
+  })
+
   function handleAgendaQuickSubmit(e: React.FormEvent) {
     e.preventDefault()
     const trimmed = agendaQuickTitle.trim()
-    if (!trimmed) return
-    createQuickTask.mutate({ title: trimmed, due_on: agendaDay })
-    setAgendaQuickTitle('')
+    if (!trimmed || createAgendaTask.isPending) return
+    createAgendaTask.mutate({ title: trimmed, due_on: agendaDay })
+  }
+
+  function handleModeChange(mode: 'grid' | 'agenda') {
+    if (mode === calendarMode) return
+    if (mode === 'agenda') {
+      if (containerRef.current) {
+        gridScrollTopRef.current = containerRef.current.scrollTop
+      }
+      if (!agendaDay) setAgendaDay(today)
+    }
+    setCalendarMode(mode)
+    saveCalendarMode(mode)
+  }
+
+  function handleTodayClick() {
+    const targetMonth = {
+      year: Number(today.slice(0, 4)),
+      month: Number(today.slice(5, 7)),
+    }
+    setAgendaMonth(targetMonth)
+    setAgendaDay(today)
+    setMonths((prev) => ensureMonthIncluded(targetMonth, prev))
+    if (calendarMode === 'grid') {
+      scrollToToday()
+    }
+  }
+
+  function navigateAgendaMonth(delta: number) {
+    const nextMonth = addMonths(agendaMonth.year, agendaMonth.month, delta)
+    setAgendaMonth(nextMonth)
+    const isCurrent = monthKey(nextMonth.year, nextMonth.month) === todayMonthKey
+    setAgendaDay(isCurrent ? today : `${monthKey(nextMonth.year, nextMonth.month)}-01`)
+    setMonths((prev) => ensureMonthIncluded(nextMonth, prev))
   }
 
   const allEvents = useMemo(
@@ -335,6 +453,16 @@ export function CalendarScrollView() {
 
   const privateLocked =
     !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
+
+  const agendaMonthIndex = months.findIndex(
+    (m) => m.year === agendaMonth.year && m.month === agendaMonth.month,
+  )
+  const agendaMonthEventQuery =
+    agendaMonthIndex >= 0 ? monthEventQueries[agendaMonthIndex] : undefined
+  const agendaDayEvents = eventsByDayMap.get(agendaDay) ?? []
+  const agendaDayTasks = tasksByDayMap.get(agendaDay) ?? []
+  const agendaDayAnnotations = annotationsByDayMap.get(agendaDay) ?? []
+
   const staleWithData =
     monthEventQueries.some((query) => query.isError && (query.data?.items.length ?? 0) > 0) ||
     (annotationsQuery.isError && (annotationsQuery.data?.items.length ?? 0) > 0) ||
@@ -342,6 +470,7 @@ export function CalendarScrollView() {
   const tasksTruncated = false
 
   useEffect(() => {
+    if (calendarMode !== 'grid') return
     const container = containerRef.current
     if (!container || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(
@@ -367,7 +496,7 @@ export function CalendarScrollView() {
       observer.observe(row)
     }
     return () => observer.disconnect()
-  }, [weekRows])
+  }, [weekRows, calendarMode])
 
   function scrollToRow(row: HTMLElement) {
     const container = containerRef.current
@@ -408,9 +537,19 @@ export function CalendarScrollView() {
   }
 
   useLayoutEffect(() => {
-    scrollToToday()
+    if (calendarMode !== 'grid') return
+    const container = containerRef.current
+    if (!container) return
+    if (!hasInitializedRef.current) {
+      scrollToToday()
+      hasInitializedRef.current = true
+    } else if (gridScrollTopRef.current !== null) {
+      container.scrollTop = gridScrollTopRef.current
+    } else {
+      scrollToToday()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [calendarMode])
 
   function extendMonths(direction: 'prev' | 'next') {
     const container = containerRef.current
@@ -448,8 +587,10 @@ export function CalendarScrollView() {
   }, [months])
 
   function handleScroll() {
+    if (calendarMode !== 'grid') return
     const container = containerRef.current
     if (!container) return
+    gridScrollTopRef.current = container.scrollTop
     if (container.scrollTop < EDGE_EXTEND_PX) {
       extendMonths('prev')
     } else if (
@@ -471,64 +612,59 @@ export function CalendarScrollView() {
        <div
          className={cn(
            'sticky top-0 z-10 border-b bg-background px-3 py-2',
-            'flex flex-col gap-2',
+           'flex flex-col gap-2',
          )}
        >
-         <div className="flex items-center justify-between gap-2 w-full">
-           <h3 data-testid="calendar-month-header" className="text-base font-extrabold">
+         <div className="flex flex-wrap items-center justify-between gap-2 w-full">
+           <h3 data-testid="calendar-month-header" className="text-base font-extrabold truncate">
              {calendarMode === 'agenda'
                ? monthLabel(agendaMonth.year, agendaMonth.month)
                : monthLabel(headerMonth.year, headerMonth.month)}
            </h3>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <div
-                className="flex items-center gap-1 rounded-lg bg-muted p-0.5"
+                className="flex items-center gap-1 rounded-lg bg-muted p-1"
                 role="group"
                 aria-label="Chế độ xem tháng"
               >
                 <Button
                   data-testid="calendar-mode-toggle-grid"
-                  size="sm"
+                  size="default"
                   variant={calendarMode === 'grid' ? 'secondary' : 'ghost'}
                   aria-pressed={calendarMode === 'grid'}
-                  className="h-7 px-2 text-xs font-semibold"
-                  onClick={() => setCalendarMode('grid')}
+                  className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                  onClick={() => handleModeChange('grid')}
                 >
                   Lưới
                 </Button>
                 <Button
                   data-testid="calendar-mode-toggle-agenda"
-                  size="sm"
+                  size="default"
                   variant={calendarMode === 'agenda' ? 'secondary' : 'ghost'}
                   aria-pressed={calendarMode === 'agenda'}
-                  className="h-7 px-2 text-xs font-semibold"
-                  onClick={() => {
-                    setCalendarMode('agenda')
-                    if (!agendaDay) setAgendaDay(today)
-                  }}
+                  className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                  onClick={() => handleModeChange('agenda')}
                 >
                   Theo ngày
                 </Button>
               </div>
-              <Button
-                data-testid="calendar-toggle-sidebar"
-                size="sm"
-                variant="outline"
-                className="hidden sm:inline-flex text-xs h-7 px-2"
-                onClick={() => setShowMiniNav((s) => !s)}
-              >
-                {showMiniNav ? 'Ẩn lịch nhỏ' : 'Hiện lịch nhỏ'}
-              </Button>
+              {calendarMode === 'grid' ? (
+                <Button
+                  data-testid="calendar-toggle-sidebar"
+                  size="default"
+                  variant="outline"
+                  className="hidden sm:inline-flex min-h-11 h-11 px-3 text-xs font-semibold"
+                  onClick={() => setShowMiniNav((s) => !s)}
+                >
+                  {showMiniNav ? 'Thu gọn lịch nhỏ' : 'Hiện lịch nhỏ'}
+                </Button>
+              ) : null}
               <Button
                 data-testid="calendar-today-button"
-                size="sm"
+                size="default"
                 variant="outline"
-                className="h-7 px-2 text-xs font-semibold"
-                onClick={() => {
-                  scrollToToday()
-                  setAgendaMonth({ year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) })
-                  setAgendaDay(today)
-                }}
+                className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                onClick={handleTodayClick}
               >
                 Hôm nay
               </Button>
@@ -616,7 +752,7 @@ export function CalendarScrollView() {
             Có thể chưa mới nhất — kiểm tra kết nối.
           </p>
         ) : null}
-        {annotationsQuery.isError ? (
+        {calendarMode === 'grid' && annotationsQuery.isError ? (
           <p
             data-testid="calendar-annotations-error"
             role="alert"
@@ -625,7 +761,7 @@ export function CalendarScrollView() {
             Không tải được dấu ngày.
           </p>
         ) : null}
-        {allTasksQuery.isError ? (
+        {calendarMode === 'grid' && allTasksQuery.isError ? (
           <p
             data-testid="calendar-tasks-error"
             role="alert"
@@ -653,14 +789,12 @@ export function CalendarScrollView() {
               <div className="flex items-center justify-between gap-2 pb-2 border-b">
                 <Button
                   data-testid="calendar-agenda-prev-month"
-                  size="icon-sm"
                   variant="ghost"
                   aria-label="Tháng trước"
-                  onClick={() =>
-                    setAgendaMonth((m) => addMonths(m.year, m.month, -1))
-                  }
+                  className="min-h-11 min-w-11 size-11 p-0 flex items-center justify-center"
+                  onClick={() => navigateAgendaMonth(-1)}
                 >
-                  <ChevronLeft />
+                  <ChevronLeft className="size-5" />
                 </Button>
                 <span
                   data-testid="calendar-agenda-month-title"
@@ -670,14 +804,12 @@ export function CalendarScrollView() {
                 </span>
                 <Button
                   data-testid="calendar-agenda-next-month"
-                  size="icon-sm"
                   variant="ghost"
                   aria-label="Tháng sau"
-                  onClick={() =>
-                    setAgendaMonth((m) => addMonths(m.year, m.month, 1))
-                  }
+                  className="min-h-11 min-w-11 size-11 p-0 flex items-center justify-center"
+                  onClick={() => navigateAgendaMonth(1)}
                 >
-                  <ChevronRight />
+                  <ChevronRight className="size-5" />
                 </Button>
               </div>
 
@@ -692,7 +824,7 @@ export function CalendarScrollView() {
                     const inCurrentMonth =
                       day.slice(0, 7) === monthKey(agendaMonth.year, agendaMonth.month)
                     if (!inCurrentMonth) {
-                      return <div key={day} aria-hidden="true" className="h-10 w-full" />
+                      return <div key={day} aria-hidden="true" className="min-h-9 h-10 w-full" />
                     }
                     const isDayToday = day === today
                     const isSelected = day === agendaDay
@@ -712,12 +844,12 @@ export function CalendarScrollView() {
                         aria-pressed={isSelected}
                         onClick={() => setAgendaDay(day)}
                         className={cn(
-                          'flex h-10 w-full min-w-0 flex-col items-center justify-center rounded-lg p-0 text-xs transition-colors',
+                          'flex min-h-9 min-w-9 h-10 w-full min-w-0 flex-col items-center justify-center rounded-lg p-0 text-xs transition-colors',
                           isSelected && 'bg-primary text-primary-foreground font-bold hover:bg-primary/90 hover:text-primary-foreground',
                           !isSelected && isDayToday && 'border border-primary font-bold text-primary',
                         )}
                       >
-                        <span>{dayNum}</span>
+                        <span className="text-xs font-semibold">{dayNum}</span>
                         <div className="flex items-center gap-0.5 mt-0.5">
                           {dayEvents.length > 0 ? (
                             <span
@@ -775,9 +907,9 @@ export function CalendarScrollView() {
                 </div>
                 <Button
                   data-testid="calendar-agenda-open-detail"
-                  size="sm"
+                  size="default"
                   variant="outline"
-                  className="text-xs"
+                  className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
                   onClick={() => setSelectedDay(agendaDay)}
                 >
                   Chi tiết / Sửa
@@ -791,17 +923,20 @@ export function CalendarScrollView() {
                 className="flex gap-2"
               >
                 <Input
+                  ref={agendaInputRef}
                   data-testid="calendar-agenda-quick-task-input"
                   placeholder="Thêm task cho ngày này…"
                   value={agendaQuickTitle}
+                  disabled={createAgendaTask.isPending}
                   onChange={(e) => setAgendaQuickTitle(e.target.value)}
-                  className="h-9 text-sm"
+                  className="min-h-11 h-11 text-sm flex-1"
                 />
                 <Button
                   data-testid="calendar-agenda-quick-task-submit"
                   type="submit"
-                  size="sm"
-                  disabled={!agendaQuickTitle.trim() || createQuickTask.isPending}
+                  size="default"
+                  disabled={!agendaQuickTitle.trim() || createAgendaTask.isPending}
+                  className="min-h-11 h-11 px-4 text-sm font-semibold shrink-0"
                 >
                   <Plus data-icon="inline-start" />
                   Thêm
@@ -809,12 +944,35 @@ export function CalendarScrollView() {
               </form>
 
               {/* Annotations */}
-              {(annotationsByDayMap.get(agendaDay) ?? []).length > 0 ? (
+              {annotationsQuery.isLoading ? (
+                <p
+                  data-testid="calendar-agenda-annotations-loading"
+                  className="text-xs text-muted-foreground"
+                >
+                  Đang tải dấu ngày…
+                </p>
+              ) : annotationsQuery.isError ? (
+                <div
+                  data-testid="calendar-agenda-annotations-error"
+                  role="alert"
+                  className="flex items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-2 text-xs text-destructive"
+                >
+                  <span>Không tải được dấu ngày.</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="min-h-6 h-6 px-2 text-xs font-semibold"
+                    onClick={() => void annotationsQuery.refetch()}
+                  >
+                    Thử lại
+                  </Button>
+                </div>
+              ) : agendaDayAnnotations.length > 0 ? (
                 <div className="space-y-1.5">
                   <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                     Dấu ngày
                   </h5>
-                  {(annotationsByDayMap.get(agendaDay) ?? []).map((ann) => (
+                  {agendaDayAnnotations.map((ann) => (
                     <div
                       key={ann.id}
                       className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold"
@@ -837,13 +995,36 @@ export function CalendarScrollView() {
               <div data-testid="calendar-agenda-events" className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Buổi ({(eventsByDayMap.get(agendaDay) ?? []).length})
+                    Buổi ({agendaMonthEventQuery?.isLoading ? '…' : agendaDayEvents.length})
                   </h5>
                 </div>
-                {(eventsByDayMap.get(agendaDay) ?? []).length === 0 ? (
+                {agendaMonthEventQuery?.isLoading ? (
+                  <p
+                    data-testid="calendar-agenda-events-loading"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Đang tải buổi…
+                  </p>
+                ) : agendaMonthEventQuery?.isError ? (
+                  <div
+                    data-testid="calendar-agenda-events-error"
+                    role="alert"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive"
+                  >
+                    <span>Không tải được buổi của tháng này.</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="min-h-8 h-8 px-2.5 text-xs font-semibold"
+                      onClick={() => void agendaMonthEventQuery.refetch()}
+                    >
+                      Thử lại
+                    </Button>
+                  </div>
+                ) : agendaDayEvents.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Không có buổi nào trong ngày.</p>
                 ) : (
-                  (eventsByDayMap.get(agendaDay) ?? []).map((event) => {
+                  agendaDayEvents.map((event) => {
                     const source = sourceById.get(event.source_id)
                     return (
                       <div
@@ -863,7 +1044,7 @@ export function CalendarScrollView() {
                           <div className="min-w-0 flex-1 space-y-0.5">
                             <p
                               data-testid="calendar-agenda-event-title"
-                              className="text-base font-bold text-foreground break-words"
+                              className="text-base font-bold text-foreground break-words min-w-0"
                             >
                               {event.title}
                             </p>
@@ -871,12 +1052,12 @@ export function CalendarScrollView() {
                               {formatVietnamTime(event)} · {source?.name ?? 'Nguồn'}
                             </p>
                             {event.location ? (
-                              <p className="text-xs text-foreground/80 break-words">
+                              <p className="text-xs text-foreground/80 break-words min-w-0">
                                 📍 {event.location}
                               </p>
                             ) : null}
                             {event.description_md ? (
-                              <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words pt-1">
+                              <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words min-w-0 pt-1">
                                 {event.description_md}
                               </p>
                             ) : null}
@@ -892,13 +1073,36 @@ export function CalendarScrollView() {
               <div data-testid="calendar-agenda-tasks" className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Task đến hạn ({(tasksByDayMap.get(agendaDay) ?? []).length})
+                    Task đến hạn ({allTasksQuery.isLoading ? '…' : agendaDayTasks.length})
                   </h5>
                 </div>
-                {(tasksByDayMap.get(agendaDay) ?? []).length === 0 ? (
+                {allTasksQuery.isLoading ? (
+                  <p
+                    data-testid="calendar-agenda-tasks-loading"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Đang tải task…
+                  </p>
+                ) : allTasksQuery.isError ? (
+                  <div
+                    data-testid="calendar-agenda-tasks-error"
+                    role="alert"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive"
+                  >
+                    <span>Không tải được task.</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="min-h-8 h-8 px-2.5 text-xs font-semibold"
+                      onClick={() => void allTasksQuery.refetch()}
+                    >
+                      Thử lại
+                    </Button>
+                  </div>
+                ) : agendaDayTasks.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Không có task đến hạn hôm nay.</p>
                 ) : (
-                  (tasksByDayMap.get(agendaDay) ?? []).map((task) => (
+                  agendaDayTasks.map((task) => (
                     <div
                       key={task.id}
                       data-testid="calendar-agenda-task-card"
@@ -928,7 +1132,7 @@ export function CalendarScrollView() {
                       </span>
                       {task.due_at ? (
                         <span className="text-xs text-muted-foreground shrink-0">
-                          {task.due_at}
+                          {formatTaskDue(task.due_at)}
                         </span>
                       ) : null}
                     </div>
@@ -1001,7 +1205,7 @@ export function CalendarScrollView() {
         }))}
       </div>
 
-      {showMiniNav ? (
+      {showMiniNav && calendarMode === 'grid' ? (
         <MiniNav
           anchor={headerMonth}
           visibleDays={visibleDays}
