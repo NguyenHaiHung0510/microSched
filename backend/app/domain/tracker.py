@@ -607,7 +607,7 @@ class TrackerStore:
                 )
                 .group_by(ReminderDispatch.subject_id)
             )
-            latest = dict(rows)
+            latest = {tracker_id: dispatched_on for tracker_id, dispatched_on in rows}
         if after_ids:
             rows = await db.execute(
                 select(ReminderDispatch.subject_id, ReminderDispatch.dispatched_on).where(

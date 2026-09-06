@@ -6,6 +6,7 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine.result import ChunkedIteratorResult, SimpleResultMetaData
 
 import app.domain.tracker as tracker_domain
 from app.core.cron_timer import CronTimer
@@ -289,6 +290,26 @@ def test_projection_query_count_does_not_grow_with_tracker_count():
     result = asyncio.run(TrackerStore()._next_reminders(db, rows, {}, now=NOW))
     assert len(result) == 200
     assert len(db.statements) == 2
+
+
+@pytest.mark.parametrize(
+    ("history", "expected_day"),
+    [([], 6), ([(UUID(int=1), date(2026, 9, 4))], 9)],
+)
+def test_fixed_projection_consumes_real_sqlalchemy_result(history, expected_day):
+    # A SQLAlchemy result exposes keys() but is not a subscriptable mapping.
+    # The simpler list-backed fake above cannot expose this integration error.
+    class SQLAlchemyDatabase:
+        async def execute(self, statement):
+            return ChunkedIteratorResult(
+                SimpleResultMetaData(["subject_id", "max"]),
+                lambda size: iter([history]),
+            )
+
+    result = asyncio.run(
+        TrackerStore()._next_reminders(SQLAlchemyDatabase(), [tracker()], {}, now=NOW)
+    )
+    assert result == {UUID(int=1): datetime(2026, 9, expected_day, 9, tzinfo=VN_TZ)}
 
 
 def test_disabled_reminders_do_not_query_dispatch_history():
