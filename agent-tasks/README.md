@@ -8,6 +8,7 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 
 Policy đang dùng: [harness-policy](../docs/harness-policy.md), entry point [AGENTS](../AGENTS.md).
 Phiên migration 2026-09-06: [042 — bounded authority](042-harness-authority-v1.md).
+UI/UX readability work: [043 — calendar, private presentation and upcoming reminders](043-ui-ux-readability.md).
 Đọc header/acceptance của task được giao và re-query GitHub/runtime; không suy current queue từ snapshot dưới.
 
 ## Historical status snapshot — 2026-08-15, không phải hàng đợi hiện hành

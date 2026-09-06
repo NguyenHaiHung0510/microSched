@@ -14,7 +14,6 @@ import {
   ChevronUp,
   Clock,
   Edit3,
-  LockKeyhole,
   Pencil,
   Pin,
   Plus,
@@ -48,6 +47,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { uuidv7 } from '@/lib/uuidv7'
 import { NoteForm } from '@/NoteForm'
+import { PrivateMarker } from '@/PrivateMarker'
+import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 import { standardRefetchInterval } from '@/query-polling'
 import {
   appendFutureReflection,
@@ -226,8 +227,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
       <Card
         data-testid="note-card"
         data-note-id={note.id}
+        data-private={note.is_private}
         onClick={openDetailsFromCard}
-        className="gap-3 overflow-visible rounded-lg bg-card px-4 py-4 shadow-2 ring-0 transition-shadow"
+        className={cn('gap-3 overflow-visible rounded-lg bg-card px-4 py-4 shadow-2 ring-0 transition-shadow', note.is_private && PRIVATE_SURFACE_CLASS)}
       >
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div className="min-w-0 flex-1 space-y-2 w-full">
@@ -249,10 +251,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 {label}
               </Button>
               {note.is_private ? (
-                <Badge data-testid="note-private-badge-card" variant="secondary">
-                  <LockKeyhole data-icon="inline-start" />
-                  Riêng tư
-                </Badge>
+                <PrivateMarker testId="note-private-badge-card" />
               ) : null}
               </div>
             </div>
@@ -467,10 +466,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           ) : (
             <div className="space-y-5">
               {note.is_private ? (
-                <Badge data-testid="note-private-badge-detail" variant="secondary">
-                  <LockKeyhole data-icon="inline-start" />
-                  Riêng tư
-                </Badge>
+                <PrivateMarker testId="note-private-badge-detail" />
               ) : null}
               {note.pinned ? (
                 <Badge data-testid="note-pinned-badge-detail" variant="default" className="gap-1">

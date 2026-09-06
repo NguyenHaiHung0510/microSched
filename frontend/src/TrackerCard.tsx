@@ -4,6 +4,9 @@ import { MoreHorizontal, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
+import { PrivateMarker } from '@/PrivateMarker'
+import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 import {
   amountToNumber,
   canSubmitAmount,
@@ -91,7 +94,9 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
   return (
     <Card
       data-tracker-id={tracker.id}
-      className="relative gap-0 p-3 shadow-1 ring-0"
+      data-testid="tracker-card"
+      data-private={tracker.is_private}
+      className={cn('relative gap-0 p-3 shadow-1 ring-0', tracker.is_private && PRIVATE_SURFACE_CLASS)}
     >
       {inputOpen && needsAmount ? (
         <form className="space-y-2" onSubmit={submit}>
@@ -160,6 +165,7 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
             onClick={handleClick}
           >
             <span className="max-w-full break-words text-sm font-bold">{tracker.name}</span>
+            {tracker.is_private ? <PrivateMarker /> : null}
             <span
               data-testid="tracker-last-seen"
               data-tracker-id={tracker.id}

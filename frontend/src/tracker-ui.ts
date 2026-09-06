@@ -144,6 +144,8 @@ export type Tracker = {
   reminder_action: ReminderAction | null
   is_private: boolean
   last_entry_at: string | null
+  /** Server projection of the next recurrence, not a push delivery promise. */
+  next_reminder_at?: string | null
   entry_count_30d: number
   created_at: string | null
   updated_at: string | null
@@ -280,6 +282,55 @@ export function groupRemindersByHour(trackers: Tracker[]): HourReminderGroup[] {
       previewText,
     }
   })
+}
+
+export type UpcomingReminderGroup = HourReminderGroup & {
+  key: string
+  nextAt: string | null
+}
+
+/** Keep equal clock times on different civil dates separate. Never infer cadence in the UI. */
+export function groupUpcomingReminders(trackers: Tracker[]): UpcomingReminderGroup[] {
+  const groups = new Map<string, UpcomingReminderGroup>()
+  for (const tracker of trackers) {
+    if (!tracker.reminder_time) continue
+    const instant = tracker.next_reminder_at ? Date.parse(tracker.next_reminder_at) : NaN
+    const nextAt = Number.isFinite(instant) ? new Date(instant).toISOString() : null
+    const key = nextAt ?? `unknown:${tracker.reminder_time}`
+    const group = groups.get(key) ?? { key, nextAt, time: tracker.reminder_time, trackers: [], previewText: '' }
+    group.trackers.push(tracker)
+    groups.set(key, group)
+  }
+  return [...groups.values()]
+    .sort((a, b) => {
+      if (a.nextAt && b.nextAt) return a.nextAt.localeCompare(b.nextAt)
+      if (a.nextAt) return -1
+      if (b.nextAt) return 1
+      return a.time.localeCompare(b.time)
+    })
+    .map((group) => {
+      const custom = group.trackers.map((tracker) => tracker.reminder_text?.trim()).filter(Boolean)
+      return {
+        ...group,
+        previewText: custom.length ? custom.join(' · ') : `Nhắc nhở: ${group.trackers.map((tracker) => tracker.name).join(', ')}`,
+      }
+    })
+}
+
+export function upcomingReminderDate(nextAt: string | null): string {
+  if (!nextAt) return 'Chưa xác định ngày'
+  return new Intl.DateTimeFormat('vi-VN', {
+    timeZone: VIETNAM_TIME_ZONE, weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+  }).format(new Date(nextAt))
+}
+
+export function upcomingReminderTime(group: Pick<UpcomingReminderGroup, 'nextAt' | 'time'>): string {
+  if (!group.nextAt) return group.time.length === 8 && group.time.endsWith(':00') ? group.time.slice(0, 5) : group.time
+  const date = new Date(group.nextAt)
+  return new Intl.DateTimeFormat('vi-VN', {
+    timeZone: VIETNAM_TIME_ZONE, hour: '2-digit', minute: '2-digit',
+    ...(date.getUTCSeconds() ? { second: '2-digit' as const } : {}), hourCycle: 'h23',
+  }).format(date)
 }
 
 /** Format reminder schedule, e.g. "Mỗi N ngày lúc HH:mm" hoặc "Sau N ngày chưa ghi lúc HH:mm". */

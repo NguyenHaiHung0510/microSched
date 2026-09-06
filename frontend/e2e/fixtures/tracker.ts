@@ -21,6 +21,7 @@ export type FixtureTracker = {
   reminder_action: 'confirm_event' | 'open_tracker' | null
   is_private: boolean
   last_entry_at: string | null
+  next_reminder_at?: string | null
   entry_count_30d: number
   created_at: string
   updated_at: string

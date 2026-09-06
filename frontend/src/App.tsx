@@ -25,6 +25,7 @@ import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { SubscriptionScreen } from '@/SubscriptionScreen'
 import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
+import { cn } from '@/lib/utils'
 
 type SessionResponse = PrivateSessionState & {
   email: string
@@ -106,6 +107,13 @@ function SignedIn({ session }: { session: SessionResponse }) {
 
   const currentTab = isTrackersRoute ? 'tracker' : activeScreen
 
+  const goToDefaultScreen = useCallback(() => {
+    if (location !== '/') {
+      navigate('/')
+    }
+    setActiveScreen('tasks')
+  }, [location])
+
   function selectTab(tab: 'tasks' | 'notes' | 'calendar' | 'tracker') {
     if (isTrackersRoute) {
       navigate('/')
@@ -130,11 +138,25 @@ function SignedIn({ session }: { session: SessionResponse }) {
   })
 
   return (
-    <div className="overflow-hidden rounded-xl bg-background shadow-3">
+    <div className={cn('mx-auto overflow-hidden rounded-xl bg-background shadow-3', currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl')}>
       <header className="flex items-center justify-between gap-4 px-5 pt-5 pb-2 sm:px-6">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-xl font-extrabold tracking-tight text-primary">
-            microSched
+          <h1>
+          <Button asChild
+            data-testid="app-logo-button"
+            variant="ghost"
+            size="lg"
+            className="min-h-11 px-0 text-xl font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary text-left focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label="Về trang Task mặc định"
+          >
+            <a href="/" onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+              event.preventDefault()
+              goToDefaultScreen()
+            }}>
+              microSched
+            </a>
+          </Button>
           </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
         </div>
@@ -160,7 +182,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <ReminderConfirmScreen key={reminderDispatchKey} />
         ) : (
           <>
-        <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">
+        <div className="mb-4 grid grid-cols-4 gap-1 sm:flex sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs [&>button]:transition-colors sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
             size="lg"
@@ -240,7 +262,9 @@ function App() {
         {/* `aria-live` từng nằm trên chính div này. Nó bọc cả app, nên mọi thay đổi
             bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
             Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}
-        <div className="mx-auto max-w-5xl">
+        <div
+          className="mx-auto max-w-[1680px]"
+        >
           {session.isPending ? (
             <Card
               className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
