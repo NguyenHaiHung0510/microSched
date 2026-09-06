@@ -102,24 +102,20 @@ contract conditional exact: `expected_production_sha=NULL` ⇒ mọi cell Tầng
 bắt buộc `readyz.commit == expected_production_sha == candidate_sha` bằng exact 40-hex commit, khác ⇒
 `FAIL_P0`. Receipt từ run/candidate khác không được copy sang baseline này.
 
-### Conflict policy Tầng 2 — bắt buộc Owner quyết
+### Policy Tầng 2 — conflict resolved, activation vẫn gated
 
-Hai phía hiện mâu thuẫn:
-
-- `CLAUDE.md`, `docs/devops-brief.md` §8.3, `agent-tasks/README.md` và spec 031 nói agent tự tạo/xoá
-  ephemeral Neon branch bằng `neonctl`.
-- `AGENTS.md` §9 và `docs/qa-framework.md` §2.1 (update 2026-08-26) cấm agent chạy `neonctl`; Owner
-  phải Restore/Sync persistent `develop` từ `main`, xác nhận, rồi agent scrub.
-
-T1 không tự chọn. Cho tới khi Owner chốt canonical policy:
+Owner-approved harness migration 2026-09-06 đã reconcile recipe ephemeral cũ về canonical
+`docs/qa-framework.md` §2.1: Owner Restore/Sync persistent develop từ main, xác nhận rồi mới scrub.
+Agent không tự tạo/xóa/restore Neon. Đây là chốt policy, **không phải activation của QA037**:
+manual Owner gate, exact sync/strategy receipts, schema/identity/order/expiry và technical validator vẫn bắt buộc.
 
 ```text
 Tầng 1 local/CI synthetic: ALLOWED
-Tầng 2 Neon high-fidelity: BLOCKED
+Tầng 2 Neon high-fidelity: BLOCKED until task-specific activation gates pass
 Tầng 3 production: NOT RUN
 ```
 
-Ngay cả khi Owner chốt persistent `develop`, agent vẫn phải dừng và hỏi nguyên văn trước QA data:
+Agent vẫn phải dừng và hỏi nguyên văn trước QA data:
 
 > Vui lòng lên Neon Console đồng bộ (Restore/Sync) nhánh `develop` từ `main` (Production) và xác nhận sau khi hoàn tất để tiếp tục.
 
@@ -446,8 +442,8 @@ production/device/push/merge/deploy.
 Current strategy approval explicitly denies production/device/push, nên mọi cell ở đây hiện `BLOCKED`/
 `NOT_RUN`. Mở lane cần **một future activation receipt riêng** tại
 `output/qa-runs/<run-id>/authority/production-device-activation.json`, validate theo
-`authority-receipts.schema.json#/$defs/production_device_activation`, hoặc valid tracked
-`coordination_record` có `authority_binding` tương đương, **sau** manual explicit Owner approval được T1
+`authority-receipts.schema.json#/$defs/production_device_activation`, hoặc scoped authorization do
+Owner cấp, được ghi/validate bằng cùng exact schema và binding tương đương, **sau** manual explicit Owner approval được T1
 trực tiếp kiểm. Receipt/record là audit evidence và technical scope input, không tự mở gate hay chứng minh
 actor. Nó bind exact candidate/spec/run/
 manifest-core, target origin/Fly app/region/database branch/device token, read-only scope, exact allowed command
@@ -456,6 +452,10 @@ exact tám denied mutations và structured scope record tương ứng. Thiếu/m
 expired/executor khác ⇒
 `authority.validate-production-device` fail và mọi target command `BLOCKED`; strategy/sync receipt không
 được dùng thay.
+
+📝 2026-09-06: chỉ thay tên/nguồn của alternative authorization theo harness authority v1;
+không bỏ activation schema, technical validator, exact binding, single-use hoặc manual Owner gate.
+Routine merge authority không mở production/device/push lane của QA037.
 
 Chỉ khi exact deployed SHA đã được phép. `expected_production_sha` lấy từ immutable merged PR commit
 queried lại qua GitHub API/`git rev-parse` ngay trước run, kèm URL/ref + query UTC trong manifest; không

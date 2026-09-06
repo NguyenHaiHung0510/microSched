@@ -689,33 +689,17 @@ worktree.
 
 Mỗi PR phải có independent exact-head review và CI terminal trước gate tiếp theo.
 
-### 6.3 Tầng 2 — Neon ephemeral branch đã scrub
+### 6.3 Tầng 2 — Owner-operated staging đã scrub
 
-Sau local/CI xanh, 031A rehearsal theo `AGENTS.md` §9 / `docs/devops-brief.md` §8.3:
+📝 Reconciled 2026-09-06: recipe ephemeral create/delete và inline secret flags cũ đã superseded.
+Theo docs/qa-framework.md §2.1, Owner Restore/Sync persistent develop từ main và xác nhận trước scrub;
+agent không tự tạo/xóa/restore Neon. Dùng backend local/Vite và Đăng nhập QA, không tự bơm cookie từ recipe cũ.
+Không downgrade Neon, không cleanup persistent branch khi đóng task.
 
-```powershell
-neonctl branches create --name qa-031-tracker-reminder --parent main
-cd backend
-uv run python -m scripts.prepare_qa_branch --branch-url "<BRANCH_NEON_MIGRATOR_URL>" --prod-key "<PROD_KEY>" --pin 123456
-$env:NEON_QA_BRANCH = "1"
-uv run alembic upgrade head
-```
-
-Placeholder secret không được thay bằng giá trị thật trong prompt/PR/log. Receipt phải chứng minh:
-
-- scrub hoàn tất; `push_subscription` và `reminder_dispatch` đã truncate trước QA;
-- migration upgrade + exact catalog constraints/backfill aggregate;
-- API cases general/fixed/after-entry/subscription invariant trên data scrubbed;
-- Cron scheduling pure/integration không gửi Web Push thật;
-- 031B Playwright có thể dùng `ms_session=qa_token`, PIN `123456`, nhưng không mở Chrome profile thật.
-
-Neon ephemeral **không downgrade**. Sau khi xuất receipt, xóa đúng branch đã resolve:
-
-```powershell
-neonctl branches delete qa-031-tracker-reminder
-```
-
-List/resolve exact branch ID trước delete; không để branch QA sống sau task.
+Giữ nguyên yêu cầu receipt: scrub hoàn tất, push/dispatch test boundary; migration upgrade +
+exact catalog constraints/backfill aggregate; API general/fixed/after-entry/subscription invariants;
+Cron tests không gửi Web Push thật; Playwright synthetic/đã scrub, không real Chrome profile.
+Đọc commands và environment hiện hành từ canonical QA procedure/task; không truyền secret trong prompt/PR/log.
 
 ### 6.4 Tầng 3 — production migration/deploy tuần tự
 

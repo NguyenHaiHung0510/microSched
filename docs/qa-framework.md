@@ -28,18 +28,20 @@ phạm vi — đúng họ lỗi mà `CLAUDE.md` ghi lại nhiều lần nhất.
 
 ## 2. Ai chạy, chạy trên gì
 
-**Ai:** 🔒 **QA thao tác lặp không bao giờ chạy ở T1** (luật chi phí do chủ đặt, 25/07). Thứ tự:
-**T3 (agy + Chrome DevTools MCP, profile đã đăng nhập)** trước → **T2 (Codex, skill `control-chrome`)**
-nếu T3 tắc. T1 chỉ **viết kịch bản** và **đọc kết quả**.
+**Ai — cập nhật Owner-approved 2026-09-06:** T1 chọn trực tiếp chạy hoặc delegate theo chất lượng,
+tốc độ, chi phí và capability thật; không còn cấm T1 QA hay cố định vendor theo vai. Khi task yêu cầu
+review độc lập, người review không tự nghiệm thu như một reviewer độc lập cho chính phần mình viết.
+Authority, review posture và gate giữ theo [harness-policy.md](harness-policy.md); lựa chọn topology
+không mở rộng quyền dùng production, dữ liệu thật hoặc thiết bị.
 
 **Trên gì:**
 
 | | Bắt buộc | Ghi chú |
 |---|---|---|
-| Môi trường | `microsched.fly.dev` (bản đang chạy thật) | Không QA trên `vite dev` — service worker, production build/config, mạng thật, Neon wake-up và lifecycle deploy/restart đều khác |
+| Môi trường | Theo loại lane ở §2.1 | Local app preview, disposable production-build QA, scrubbed staging và scoped production smoke là các lớp khác nhau; không thay thế evidence cho nhau |
 | Viewport chính | **390 × 844** (iPhone) | Thiết bị chính của chủ. Mọi mục đỏ ở đây là đỏ thật |
 | Viewport phụ | 1280 × 800 | Chỉ để kiểm lối tắt desktop (hover) không hỏng |
-| Thiết bị thật | ít nhất 1 lượt/slice trên iPhone thật | Bàn phím ảo, safe area, và độ nhạy chạm không mô phỏng được |
+| Thiết bị thật | Ít nhất 1 lượt/slice dogfooding trên iPhone thật; exceptions disposable/release theo §2.1 | Bàn phím ảo, safe area, độ nhạy chạm không được chứng minh bằng viewport; chưa chạy vẫn NOT_RUN |
 
 ⚠️ **`resize_window` của kênh trình duyệt từng báo resize 390px trong khi `innerWidth` vẫn 1254**
 (đo thật 25/07). Trước khi tin viewport, **đọc `window.innerWidth` thật**.

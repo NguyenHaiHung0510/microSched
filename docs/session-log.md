@@ -2,9 +2,19 @@
 
 **Đây là bản lưu trữ.** Nội dung dưới đây là toàn bộ `CLAUDE.md` tính đến 2026-08-01, giữ nguyên văn để không mất bài học nào, TRƯỚC KHI file đó được rút gọn (lý do: cảnh báo "CLAUDE.md over 40k-char limit" — file đã phình tới ~104k ký tự vì mỗi lần đóng phiên lại thêm một note 📝 có ngày trực tiếp vào đó).
 
-**Đọc file này khi:** cần tra lại lý do đằng sau một quyết định cũ, hoặc lần theo lịch sử một bug/bài học đã dẫn tới trạng thái hiện tại. **Đừng đọc file này để biết "hiện trạng bây giờ"** — dùng `CLAUDE.md` (mục "What this repository is" + "Việc còn treo") cho việc đó, vì log này đứng yên ở 2026-08-01.
+**Đọc file này khi:** cần rationale hoặc receipt lịch sử. **Không dùng làm current state**: entry point là `AGENTS.md`, reading map `docs/project-guide.md`, workflow `docs/harness-policy.md`, status là header task + GitHub/runtime được query lại. Phần archive giữ nguyên; các receipt về sau không biến lịch sử thành policy.
 
-**Từ 2026-08-01, quy ước mới (xem `feedback_session_close_checklist` trong memory):** note đóng phiên có ngày viết tiếp vào **file này**, không viết vào `CLAUDE.md` nữa. `CLAUDE.md` chỉ sửa tại chỗ phần "current state"/"việc còn treo" (không tích luỹ).
+**Closeout:** note có ngày ghi ở đây, không tích lũy vào entry point. Từ 2026-09-06 `CLAUDE.md` chỉ compatibility pointer; current facts/decisions cập nhật đúng nguồn chuẩn.
+
+## 2026-09-06 — bounded authority và instruction migration
+
+Owner duyệt inherited authority cho T1, scoped holder-issued elevation và Owner-only boundaries;
+tách coordination khỏi authorization, ad-review theo risk thay vì cố định mọi routine task.
+PR #200 đã merge theo grant mới tại `58718ace321782d6f10515956cc851b48c861068` sau exact-head review + 10 checks PASS.
+Migration được mô tả ở [task 042](../agent-tasks/042-harness-authority-v1.md); AGENTS compact, CLAUDE pointer,
+policy/reading map canonical, recipe Neon QA stale được reconcile về Owner-sync staging.
+Gate production/device/real-data của QA037 không được mở bởi migration này. Xem PR/receipt của task 042
+cho CI/merge/live status, không suy từ việc tài liệu đã viết. Global adapter/private memory update được giữ ngoài public repo.
 
 ---
 
