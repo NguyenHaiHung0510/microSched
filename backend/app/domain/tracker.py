@@ -16,7 +16,7 @@ four structural differences that the 011a spec (§2) pins down:
 """
 
 import logging
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -28,8 +28,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
 from app.domain import money
-from app.domain.models import AuthSession, Entry, Subscription, Tracker, TrackerGroup
+from app.domain.models import (
+    AuthSession,
+    Entry,
+    ReminderDispatch,
+    Subscription,
+    Tracker,
+    TrackerGroup,
+)
 from app.domain.reading import can_see_private, not_deleted, readable, with_privacy_gate
+from app.domain.tracker_schedule import VN_TZ, effective_tracker_config, next_tracker_reminder_at
 from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
 logger = logging.getLogger(__name__)
@@ -306,6 +314,13 @@ class TrackerRead(BaseModel):
     reminder_action: ReminderAction | None
     is_private: bool
     last_entry_at: datetime | None
+    next_reminder_at: datetime | None = Field(
+        default=None,
+        description=(
+            "Next planned recurrence in VN time, including the 15-minute scheduler grace; "
+            "not push delivery or pending/retry status. Null when disabled or unrepresentable."
+        ),
+    )
     entry_count_30d: int
     created_at: datetime | None
     updated_at: datetime | None
@@ -507,14 +522,14 @@ class TrackerStore:
         self, db: AsyncSession, auth: AuthSession, tracker: Tracker
     ) -> TrackerRead:
         """Build a TrackerRead, folding in last-entry and 30-day-count in one pass."""
-        last, count = await self._last_entry_and_count(db, [tracker.id])
-        return self._tracker_read_from(tracker, last, count)
+        return (await self._read_trackers(db, [tracker]))[0]
 
     def _tracker_read_from(
         self,
         tracker: Tracker,
         last: dict[UUID, datetime],
         count: dict[UUID, int],
+        next_reminder_at: datetime | None = None,
     ) -> TrackerRead:
         """Build a TrackerRead from precomputed batched metadata."""
         mode, interval, action, _time, _text = _canonical_reminder(
@@ -544,6 +559,7 @@ class TrackerStore:
             reminder_action=action,
             is_private=tracker.is_private,
             last_entry_at=last.get(tracker.id),
+            next_reminder_at=next_reminder_at,
             entry_count_30d=count.get(tracker.id, 0),
             created_at=tracker.created_at,
             updated_at=tracker.updated_at,
@@ -553,7 +569,65 @@ class TrackerStore:
         """Batch-build TrackerRead rows with ONE last-entry/count pass (M1)."""
         ids = [tracker.id for tracker in trackers]
         last, count = await self._last_entry_and_count(db, ids)
-        return [self._tracker_read_from(tracker, last, count) for tracker in trackers]
+        next_reminders = await self._next_reminders(db, trackers, last)
+        return [
+            self._tracker_read_from(tracker, last, count, next_reminders.get(tracker.id))
+            for tracker in trackers
+        ]
+
+    async def _next_reminders(
+        self,
+        db: AsyncSession,
+        trackers: list[Tracker],
+        last_entries: dict[UUID, datetime],
+        *,
+        now: datetime | None = None,
+    ) -> dict[UUID, datetime | None]:
+        """Batch projection for already-readable trackers only; never query all history.
+
+        Fixed cadence needs one MAX per tracker regardless of dispatch status.
+        After-entry de-duplication needs recent/future civil dates, matching the
+        timer's cutoff. At most two queries regardless of tracker count; disabled
+        schedules cause no dispatch query. No pending/retry payload is exposed.
+        """
+        now_vn = (now or datetime.now(UTC)).astimezone(VN_TZ)
+        fixed_ids, after_ids = [], []
+        for tracker in trackers:
+            config = effective_tracker_config(tracker)
+            if config is not None:
+                (fixed_ids if config[0] == "fixed" else after_ids).append(tracker.id)
+        latest: dict[UUID, date] = {}
+        dispatched: dict[UUID, set[date]] = {}
+        if fixed_ids:
+            rows = await db.execute(
+                select(ReminderDispatch.subject_id, func.max(ReminderDispatch.dispatched_on))
+                .where(
+                    ReminderDispatch.subject_type == "tracker",
+                    ReminderDispatch.subject_id.in_(fixed_ids),
+                )
+                .group_by(ReminderDispatch.subject_id)
+            )
+            latest = dict(rows)
+        if after_ids:
+            rows = await db.execute(
+                select(ReminderDispatch.subject_id, ReminderDispatch.dispatched_on).where(
+                    ReminderDispatch.subject_type == "tracker",
+                    ReminderDispatch.subject_id.in_(after_ids),
+                    ReminderDispatch.dispatched_on >= now_vn.date() - timedelta(days=30),
+                )
+            )
+            for tracker_id, dispatched_on in rows:
+                dispatched.setdefault(tracker_id, set()).add(dispatched_on)
+        return {
+            tracker.id: next_tracker_reminder_at(
+                tracker,
+                now=now_vn,
+                last_entry_at=last_entries.get(tracker.id),
+                last_scheduled_date=latest.get(tracker.id),
+                dispatched_dates=dispatched.get(tracker.id, set()),
+            )
+            for tracker in trackers
+        }
 
     async def _last_entry_and_count(
         self, db: AsyncSession, tracker_ids: list[UUID]

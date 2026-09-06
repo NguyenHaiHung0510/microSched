@@ -26,13 +26,18 @@ from app.domain.reminder import (
     build_tracker_reminder_payload,
 )
 from app.domain.settings import expiry_lead_days
+from app.domain.tracker_schedule import (
+    GRACE_WINDOW,
+    VN_TZ,
+    after_entry_candidate_date,
+    effective_tracker_config,
+    fixed_candidate_date,
+)
 
 logger = logging.getLogger(__name__)
 
-VN_TZ = timezone(timedelta(hours=7))
 SUBSCRIPTION_REMINDER_TIME = time(7, 0)
 PENDING_RECOVERY_TIMEOUT = timedelta(hours=24)
-GRACE_WINDOW = timedelta(minutes=15)
 # 011d §5.3: a top-level loop failure must back off for a bounded window rather
 # than hot-looping or dying silently; tests shorten this via monkeypatch.
 LOOP_FAILURE_BACKOFF_SECONDS = 30
@@ -488,84 +493,10 @@ class CronTimer:
             "rss_kb": read_rss_kb(),
         }
 
-    @staticmethod
-    def _effective_tracker_config(
-        tracker: Tracker,
-    ) -> tuple[str, int, str, time] | None:
-        """Return an enabled config, including the rolling legacy writer shape."""
-        if tracker.reminder_time is None:
-            return None
-        if tracker.reminder_time.microsecond:
-            # 035A is deployed before the database CHECK arrives.  An old or
-            # direct-SQL writer can still leave a fractional row, which must
-            # never become a rounded or fractional batch key in RAM.
-            return None
-        if (
-            tracker.kind == "health"
-            and tracker.input_mode == "event"
-            and tracker.reminder_mode is None
-            and tracker.reminder_interval_days is None
-            and tracker.reminder_action is None
-        ):
-            return "fixed", 1, "confirm_event", tracker.reminder_time
-        if (
-            tracker.reminder_mode not in {"fixed", "after_entry"}
-            or tracker.reminder_interval_days is None
-            or tracker.reminder_interval_days <= 0
-            or tracker.reminder_action not in {"confirm_event", "open_tracker"}
-            or (tracker.reminder_action == "confirm_event" and tracker.input_mode != "event")
-        ):
-            return None
-        return (
-            tracker.reminder_mode,
-            tracker.reminder_interval_days,
-            tracker.reminder_action,
-            tracker.reminder_time,
-        )
-
-    @staticmethod
-    def _fixed_candidate_date(
-        *,
-        now_vn: datetime,
-        reminder_time: time,
-        interval_days: int,
-        last_scheduled_date: date | None,
-    ) -> date:
-        """Choose the next fixed cadence date without burst catch-up."""
-        if last_scheduled_date is None:
-            candidate = now_vn.date()
-            if datetime.combine(candidate, reminder_time, tzinfo=VN_TZ) < now_vn - GRACE_WINDOW:
-                candidate += timedelta(days=1)
-            return candidate
-        candidate = last_scheduled_date + timedelta(days=interval_days)
-        while datetime.combine(candidate, reminder_time, tzinfo=VN_TZ) < now_vn - GRACE_WINDOW:
-            candidate += timedelta(days=interval_days)
-        return candidate
-
-    @staticmethod
-    def _after_entry_candidate_date(
-        *,
-        now_vn: datetime,
-        reminder_time: time,
-        interval_days: int,
-        last_entry_date: date | None,
-        dispatched_dates: set[date],
-    ) -> date:
-        """Choose a civil VN date, using entry freshness rather than notifications."""
-        freshness = (
-            last_entry_date + timedelta(days=interval_days) if last_entry_date is not None else None
-        )
-        if freshness is not None and datetime.combine(freshness, reminder_time, tzinfo=VN_TZ) >= (
-            now_vn - GRACE_WINDOW
-        ):
-            candidate = freshness
-        else:
-            candidate = now_vn.date()
-            if datetime.combine(candidate, reminder_time, tzinfo=VN_TZ) < now_vn - GRACE_WINDOW:
-                candidate += timedelta(days=1)
-        while candidate in dispatched_dates:
-            candidate += timedelta(days=1)
-        return candidate
+    # Keep the established test/caller seams while sharing canonical recurrence rules.
+    _effective_tracker_config = staticmethod(effective_tracker_config)
+    _fixed_candidate_date = staticmethod(fixed_candidate_date)
+    _after_entry_candidate_date = staticmethod(after_entry_candidate_date)
 
     async def load_snapshot(self, db: AsyncSession, *, now: datetime | None = None) -> None:
         """Load active tracker and subscription schedules and pending recoveries into RAM.
