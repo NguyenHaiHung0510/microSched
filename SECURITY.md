@@ -1,7 +1,9 @@
 # Security policy
 
-microSched là một dự án cá nhân đang phát triển. Nếu bạn phát hiện lỗ hổng có thể ảnh hưởng tới người dùng, dữ liệu, authentication hoặc deployment, hãy báo cáo riêng tư qua [GitHub private vulnerability reporting](https://github.com/NguyenHaiHung0510/microSched/security/advisories/new).
+English | [Tiếng Việt](SECURITY.vi.md)
 
-Không mở public issue cho lỗ hổng chưa được khắc phục và không gửi secrets, credential, token, dữ liệu cá nhân thật hoặc production payload trong báo cáo. Khi có thể, mô tả phiên bản/commit bị ảnh hưởng, điều kiện tái hiện tối thiểu và impact; hãy scrub mọi dữ liệu nhạy cảm trước khi gửi.
+microSched is a personal project under active development. If you discover a vulnerability that could affect users, data, authentication, or deployment, please report it privately through [GitHub private vulnerability reporting](https://github.com/NguyenHaiHung0510/microSched/security/advisories/new).
 
-Kênh tiếp nhận chính thức là GitHub private vulnerability reporting.
+Do not open a public issue for an unpatched vulnerability, and do not include secrets, credentials, tokens, real personal data, or production payloads in your report. Where possible, describe the affected version/commit, minimal reproduction conditions, and impact; scrub all sensitive data before submitting.
+
+The official reporting channel is GitHub private vulnerability reporting.
