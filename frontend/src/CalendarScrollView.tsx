@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { GripVertical, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GripVertical, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
 import {
+  formatVietnamTime,
+  sourceColorToken,
   todayInVietnam,
   type CalendarEvent,
   type CalendarSource,
@@ -17,6 +19,7 @@ import {
   annotationsByDay,
   dedupeById,
   eventsByDay,
+  formatFullVietnameseDate,
   formatShortVietnamDate,
   lastDayOfMonth,
   monthFetchRange,
@@ -41,7 +44,9 @@ import {
 import { DayCell, type DropTaskPayload } from '@/DayCell'
 import { DayDetailDialog } from '@/DayDetailDialog'
 import { MiniNav } from '@/MiniNav'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import {
   Tooltip,
@@ -133,6 +138,14 @@ export function CalendarScrollView() {
   const isDesktop = useIsDesktop()
   const containerRef = useRef<HTMLDivElement>(null)
   const [quickTitle, setQuickTitle] = useState('')
+  const [calendarMode, setCalendarMode] = useState<'grid' | 'agenda'>('grid')
+  const [showMiniNav, setShowMiniNav] = useState(true)
+  const [agendaDay, setAgendaDay] = useState(today)
+  const [agendaMonth, setAgendaMonth] = useState<YearMonth>(() => ({
+    year: Number(today.slice(0, 4)),
+    month: Number(today.slice(5, 7)),
+  }))
+  const [agendaQuickTitle, setAgendaQuickTitle] = useState('')
   const [months, setMonths] = useState<YearMonth[]>(() =>
     monthsWindow(
       { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) },
@@ -276,6 +289,14 @@ export function CalendarScrollView() {
     const trimmed = quickTitle.trim()
     if (!trimmed) return
     createQuickTask.mutate({ title: trimmed, due_on: today })
+  }
+
+  function handleAgendaQuickSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = agendaQuickTitle.trim()
+    if (!trimmed) return
+    createQuickTask.mutate({ title: trimmed, due_on: agendaDay })
+    setAgendaQuickTitle('')
   }
 
   const allEvents = useMemo(
@@ -453,22 +474,69 @@ export function CalendarScrollView() {
             'flex flex-col gap-2',
          )}
        >
-          <div className="flex items-center justify-between gap-2 w-full">
+         <div className="flex items-center justify-between gap-2 w-full">
            <h3 data-testid="calendar-month-header" className="text-base font-extrabold">
-             {monthLabel(headerMonth.year, headerMonth.month)}
+             {calendarMode === 'agenda'
+               ? monthLabel(agendaMonth.year, agendaMonth.month)
+               : monthLabel(headerMonth.year, headerMonth.month)}
            </h3>
-            <Button
-              data-testid="calendar-today-button"
-              size="sm"
-              variant="outline"
-              onClick={scrollToToday}
-            >
-              Hôm nay
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <div
+                className="flex items-center gap-1 rounded-lg bg-muted p-0.5"
+                role="group"
+                aria-label="Chế độ xem tháng"
+              >
+                <Button
+                  data-testid="calendar-mode-toggle-grid"
+                  size="sm"
+                  variant={calendarMode === 'grid' ? 'secondary' : 'ghost'}
+                  aria-pressed={calendarMode === 'grid'}
+                  className="h-7 px-2 text-xs font-semibold"
+                  onClick={() => setCalendarMode('grid')}
+                >
+                  Lưới
+                </Button>
+                <Button
+                  data-testid="calendar-mode-toggle-agenda"
+                  size="sm"
+                  variant={calendarMode === 'agenda' ? 'secondary' : 'ghost'}
+                  aria-pressed={calendarMode === 'agenda'}
+                  className="h-7 px-2 text-xs font-semibold"
+                  onClick={() => {
+                    setCalendarMode('agenda')
+                    if (!agendaDay) setAgendaDay(today)
+                  }}
+                >
+                  Theo ngày
+                </Button>
+              </div>
+              <Button
+                data-testid="calendar-toggle-sidebar"
+                size="sm"
+                variant="outline"
+                className="hidden sm:inline-flex text-xs h-7 px-2"
+                onClick={() => setShowMiniNav((s) => !s)}
+              >
+                {showMiniNav ? 'Ẩn lịch nhỏ' : 'Hiện lịch nhỏ'}
+              </Button>
+              <Button
+                data-testid="calendar-today-button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs font-semibold"
+                onClick={() => {
+                  scrollToToday()
+                  setAgendaMonth({ year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) })
+                  setAgendaDay(today)
+                }}
+              >
+                Hôm nay
+              </Button>
+            </div>
           </div>
 
           {/* Tooltip & Quick Task Entry bar for desktop */}
-          {isDesktop ? (
+          {isDesktop && calendarMode === 'grid' ? (
             <form
               onSubmit={handleQuickSubmit}
               data-testid="calendar-quick-task-bar"
@@ -529,13 +597,15 @@ export function CalendarScrollView() {
          ) : null}
 
           {/* Sticky Weekday Labels Grid (T2–CN) */}
-          <div className="grid grid-cols-7 gap-0.5 px-0.5 pt-1 text-center">
-            {WEEKDAY_LABELS.map((label) => (
-              <span key={label} className="text-xs font-bold text-muted-foreground">
-                {label}
-              </span>
-            ))}
-          </div>
+          {calendarMode === 'grid' ? (
+            <div className="grid grid-cols-7 gap-0.5 px-0.5 pt-1 text-center">
+              {WEEKDAY_LABELS.map((label) => (
+                <span key={label} className="text-xs font-bold text-muted-foreground">
+                  {label}
+                </span>
+              ))}
+            </div>
+          ) : null}
        </div>
 
        {staleWithData ? (
@@ -573,7 +643,302 @@ export function CalendarScrollView() {
           </p>
         ) : null}
 
-        {months.map(({ year, month }, index) => {
+        {calendarMode === 'agenda' ? (
+          <div data-testid="calendar-agenda-container" className="space-y-4 p-3 sm:p-4">
+            {/* Compact Month Picker */}
+            <div
+              data-testid="calendar-agenda-picker"
+              className="rounded-xl border bg-card p-3 shadow-sm space-y-2"
+            >
+              <div className="flex items-center justify-between gap-2 pb-2 border-b">
+                <Button
+                  data-testid="calendar-agenda-prev-month"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Tháng trước"
+                  onClick={() =>
+                    setAgendaMonth((m) => addMonths(m.year, m.month, -1))
+                  }
+                >
+                  <ChevronLeft />
+                </Button>
+                <span
+                  data-testid="calendar-agenda-month-title"
+                  className="text-sm font-extrabold text-foreground"
+                >
+                  {monthLabel(agendaMonth.year, agendaMonth.month)}
+                </span>
+                <Button
+                  data-testid="calendar-agenda-next-month"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Tháng sau"
+                  onClick={() =>
+                    setAgendaMonth((m) => addMonths(m.year, m.month, 1))
+                  }
+                >
+                  <ChevronRight />
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-7 gap-1 text-center">
+                {WEEKDAY_LABELS.map((label) => (
+                  <span key={label} className="text-xs font-bold text-muted-foreground">
+                    {label}
+                  </span>
+                ))}
+                {monthWeeks(agendaMonth.year, agendaMonth.month).flatMap((week) =>
+                  week.days.map((day) => {
+                    const inCurrentMonth =
+                      day.slice(0, 7) === monthKey(agendaMonth.year, agendaMonth.month)
+                    if (!inCurrentMonth) {
+                      return <div key={day} aria-hidden="true" className="h-10 w-full" />
+                    }
+                    const isDayToday = day === today
+                    const isSelected = day === agendaDay
+                    const dayEvents = eventsByDayMap.get(day) ?? []
+                    const dayTasks = tasksByDayMap.get(day) ?? []
+                    const dayAnnotations = annotationsByDayMap.get(day) ?? []
+                    const dayNum = Number(day.slice(8, 10))
+
+                    return (
+                      <Button
+                        key={day}
+                        data-testid="calendar-agenda-day-button"
+                        data-day={day}
+                        data-selected={isSelected ? 'true' : undefined}
+                        variant={isSelected ? 'secondary' : 'ghost'}
+                        aria-label={day}
+                        aria-pressed={isSelected}
+                        onClick={() => setAgendaDay(day)}
+                        className={cn(
+                          'flex h-10 w-full min-w-0 flex-col items-center justify-center rounded-lg p-0 text-xs transition-colors',
+                          isSelected && 'bg-primary text-primary-foreground font-bold hover:bg-primary/90 hover:text-primary-foreground',
+                          !isSelected && isDayToday && 'border border-primary font-bold text-primary',
+                        )}
+                      >
+                        <span>{dayNum}</span>
+                        <div className="flex items-center gap-0.5 mt-0.5">
+                          {dayEvents.length > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'size-1 rounded-full',
+                                isSelected ? 'bg-primary-foreground' : 'bg-primary',
+                              )}
+                            />
+                          ) : null}
+                          {dayTasks.length > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'size-1 rounded-full',
+                                isSelected ? 'bg-primary-foreground/70' : 'bg-muted-foreground',
+                              )}
+                            />
+                          ) : null}
+                          {dayAnnotations.length > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'size-1 rounded-full',
+                                isSelected ? 'bg-primary-foreground/90' : 'bg-warn',
+                              )}
+                            />
+                          ) : null}
+                        </div>
+                      </Button>
+                    )
+                  }),
+                )}
+              </div>
+            </div>
+
+            {/* Selected Day Agenda Content */}
+            <div
+              data-testid="calendar-agenda-view"
+              className="rounded-xl border bg-card p-4 shadow-1 space-y-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+                <div className="flex items-center gap-2">
+                  <h4
+                    data-testid="calendar-agenda-day-title"
+                    className="text-base font-extrabold text-foreground"
+                  >
+                    {formatFullVietnameseDate(agendaDay)}
+                  </h4>
+                  {agendaDay === today ? (
+                    <Badge variant="secondary" className="bg-primary/10 text-primary text-xs font-bold">
+                      Hôm nay
+                    </Badge>
+                  ) : null}
+                </div>
+                <Button
+                  data-testid="calendar-agenda-open-detail"
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={() => setSelectedDay(agendaDay)}
+                >
+                  Chi tiết / Sửa
+                </Button>
+              </div>
+
+              {/* Quick Add for this day */}
+              <form
+                onSubmit={handleAgendaQuickSubmit}
+                data-testid="calendar-agenda-quick-task-bar"
+                className="flex gap-2"
+              >
+                <Input
+                  data-testid="calendar-agenda-quick-task-input"
+                  placeholder="Thêm task cho ngày này…"
+                  value={agendaQuickTitle}
+                  onChange={(e) => setAgendaQuickTitle(e.target.value)}
+                  className="h-9 text-sm"
+                />
+                <Button
+                  data-testid="calendar-agenda-quick-task-submit"
+                  type="submit"
+                  size="sm"
+                  disabled={!agendaQuickTitle.trim() || createQuickTask.isPending}
+                >
+                  <Plus data-icon="inline-start" />
+                  Thêm
+                </Button>
+              </form>
+
+              {/* Annotations */}
+              {(annotationsByDayMap.get(agendaDay) ?? []).length > 0 ? (
+                <div className="space-y-1.5">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Dấu ngày
+                  </h5>
+                  {(annotationsByDayMap.get(agendaDay) ?? []).map((ann) => (
+                    <div
+                      key={ann.id}
+                      className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="size-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: sourceColorToken(ann.color) }}
+                      />
+                      <span className="font-bold">{ann.label}</span>
+                      {ann.note_md ? (
+                        <span className="text-muted-foreground truncate">· {ann.note_md}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* Events section */}
+              <div data-testid="calendar-agenda-events" className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Buổi ({(eventsByDayMap.get(agendaDay) ?? []).length})
+                  </h5>
+                </div>
+                {(eventsByDayMap.get(agendaDay) ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Không có buổi nào trong ngày.</p>
+                ) : (
+                  (eventsByDayMap.get(agendaDay) ?? []).map((event) => {
+                    const source = sourceById.get(event.source_id)
+                    return (
+                      <div
+                        key={event.id}
+                        data-testid="calendar-agenda-event-card"
+                        data-event-id={event.id}
+                        className="rounded-lg border bg-background p-3 shadow-sm space-y-1 transition-colors"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <span
+                            aria-hidden="true"
+                            className="mt-1 size-3 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor: sourceColorToken(source?.color ?? null),
+                            }}
+                          />
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <p
+                              data-testid="calendar-agenda-event-title"
+                              className="text-base font-bold text-foreground break-words"
+                            >
+                              {event.title}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatVietnamTime(event)} · {source?.name ?? 'Nguồn'}
+                            </p>
+                            {event.location ? (
+                              <p className="text-xs text-foreground/80 break-words">
+                                📍 {event.location}
+                              </p>
+                            ) : null}
+                            {event.description_md ? (
+                              <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words pt-1">
+                                {event.description_md}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+
+              {/* Tasks section */}
+              <div data-testid="calendar-agenda-tasks" className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Task đến hạn ({(tasksByDayMap.get(agendaDay) ?? []).length})
+                  </h5>
+                </div>
+                {(tasksByDayMap.get(agendaDay) ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Không có task đến hạn hôm nay.</p>
+                ) : (
+                  (tasksByDayMap.get(agendaDay) ?? []).map((task) => (
+                    <div
+                      key={task.id}
+                      data-testid="calendar-agenda-task-card"
+                      data-task-id={task.id}
+                      className="flex items-center gap-3 rounded-lg border bg-background p-3 shadow-sm transition-colors"
+                    >
+                      <Checkbox
+                        data-testid="calendar-agenda-task-toggle"
+                        checked={task.status === 'completed'}
+                        onCheckedChange={(checked) =>
+                          toggleTaskStatus.mutate({
+                            taskId: task.id,
+                            status: checked === true ? 'completed' : 'open',
+                          })
+                        }
+                        className="size-4 rounded-sm"
+                        aria-label={`Đổi trạng thái ${task.title}`}
+                      />
+                      <span
+                        data-testid="calendar-agenda-task-title"
+                        className={cn(
+                          'min-w-0 flex-1 text-sm font-semibold break-words',
+                          task.status === 'completed' && 'line-through text-muted-foreground',
+                        )}
+                      >
+                        {task.title}
+                      </span>
+                      {task.due_at ? (
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {task.due_at}
+                        </span>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          months.map(({ year, month }, index) => {
           const query = monthEventQueries[index]
           const currentMonthKey = monthKey(year, month)
           return (
@@ -633,16 +998,18 @@ export function CalendarScrollView() {
               ))}
             </div>
           )
-        })}
+        }))}
       </div>
 
-      <MiniNav
-        anchor={headerMonth}
-        visibleDays={visibleDays}
-        onSelectDay={scrollToDay}
-        onPrev={() => scrollToMonth(addMonths(headerMonth.year, headerMonth.month, -1))}
-        onNext={() => scrollToMonth(addMonths(headerMonth.year, headerMonth.month, 1))}
-      />
+      {showMiniNav ? (
+        <MiniNav
+          anchor={headerMonth}
+          visibleDays={visibleDays}
+          onSelectDay={scrollToDay}
+          onPrev={() => scrollToMonth(addMonths(headerMonth.year, headerMonth.month, -1))}
+          onNext={() => scrollToMonth(addMonths(headerMonth.year, headerMonth.month, 1))}
+        />
+      ) : null}
 
       <DayDetailDialog
         open={selectedDay !== null}

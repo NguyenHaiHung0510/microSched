@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Check } from 'lucide-react'
 
-import type { CalendarEvent } from '@/calendar-ui'
+import { formatVietnamTime, type CalendarEvent } from '@/calendar-ui'
 import {
   mergeDayChips,
   sourceTone,
@@ -132,9 +132,15 @@ export function DayCell({
             <span
               data-testid="calendar-day-chip-event"
               key={chip.event.id}
+              title={chip.event.location ? `${chip.event.title} · ${chip.event.location}` : chip.event.title}
               style={sourceTone(sourceColorOf(chip.event.source_id))}
-              className="block truncate rounded-sm px-1 py-px text-xs font-bold"
+              className="block truncate rounded-sm px-1 py-px text-xs font-bold leading-tight"
             >
+              {!chip.event.all_day && isDesktop ? (
+                <span className="mr-1 opacity-75 font-semibold">
+                  {formatVietnamTime(chip.event).split('–')[0]}
+                </span>
+              ) : null}
               {chip.event.title}
             </span>
           ) : isDesktop ? (
@@ -161,6 +167,7 @@ export function DayCell({
               )}
             >
               <span
+                title={chip.task.title}
                 className={cn(
                   'min-w-0 flex-1 truncate',
                   chip.task.status === 'completed' && 'line-through',
@@ -198,6 +205,7 @@ export function DayCell({
             <span
               data-testid="calendar-day-chip-task"
               key={chip.task.id}
+              title={chip.task.title}
               className={cn(
                 'block truncate rounded-sm border border-dashed border-input px-1 py-px text-xs font-semibold text-secondary-foreground',
                 chip.task.status === 'completed' && 'line-through',
