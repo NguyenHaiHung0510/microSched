@@ -4,3 +4,6 @@
 ## 2026-08-02 - Memoize list items in React mapping loops
 **Learning:** For React components rendering lists using `.map()`, rendering inline JSX with handlers created in the parent scope causes all list items to re-render when the parent's state updates, even if the individual items haven't changed.
 **Action:** Extract list items into separate components, wrap them in `React.memo`, and use `useCallback` on any handler functions passed down from the parent to ensure stable prop references and prevent unnecessary re-renders.
+## 2026-08-05 - Avoid subqueries for count in SQLAlchemy for PostgreSQL
+**Learning:** Using `select(func.count()).select_from(stmt.subquery())` in SQLAlchemy against PostgreSQL can lead to a full evaluation of the result set, causing severe performance overhead for large tables.
+**Action:** Always prefer `stmt.with_only_columns(func.count()).order_by(None)` instead of subqueries for performing count queries.
