@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check } from 'lucide-react'
+import { Check, LockKeyhole } from 'lucide-react'
 
 import { formatVietnamTime, type CalendarEvent } from '@/calendar-ui'
 import {
@@ -96,13 +96,16 @@ export function DayCell({
         {visibleAnnotations.map((annotation) => (
           <span
             data-testid="calendar-day-annotation"
+            data-private={annotation.is_private}
             key={annotation.id}
             style={sourceTone(annotation.color)}
             className={cn(
               'block truncate rounded-sm px-1 py-px text-xs font-semibold',
+              annotation.is_private && 'border-s-2 border-s-primary',
               !showAnnotationLabels && 'min-h-1.5 py-0',
             )}
           >
+            {annotation.is_private ? <LockKeyhole aria-label="Riêng tư" role="img" className="mr-1 inline size-3 text-primary" /> : null}
             {showAnnotationLabels ? annotation.label : null}
           </span>
         ))}
@@ -134,10 +137,10 @@ export function DayCell({
               key={chip.event.id}
               title={chip.event.location ? `${chip.event.title} · ${chip.event.location}` : chip.event.title}
               style={sourceTone(sourceColorOf(chip.event.source_id))}
-              className="block truncate rounded-sm px-1 py-px text-xs font-bold leading-tight"
+              className={cn('rounded-sm px-1 py-px text-xs font-bold', isDesktop ? 'line-clamp-2 whitespace-normal [overflow-wrap:anywhere] leading-4' : 'block truncate')}
             >
               {!chip.event.all_day && isDesktop ? (
-                <span className="mr-1 opacity-75 font-semibold">
+                <span className="mr-1 font-semibold">
                   {formatVietnamTime(chip.event).split('–')[0]}
                 </span>
               ) : null}
@@ -146,6 +149,7 @@ export function DayCell({
           ) : isDesktop ? (
             <div
               data-testid="calendar-day-chip-task"
+              data-private={chip.task.is_private ?? false}
               key={chip.task.id}
               draggable={isDesktop}
               onDragStart={(e) => {
@@ -162,25 +166,34 @@ export function DayCell({
                 e.dataTransfer.effectAllowed = 'move'
               }}
               className={cn(
-                'group flex items-center justify-between gap-1 rounded-sm border border-dashed border-input bg-card/60 px-1 py-0.5 text-xs font-semibold text-secondary-foreground hover:border-primary',
+                'group flex items-start justify-between gap-1 rounded-sm border border-dashed border-input bg-card/60 px-1 py-0.5 text-xs font-semibold text-secondary-foreground hover:border-primary',
+                chip.task.is_private && 'border-s-2 border-s-primary bg-brand-50',
                 chip.task.status === 'completed' && 'line-through',
               )}
             >
               <span
                 title={chip.task.title}
                 className={cn(
-                  'min-w-0 flex-1 truncate',
+                  'min-w-0 flex-1 line-clamp-2 whitespace-normal [overflow-wrap:anywhere] leading-4',
                   chip.task.status === 'completed' && 'line-through',
                 )}
               >
+                {chip.task.is_private ? <LockKeyhole aria-label="Riêng tư" role="img" className="mr-1 inline size-3 text-primary" /> : null}
                 {chip.task.title}
               </span>
               {onToggleTask ? (
                 <span
                   role="checkbox"
+                  tabIndex={0}
                   aria-checked={chip.task.status === 'completed'}
                   data-testid="calendar-chip-task-toggle"
                   aria-label={`Đổi trạng thái ${chip.task.title}`}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onToggleTask(chip.task.id, chip.task.status === 'completed' ? 'open' : 'completed')
+                  }}
                   onClick={(e) => {
                     e.stopPropagation()
                     onToggleTask(
@@ -189,7 +202,7 @@ export function DayCell({
                     )
                   }}
                   className={cn(
-                    'flex size-3.5 shrink-0 items-center justify-center rounded border border-input transition-colors hover:border-primary',
+                    'flex size-6 shrink-0 items-center justify-center rounded border border-input transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                     chip.task.status === 'completed'
                       ? 'border-primary bg-primary text-primary-foreground'
                       : 'bg-background',
@@ -204,13 +217,16 @@ export function DayCell({
           ) : (
             <span
               data-testid="calendar-day-chip-task"
+              data-private={chip.task.is_private ?? false}
               key={chip.task.id}
               title={chip.task.title}
               className={cn(
                 'block truncate rounded-sm border border-dashed border-input px-1 py-px text-xs font-semibold text-secondary-foreground',
+                chip.task.is_private && 'border-s-2 border-s-primary bg-brand-50',
                 chip.task.status === 'completed' && 'line-through',
               )}
             >
+              {chip.task.is_private ? <LockKeyhole aria-label="Riêng tư" role="img" className="mr-1 inline size-3 text-primary" /> : null}
               {chip.task.title}
             </span>
           ),

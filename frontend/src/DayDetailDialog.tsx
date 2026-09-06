@@ -40,6 +40,8 @@ import {
   type TaskWritePayload,
 } from '@/task-ui'
 import { CALENDAR_FAMILY_KEY } from '@/calendar-queries'
+import { PrivateMarker } from '@/PrivateMarker'
+import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 
 type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
 
@@ -399,7 +401,9 @@ export function DayDetailDialog({
                   annotations.map((annotation) => (
                     <div
                       key={annotation.id}
-                      className="flex items-start gap-3 rounded-lg border p-3"
+                      data-testid="calendar-annotation-detail"
+                      data-private={annotation.is_private}
+                      className={cn('flex items-start gap-3 rounded-lg border p-3', annotation.is_private && PRIVATE_SURFACE_CLASS)}
                     >
                       <span
                         aria-hidden="true"
@@ -408,6 +412,7 @@ export function DayDetailDialog({
                       />
                       <div className="min-w-0 flex-1">
                         <p className="break-words text-sm font-bold">{annotation.label}</p>
+                        {annotation.is_private ? <PrivateMarker /> : null}
                         <p className="text-xs text-muted-foreground">
                           {annotation.starts_on === annotation.ends_on
                             ? formatShortVietnamDate(annotation.starts_on)
@@ -519,9 +524,11 @@ export function DayDetailDialog({
                    <div
                      data-testid="calendar-day-task"
                      data-task-id={task.id}
+                     data-private={task.is_private}
                      key={task.id}
                      className={cn(
                         'flex items-center gap-2 rounded-lg border p-2 text-left transition-colors hover:bg-muted/50',
+                       task.is_private && PRIVATE_SURFACE_CLASS,
                        task.status === 'completed' && 'opacity-70',
                      )}
                    >
@@ -541,12 +548,13 @@ export function DayDetailDialog({
                         variant="ghost"
                         data-testid="calendar-day-task-edit-trigger"
                         className={cn(
-                          'h-auto min-w-0 flex-1 justify-start p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
+                          'h-auto min-w-0 flex-1 flex-col items-start justify-start whitespace-normal break-words p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                          task.status === 'completed' && 'line-through',
                         )}
                         onClick={() => setTaskEdit(task)}
                       >
                         {task.title}
+                        {task.is_private ? <PrivateMarker /> : null}
                       </Button>
                       <Button
                         data-testid="calendar-day-task-delete"

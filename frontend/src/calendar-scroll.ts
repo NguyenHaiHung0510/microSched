@@ -68,6 +68,7 @@ export type TaskSummary = {
   due_at: string | null
   created_at: string | null
   pinned?: boolean
+  is_private?: boolean
 }
 
 export type DayChip =

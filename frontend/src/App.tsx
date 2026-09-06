@@ -138,21 +138,26 @@ function SignedIn({ session }: { session: SessionResponse }) {
   })
 
   return (
-    <div className="overflow-hidden rounded-xl bg-background shadow-3">
+    <div className={cn('mx-auto overflow-hidden rounded-xl bg-background shadow-3', currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl')}>
       <header className="flex items-center justify-between gap-4 px-5 pt-5 pb-2 sm:px-6">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <Button
+          <h1>
+          <Button asChild
             data-testid="app-logo-button"
             variant="ghost"
-            size="sm"
-            className="h-auto p-0 hover:bg-transparent text-left focus-visible:ring-2 focus-visible:ring-primary/60 rounded"
+            size="lg"
+            className="min-h-11 px-0 text-xl font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary text-left focus-visible:ring-2 focus-visible:ring-primary"
             aria-label="Về trang Task mặc định"
-            onClick={goToDefaultScreen}
           >
-            <h1 className="text-xl font-extrabold tracking-tight text-primary transition-opacity hover:opacity-80">
+            <a href="/" onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+              event.preventDefault()
+              goToDefaultScreen()
+            }}>
               microSched
-            </h1>
+            </a>
           </Button>
+          </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -177,7 +182,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <ReminderConfirmScreen key={reminderDispatchKey} />
         ) : (
           <>
-        <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">
+        <div className="mb-4 grid grid-cols-4 gap-1 sm:flex sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
             size="lg"
@@ -258,10 +263,7 @@ function App() {
             bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
             Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}
         <div
-          className={cn(
-            'mx-auto transition-all duration-200',
-            session.data && !loggedOut ? 'max-w-5xl xl:max-w-7xl' : 'max-w-5xl',
-          )}
+          className="mx-auto max-w-[1680px]"
         >
           {session.isPending ? (
             <Card

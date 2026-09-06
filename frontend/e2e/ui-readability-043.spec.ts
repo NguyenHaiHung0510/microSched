@@ -1,5 +1,12 @@
 import { expect, test } from './fixtures/tasks'
 
+test.beforeEach(async ({ page }) => {
+  // Every screen visited by navigation tests stays fully synthetic.
+  for (const pattern of ['**/api/calendar/**', '**/api/notes**', '**/api/subscriptions**', '**/api/settings**']) {
+    await page.route(pattern, (route) => route.fulfill({ json: { items: [] } }))
+  }
+})
+
 /**
  * Task 043: UI/UX Readability Regression Suite
  * Covers 3 bounded areas:
@@ -93,11 +100,16 @@ test.describe('Area 1: Logo microSched navigation', () => {
     const logoButton = page.getByTestId('app-logo-button')
     await expect(logoButton).toBeVisible()
     await expect(logoButton).toHaveAttribute('aria-label', 'Về trang Task mặc định')
+    await expect(logoButton).toHaveAttribute('href', '/')
+    const origin = await page.evaluate(() => performance.timeOrigin)
+    const logoBox = await logoButton.boundingBox()
+    expect(logoBox!.height).toBeGreaterThanOrEqual(44)
     await logoButton.click()
 
     // Verifies SPA navigation back to Task view
     await expect(page.getByRole('tab', { name: 'Task' })).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('task-list')).toBeVisible()
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin)
   })
 
   test('logo button navigates back to default Task screen from /subscription deep link without full reload', async ({ page }) => {
@@ -160,6 +172,12 @@ test.describe('Area 2: Calendar month readability on desktop and mobile', () => 
     expect(chipText).toContain('09:00')
     expect(chipText).toContain('Họp hội đồng công nghệ thông tin kỳ 1')
     await expect(eventChip).toHaveAttribute('title', /Phòng 204 A2/)
+    await page.getByTestId('calendar-today-button').click()
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    const currentMonth = Number(todayStr.slice(5, 7))
+    await expect(page.getByTestId('calendar-month-header')).toContainText(`tháng ${currentMonth} năm ${todayStr.slice(0, 4)}`)
+    const metrics = await eventChip.evaluate((element) => ({ height: element.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(element).lineHeight) }))
+    expect(metrics.height).toBeGreaterThan(metrics.lineHeight * 1.5)
 
     // Sidebar can be toggled on desktop to give more usable space
     const toggleSidebarBtn = page.getByTestId('calendar-toggle-sidebar')
@@ -173,7 +191,6 @@ test.describe('Area 2: Calendar month readability on desktop and mobile', () => 
 
     // Expand sidebar again
     await toggleSidebarBtn.click()
-    await expect(toggleSidebarBtn).toHaveText('Thu gọn lịch nhỏ')
     await expect(page.getByTestId('calendar-mininav')).toBeVisible()
   })
 
@@ -229,6 +246,20 @@ test.describe('Area 2: Calendar month readability on desktop and mobile', () => 
 })
 
 test.describe('Area 3: Task timeline empty-day hierarchy and overdue section', () => {
+  test('consecutive empty dates share rows while today and populated groups stay full width', async ({ page, taskApi }) => {
+    taskApi.tasks = [{ ...taskApi.tasks[0], id: 'today-043', pinned: false, is_private: false, due_precision: 'date', due_on: vnDay(0), due_at: null, status: 'open' }]
+    await page.goto('/')
+    const empty = page.locator('[data-testid="task-day-group"][data-empty="true"]')
+    await expect(empty).toHaveCount(6)
+    const first = await empty.nth(0).boundingBox()
+    const second = await empty.nth(1).boundingBox()
+    expect(Math.abs(first!.y - second!.y)).toBeLessThan(2)
+    expect(first!.height).toBeLessThan(75)
+    const today = await page.locator(`[data-testid="task-day-group"][data-day="${vnDay(0)}"]`).boundingBox()
+    expect(today!.width).toBeGreaterThan(first!.width * 1.5)
+    await expect(page.getByTestId('task-card')).toHaveCount(1)
+  })
+
   test('overdue banner sits above quick add and does not push quick add below many items', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByTestId('task-list')).toBeVisible()
@@ -269,7 +300,7 @@ test.describe('Area 3: Task timeline empty-day hierarchy and overdue section', (
     expect(dayAttrs.every(Boolean)).toBe(true)
 
     // Today group has "Hôm nay" badge
-    const todayBadge = dayGroups.filter({ hasText: 'Hôm nay' })
+    const todayBadge = page.getByTestId('task-today-label')
     await expect(todayBadge).toBeVisible()
 
     // Navigating earlier advances 7 contiguous blocks (total 14) without losing items

@@ -1,5 +1,31 @@
 import { expect, test } from './fixtures/tasks'
 
+test.beforeEach(async ({ page }) => {
+  for (const pattern of ['**/api/notes**', '**/api/subscriptions**', '**/api/settings**']) {
+    await page.route(pattern, (route) => route.fulfill({ json: { items: [] } }))
+  }
+})
+
+test('agenda task failures do not look empty and recover through the visible retry', async ({ page }) => {
+  let fail = true
+  await setupCalendarRoutes(page)
+  await page.route('**/api/tasks?**', (route) => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('bucket') !== 'dated') return route.fallback()
+    return route.fulfill({ status: fail ? 500 : 200, json: fail ? { detail: 'Synthetic load failure' } : { items: [] } })
+  })
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Lịch' }).click()
+  await page.getByTestId('calendar-mode-toggle-agenda').click()
+  await expect(page.getByTestId('calendar-agenda-tasks-loading')).toBeVisible()
+  await expect(page.getByTestId('calendar-agenda-tasks-empty')).toHaveCount(0)
+  await expect(page.getByTestId('calendar-agenda-tasks-error')).toBeVisible({ timeout: 12_000 })
+  await expect(page.getByTestId('calendar-agenda-tasks-empty')).toHaveCount(0)
+  fail = false
+  await page.getByTestId('calendar-agenda-tasks-retry').click()
+  await expect(page.getByTestId('calendar-agenda-tasks-empty')).toBeVisible()
+})
+
 /**
  * Task 043: Agenda State, Month Navigation, Error Handling & Persistence Suite
  * Covers 5 bounded areas:
@@ -219,7 +245,7 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
     expect(requestedTaskRanges.length).toBeGreaterThan(0)
   })
 
-  test('agenda handles per-month event and task loading/error states explicitly without false empty message', async ({ page }) => {
+  test('agenda handles per-month event loading/error states explicitly without false empty message', async ({ page }) => {
     let failEvents = true
 
     await page.route('**/api/calendar/**', async (route) => {
@@ -279,11 +305,14 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
 
     // On failed event query, error card is rendered
     const errorAlert = page.getByTestId('calendar-agenda-events-error')
-    await expect(errorAlert).toBeVisible()
+    await expect(page.getByTestId('calendar-agenda-events-loading')).toBeVisible()
+    await expect(page.getByTestId('calendar-agenda-events-empty')).toHaveCount(0)
+    // Existing query defaults retry at 1s, 2s, 4s before reaching the error state.
+    await expect(errorAlert).toBeVisible({ timeout: 12_000 })
     await expect(errorAlert).toContainText('Không tải được buổi của tháng này.')
 
     // Must NEVER show 'Không có buổi nào trong ngày.' on failed query!
-    await expect(page.getByText('Không có buổi nào trong ngày.')).toBeHidden()
+    await expect(page.getByTestId('calendar-agenda-events-empty')).toHaveCount(0)
 
     // Now permit success and click retry
     failEvents = false

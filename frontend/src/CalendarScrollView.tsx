@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, GripVertical, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GripVertical, MapPin, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
@@ -57,6 +57,8 @@ import {
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { remainingSeconds } from '@/private-gate'
+import { PrivateMarker } from '@/PrivateMarker'
+import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 
 type Envelope<T> = { items: T[] }
 type SessionLite = { private_until: string | null }
@@ -194,6 +196,8 @@ export function CalendarScrollView() {
   const todayMonthKey = today.slice(0, 7)
   const isDesktop = useIsDesktop()
   const containerRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLDivElement>(null)
+  const [headerHeight, setHeaderHeight] = useState(HEADER_HEIGHT)
   const [quickTitle, setQuickTitle] = useState('')
   const [calendarMode, setCalendarMode] = useState<'grid' | 'agenda'>(getSavedCalendarMode)
   const [showMiniNav, setShowMiniNav] = useState(true)
@@ -210,6 +214,7 @@ export function CalendarScrollView() {
     ),
   )
   const [visibleWeekKeys, setVisibleWeekKeys] = useState<string[]>([])
+  const [centerWeekKey, setCenterWeekKey] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const visibleRef = useRef(new Map<string, boolean>())
   const extendingRef = useRef(false)
@@ -440,11 +445,24 @@ export function CalendarScrollView() {
   )
 
   const headerMonth = useMemo(() => {
+    // Navigation centers its target week below the measured sticky controls.
+    // Name that central week, rather than a preceding month at the top edge.
     const visible = new Set(visibleWeekKeys)
-    const first = weekRows.find((row) => visible.has(row.key))
+    const first = weekRows.find((row) => row.key === centerWeekKey) ?? weekRows.find((row) => visible.has(row.key))
     if (first) return { year: first.year, month: first.month }
     return { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) }
-  }, [visibleWeekKeys, weekRows, today])
+  }, [visibleWeekKeys, centerWeekKey, weekRows, today])
+
+  useLayoutEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const measure = () => setHeaderHeight(Math.ceil(header.getBoundingClientRect().height))
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(header)
+    return () => observer.disconnect()
+  }, [])
 
   const visibleDays = useMemo(
     () => visibleDayKeys(visibleWeekKeys, weekDaysByKey),
@@ -473,36 +491,41 @@ export function CalendarScrollView() {
     if (calendarMode !== 'grid') return
     const container = containerRef.current
     if (!container || typeof IntersectionObserver === 'undefined') return
+    visibleRef.current.clear()
     const observer = new IntersectionObserver(
       (entries) => {
-        let changed = false
         for (const entry of entries) {
           const key = (entry.target as HTMLElement).dataset.weekKey
           if (!key) continue
-          if (visibleRef.current.get(key) !== entry.isIntersecting) changed = true
           visibleRef.current.set(key, entry.isIntersecting)
         }
-        if (!changed) return
         const next = [...visibleRef.current]
           .filter(([, value]) => value)
           .map(([key]) => key)
         setVisibleWeekKeys((previous) =>
           previous.join(',') === next.join(',') ? previous : next,
         )
+        const center = container.getBoundingClientRect().top + (headerHeight + container.clientHeight) / 2
+        const nearest = next.map((key) => {
+          const row = container.querySelector<HTMLElement>(`[data-week-key="${key}"]`)
+          const bounds = row?.getBoundingClientRect()
+          return { key, distance: bounds ? Math.abs((bounds.top + bounds.bottom) / 2 - center) : Infinity }
+        }).sort((a, b) => a.distance - b.distance)[0]
+        setCenterWeekKey(nearest?.key ?? null)
       },
-      { root: container, threshold: 0, rootMargin: `-${HEADER_HEIGHT}px 0px 0px 0px` },
+      { root: container, threshold: [0, 0.5, 1], rootMargin: `-${headerHeight}px 0px 0px 0px` },
     )
     for (const row of container.querySelectorAll<HTMLElement>('[data-week-key]')) {
       observer.observe(row)
     }
     return () => observer.disconnect()
-  }, [weekRows, calendarMode])
+  }, [weekRows, calendarMode, headerHeight])
 
   function scrollToRow(row: HTMLElement) {
     const container = containerRef.current
     if (!container) return
     const centered =
-      row.offsetTop - (container.clientHeight - row.clientHeight) / 2 - HEADER_HEIGHT / 2
+      row.offsetTop - (container.clientHeight - row.clientHeight) / 2 - headerHeight / 2
     container.scrollTop = Math.max(0, centered)
   }
 
@@ -610,6 +633,7 @@ export function CalendarScrollView() {
         className="relative h-[calc(100dvh-13rem)] min-h-80 min-w-0 flex-1 overflow-y-auto rounded-xl border bg-card shadow-1"
      >
        <div
+         ref={headerRef}
          className={cn(
            'sticky top-0 z-10 border-b bg-background px-3 py-2',
            'flex flex-col gap-2',
@@ -651,6 +675,7 @@ export function CalendarScrollView() {
               {calendarMode === 'grid' ? (
                 <Button
                   data-testid="calendar-toggle-sidebar"
+                  aria-expanded={showMiniNav}
                   size="default"
                   variant="outline"
                   className="hidden sm:inline-flex min-h-11 h-11 px-3 text-xs font-semibold"
@@ -837,6 +862,7 @@ export function CalendarScrollView() {
                       <Button
                         key={day}
                         data-testid="calendar-agenda-day-button"
+                        disabled={createAgendaTask.isPending}
                         data-day={day}
                         data-selected={isSelected ? 'true' : undefined}
                         variant={isSelected ? 'secondary' : 'ghost'}
@@ -844,7 +870,7 @@ export function CalendarScrollView() {
                         aria-pressed={isSelected}
                         onClick={() => setAgendaDay(day)}
                         className={cn(
-                          'flex min-h-9 min-w-9 h-10 w-full min-w-0 flex-col items-center justify-center rounded-lg p-0 text-xs transition-colors',
+                          'flex min-h-11 min-w-6 h-11 w-full flex-col items-center justify-center rounded-lg p-0 text-xs transition-colors',
                           isSelected && 'bg-primary text-primary-foreground font-bold hover:bg-primary/90 hover:text-primary-foreground',
                           !isSelected && isDayToday && 'border border-primary font-bold text-primary',
                         )}
@@ -892,7 +918,7 @@ export function CalendarScrollView() {
               className="rounded-xl border bg-card p-4 shadow-1 space-y-4"
             >
               <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <h4
                     data-testid="calendar-agenda-day-title"
                     className="text-base font-extrabold text-foreground"
@@ -926,10 +952,11 @@ export function CalendarScrollView() {
                   ref={agendaInputRef}
                   data-testid="calendar-agenda-quick-task-input"
                   placeholder="Thêm task cho ngày này…"
+                  aria-label="Task mới cho ngày đã chọn"
                   value={agendaQuickTitle}
-                  disabled={createAgendaTask.isPending}
+                  readOnly={createAgendaTask.isPending}
                   onChange={(e) => setAgendaQuickTitle(e.target.value)}
-                  className="min-h-11 h-11 text-sm flex-1"
+                  className="min-h-11 h-11 min-w-0 text-base sm:text-sm flex-1"
                 />
                 <Button
                   data-testid="calendar-agenda-quick-task-submit"
@@ -961,7 +988,7 @@ export function CalendarScrollView() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="min-h-6 h-6 px-2 text-xs font-semibold"
+                    className="min-h-11 h-11 px-2 text-xs font-semibold"
                     onClick={() => void annotationsQuery.refetch()}
                   >
                     Thử lại
@@ -975,16 +1002,19 @@ export function CalendarScrollView() {
                   {agendaDayAnnotations.map((ann) => (
                     <div
                       key={ann.id}
-                      className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold"
+                      data-testid="calendar-agenda-annotation"
+                      data-private={ann.is_private}
+                      className={cn('flex flex-wrap items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold', ann.is_private && PRIVATE_SURFACE_CLASS)}
                     >
                       <span
                         aria-hidden="true"
                         className="size-2.5 rounded-full shrink-0"
                         style={{ backgroundColor: sourceColorToken(ann.color) }}
                       />
-                      <span className="font-bold">{ann.label}</span>
+                      <span className="min-w-0 break-words font-bold">{ann.label}</span>
+                      {ann.is_private ? <PrivateMarker /> : null}
                       {ann.note_md ? (
-                        <span className="text-muted-foreground truncate">· {ann.note_md}</span>
+                        <span className="min-w-0 break-words text-muted-foreground">· {ann.note_md}</span>
                       ) : null}
                     </div>
                   ))}
@@ -1015,14 +1045,14 @@ export function CalendarScrollView() {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="min-h-8 h-8 px-2.5 text-xs font-semibold"
+                      className="min-h-11 h-11 px-2.5 text-xs font-semibold"
                       onClick={() => void agendaMonthEventQuery.refetch()}
                     >
                       Thử lại
                     </Button>
                   </div>
                 ) : agendaDayEvents.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Không có buổi nào trong ngày.</p>
+                  <p data-testid="calendar-agenda-events-empty" className="text-sm text-muted-foreground">Không có buổi nào trong ngày.</p>
                 ) : (
                   agendaDayEvents.map((event) => {
                     const source = sourceById.get(event.source_id)
@@ -1052,8 +1082,8 @@ export function CalendarScrollView() {
                               {formatVietnamTime(event)} · {source?.name ?? 'Nguồn'}
                             </p>
                             {event.location ? (
-                              <p className="text-xs text-foreground/80 break-words min-w-0">
-                                📍 {event.location}
+                              <p className="flex items-start gap-1 text-xs text-muted-foreground break-words min-w-0">
+                                <MapPin className="mt-0.5 size-3 shrink-0" aria-hidden="true" /> {event.location}
                               </p>
                             ) : null}
                             {event.description_md ? (
@@ -1093,21 +1123,23 @@ export function CalendarScrollView() {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="min-h-8 h-8 px-2.5 text-xs font-semibold"
+                      data-testid="calendar-agenda-tasks-retry"
+                      className="min-h-11 h-11 px-2.5 text-xs font-semibold"
                       onClick={() => void allTasksQuery.refetch()}
                     >
                       Thử lại
                     </Button>
                   </div>
                 ) : agendaDayTasks.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Không có task đến hạn hôm nay.</p>
+                  <p data-testid="calendar-agenda-tasks-empty" className="text-sm text-muted-foreground">Không có task đến hạn trong ngày này.</p>
                 ) : (
                   agendaDayTasks.map((task) => (
                     <div
                       key={task.id}
                       data-testid="calendar-agenda-task-card"
+                      data-private={task.is_private}
                       data-task-id={task.id}
-                      className="flex items-center gap-3 rounded-lg border bg-background p-3 shadow-sm transition-colors"
+                      className={cn('flex items-center gap-3 rounded-lg border bg-background p-3 shadow-sm transition-colors', task.is_private && PRIVATE_SURFACE_CLASS)}
                     >
                       <Checkbox
                         data-testid="calendar-agenda-task-toggle"
@@ -1118,7 +1150,7 @@ export function CalendarScrollView() {
                             status: checked === true ? 'completed' : 'open',
                           })
                         }
-                        className="size-4 rounded-sm"
+                        className="size-6 shrink-0 rounded-sm"
                         aria-label={`Đổi trạng thái ${task.title}`}
                       />
                       <span
@@ -1129,6 +1161,7 @@ export function CalendarScrollView() {
                         )}
                       >
                         {task.title}
+                        {task.is_private ? <span className="mt-1 block"><PrivateMarker /></span> : null}
                       </span>
                       {task.due_at ? (
                         <span className="text-xs text-muted-foreground shrink-0">

@@ -37,6 +37,8 @@ import { DashboardPanel } from '@/DashboardPanel'
 import { EntryEditDialog, type EntryEditPayload } from '@/EntryEditDialog'
 import { GroupForm } from '@/GroupForm'
 import { TrackerForm, type TrackerWritePayload } from '@/TrackerForm'
+import { PrivateMarker } from '@/PrivateMarker'
+import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 import {
   subscriptionQueryKey,
   type SettingsItem,
@@ -52,7 +54,9 @@ import {
   formatQuantity,
   formatReminderSummary,
   formatVnd,
-  groupRemindersByHour,
+  groupUpcomingReminders,
+  upcomingReminderDate,
+  upcomingReminderTime,
   groupTrackersByGroup,
   sortTrackersForGrid,
   trackerKindLabel,
@@ -392,7 +396,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
     [trackers, groups],
   )
   const reminderGroups = useMemo(
-    () => groupRemindersByHour(trackers),
+    () => groupUpcomingReminders(trackers),
     [trackers],
   )
 
@@ -449,23 +453,29 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         <Card data-testid="tracker-reminders-overview" className="gap-3 p-4 shadow-1 ring-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <Bell className="size-4 text-primary" />
-              <h3 className="text-base font-bold">Lịch nhắc nhở trong ngày</h3>
+              <Bell className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <h3 className="text-base font-bold">Nhắc nhở sắp tới</h3>
             </div>
             <span className="text-xs text-muted-foreground">
-              {reminderGroups.length} khung giờ
+              {reminderGroups.length} mốc nhắc
             </span>
           </div>
+          <p className="text-xs text-muted-foreground">Theo lịch · giờ Việt Nam</p>
           <div className="space-y-2 pt-1">
           {reminderGroups.map((group) => (
             <div
-              key={group.time}
+              key={group.key}
+              data-testid="tracker-reminder-group"
+              data-next-at={group.nextAt ?? ''}
                 className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 rounded-lg bg-muted/40 p-3 border border-border/60"
             >
                <div className="min-w-0 flex-1 space-y-1">
+                  <p data-testid="tracker-reminder-date" className="text-sm font-bold capitalize">
+                    {upcomingReminderDate(group.nextAt)}
+                  </p>
                   <div className="flex items-start gap-2 min-w-0">
-                    <span className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary">
-                      {group.time}
+                    <span data-testid="tracker-reminder-time" className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-xs font-extrabold text-primary tabular-nums">
+                      {upcomingReminderTime(group)}
                     </span>
                     <span
                       data-testid="tracker-reminder-preview"
@@ -474,9 +484,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                       {group.previewText}
                     </span>
                   </div>
-                  <p className="break-words text-xs text-muted-foreground">
-                    Mục: {group.trackers.map((t) => t.name).join(', ')}
-                  </p>
+                  <ul className="space-y-1">
+                    {group.trackers.map((tracker) => (
+                      <li key={tracker.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 break-words text-xs text-muted-foreground">
+                        <span className="min-w-0 break-words">{tracker.name} · {formatReminderSummary(tracker)}</span>
+                        {tracker.is_private ? <PrivateMarker /> : null}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
                 <div data-testid="tracker-reminder-actions" className="flex flex-wrap items-center justify-start lg:justify-end gap-2 min-w-0 max-w-full lg:max-w-[50%]">
                   {group.trackers.map((tracker) =>
@@ -670,12 +685,15 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                         groupTrackers.map((tracker) => (
                           <div
                             key={tracker.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-2.5"
+                            data-testid="tracker-management-row"
+                            data-private={tracker.is_private}
+                            className={cn('flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-2.5', tracker.is_private && PRIVATE_SURFACE_CLASS)}
                           >
                             <div className="min-w-0">
                               <p className="max-w-full break-words text-sm font-semibold">
                                 {tracker.name}
                               </p>
+                              {tracker.is_private ? <PrivateMarker /> : null}
                               <p className="text-xs text-muted-foreground">
                                 {tracker.input_mode === 'event'
                                   ? 'Một chạm'
@@ -766,12 +784,15 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                     {groupedData.unassigned.map((tracker) => (
                       <div
                         key={tracker.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-2.5"
+                        data-testid="tracker-management-row"
+                        data-private={tracker.is_private}
+                        className={cn('flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-2.5', tracker.is_private && PRIVATE_SURFACE_CLASS)}
                       >
                         <div className="min-w-0">
                           <p className="max-w-full break-words text-sm font-semibold">
                             {tracker.name}
                           </p>
+                          {tracker.is_private ? <PrivateMarker /> : null}
                           <p className="text-xs text-muted-foreground">
                             {tracker.input_mode === 'event'
                               ? 'Một chạm'

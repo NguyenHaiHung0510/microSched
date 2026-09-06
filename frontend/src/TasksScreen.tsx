@@ -13,7 +13,6 @@ import {
   ChevronDown,
   ChevronUp,
   Edit3,
-  LockKeyhole,
   Pin,
   PinOff,
   Plus,
@@ -42,6 +41,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { PrivateMarker } from '@/PrivateMarker'
+import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 import { uuidv7 } from '@/lib/uuidv7'
 import { taskRefetchInterval } from '@/query-polling'
 import { TaskForm } from '@/TaskForm'
@@ -443,15 +444,16 @@ export function TasksScreen() {
           key={day}
           data-testid="task-day-group"
           data-day={day}
+          data-empty="true"
           className={cn(
-            'rounded-lg transition-colors',
+            'min-w-0 rounded-lg transition-colors',
             isToday
-              ? 'border border-primary/30 bg-accent/25 p-3 shadow-none'
+              ? 'col-span-full border border-primary bg-accent/25 p-3 shadow-none'
               : 'border border-dashed border-border/60 bg-card/40 px-3 py-2 text-muted-foreground shadow-none hover:bg-card/70',
           )}
         >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h3
                 className={cn('font-bold', isToday ? 'text-sm text-foreground' : 'text-xs text-muted-foreground')}
                 tabIndex={-1}
@@ -459,13 +461,13 @@ export function TasksScreen() {
                 {formatTimelineDay(day)}
               </h3>
               {isToday ? (
-                <Badge variant="secondary" className="bg-primary/10 text-xs font-bold text-primary">
+                <Badge data-testid="task-today-label" variant="secondary" className="bg-primary/10 text-xs font-bold text-primary">
                   Hôm nay
                 </Badge>
               ) : null}
             </div>
-            <span className="text-xs text-muted-foreground/70">
-              {isToday ? 'Chưa có việc nào' : 'Trống'}
+            <span className={cn('text-xs text-muted-foreground', !isToday && 'sr-only')}>
+              {isToday ? 'Chưa có việc nào' : 'Không có việc trong bộ lọc'}
             </span>
           </div>
         </Card>
@@ -478,17 +480,17 @@ export function TasksScreen() {
         data-testid="task-day-group"
         data-day={day}
         className={cn(
-          'space-y-3 rounded-lg bg-card p-4 shadow-1',
-          isToday && 'ring-1 ring-primary/40',
+          'col-span-full min-w-0 space-y-3 rounded-lg bg-card p-4 shadow-1',
+          isToday && 'ring-1 ring-primary',
         )}
       >
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h3 className="text-base font-bold" tabIndex={-1}>
               {formatTimelineDay(day)}
             </h3>
             {isToday ? (
-              <Badge variant="secondary" className="bg-primary/10 text-xs font-bold text-primary">
+              <Badge data-testid="task-today-label" variant="secondary" className="bg-primary/10 text-xs font-bold text-primary">
                 Hôm nay
               </Badge>
             ) : null}
@@ -526,11 +528,15 @@ export function TasksScreen() {
           data-testid="overdue-banner"
           size="lg"
           variant="outline"
-          className="w-full justify-between border-bad/30 bg-bad-bg font-bold text-bad hover:bg-bad-bg/80"
-          onClick={() => overdueRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          className="h-auto min-h-11 w-full min-w-0 flex-wrap justify-between whitespace-normal border-bad bg-bad-bg font-bold text-bad hover:bg-bad-bg"
+          onClick={() => {
+            const group = overdueRef.current
+            group?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
+            group?.querySelector('h3')?.focus({ preventScroll: true })
+          }}
         >
           <span className="flex items-center gap-2">
-            <AlertTriangle className="size-4" />
+            <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
             Có {groups.overdue.length} việc quá hạn trước đó
           </span>
           <span className="text-xs font-semibold">Xem việc &darr;</span>
@@ -591,7 +597,7 @@ export function TasksScreen() {
             ))}
           </div>
         ) : null}
-        <div data-testid="task-list" className="space-y-3">
+        <div data-testid="task-list" className="grid grid-cols-2 gap-3 sm:grid-cols-3 [&>section]:col-span-full">
           {groups.dateGroups.map(({ day, tasks: groupTasks }) => renderGroup(day, groupTasks))}
           {groups.undated.some((task) => task.status === 'open') && filter !== 'completed' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3>{groups.undated.filter((task) => task.status === 'open').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />)}</section> : null}
           {groups.undated.some((task) => task.status === 'completed') && filter !== 'open' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3><Button data-testid="task-day-completed-toggle" size="lg" variant="ghost" aria-expanded={completedOpen.has('undated')} onClick={() => setCompletedOpen((current) => new Set(current).has('undated') ? new Set([...current].filter((key) => key !== 'undated')) : new Set([...current, 'undated']))}>Đã xong ({groups.undated.filter((task) => task.status === 'completed').length})</Button>{completedOpen.has('undated') ? groups.undated.filter((task) => task.status === 'completed').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />) : null}</section> : null}
@@ -866,12 +872,14 @@ const TaskCard = memo(function TaskCard({
       <Card
         data-testid="task-card"
         data-task-id={task.id}
+        data-private={task.is_private}
         onClick={openDetailsFromCard}
-        className={[
+        className={cn(
           'group/task relative gap-3 overflow-visible rounded-lg px-4 py-4 shadow-2 ring-0 transition-shadow',
           task.pinned ? 'bg-brand-50 shadow-rose' : 'bg-card',
-          task.status === 'completed' ? 'opacity-70' : '',
-        ].join(' ')}
+          task.is_private && PRIVATE_SURFACE_CLASS,
+          task.status === 'completed' && !task.is_private ? 'opacity-70' : '',
+        )}
       >
         <div className="flex items-start gap-3">
           <Checkbox
@@ -949,10 +957,7 @@ const TaskCard = memo(function TaskCard({
               </Tooltip>
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
               {task.is_private ? (
-                <Badge variant="secondary">
-                  <LockKeyhole data-icon="inline-start" />
-                  Riêng tư
-                </Badge>
+                <PrivateMarker />
               ) : null}
             </div>
 
@@ -1135,10 +1140,7 @@ const TaskCard = memo(function TaskCard({
               <div className="flex flex-wrap items-center gap-2">
                 {task.priority ? <PriorityBadge priority={task.priority} /> : null}
                 {task.is_private ? (
-                  <Badge variant="secondary">
-                    <LockKeyhole data-icon="inline-start" />
-                    Riêng tư
-                  </Badge>
+                  <PrivateMarker />
                 ) : null}
                 <Badge variant={task.status === 'completed' ? 'secondary' : 'outline'}>
                   {task.status === 'completed' ? 'Đã xong' : 'Đang mở'}
