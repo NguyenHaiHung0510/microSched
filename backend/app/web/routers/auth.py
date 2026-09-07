@@ -1,6 +1,7 @@
 """Google login, logout, and the allowlist gate (auth-brief §1-§2)."""
 
 import logging
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -28,28 +29,35 @@ DENIED_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Không được phép — microSched</title>
+<title>Chưa thể đăng nhập — microSched</title>
 </head>
 <body style="margin:0;background:#fafafa;color:#171717;
              font-family:system-ui,-apple-system,sans-serif">
 <main style="max-width:30rem;margin:0 auto;padding:5rem 1.5rem">
   <p style="margin:0;font-size:.875rem;font-weight:500;color:#737373">microSched</p>
   <h1 style="margin:.5rem 0 0;font-size:1.875rem;font-weight:600;letter-spacing:-.02em">
-    Không được phép
+    Chưa thể đăng nhập vào microSched
   </h1>
   <p style="margin:1.5rem 0 0;line-height:1.6;color:#404040">
-    microSched là <strong>dự án cá nhân</strong>, chỉ mở cho tài khoản của chủ sở hữu.
-    Tài khoản Google bạn vừa dùng không nằm trong danh sách được phép.
+    Lần đăng nhập này chưa hoàn tất. Đây là bản triển khai cá nhân,
+    chỉ dành cho tài khoản được cấp quyền.
   </p>
   <p style="margin:1rem 0 0;line-height:1.6;color:#737373;font-size:.875rem">
-    Đây không phải lỗi — ứng dụng không có đăng ký, và không có cách nào xin quyền truy cập.
+    Nếu bạn có quyền truy cập, hãy quay về trang chủ để thử lại.
+    Bạn cũng có thể tìm hiểu mã nguồn và tự triển khai một bản cho mình.
   </p>
   <p style="margin:2rem 0 0">
-    <a href="/" style="color:#171717;font-size:.875rem">← Quay lại trang chủ</a>
+    <a href="/home">Về trang chủ</a> ·
+    <a href="https://github.com/NguyenHaiHung0510/microSched">Xem mã nguồn</a> ·
+    <a href="https://github.com/NguyenHaiHung0510">Người đứng sau dự án</a>
   </p>
 </main>
 </body>
 </html>"""
+
+# No request-supplied path: the same-origin document is built from shared UI
+# components/tokens. Keep a static, neutral fallback for backend-only installs.
+DENIED_DOCUMENT = Path(__file__).resolve().parents[4] / "frontend" / "dist" / "denied.html"
 
 
 def sanitize_return_to(target: str | None) -> str:
@@ -164,7 +172,10 @@ async def login(request: Request) -> Response:
 @router.get("/denied")
 async def access_denied() -> Response:
     """Serve the refusal page at a URL of its own."""
-    return HTMLResponse(content=DENIED_HTML, status_code=status.HTTP_403_FORBIDDEN)
+    content = (
+        DENIED_DOCUMENT.read_text(encoding="utf-8") if DENIED_DOCUMENT.is_file() else DENIED_HTML
+    )
+    return HTMLResponse(content=content, status_code=status.HTTP_403_FORBIDDEN)
 
 
 @router.get("/callback", name="auth_callback")

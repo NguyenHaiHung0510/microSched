@@ -4,7 +4,7 @@ import {
   Activity,
   CalendarDays,
   ListTodo,
-  LogIn,
+  BookOpen,
   LogOut,
   NotebookPen,
   RefreshCw,
@@ -27,6 +27,8 @@ import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
 import { cn } from '@/lib/utils'
 import { LiveStatus } from '@/LiveStatus'
+import HomePage from '@/HomePage'
+import { isHomepage, type PublicAuthState } from '@/public-navigation'
 
 type SessionResponse = PrivateSessionState & {
   email: string
@@ -50,50 +52,6 @@ function todayLabel(): string {
     day: '2-digit',
     month: '2-digit',
   }).format(new Date())
-}
-
-function LoginScreen() {
-  const location = useLocation()
-  // F8: OAuth redirect phải quay về ĐÚNG chỗ người dùng định làm (nhắc thuốc,
-  // subscription…) — nếu không, prompt bị nuốt khi session hết hạn. Chỉ gửi
-  // pathname+search tương đối, không bao giờ origin (chống open-redirect).
-  const returnTo =
-    location.startsWith('/') && !location.startsWith('//') ? location : '/'
-  const loginHref = `/auth/login?return_to=${encodeURIComponent(returnTo)}`
-  return (
-    <div className="mx-auto max-w-lg space-y-5 pt-10 sm:pt-20">
-      <div className="space-y-1 text-center">
-        <h1 className="text-2xl font-extrabold tracking-tight text-primary">
-          microSched
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Lên việc, chia checklist, hoàn thành từng bước.
-        </p>
-      </div>
-      <Card className="gap-5 rounded-lg bg-card p-6 shadow-2 ring-0">
-        <div className="space-y-1">
-          <h2 className="text-lg font-bold">Cần đăng nhập</h2>
-          <p className="text-sm text-muted-foreground">
-            microSched là dự án cá nhân, chỉ mở cho tài khoản của chủ sở hữu.
-          </p>
-        </div>
-        {/* A real link, not fetch: the OAuth handshake needs a full page navigation. */}
-        <Button asChild size="lg">
-          <a href={loginHref} data-testid="login-link">
-            <LogIn data-icon="inline-start" />
-            Đăng nhập bằng Google
-          </a>
-        </Button>
-        {import.meta.env.DEV && (
-          <Button asChild variant="outline" size="sm" className="mt-2">
-            <a href="/auth/dev-session" data-testid="qa-dev-login-link">
-              Đăng nhập QA (Bypass OAuth)
-            </a>
-          </Button>
-        )}
-      </Card>
-    </div>
-  )
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
@@ -180,6 +138,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
+        <Button asChild variant="link" size="lg" className="mb-2 px-0 text-xs">
+          <a href="/home" data-testid="app-homepage-link"><BookOpen aria-hidden="true" />Giới thiệu microSched</a>
+        </Button>
         {location.startsWith('/subscription') ? (
           <SubscriptionScreen />
         ) : location.startsWith('/reminder-confirm') ? (
@@ -247,6 +208,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
 }
 
 function App() {
+  const location = useLocation()
   const session = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
@@ -259,6 +221,15 @@ function App() {
   })
 
   const loggedOut = session.isError && session.error instanceof UnauthenticatedError
+  const publicAuth: PublicAuthState = session.isPending ? 'checking'
+    : loggedOut ? 'guest'
+      : session.isError ? 'unknown'
+        : session.data ? 'signed-in' : 'checking'
+  // Public content does not mount protected screens. Explicit /home also stays
+  // readable during a session/network check and when the Owner is signed in.
+  if (isHomepage(location) || loggedOut) {
+    return <HomePage auth={publicAuth} location={location} onRetry={() => void session.refetch()} />
+  }
 
   return (
     <TooltipProvider>
@@ -283,7 +254,6 @@ function App() {
             </Card>
           ) : null}
 
-          {loggedOut ? <LoginScreen /> : null}
 
           {session.isError && !loggedOut ? (
             <Card
