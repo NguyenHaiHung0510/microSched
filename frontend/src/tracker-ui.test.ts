@@ -15,6 +15,9 @@ import {
   formatReminderSummary,
   formatVnd,
   groupRemindersByHour,
+  groupUpcomingReminders,
+  upcomingReminderDate,
+  upcomingReminderTime,
   groupTrackersByGroup,
   quantityToNumber,
   quietAgo,
@@ -47,6 +50,40 @@ function tracker(overrides: Partial<Tracker> = {}): Tracker {
     ...overrides,
   }
 }
+
+describe('upcoming reminders use server recurrence dates', () => {
+  it('separates the same clock time on different dates and sorts by instant', () => {
+    const groups = groupUpcomingReminders([
+      tracker({ id: 'five-day', reminder_time: '08:00:00', next_reminder_at: '2026-09-11T08:00:00+07:00' }),
+      tracker({ id: 'daily', reminder_time: '08:00:00', next_reminder_at: '2026-09-07T08:00:00+07:00' }),
+      tracker({ id: 'same-instant', reminder_time: '08:00', next_reminder_at: '2026-09-07T01:00:00Z' }),
+      tracker({ id: 'disabled', reminder_time: null, next_reminder_at: '2026-09-06T01:00:00Z' }),
+    ])
+    expect(groups).toHaveLength(2)
+    expect(groups[0].trackers.map(({ id }) => id)).toEqual(['daily', 'same-instant'])
+    expect(groups[1].trackers[0].id).toBe('five-day')
+    expect(upcomingReminderDate(groups[1].nextAt)).toContain('11/09/2026')
+    expect(upcomingReminderTime(groups[1])).toBe('08:00')
+  })
+
+  it('does not invent a next day from missing or corrupt projection data', () => {
+    const groups = groupUpcomingReminders([
+      tracker({ id: 'old-api', reminder_time: '08:00:00', reminder_interval_days: 5, created_at: '2026-01-01T00:00:00Z' }),
+      tracker({ id: 'invalid', reminder_time: '08:00:00', next_reminder_at: 'not-a-date' }),
+      tracker({ id: 'known', reminder_time: '20:00:00', next_reminder_at: '2026-09-07T13:00:00Z' }),
+    ])
+    expect(groups[0].trackers[0].id).toBe('known')
+    expect(groups[1].nextAt).toBeNull()
+    expect(upcomingReminderDate(groups[1].nextAt)).toBe('Chưa xác định ngày')
+    expect(upcomingReminderTime(groups[1])).toBe('08:00')
+  })
+
+  it('uses Vietnam civil day and preserves nonzero scheduled seconds', () => {
+    expect(upcomingReminderDate('2026-09-06T17:00:30Z')).toContain('07/09/2026')
+    expect(upcomingReminderTime({ nextAt: '2026-09-06T17:00:30Z', time: '00:00:30' })).toBe('00:00:30')
+    expect(upcomingReminderTime({ nextAt: null, time: '08:00' })).toBe('08:00')
+  })
+})
 
 describe('tracker grid order (§5.2)', () => {
   it('sorts by 30-day count, then last entry, then name for determinism', () => {

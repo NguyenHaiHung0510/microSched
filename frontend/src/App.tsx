@@ -4,7 +4,7 @@ import {
   Activity,
   CalendarDays,
   ListTodo,
-  LogIn,
+  BookOpen,
   LogOut,
   NotebookPen,
   RefreshCw,
@@ -25,6 +25,10 @@ import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { SubscriptionScreen } from '@/SubscriptionScreen'
 import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
+import { cn } from '@/lib/utils'
+import { LiveStatus } from '@/LiveStatus'
+import HomePage from '@/HomePage'
+import { isHomepage, type PublicAuthState } from '@/public-navigation'
 
 type SessionResponse = PrivateSessionState & {
   email: string
@@ -50,50 +54,6 @@ function todayLabel(): string {
   }).format(new Date())
 }
 
-function LoginScreen() {
-  const location = useLocation()
-  // F8: OAuth redirect phải quay về ĐÚNG chỗ người dùng định làm (nhắc thuốc,
-  // subscription…) — nếu không, prompt bị nuốt khi session hết hạn. Chỉ gửi
-  // pathname+search tương đối, không bao giờ origin (chống open-redirect).
-  const returnTo =
-    location.startsWith('/') && !location.startsWith('//') ? location : '/'
-  const loginHref = `/auth/login?return_to=${encodeURIComponent(returnTo)}`
-  return (
-    <div className="mx-auto max-w-lg space-y-5 pt-10 sm:pt-20">
-      <div className="space-y-1 text-center">
-        <h1 className="text-2xl font-extrabold tracking-tight text-primary">
-          microSched
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Lên việc, chia checklist, hoàn thành từng bước.
-        </p>
-      </div>
-      <Card className="gap-5 rounded-lg bg-card p-6 shadow-2 ring-0">
-        <div className="space-y-1">
-          <h2 className="text-lg font-bold">Cần đăng nhập</h2>
-          <p className="text-sm text-muted-foreground">
-            microSched là dự án cá nhân, chỉ mở cho tài khoản của chủ sở hữu.
-          </p>
-        </div>
-        {/* A real link, not fetch: the OAuth handshake needs a full page navigation. */}
-        <Button asChild size="lg">
-          <a href={loginHref} data-testid="login-link">
-            <LogIn data-icon="inline-start" />
-            Đăng nhập bằng Google
-          </a>
-        </Button>
-        {import.meta.env.DEV && (
-          <Button asChild variant="outline" size="sm" className="mt-2">
-            <a href="/auth/dev-session" data-testid="qa-dev-login-link">
-              Đăng nhập QA (Bypass OAuth)
-            </a>
-          </Button>
-        )}
-      </Card>
-    </div>
-  )
-}
-
 function SignedIn({ session }: { session: SessionResponse }) {
   // 011c §5.1: exactly one deep-linked screen besides the tab block; every tab
   // keeps the URL "/" and activeScreen stays a useState (tabs do NOT own URLs).
@@ -105,6 +65,13 @@ function SignedIn({ session }: { session: SessionResponse }) {
   >(() => (isTrackersRoute ? 'tracker' : 'tasks'))
 
   const currentTab = isTrackersRoute ? 'tracker' : activeScreen
+
+  const goToDefaultScreen = useCallback(() => {
+    if (location !== '/') {
+      navigate('/')
+    }
+    setActiveScreen('tasks')
+  }, [location])
 
   function selectTab(tab: 'tasks' | 'notes' | 'calendar' | 'tracker') {
     if (isTrackersRoute) {
@@ -130,13 +97,30 @@ function SignedIn({ session }: { session: SessionResponse }) {
   })
 
   return (
-    <div className="overflow-hidden rounded-xl bg-background shadow-3">
+    <div className={cn('mx-auto overflow-hidden rounded-xl bg-background shadow-3', currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl')}>
       <header className="flex items-center justify-between gap-4 px-5 pt-5 pb-2 sm:px-6">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-xl font-extrabold tracking-tight text-primary">
-            microSched
+          <h1>
+          <Button asChild
+            data-testid="app-logo-button"
+            variant="ghost"
+            size="lg"
+            className="min-h-11 px-0 text-xl font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary text-left focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label="Về trang Task mặc định"
+          >
+            <a href="/" onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+              event.preventDefault()
+              goToDefaultScreen()
+            }}>
+              microSched
+            </a>
+          </Button>
           </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
+          {currentTab !== 'calendar' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
+            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} /></div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
@@ -154,13 +138,16 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
+        <Button asChild variant="link" size="lg" className="mb-2 px-0 text-xs">
+          <a href="/home" data-testid="app-homepage-link"><BookOpen aria-hidden="true" />Giới thiệu microSched</a>
+        </Button>
         {location.startsWith('/subscription') ? (
           <SubscriptionScreen />
         ) : location.startsWith('/reminder-confirm') ? (
           <ReminderConfirmScreen key={reminderDispatchKey} />
         ) : (
           <>
-        <div className="mb-4 flex flex-wrap gap-1" role="tablist" aria-label="Chọn nội dung">
+        <div className="mb-4 grid grid-cols-4 gap-1 sm:flex sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs [&>button]:transition-colors sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
             size="lg"
@@ -221,6 +208,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
 }
 
 function App() {
+  const location = useLocation()
   const session = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
@@ -233,6 +221,15 @@ function App() {
   })
 
   const loggedOut = session.isError && session.error instanceof UnauthenticatedError
+  const publicAuth: PublicAuthState = session.isPending ? 'checking'
+    : loggedOut ? 'guest'
+      : session.isError ? 'unknown'
+        : session.data ? 'signed-in' : 'checking'
+  // Public content does not mount protected screens. Explicit /home also stays
+  // readable during a session/network check and when the Owner is signed in.
+  if (isHomepage(location) || loggedOut) {
+    return <HomePage auth={publicAuth} location={location} onRetry={() => void session.refetch()} />
+  }
 
   return (
     <TooltipProvider>
@@ -240,7 +237,9 @@ function App() {
         {/* `aria-live` từng nằm trên chính div này. Nó bọc cả app, nên mọi thay đổi
             bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
             Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}
-        <div className="mx-auto max-w-5xl">
+        <div
+          className="mx-auto max-w-[1680px]"
+        >
           {session.isPending ? (
             <Card
               className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
@@ -255,7 +254,6 @@ function App() {
             </Card>
           ) : null}
 
-          {loggedOut ? <LoginScreen /> : null}
 
           {session.isError && !loggedOut ? (
             <Card

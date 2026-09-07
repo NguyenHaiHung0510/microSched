@@ -10,11 +10,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowDown,
   ArrowUp,
-  ChevronDown,
-  ChevronUp,
   Clock,
   Edit3,
-  LockKeyhole,
   Pencil,
   Pin,
   Plus,
@@ -27,7 +24,7 @@ import { apiRequest, UnauthenticatedError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
+import { NoteChecklist } from '@/NoteChecklist'
 import {
   Dialog,
   DialogContent,
@@ -48,6 +45,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { uuidv7 } from '@/lib/uuidv7'
 import { NoteForm } from '@/NoteForm'
+import { PrivateMarker } from '@/PrivateMarker'
+import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 import { standardRefetchInterval } from '@/query-polling'
 import {
   appendFutureReflection,
@@ -78,7 +77,6 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const queryClient = useQueryClient()
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [editing, setEditing] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const [newItem, setNewItem] = useState('')
   const [reflectionOpen, setReflectionOpen] = useState(false)
   const [reflectionText, setReflectionText] = useState('')
@@ -166,8 +164,6 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   })
 
   const completedItems = note.items.filter((item) => item.is_completed).length
-  const visibleItems = expanded ? note.items : note.items.slice(0, 3)
-  const hiddenItems = Math.max(0, note.items.length - 3)
   const mutationError =
     update.error ??
     remove.error ??
@@ -216,9 +212,11 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     setEditingItemContent(item.content)
   }
 
-  function moveItem(index: number, direction: -1 | 1) {
-    const other = note.items[index + direction]
-    if (other) reorderItems.mutate({ item: note.items[index], other })
+  function moveItem(item: NoteItem, direction: -1 | 1) {
+    const group = note.items.filter((entry) => entry.is_completed === item.is_completed)
+    const index = group.findIndex((entry) => entry.id === item.id)
+    const other = group[index + direction]
+    if (other) reorderItems.mutate({ item, other })
   }
 
   return (
@@ -226,8 +224,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
       <Card
         data-testid="note-card"
         data-note-id={note.id}
+        data-private={note.is_private}
         onClick={openDetailsFromCard}
-        className="gap-3 overflow-visible rounded-lg bg-card px-4 py-4 shadow-2 ring-0 transition-shadow"
+        className={cn('gap-3 overflow-visible rounded-lg bg-card px-4 py-4 shadow-2 ring-0 transition-shadow', note.is_private && PRIVATE_SURFACE_CLASS)}
       >
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div className="min-w-0 flex-1 space-y-2 w-full">
@@ -249,10 +248,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 {label}
               </Button>
               {note.is_private ? (
-                <Badge data-testid="note-private-badge-card" variant="secondary">
-                  <LockKeyhole data-icon="inline-start" />
-                  Riêng tư
-                </Badge>
+                <PrivateMarker testId="note-private-badge-card" />
               ) : null}
               </div>
             </div>
@@ -377,53 +373,15 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         </div>
 
         {note.items.length > 0 ? (
-          <div className="space-y-2">
-            {visibleItems.map((item) => (
-              <label
-                className="flex min-h-8 items-center gap-3 text-sm"
-                data-testid="note-item"
-                data-note-item-id={item.id}
-                key={item.id}
-              >
-                <Checkbox
-                  data-testid="note-item-checkbox"
-                  aria-label={`Đánh dấu ${item.content} hoàn thành`}
-                  checked={item.is_completed}
-                  disabled={changeItem.isPending}
-                  onCheckedChange={(checked) =>
-                    changeItem.mutate({ item, changes: { is_completed: checked === true } })
-                  }
-                />
-                <span
-                  data-testid="note-item-content"
-                  className={`min-w-0 break-words ${
-                    item.is_completed ? 'text-muted-foreground line-through' : ''
-                  }`}
-                >
-                  {item.content}
-                </span>
-              </label>
-            ))}
-            {hiddenItems > 0 ? (
-              <Button
-                className="h-auto px-0 py-1 text-xs"
-                size="sm"
-                variant="link"
-                onClick={() => setExpanded((current) => !current)}
-              >
-                {expanded ? (
-                  <>
-                    <ChevronUp data-icon="inline-start" />
-                    Thu gọn
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown data-icon="inline-start" />+ {hiddenItems} mục khác…
-                  </>
-                )}
-              </Button>
-            ) : null}
-          </div>
+          <NoteChecklist
+            items={note.items}
+            preview
+            pending={changeItem.isPending}
+            failed={changeItem.isError}
+            onToggle={(item, checked) =>
+              changeItem.mutate({ item, changes: { is_completed: checked } })
+            }
+          />
         ) : null}
 
         {mutationError ? <p className="text-sm text-bad">{errorMessage(mutationError)}</p> : null}
@@ -465,12 +423,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               onCancel={() => setEditing(false)}
             />
           ) : (
-            <div className="space-y-5">
+            <div className="min-w-0 space-y-5">
               {note.is_private ? (
-                <Badge data-testid="note-private-badge-detail" variant="secondary">
-                  <LockKeyhole data-icon="inline-start" />
-                  Riêng tư
-                </Badge>
+                <PrivateMarker testId="note-private-badge-detail" />
               ) : null}
               {note.pinned ? (
                 <Badge data-testid="note-pinned-badge-detail" variant="default" className="gap-1">
@@ -557,14 +512,18 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                {note.items.length === 0 ? (
                  <p className="text-sm text-muted-foreground">Chưa có mục nhỏ.</p>
                ) : (
-                 <div className="space-y-2">
-                   {note.items.map((item, index) => (
-                     <div
-                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 rounded-md bg-muted/40 p-2 sm:px-2.5 sm:py-1.5"
-                        data-testid="note-item"
-                        data-note-item-id={item.id}
-                        key={item.id}
-                      >
+                 <NoteChecklist
+                   items={note.items}
+                   pending={changeItem.isPending}
+                   failed={changeItem.isError}
+                   onToggle={(item, checked) =>
+                     changeItem.mutate({ item, changes: { is_completed: checked } })
+                   }
+                   renderItem={(item, toggle) => {
+                     const group = note.items.filter((entry) => entry.is_completed === item.is_completed)
+                     const index = group.findIndex((entry) => entry.id === item.id)
+                     return (
+                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 rounded-md bg-muted/40 p-2 sm:px-2.5 sm:py-1.5">
                         {editingItemId === item.id ? (
                           <>
                             <Input
@@ -590,29 +549,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                           </>
                         ) : (
                           <>
-                            <div className="flex min-w-0 flex-1 items-start sm:items-center gap-2.5">
-                            <Checkbox
-                              data-testid="note-item-checkbox"
-                              aria-label={`Đánh dấu ${item.content} hoàn thành`}
-                              checked={item.is_completed}
-                              className="mt-0.5 sm:mt-0"
-                              disabled={changeItem.isPending}
-                              onCheckedChange={(checked) =>
-                                changeItem.mutate({
-                                  item,
-                                  changes: { is_completed: checked === true },
-                                })
-                              }
-                            />
-                            <span
-                              data-testid="note-item-content"
-                              className={`min-w-0 flex-1 break-words text-sm ${
-                                item.is_completed ? 'text-muted-foreground line-through' : ''
-                              }`}
-                            >
-                              {item.content}
-                            </span>
-                            </div>
+                            <div className="min-w-0 flex-1">{toggle}</div>
                             <div className="flex shrink-0 items-center justify-end gap-1 self-end sm:self-auto pt-1 sm:pt-0">
                             <Button
                               data-testid="note-item-up"
@@ -621,7 +558,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8"
                               aria-label={`Đưa ${item.content} lên`}
                               disabled={index === 0 || reorderItems.isPending}
-                              onClick={() => moveItem(index, -1)}
+                              onClick={() => moveItem(item, -1)}
                             >
                               <ArrowUp />
                             </Button>
@@ -631,8 +568,8 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               variant="ghost"
                               className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8"
                               aria-label={`Đưa ${item.content} xuống`}
-                              disabled={index === note.items.length - 1 || reorderItems.isPending}
-                              onClick={() => moveItem(index, 1)}
+                              disabled={index === group.length - 1 || reorderItems.isPending}
+                              onClick={() => moveItem(item, 1)}
                             >
                               <ArrowDown />
                             </Button>
@@ -661,8 +598,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                           </>
                         )}
                       </div>
-                    ))}
-                  </div>
+                     )
+                   }}
+                 />
                 )}
 
                 <form

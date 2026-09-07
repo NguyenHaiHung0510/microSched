@@ -282,3 +282,9 @@ Cập nhật ngược cùng ngày: `schema-physical-brief.md` (§1 + §7), `sche
 
 ---
 *Cập nhật khi: phiên auth / encryption-review / frontend chốt các phần DEFER của file này. Thêm note có ngày — không xóa kết luận cũ.*
+
+## 14. Upcoming reminder projection — 2026-09-06, Task 043
+
+`TrackerRead.next_reminder_at` is an additive nullable API field for the next planned recurrence in Vietnam time. The tracker overview uses its date and time, groups only matching instants, and labels an unavailable projection explicitly. It no longer groups all configured clock times under a claim that they occur today.
+
+The projection shares the timer's existing canonical recurrence helpers. Fixed N-day cadence uses the latest recorded dispatch date; without that anchor the existing nearest today/tomorrow slot rule remains. After-entry cadence uses the latest nondeleted entry's Vietnam civil date and skips recorded dispatch dates. The existing 15-minute grace remains, so a projected occurrence may be just in the past. This field describes the schedule, not push delivery, a pending retry, or a delivery guarantee. Disabled/unrepresentable schedules return null. Dispatch metadata queries are batched and scoped to already-readable tracker IDs; no migration, new polling cadence or privacy boundary is introduced.

@@ -17,19 +17,21 @@ export function MiniNav({
   onSelectDay,
   onPrev,
   onNext,
+  className,
 }: {
   anchor: YearMonth
   visibleDays: Set<string>
   onSelectDay: (day: string) => void
   onPrev: () => void
   onNext: () => void
+  className?: string
 }) {
   const months: YearMonth[] = [anchor, addMonths(anchor.year, anchor.month, 1)]
 
   return (
     <aside
       data-testid="calendar-mininav"
-      className="hidden w-52 shrink-0 flex-col gap-4 sm:flex"
+      className={cn('hidden w-48 shrink-0 flex-col gap-4 sm:flex', className)}
       aria-label="Lịch thu nhỏ"
     >
       <div className="flex items-center justify-between gap-2">

@@ -1429,6 +1429,9 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     const noteDialog = page.getByTestId('note-detail-dialog')
     await expect(noteDialog).toBeVisible()
 
+    // Task045 groups completed rows behind a disclosure. Expand it so the
+    // original geometry contract still measures every checklist row.
+    await noteDialog.getByTestId('note-items-completed-toggle').click()
     const items = noteDialog.locator('[data-testid="note-item"]')
     await expect(items).toHaveCount(6)
     await expect(items.first()).toBeVisible()

@@ -1,10 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { GripVertical, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GripVertical, MapPin, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
 import {
+  formatVietnamTime,
+  VIETNAM_TIME_ZONE,
+  sourceColorToken,
   todayInVietnam,
   type CalendarEvent,
   type CalendarSource,
@@ -17,6 +20,7 @@ import {
   annotationsByDay,
   dedupeById,
   eventsByDay,
+  formatFullVietnameseDate,
   formatShortVietnamDate,
   lastDayOfMonth,
   monthFetchRange,
@@ -41,7 +45,9 @@ import {
 import { DayCell, type DropTaskPayload } from '@/DayCell'
 import { DayDetailDialog } from '@/DayDetailDialog'
 import { MiniNav } from '@/MiniNav'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import {
   Tooltip,
@@ -51,6 +57,8 @@ import {
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { remainingSeconds } from '@/private-gate'
+import { PrivateMarker } from '@/PrivateMarker'
+import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 
 type Envelope<T> = { items: T[] }
 type SessionLite = { private_until: string | null }
@@ -58,6 +66,62 @@ type SessionLite = { private_until: string | null }
 const HEADER_HEIGHT = 56
 const EDGE_EXTEND_PX = 80
 const EXTEND_MONTHS = 6
+const CALENDAR_MODE_KEY = 'microsched:calendar-mode'
+
+function getSavedCalendarMode(): 'grid' | 'agenda' {
+  try {
+    const saved = localStorage.getItem(CALENDAR_MODE_KEY)
+    if (saved === 'agenda' || saved === 'grid') return saved
+  } catch {
+    // Ignore storage errors
+  }
+  return 'grid'
+}
+
+function saveCalendarMode(mode: 'grid' | 'agenda') {
+  try {
+    localStorage.setItem(CALENDAR_MODE_KEY, mode)
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function ensureMonthIncluded(target: YearMonth, currentMonths: YearMonth[]): YearMonth[] {
+  if (currentMonths.length === 0) return [target]
+  const targetIndex = target.year * 12 + (target.month - 1)
+  const firstIndex = currentMonths[0].year * 12 + (currentMonths[0].month - 1)
+  const lastIndex =
+    currentMonths[currentMonths.length - 1].year * 12 +
+    (currentMonths[currentMonths.length - 1].month - 1)
+
+  if (targetIndex >= firstIndex && targetIndex <= lastIndex) {
+    return currentMonths
+  }
+  if (targetIndex < firstIndex) {
+    const prepended: YearMonth[] = []
+    for (let i = targetIndex; i < firstIndex; i++) {
+      prepended.push({ year: Math.floor(i / 12), month: (i % 12) + 1 })
+    }
+    return [...prepended, ...currentMonths]
+  }
+  const appended: YearMonth[] = []
+  for (let i = lastIndex + 1; i <= targetIndex; i++) {
+    appended.push({ year: Math.floor(i / 12), month: (i % 12) + 1 })
+  }
+  return [...currentMonths, ...appended]
+}
+
+function formatTaskDue(dueAt: string): string {
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      timeZone: VIETNAM_TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(dueAt))
+  } catch {
+    return dueAt
+  }
+}
 
 async function getSources(): Promise<Envelope<CalendarSource>> {
   return apiRequest<Envelope<CalendarSource>>('/api/calendar/sources')
@@ -132,7 +196,17 @@ export function CalendarScrollView() {
   const todayMonthKey = today.slice(0, 7)
   const isDesktop = useIsDesktop()
   const containerRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLDivElement>(null)
+  const [headerHeight, setHeaderHeight] = useState(HEADER_HEIGHT)
   const [quickTitle, setQuickTitle] = useState('')
+  const [calendarMode, setCalendarMode] = useState<'grid' | 'agenda'>(getSavedCalendarMode)
+  const [showMiniNav, setShowMiniNav] = useState(true)
+  const [agendaDay, setAgendaDay] = useState(today)
+  const [agendaMonth, setAgendaMonth] = useState<YearMonth>(() => ({
+    year: Number(today.slice(0, 4)),
+    month: Number(today.slice(5, 7)),
+  }))
+  const [agendaQuickTitle, setAgendaQuickTitle] = useState('')
   const [months, setMonths] = useState<YearMonth[]>(() =>
     monthsWindow(
       { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) },
@@ -140,10 +214,14 @@ export function CalendarScrollView() {
     ),
   )
   const [visibleWeekKeys, setVisibleWeekKeys] = useState<string[]>([])
+  const [centerWeekKey, setCenterWeekKey] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const visibleRef = useRef(new Map<string, boolean>())
   const extendingRef = useRef(false)
   const prependScrollRef = useRef<number | null>(null)
+  const gridScrollTopRef = useRef<number | null>(null)
+  const hasInitializedRef = useRef(false)
+  const agendaInputRef = useRef<HTMLInputElement>(null)
 
   const weekRows = useMemo(
     () =>
@@ -278,6 +356,72 @@ export function CalendarScrollView() {
     createQuickTask.mutate({ title: trimmed, due_on: today })
   }
 
+  const createAgendaTask = useMutation({
+    mutationFn: (variables: { title: string; due_on: string }) =>
+      apiRequest<CalendarTask>('/api/tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: variables.title,
+          status: 'open',
+          priority: null,
+          due_precision: 'date',
+          due_on: variables.due_on,
+          due_at: null,
+          is_private: false,
+        }),
+      }),
+    onSuccess: (_data, variables) => {
+      setAgendaQuickTitle('')
+      refreshAll()
+      toast.success(`Đã thêm task vào ${formatShortVietnamDate(variables.due_on)}`)
+      agendaInputRef.current?.focus()
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Không thể tạo task.')
+      agendaInputRef.current?.focus()
+    },
+  })
+
+  function handleAgendaQuickSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = agendaQuickTitle.trim()
+    if (!trimmed || createAgendaTask.isPending) return
+    createAgendaTask.mutate({ title: trimmed, due_on: agendaDay })
+  }
+
+  function handleModeChange(mode: 'grid' | 'agenda') {
+    if (mode === calendarMode) return
+    if (mode === 'agenda') {
+      if (containerRef.current) {
+        gridScrollTopRef.current = containerRef.current.scrollTop
+      }
+      if (!agendaDay) setAgendaDay(today)
+    }
+    setCalendarMode(mode)
+    saveCalendarMode(mode)
+  }
+
+  function handleTodayClick() {
+    const targetMonth = {
+      year: Number(today.slice(0, 4)),
+      month: Number(today.slice(5, 7)),
+    }
+    setAgendaMonth(targetMonth)
+    setAgendaDay(today)
+    setMonths((prev) => ensureMonthIncluded(targetMonth, prev))
+    if (calendarMode === 'grid') {
+      scrollToToday()
+    }
+  }
+
+  function navigateAgendaMonth(delta: number) {
+    const nextMonth = addMonths(agendaMonth.year, agendaMonth.month, delta)
+    setAgendaMonth(nextMonth)
+    const isCurrent = monthKey(nextMonth.year, nextMonth.month) === todayMonthKey
+    setAgendaDay(isCurrent ? today : `${monthKey(nextMonth.year, nextMonth.month)}-01`)
+    setMonths((prev) => ensureMonthIncluded(nextMonth, prev))
+  }
+
   const allEvents = useMemo(
     () => dedupeById(monthEventQueries.flatMap((query) => query.data?.items ?? [])),
     [monthEventQueries],
@@ -301,11 +445,24 @@ export function CalendarScrollView() {
   )
 
   const headerMonth = useMemo(() => {
+    // Navigation centers its target week below the measured sticky controls.
+    // Name that central week, rather than a preceding month at the top edge.
     const visible = new Set(visibleWeekKeys)
-    const first = weekRows.find((row) => visible.has(row.key))
+    const first = weekRows.find((row) => row.key === centerWeekKey) ?? weekRows.find((row) => visible.has(row.key))
     if (first) return { year: first.year, month: first.month }
     return { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) }
-  }, [visibleWeekKeys, weekRows, today])
+  }, [visibleWeekKeys, centerWeekKey, weekRows, today])
+
+  useLayoutEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const measure = () => setHeaderHeight(Math.ceil(header.getBoundingClientRect().height))
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(header)
+    return () => observer.disconnect()
+  }, [])
 
   const visibleDays = useMemo(
     () => visibleDayKeys(visibleWeekKeys, weekDaysByKey),
@@ -314,6 +471,16 @@ export function CalendarScrollView() {
 
   const privateLocked =
     !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
+
+  const agendaMonthIndex = months.findIndex(
+    (m) => m.year === agendaMonth.year && m.month === agendaMonth.month,
+  )
+  const agendaMonthEventQuery =
+    agendaMonthIndex >= 0 ? monthEventQueries[agendaMonthIndex] : undefined
+  const agendaDayEvents = eventsByDayMap.get(agendaDay) ?? []
+  const agendaDayTasks = tasksByDayMap.get(agendaDay) ?? []
+  const agendaDayAnnotations = annotationsByDayMap.get(agendaDay) ?? []
+
   const staleWithData =
     monthEventQueries.some((query) => query.isError && (query.data?.items.length ?? 0) > 0) ||
     (annotationsQuery.isError && (annotationsQuery.data?.items.length ?? 0) > 0) ||
@@ -321,38 +488,44 @@ export function CalendarScrollView() {
   const tasksTruncated = false
 
   useEffect(() => {
+    if (calendarMode !== 'grid') return
     const container = containerRef.current
     if (!container || typeof IntersectionObserver === 'undefined') return
+    visibleRef.current.clear()
     const observer = new IntersectionObserver(
       (entries) => {
-        let changed = false
         for (const entry of entries) {
           const key = (entry.target as HTMLElement).dataset.weekKey
           if (!key) continue
-          if (visibleRef.current.get(key) !== entry.isIntersecting) changed = true
           visibleRef.current.set(key, entry.isIntersecting)
         }
-        if (!changed) return
         const next = [...visibleRef.current]
           .filter(([, value]) => value)
           .map(([key]) => key)
         setVisibleWeekKeys((previous) =>
           previous.join(',') === next.join(',') ? previous : next,
         )
+        const center = container.getBoundingClientRect().top + (headerHeight + container.clientHeight) / 2
+        const nearest = next.map((key) => {
+          const row = container.querySelector<HTMLElement>(`[data-week-key="${key}"]`)
+          const bounds = row?.getBoundingClientRect()
+          return { key, distance: bounds ? Math.abs((bounds.top + bounds.bottom) / 2 - center) : Infinity }
+        }).sort((a, b) => a.distance - b.distance)[0]
+        setCenterWeekKey(nearest?.key ?? null)
       },
-      { root: container, threshold: 0, rootMargin: `-${HEADER_HEIGHT}px 0px 0px 0px` },
+      { root: container, threshold: [0, 0.5, 1], rootMargin: `-${headerHeight}px 0px 0px 0px` },
     )
     for (const row of container.querySelectorAll<HTMLElement>('[data-week-key]')) {
       observer.observe(row)
     }
     return () => observer.disconnect()
-  }, [weekRows])
+  }, [weekRows, calendarMode, headerHeight])
 
   function scrollToRow(row: HTMLElement) {
     const container = containerRef.current
     if (!container) return
     const centered =
-      row.offsetTop - (container.clientHeight - row.clientHeight) / 2 - HEADER_HEIGHT / 2
+      row.offsetTop - (container.clientHeight - row.clientHeight) / 2 - headerHeight / 2
     container.scrollTop = Math.max(0, centered)
   }
 
@@ -387,9 +560,22 @@ export function CalendarScrollView() {
   }
 
   useLayoutEffect(() => {
-    scrollToToday()
+    const container = containerRef.current
+    if (!container) return
+    if (calendarMode === 'agenda') {
+      container.scrollTop = 0
+      return
+    }
+    if (!hasInitializedRef.current) {
+      scrollToToday()
+      hasInitializedRef.current = true
+    } else if (gridScrollTopRef.current !== null) {
+      container.scrollTop = gridScrollTopRef.current
+    } else {
+      scrollToToday()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [calendarMode])
 
   function extendMonths(direction: 'prev' | 'next') {
     const container = containerRef.current
@@ -427,8 +613,10 @@ export function CalendarScrollView() {
   }, [months])
 
   function handleScroll() {
+    if (calendarMode !== 'grid') return
     const container = containerRef.current
     if (!container) return
+    gridScrollTopRef.current = container.scrollTop
     if (container.scrollTop < EDGE_EXTEND_PX) {
       extendMonths('prev')
     } else if (
@@ -448,27 +636,71 @@ export function CalendarScrollView() {
         className="relative h-[calc(100dvh-13rem)] min-h-80 min-w-0 flex-1 overflow-y-auto rounded-xl border bg-card shadow-1"
      >
        <div
+         ref={headerRef}
          className={cn(
            'sticky top-0 z-10 border-b bg-background px-3 py-2',
-            'flex flex-col gap-2',
+           'flex flex-col gap-2',
          )}
        >
-          <div className="flex items-center justify-between gap-2 w-full">
-           <h3 data-testid="calendar-month-header" className="text-base font-extrabold">
-             {monthLabel(headerMonth.year, headerMonth.month)}
+         <div className="flex flex-wrap items-center justify-between gap-2 w-full">
+           <h3 data-testid="calendar-month-header" className="text-base font-extrabold truncate">
+             {calendarMode === 'agenda'
+               ? monthLabel(agendaMonth.year, agendaMonth.month)
+               : monthLabel(headerMonth.year, headerMonth.month)}
            </h3>
-            <Button
-              data-testid="calendar-today-button"
-              size="sm"
-              variant="outline"
-              onClick={scrollToToday}
-            >
-              Hôm nay
-            </Button>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div
+                className="flex items-center gap-1 rounded-lg bg-muted p-1"
+                role="group"
+                aria-label="Chế độ xem tháng"
+              >
+                <Button
+                  data-testid="calendar-mode-toggle-grid"
+                  size="default"
+                  variant={calendarMode === 'grid' ? 'secondary' : 'ghost'}
+                  aria-pressed={calendarMode === 'grid'}
+                  className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                  onClick={() => handleModeChange('grid')}
+                >
+                  Lưới
+                </Button>
+                <Button
+                  data-testid="calendar-mode-toggle-agenda"
+                  size="default"
+                  variant={calendarMode === 'agenda' ? 'secondary' : 'ghost'}
+                  aria-pressed={calendarMode === 'agenda'}
+                  className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                  onClick={() => handleModeChange('agenda')}
+                >
+                  Theo ngày
+                </Button>
+              </div>
+              {calendarMode === 'grid' ? (
+                <Button
+                  data-testid="calendar-toggle-sidebar"
+                  aria-expanded={showMiniNav}
+                  size="default"
+                  variant="outline"
+                  className="hidden sm:inline-flex min-h-11 h-11 px-3 text-xs font-semibold"
+                  onClick={() => setShowMiniNav((s) => !s)}
+                >
+                  {showMiniNav ? 'Thu gọn lịch nhỏ' : 'Hiện lịch nhỏ'}
+                </Button>
+              ) : null}
+              <Button
+                data-testid="calendar-today-button"
+                size="default"
+                variant="outline"
+                className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                onClick={handleTodayClick}
+              >
+                Hôm nay
+              </Button>
+            </div>
           </div>
 
           {/* Tooltip & Quick Task Entry bar for desktop */}
-          {isDesktop ? (
+          {isDesktop && calendarMode === 'grid' ? (
             <form
               onSubmit={handleQuickSubmit}
               data-testid="calendar-quick-task-bar"
@@ -529,13 +761,15 @@ export function CalendarScrollView() {
          ) : null}
 
           {/* Sticky Weekday Labels Grid (T2–CN) */}
-          <div className="grid grid-cols-7 gap-0.5 px-0.5 pt-1 text-center">
-            {WEEKDAY_LABELS.map((label) => (
-              <span key={label} className="text-xs font-bold text-muted-foreground">
-                {label}
-              </span>
-            ))}
-          </div>
+          {calendarMode === 'grid' ? (
+            <div className="grid grid-cols-7 gap-0.5 px-0.5 pt-1 text-center">
+              {WEEKDAY_LABELS.map((label) => (
+                <span key={label} className="text-xs font-bold text-muted-foreground">
+                  {label}
+                </span>
+              ))}
+            </div>
+          ) : null}
        </div>
 
        {staleWithData ? (
@@ -546,7 +780,7 @@ export function CalendarScrollView() {
             Có thể chưa mới nhất — kiểm tra kết nối.
           </p>
         ) : null}
-        {annotationsQuery.isError ? (
+        {calendarMode === 'grid' && annotationsQuery.isError ? (
           <p
             data-testid="calendar-annotations-error"
             role="alert"
@@ -555,7 +789,7 @@ export function CalendarScrollView() {
             Không tải được dấu ngày.
           </p>
         ) : null}
-        {allTasksQuery.isError ? (
+        {calendarMode === 'grid' && allTasksQuery.isError ? (
           <p
             data-testid="calendar-tasks-error"
             role="alert"
@@ -573,7 +807,387 @@ export function CalendarScrollView() {
           </p>
         ) : null}
 
-        {months.map(({ year, month }, index) => {
+        {calendarMode === 'agenda' ? (
+          <div data-testid="calendar-agenda-container" className="space-y-4 p-3 sm:p-4">
+            {/* Compact Month Picker */}
+            <div
+              data-testid="calendar-agenda-picker"
+              className="rounded-xl border bg-card p-3 shadow-sm space-y-2"
+            >
+              <div className="flex items-center justify-between gap-2 pb-2 border-b">
+                <Button
+                  data-testid="calendar-agenda-prev-month"
+                  variant="ghost"
+                  aria-label="Tháng trước"
+                  className="min-h-11 min-w-11 size-11 p-0 flex items-center justify-center"
+                  onClick={() => navigateAgendaMonth(-1)}
+                >
+                  <ChevronLeft className="size-5" />
+                </Button>
+                <span
+                  data-testid="calendar-agenda-month-title"
+                  className="text-sm font-extrabold text-foreground"
+                >
+                  {monthLabel(agendaMonth.year, agendaMonth.month)}
+                </span>
+                <Button
+                  data-testid="calendar-agenda-next-month"
+                  variant="ghost"
+                  aria-label="Tháng sau"
+                  className="min-h-11 min-w-11 size-11 p-0 flex items-center justify-center"
+                  onClick={() => navigateAgendaMonth(1)}
+                >
+                  <ChevronRight className="size-5" />
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-7 gap-1 text-center">
+                {WEEKDAY_LABELS.map((label) => (
+                  <span key={label} className="text-xs font-bold text-muted-foreground">
+                    {label}
+                  </span>
+                ))}
+                {monthWeeks(agendaMonth.year, agendaMonth.month).flatMap((week) =>
+                  week.days.map((day) => {
+                    const inCurrentMonth =
+                      day.slice(0, 7) === monthKey(agendaMonth.year, agendaMonth.month)
+                    if (!inCurrentMonth) {
+                      return <div key={day} aria-hidden="true" className="min-h-9 h-10 w-full" />
+                    }
+                    const isDayToday = day === today
+                    const isSelected = day === agendaDay
+                    const dayEvents = eventsByDayMap.get(day) ?? []
+                    const dayTasks = tasksByDayMap.get(day) ?? []
+                    const dayAnnotations = annotationsByDayMap.get(day) ?? []
+                    const dayNum = Number(day.slice(8, 10))
+
+                    return (
+                      <Button
+                        key={day}
+                        data-testid="calendar-agenda-day-button"
+                        disabled={createAgendaTask.isPending}
+                        data-day={day}
+                        data-selected={isSelected ? 'true' : undefined}
+                        variant={isSelected ? 'secondary' : 'ghost'}
+                        aria-label={day}
+                        aria-pressed={isSelected}
+                        onClick={() => setAgendaDay(day)}
+                        className={cn(
+                          'flex min-h-11 min-w-6 h-11 w-full flex-col items-center justify-center rounded-lg p-0 text-xs transition-colors',
+                          isSelected && 'bg-primary text-primary-foreground font-bold hover:bg-primary/90 hover:text-primary-foreground',
+                          !isSelected && isDayToday && 'border border-primary font-bold text-primary',
+                        )}
+                      >
+                        <span className="text-xs font-semibold">{dayNum}</span>
+                        <div className="flex items-center gap-0.5 mt-0.5">
+                          {dayEvents.length > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'size-1 rounded-full',
+                                isSelected ? 'bg-primary-foreground' : 'bg-primary',
+                              )}
+                            />
+                          ) : null}
+                          {dayTasks.length > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'size-1 rounded-full',
+                                isSelected ? 'bg-primary-foreground/70' : 'bg-muted-foreground',
+                              )}
+                            />
+                          ) : null}
+                          {dayAnnotations.length > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'size-1 rounded-full',
+                                isSelected ? 'bg-primary-foreground/90' : 'bg-warn',
+                              )}
+                            />
+                          ) : null}
+                        </div>
+                      </Button>
+                    )
+                  }),
+                )}
+              </div>
+            </div>
+
+            {/* Selected Day Agenda Content */}
+            <div
+              data-testid="calendar-agenda-view"
+              className="rounded-xl border bg-card p-4 shadow-1 space-y-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h4
+                    data-testid="calendar-agenda-day-title"
+                    className="text-base font-extrabold text-foreground"
+                  >
+                    {formatFullVietnameseDate(agendaDay)}
+                  </h4>
+                  {agendaDay === today ? (
+                    <Badge variant="secondary" className="bg-primary/10 text-primary text-xs font-bold">
+                      Hôm nay
+                    </Badge>
+                  ) : null}
+                </div>
+                <Button
+                  data-testid="calendar-agenda-open-detail"
+                  size="default"
+                  variant="outline"
+                  className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                  onClick={() => setSelectedDay(agendaDay)}
+                >
+                  Chi tiết / Sửa
+                </Button>
+              </div>
+
+              {/* Quick Add for this day */}
+              <form
+                onSubmit={handleAgendaQuickSubmit}
+                data-testid="calendar-agenda-quick-task-bar"
+                className="flex gap-2"
+              >
+                <Input
+                  ref={agendaInputRef}
+                  data-testid="calendar-agenda-quick-task-input"
+                  placeholder="Thêm task cho ngày này…"
+                  aria-label="Task mới cho ngày đã chọn"
+                  value={agendaQuickTitle}
+                  readOnly={createAgendaTask.isPending}
+                  onChange={(e) => setAgendaQuickTitle(e.target.value)}
+                  className="min-h-11 h-11 min-w-0 text-base sm:text-sm flex-1"
+                />
+                <Button
+                  data-testid="calendar-agenda-quick-task-submit"
+                  type="submit"
+                  size="default"
+                  disabled={!agendaQuickTitle.trim() || createAgendaTask.isPending}
+                  className="min-h-11 h-11 px-4 text-sm font-semibold shrink-0"
+                >
+                  <Plus data-icon="inline-start" />
+                  Thêm
+                </Button>
+              </form>
+
+              {/* Annotations */}
+              {annotationsQuery.isLoading ? (
+                <p
+                  data-testid="calendar-agenda-annotations-loading"
+                  className="text-xs text-muted-foreground"
+                >
+                  Đang tải dấu ngày…
+                </p>
+              ) : annotationsQuery.isError ? (
+                <div
+                  data-testid="calendar-agenda-annotations-error"
+                  role="alert"
+                  className="flex items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-2 text-xs text-destructive"
+                >
+                  <span>Không tải được dấu ngày.</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="min-h-11 h-11 px-2 text-xs font-semibold"
+                    onClick={() => void annotationsQuery.refetch()}
+                  >
+                    Thử lại
+                  </Button>
+                </div>
+              ) : agendaDayAnnotations.length > 0 ? (
+                <div className="space-y-1.5">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Dấu ngày
+                  </h5>
+                  {agendaDayAnnotations.map((ann) => (
+                    <div
+                      key={ann.id}
+                      data-testid="calendar-agenda-annotation"
+                      data-private={ann.is_private}
+                      className={cn('flex flex-wrap items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold', ann.is_private && PRIVATE_SURFACE_CLASS)}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="size-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: sourceColorToken(ann.color) }}
+                      />
+                      <span className="min-w-0 break-words font-bold">{ann.label}</span>
+                      {ann.is_private ? <PrivateMarker /> : null}
+                      {ann.note_md ? (
+                        <span className="min-w-0 break-words text-muted-foreground">· {ann.note_md}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* Events section */}
+              <div data-testid="calendar-agenda-events" className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Buổi ({agendaMonthEventQuery?.isLoading ? '…' : agendaDayEvents.length})
+                  </h5>
+                </div>
+                {agendaMonthEventQuery?.isLoading ? (
+                  <p
+                    data-testid="calendar-agenda-events-loading"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Đang tải buổi…
+                  </p>
+                ) : agendaMonthEventQuery?.isError ? (
+                  <div
+                    data-testid="calendar-agenda-events-error"
+                    role="alert"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive"
+                  >
+                    <span>Không tải được buổi của tháng này.</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="min-h-11 h-11 px-2.5 text-xs font-semibold"
+                      onClick={() => void agendaMonthEventQuery.refetch()}
+                    >
+                      Thử lại
+                    </Button>
+                  </div>
+                ) : agendaDayEvents.length === 0 ? (
+                  <p data-testid="calendar-agenda-events-empty" className="text-sm text-muted-foreground">Không có buổi nào trong ngày.</p>
+                ) : (
+                  agendaDayEvents.map((event) => {
+                    const source = sourceById.get(event.source_id)
+                    return (
+                      <div
+                        key={event.id}
+                        data-testid="calendar-agenda-event-card"
+                        data-event-id={event.id}
+                        className="rounded-lg border bg-background p-3 shadow-sm space-y-1 transition-colors"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <span
+                            aria-hidden="true"
+                            className="mt-1 size-3 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor: sourceColorToken(source?.color ?? null),
+                            }}
+                          />
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <p
+                              data-testid="calendar-agenda-event-title"
+                              className="text-base font-bold text-foreground break-words min-w-0"
+                            >
+                              {event.title}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatVietnamTime(event)} · {source?.name ?? 'Nguồn'}
+                            </p>
+                            {event.location ? (
+                              <p className="flex items-start gap-1 text-xs text-muted-foreground break-words min-w-0">
+                                <MapPin className="mt-0.5 size-3 shrink-0" aria-hidden="true" /> {event.location}
+                              </p>
+                            ) : null}
+                            {event.description_md ? (
+                              <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words min-w-0 pt-1">
+                                {event.description_md}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+
+              {/* Tasks section */}
+              <div data-testid="calendar-agenda-tasks" className="space-y-2">
+                {toggleTaskStatus.isError ? (
+                  <p role="alert" data-testid="calendar-agenda-task-status-error" className="text-sm text-destructive">
+                    Không đổi được trạng thái task. Bấm lại ô trạng thái để thử lại.
+                  </p>
+                ) : null}
+                <div className="flex items-center justify-between">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Task đến hạn ({allTasksQuery.isLoading ? '…' : agendaDayTasks.length})
+                  </h5>
+                </div>
+                {allTasksQuery.isLoading ? (
+                  <p
+                    data-testid="calendar-agenda-tasks-loading"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Đang tải task…
+                  </p>
+                ) : allTasksQuery.isError ? (
+                  <div
+                    data-testid="calendar-agenda-tasks-error"
+                    role="alert"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive"
+                  >
+                    <span>Không tải được task.</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      data-testid="calendar-agenda-tasks-retry"
+                      className="min-h-11 h-11 px-2.5 text-xs font-semibold"
+                      onClick={() => void allTasksQuery.refetch()}
+                    >
+                      Thử lại
+                    </Button>
+                  </div>
+                ) : agendaDayTasks.length === 0 ? (
+                  <p data-testid="calendar-agenda-tasks-empty" className="text-sm text-muted-foreground">Không có task đến hạn trong ngày này.</p>
+                ) : (
+                  agendaDayTasks.map((task) => (
+                    <div
+                      key={task.id}
+                      data-testid="calendar-agenda-task-card"
+                      data-private={task.is_private}
+                      data-task-id={task.id}
+                      className={cn('flex items-center gap-3 rounded-lg border bg-background p-3 shadow-sm transition-colors', task.is_private && PRIVATE_SURFACE_CLASS)}
+                    >
+                      <Checkbox
+                        data-testid="calendar-agenda-task-toggle"
+                        checked={task.status === 'completed'}
+                        disabled={toggleTaskStatus.isPending}
+                        onCheckedChange={(checked) =>
+                          toggleTaskStatus.mutate({
+                            taskId: task.id,
+                            status: checked === true ? 'completed' : 'open',
+                          })
+                        }
+                        className="size-6 shrink-0 rounded-sm"
+                        aria-label={`Đổi trạng thái ${task.title}`}
+                      />
+                      <span
+                        data-testid="calendar-agenda-task-title"
+                        className={cn(
+                          'min-w-0 flex-1 text-sm font-semibold break-words',
+                          task.status === 'completed' && 'line-through text-muted-foreground',
+                        )}
+                      >
+                        {task.title}
+                        {toggleTaskStatus.isPending && toggleTaskStatus.variables?.taskId === task.id ? (
+                          <span role="status" data-testid="calendar-agenda-task-pending" className="mt-1 block text-xs text-muted-foreground">Đang lưu…</span>
+                        ) : null}
+                        {task.is_private ? <span className="mt-1 block"><PrivateMarker /></span> : null}
+                      </span>
+                      {task.due_at ? (
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {formatTaskDue(task.due_at)}
+                        </span>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          months.map(({ year, month }, index) => {
           const query = monthEventQueries[index]
           const currentMonthKey = monthKey(year, month)
           return (
@@ -633,16 +1247,18 @@ export function CalendarScrollView() {
               ))}
             </div>
           )
-        })}
+        }))}
       </div>
 
-      <MiniNav
-        anchor={headerMonth}
-        visibleDays={visibleDays}
-        onSelectDay={scrollToDay}
-        onPrev={() => scrollToMonth(addMonths(headerMonth.year, headerMonth.month, -1))}
-        onNext={() => scrollToMonth(addMonths(headerMonth.year, headerMonth.month, 1))}
-      />
+      {showMiniNav && calendarMode === 'grid' ? (
+        <MiniNav
+          anchor={headerMonth}
+          visibleDays={visibleDays}
+          onSelectDay={scrollToDay}
+          onPrev={() => scrollToMonth(addMonths(headerMonth.year, headerMonth.month, -1))}
+          onNext={() => scrollToMonth(addMonths(headerMonth.year, headerMonth.month, 1))}
+        />
+      ) : null}
 
       <DayDetailDialog
         open={selectedDay !== null}
