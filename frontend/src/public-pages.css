@@ -19,9 +19,21 @@
 .public-hero-copy { display: grid; grid-template-columns: 1.1fr 1fr; gap: 56px; align-items: start; }
 .public-hero-intro > p:first-child { font-size: 1.1rem; margin: 0 0 24px; }
 .public-access { color: var(--muted-foreground); font-size: .8rem; margin-top: 18px; max-width: 50ch; }
-.public-showcase { margin: 48px auto 0; max-width: 1024px; padding: 12px 12px 0; background: var(--accent); border-radius: 24px; }
+.public-gallery { margin: 48px auto 0; max-width: 1024px; }
+.public-gallery-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.public-page .public-gallery-choice { display: flex; flex-direction: column; gap: 10px; width: 100%; height: auto; min-width: 0; padding: 8px; border: 2px solid transparent; border-radius: 16px; color: var(--secondary-foreground); background: var(--card); white-space: normal; }
+.public-page .public-gallery-choice:hover { background: var(--secondary); }
+.public-page .public-gallery-choice:focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
+.public-page .public-gallery-choice[aria-pressed="true"] { border-color: var(--primary); background: var(--accent); color: var(--primary); }
+.public-gallery-choice img { display: block; width: 100%; height: auto; border-radius: 8px; }
+.public-gallery-choice span { display: flex; gap: 8px; align-items: center; justify-content: center; min-height: 28px; font-size: .9rem; font-weight: 800; }
+.public-gallery-choice svg { flex-shrink: 0; }
+.public-showcase { margin: 0; padding: 12px 12px 0; background: var(--accent); border-radius: 24px; }
 .public-showcase img { display: block; width: 100%; height: auto; border-radius: 16px; box-shadow: var(--sh-2); }
 .public-showcase figcaption { text-align: center; color: var(--accent-foreground); font-size: .8rem; line-height: 1.6; padding: 14px 8px; }
+.public-gallery-description { font-size: .95rem; font-weight: 700; }
+.public-gallery-caption { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; column-gap: 20px; margin-top: 4px; }
+.public-gallery-caption .public-text-link { font-size: .8rem; }
 .public-section { padding-block: 80px; }
 .public-section[id] { scroll-margin-top: 24px; }
 .public-section + .public-section { border-top: 1px solid var(--n-200); }
@@ -75,12 +87,16 @@
   .public-method-steps { grid-template-columns: 1fr 1fr; gap: 20px; }
   .public-footer { padding-block: 48px; gap: 36px; }
   .public-desktop-break { display: none; }
-  .public-showcase { margin-top: 32px; }
+  .public-gallery { margin-top: 32px; }
   .public-features { gap: 28px; }
 }
 @media (max-width: 600px) {
   .public-features { grid-template-columns: 1fr; }
-  .public-showcase { max-width: 390px; padding: 8px 8px 0; border-radius: 20px; }
+  .public-gallery { max-width: 390px; }
+  .public-gallery-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .public-gallery-choice img { display: none; }
+  .public-page .public-gallery-choice { padding: 8px; border-radius: 12px; }
+  .public-showcase { padding: 8px 8px 0; border-radius: 20px; }
   .public-showcase img { border-radius: 14px; }
   .public-hero-intro > p:first-child { font-size: 1rem; }
   .public-eyebrow { letter-spacing: .07em; }
