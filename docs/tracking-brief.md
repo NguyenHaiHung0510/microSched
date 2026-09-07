@@ -171,6 +171,17 @@ Cập nhật ngược cùng ngày: `schema-physical-brief.md` (bảng §1 + mụ
 | F5 | Thu − chi âm hay dương? | net theo `direction` |
 | F6 | Bao nhiêu là CỐ ĐỊNH? | burn/tháng từ subscription entity (chu kỳ quy về tháng) + món sắp gia hạn — tách chi cố định/linh hoạt, entity C trả lãi ngay |
 
+**Owner-approved 2026-09-07 — Task 046 supersedes F2's same-elapsed-period rule above.**
+Report selection is 1/3/6/12 calendar months ending at the selected month (default 1).
+Completed months count in full; the current month ends at now in +07:00. F1/F3/F4/F5
+use the selected range; F2 compares that range with the preceding full range of the
+same number of months. Show actual period bounds and flag an incomplete current
+month; do not interpret this difference as a forecast or spending judgement.
+The monthly series includes zero months. A2/A3/A4/F6 remain relative to now.
+The approved recording-rhythm view shows counts per tracker/day for the selected
+month, excluding archived trackers, deleted entries and locked private data.
+Missing records are not evidence of missed reminders or medication adherence.
+
 **MUỐN (sau, không phá schema):** streak/kỷ lục khoảng cách, heatmap lịch, run-rate dự báo cuối tháng, tổng tiết kiệm promotion (`list_amount − amount`), so theo năm. **AI Bước 1 (cố ý không làm UI):** "vì sao tháng này cao", pattern giờ/ngày-trong-tuần, tương quan bia↔thuốc.
 
 ### 8.3 Việc còn lại của phiên *(cập nhật 2026-07-19 muộn)*

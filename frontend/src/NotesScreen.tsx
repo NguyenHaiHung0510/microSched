@@ -265,7 +265,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                  <div
                    key={refl.id}
                    data-testid="note-reflection-box"
-                   className="rounded-md border border-warn/30 bg-warn-bg p-2.5 text-xs text-foreground space-y-1 shadow-sm w-full"
+                   className="rounded-lg border border-reflection-foreground/20 bg-reflection-bg p-3 text-xs text-foreground space-y-2 w-full"
                  >
                     <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-bold text-foreground">
                       <span className="flex flex-wrap items-center gap-1 min-w-0">
@@ -276,7 +276,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                         <Button
                           size="icon-xs"
                           variant="ghost"
-                          className="size-8 min-h-8 min-w-8 p-0 hover:bg-warn/20"
+                          className="size-8 min-h-8 min-w-8 p-0 hover:bg-reflection-foreground/10"
                           aria-label="Sửa lời nhắn"
                           onClick={(e) => {
                             e.stopPropagation()
@@ -289,7 +289,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                         <Button
                           size="icon-xs"
                           variant="ghost"
-                          className="size-8 min-h-8 min-w-8 p-0 text-bad hover:bg-warn/20 hover:text-bad"
+                          className="size-8 min-h-8 min-w-8 p-0 text-bad hover:bg-reflection-foreground/10 hover:text-bad"
                           aria-label="Xoá lời nhắn"
                           onClick={(e) => {
                             e.stopPropagation()
@@ -454,7 +454,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                      <div
                        key={refl.id}
                        data-testid="note-reflection-box-detail"
-                       className="rounded-md border border-warn/30 bg-warn-bg p-3 text-xs text-foreground space-y-1.5 shadow-sm"
+                       className="rounded-lg border border-reflection-foreground/20 bg-reflection-bg p-3 text-xs text-foreground space-y-2"
                      >
                         <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-bold text-foreground">
                           <span className="flex flex-wrap items-center gap-1">
@@ -465,7 +465,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                             <Button
                               size="icon-xs"
                               variant="ghost"
-                              className="size-8 min-h-8 min-w-8 p-0 hover:bg-warn/20"
+                              className="size-8 min-h-8 min-w-8 p-0 hover:bg-reflection-foreground/10"
                               aria-label="Sửa lời nhắn"
                               onClick={() => {
                                 setEditingReflectionIdx(idx)
@@ -477,7 +477,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                             <Button
                               size="icon-xs"
                               variant="ghost"
-                              className="size-8 min-h-8 min-w-8 p-0 text-bad hover:bg-warn/20 hover:text-bad"
+                              className="size-8 min-h-8 min-w-8 p-0 text-bad hover:bg-reflection-foreground/10 hover:text-bad"
                               aria-label="Xoá lời nhắn"
                               onClick={() => {
                                 const newBody = deleteFutureReflection(note.body_md, idx)
