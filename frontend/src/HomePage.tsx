@@ -39,7 +39,7 @@ const copy = {
     futures: [
       ['Mimi', 'Trợ lý trong microSched', 'Mình muốn có một trợ lý làm việc được với task, note, tracker và tài liệu ngay trong app. Mimi sẽ thực hiện thao tác trong phạm vi được cho phép, với bước xác nhận phù hợp.'],
       ['microLink', 'Kết nối coding agent với microSched', 'Mình muốn coding agent có thể đọc và cập nhật dữ liệu microSched ngay từ môi trường đang dùng, hiện là Codex. microLink sẽ kết nối hai bên qua MCP, với các công cụ có phạm vi rõ ràng.'],
-      ['miGarden', 'Theo dõi và tưới hoa', 'Mình thích trồng hoa và muốn theo dõi từng chậu, rồi điều khiển tưới từ microSched. Mình dự định bắt đầu bằng vài chậu và thử từng phần, vì cảm biến, mạng và hệ thống tưới đều có thể gặp trục trặc.'],
+      ['miGarden', 'Theo dõi và tưới hoa', 'Mình thích trồng hoa và muốn theo dõi từng chậu, rồi điều khiển tưới từ microSched. Phần cứng, kết nối chập chờn và nước khiến đây là một dự án đầy tham vọng, với không ít điều có thể hỏng. Mình muốn bắt đầu bằng một mô hình thử nghiệm nhỏ, học từ những lần thất bại và tiếp tục hoàn thiện thành một hệ thống mình có thể sử dụng và tin cậy.'],
     ],
     ambition: 'Mình muốn hoàn thành những phiên bản đầu tiên thật chỉn chu trong kỳ học này, rồi tiếp tục phát triển sau khi kết thúc môn học. Nếu miGarden làm được như dự định, mình còn mong Mimi có thể gợi ý cách chăm hoa và thực hiện yêu cầu tưới sau khi được mình duyệt.',
     footerTitle: 'Bạn muốn tìm hiểu thêm?',

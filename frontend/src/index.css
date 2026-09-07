@@ -48,6 +48,9 @@
   --warn-bg: #fdf1de;
   --bad:     #b04a3a; /* 5,40:1 trên --card; 4,73:1 trên --bad-bg */
   --bad-bg:  #fdeceb;
+  /* Future reflections are correspondence, not privacy or warning state. */
+  --reflection-bg: #eef3f8;
+  --reflection-foreground: #49657e;
 
   /* --- hợp đồng token của shadcn: component đang chạy đọc đúng các tên này --- */
   --background:             var(--n-50);
@@ -161,6 +164,8 @@
   --color-warn-bg: var(--warn-bg);
   --color-bad: var(--bad);
   --color-bad-bg: var(--bad-bg);
+  --color-reflection-bg: var(--reflection-bg);
+  --color-reflection-foreground: var(--reflection-foreground);
 }
 
 /* Default viền trang trí phải ở base layer. Nếu để unlayered, rule `*` sẽ thắng

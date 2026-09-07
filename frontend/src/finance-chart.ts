@@ -23,23 +23,22 @@ export function financeShares(values: number[]): number[] | null {
   return total > 0 ? values.map((value) => (value / total) * 100) : null
 }
 
-/** Backend windows are half-open. F2's previous window counts complete days,
- * while the selected live window also includes today's elapsed time. */
-export function financePeriodLabels(start: string, end: string, previousDays: number) {
+/** Backend finance windows are half-open ISO-8601 boundaries. */
+export function financePeriodLabel(start: string | null, end: string | null) {
+  if (!start || !end) return 'Chưa có kỳ so sánh'
   const startAt = new Date(start)
   const endAt = new Date(end)
   if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())) {
-    return { current: 'Không rõ thời gian', previous: 'Không rõ thời gian' }
+    return 'Không rõ thời gian'
   }
   const date = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric' })
   const time = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' })
-  const parts = date.formatToParts(startAt)
-  const year = Number(parts.find((part) => part.type === 'year')?.value)
-  const month = Number(parts.find((part) => part.type === 'month')?.value)
-  const previousStart = new Date(Date.UTC(year, month - 2, 1) - 7 * 60 * 60 * 1_000)
-  const previousEnd = new Date(previousStart.getTime() + previousDays * 24 * 60 * 60 * 1_000)
+  return endAt <= startAt ? 'Kỳ chưa bắt đầu' : `${date.format(startAt)} → trước ${time.format(endAt)} ${date.format(endAt)}`
+}
+
+export function financePeriodLabels(start: string, end: string, previousStart: string | null, previousEnd: string | null) {
   return {
-    current: endAt <= startAt ? 'Kỳ chưa bắt đầu' : `${date.format(startAt)} → trước ${time.format(endAt)} ${date.format(endAt)}`,
-    previous: previousDays === 0 ? 'Chưa có ngày trọn vẹn để so' : `${date.format(previousStart)} → trước 00:00 ${date.format(previousEnd)}`,
+    current: financePeriodLabel(start, end),
+    previous: financePeriodLabel(previousStart, previousEnd),
   }
 }

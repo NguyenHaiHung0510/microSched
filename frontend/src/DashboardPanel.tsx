@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { FinanceComparison, FinanceComposition } from '@/FinanceChart'
+import { TrackerRhythm } from '@/TrackerRhythm'
 import { daysLeftLabel, formatShortDate } from '@/subscription-ui'
 import { formatVnd, type DashboardResponse, type Tracker } from '@/tracker-ui'
 
@@ -73,17 +74,17 @@ export function DashboardPanel({
         </div>
         <dl className="grid grid-cols-1 gap-3 rounded-lg bg-muted/50 p-3 sm:grid-cols-2">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 sm:block">
-            <dt className="text-sm text-muted-foreground">Đã chi trong kỳ</dt>
+            <dt className="text-sm text-muted-foreground">Đã chi trong kỳ đang xem</dt>
             <dd data-testid="dashboard-f1-total" className="break-words text-xl font-extrabold tabular-nums sm:text-2xl">{formatVnd(dashboard.f1_total)}</dd>
           </div>
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 sm:block">
-            <dt className="text-sm text-muted-foreground">Thu − chi</dt>
+            <dt className="text-sm text-muted-foreground">Thu − chi trong kỳ đang xem</dt>
             <dd data-testid="dashboard-f5-net" className={`break-words text-xl font-bold tabular-nums ${dashboard.f5_net < 0 ? 'text-bad' : dashboard.f5_net > 0 ? 'text-ok' : 'text-foreground'}`}>
               {dashboard.f5_net > 0 ? '+' : ''}{formatVnd(dashboard.f5_net)}
             </dd>
           </div>
         </dl>
-        <FinanceComparison dashboard={dashboard} />
+        <FinanceComparison key={dashboard.report_months} dashboard={dashboard} />
         <div className="border-t border-muted pt-3"><FinanceComposition groups={dashboard.f3_groups} trackerName={trackerName} /></div>
 
         {dashboard.f4_top.length > 0 ? (
@@ -172,6 +173,10 @@ export function DashboardPanel({
             ) : null}
           </div>
         ) : null}
+      </Card>
+
+      <Card className="gap-3 p-4 shadow-1 ring-0">
+        <TrackerRhythm key={dashboard.activity_month} dashboard={dashboard} trackers={trackers} />
       </Card>
     </div>
   )

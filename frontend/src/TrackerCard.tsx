@@ -96,10 +96,10 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
       data-tracker-id={tracker.id}
       data-testid="tracker-card"
       data-private={tracker.is_private}
-      className={cn('relative gap-0 p-3 shadow-1 ring-0', tracker.is_private && PRIVATE_SURFACE_CLASS)}
+      className={cn('relative min-w-0 gap-0 p-3 shadow-1 ring-0', tracker.is_private && PRIVATE_SURFACE_CLASS)}
     >
       {inputOpen && needsAmount ? (
-        <form className="space-y-2" onSubmit={submit}>
+        <form className="min-w-0 space-y-2 break-words" onSubmit={submit}>
           <label className="block space-y-1 text-sm font-semibold">
             <span>{tracker.input_mode === 'money' ? 'Số tiền' : `Số lượng (${tracker.unit ?? 'đơn vị'})`}</span>
             <Input
@@ -152,19 +152,19 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
           </div>
         </form>
       ) : (
-        <>
+        <div className="flex min-w-0 items-start gap-2">
           <Button
             data-testid="tracker-button"
             data-tracker-id={tracker.id}
             variant="secondary"
-            className="h-auto min-h-11 min-w-0 flex-col items-start gap-0.5 py-2 pr-12 pl-3 text-left"
+            className="h-auto min-h-11 min-w-0 flex-1 shrink flex-col items-start gap-1 whitespace-normal px-3 py-2 text-left"
             disabled={locked}
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
             onTouchMove={handleTouchMove}
             onClick={handleClick}
           >
-            <span className="max-w-full break-words text-sm font-bold">{tracker.name}</span>
+            <span data-testid="tracker-capture-name" className="w-full min-w-0 break-words text-sm font-bold">{tracker.name}</span>
             {tracker.is_private ? <PrivateMarker /> : null}
             <span
               data-testid="tracker-last-seen"
@@ -179,7 +179,7 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
             data-tracker-id={tracker.id}
             variant="ghost"
             size="icon-lg"
-            className="absolute top-1.5 right-1.5 size-11"
+            className="size-11 shrink-0"
             aria-label={`Ghi lùi giờ cho ${tracker.name}`}
             onClick={(event) => {
               event.stopPropagation()
@@ -191,7 +191,7 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
           {locked ? (
             <X className="pointer-events-none absolute top-1.5 left-1.5 size-3.5 text-muted-foreground" />
           ) : null}
-        </>
+        </div>
       )}
     </Card>
   )

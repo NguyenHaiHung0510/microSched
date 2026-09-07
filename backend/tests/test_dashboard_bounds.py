@@ -9,8 +9,8 @@ def _now(year: int, month: int, day: int, hour: int = 12) -> datetime:
     return datetime(year, month, day, hour, 0, 0, tzinfo=VN_TZ)
 
 
-def test_f2_previous_period_truncated_when_previous_month_is_shorter():
-    """31/03: kỳ trước cắt tại đầu tháng 3 → 28 ngày, truncated=true (spec §4.3)."""
+def test_f2_previous_period_is_the_whole_previous_month_when_shorter():
+    """31/03 compares all 28 days of February, never an elapsed-days truncation."""
     bounds = _periods("2026-03", _now(2026, 3, 31))
     assert bounds.period_start == datetime(2026, 3, 1, tzinfo=VN_TZ)
     assert bounds.period_end == _now(2026, 3, 31)
@@ -18,34 +18,28 @@ def test_f2_previous_period_truncated_when_previous_month_is_shorter():
     assert bounds.prev_start == datetime(2026, 2, 1, tzinfo=VN_TZ)
     assert bounds.prev_end == datetime(2026, 3, 1, tzinfo=VN_TZ)
     assert bounds.prev_period_days == 28
-    assert bounds.prev_period_truncated is True
+    assert bounds.prev_period_truncated is False
     assert bounds.is_future is False
 
 
 def test_f2_past_month_compares_full_month_to_full_previous_month():
-    """Tháng quá khứ: period_end = cuối tháng, kỳ trước = cùng thời lượng đã trôi.
-
-    The operative F2 definition is "cùng thời lượng" (elapsed duration), not
-    "whole previous calendar month": February has 28 days, so the previous
-    window is the first 28 days of January (Jan 1 → Jan 29) and is NOT
-    truncated (January is longer).
-    """
+    """A full past February compares to all 31 days of the preceding January."""
     bounds = _periods("2026-02", _now(2026, 8, 5))
     assert bounds.period_end == datetime(2026, 3, 1, tzinfo=VN_TZ)
     assert bounds.current_period_days == 28
     assert bounds.prev_start == datetime(2026, 1, 1, tzinfo=VN_TZ)
-    assert bounds.prev_end == datetime(2026, 1, 29, tzinfo=VN_TZ)
-    assert bounds.prev_period_days == 28
+    assert bounds.prev_end == datetime(2026, 2, 1, tzinfo=VN_TZ)
+    assert bounds.prev_period_days == 31
     assert bounds.prev_period_truncated is False
 
 
-def test_f2_no_truncation_when_previous_month_is_longer():
-    """Ngày 30/4: kỳ trước kéo 29 ngày từ 01/03, tháng 3 dài hơn nên không cắt."""
+def test_f2_current_partial_month_still_compares_full_previous_month():
+    """A partial April report compares all 31 days of March."""
     bounds = _periods("2026-04", _now(2026, 4, 30, 12))
     assert bounds.current_period_days == 29
     assert bounds.prev_start == datetime(2026, 3, 1, tzinfo=VN_TZ)
-    assert bounds.prev_end == datetime(2026, 3, 30, tzinfo=VN_TZ)
-    assert bounds.prev_period_days == 29
+    assert bounds.prev_end == datetime(2026, 4, 1, tzinfo=VN_TZ)
+    assert bounds.prev_period_days == 31
     assert bounds.prev_period_truncated is False
 
 
@@ -60,14 +54,25 @@ def test_future_month_is_short_circuited():
     assert bounds.prev_period_days == 0
 
 
-def test_current_month_mid_month_previous_window_matches_elapsed():
-    """Ngày 15/05: kỳ trước bắt đầu 01/04, kéo 14 ngày (không cắt — tháng 4 đủ dài)."""
+def test_current_month_mid_month_previous_window_is_full_calendar_month():
+    """A partial May report compares all 30 days of April."""
     bounds = _periods("2026-05", _now(2026, 5, 15))
     assert bounds.current_period_days == 14
     assert bounds.prev_start == datetime(2026, 4, 1, tzinfo=VN_TZ)
-    assert bounds.prev_end == datetime(2026, 4, 15, tzinfo=VN_TZ)
-    assert bounds.prev_period_days == 14
+    assert bounds.prev_end == datetime(2026, 5, 1, tzinfo=VN_TZ)
+    assert bounds.prev_period_days == 30
     assert bounds.prev_period_truncated is False
+
+
+def test_current_month_exact_midnight_keeps_full_previous_month():
+    """The first instant of a current month is zero selected time, not a future month."""
+    bounds = _periods("2026-05", _now(2026, 5, 1, 0))
+
+    assert bounds.is_future is False
+    assert bounds.current_period_days == 0
+    assert bounds.prev_start == datetime(2026, 4, 1, tzinfo=VN_TZ)
+    assert bounds.prev_end == datetime(2026, 5, 1, tzinfo=VN_TZ)
+    assert bounds.prev_period_days == 30
 
 
 def test_month_validation_still_raises_value_error():

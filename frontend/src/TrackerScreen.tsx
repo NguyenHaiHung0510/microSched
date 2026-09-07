@@ -62,6 +62,8 @@ import {
   trackerKindLabel,
   trackerInvalidationKey,
   trackerQueryKey,
+  isSelectableReportMonth,
+  minimumReportMonth,
   useTrackerWrites,
   type DashboardResponse,
   type Entry,
@@ -82,6 +84,17 @@ function monthLabel(month: string): string {
   )
 }
 
+function shiftMonth(month: string, delta: number): string {
+  const [year, number] = month.split('-').map(Number)
+  const index = (year - 1) * 12 + number - 1 + delta
+  return `${String(Math.floor(index / 12) + 1).padStart(4, '0')}-${String((index % 12) + 1).padStart(2, '0')}`
+}
+
+function reportMonthLabel(month: string, months: 1 | 3 | 6 | 12): string {
+  if (months === 1) return monthLabel(month)
+  return `${monthLabel(shiftMonth(month, 1 - months))} – ${monthLabel(month)}`
+}
+
 function formatEntryLine(entry: Entry): string {
   if (entry.amount != null) return `${entry.amount.toLocaleString('vi-VN')} ₫`
   if (entry.quantity != null) return formatQuantity(entry.quantity)
@@ -94,6 +107,11 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const writes = useTrackerWrites(refresh)
   const currentMonth = currentVietnamMonth()
   const [month, setMonth] = useState(currentMonth)
+  const [reportMonths, setReportMonths] = useState<1 | 3 | 6 | 12>(1)
+  const chooseReportMonths = (months: 1 | 3 | 6 | 12) => {
+    setReportMonths(months)
+    if (month < minimumReportMonth(months)) setMonth(minimumReportMonth(months))
+  }
   const wasUnlocked = useRef(privateUnlocked)
 
   const groupsQuery = useQuery({
@@ -107,8 +125,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
     refetchInterval: standardRefetchInterval,
   })
   const dashboardQuery = useQuery({
-    queryKey: [...trackerQueryKey('dashboard'), month],
-    queryFn: () => apiRequest<DashboardResponse>(`/api/tracker/dashboard?month=${month}`),
+    queryKey: [...trackerQueryKey('dashboard'), month, reportMonths],
+    queryFn: () => apiRequest<DashboardResponse>(`/api/tracker/dashboard?month=${month}&months=${reportMonths}`),
     refetchInterval: standardRefetchInterval,
   })
   const entriesQuery = useQuery({
@@ -524,7 +542,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 basis-full space-y-1 sm:basis-0 sm:flex-1">
             <p className="text-xs font-bold uppercase tracking-wider text-primary">
-              Tài chính {monthLabel(month)}
+              Tài chính {reportMonthLabel(month, reportMonths)}
             </p>
             {dashboardQuery.isError ? (
               <p role="alert" className="text-sm text-bad">Không tải được số liệu. Mở báo cáo để thử lại.</p>
@@ -538,16 +556,15 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   </span>
                   <span className="text-xs text-muted-foreground">đã chi</span>
                 </div>
-                {dashboardQuery.data.prev_period_days > 0 ? (
+                {dashboardQuery.data.previous_period_start && dashboardQuery.data.previous_period_end ? (
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                    <span>So cùng kỳ tháng trước:</span>
+                    <span>So với kỳ trước trọn vẹn:</span>
                     {(() => {
                       const delta = dashboardQuery.data.f2_current - dashboardQuery.data.f2_previous
-                      const dir = delta > 0 ? 'tăng' : delta < 0 ? 'giảm' : 'bằng'
-                      const colorClass = delta > 0 ? 'text-bad' : delta < 0 ? 'text-ok' : 'text-foreground'
+                      const dir = delta > 0 ? 'Nhiều hơn' : delta < 0 ? 'Ít hơn' : 'Bằng kỳ trước'
                       return (
-                        <span data-testid="tracker-finance-compare" className={cn('font-bold tabular-nums', colorClass)}>
-                          {dir} {formatVnd(Math.abs(delta))}
+                        <span data-testid="tracker-finance-compare" className="font-bold tabular-nums text-foreground">
+                          {dir}{delta !== 0 ? ` ${formatVnd(Math.abs(delta))}` : ''}
                         </span>
                       )
                     })()}
@@ -573,11 +590,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           </Button>
         </div>
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <label className="space-y-1 text-xs font-semibold">
+          <label className="flex min-w-0 flex-col gap-2 text-xs font-semibold">
             <span>Tháng báo cáo</span>
-            <Input data-testid="tracker-report-month" type="month" value={month} max={currentMonth} className="min-h-11 w-auto text-base"
-              onChange={(event) => { const value = event.target.value; if (/^\d{4}-(0[1-9]|1[0-2])$/.test(value) && value >= '0001-01' && value <= currentMonth) setMonth(value) }} />
+            <Input data-testid="tracker-report-month" type="month" value={month} min={minimumReportMonth(reportMonths)} max={currentMonth} className="min-h-11 w-full text-base sm:w-auto"
+              onChange={(event) => { const value = event.target.value; if (isSelectableReportMonth(value, reportMonths, currentMonth)) setMonth(value) }} />
           </label>
+          <div className="grid grid-cols-4 gap-1 sm:flex" role="group" aria-label="Khoảng báo cáo">
+            {([1, 3, 6, 12] as const).map((months) => <Button key={months} size="lg" variant={reportMonths === months ? 'selected' : 'ghost'} aria-pressed={reportMonths === months} onClick={() => chooseReportMonths(months)}>{months === 12 ? '1 năm' : `${months} tháng`}</Button>)}
+          </div>
           <Button data-testid="tracker-open-report" variant="outline" className="min-h-11" onClick={() => {
             setRhythmCollapsed(false)
             window.requestAnimationFrame(() => document.getElementById('tracker-report')?.scrollIntoView({ block: 'start' }))
@@ -603,17 +623,17 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       />
 
       {/* 3. Quản lý nhóm & Tracker (Mặc định thu gọn) */}
-      <Card className="gap-4 p-4 shadow-1 ring-0">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+      <Card data-testid="tracker-management" className="gap-4 p-4 shadow-1 ring-0">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-2">
             <Layers className="size-4 text-primary" />
-            <h3 className="text-base font-bold">Quản lý nhóm & Tracker</h3>
+            <h3 className="min-w-0 break-words text-base font-bold">Quản lý nhóm & Tracker</h3>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
             <Button
               variant="ghost"
               size="sm"
-              className="min-h-10 text-xs"
+              className="min-h-11 flex-1 text-xs sm:flex-none"
               onClick={() => {
                 if (collapsedGroups.size > 0 || unassignedCollapsed) {
                   setCollapsedGroups(new Set())
@@ -629,7 +649,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             <Button
               variant="outline"
               size="sm"
-              className="min-h-10"
+              className="min-h-11 flex-1 sm:flex-none"
               aria-label="Thêm nhóm"
               onClick={() => setGroupOpen(true)}
             >
@@ -650,28 +670,19 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   key={group.id}
                   className="rounded-lg border border-border/80 bg-card p-3 shadow-sm transition-all"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <Button
                       type="button"
                       variant="ghost"
-                      className="flex min-w-0 flex-1 items-center justify-start gap-2 text-left font-semibold cursor-pointer select-none h-auto p-0 hover:bg-transparent"
+                      className="flex w-full min-w-0 shrink items-start justify-start gap-2 text-left font-semibold !whitespace-normal [&_*]:!whitespace-normal cursor-pointer select-none h-auto p-0 hover:bg-transparent sm:w-auto sm:flex-1"
                       onClick={() => toggleGroupCollapse(group.id)}
                     >
                       <Folder className="size-4 text-primary shrink-0" />
-                      <span className="break-words text-sm font-bold text-foreground">
-                        {group.name}
-                      </span>
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                        {trackerKindLabel(group.kind)} · {groupTrackers.length} tracker
-                      </span>
-                      {isCollapsed ? (
-                        <ChevronDown className="size-4 text-muted-foreground ml-auto" />
-                      ) : (
-                        <ChevronUp className="size-4 text-muted-foreground ml-auto" />
-                      )}
+                      <span className="min-w-0 flex-1"><span data-testid="tracker-group-title" className="block max-w-full break-words text-sm font-bold text-foreground">{group.name}</span><span className="mt-1 inline-block rounded bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground">{trackerKindLabel(group.kind)} · {groupTrackers.length} tracker</span></span>
+                      {isCollapsed ? <ChevronDown className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> : <ChevronUp className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
                     </Button>
 
-                   <div className="flex items-center gap-1">
+                   <div className="flex w-full items-center justify-end gap-1 border-t border-border/50 pt-2 sm:w-auto sm:border-0 sm:pt-0">
                      <Button
                        variant="ghost"
                        size="icon-lg"
@@ -701,7 +712,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                             key={tracker.id}
                             data-testid="tracker-management-row"
                             data-private={tracker.is_private}
-                            className={cn('flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-2.5', tracker.is_private && PRIVATE_SURFACE_CLASS)}
+                            className={cn('flex flex-col items-stretch gap-2 rounded-md bg-muted/40 p-2.5 sm:flex-row sm:items-center sm:justify-between', tracker.is_private && PRIVATE_SURFACE_CLASS)}
                           >
                             <div className="min-w-0">
                               <p className="max-w-full break-words text-sm font-semibold">
@@ -717,8 +728,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                 {tracker.reminder_time ? ` · ${formatReminderSummary(tracker) ?? `Nhắc ${tracker.reminder_time}`}` : ''}
                               </p>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <label className="flex items-center gap-1.5 text-xs font-semibold">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-2 sm:justify-end sm:border-0 sm:pt-0">
+                              <label className="flex min-h-11 items-center gap-1.5 text-xs font-semibold">
                                 <Checkbox
                                   data-testid="tracker-private-toggle"
                                   data-tracker-id={tracker.id}
@@ -773,11 +784,11 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
             {groupedData.unassigned.length > 0 ? (
               <div className="rounded-lg border border-border/80 bg-card p-3 shadow-sm">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <Button
                     type="button"
                     variant="ghost"
-                    className="flex min-w-0 flex-1 items-center justify-start gap-2 text-left font-semibold cursor-pointer select-none h-auto p-0 hover:bg-transparent"
+                    className="flex min-w-0 w-full items-center justify-start gap-2 text-left font-semibold cursor-pointer select-none h-auto p-0 hover:bg-transparent"
                     onClick={() => setUnassignedCollapsed(!unassignedCollapsed)}
                   >
                     <Sparkles className="size-4 text-muted-foreground shrink-0" />
@@ -800,7 +811,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                         key={tracker.id}
                         data-testid="tracker-management-row"
                         data-private={tracker.is_private}
-                        className={cn('flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 p-2.5', tracker.is_private && PRIVATE_SURFACE_CLASS)}
+                        className={cn('flex flex-col items-stretch gap-2 rounded-md bg-muted/40 p-2.5 sm:flex-row sm:items-center sm:justify-between', tracker.is_private && PRIVATE_SURFACE_CLASS)}
                       >
                         <div className="min-w-0">
                           <p className="max-w-full break-words text-sm font-semibold">
@@ -816,8 +827,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                             {tracker.reminder_time ? ` · ${formatReminderSummary(tracker) ?? `Nhắc ${tracker.reminder_time}`}` : ''}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <label className="flex items-center gap-1.5 text-xs font-semibold">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-2 sm:justify-end sm:border-0 sm:pt-0">
+                          <label className="flex min-h-11 items-center gap-1.5 text-xs font-semibold">
                             <Checkbox
                               data-testid="tracker-private-toggle"
                               data-tracker-id={tracker.id}
@@ -986,7 +997,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           <div className="pt-2">
       <DashboardPanel
         dashboard={dashboardQuery.data ?? null}
-        monthLabel={monthLabel(month)}
+        monthLabel={reportMonthLabel(month, reportMonths)}
+        financeExtra={<div className="flex flex-wrap gap-1" role="group" aria-label="Đổi khoảng báo cáo trong chi tiết">{([1, 3, 6, 12] as const).map((months) => <Button key={months} size="lg" variant={reportMonths === months ? 'selected' : 'ghost'} aria-pressed={reportMonths === months} onClick={() => chooseReportMonths(months)}>{months === 12 ? '1 năm' : `${months} tháng`}</Button>)}</div>}
         trackers={trackers}
         loading={dashboardQuery.isPending}
         error={dashboardQuery.error}
