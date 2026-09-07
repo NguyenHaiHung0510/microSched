@@ -32,6 +32,21 @@ async function capture(page: import('@playwright/test').Page, name: string, proj
   writeFileSync(path.join(directory,`${project}-${name}.json`),JSON.stringify({file,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),viewport:page.viewportSize(),capturedAt:new Date().toISOString(),md5:createHash('md5').update(bytes).digest('hex'),sha256:createHash('sha256').update(bytes).digest('hex')},null,2))
 }
 
+async function expectDayTargetGeometry(rhythm: import('@playwright/test').Locator) {
+  const boxes = await rhythm.getByTestId('rhythm-day').evaluateAll(elements => elements.map(element => {
+    const box = element.getBoundingClientRect()
+    return { left: box.left, right: box.right, top: box.top, width: box.width, height: box.height }
+  }))
+  for (const box of boxes) {
+    expect(box.width).toBeGreaterThanOrEqual(24)
+    expect(box.height).toBeGreaterThanOrEqual(44)
+  }
+  for (let index = 1; index < boxes.length; index += 1) {
+    if (Math.abs(boxes[index].top - boxes[index - 1].top) < 1) {
+      expect(boxes[index].left - boxes[index - 1].right).toBeGreaterThanOrEqual(8)
+    }
+  }
+}
 test.beforeEach(async ({page,taskApi,trackerApi}) => {
   await page.clock.setFixedTime(new Date('2026-09-07T12:00:00+07:00'))
   taskApi.privateUntil='2026-09-07T12:36:00+07:00'
@@ -82,9 +97,20 @@ test('rhythm selection survives focus, changes month cleanly and hides private r
   const day=rhythm.getByRole('button',{name:'Đọc sách, 02/09/2026: 2 lần ghi',exact:true})
   await day.focus();await page.keyboard.press('Enter')
   await expect(day).toBeFocused();await expect(page.getByTestId('rhythm-detail')).toContainText('2 lần ghi')
+  await expectDayTargetGeometry(rhythm)
+  const scroll = rhythm.getByTestId('rhythm-week-scroll')
+  await scroll.evaluate(element => { element.scrollLeft = element.scrollWidth })
+  const rightmost = await scroll.evaluate(element => {
+    const button = element.querySelector('[role="row"]:nth-child(2) [role="cell"]:last-child button')!
+    const target = button.getBoundingClientRect(), frame = element.getBoundingClientRect()
+    return target.left >= frame.left && target.right <= frame.right + 1
+  })
+  expect(rightmost).toBe(true)
+  await scroll.evaluate(element => { element.scrollLeft = 0 })
   await rhythm.scrollIntoViewIfNeeded();await capture(page,'rhythm-week',info.project.name)
   await rhythm.getByRole('button',{name:'Một tracker',exact:true}).click()
   await expect(rhythm.getByRole('button',{name:'Đọc sách, 08/09/2026: chưa tới',exact:true})).toBeDisabled()
+  await expectDayTargetGeometry(rhythm)
   await capture(page,'rhythm-month',info.project.name)
   await page.getByTestId('tracker-report-month').fill('2026-08')
   await expect(page.getByTestId('rhythm-detail')).toContainText('Chọn một chấm')
