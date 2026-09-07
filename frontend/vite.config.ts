@@ -42,6 +42,14 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rolldownOptions: {
+      input: {
+        app: path.resolve(__dirname, 'index.html'),
+        denied: path.resolve(__dirname, 'denied.html'),
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:8000',

@@ -37,6 +37,20 @@ const render = (data: DashboardResponse | null = dashboard, error: unknown = nul
   <DashboardPanel dashboard={data} monthLabel="09/2026" trackers={trackers} loading={false} error={error} onRetry={() => undefined} />,
 )
 
+test('net balance is signed and positive green, negative red, zero neutral', () => {
+  for (const [amount, color, text] of [
+    [825_000, 'text-ok', '+825.000 ₫'],
+    [-135_000, 'text-bad', '-135.000 ₫'],
+    [0, 'text-foreground', '0 ₫'],
+  ] as const) {
+    const html = render({ ...dashboard, f5_net: amount })
+    const net = html.match(/<dd data-testid="dashboard-f5-net" class="([^"]+)">([\s\S]*?)<\/dd>/)
+    assert.ok(net)
+    assert.ok(net[1].split(' ').includes(color))
+    assert.equal(net[2].trim(), text)
+  }
+})
+
 test('finance bars share a real zero baseline and do not turn zero into visible money', () => {
   const positive = financeBarScale([0, 100, 400])
   assert.deepEqual(positive.bar(0), { left: 0, width: 0 })

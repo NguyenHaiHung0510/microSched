@@ -78,8 +78,8 @@ export function DashboardPanel({
           </div>
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 sm:block">
             <dt className="text-sm text-muted-foreground">Thu − chi</dt>
-            <dd data-testid="dashboard-f5-net" className={`break-words text-xl font-bold tabular-nums ${dashboard.f5_net < 0 ? 'text-bad' : 'text-foreground'}`}>
-              {formatVnd(dashboard.f5_net)}
+            <dd data-testid="dashboard-f5-net" className={`break-words text-xl font-bold tabular-nums ${dashboard.f5_net < 0 ? 'text-bad' : dashboard.f5_net > 0 ? 'text-ok' : 'text-foreground'}`}>
+              {dashboard.f5_net > 0 ? '+' : ''}{formatVnd(dashboard.f5_net)}
             </dd>
           </div>
         </dl>
