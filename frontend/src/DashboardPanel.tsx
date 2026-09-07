@@ -71,12 +71,12 @@ export function DashboardPanel({
           <h2 className="text-base font-bold">Tài chính {monthLabel}</h2>
           {financeExtra}
         </div>
-        <dl className="grid grid-cols-2 gap-3 rounded-lg bg-muted/50 p-3">
-          <div>
+        <dl className="grid grid-cols-1 gap-3 rounded-lg bg-muted/50 p-3 sm:grid-cols-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 sm:block">
             <dt className="text-sm text-muted-foreground">Đã chi trong kỳ</dt>
             <dd data-testid="dashboard-f1-total" className="break-words text-xl font-extrabold tabular-nums sm:text-2xl">{formatVnd(dashboard.f1_total)}</dd>
           </div>
-          <div>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 sm:block">
             <dt className="text-sm text-muted-foreground">Thu − chi</dt>
             <dd data-testid="dashboard-f5-net" className={`break-words text-xl font-bold tabular-nums ${dashboard.f5_net < 0 ? 'text-bad' : 'text-foreground'}`}>
               {formatVnd(dashboard.f5_net)}

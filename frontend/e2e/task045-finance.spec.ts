@@ -36,6 +36,8 @@ test('finance charts show exact periods, composition and keyboard disclosure wit
   await expect(comparison).toContainText('2.100.000')
   await expect(comparison).toContainText('01/08/2026')
   await expect(comparison).toContainText('01/07/2026')
+  // Common currency totals remain on one readable line at either viewport.
+  expect((await page.getByTestId('dashboard-f1-total').boundingBox())?.height).toBeLessThan(40)
   const group = page.getByTestId('dashboard-f3-group')
   await group.locator('summary').focus()
   await page.keyboard.press('Enter')

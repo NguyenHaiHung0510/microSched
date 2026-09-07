@@ -522,7 +522,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       {/* 1. Tài chính tháng X năm Y lên đầu */}
       <Card data-testid="tracker-finance-overview" className="gap-3 p-4 shadow-1 ring-0 bg-gradient-to-br from-brand-50/60 to-card border-brand-200">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1 min-w-0 flex-1">
+          <div className="min-w-0 basis-full space-y-1 sm:basis-0 sm:flex-1">
             <p className="text-xs font-bold uppercase tracking-wider text-primary">
               Tài chính {monthLabel(month)}
             </p>
