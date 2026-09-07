@@ -1,6 +1,6 @@
 # 047 — One-shot reminders
 
-Status: LOCAL IMPLEMENTED; [PR 213](https://github.com/NguyenHaiHung0510/microSched/pull/213) REVIEWABLE; PRODUCTION MIGRATION HOLD. Owner approved 2026-09-07 in task `01a07c4f-aa74-7ef2-888b-a1b3abf87b17`, including 45-minute late delivery and autonomous continuation after the UI lane. T1 is the writer. Base: develop `0db779a5bd8457a588c59aa3fac6e3ec8bf8de62`; PR211/212 independently verified MERGED, UI task completed. Existing worktrees and untracked files retained.
+Status: IMPLEMENTED; production migration 0013 APPLIED; current delivery/CI receipts at [PR 213](https://github.com/NguyenHaiHung0510/microSched/pull/213). Owner approved 2026-09-07 in task `01a07c4f-aa74-7ef2-888b-a1b3abf87b17`, including 45-minute late delivery and autonomous continuation after the UI lane, then explicitly approved migration and continued delivery on 2026-09-08. T1 is the writer. Base: develop `0db779a5bd8457a588c59aa3fac6e3ec8bf8de62`; PR211/212 independently verified MERGED, UI task completed. Existing worktrees and untracked files retained.
 
 ## Accepted behavior
 
@@ -16,7 +16,7 @@ Status: LOCAL IMPLEMENTED; [PR 213](https://github.com/NguyenHaiHung0510/microSc
 
 Use existing PostgreSQL, in-process owned scheduler, event-driven reload and Web Push. No extra service, timer poll, Redis/Celery, infrastructure or costs. New rows use typed nullable foreign keys with exactly one source, partial uniqueness for active reminders, bounded list/page queries and four attempts. No source prose in reminder table. Privacy remains source-derived.
 
-Migration is additive; old application can run on expanded schema. Production deployment is HOLD until required schema is applied through an authorized migration lane. Never auto-migrate on deploy or read real secrets/data. Local disposable PostgreSQL only for destructive migration/QA.
+Migration is additive; old application can run on expanded schema. The initial production deployment hold was satisfied by the separately Owner-approved migration recorded below. Never auto-migrate on deploy or expose credentials/personal records. Local disposable PostgreSQL only for destructive migration/QA.
 
 ## Acceptance
 
@@ -55,11 +55,27 @@ Review is T1 self-review, not independent review. It found and corrected the pre
 
 Repository hooks and secret scanning passed before commit. Only the sanitized commit was published; public documentation contains no personal key-storage locations. This docs-only follow-up preserves the frozen application/test code above. No merge/deploy occurred.
 
+## Owner-approved production migration — 2026-09-08
+
+Authority: after T1 explicitly requested permission to apply 0013, verify schema and continue merge/deploy, the Owner replied “duyệt, tiếp tục đến khi hết việc” in the current task. This grants T1 that bounded delivery action; it does not authorize unrelated infrastructure, backup/key access, production fixture writes or destructive cleanup.
+
+Preflight found production at 0011, not 0012. The configured local runtime/migrator targets matched; a runtime-side normalized target fingerprint also matched without exposing credentials or endpoint names (SSH returned the fingerprint but a nonzero transport exit, so this is partial transport evidence). Missing batch tables and all 0012 data preconditions were verified with boolean-only queries. Standard Alembic applied the required checked-in chain `0011 → 0012 → 0013`, exit 0, transactional DDL with 5-second lock and 60-second statement timeouts. No downgrade, manual stamping, record rewrite or deletion was used.
+
+Post-migration: revision0013, correct table owner, three cascading FKs, three valid active unique indexes and three enabled source triggers. Six CHECKs, three FKs, one PK and eight PostgreSQL18 NOT NULL constraints are all validated. App-role SELECT/INSERT/UPDATE/DELETE were checked individually, schema CREATE remains denied, and an actual app-role `SELECT ... LIMIT 0` succeeded without loading records. Canonical `scripts.check_migration_drift` returned `migration_drift=empty`. The previous deployed app remained at `0db779a5bd8457a588c59aa3fac6e3ec8bf8de62`, `db=up`, immediately after expansion.
+
+The first custom verification used a PostgreSQL-pre18 assumption of ten total constraints and failed; catalog types showed eight additional NOT NULL entries, all valid. Two elevated read-command approval reviews timed out. The unchanged drift checker and typed catalog query then completed successfully with ordinary execution permissions. These were verification/tooling issues, not migration rollback or data repair. Final exact-head merge/deploy receipts belong in PR213 so this historical checkpoint does not masquerade as live state.
+
+### Delivery checkpoint: tool recovery
+
+After successful migration verification, elevated local git commit/push commands and GitHub browser access failed at automatic approval review before execution. Bounded retries and heartbeat resumption also timed out. The Owner subsequently re-enabled the hourly heartbeat and instructed T1 to continue. On resumption, the saved heartbeat was verified ACTIVE at one hour, GitHub commands succeeded, and PR213 remained OPEN/ready/CLEAN with all ten checks successful.
+
+Application code remains frozen at the previously checked head; this receipt is documentation only. Owner authority is sufficient to publish it, refresh exact head/base/checks, CAS merge and verify deployment. Do not reapply 0012/0013 or request a second business approval for this bounded delivery. Final merge/deployment evidence is maintained in PR213; physical device and actual Web Push remain NOT_RUN.
+
 Screenshots remain local under `frontend/output/playwright/reminders-047/`; scripts reproduce them with synthetic data. The Docker image is a local production-build smoke with local auth/config, not full production-cell/device/provider acceptance. The guarded native localhost login issues the synthetic session; no auth gate was weakened for Docker port forwarding. No actual Web Push sent.
 
 ## Migration and delivery handoff
 
-Finish repository hooks, commit, PR into develop and all configured CI gates before asking for the final Owner action. Do not merge code whose schema is absent in production. Owner-approved migration lane must apply additive 0013 and verify catalog/drift/privileges while the previous app remains deployed. The migration is transactional but installs source triggers and obtains PostgreSQL DDL locks; this is a maintenance action, not a deploy hook. Use the existing migration credential procedure without copying credentials into chat or receipts.
+The Owner-approved migration gate is satisfied by the receipt above. Finish repository hooks and all configured exact-head CI gates before merge into develop; then verify deployment. Migration remains a separately authorized maintenance action, not a deploy hook. Do not copy credentials into chat or receipts.
 
 Rollback is the previous app on expanded schema. Keep 0013 and reminder rows; never use downgrade as production rollback. Empty-schema downgrade/upgrade is only a disposable QA lane. After schema verification and fresh exact head/base/checks, normal authorized merge/deploy may proceed; verify exact readyz commit and `db=up`. Physical iPhone/Safari and Web Push delivery require separate observation.
 
