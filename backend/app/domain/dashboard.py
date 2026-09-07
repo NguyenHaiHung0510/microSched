@@ -169,7 +169,7 @@ class DashboardResponse(BaseModel):
 
 
 _MONTH_RE = re.compile(r"^(?P<year>\d{4})-(?P<month>0[1-9]|1[0-2])$")
-_REPORT_MONTHS = frozenset({1, 3, 6, 12})
+REPORT_MONTHS = frozenset({1, 3, 6, 12})
 
 
 def _month_bounds(month: str) -> tuple[datetime, datetime]:
@@ -238,7 +238,7 @@ def _periods(month: str, now: datetime, months: int = 1) -> PeriodBounds:
     month is complete. F2's comparison is the whole preceding count of calendar
     months, never a same-elapsed-days window.
     """
-    if months not in _REPORT_MONTHS:
+    if months not in REPORT_MONTHS:
         raise ValueError("months must be one of 1, 3, 6, 12")
     month_start, month_end = _month_bounds(month)
     period_start = _shift_months(month_start, months - 1)

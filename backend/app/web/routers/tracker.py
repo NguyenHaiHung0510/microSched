@@ -2,14 +2,14 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.dashboard import DashboardResponse, DashboardService
+from app.domain.dashboard import REPORT_MONTHS, DashboardResponse, DashboardService
 from app.domain.models import AuthSession
 from app.domain.tracker import (
     EntryCreate,
@@ -310,9 +310,11 @@ async def dashboard(
     db: Database,
     session: CurrentSession,
     month: str | None = Query(default=None),
-    months: Literal[1, 3, 6, 12] = Query(default=1),
+    months: int = Query(default=1),
 ) -> DashboardResponse:
     """Compute behavior + an absolute finance report (default = current +07 month)."""
+    if months not in REPORT_MONTHS:
+        raise HTTPException(status_code=422, detail="months must be one of 1, 3, 6, 12")
     if month is None:
         vn_now = datetime.now(timezone(timedelta(hours=7)))
         month = f"{vn_now.year:04d}-{vn_now.month:02d}"
