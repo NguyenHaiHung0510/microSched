@@ -384,7 +384,9 @@ test('session error performs no repeated /api/me polling', async ({ page, taskAp
   test.setTimeout(MEASUREMENT_MS + 30_000)
   taskApi.sessionStatus = 401
   await page.goto('/')
-  await expect(page.getByText('Cần đăng nhập')).toBeVisible()
+  // Guests now see the public homepage, not the retired sign-in card.
+  await expect(page.getByTestId('login-link')).toBeVisible()
+  await expect(page.getByRole('tab')).toHaveCount(0)
   taskApi.resetCounts()
   await page.waitForTimeout(MEASUREMENT_MS)
   console.log(`session error: ${taskApi.count('GET', '/api/me')} GET /api/me after initial 401`)
