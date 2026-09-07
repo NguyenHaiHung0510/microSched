@@ -19,6 +19,10 @@ Production Dockerfile candidate for Task 047, one CPU and 256 MB memory limit, s
 
 Keep the current machine/cost policy. No evidence from this bounded run justifies upgrading RAM, autoscaling or challenging every visitor. A more exact CDN/domain proposal depends on the Owner's domain/hosting preference; no service purchase or pricing promise is made here.
 
+### Dependency follow-up observed during publication
+
+GitHub reported six open high-severity alerts on 2026-09-08: #10–13 for `fast-uri` (patched 3.1.6) and #14–15 for `browserslist` (patched 4.28.7). Local `npm ls` confirmed 3.1.5 and 4.28.6 through Workbox build/AJV and Babel/lint tooling. The runtime Docker stage copies compiled static files into Python and has no Node server. This graph does not establish a remotely reachable homepage exploit; it also does not dismiss build-tool advisories. A small dependency-maintenance change is worth scheduling separately, with lockfile/build/PWA checks. These dependencies and overrides were not changed by Task 047. [Current repository alerts](https://github.com/NguyenHaiHung0510/microSched/security/dependabot).
+
 ## PIN and backup threat model
 
 Current code verified: `backend/app/core/private_pin.py` hashes the six-digit display PIN with Argon2id; it does not import crypto or derive an encryption key. `backend/app/core/crypto.py` decrypts private columns using a separately configured 32-byte AES-GCM master key. The following conclusions concern those encrypted columns, not every field in a database dump.

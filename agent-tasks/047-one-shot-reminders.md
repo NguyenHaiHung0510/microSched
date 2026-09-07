@@ -1,6 +1,6 @@
 # 047 — One-shot reminders
 
-Status: LOCAL IMPLEMENTED; PR/CI pending; PRODUCTION MIGRATION HOLD. Owner approved 2026-09-07 in task `01a07c4f-aa74-7ef2-888b-a1b3abf87b17`, including 45-minute late delivery and autonomous continuation after the UI lane. T1 is the writer. Base: develop `0db779a5bd8457a588c59aa3fac6e3ec8bf8de62`; PR211/212 independently verified MERGED, UI task completed. Existing worktrees and untracked files retained.
+Status: LOCAL IMPLEMENTED; [PR 213](https://github.com/NguyenHaiHung0510/microSched/pull/213) REVIEWABLE; PRODUCTION MIGRATION HOLD. Owner approved 2026-09-07 in task `01a07c4f-aa74-7ef2-888b-a1b3abf87b17`, including 45-minute late delivery and autonomous continuation after the UI lane. T1 is the writer. Base: develop `0db779a5bd8457a588c59aa3fac6e3ec8bf8de62`; PR211/212 independently verified MERGED, UI task completed. Existing worktrees and untracked files retained.
 
 ## Accepted behavior
 
@@ -30,7 +30,7 @@ Homepage: measure payload/cache and bounded synthetic load, then propose control
 
 ## Checkpoint
 
-2026-09-08: implementation complete in `feat/047-one-shot-reminders`. New migration 0013, parent-gated API, durable dispatcher, after-commit timer reload, source editors and global management are implemented. No new dependency/service/polling. Local preview uses only disposable synthetic PostgreSQL. Production and physical-device acceptance NOT_RUN. Hourly continuation `microsched-reminders-hourly-continuation` remains ACTIVE until PR/CI and independent work finish.
+2026-09-08: implementation complete in `feat/047-one-shot-reminders`; application/test code frozen at `4aa26ed2938f5d4bb65cb3bdeb0a9fce9407c327`. New migration 0013, parent-gated API, durable dispatcher, after-commit timer reload, source editors and global management are implemented. No new dependency/service/polling. Local preview uses only disposable synthetic PostgreSQL. Production and physical-device acceptance NOT_RUN. Check [PR 213 checks](https://github.com/NguyenHaiHung0510/microSched/pull/213/checks) for current exact-head CI; initial published head passed Backend, Frontend, Production dependency, Repository hooks and Secret scan while longer jobs were running. Hourly continuation `microsched-reminders-hourly-continuation` is to pause when CI and independent work finish and only the Owner migration gate remains.
 
 ## Local evidence — 2026-09-08
 
@@ -43,7 +43,7 @@ These are observed local runs on the pre-commit candidate; CI will bind committe
 | Pure + PG feature | `pytest tests/test_one_shot.py tests/test_one_shot_pg.py` | 26 PASS |
 | Frontend unit | `npm test` | 145 PASS |
 | Full browser | `npm run e2e` | 266 PASS, 34 conditional production-cell cases SKIPPED; before device controls and nonblocking refetch refinement |
-| Feature browser | `npm run e2e -- e2e/reminders-047.spec.ts` | 8 PASS after device controls; mobile and desktop |
+| Feature browser | `npm run e2e -- e2e/reminders-047.spec.ts` | 8 PASS after final device/nonblocking-refetch refinements; mobile and desktop |
 | Native local app | `node scripts/qa-reminders-047.mjs` | PASS 390×844 and 1280×800: actual save, preset, center, completion, ≥44px buttons |
 | Docker runtime | `REMINDER_QA_LOGIN_URL=http://127.0.0.1:8047 node scripts/qa-reminders-runtime-047.mjs` | PASS all source editors, actual private list/detail/cancel guards, no-store, long unbroken/Vietnamese mobile text, HTTP source reschedule, real timer wake → no_device |
 | Image | Production Dockerfile, local synthetic config, 1 CPU/256MB | Build/start PASS; real scheduler ownership acquired; idle memory observed 96.79 MiB |
@@ -52,6 +52,8 @@ These are observed local runs on the pre-commit candidate; CI will bind committe
 | Safety RED/GREEN | Remove source-write reload marker, then restore | RED caught missing post-commit reload; restored 2 PASS, commit failure produces no reload |
 
 Review is T1 self-review, not independent review. It found and corrected the pre-commit source-reload race and mutation pending-on-refetch issue. Frozen legacy cutover remains pinned to schema 0012: tests rehearse 0012 then restore head, while the actual script refuses 0013. No broader purge inventory/authority was added.
+
+Repository hooks and secret scanning passed before commit. Only the sanitized commit was published; public documentation contains no personal key-storage locations. This docs-only follow-up preserves the frozen application/test code above. No merge/deploy occurred.
 
 Screenshots remain local under `frontend/output/playwright/reminders-047/`; scripts reproduce them with synthetic data. The Docker image is a local production-build smoke with local auth/config, not full production-cell/device/provider acceptance. The guarded native localhost login issues the synthetic session; no auth gate was weakened for Docker port forwarding. No actual Web Push sent.
 
