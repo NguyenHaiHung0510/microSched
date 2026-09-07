@@ -11,6 +11,7 @@ and ``ZoneInfoNotFoundError`` would only fire in production. Weeks start on Mond
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
@@ -109,11 +110,35 @@ class F6Summary(BaseModel):
         return int(value)
 
 
+class FinanceMonth(BaseModel):
+    """One chronological expense total in the requested report range."""
+
+    month: str
+    period_start: datetime
+    period_end: datetime
+    total: Decimal = Field(default_factory=Decimal)
+
+    @field_serializer("total")
+    def _total_as_number(self, value: Decimal) -> int:
+        return int(value)
+
+
+class ActivityDay(BaseModel):
+    """A non-sensitive daily entry count for one visible active tracker."""
+
+    tracker_id: UUID
+    day: str
+    count: int
+
+
 class DashboardResponse(BaseModel):
     """Aggregated dashboard payload returned by ``GET /api/tracker/dashboard``."""
 
     period_start: datetime
     period_end: datetime
+    report_months: int = 1
+    previous_period_start: datetime | None = None
+    previous_period_end: datetime | None = None
     current_period_days: int
     prev_period_days: int
     prev_period_truncated: bool
@@ -124,6 +149,9 @@ class DashboardResponse(BaseModel):
     f3_groups: list[F3Group] = Field(default_factory=list)
     f4_top: list[F4Top] = Field(default_factory=list)
     f5_net: Decimal = Field(default_factory=Decimal)
+    finance_months: list[FinanceMonth] = Field(default_factory=list)
+    activity_month: str
+    activity_days: list[ActivityDay] = Field(default_factory=list)
     a2_gap: list[dict] = Field(default_factory=list)
     a3_counts: A3Counts = Field(default_factory=lambda: A3Counts(week=0, month=0, year=0))
     a4_trend: A4Trend = Field(
@@ -140,20 +168,37 @@ class DashboardResponse(BaseModel):
         return int(value)
 
 
+_MONTH_RE = re.compile(r"^(?P<year>\d{4})-(?P<month>0[1-9]|1[0-2])$")
+REPORT_MONTHS = frozenset({1, 3, 6, 12})
+
+
 def _month_bounds(month: str) -> tuple[datetime, datetime]:
     """Return ``(month_start, next_month_start)`` in ``+07:00``."""
-    year, _, month_num = month.partition("-")
-    start = datetime(int(year), int(month_num), 1, tzinfo=VN_TZ)
-    if month_num == "12":
-        next_start = datetime(int(year) + 1, 1, 1, tzinfo=VN_TZ)
+    match = _MONTH_RE.fullmatch(month)
+    if match is None:
+        raise ValueError("month must look like YYYY-MM")
+    year = int(match["year"])
+    month_num = int(match["month"])
+    if year < 1 or (year == 9999 and month_num == 12):
+        raise ValueError("month is outside the supported calendar range")
+    start = datetime(year, month_num, 1, tzinfo=VN_TZ)
+    if month_num == 12:
+        next_start = datetime(year + 1, 1, 1, tzinfo=VN_TZ)
     else:
-        next_start = datetime(int(year), int(month_num) + 1, 1, tzinfo=VN_TZ)
+        next_start = datetime(year, month_num + 1, 1, tzinfo=VN_TZ)
     return start, next_start
 
 
 def _relative_now() -> datetime:
     """Return current time normalized to ``+07:00``."""
     return datetime.now(timezone.utc).astimezone(VN_TZ)
+
+
+def _as_vn(value: datetime) -> datetime:
+    """Normalize PostgreSQL-aware and SQLite-synthetic timestamps to the report zone."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=VN_TZ)
+    return value.astimezone(VN_TZ)
 
 
 def _monday_of(day: datetime) -> datetime:
@@ -164,13 +209,11 @@ def _monday_of(day: datetime) -> datetime:
 
 def _shift_months(start: datetime, count: int) -> datetime:
     """Return the first day ``count`` calendar months before ``start``."""
-    year, month = start.year, start.month
-    for _ in range(count):
-        month -= 1
-        if month == 0:
-            month = 12
-            year -= 1
-    return datetime(year, month, 1, tzinfo=VN_TZ)
+    target = start.year * 12 + (start.month - 1) - count
+    year, month_index = divmod(target, 12)
+    if year < 1:
+        raise ValueError("month range predates year 0001")
+    return datetime(year, month_index + 1, 1, tzinfo=VN_TZ)
 
 
 @dataclass
@@ -187,21 +230,31 @@ class PeriodBounds:
     is_future: bool
 
 
-def _periods(month: str, now: datetime) -> PeriodBounds:
+def _periods(month: str, now: datetime, months: int = 1) -> PeriodBounds:
     """Compute every dashboard time boundary for ``month`` relative to ``now``.
 
-    Spec §4.3: ``period_end = min(now_vn, đầu tháng kế tiếp)``. F2 compares the
-    same elapsed duration of the PREVIOUS CALENDAR MONTH — the previous window
-    starts at the first day of the month before ``period_start`` and is cut at
-    ``period_start`` when it would overflow (31/3 vs February → 28 days,
-    ``prev_period_truncated=True`` — C4). A future month has
-    ``period_end <= period_start``: every finance metric is zero and no previous
-    period is fetched (no fake 1-day window).
+    The selected range covers an absolute count of calendar months ending in
+    ``month``. The selected current month ends at ``now``; every earlier selected
+    month is complete. F2's comparison is the whole preceding count of calendar
+    months, never a same-elapsed-days window.
     """
+    if months not in REPORT_MONTHS:
+        raise ValueError("months must be one of 1, 3, 6, 12")
     month_start, month_end = _month_bounds(month)
-    period_start = month_start
+    period_start = _shift_months(month_start, months - 1)
+    if month_start > now:
+        return PeriodBounds(
+            period_start=period_start,
+            period_end=period_start,
+            current_period_days=0,
+            prev_start=None,
+            prev_end=None,
+            prev_period_days=0,
+            prev_period_truncated=False,
+            is_future=True,
+        )
     period_end = min(now, month_end)
-    if period_end <= period_start:
+    if period_end < period_start:
         return PeriodBounds(
             period_start=period_start,
             period_end=month_start,
@@ -213,8 +266,8 @@ def _periods(month: str, now: datetime) -> PeriodBounds:
             is_future=True,
         )
     current_days = (period_end - period_start).days
-    prev_start = _shift_months(period_start, 1)
-    prev_end = min(period_start, prev_start + timedelta(days=current_days))
+    prev_start = _shift_months(period_start, months)
+    prev_end = period_start
     return PeriodBounds(
         period_start=period_start,
         period_end=period_end,
@@ -222,9 +275,29 @@ def _periods(month: str, now: datetime) -> PeriodBounds:
         prev_start=prev_start,
         prev_end=prev_end,
         prev_period_days=(prev_end - prev_start).days,
-        prev_period_truncated=prev_end < prev_start + timedelta(days=current_days),
+        prev_period_truncated=False,
         is_future=False,
     )
+
+
+def _finance_month_bounds(month: str, months: int, now: datetime) -> list[FinanceMonth]:
+    """Build chronological selected-month labels and their bounded half-open periods."""
+    selected_start, _ = _month_bounds(month)
+    result: list[FinanceMonth] = []
+    for offset in range(months - 1, -1, -1):
+        start = _shift_months(selected_start, offset)
+        _, end = _month_bounds(f"{start.year:04d}-{start.month:02d}")
+        bounded_end = min(now, end)
+        if bounded_end < start:
+            bounded_end = start
+        result.append(
+            FinanceMonth(
+                month=f"{start.year:04d}-{start.month:02d}",
+                period_start=start,
+                period_end=bounded_end,
+            )
+        )
+    return result
 
 
 class DashboardService:
@@ -289,6 +362,30 @@ class DashboardService:
         stmt = not_deleted(stmt, Entry)
         result = await db.execute(stmt)
         return [(entry, tracker) for entry, tracker in result]
+
+    @staticmethod
+    def _activity_days(
+        rows: list[tuple[Entry, Tracker, Decimal | None, bool]],
+        selected_month_start: datetime,
+        period_end: datetime,
+    ) -> list[ActivityDay]:
+        """Return sparse selected-month counts from already parent-gated rows."""
+        activity_counts: dict[tuple[UUID, str], int] = {}
+        for entry, tracker, _amount, _bad in rows:
+            if tracker.deleted_at is not None or entry.occurred_at is None:
+                continue
+            occurred_at = _as_vn(entry.occurred_at)
+            if not (selected_month_start <= occurred_at < period_end):
+                continue
+            local_day = occurred_at.date().isoformat()
+            key = (tracker.id, local_day)
+            activity_counts[key] = activity_counts.get(key, 0) + 1
+        return [
+            ActivityDay(tracker_id=tracker_id, day=day, count=count)
+            for (tracker_id, day), count in sorted(
+                activity_counts.items(), key=lambda item: item[0]
+            )
+        ]
 
     async def _visible_trackers(self, db: AsyncSession, auth: AuthSession) -> list[Tracker]:
         from app.domain.reading import readable
@@ -451,13 +548,14 @@ class DashboardService:
         )
 
     async def compute(
-        self, db: AsyncSession, auth: AuthSession, *, month: str
+        self, db: AsyncSession, auth: AuthSession, *, month: str, months: int = 1
     ) -> DashboardResponse:
-        """Compute the whole dashboard for one requested month."""
+        """Compute the dashboard for an absolute selected calendar-month range."""
         now = _relative_now()
-        period = _periods(month, now)
+        period = _periods(month, now, months)
         period_start = period.period_start
         period_end = period.period_end
+        finance_months = _finance_month_bounds(month, months, now)
         f6 = await self._f6(db, auth)
 
         # ---------------- A3 / A4 (relative to today) ---------------------
@@ -500,6 +598,9 @@ class DashboardService:
             return DashboardResponse(
                 period_start=period_start,
                 period_end=period_end,
+                report_months=months,
+                previous_period_start=None,
+                previous_period_end=None,
                 current_period_days=0,
                 prev_period_days=0,
                 prev_period_truncated=False,
@@ -510,6 +611,9 @@ class DashboardService:
                 f3_groups=[],
                 f4_top=[],
                 f5_net=Decimal(0),
+                finance_months=finance_months,
+                activity_month=month,
+                activity_days=[],
                 a2_gap=a2_gap,
                 a3_counts=a3_counts,
                 a4_trend=a4_trend,
@@ -517,10 +621,9 @@ class DashboardService:
             )
 
         month_start = period_start
-        month_end = _month_bounds(month)[1]
-        month_rows = await self._fetch_month(db, auth, month_start, month_end)
         prev_start = period.prev_start
         prev_end = period.prev_end
+        month_rows = await self._fetch_month(db, auth, month_start, period_end)
         prev_rows = await self._fetch_month(db, auth, prev_start, prev_end)
         fetch_rows = month_rows + prev_rows
 
@@ -532,7 +635,7 @@ class DashboardService:
                 corrupted += 1
             decoded.append((entry, tracker, amount, bad))
 
-        # ---------------- F1 / F5 (within the live period) -----------------
+        # ---------------- F1 / F5 (within the selected range) -------------
         f1_total = Decimal(0)
         in_total = Decimal(0)
         for entry, tracker, amount, bad in decoded:
@@ -545,7 +648,7 @@ class DashboardService:
                     in_total += amount
         f5_net = in_total - f1_total
 
-        # ---------------- F2 (same-length previous period) -----------------
+        # ---------------- F2 (whole preceding calendar-month range) --------
         f2_previous = Decimal(0)
         f2_current = Decimal(0)
         for entry, tracker, amount, bad in decoded:
@@ -555,6 +658,32 @@ class DashboardService:
                 f2_current += amount
             elif prev_start <= entry.occurred_at < prev_end:
                 f2_previous += amount
+
+        # Monthly expense bars reuse the selected-range rows already fetched above.
+        # They deliberately contain only direction=out totals, matching F1/F2.
+        monthly_totals = {item.month: Decimal(0) for item in finance_months}
+        for entry, tracker, amount, bad in decoded:
+            if (
+                bad
+                or amount is None
+                or tracker.direction != "out"
+                or entry.occurred_at is None
+                or not (period_start <= entry.occurred_at < period_end)
+            ):
+                continue
+            local = _as_vn(entry.occurred_at)
+            key = f"{local.year:04d}-{local.month:02d}"
+            if key in monthly_totals:
+                monthly_totals[key] += amount
+        finance_months = [
+            item.model_copy(update={"total": monthly_totals[item.month]}) for item in finance_months
+        ]
+
+        # Activity is a compact visualization aid, never a finance payload: active
+        # (not archived), visible parent trackers, selected month only, and positive
+        # daily counts. It reuses the parent-gated rows from the selected query.
+        selected_month_start, _ = _month_bounds(month)
+        activity_days = self._activity_days(decoded, selected_month_start, period_end)
 
         # ---------------- F3 / F4 ------------------------------------------
         group_totals: dict[UUID | None, Decimal] = {}
@@ -589,7 +718,7 @@ class DashboardService:
             f3_groups.sort(key=lambda g: g.total, reverse=True)
 
             # Resolve tracker names for F3/F4 in one pass.
-            tids = {tid for group in f3_groups for tid_map in group.trackers for tid in tid_map}
+            tids = {UUID(line["tracker_id"]) for group in f3_groups for line in group.trackers}
             f4_decoded = [
                 (entry, tracker, amount)
                 for entry, tracker, amount, bad in decoded
@@ -597,6 +726,8 @@ class DashboardService:
                 and amount is not None
                 and tracker.direction == "out"
                 and tracker.id in tids
+                and entry.occurred_at is not None
+                and month_start <= entry.occurred_at < period_end
             ]
             for _entry, tracker, _amount in f4_decoded:
                 if tracker.id not in tracker_names:
@@ -634,6 +765,9 @@ class DashboardService:
         return DashboardResponse(
             period_start=period_start,
             period_end=period_end,
+            report_months=months,
+            previous_period_start=prev_start,
+            previous_period_end=prev_end,
             current_period_days=period.current_period_days,
             prev_period_days=period.prev_period_days,
             prev_period_truncated=period.prev_period_truncated,
@@ -644,6 +778,9 @@ class DashboardService:
             f3_groups=f3_groups,
             f4_top=f4_top,
             f5_net=f5_net,
+            finance_months=finance_months,
+            activity_month=month,
+            activity_days=activity_days,
             a2_gap=a2_gap,
             a3_counts=a3_counts,
             a4_trend=a4_trend,

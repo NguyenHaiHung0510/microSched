@@ -98,7 +98,7 @@ export function CaptureGrid({
     return (
       <div
         data-testid="tracker-grid"
-        className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
+        className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-3"
       >
         {trackers.map((tracker) => (
           <TrackerCard
@@ -123,7 +123,7 @@ export function CaptureGrid({
         <Button
           variant="ghost"
           size="sm"
-          className="h-auto p-1 text-xs text-primary font-semibold hover:bg-transparent"
+          className="min-h-11 p-1 text-xs text-primary font-semibold hover:bg-transparent"
           onClick={toggleAll}
         >
           {allCollapsed ? 'Mở rộng tất cả' : 'Thu gọn tất cả'}
@@ -134,17 +134,20 @@ export function CaptureGrid({
         const isCollapsed = collapsedGroups.has(group.id)
         return (
           <div key={group.id} className="rounded-lg border border-border/80 bg-card p-3 shadow-1">
-            <button
+            <Button
               type="button"
-              className="flex w-full items-center justify-between gap-2 text-left font-semibold cursor-pointer select-none"
+              variant="ghost"
+              size="lg"
+              aria-expanded={!isCollapsed}
+              className="h-auto w-full min-w-0 justify-between gap-2 whitespace-normal p-0 text-left font-semibold"
               onClick={() => toggleGroup(group.id)}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Folder className="size-4 text-primary shrink-0" />
-                <span className="text-sm font-bold truncate text-foreground">
+                <span className="min-w-0 break-words text-sm font-bold text-foreground">
                   {group.name}
                 </span>
-                <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
                   {groupTrackers.length}
                 </span>
               </div>
@@ -153,10 +156,10 @@ export function CaptureGrid({
               ) : (
                 <ChevronUp className="size-4 text-muted-foreground ml-auto shrink-0" />
               )}
-            </button>
+            </Button>
 
             {!isCollapsed && groupTrackers.length > 0 ? (
-              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 border-t border-border/50 pt-2.5">
+              <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-3 border-t border-border/50 pt-2.5">
                 {groupTrackers.map((tracker) => (
                   <TrackerCard
                     key={tracker.id}
@@ -175,9 +178,12 @@ export function CaptureGrid({
 
       {grouped.unassigned.length > 0 ? (
         <div className="rounded-lg border border-border/80 bg-card p-3 shadow-1">
-          <button
+          <Button
             type="button"
-            className="flex w-full items-center justify-between gap-2 text-left font-semibold cursor-pointer select-none"
+            variant="ghost"
+            size="lg"
+            aria-expanded={!unassignedCollapsed}
+            className="h-auto w-full min-w-0 justify-between gap-2 whitespace-normal p-0 text-left font-semibold"
             onClick={() => setUnassignedCollapsed(!unassignedCollapsed)}
           >
             <div className="flex items-center gap-2 min-w-0">
@@ -194,10 +200,10 @@ export function CaptureGrid({
             ) : (
               <ChevronUp className="size-4 text-muted-foreground ml-auto shrink-0" />
             )}
-          </button>
+          </Button>
 
           {!unassignedCollapsed ? (
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 border-t border-border/50 pt-2.5">
+            <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-3 border-t border-border/50 pt-2.5">
              {grouped.unassigned.map((tracker) => (
                <TrackerCard
                  key={tracker.id}

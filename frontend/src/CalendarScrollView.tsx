@@ -629,11 +629,12 @@ export function CalendarScrollView() {
 
   return (
     <div className="-mx-5 flex gap-4 sm:mx-0">
+      <div data-testid="calendar-scroll-frame" className="min-w-0 flex-1 overflow-hidden rounded-xl border bg-card p-1 shadow-1">
       <div
         data-testid="calendar-scroll-container"
         ref={containerRef}
         onScroll={handleScroll}
-        className="relative h-[calc(100dvh-13rem)] min-h-80 min-w-0 flex-1 overflow-y-auto rounded-xl border bg-card shadow-1"
+        className="relative h-[calc(100dvh-13rem)] min-h-80 min-w-0 overflow-y-auto rounded-lg bg-card [scrollbar-gutter:stable]"
      >
        <div
          ref={headerRef}
@@ -1250,6 +1251,7 @@ export function CalendarScrollView() {
         }))}
       </div>
 
+      </div>
       {showMiniNav && calendarMode === 'grid' ? (
         <MiniNav
           anchor={headerMonth}

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
+from app.domain.dashboard import VN_TZ, _month_bounds, _shift_months
 from app.domain.models import AuthSession
 from app.main import create_app
 from app.web.deps import get_session, require_session
@@ -805,6 +806,145 @@ def test_f4_excludes_entries_after_now(pg_dsn: str):
             await client.aclose()
             await _cleanup(pg_dsn, "entry", entry_ids)
             await _cleanup(pg_dsn, "tracker", [tracker_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_dashboard_activity_is_parent_gated_sparse_and_excludes_archived(pg_dsn: str):
+    """Activity has only visible active IDs/day counts; finance keeps archived history."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids: list[UUID] = []
+        try:
+            public = await _create_tracker(client, name="Công khai", input_mode="money")
+            private = await _create_tracker(
+                client, name="Riêng tư", input_mode="money", is_private=True
+            )
+            archived = await _create_tracker(client, name="Đã lưu", input_mode="money")
+            tracker_ids = [UUID(row["id"]) for row in (public, private, archived)]
+            entry_at = datetime.now(UTC) - timedelta(minutes=5)
+            occurred_at = entry_at.isoformat()
+            for tracker, amount in ((public, 1000), (private, 2000), (archived, 3000)):
+                response = await _create_entry(
+                    client, tracker["id"], amount=amount, occurred_at=occurred_at
+                )
+                assert response.status_code == 201, response.text
+            assert (
+                await client.delete(f"/api/tracker/trackers/{archived['id']}")
+            ).status_code == 204
+
+            entry_vn = entry_at.astimezone(VN_TZ)
+            month = entry_vn.strftime("%Y-%m")
+            auth_state["value"] = _auth(unlocked=False)
+            locked = await client.get(f"/api/tracker/dashboard?month={month}&months=1")
+            assert locked.status_code == 200, locked.text
+            payload = locked.json()
+            assert payload["f1_total"] == 4000  # archived finance survives; private is gated.
+            assert payload["activity_month"] == month
+            assert payload["activity_days"] == [
+                {
+                    "tracker_id": public["id"],
+                    "day": entry_vn.date().isoformat(),
+                    "count": 1,
+                }
+            ]
+            assert set(payload["activity_days"][0]) == {"tracker_id", "day", "count"}
+
+            auth_state["value"] = _auth()
+            unlocked = (await client.get(f"/api/tracker/dashboard?month={month}&months=1")).json()
+            assert {row["tracker_id"] for row in unlocked["activity_days"]} == {
+                public["id"],
+                private["id"],
+            }
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", tracker_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_dashboard_absolute_ranges_aggregate_finance_in_one_bounded_window(pg_dsn: str):
+    """1/3/6/12 reports include exact bounds and whole preceding calendar ranges."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids: list[UUID] = []
+        try:
+            now_vn = datetime.now(VN_TZ)
+            selected_start = _shift_months(
+                now_vn.replace(day=1, hour=0, minute=0, second=0, microsecond=0), 1
+            )
+            selected_month = f"{selected_start.year:04d}-{selected_start.month:02d}"
+            public = await _create_tracker(client, name="Chi chung", input_mode="money")
+            refund = await _create_tracker(
+                client, name="Hoan tien", input_mode="money", direction="in"
+            )
+            private = await _create_tracker(
+                client, name="Chi rieng", input_mode="money", is_private=True
+            )
+            archived = await _create_tracker(client, name="Chi da luu", input_mode="money")
+            tracker_ids = [UUID(row["id"]) for row in (public, refund, private, archived)]
+
+            # Entries at every lower bound exercise the two contiguous scan ranges:
+            # offsets 0..11 are a 12-month selected report; 12..23 are its full prior period.
+            for offset in range(24):
+                occurred_at = _shift_months(selected_start, offset).isoformat()
+                response = await _create_entry(
+                    client, public["id"], amount=(offset + 1) * 100, occurred_at=occurred_at
+                )
+                assert response.status_code == 201, response.text
+
+            for tracker, amount in ((refund, 1000), (private, 17), (archived, 13)):
+                response = await _create_entry(
+                    client, tracker["id"], amount=amount, occurred_at=selected_start.isoformat()
+                )
+                assert response.status_code == 201, response.text
+            assert (
+                await client.delete(f"/api/tracker/trackers/{archived['id']}")
+            ).status_code == 204
+
+            # The exact exclusive upper bound must not leak into the chosen report.
+            _, selected_end = _month_bounds(selected_month)
+            outside = await _create_entry(
+                client, public["id"], amount=999999, occurred_at=selected_end.isoformat()
+            )
+            assert outside.status_code == 201, outside.text
+
+            auth_state["value"] = _auth(unlocked=False)
+            for months in (1, 3, 6, 12):
+                response = await client.get(
+                    f"/api/tracker/dashboard?month={selected_month}&months={months}"
+                )
+                assert response.status_code == 200, response.text
+                dashboard = response.json()
+                selected_out = sum((offset + 1) * 100 for offset in range(months)) + 13
+                previous_out = sum((offset + 1) * 100 for offset in range(months, months * 2))
+                assert dashboard["report_months"] == months
+                assert dashboard["f1_total"] == selected_out
+                assert dashboard["f2_current"] == selected_out
+                assert dashboard["f2_previous"] == previous_out
+                assert dashboard["f5_net"] == 1000 - selected_out
+                assert (
+                    dashboard["previous_period_start"]
+                    == _shift_months(_shift_months(selected_start, months - 1), months).isoformat()
+                )
+                assert (
+                    dashboard["previous_period_end"]
+                    == _shift_months(selected_start, months - 1).isoformat()
+                )
+                assert [item["total"] for item in dashboard["finance_months"]] == [
+                    (offset + 1) * 100 + (13 if offset == 0 else 0)
+                    for offset in range(months - 1, -1, -1)
+                ]
+                assert len(dashboard["finance_months"]) == months
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", tracker_ids)
             await engine.dispose()
 
     asyncio.run(scenario())

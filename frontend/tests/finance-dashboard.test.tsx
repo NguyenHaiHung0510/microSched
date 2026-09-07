@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { expect, test } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { DashboardPanel } from '../src/DashboardPanel'
 import { financeBarScale, financePeriodLabels, financeShares } from '../src/finance-chart'
+import { activityCountByTrackerDay, daysInReportMonth, reportMonthOffset } from '../src/tracker-rhythm'
 import type { DashboardResponse, Tracker } from '../src/tracker-ui'
 
 const dashboard: DashboardResponse = {
@@ -16,6 +17,12 @@ const dashboard: DashboardResponse = {
   f1_total: 300_000,
   f2_current: 300_000,
   f2_previous: 400_000,
+  report_months: 1,
+  previous_period_start: '2026-08-01T00:00:00+07:00',
+  previous_period_end: '2026-09-01T00:00:00+07:00',
+  finance_months: [{ month: '2026-09', period_start: '2026-09-01T00:00:00+07:00', period_end: '2026-09-07T12:30:00+07:00', total: 300_000 }],
+  activity_month: '2026-09',
+  activity_days: [{ tracker_id: 'food', day: '2026-09-02', count: 2 }],
   f3_groups: [{ name: 'Sinh hoạt', total: 300_000, trackers: [{ tracker_id: 'food', name: '', total: 300_000 }] }],
   f4_top: [],
   f5_net: -100_000,
@@ -71,16 +78,24 @@ test('composition percentages require a positive whole with no negative or missi
   assert.equal(financeShares([300, NaN]), null)
 })
 
-test('period labels retain actual Vietnam boundaries rather than calling a partial month full', () => {
-  assert.deepEqual(financePeriodLabels(dashboard.period_start, dashboard.period_end, 6), {
+test('period labels use absolute backend windows rather than elapsed-day reconstruction', () => {
+  assert.deepEqual(financePeriodLabels(dashboard.period_start, dashboard.period_end, dashboard.previous_period_start, dashboard.previous_period_end), {
     current: '01/09/2026 → trước 12:30 07/09/2026',
-    previous: '01/08/2026 → trước 00:00 07/08/2026',
+    previous: '01/08/2026 → trước 00:00 01/09/2026',
   })
-  assert.deepEqual(financePeriodLabels('2026-01-01T00:00:00+07:00', '2026-02-01T00:00:00+07:00', 31), {
+  assert.deepEqual(financePeriodLabels('2026-01-01T00:00:00+07:00', '2026-02-01T00:00:00+07:00', '2025-12-01T00:00:00+07:00', '2026-01-01T00:00:00+07:00'), {
     current: '01/01/2026 → trước 00:00 01/02/2026',
     previous: '01/12/2025 → trước 00:00 01/01/2026',
   })
-  assert.equal(financePeriodLabels('2026-10-01T00:00:00+07:00', '2026-10-01T00:00:00+07:00', 0).current, 'Kỳ chưa bắt đầu')
+  assert.equal(financePeriodLabels('2026-10-01T00:00:00+07:00', '2026-10-01T00:00:00+07:00', null, null).current, 'Kỳ chưa bắt đầu')
+})
+
+test('rhythm helpers retain sparse-positive activity without inventing missed reminders', () => {
+  expect(daysInReportMonth('2026-02')).toHaveLength(28)
+  expect(reportMonthOffset('2026-09')).toBe(1)
+  const counts = activityCountByTrackerDay([{ tracker_id: 'food', day: '2026-09-02', count: 2 }, { tracker_id: 'food', day: '2026-09-03', count: 0 }])
+  expect(counts.get('food:2026-09-02')).toBe(2)
+  expect(counts.has('food:2026-09-03')).toBe(false)
 })
 
 test('finance dashboard exposes exact amounts and resolves empty group tracker names', () => {
@@ -93,6 +108,16 @@ test('finance dashboard exposes exact amounts and resolves empty group tracker n
   assert.match(html, /Nhịp ghi hiện tại/)
   assert.match(html, /Khoản cố định hiện tại/)
   assert.doesNotMatch(html, /dashboard-refreshing|live and fresh/)
+})
+
+test('a historical month ending at the next calendar boundary is not called partial', () => {
+  const html = render({ ...dashboard,
+    period_start: '2026-08-01T00:00:00+07:00',
+    period_end: '2026-09-01T00:00:00+07:00',
+    finance_months: [{ month: '2026-08', period_start: '2026-08-01T00:00:00+07:00', period_end: '2026-09-01T00:00:00+07:00', total: 300_000 }],
+    activity_month: '2026-08',
+  })
+  assert.doesNotMatch(html, /Kỳ đang xem chưa trọn tháng/)
 })
 
 test('insufficient rhythm trackers stay reachable in one closed disclosure', () => {
@@ -124,13 +149,13 @@ test('errors hide cached financial content and zero scheduled amounts are not mi
   assert.doesNotMatch(zero, /Chưa có khoản cố định nào/)
 })
 
-test('corruption warnings remain visible and first-day comparison is not a misleading delta', () => {
-  const html = render({ ...dashboard, prev_period_days: 0, corrupted_entry_count: 2,
+test('corruption warnings remain visible and a missing preceding full window is not a misleading delta', () => {
+  const html = render({ ...dashboard, prev_period_days: 0, previous_period_start: null, previous_period_end: null, corrupted_entry_count: 2,
     f6: { ...dashboard.f6, corrupted_subscription_count: 1 } })
   assert.match(html, /2 bản ghi không đọc được/)
   assert.match(html, /1 bản ghi không đọc được/)
   assert.match(html, /Chưa tính được tổng/)
   assert.doesNotMatch(html, /Chưa có khoản cố định nào/)
-  assert.match(html, /Chưa đủ kỳ so sánh/)
+  assert.match(html, /Chưa có kỳ trước để so sánh/)
   assert.doesNotMatch(html, /Ít hơn 100\.000/)
 })

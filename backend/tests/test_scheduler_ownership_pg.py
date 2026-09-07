@@ -182,9 +182,13 @@ def test_pg_only_one_owner_receipt_and_handoff(pg_dsn: str, monkeypatch) -> None
         first.load_snapshot = first_snapshot
         second.load_snapshot = second_snapshot
         first_task = asyncio.create_task(first.run())
-        second_task = asyncio.create_task(second.run())
+        second_task = None
         try:
+            # This test names first as the owner and second as the standby. Wait
+            # for that owner before starting the contender: task creation order
+            # does not determine which independent PostgreSQL connection wins.
             await asyncio.wait_for(first_loaded.wait(), timeout=2)
+            second_task = asyncio.create_task(second.run())
             await _wait_for_state(second, "standby")
             assert first_calls == 1
             assert second_calls == 0
@@ -207,7 +211,8 @@ def test_pg_only_one_owner_receipt_and_handoff(pg_dsn: str, monkeypatch) -> None
         finally:
             await first.stop()
             await second.stop()
-            await asyncio.gather(first_task, second_task, return_exceptions=True)
+            tasks = [first_task] + ([second_task] if second_task is not None else [])
+            await asyncio.gather(*tasks, return_exceptions=True)
             await engine.dispose()
 
     monkeypatch.setattr(cron, "OWNERSHIP_ACQUIRE_BACKOFF_SECONDS", (0.01,))
