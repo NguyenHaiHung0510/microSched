@@ -538,7 +538,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   </span>
                   <span className="text-xs text-muted-foreground">đã chi</span>
                 </div>
-                {dashboardQuery.data.f2_previous > 0 || dashboardQuery.data.f2_current > 0 ? (
+                {dashboardQuery.data.prev_period_days > 0 ? (
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
                     <span>So cùng kỳ tháng trước:</span>
                     {(() => {
@@ -554,7 +554,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   </p>
                 ) : (
                   <p className="text-xs font-medium text-muted-foreground">
-                    So cùng kỳ tháng trước: <span data-testid="tracker-finance-compare" className="font-bold tabular-nums text-foreground">bằng 0 ₫</span>
+                    <span data-testid="tracker-finance-compare">Chưa đủ kỳ so sánh</span>
                   </p>
                 )}
               </div>
