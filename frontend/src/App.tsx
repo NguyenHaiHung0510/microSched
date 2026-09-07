@@ -26,6 +26,7 @@ import { SubscriptionScreen } from '@/SubscriptionScreen'
 import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
 import { cn } from '@/lib/utils'
+import { LiveStatus } from '@/LiveStatus'
 
 type SessionResponse = PrivateSessionState & {
   email: string
@@ -159,6 +160,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           </Button>
           </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
+          {currentTab !== 'calendar' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
+            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} /></div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />

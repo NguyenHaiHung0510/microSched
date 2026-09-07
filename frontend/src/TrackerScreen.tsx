@@ -92,7 +92,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const queryClient = useQueryClient()
   const refresh = () => void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
   const writes = useTrackerWrites(refresh)
-  const month = currentVietnamMonth()
+  const currentMonth = currentVietnamMonth()
+  const [month, setMonth] = useState(currentMonth)
   const wasUnlocked = useRef(privateUnlocked)
 
   const groupsQuery = useQuery({
@@ -525,7 +526,9 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             <p className="text-xs font-bold uppercase tracking-wider text-primary">
               Tài chính {monthLabel(month)}
             </p>
-            {dashboardQuery.isPending ? (
+            {dashboardQuery.isError ? (
+              <p role="alert" className="text-sm text-bad">Không tải được số liệu. Mở báo cáo để thử lại.</p>
+            ) : dashboardQuery.isPending ? (
               <p className="text-sm text-muted-foreground">Đang tải số liệu chi tiêu…</p>
             ) : dashboardQuery.data ? (
               <div className="space-y-1">
@@ -556,7 +559,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                 )}
               </div>
             ) : (
-              <p className="text-sm font-semibold text-foreground">Chưa có chi tiêu tháng này</p>
+              <p className="text-sm font-semibold text-foreground">Chưa có chi tiêu trong kỳ</p>
             )}
           </div>
           <Button
@@ -568,6 +571,17 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           >
             Đăng ký · {subscriptionsQuery.data?.items.length ?? 0} khoản
           </Button>
+        </div>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <label className="space-y-1 text-xs font-semibold">
+            <span>Tháng báo cáo</span>
+            <Input data-testid="tracker-report-month" type="month" value={month} max={currentMonth} className="min-h-11 w-auto text-base"
+              onChange={(event) => { const value = event.target.value; if (/^\d{4}-(0[1-9]|1[0-2])$/.test(value) && value >= '0001-01' && value <= currentMonth) setMonth(value) }} />
+          </label>
+          <Button data-testid="tracker-open-report" variant="outline" className="min-h-11" onClick={() => {
+            setRhythmCollapsed(false)
+            window.requestAnimationFrame(() => document.getElementById('tracker-report')?.scrollIntoView({ block: 'start' }))
+          }}>Xem biểu đồ</Button>
         </div>
       </Card>
 
@@ -859,12 +873,15 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         <Button
           type="button"
           variant="ghost"
-          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none h-auto p-0 hover:bg-transparent"
+          data-testid="tracker-entries-toggle"
+          aria-expanded={!entriesCollapsed}
+          aria-controls="tracker-recent-entries"
+          className="flex min-h-11 w-full items-center justify-between gap-3 text-left cursor-pointer select-none h-auto p-0 hover:bg-transparent"
           onClick={() => setEntriesCollapsed(!entriesCollapsed)}
         >
-          <div className="flex items-baseline gap-2">
+          <div className="flex flex-wrap items-baseline gap-2">
             <h3 className="text-base font-bold">Bản ghi gần đây</h3>
-            <span className="text-xs text-muted-foreground">20 bản ghi mới nhất</span>
+            <span className="text-xs text-muted-foreground">{entriesQuery.data?.items.length ?? 0} bản ghi mới nhất</span>
           </div>
         {entriesCollapsed ? (
           <ChevronDown className="size-4 text-muted-foreground" />
@@ -873,8 +890,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         )}
         </Button>
       {!entriesCollapsed ? (
-        entriesQuery.data?.items.length ? (
-          <div className="space-y-2">
+        entriesQuery.isPending ? <p className="text-sm text-muted-foreground">Đang tải bản ghi…</p> : entriesQuery.isError ? (
+          <div role="alert" className="space-y-2 text-sm text-bad"><p>Không tải được bản ghi gần đây.</p><Button variant="outline" className="min-h-11" onClick={() => void entriesQuery.refetch()}>Thử lại</Button></div>
+        ) : entriesQuery.data?.items.length ? (
+          <div id="tracker-recent-entries" className="divide-y divide-border">
             {entriesQuery.data.items.map((entry) => {
               const tracker = trackers.find((item) => item.id === entry.tracker_id)
               return (
@@ -882,7 +901,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                   key={entry.id}
                   data-testid="entry-row"
                   data-entry-id={entry.id}
-                  className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 p-3"
+                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-3"
                 >
                   <div className="min-w-0">
                     <p className="max-w-full break-words text-sm font-semibold">
@@ -900,8 +919,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                         : ''}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold tabular-nums">
+                  <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
+                    <span className="basis-full text-right text-sm font-bold tabular-nums sm:basis-auto">
                       {showListPrice &&
                       entry.list_amount != null &&
                       entry.amount != null &&
@@ -945,12 +964,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       ) : null}
       </Card>
 
-      <Card className="gap-3 p-4 shadow-1 ring-0">
+      <Card id="tracker-report" className="scroll-mt-4 gap-3 p-4 shadow-1 ring-0">
         <Button
           type="button"
           variant="ghost"
           className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none h-auto p-0 hover:bg-transparent"
           onClick={() => setRhythmCollapsed(!rhythmCollapsed)}
+          data-testid="tracker-report-toggle"
+          aria-expanded={!rhythmCollapsed}
         >
           <div className="flex items-center gap-2">
             <h3 className="text-base font-bold">Nhịp ghi & Báo cáo</h3>
@@ -969,9 +990,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         trackers={trackers}
         loading={dashboardQuery.isPending}
         error={dashboardQuery.error}
-        // TanStack v5 returns 0 (not null) while the query has never
-        // succeeded; fold that into null so the chip reads "never fresh"
-        // instead of a ~57-year-old elapsed time.
         lastSuccessAt={dashboardQuery.dataUpdatedAt || null}
         queryStatus={dashboardQuery.status}
         onRetry={() => void refresh()}

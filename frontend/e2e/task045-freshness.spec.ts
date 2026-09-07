@@ -1,0 +1,45 @@
+import { test, expect } from './fixtures/tracker'
+
+test('one header indicator follows active polling tabs, offline and excludes calendar', async ({ page, context }) => {
+  await page.route('**/api/notes?*', (route) => route.fulfill({ json: { items: [] } }))
+  await page.route('**/api/calendar/**', (route) => route.fulfill({ json: { items: [] } }))
+  await page.goto('/')
+  const status = page.getByTestId('app-live-status')
+  await expect(status).toHaveAttribute('data-state', 'live')
+  await expect(page.locator('header').getByTestId('app-live-status')).toHaveCount(1)
+  await page.getByRole('tab', { name: 'Ghi chú' }).click()
+  await expect(status).toHaveAttribute('data-state', 'live')
+  await context.setOffline(true)
+  await expect(status).toHaveAttribute('data-state', 'offline')
+  await context.setOffline(false)
+  await expect(status).toHaveAttribute('data-state', 'live')
+  await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await expect(status).toHaveAttribute('data-state', 'live')
+  await page.getByRole('tab', { name: 'Lịch', exact: true }).click()
+  await expect(status).toHaveCount(0)
+})
+
+test('failed active query cannot inherit green from a previous tab', async ({ page }) => {
+  await page.route('**/api/notes?*', (route) => route.fulfill({ status: 500, json: { detail: 'Synthetic failure' } }))
+  await page.goto('/')
+  await expect(page.getByTestId('app-live-status')).toHaveAttribute('data-state', 'live')
+  await page.getByRole('tab', { name: 'Ghi chú' }).click()
+  await expect(page.getByTestId('app-live-status')).not.toHaveAttribute('data-state', 'live')
+  await expect(page.getByTestId('app-live-status')).toHaveAttribute('data-state', 'error', { timeout: 15_000 })
+})
+
+test('report month uses existing month endpoint and recent rows remain reachable', async ({ page }) => {
+  const months: string[] = []
+  page.on('request', (request) => { const url = new URL(request.url()); if (url.pathname === '/api/tracker/dashboard') months.push(url.searchParams.get('month') ?? '') })
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await expect(page.getByTestId('tracker-report-month')).toBeVisible()
+  await page.getByTestId('tracker-report-month').fill('2025-01')
+  await expect.poll(() => months.includes('2025-01')).toBe(true)
+  await page.getByTestId('tracker-open-report').click()
+  await expect(page.getByTestId('tracker-report-toggle')).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByTestId('dashboard-panel')).toBeVisible()
+  await page.getByTestId('tracker-entries-toggle').click()
+  await expect(page.getByTestId('tracker-entries-toggle')).toHaveAttribute('aria-expanded', 'true')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
