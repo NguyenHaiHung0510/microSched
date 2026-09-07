@@ -1,6 +1,6 @@
 # Task 046 — reporting preview and interface polish
 
-Status: IMPLEMENTING — Owner approved preview and delivery through main release (2026-09-07).
+Status: IMPLEMENTED — local acceptance and independent review passed; delivery tracked in PR #211 (2026-09-07).
 
 Authority: Owner requested note-reflection color, calendar scrollbar containment,
 report-month label spacing, absolute calendar-month reporting with 1/3/6/12-month
@@ -50,4 +50,45 @@ diff and gates; use match-head CAS. Production acceptance: deploy success plus
 one read-only /api/readyz check with exact commit and db=up; no real-data testing.
 Physical iPhone remains explicitly NOT_RUN under qa-framework §2.1.
 
-Physical iPhone/Safari, real account and production acceptance: NOT_RUN.
+Physical iPhone/Safari and real-account acceptance: NOT_RUN. Production/release acceptance is recorded separately after the exact deployed commit is verified.
+
+## Implementation acceptance — 2026-09-07
+
+- Final code review target: 09f5fb454edb27fa2768512dce9eaf702229fadf,
+  baseline fb294eb07b5954994268ea23af550cc070dc0714. Independent read-only review
+  closed numeric HTTP parsing, midnight fixture and rhythm target-spacing findings;
+  no remaining actionable P0/P1/P2 within the declared scope.
+- Backend: 410 non-Postgres tests passed in the backend worker. Intended removal of
+  the locked-private SQL predicate failed RED, restoration passed GREEN. This is
+  query-contract evidence, not a substitute for database execution. Migration QA
+  run 34137152374 passed all 199 Postgres tests on the previous PR head; exact final
+  head CI remains a merge gate.
+- Frontend: lint and 138 unit tests passed. Full synthetic Chromium regression:
+  258 passed, 34 conditional skips at b6aaa58. The final spacing delta additionally
+  passed six report tests with measured 8px gaps, minimum 24x44px secondary day
+  targets, locally scrollable weekly matrix and reachable rightmost cells.
+  Capture/backdate and management primary controls retain 44px targets.
+- Real app builds ran through Playwright's configured build/preview command.
+  Mobile viewport is Chromium 390x844 with touch; desktop is 1280x800. Management
+  test intentionally fixes 390px under both projects, so it is mobile evidence.
+- Eighteen synthetic screenshot/hash manifests are retained locally in
+  output/task-046/screenshots. Final finance/rhythm captures use 09f5fb4; unchanged
+  reflection/calendar/capture/management captures use b6aaa58. Both T1 and reviewer
+  inspected evidence. Observed visuals: long names wrap and actions remain separate;
+  reflection blue differs from the pink private edge; financial labels and daily
+  counts are readable. DOM measurements are asserted in tests, not inferred from
+  screenshots.
+- Local raw receipts: output/task-046/full-browser.log,
+  reporting-integration.log, capture-regression.log, rhythm-spacing-green.log;
+  backend worker output/task-046-data/activity-private-sql-red.log,
+  activity-private-sql-green.log, activity-private-full-non-pg-green.log.
+- Preview source remains a local untracked artifact, excluded from the PR.
+  No security/scheduler/migration changes or unrelated Git cleanup.
+- Owner requested a 45-minute continuation heartbeat on 2026-09-07. Existing
+  task heartbeat microsched-uiux-07-sep-0205 was updated and verified ACTIVE at
+  45-minute intervals. Pause it after merge/deploy/main release complete.
+
+Delivery checkpoint: PR https://github.com/NguyenHaiHung0510/microSched/pull/211.
+Recheck final CI, exact head/base/diff and merge with CAS; verify develop deploy
+and readyz commit/db; then main release-label PR and next minor annotated tag.
+The local output/task-046/delivery-receipt.md records subsequent exact receipts.
