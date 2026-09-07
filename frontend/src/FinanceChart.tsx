@@ -44,11 +44,14 @@ function TrendLine({ rows }: { rows: FinanceRow[] }) {
   const y = (value: number) => 142 - ((value - minimum) / range) * 110
   const path = rows.map((row, index) => `${index === 0 ? 'M' : 'L'} ${x(index)} ${y(row.total)}`).join(' ')
   return <div className="space-y-2" data-testid="finance-line-chart">
-    <svg viewBox="0 0 520 174" className="w-full overflow-visible" role="img" aria-label="Xu hướng chi theo tháng; số tiền chính xác có trong bảng dữ liệu bên dưới">
+    <svg viewBox="0 0 520 154" className="w-full overflow-visible" role="img" aria-label="Xu hướng chi theo tháng; số tiền chính xác có trong bảng dữ liệu bên dưới">
       <line x1="28" x2="492" y1={y(0)} y2={y(0)} stroke="var(--border)" strokeDasharray="3 4" />
       <path d={path} fill="none" stroke="var(--primary)" strokeWidth="3" />
-      {rows.map((row, index) => <g key={row.month}><circle cx={x(index)} cy={y(row.total)} r={index === rows.length - 1 ? 6 : 4} fill={index === rows.length - 1 ? 'var(--ok)' : 'var(--primary)'} /><text x={x(index)} y="169" textAnchor="middle" fontSize="20" fill="var(--foreground)">{row.month.slice(5)}</text></g>)}
+      {rows.map((row, index) => <circle key={row.month} cx={x(index)} cy={y(row.total)} r={index === rows.length - 1 ? 6 : 4} fill={index === rows.length - 1 ? 'var(--ok)' : 'var(--primary)'} />)}
     </svg>
+    <div className="relative h-4 text-xs tabular-nums text-foreground" aria-hidden="true">
+      {rows.map((row, index) => <span key={row.month} data-testid="finance-axis-label" className="absolute -translate-x-1/2" style={{ left: `${x(index) / 520 * 100}%` }}>{row.month.slice(5)}</span>)}
+    </div>
     <p className="text-xs text-muted-foreground">Đường nét đứt là mốc 0 ₫; các tháng đi từ trái sang phải.</p>
   </div>
 }

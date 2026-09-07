@@ -1,6 +1,10 @@
+import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { expect, test } from './fixtures/tracker'
 
-test('Task046 tracker management keeps long names and controls in separate mobile rows', async ({ page, trackerApi }) => {
+test('Task046 tracker management keeps long names and controls in separate mobile rows', async ({ page, trackerApi }, info) => {
   const longGroup = 'Nhóm theo dõi sức khoẻ, học tập và các thói quen cần ghi nhận rất dài'
   const longTracker = 'Tracker có tên dài để kiểm tra hàng thao tác vẫn chạm được ở màn hình điện thoại'
   trackerApi.groups = [{ id: 'long-group', name: longGroup, kind: 'health', tracker_count: 1 }]
@@ -26,6 +30,17 @@ test('Task046 tracker management keeps long names and controls in separate mobil
       controls: boxes.map((box) => ({ left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height })),
     }
   })
+  if (process.env.CAPTURE_UI_046 === '1') {
+    await management.scrollIntoViewIfNeeded()
+    const directory = path.resolve('../output/task-046/screenshots')
+    mkdirSync(directory, { recursive: true })
+    const file = `${info.project.name}-management-mobile.png`
+    const bytes = await page.screenshot({ path: path.join(directory, file), animations: 'disabled' })
+    writeFileSync(path.join(directory, `${info.project.name}-management-mobile.json`), JSON.stringify({ file,
+      head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), viewport: page.viewportSize(), capturedAt: new Date().toISOString(),
+      md5: createHash('md5').update(bytes).digest('hex'), sha256: createHash('sha256').update(bytes).digest('hex'),
+    }, null, 2))
+  }
   expect(geometry.noHorizontalOverflow).toBe(true)
   expect(geometry.controls).toHaveLength(3)
   for (const control of geometry.controls) {

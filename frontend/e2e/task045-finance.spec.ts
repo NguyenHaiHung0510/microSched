@@ -1,12 +1,12 @@
 import { test, expect } from './fixtures/tracker'
 
 for (const scenario of [
-  { name: 'first-day', days: 0, current: 300000, previous: 0, summary: 'Chưa đủ kỳ so sánh', report: 'Chưa đủ kỳ so sánh' },
-  { name: 'signed', days: 6, current: -100, previous: -300, summary: 'tăng 200', report: 'Nhiều hơn 200' },
+  { name: 'first-day with a whole previous month', days: 0, current: 300000, previous: 500000, summary: 'Ít hơn 200.000', report: 'Ít hơn 200.000' },
+  { name: 'signed', days: 6, current: -100, previous: -300, summary: 'Nhiều hơn 200', report: 'Nhiều hơn 200' },
 ]) {
   test(`overview and detailed comparison agree for ${scenario.name}`, async ({ page }) => {
     await page.route('**/api/tracker/dashboard?*', (route) => route.fulfill({ json: {
-      period_start: '2026-09-01T00:00:00+07:00', period_end: '2026-09-07T12:00:00+07:00', current_period_days: scenario.days, prev_period_days: scenario.days, prev_period_truncated: false,
+      period_start: '2026-09-01T00:00:00+07:00', period_end: scenario.days === 0 ? '2026-09-01T12:00:00+07:00' : '2026-09-07T12:00:00+07:00', current_period_days: scenario.days, prev_period_days: 31, prev_period_truncated: false,
       corrupted_entry_count: 0, f1_total: scenario.current, f2_current: scenario.current, f2_previous: scenario.previous, f5_net: -scenario.current,
       report_months: 1, previous_period_start: '2026-08-01T00:00:00+07:00', previous_period_end: '2026-09-01T00:00:00+07:00',
       finance_months: [{ month: '2026-09', period_start: '2026-09-01T00:00:00+07:00', period_end: '2026-09-07T12:00:00+07:00', total: scenario.current }], activity_month: '2026-09', activity_days: [],
