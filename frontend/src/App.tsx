@@ -28,6 +28,7 @@ import { TrackerScreen } from '@/TrackerScreen'
 import { cn } from '@/lib/utils'
 import { LiveStatus } from '@/LiveStatus'
 import HomePage from '@/HomePage'
+import { ReminderCenter } from '@/ReminderCenter'
 import { isHomepage, type PublicAuthState } from '@/public-navigation'
 
 type SessionResponse = PrivateSessionState & {
@@ -123,7 +124,8 @@ function SignedIn({ session }: { session: SessionResponse }) {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
+          <ReminderCenter key={`reminders-${privateScopeVersion}`} />
+            <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
           <Button
             variant="secondary"
             size="icon-lg"

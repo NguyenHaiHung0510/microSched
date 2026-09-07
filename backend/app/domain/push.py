@@ -118,6 +118,7 @@ def _do_webpush_sync(
     vapid_private_key: str,
     vapid_claims_sub: str,
     timeout_seconds: float,
+    ttl_seconds: int | None = None,
 ) -> int:
     """Synchronous wrapper for pywebpush call."""
     sub_info = {
@@ -134,6 +135,7 @@ def _do_webpush_sync(
         vapid_private_key=vapid_private_key,
         vapid_claims=vapid_claims,
         timeout=timeout_seconds,
+        **({"ttl": ttl_seconds} if ttl_seconds is not None else {}),
     )
     return response.status_code if response else 200
 
@@ -144,6 +146,7 @@ async def send_push(
     payload: dict,
     timeout_seconds: float = 20.0,
     provider_work_tracker: ProviderWorkTracker | None = None,
+    ttl_seconds: int | None = None,
 ) -> PushResult:
     """Send a Web Push notification to a single PushSubscription with a timeout."""
     settings = get_settings()
@@ -175,6 +178,7 @@ async def send_push(
                     settings.vapid_private_key,
                     settings.vapid_claims_sub,
                     timeout_seconds,
+                    *(() if ttl_seconds is None else (ttl_seconds,)),
                 ),
                 name="microsched-web-push-worker",
             )

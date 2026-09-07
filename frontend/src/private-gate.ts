@@ -87,5 +87,6 @@ export function expirePrivateSession(
   queryClient.removeQueries({ queryKey: noteInvalidationKey })
   queryClient.removeQueries({ queryKey: trackerInvalidationKey })
   queryClient.removeQueries({ queryKey: subscriptionInvalidationKey })
+  queryClient.removeQueries({ queryKey: ['reminders'] })
   return true
 }

@@ -29,6 +29,7 @@ EXPECTED_TABLES = {
     "tracker_group",
     "push_subscription",
     "reminder_dispatch",
+    "one_shot_reminder",
     "tracker_reminder_batch",
     "tracker_reminder_batch_item",
 }

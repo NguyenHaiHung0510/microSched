@@ -15,7 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.process_stats import read_rss_kb, read_uptime_s
 from app.core.settings import get_settings
-from app.domain.models import Entry, ReminderDispatch, Subscription, Tracker, TrackerReminderBatch
+from app.domain.models import (
+    Entry,
+    OneShotReminder,
+    ReminderDispatch,
+    Subscription,
+    Tracker,
+    TrackerReminderBatch,
+)
+from app.domain.one_shot_delivery import OneShotDispatcher
 from app.domain.reminder import (
     DispatchOutcome,
     DispatchTelemetry,
@@ -92,6 +100,7 @@ class ScheduleKind(StrEnum):
 
     TRACKER = "tracker"
     SUBSCRIPTION = "subscription"
+    ONE_SHOT = "one_shot"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,10 +121,15 @@ class TimerItem:
     dispatch_id: UUID | None = None
     batch_id: UUID | None = None
     is_pending_recovery: bool = False
+    revision: int = 1
 
     def heap_tuple(self) -> tuple[datetime, int, int, date, int, "TimerItem"]:
         """Return deterministic tuple for min-heap ordering."""
-        kind_order = 0 if self.kind == ScheduleKind.TRACKER else 1
+        kind_order = {
+            ScheduleKind.TRACKER: 0,
+            ScheduleKind.SUBSCRIPTION: 1,
+            ScheduleKind.ONE_SHOT: 2,
+        }[self.kind]
         return (
             self.due_at,
             kind_order,
@@ -153,6 +167,7 @@ class CronTimer:
         # this enabled timer instance rather than module import state.
         self._dispatcher = reminder_dispatcher or ReminderDispatcher()
         self._batch_dispatcher = tracker_batch_dispatcher or TrackerBatchDispatcher()
+        self._one_shot_dispatcher = OneShotDispatcher()
         self._lock_connection_factory = lock_connection_factory
         self.auto_reconnect = auto_reconnect
         self._has_batch_items = True
@@ -394,7 +409,7 @@ class CronTimer:
 
     async def _wait_for_provider_workers(self) -> None:
         """Retain scheduler ownership until real Web Push workers are finished."""
-        for dispatcher in (self._dispatcher, self._batch_dispatcher):
+        for dispatcher in (self._dispatcher, self._batch_dispatcher, self._one_shot_dispatcher):
             provider_work = getattr(dispatcher, "provider_work", None)
             if provider_work is None:
                 continue
@@ -788,6 +803,36 @@ class CronTimer:
                     break
                 curr_date += timedelta(days=1)
 
+        # Expand compatibility: old schema remains usable during migration rehearsal.
+        one_shot_table = await db.execute(
+            text("SELECT to_regclass('microsched.one_shot_reminder')")
+        )
+        if one_shot_table.scalar_one_or_none() is not None:
+            one_shots = (
+                (
+                    await db.execute(
+                        select(OneShotReminder)
+                        .where(OneShotReminder.status.in_(("pending", "sending")))
+                        .order_by(
+                            func.coalesce(OneShotReminder.next_attempt_at, OneShotReminder.due_at)
+                        )
+                        .limit(1000)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in one_shots:
+                heapq.heappush(
+                    new_heap,
+                    TimerItem(
+                        due_at=row.next_attempt_at or row.due_at,
+                        occurrence_on=row.due_at.date(),
+                        kind=ScheduleKind.ONE_SHOT,
+                        subject_id=row.id,
+                        revision=row.revision,
+                    ).heap_tuple(),
+                )
         self._heap = new_heap
         self._last_reload_at = now_vn
         next_due_at = self._heap[0][0].isoformat() if self._heap else "none"
@@ -1001,6 +1046,20 @@ class CronTimer:
             await self._assert_owner("due_item")
         now_vn = now or datetime.now(VN_TZ)
         today_vn = now_vn.date()
+
+        if item.kind == ScheduleKind.ONE_SHOT:
+            async with self.session_factory() as db:
+                await self._one_shot_dispatcher.dispatch(
+                    db,
+                    item.subject_id,
+                    item.revision,
+                    now=now,
+                    ownership_guard=self._guard_provider_attempt
+                    if self._ownership_active
+                    else None,
+                )
+            self.request_reload("one_shot_terminal_or_retry")
+            return
 
         if item.batch_id is not None:
             async with self.session_factory() as db:
