@@ -22,6 +22,7 @@ from app.web.routers.me import router as me_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
 from app.web.routers.push import router as push_router
+from app.web.routers.reminders import router as reminders_router
 from app.web.routers.settings import router as settings_router
 from app.web.routers.subscription import router as subscription_router
 from app.web.routers.tasks import router as tasks_router
@@ -146,6 +147,13 @@ def create_app() -> FastAPI:
                 )
         return await call_next(request)
 
+    @app.middleware("http")
+    async def reminder_no_store(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/reminders"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     if cron_runtime_enabled:
         # Both the ContextVar and its timer types are feature-gated. Importing
         # this app with the flag false must not construct cron runtime state.
@@ -180,6 +188,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(subscription_router)
     protected_api.include_router(settings_router)
     protected_api.include_router(push_router)
+    protected_api.include_router(reminders_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:

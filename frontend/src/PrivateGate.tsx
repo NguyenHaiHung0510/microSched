@@ -87,6 +87,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
     void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
     void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
     void queryClient.invalidateQueries({ queryKey: subscriptionInvalidationKey })
+    void queryClient.invalidateQueries({ queryKey: ['reminders'] })
     onVisibilityChange?.()
     return true
   }, [invalidateStatus, onVisibilityChange, privateUntil, queryClient])
@@ -160,6 +161,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
       void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
       void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
       void queryClient.invalidateQueries({ queryKey: subscriptionInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: ['reminders'] })
       onVisibilityChange?.()
     },
     onError: reportError,
@@ -175,6 +177,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
       queryClient.removeQueries({ queryKey: noteInvalidationKey })
       queryClient.removeQueries({ queryKey: trackerInvalidationKey })
       queryClient.removeQueries({ queryKey: subscriptionInvalidationKey })
+      queryClient.removeQueries({ queryKey: ['reminders'] })
       setPrivateOverride(null)
       setErrorText(null)
       invalidateStatus()
@@ -183,6 +186,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
       void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
       void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
       void queryClient.invalidateQueries({ queryKey: subscriptionInvalidationKey })
+      void queryClient.invalidateQueries({ queryKey: ['reminders'] })
       onVisibilityChange?.()
     },
     onError: reportError,

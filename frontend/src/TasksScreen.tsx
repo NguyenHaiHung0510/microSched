@@ -46,6 +46,7 @@ import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 import { uuidv7 } from '@/lib/uuidv7'
 import { taskRefetchInterval } from '@/query-polling'
 import { TaskForm } from '@/TaskForm'
+import { ReminderButton } from '@/ReminderEditor'
 import {
   type TaskFilter,
   type TaskDuePrecision,
@@ -1127,6 +1128,7 @@ const TaskCard = memo(function TaskCard({
             </DialogDescription>
           </DialogHeader>
 
+          {!editing && task.status === 'open' && <ReminderButton kind="task" sourceId={task.id} />}
           {editing ? (
             <TaskForm
               initial={task}

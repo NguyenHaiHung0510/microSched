@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react'
+import { ReminderButton } from '@/ReminderEditor'
 
 import {
   allDayVietnamRange,
@@ -174,6 +175,7 @@ export function EventForm({
         <Textarea className="bg-card" value={description} onChange={(event) => setDescription(event.target.value)} />
       </label>
       <div className="flex flex-wrap gap-2">
+        {editTarget?.id && <ReminderButton kind="event" sourceId={editTarget.id} />}
         <Button size="lg" type="submit" disabled={!title.trim() || !sourceId || pending}>
           {pending ? 'Đang lưu…' : editTarget ? 'Lưu buổi' : 'Tạo buổi'}
         </Button>

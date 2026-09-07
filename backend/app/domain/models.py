@@ -694,6 +694,86 @@ class ReminderDispatch(UUIDTimestampModel, table=True):
     )
 
 
+class OneShotReminder(UUIDTimestampModel, table=True):
+    """A durable occurrence; prose and visibility always come from its live parent."""
+
+    __tablename__ = "one_shot_reminder"
+    __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __delete_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __table_args__ = (
+        CheckConstraint("num_nonnulls(task_id, event_id, tracker_id) = 1", name="one_source"),
+        CheckConstraint("mode IN ('absolute', 'relative')", name="mode"),
+        CheckConstraint(
+            "(mode = 'absolute' AND offset_minutes IS NULL AND anchor_time IS NULL) OR "
+            "(mode = 'relative' AND offset_minutes IS NOT NULL "
+            "AND offset_minutes BETWEEN -525600 AND 525600 "
+            "AND tracker_id IS NULL)",
+            name="schedule_config",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sending', 'sent', 'missed', 'needs_reschedule', "
+            "'no_device', 'failed', 'cancelled')",
+            name="status",
+        ),
+        CheckConstraint("revision >= 1", name="revision"),
+        CheckConstraint("attempt_count BETWEEN 0 AND 4", name="attempt_count"),
+        {"schema": SCHEMA},
+    )
+
+    task_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID, ForeignKey(f"{SCHEMA}.task.id", ondelete="CASCADE"), nullable=True
+        ),
+    )
+    event_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID, ForeignKey(f"{SCHEMA}.calendar_event.id", ondelete="CASCADE"), nullable=True
+        ),
+    )
+    tracker_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID, ForeignKey(f"{SCHEMA}.tracker.id", ondelete="CASCADE"), nullable=True
+        ),
+    )
+    mode: str = Field(sa_column=Column(Text, nullable=False))
+    offset_minutes: int | None = Field(default=None, sa_column=Column(Integer))
+    anchor_time: time | None = Field(default=None, sa_column=Column(Time))
+    due_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    status: str = Field(
+        default="pending", sa_column=Column(Text, nullable=False, server_default=text("'pending'"))
+    )
+    revision: int = Field(
+        default=1, sa_column=Column(Integer, nullable=False, server_default=text("1"))
+    )
+    attempt_count: int = Field(
+        default=0, sa_column=Column(Integer, nullable=False, server_default=text("0"))
+    )
+    next_attempt_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True))
+    )
+    last_attempt_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True))
+    )
+    sent_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+
+
+for _source_column in ("task_id", "event_id", "tracker_id"):
+    Index(
+        f"uq_one_shot_reminder_active_{_source_column}",
+        OneShotReminder.__table__.c[_source_column],
+        unique=True,
+        postgresql_where=text("status IN ('pending', 'sending', 'needs_reschedule')"),
+    )
+Index(
+    "ix_one_shot_reminder_due_at",
+    OneShotReminder.__table__.c.due_at,
+    postgresql_where=text("status IN ('pending', 'sending')"),
+)
+
+
 class TrackerReminderBatch(UUIDTimestampModel, table=True):
     """One immutable tracker-reminder membership generation for a civil instant."""
 

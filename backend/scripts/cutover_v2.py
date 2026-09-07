@@ -1086,7 +1086,7 @@ def _expected_column_contract() -> dict[tuple[str, str], dict[str, Any]]:
         "NUMERIC": ("numeric", "numeric"),
     }
     for table in SQLModel.metadata.tables.values():
-        if table.schema != "microsched":
+        if table.schema != "microsched" or table.name not in ALL_EXPECTED_TARGET_TABLES:
             continue
         for column in table.columns:
             compiled_type = str(column.type.compile(dialect=dialect)).upper()
@@ -1139,7 +1139,7 @@ def _expected_constraint_contract() -> set[tuple[str, str, str, str]]:
         ),
     }
     for table in SQLModel.metadata.tables.values():
-        if table.schema != "microsched":
+        if table.schema != "microsched" or table.name not in ALL_EXPECTED_TARGET_TABLES:
             continue
         for constraint in table.constraints:
             name = constraint.name

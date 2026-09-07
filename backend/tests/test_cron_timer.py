@@ -876,7 +876,7 @@ async def test_generic_after_entry_schedule_uses_bounded_aggregate_results(monke
     assert item.occurrence_on == date(2026, 8, 7)
     assert item.reminder_action == "open_tracker"
     assert item.last_entry_date == date(2026, 8, 4)
-    assert db.executions == 6
+    assert db.executions == 7
 
 
 def test_cron_timer_disabled_by_default(monkeypatch):
@@ -993,7 +993,7 @@ async def test_queue_loaded_receipt_uses_none_for_empty_heap(monkeypatch, caplog
         "pending_manual_required_count": "0",
         "invalid_tracker_schedule_count": "0",
     }
-    assert db.executions == 4
+    assert db.executions == 5
 
 
 def test_timer_item_heap_ordering():
@@ -1521,10 +1521,10 @@ async def test_empty_heap_waits_without_queries(monkeypatch):
     timer = CronTimer(FakeFactory(db))
     task = asyncio.create_task(timer.run())
     await asyncio.sleep(0.1)
-    assert db.executions == 4, "exactly the one startup snapshot, no polling"
+    assert db.executions == 5, "exactly the one startup snapshot, no polling"
     timer.request_reload("test")
     await asyncio.sleep(0.1)
-    assert db.executions == 8, "reload after the commit marker"
+    assert db.executions == 10, "reload after the commit marker"
     await timer.stop()
     await asyncio.wait_for(task, timeout=2)
     assert task.done()
@@ -1629,12 +1629,14 @@ async def test_stop_interrupts_long_top_level_failure_backoff(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_get_session_reload_marker_only_after_commit(monkeypatch):
+@pytest.mark.parametrize("source_write", [False, True])
+async def test_get_session_reload_marker_only_after_commit(monkeypatch, source_write):
     """F4: the marker triggers a reload only on commit; rollback must not."""
     calls = []
 
     class FakeSink:
         def request_reload(self, reason: str) -> None:
+            assert session.committed, "reload must follow the source commit"
             calls.append(reason)
 
     class FakeSession:
@@ -1674,17 +1676,25 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
     get_settings.cache_clear()
     sink_context = deps.get_cron_reload_sink()
     token = sink_context.set(FakeSink())
+    from starlette.requests import Request
+
+    request = Request(
+        {"type": "http", "method": "PATCH", "path": "/api/tasks/synthetic", "headers": []}
+    )
+    expected_reason = "one_shot_source_write" if source_write else "subscription:renew"
     try:
         session = FakeSession()
         monkeypatch.setattr(deps, "get_sessionmaker", lambda: FakeFactory(session))
 
         async def consume_ok():
-            async for _db in deps.get_session():
-                _db.info[deps.CRON_TIMER_RELOAD_INFO_KEY] = "subscription:renew"
+            async for _db in deps.get_session(request if source_write else None):
+                assert calls == [], "no reload before the request transaction completes"
+                if not source_write:
+                    _db.info[deps.CRON_TIMER_RELOAD_INFO_KEY] = expected_reason
 
         await consume_ok()
         assert session.committed is True
-        assert calls == ["subscription:renew"]
+        assert calls == [expected_reason]
         assert deps.CRON_TIMER_RELOAD_INFO_KEY not in session.info
 
         # A commit failure after the request wrote its marker must roll back and
@@ -1694,8 +1704,9 @@ async def test_get_session_reload_marker_only_after_commit(monkeypatch):
         monkeypatch.setattr(deps, "get_sessionmaker", lambda: FakeFactory(session2))
 
         try:
-            async for _db in deps.get_session():
-                _db.info[deps.CRON_TIMER_RELOAD_INFO_KEY] = "subscription:renew"
+            async for _db in deps.get_session(request if source_write else None):
+                if not source_write:
+                    _db.info[deps.CRON_TIMER_RELOAD_INFO_KEY] = expected_reason
         except RuntimeError:
             pass
 

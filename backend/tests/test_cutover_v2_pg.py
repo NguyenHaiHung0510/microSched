@@ -370,6 +370,42 @@ def test_throwaway_restore_reports_foreign_session_metadata() -> None:
     _run(run())
 
 
+@pytest.fixture(scope="module", autouse=True)
+def cutover_approved_schema():
+    """012 cutover has a frozen 0012 catalog; do not widen its deletion grant.
+
+    047 adds source-owned reminders that this historical purge tool cannot
+    preserve. Keep its full original rehearsal on 0012, then restore current
+    head for the rest of the suite. A separate current-schema test proves the
+    tool refuses the new table rather than silently deleting it.
+    """
+    from alembic.config import Config
+
+    from alembic import command
+
+    raw = os.environ.get("NEON_MIGRATOR_URL")
+    if not raw:
+        yield
+        return
+    parsed = make_url(raw)
+    if parsed.host not in {"localhost", "127.0.0.1", "::1", "postgres", "db"}:
+        pytest.fail("cutover historical schema rehearsal requires local disposable PostgreSQL")
+    owner_url = parsed.set(
+        username="microsched_migrator", password=os.environ["CI_MIGRATOR_PASSWORD"]
+    ).render_as_string(hide_password=False)
+    try:
+        os.environ["NEON_MIGRATOR_URL"] = owner_url
+        command.downgrade(Config("alembic.ini"), "0012")
+        os.environ["NEON_MIGRATOR_URL"] = raw
+        yield
+    finally:
+        os.environ["NEON_MIGRATOR_URL"] = owner_url
+        try:
+            command.upgrade(Config("alembic.ini"), "head")
+        finally:
+            os.environ["NEON_MIGRATOR_URL"] = raw
+
+
 @pytest.fixture
 def rehearsal(pg_dsn: str):
     admin_url = os.environ["NEON_MIGRATOR_URL"]

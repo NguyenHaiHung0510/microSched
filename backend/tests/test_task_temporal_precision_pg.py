@@ -7,6 +7,7 @@ from pathlib import Path
 import asyncpg
 import pytest
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -371,7 +372,7 @@ def test_expand_downgrade_refuses_to_discard_date_only_task(pg_dsn):
                 )
                 assert (
                     await conn.fetchval("SELECT version_num FROM microsched.alembic_version")
-                    == "0012"
+                    == ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
                 )
             finally:
                 await conn.close()
