@@ -48,7 +48,7 @@ test('Task045 synthetic UI evidence', async ({ page, taskApi, trackerApi }, info
     f1_total: 1800000, f2_current: 1800000, f2_previous: 2100000, f5_net: 3200000,
     f3_groups: ['Sinh hoạt', 'Học tập', 'Di chuyển'].map((name, index) => ({ name, total: [900000, 600000, 300000][index], trackers: [{ tracker_id: `qa-tracker-${index}`, name: trackerApi.trackers[index].name, total: [900000, 600000, 300000][index] }] })),
     f4_top: [{ entry_id: 'qa-entry-0', tracker_id: 'qa-tracker-0', tracker_name: trackerApi.trackers[0].name, amount: 480000 }],
-    a2_gap: trackerApi.trackers.map((tracker, index) => ({ tracker_id: tracker.id, days_since_last: index === 0 ? 2 : null, avg_interval_days: index === 0 ? 3 : null })),
+    a2_gap: trackerApi.trackers.map((tracker, index) => ({ tracker_id: tracker.id, enough: index === 0, current_days: index === 0 ? 2 : null, avg_days: index === 0 ? 3 : null })),
     a3_counts: { week: 7, month: 12, year: 120 }, a4_trend: { current_month: 12, prev_avg: 15, trend: 'down' },
     f6: { monthly_burn: 250000, subscription_count: 1, upcoming: [], corrupted_subscription_count: 0 },
   } }))

@@ -990,8 +990,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         trackers={trackers}
         loading={dashboardQuery.isPending}
         error={dashboardQuery.error}
-        lastSuccessAt={dashboardQuery.dataUpdatedAt || null}
-        queryStatus={dashboardQuery.status}
         onRetry={() => void refresh()}
       />
           </div>
