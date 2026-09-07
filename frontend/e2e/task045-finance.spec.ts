@@ -8,6 +8,8 @@ for (const scenario of [
     await page.route('**/api/tracker/dashboard?*', (route) => route.fulfill({ json: {
       period_start: '2026-09-01T00:00:00+07:00', period_end: '2026-09-07T12:00:00+07:00', current_period_days: scenario.days, prev_period_days: scenario.days, prev_period_truncated: false,
       corrupted_entry_count: 0, f1_total: scenario.current, f2_current: scenario.current, f2_previous: scenario.previous, f5_net: -scenario.current,
+      report_months: 1, previous_period_start: '2026-08-01T00:00:00+07:00', previous_period_end: '2026-09-01T00:00:00+07:00',
+      finance_months: [{ month: '2026-09', period_start: '2026-09-01T00:00:00+07:00', period_end: '2026-09-07T12:00:00+07:00', total: scenario.current }], activity_month: '2026-09', activity_days: [],
       f3_groups: [], f4_top: [], a2_gap: [], a3_counts: { week: 0, month: 0, year: 0 }, a4_trend: { current_month: 0, prev_avg: 0, trend: 'flat' },
       f6: { monthly_burn: 0, subscription_count: 0, corrupted_subscription_count: 0, upcoming: [] },
     } }))
@@ -23,6 +25,8 @@ test('finance charts show exact periods, composition and keyboard disclosure wit
   await page.route('**/api/tracker/dashboard?*', (route) => route.fulfill({ json: {
     period_start: '2026-08-01T00:00:00+07:00', period_end: '2026-09-01T00:00:00+07:00', current_period_days: 31, prev_period_days: 31, prev_period_truncated: false,
     corrupted_entry_count: 0, f1_total: 1800000, f2_current: 1800000, f2_previous: 2100000, f5_net: -1800000,
+    report_months: 1, previous_period_start: '2026-07-01T00:00:00+07:00', previous_period_end: '2026-08-01T00:00:00+07:00',
+    finance_months: [{ month: '2026-08', period_start: '2026-08-01T00:00:00+07:00', period_end: '2026-09-01T00:00:00+07:00', total: 1800000 }], activity_month: '2026-08', activity_days: [],
     f3_groups: [{ name: 'Nhóm ' + 'X'.repeat(70), total: 1800000, trackers: [{ tracker_id: 'tracker-002', name: '', total: 1800000 }] }],
     f4_top: [], a2_gap: [], a3_counts: { week: 1, month: 2, year: 3 }, a4_trend: { current_month: 2, prev_avg: 3, trend: 'down' },
     f6: { monthly_burn: 0, subscription_count: 0, corrupted_subscription_count: 0, upcoming: [] },

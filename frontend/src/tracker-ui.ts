@@ -188,6 +188,21 @@ export type DashboardResponse = {
   f1_total: number
   f2_current: number
   f2_previous: number
+  /** Number of calendar months in the selected finance report. */
+  report_months: 1 | 3 | 6 | 12
+  /** Complete preceding calendar window used for F2, if one exists. */
+  previous_period_start: string | null
+  previous_period_end: string | null
+  /** Chronological selected-month values; the last row is the selected month. */
+  finance_months: Array<{
+    month: string
+    period_start: string
+    period_end: string
+    total: number
+  }>
+  /** The calendar month represented by sparse positive activity rows. */
+  activity_month: string
+  activity_days: Array<{ tracker_id: string; day: string; count: number }>
   f3_groups: Array<{ name: string; total: number; trackers: Array<{ tracker_id: string; name: string | null; total: number }> }>
   f4_top: Array<{ entry_id: string; tracker_id: string; tracker_name: string; amount: number }>
   f5_net: number
@@ -201,6 +216,20 @@ export const trackerInvalidationKey = ['tracker'] as const
 
 export function trackerQueryKey(kind: 'groups' | 'trackers' | 'entries' | 'dashboard') {
   return ['tracker', kind] as const
+}
+
+/** The backend needs N selected months plus N complete preceding months for F2. */
+export function minimumReportMonth(months: 1 | 3 | 6 | 12): string {
+  const finalIndex = months * 2 - 1
+  const year = Math.floor(finalIndex / 12) + 1
+  const month = (finalIndex % 12) + 1
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`
+}
+
+export function isSelectableReportMonth(value: string, months: 1 | 3 | 6 | 12, currentMonth: string): boolean {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
+    && value >= minimumReportMonth(months)
+    && value <= currentMonth
 }
 
 /** Grid order, frozen per mount (spec §5.2): count desc, then last entry, then name. */
