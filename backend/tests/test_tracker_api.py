@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
+from app.domain.dashboard import VN_TZ
 from app.domain.models import AuthSession
 from app.main import create_app
 from app.web.deps import get_session, require_session
@@ -805,6 +806,61 @@ def test_f4_excludes_entries_after_now(pg_dsn: str):
             await client.aclose()
             await _cleanup(pg_dsn, "entry", entry_ids)
             await _cleanup(pg_dsn, "tracker", [tracker_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_dashboard_activity_is_parent_gated_sparse_and_excludes_archived(pg_dsn: str):
+    """Activity has only visible active IDs/day counts; finance keeps archived history."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids: list[UUID] = []
+        try:
+            public = await _create_tracker(client, name="Công khai", input_mode="money")
+            private = await _create_tracker(
+                client, name="Riêng tư", input_mode="money", is_private=True
+            )
+            archived = await _create_tracker(client, name="Đã lưu", input_mode="money")
+            tracker_ids = [UUID(row["id"]) for row in (public, private, archived)]
+            occurred_at = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+            for tracker, amount in ((public, 1000), (private, 2000), (archived, 3000)):
+                response = await _create_entry(
+                    client, tracker["id"], amount=amount, occurred_at=occurred_at
+                )
+                assert response.status_code == 201, response.text
+            assert (
+                await client.delete(f"/api/tracker/trackers/{archived['id']}")
+            ).status_code == 204
+
+            today_vn = datetime.now(UTC).astimezone(VN_TZ)
+            month = today_vn.strftime("%Y-%m")
+            auth_state["value"] = _auth(unlocked=False)
+            locked = await client.get(f"/api/tracker/dashboard?month={month}&months=1")
+            assert locked.status_code == 200, locked.text
+            payload = locked.json()
+            assert payload["f1_total"] == 4000  # archived finance survives; private is gated.
+            assert payload["activity_month"] == month
+            assert payload["activity_days"] == [
+                {
+                    "tracker_id": public["id"],
+                    "day": today_vn.date().isoformat(),
+                    "count": 1,
+                }
+            ]
+            assert set(payload["activity_days"][0]) == {"tracker_id", "day", "count"}
+
+            auth_state["value"] = _auth()
+            unlocked = (await client.get(f"/api/tracker/dashboard?month={month}&months=1")).json()
+            assert {row["tracker_id"] for row in unlocked["activity_days"]} == {
+                public["id"],
+                private["id"],
+            }
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", tracker_ids)
             await engine.dispose()
 
     asyncio.run(scenario())

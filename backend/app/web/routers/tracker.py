@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -310,12 +310,13 @@ async def dashboard(
     db: Database,
     session: CurrentSession,
     month: str | None = Query(default=None),
+    months: Literal[1, 3, 6, 12] = Query(default=1),
 ) -> DashboardResponse:
-    """Compute behavior + finance dashboard for ``month=YYYY-MM`` (default = current +07)."""
+    """Compute behavior + an absolute finance report (default = current +07 month)."""
     if month is None:
         vn_now = datetime.now(timezone(timedelta(hours=7)))
         month = f"{vn_now.year:04d}-{vn_now.month:02d}"
     try:
-        return await dashboard_service.compute(db, session, month=month)
+        return await dashboard_service.compute(db, session, month=month, months=months)
     except ValueError:
         raise HTTPException(status_code=422, detail="month must look like YYYY-MM")
