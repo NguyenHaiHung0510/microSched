@@ -1,12 +1,38 @@
 """Database-free bounds and disclosure guards for the tracker dashboard report."""
 
-from datetime import datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
 from app.domain.dashboard import VN_TZ, DashboardService, _finance_month_bounds, _periods
+from app.domain.models import AuthSession
+
+
+class _StatementRows:
+    def __init__(self, rows: list[tuple[object, object]]) -> None:
+        self._rows = rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _PrivacyAwareSession:
+    """A no-DB executor whose synthetic rows follow the compiled tracker predicate."""
+
+    def __init__(self) -> None:
+        self.sql = ""
+        self.public = ("public-entry", "public-tracker")
+        self.private = ("private-entry", "private-tracker")
+
+    async def execute(self, statement):
+        self.sql = str(statement).lower()
+        rows = [self.public]
+        if "tracker.is_private is false" not in self.sql:
+            rows.append(self.private)
+        return _StatementRows(rows)
 
 
 def test_absolute_report_range_uses_full_previous_months_across_leap_year() -> None:
@@ -102,3 +128,28 @@ def test_activity_is_sparse_and_excludes_archived_and_future_rows() -> None:
     assert [item.model_dump(mode="json") for item in activity] == [
         {"tracker_id": str(visible_id), "day": "2025-05-01", "count": 3}
     ]
+
+
+def test_dashboard_activity_source_keeps_locked_private_tracker_sql_gate() -> None:
+    """Removing the parent privacy gate makes the activity source return a private row."""
+
+    async def scenario() -> None:
+        now = datetime.now(UTC)
+        locked = AuthSession(
+            token_hash="dashboard-privacy-guard",
+            user_email="owner@example.com",
+            expires_at=now + timedelta(days=1),
+            private_until=None,
+        )
+        db = _PrivacyAwareSession()
+        rows = await DashboardService()._fetch_month(
+            db,
+            locked,
+            datetime(2025, 5, 1, tzinfo=VN_TZ),
+            datetime(2025, 6, 1, tzinfo=VN_TZ),
+        )
+
+        assert "tracker.is_private is false" in db.sql
+        assert rows == [db.public]
+
+    asyncio.run(scenario())
