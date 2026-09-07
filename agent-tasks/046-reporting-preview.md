@@ -25,6 +25,13 @@ matrix with one row per tracker, direct counts and a legend, accessible day deta
 and an alternative focused monthly calendar for dense tracker collections.
 No missed-dose/adherence inference from a missing record.
 
+Additional Owner feedback (mobile screenshots, 2026-09-07): quick-capture titles
+overflow and overlap the backdate icon; management headings/group metadata overlap
+edit/delete actions. Included in this delivery. Use responsive minimum-width grid
+tracks, separate capture/menu hit targets, wrapped titles and separated management
+actions. Verify hostile names and actual hit-target geometry plus capture/backdate
+regression; preserve capture ordering and private semantics.
+
 Skills: ui-ux-pro-max, targeted chart/heatmap guidance under docs/ui-brief.md.
 Preview approval accepts presentation and interactions, not API/runtime/device QA.
 Post-approval implementation must test absolute period boundaries, capped current
