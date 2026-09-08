@@ -1,5 +1,12 @@
 # Decision brief — Frontend UI stack (microSched)
 
+Task 049 delivery contract: content-hashed build assets use long-lived immutable
+cache headers; HTML, service worker and unhashed static files revalidate. Build
+creates gzip alternatives for JS/CSS after precache generation, retaining the
+original files and URLs. API/auth responses are no-store and never share these
+static cache rules. No CDN/proxy or runtime compression service is introduced.
+See [Task 049](../agent-tasks/049-static-delivery.md) for acceptance evidence.
+
 > Decision record **tự-chứa** (đọc được ở phiên 0-context). **✅ CHỐT 2026-07-20** (phiên frontend).
 > Nối tiếp `architecture-brief.md` §4 — ở đó đã chốt *kiểu triển khai* (SPA/PWA **tĩnh**, offline-first, serve cùng origin); file này chốt **stack cụ thể**. Nghiên cứu live tra cùng ngày (nguồn §8). Phần **cố ý còn mở** (router/chart/layout/web-push chi tiết — quyết lúc scaffold/build, không phải cửa một chiều): §7.
 
