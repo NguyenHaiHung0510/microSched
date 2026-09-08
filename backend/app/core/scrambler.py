@@ -1,4 +1,4 @@
-"""Structure- and typography-preserving text scrambler for microSched QA data.
+r"""Structure- and typography-preserving text scrambler for microSched QA data.
 
 Replaces character glyphs with deterministic pseudo-random characters while preserving:
   - String length (1:1 character count)
