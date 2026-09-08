@@ -263,3 +263,9 @@ Chi tiết đầy đủ + bảng phán quyết từng cột + lý do: `tracking-
 
 ---
 *Cập nhật khi: đổi ORM/DB/khoá chính, hoặc sau phiên tracking (§7). Thêm ghi chú có ngày — không xoá trắng kết luận cũ.*
+
+## Addendum 2026-09-08 — Task 047 one-shot reminders
+
+Migration `0013` adds `one_shot_reminder`: exactly one typed nullable FK to task/calendar_event/tracker, cascade on hard deletion, parent-derived read gates, no copied source prose. Absolute/relative configuration and eight lifecycle states have CHECK constraints; partial unique indexes allow one active row per source and a partial due index supports the timer. Revision and bounded attempt metadata survive restart. Source UPDATE triggers atomically cancel or reschedule active rows with parent → reminder lock order; the application reloads the timer after source commit. Queries cap list pages, scheduler snapshots (1000 rows) and subscription fan-out (100); retries cap at four without a new polling service.
+
+The expansion supports the previous app for rollback; downgrade refuses a nonempty reminder table. Preserve reminder data and roll back application code, not production schema. Historical cutover still refuses revisions after its frozen `0012` contract. Production migration is separately held pending Owner-authorized execution and catalog/privilege verification. Accepted temporal/visibility behavior and local/CI evidence: [Task 047](../agent-tasks/047-one-shot-reminders.md).

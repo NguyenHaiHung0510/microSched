@@ -20,7 +20,7 @@
 .public-hero-intro > p:first-child { font-size: 1.1rem; margin: 0 0 24px; }
 .public-access { color: var(--muted-foreground); font-size: .8rem; margin-top: 18px; max-width: 50ch; }
 .public-gallery { margin: 48px auto 0; max-width: 1024px; }
-.public-gallery-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.public-gallery-choices { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
 .public-page .public-gallery-choice { display: flex; flex-direction: column; gap: 10px; width: 100%; height: auto; min-width: 0; padding: 8px; border: 2px solid transparent; border-radius: 16px; color: var(--secondary-foreground); background: var(--card); white-space: normal; }
 .public-page .public-gallery-choice:hover { background: var(--secondary); }
 .public-page .public-gallery-choice:focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
@@ -112,3 +112,15 @@
 @media (prefers-reduced-motion: reduce) {
   .public-page *, .public-page *::before, .public-page *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.public-gallery-toolbar { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; font-size: .85rem; color: var(--muted-foreground); }
+.public-gallery-indicators { display: inline-flex; gap: 6px; align-items: center; }
+.public-gallery-dot { display: inline-block; width: 6px; height: 6px; border-radius: 9999px; background: var(--muted-foreground); opacity: 0.35; transition: width 300ms ease, opacity 300ms ease, background-color 300ms ease; }
+.public-gallery-dot.active { width: 18px; opacity: 1; background: var(--primary); }
+.public-showcase-stage { display: grid; grid-template-areas: "showcase"; position: relative; overflow: hidden; border-radius: 16px; background: var(--card); }
+.public-showcase-slide { grid-area: showcase; width: 100%; opacity: 0; visibility: hidden; transform: scale(0.99); transition: opacity 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1), visibility 400ms; pointer-events: none; }
+.public-showcase-slide[data-active="true"] { opacity: 1; visibility: visible; transform: scale(1); pointer-events: auto; z-index: 2; }
+.public-showcase-slide img { display: block; width: 100%; height: auto; border-radius: 16px; box-shadow: var(--sh-2); }
+.public-repo-preview, .public-creator > .public-profile-preview { display: block; overflow: hidden; border-radius: 16px; border: 1px solid var(--n-200); margin-bottom: 24px; background: var(--card); }
+.public-repo-preview img, .public-profile-preview img { display: block; width: 100%; height: auto; }
+.public-creator { align-self: start; }

@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react'
+import { ReminderButton } from '@/ReminderEditor'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -282,6 +283,7 @@ export function TrackerForm({
       ) : null}
 
       <div className="flex flex-wrap gap-2 pt-1">
+        {initial?.id && <ReminderButton kind="tracker" sourceId={initial.id} />}
         <Button size="lg" className="min-h-11" type="submit" disabled={!canSubmit}>
           {pending ? 'Đang lưu…' : initial ? 'Lưu thay đổi' : 'Tạo tracker'}
         </Button>

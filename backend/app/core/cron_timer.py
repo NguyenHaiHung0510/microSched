@@ -15,7 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.process_stats import read_rss_kb, read_uptime_s
 from app.core.settings import get_settings
-from app.domain.models import Entry, ReminderDispatch, Subscription, Tracker, TrackerReminderBatch
+from app.domain.models import (
+    Entry,
+    OneShotReminder,
+    ReminderDispatch,
+    Subscription,
+    Tracker,
+    TrackerReminderBatch,
+)
+from app.domain.one_shot_delivery import OneShotDispatcher
 from app.domain.reminder import (
     DispatchOutcome,
     DispatchTelemetry,
@@ -92,6 +100,7 @@ class ScheduleKind(StrEnum):
 
     TRACKER = "tracker"
     SUBSCRIPTION = "subscription"
+    ONE_SHOT = "one_shot"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,10 +121,15 @@ class TimerItem:
     dispatch_id: UUID | None = None
     batch_id: UUID | None = None
     is_pending_recovery: bool = False
+    revision: int = 1
 
     def heap_tuple(self) -> tuple[datetime, int, int, date, int, "TimerItem"]:
         """Return deterministic tuple for min-heap ordering."""
-        kind_order = 0 if self.kind == ScheduleKind.TRACKER else 1
+        kind_order = {
+            ScheduleKind.TRACKER: 0,
+            ScheduleKind.SUBSCRIPTION: 1,
+            ScheduleKind.ONE_SHOT: 2,
+        }[self.kind]
         return (
             self.due_at,
             kind_order,
@@ -153,6 +167,7 @@ class CronTimer:
         # this enabled timer instance rather than module import state.
         self._dispatcher = reminder_dispatcher or ReminderDispatcher()
         self._batch_dispatcher = tracker_batch_dispatcher or TrackerBatchDispatcher()
+        self._one_shot_dispatcher = OneShotDispatcher()
         self._lock_connection_factory = lock_connection_factory
         self.auto_reconnect = auto_reconnect
         self._has_batch_items = True
@@ -164,6 +179,9 @@ class CronTimer:
         self._snapshot_task: asyncio.Task[None] | None = None
         self._heap: list[tuple[datetime, int, int, date, int, TimerItem]] = []
         self.reload_event = asyncio.Event()
+        self._reload_version = 0
+        self._waiting_for_schedule = False
+        self._idle_recovery_hint: tuple[datetime | None, int] | None = None
         self._stop_event = asyncio.Event()
         self._reload_reason: str = "init"
         self._status: str = "starting"
@@ -197,6 +215,7 @@ class CronTimer:
 
     def request_reload(self, reason: str) -> None:
         """Signal the timer loop to reload the schedule snapshot from DB."""
+        self._reload_version += 1
         self._reload_reason = reason
         self.reload_event.set()
 
@@ -232,6 +251,13 @@ class CronTimer:
         ):
             return
         self._status = "ownership_lost"
+        if self._waiting_for_schedule and not self.reload_event.is_set():
+            # A deadline is only a wake hint, never permission to dispatch.
+            # Preserve no source data once the unowned heap is cleared.
+            self._idle_recovery_hint = (
+                self._heap[0][0] if self._heap else None,
+                self._reload_version,
+            )
         self._ownership_lost_event.set()
         self._ownership_wake_event.set()
         self.reload_event.set()
@@ -394,7 +420,7 @@ class CronTimer:
 
     async def _wait_for_provider_workers(self) -> None:
         """Retain scheduler ownership until real Web Push workers are finished."""
-        for dispatcher in (self._dispatcher, self._batch_dispatcher):
+        for dispatcher in (self._dispatcher, self._batch_dispatcher, self._one_shot_dispatcher):
             provider_work = getattr(dispatcher, "provider_work", None)
             if provider_work is None:
                 continue
@@ -788,6 +814,36 @@ class CronTimer:
                     break
                 curr_date += timedelta(days=1)
 
+        # Expand compatibility: old schema remains usable during migration rehearsal.
+        one_shot_table = await db.execute(
+            text("SELECT to_regclass('microsched.one_shot_reminder')")
+        )
+        if one_shot_table.scalar_one_or_none() is not None:
+            one_shots = (
+                (
+                    await db.execute(
+                        select(OneShotReminder)
+                        .where(OneShotReminder.status.in_(("pending", "sending")))
+                        .order_by(
+                            func.coalesce(OneShotReminder.next_attempt_at, OneShotReminder.due_at)
+                        )
+                        .limit(1000)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in one_shots:
+                heapq.heappush(
+                    new_heap,
+                    TimerItem(
+                        due_at=row.next_attempt_at or row.due_at,
+                        occurrence_on=row.due_at.date(),
+                        kind=ScheduleKind.ONE_SHOT,
+                        subject_id=row.id,
+                        revision=row.revision,
+                    ).heap_tuple(),
+                )
         self._heap = new_heap
         self._last_reload_at = now_vn
         next_due_at = self._heap[0][0].isoformat() if self._heap else "none"
@@ -1001,6 +1057,20 @@ class CronTimer:
             await self._assert_owner("due_item")
         now_vn = now or datetime.now(VN_TZ)
         today_vn = now_vn.date()
+
+        if item.kind == ScheduleKind.ONE_SHOT:
+            async with self.session_factory() as db:
+                await self._one_shot_dispatcher.dispatch(
+                    db,
+                    item.subject_id,
+                    item.revision,
+                    now=now,
+                    ownership_guard=self._guard_provider_attempt
+                    if self._ownership_active
+                    else None,
+                )
+            self.request_reload("one_shot_terminal_or_retry")
+            return
 
         if item.batch_id is not None:
             async with self.session_factory() as db:
@@ -1349,6 +1419,31 @@ class CronTimer:
         if conn is not None:
             await self._close_lock_connection(conn)
 
+    async def _wait_before_idle_recovery(self) -> None:
+        """Let a serverless DB stay asleep until a known deadline or source edit.
+
+        Loss during dispatch/recovery still reconnects immediately. The empty
+        queue path has no periodic query or timer. A local source write wakes
+        this wait; the next loop must acquire ownership and reload durable state.
+        """
+        hint, self._idle_recovery_hint = self._idle_recovery_hint, None
+        if hint is None or self._is_stopped:
+            return
+        due_at, reload_version = hint
+        if self._reload_version != reload_version:
+            return
+        self.reload_event.clear()  # consume only the termination callback's wake
+        self._status = "idle_unowned"
+        self._log_ownership_transition("idle_unowned")
+        if due_at is None:
+            await self.reload_event.wait()
+        else:
+            delay = max(0.0, (due_at - datetime.now(VN_TZ)).total_seconds())
+            try:
+                await asyncio.wait_for(self.reload_event.wait(), timeout=delay)
+            except TimeoutError:
+                pass
+
     async def run(self) -> None:
         """Run only while this process owns the PostgreSQL scheduler lock."""
         self._log_ownership_transition("starting", level=logging.WARNING)
@@ -1445,11 +1540,19 @@ class CronTimer:
                             if self._is_stopped:
                                 break
                             now_vn = datetime.now(VN_TZ)
-                            if self._heap:
-                                sleep_sec = max(0.0, (self._heap[0][0] - now_vn).total_seconds())
-                                await asyncio.wait_for(self.reload_event.wait(), timeout=sleep_sec)
-                            else:
-                                await self.reload_event.wait()
+                            self._waiting_for_schedule = True
+                            try:
+                                if self._heap:
+                                    sleep_sec = max(
+                                        0.0, (self._heap[0][0] - now_vn).total_seconds()
+                                    )
+                                    await asyncio.wait_for(
+                                        self.reload_event.wait(), timeout=sleep_sec
+                                    )
+                                else:
+                                    await self.reload_event.wait()
+                            finally:
+                                self._waiting_for_schedule = False
                         except asyncio.CancelledError:
                             logger.info("CronTimer loop cancelled")
                             raise
@@ -1470,6 +1573,7 @@ class CronTimer:
                     await self._cleanup_lost_ownership()
                     if not self.auto_reconnect:
                         raise
+                    await self._wait_before_idle_recovery()
                     logger.warning(
                         "cron_timer_ownership_lost_reconnecting lock_ref=%s action=reacquire",
                         SCHEDULER_ADVISORY_LOCK_REF,
@@ -1481,6 +1585,7 @@ class CronTimer:
                 self._log_ownership_transition("ownership_lost", level=logging.ERROR)
             if self.auto_reconnect and not self._is_stopped:
                 await self._cleanup_lost_ownership()
+                await self._wait_before_idle_recovery()
                 logger.warning(
                     "cron_timer_ownership_lost_reconnecting lock_ref=%s action=reacquire",
                     SCHEDULER_ADVISORY_LOCK_REF,

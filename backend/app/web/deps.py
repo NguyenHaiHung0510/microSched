@@ -55,7 +55,7 @@ def get_session_store() -> SessionStore | None:
     return PostgresSessionStore(factory, get_settings().session_ttl_days)
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
+async def get_session(request: Request = None) -> AsyncIterator[AsyncSession]:
     """Yield one transaction-scoped database session for the whole HTTP request."""
     factory = get_sessionmaker()
     if factory is None:
@@ -67,6 +67,15 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     async with factory() as db:
         try:
             yield db
+            # Source triggers update one-shot rows in this same transaction.
+            # A response middleware can run before this commit: reload only
+            # through the established post-commit sink to avoid stale snapshots.
+            if (
+                request is not None
+                and request.method in {"POST", "PATCH", "PUT", "DELETE"}
+                and request.url.path.startswith(("/api/tasks", "/api/calendar", "/api/tracker"))
+            ):
+                db.info.setdefault(CRON_TIMER_RELOAD_INFO_KEY, "one_shot_source_write")
             await db.commit()
         except asyncio.CancelledError:
             await db.rollback()

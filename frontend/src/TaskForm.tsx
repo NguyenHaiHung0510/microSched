@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react'
+import { ReminderButton } from '@/ReminderEditor'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
 
@@ -672,6 +673,7 @@ export function TaskForm({
       </label>
 
      <div className="flex flex-wrap gap-2 pt-1">
+       {taskId && <ReminderButton kind="task" sourceId={taskId} />}
        <Button
          size="lg"
          type="submit"

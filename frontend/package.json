@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && npm run verify:apple-icon && npm run verify:pwa-surface",
+    "build": "tsc -b && vite build && npm run verify:apple-icon && npm run verify:pwa-surface && node scripts/precompress-assets.mjs",
     "e2e": "playwright test",
     "lint": "eslint .",
     "preview": "vite preview",

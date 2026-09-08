@@ -49,6 +49,8 @@ async def healthz(request: Request) -> dict[str, str]:
                 result["cron_timer_status"] = "degraded"
             elif status == "owner":
                 result["cron_timer_status"] = "owner"
+            elif status == "idle_unowned":
+                result["cron_timer_status"] = "idle_unowned"
             else:
                 result["cron_timer_status"] = "standby"
             result["cron_timer"] = result["cron_timer_status"]
