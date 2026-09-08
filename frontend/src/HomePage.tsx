@@ -13,7 +13,7 @@ const copy = {
   vi: {
     eyebrow: 'DỰ ÁN CÁ NHÂN · VỪA LÀM, VỪA HỌC',
     heading: <>Ứng dụng mình dùng <em>hằng ngày.</em></>,
-    intro: 'Mình xây microSched để gom công việc, ghi chú, lịch và những điều cần theo dõi vào cùng một ứng dụng. Mình dùng nó mỗi ngày và tiếp tục chỉnh sửa theo nhu cầu thực tế. Qua đó, mình học cả cách xây dựng phần mềm lẫn cách làm việc cùng AI agents.',
+    intro: 'Mình làm microSched để gom việc cần làm, ghi chú, lịch và những điều muốn theo dõi vào một chỗ. Dùng mỗi ngày, mình lại thấy chỗ cần sửa hoặc một ý tưởng muốn thử. Dự án vì thế vừa giúp mình sắp xếp cuộc sống, vừa là nơi mình học cách xây phần mềm và làm việc cùng AI agents.',
     explore: 'Khám phá microSched', source: 'Xem mã nguồn', signIn: 'Đăng nhập', open: 'Vào ứng dụng', checking: 'Đang kiểm tra…', retry: 'Thử lại', unknown: 'Chưa kiểm tra được phiên đăng nhập.',
     access: 'Đây là bản microSched mình dùng riêng; đăng nhập chỉ dành cho tài khoản được cấp quyền.',
     everyday: 'Mình dùng microSched để làm gì?',
@@ -24,18 +24,18 @@ const copy = {
       ['Theo dõi thói quen, chi tiêu', 'Ghi lại thói quen, chi tiêu và theo dõi các gói đăng ký sắp gia hạn.'],
     ],
     journeyLabel: 'HÀNH TRÌNH', journeyTitle: 'Từ công cụ dòng lệnh đến microSched.',
-    journeyIntro: 'Ban đầu, mình chỉ muốn có một công cụ phù hợp hơn với việc học và cuộc sống. Từ chương trình dòng lệnh đến ứng dụng desktop, rồi lên web, mỗi phiên bản đều cho mình thêm điều để học.',
+    journeyIntro: 'Ban đầu, mình chỉ muốn có một công cụ hợp với cách mình học và sắp xếp công việc. Mình bắt đầu từ dòng lệnh, thử làm ứng dụng desktop, rồi đưa nó lên web. Mỗi lần làm lại là một lần hiểu thêm về phần mềm mình đang xây.',
     chapters: [
       ['01', 'C++ · Dòng lệnh', 'Những bước đầu', 'Mình làm một chương trình nhỏ, sửa dần qua các phiên bản và bắt đầu học Git.'],
-      ['02', 'Python · Flet', 'Thử làm phần mềm cùng AI', 'Qua nhiều vòng trao đổi với AI, mình làm được một ứng dụng desktop có thể dùng hằng ngày.'],
-      ['03', 'microSched · Web', 'Làm bài bản hơn', 'Mình học thêm về thiết kế hệ thống, triển khai và vận hành, rồi cải tiến ứng dụng từ chính việc sử dụng mỗi ngày.'],
+      ['02', 'Python · Flet', 'Thử làm phần mềm cùng AI', 'Mình thử làm ứng dụng desktop bằng Python và Flet, trao đổi với AI qua nhiều vòng để chỉnh sửa và đưa vào dùng mỗi ngày.'],
+      ['03', 'microSched · Web', 'Làm bài bản hơn', 'Khi đưa microSched lên web, mình bắt đầu học sâu hơn về thiết kế hệ thống, triển khai và vận hành. Những vướng mắc khi dùng app cũng trở thành việc cần làm tiếp theo.'],
     ],
     methodLabel: 'CÁCH MÌNH LÀM DỰ ÁN', methodTitle: 'Học cách làm việc cùng AI agents.',
-    methodBody: 'Bên cạnh việc học xây dựng phần mềm, mình tìm hiểu harness engineering qua cách tổ chức công việc với AI agents và kiểm tra kết quả. Mình xác định mục tiêu và phạm vi; agent điều phối thực hiện hoặc chia việc cho các agent khác. Review độc lập, kiểm thử và việc ghi lại các quyết định giúp mình kiểm tra kết quả và rút kinh nghiệm. Mình muốn cách làm này vẫn hữu ích khi model hay công cụ thay đổi.',
+    methodBody: 'Mình dùng dự án để tìm hiểu harness engineering: tổ chức công việc với AI agents sao cho có mục tiêu rõ ràng và kiểm tra được kết quả. Mình xác định mục tiêu và phạm vi; agent điều phối có thể trực tiếp làm hoặc chia những phần việc cụ thể cho agent khác. Review độc lập, kiểm thử và ghi lại quyết định giúp mình xem thay đổi có đáp ứng yêu cầu hay không. Mình muốn xây dựng một cách làm vẫn hữu ích khi model và công cụ thay đổi.',
     methodSteps: ['Làm rõ mục tiêu', 'Làm việc đúng phạm vi', 'Review và kiểm thử', 'Ghi lại điều đã học'],
     stack: 'React · FastAPI · PostgreSQL',
     futureLabel: 'NHỮNG DỰ ĐỊNH TIẾP THEO', futureTitle: 'Những điều mình muốn làm tiếp.', futureStatus: 'Đang tìm hiểu và thiết kế',
-    futureIntro: 'Mình đang thiết kế ba dự án xoay quanh microSched, kết hợp những gì đang học ở trường với những thứ mình muốn dùng trong cuộc sống.',
+    futureIntro: 'Mình đang thiết kế ba dự án kết nối với microSched, từ những gì đang học ở trường và những thứ muốn tự làm để dùng.',
     futures: [
       ['Mimi', 'Trợ lý trong microSched', 'Mình muốn có một trợ lý làm việc được với task, note, tracker và tài liệu ngay trong app. Mimi sẽ thực hiện thao tác trong phạm vi được cho phép, với bước xác nhận phù hợp.'],
       ['microLink', 'Kết nối coding agent với microSched', 'Mình muốn coding agent có thể đọc và cập nhật dữ liệu microSched ngay từ môi trường đang dùng, hiện là Codex. microLink sẽ kết nối hai bên qua MCP, với các công cụ có phạm vi rõ ràng.'],
@@ -63,13 +63,13 @@ const copy = {
     journeyLabel: 'THE JOURNEY', journeyTitle: 'It started with a small tool.',
     journeyIntro: 'I started with a simple wish: a tool that fits studying and everyday life a little better. Each version brought something new to learn.',
     chapters: [
-      ['01', 'C++ · Command line', 'The first steps', 'I started with a small C++ program, learned to edit it, and got familiar with Git.'],
-      ['02', 'Python · Flet', 'Experimenting with AI', 'Through rounds of prompting, I built a Python/Flet desktop app I could use in everyday life.'],
+      ['01', 'C++ · Command line', 'The first steps', 'I built a small C++ program, improved it over time and started learning Git.'],
+      ['02', 'Python · Flet', 'Experimenting with AI', 'I built a Python/Flet desktop app through repeated rounds of building, reviewing and refining with AI.'],
       ['03', 'microSched · Web', 'Building more deliberately', 'With microSched, I’m learning to design, deploy and improve a web app I use day to day.'],
     ],
     methodLabel: 'HOW I BUILD THE PROJECT', methodTitle: 'Learning to build with AI agents.',
     methodBody: 'Alongside learning to build software, I’m exploring harness engineering by organizing work with AI coding agents and checking the results. I set the goals and scope; a coordinating agent can implement changes or delegate focused tasks. Independent reviews, tests and a record of decisions help me check results and learn from them. I want that way of working to stay useful as models and tools change.',
-    methodSteps: ['Clarify the goal', 'Work within scope', 'Review and test', 'Keep what was learned'],
+    methodSteps: ['Clarify the goal', 'Work within scope', 'Review and test', 'Record what I learned'],
     stack: 'React · FastAPI · PostgreSQL',
     futureLabel: 'WHAT COMES NEXT', futureTitle: 'Beyond the screen, closer to everyday life.', futureStatus: 'Being explored and designed',
     futureIntro: 'I’m designing three projects around microSched, connecting what I’m learning with things I want to do in everyday life.',
@@ -87,10 +87,10 @@ const copy = {
 }
 
 function usePublicLanguage() {
-  const [language, updateLanguage] = useState<Language>(() => new URLSearchParams(window.location.search).get('lang') === 'en' ? 'en' : 'vi')
+  const [language, updateLanguage] = useState<Language>(() => new URLSearchParams(window.location.search).get('lang') === 'vi' ? 'vi' : 'en')
   function setLanguage(next: Language) {
     const url = new URL(window.location.href)
-    if (next === 'en') url.searchParams.set('lang', 'en')
+    if (next === 'vi') url.searchParams.set('lang', 'vi')
     else url.searchParams.delete('lang')
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
     updateLanguage(next)
@@ -108,7 +108,7 @@ export function DeniedPage() {
   useEffect(() => { document.title = vi ? 'Chưa thể đăng nhập — microSched' : 'Unable to sign in — microSched' }, [vi])
   return <div className="public-page public-denied" lang={language}>
     <header className="public-header public-container">
-      <a href={`/home${vi ? '' : '?lang=en'}`} className="public-brand"><img src="/microsched.svg" width="28" height="28" alt="" />microSched</a>
+      <a href={`/home${vi ? '?lang=vi' : ''}`} className="public-brand"><img src="/microsched.svg" width="28" height="28" alt="" />microSched</a>
       <Button variant="ghost" size="lg" onClick={() => setLanguage(vi ? 'en' : 'vi')}>{vi ? 'English' : 'Tiếng Việt'}</Button>
     </header>
     <main className="public-denied-main">
@@ -118,7 +118,7 @@ export function DeniedPage() {
       <p>{vi ? 'Bạn cũng có thể tìm hiểu mã nguồn và tự triển khai một bản cho mình.' : 'You can also explore the source code and host your own instance.'}</p>
       <div className="public-actions">
         <Button asChild size="lg"><a href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer">{vi ? 'Xem mã nguồn' : 'View source'}<ArrowRight aria-hidden="true" /></a></Button>
-        <Button asChild variant="outline" size="lg"><a href={`/home${vi ? '' : '?lang=en'}`}>{vi ? 'Về trang chủ' : 'Home'}</a></Button>
+        <Button asChild variant="outline" size="lg"><a href={`/home${vi ? '?lang=vi' : ''}`}>{vi ? 'Về trang chủ' : 'Home'}</a></Button>
       </div>
       <a className="public-text-link" href={CREATOR_URL} target="_blank" rel="noopener noreferrer">{vi ? 'Một chút về mình' : 'About me'} <ArrowRight aria-hidden="true" size={16} /></a>
     </main>
@@ -137,7 +137,7 @@ export default function HomePage({ auth, location, onRetry }: { auth: PublicAuth
   return <div className="public-page" lang={language}>
     <a className="public-skip" href="#public-main">{language === 'vi' ? 'Đến nội dung' : 'Skip to content'}</a>
     <header className="public-header public-container">
-      <a href={`/home${language === 'en' ? '?lang=en' : ''}`} className="public-brand" aria-label={language === 'vi' ? 'Trang chủ microSched' : 'microSched homepage'}><img src="/microsched.svg" width="28" height="28" alt="" />microSched</a>
+      <a href={`/home${language === 'vi' ? '?lang=vi' : ''}`} className="public-brand" aria-label={language === 'vi' ? 'Trang chủ microSched' : 'microSched homepage'}><img src="/microsched.svg" width="28" height="28" alt="" />microSched</a>
       <div className="public-header-actions">
         <Button variant="ghost" size="lg" onClick={() => setLanguage(language === 'vi' ? 'en' : 'vi')}>{language === 'vi' ? 'English' : 'Tiếng Việt'}</Button>
         {auth === 'signed-in' ? <Button asChild size="lg"><a href="/" data-testid="public-open-app">{c.open}<ArrowRight aria-hidden="true" /></a></Button>
@@ -188,8 +188,8 @@ export default function HomePage({ auth, location, onRetry }: { auth: PublicAuth
       </section>
     </main>
     <footer className="public-footer public-container">
-      <div><h2>{c.footerTitle}</h2><p>{c.footerText}</p><Button asChild size="lg"><a href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer">{c.source}<ArrowRight aria-hidden="true" /></a></Button></div>
-      <div className="public-creator"><p className="public-eyebrow">{c.creator}</p><a href={CREATOR_URL} target="_blank" rel="noopener noreferrer">Nguyễn Hải Hưng <ArrowRight aria-hidden="true" size={20} /></a><p>{c.creatorNote}</p></div>
+      <div><a className="public-repo-preview" href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label={c.source}><img src="/showcase/source-preview.png" width="838" height="600" loading="lazy" alt={language === 'vi' ? 'Một phần README của microSched trên GitHub' : 'A preview of the microSched README on GitHub'} /></a><h2>{c.footerTitle}</h2><p>{c.footerText}</p><Button asChild size="lg"><a href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer">{c.source}<ArrowRight aria-hidden="true" /></a></Button></div>
+      <div className="public-creator"><a className="public-profile-preview" href={CREATOR_URL} target="_blank" rel="noopener noreferrer" aria-label={c.creator}><img src="/showcase/creator-preview.png" width="846" height="520" loading="lazy" alt={language === 'vi' ? 'Phần mở đầu README giới thiệu của Hưng trên GitHub' : 'The opening of Hưng’s GitHub profile README'} /></a><p className="public-eyebrow">{c.creator}</p><a href={CREATOR_URL} target="_blank" rel="noopener noreferrer">Nguyễn Hải Hưng <ArrowRight aria-hidden="true" size={20} /></a><p>{c.creatorNote}</p></div>
     </footer>
   </div>
 }
