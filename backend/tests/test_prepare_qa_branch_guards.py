@@ -48,7 +48,11 @@ def test_local_scrub_of_declared_branch_is_allowed(monkeypatch) -> None:
     # CI and local DNS report different gaierror codes (-5 vs 11001); both
     # prove the failure happened at name resolution, not at a guard.
     message = str(exc_info.value)
-    assert "No address associated with hostname" in message or "getaddrinfo failed" in message
+    assert (
+        "No address associated with hostname" in message
+        or "getaddrinfo failed" in message
+        or "Name or service not known" in message
+    )
 
 
 def test_scrub_refuses_the_raw_production_host(monkeypatch) -> None:
