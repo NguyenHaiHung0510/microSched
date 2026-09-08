@@ -62,7 +62,7 @@ export function PublicShowcase({ language }: { language: 'vi' | 'en' }) {
 
     const timer = window.setTimeout(() => {
       setSelected(curr => (curr + 1) % screens.length)
-    }, 6000)
+    }, 2000)
 
     return () => window.clearTimeout(timer)
   }, [reducedMotion, visible, hovered, focused, pageVisible, selected])
