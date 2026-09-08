@@ -70,7 +70,9 @@ class SPAStaticFiles(StaticFiles):
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         path = path.replace("\\", "/")
-        hashed_asset = re.fullmatch(r"assets/[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+", path)
+        # Vite emits eight-character hashes. A fixed width also avoids quadratic
+        # backtracking on malformed URLs consisting of many hyphens.
+        hashed_asset = re.fullmatch(r"assets/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+", path)
         try:
             response = await super().get_response(path, scope)
         except StarletteHTTPException as error:

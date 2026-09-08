@@ -13,3 +13,10 @@ Actual service-worker registration/activation and offline shell reload PASS. Ini
 Rollback: prior server ignores gzip alternatives and serves original assets. Deploy the prior image to revert headers/serving behavior; no schema/data changes. Existing immutable assets are safe only while filenames remain content-hashed. Original files remain in every build. Old missing chunks return 404 rather than being retained indefinitely; PWA precaches the existing URL set, not duplicate gzip URLs.
 
 Next: full final backend and required CI, exact-head CAS merge, exact deployed SHA/db plus bounded public asset/header smoke; no production load or private-account fixture.
+
+Final self-review: use the current Vite eight-character hash format exactly;
+other filenames revalidate. A bounded local malformed-path probe exposed
+quadratic backtracking in the initial variable-width pattern. The fixed-width
+pattern reduced the 4096-character probe from about 14.6 ms to 0.11 ms in this
+local run; nine delivery tests and Ruff passed after correction. This is a local
+regression/performance observation, not an Internet capacity benchmark.
