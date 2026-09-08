@@ -1926,8 +1926,43 @@ async def test_reload_within_grace_terminal_reentry_keeps_same_occurrence_ref(ca
 
 
 @pytest.mark.anyio
+async def test_idle_connection_loss_waits_for_source_change_before_reconnect():
+    """048: a suspended empty database must not be woken by lock recovery alone."""
+    connections = []
+    loaded = asyncio.Event()
+
+    async def connect():
+        connection = FakeLockConnection()
+        connections.append(connection)
+        return connection
+
+    timer = CronTimer(FakeFactory(object()), lock_connection_factory=connect, auto_reconnect=True)
+
+    async def snapshot(db):
+        loaded.set()
+
+    timer.load_snapshot = snapshot
+    task = asyncio.create_task(timer.run())
+    try:
+        await asyncio.wait_for(loaded.wait(), 1)
+        await asyncio.sleep(0.01)
+        loaded.clear()
+        connections[0].listener(connections[0])
+        await asyncio.sleep(0.05)
+        assert len(connections) == 1, "idle lock loss must not wake Neon"
+        assert timer.status == "idle_unowned"
+        timer.request_reload("source_changed")
+        await asyncio.wait_for(loaded.wait(), 1)
+        assert len(connections) == 2
+        assert timer.status == "owner"
+    finally:
+        await timer.stop()
+        await asyncio.wait_for(task, 1)
+
+
+@pytest.mark.anyio
 async def test_scheduler_auto_reconnect_on_ownership_loss(monkeypatch):
-    "041: when auto_reconnect=True, CronTimer re-acquires lock after connection drop."
+    "041/048: interrupted snapshot work still reacquires immediately."
     reconnect_count = 0
     acquired_event = asyncio.Event()
 
@@ -1940,6 +1975,8 @@ async def test_scheduler_auto_reconnect_on_ownership_loss(monkeypatch):
 
     async def snapshot(db):
         acquired_event.set()
+        if reconnect_count == 1:
+            await asyncio.Event().wait()  # interrupt active recovery, not idle sleep
 
     timer.load_snapshot = snapshot
 
@@ -1959,6 +1996,63 @@ async def test_scheduler_auto_reconnect_on_ownership_loss(monkeypatch):
 
     await timer.stop()
     await task
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("wake", ["deadline", "edit_race", "stop"])
+async def test_idle_recovery_deadline_edit_race_and_shutdown(wake):
+    connections = []
+    loaded = asyncio.Event()
+    due_at = datetime.now(VN_TZ) + timedelta(seconds=0.2)
+
+    async def connect():
+        conn = FakeLockConnection()
+        connections.append(conn)
+        return conn
+
+    timer = CronTimer(FakeFactory(object()), lock_connection_factory=connect, auto_reconnect=True)
+
+    async def snapshot(db):
+        timer._heap.clear()
+        if len(connections) == 1 and wake == "deadline":
+            item = TimerItem(
+                due_at=due_at,
+                occurrence_on=due_at.date(),
+                kind=ScheduleKind.SUBSCRIPTION,
+                subject_id=UUID(int=1),
+            )
+            heapq.heappush(timer._heap, item.heap_tuple())
+        loaded.set()
+
+    async def forbidden_dispatch(*args, **kwargs):
+        pytest.fail("a stale wake hint must not dispatch the old item")
+
+    timer.load_snapshot = snapshot
+    timer._process_due_item = forbidden_dispatch
+    task = asyncio.create_task(timer.run())
+    try:
+        await asyncio.wait_for(loaded.wait(), 1)
+        await asyncio.sleep(0.01)
+        loaded.clear()
+        connections[0].listener(connections[0])
+        if wake == "edit_race":
+            timer.request_reload("concurrent_edit")
+        else:
+            await asyncio.sleep(0.03)
+            assert len(connections) == 1
+            assert timer._heap == []
+        if wake == "stop":
+            await timer.stop()
+            await asyncio.wait_for(task, 1)
+            assert len(connections) == 1
+        else:
+            await asyncio.wait_for(loaded.wait(), 1)
+            assert len(connections) == 2
+            if wake == "deadline":
+                assert datetime.now(VN_TZ) >= due_at
+    finally:
+        await timer.stop()
+        await asyncio.wait_for(task, 1)
 
 
 @pytest.mark.anyio

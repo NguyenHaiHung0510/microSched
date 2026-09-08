@@ -213,8 +213,12 @@ chưa tính lại cả tháng 31 ngày.
 
 **Dòng chi phí CI/CD \$0 không đổi:** GitHub Actions làm CI/CD và giữ nút `workflow_dispatch` để
 chạy CD thủ công. Google Cloud Scheduler đã bị **xoá hoàn toàn** để nhường chỗ cho `011d` in-process timer.
-Neon vẫn autosuspend độc lập vì `/api/healthz` không chạm DB và timer ngủ bằng async memory event
-khi rỗng.
+Task 048: `/api/healthz` không chạm DB, nhưng chỉ riêng việc timer chờ bằng RAM chưa
+đủ bảo đảm Neon ngủ. Khi kết nối giữ khóa mất trong lúc chờ lịch, timer phải chờ
+hạn kế tiếp hoặc source reload trước khi kết nối lại; trạng thái `idle_unowned`
+không gửi thông báo. Khi có việc, timer giành khóa và đọc lịch mới trước khi xử lý.
+Mất kết nối giữa dispatch/recovery vẫn phục hồi ngay. Xác nhận tiết kiệm compute
+phải dựa trên Neon Operations/usage sau triển khai, không suy từ unit test.
 
 ---
 *Cập nhật khi: đổi host/DB/LLM provider, hết credit, đổi công cụ dev-stack (§6), hoặc tới mốc soi-lại 3 tháng (~10/2026). §7 cập nhật theo nhịp 3–7 ngày — đó là mục đích của nó. Thêm ghi chú có ngày — không xoá trắng con số cũ.*
