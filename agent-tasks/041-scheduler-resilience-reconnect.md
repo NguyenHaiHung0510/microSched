@@ -1,5 +1,12 @@
 # Task 041: Scheduler Resilience, Auto-Reconnection & Graceful Fallback
 
+> Task 048 supersedes immediate recovery **only after an idle schedule wait**:
+> retain a deadline hint and wait without DB I/O until that deadline or a source
+> change. Then reacquire ownership and reload durable state before dispatch.
+> Interrupted dispatch/snapshot work still recovers immediately. This prevents
+> autosuspend itself from creating a repeated wakeup cycle; all ownership fences
+> remain mandatory. `idle_unowned` is a healthy, live timer state, not an owner.
+
 ## 1. Problem Statement
 In Task 035A, PostgreSQL advisory locks were introduced to ensure single-node scheduler ownership (CronTimer).
 However, under Neon Serverless PostgreSQL and cloud deployments:

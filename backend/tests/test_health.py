@@ -160,6 +160,12 @@ def test_healthz_reports_cron_timer_status_contract(monkeypatch) -> None:
     assert res.json()["status"] == "ok"
     assert res.json()["cron_timer_status"] == "standby"
 
+    # Sleeping without ownership is healthy and must not wake the database.
+    app.state.cron_timer = FakeTimer(status="idle_unowned")
+    res = client.get("/api/healthz")
+    assert res.json()["status"] == "ok"
+    assert res.json()["cron_timer_status"] == "idle_unowned"
+
     # 4. Timer degraded (loop failures)
     app.state.cron_timer = FakeTimer(status="owner", failures=2)
     res = client.get("/api/healthz")
