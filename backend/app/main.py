@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import Scope
@@ -67,12 +69,53 @@ class SPAStaticFiles(StaticFiles):
     """Serve the SPA entry point when a built frontend route is not a file."""
 
     async def get_response(self, path: str, scope: Scope) -> Response:
+        path = path.replace("\\", "/")
+        # Vite emits eight-character hashes. A fixed width also avoids quadratic
+        # backtracking on malformed URLs consisting of many hyphens.
+        hashed_asset = re.fullmatch(r"assets/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+", path)
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as error:
-            if error.status_code != 404:
+            if error.status_code != 404 or path.startswith("assets/"):
                 raise
-            return FileResponse(Path(self.directory) / "index.html")
+            response = FileResponse(Path(self.directory) / "index.html")
+        if hashed_asset and response.status_code in (200, 304):
+            headers = Headers(scope=scope)
+            if (
+                response.status_code == 200
+                and path.endswith((".js", ".css"))
+                and "range" not in headers
+                and self._accepts_gzip(headers.get("accept-encoding", ""))
+            ):
+                try:
+                    compressed = await super().get_response(path + ".gz", scope)
+                except StarletteHTTPException as error:
+                    if error.status_code != 404:
+                        raise
+                else:
+                    compressed.headers["Content-Encoding"] = "gzip"
+                    compressed.headers["Content-Type"] = response.headers["content-type"]
+                    response = compressed
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            response.headers["Vary"] = "Accept-Encoding"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @staticmethod
+    def _accepts_gzip(value: str) -> bool:
+        qualities: dict[str, float] = {}
+        for entry in value.lower().split(","):
+            coding, *parameters = entry.strip().split(";")
+            quality = 1.0
+            for parameter in parameters:
+                if parameter.strip().startswith("q="):
+                    try:
+                        quality = float(parameter.strip()[2:])
+                    except ValueError:
+                        quality = 0.0
+            qualities[coding] = quality if 0 <= quality <= 1 else 0.0
+        return qualities.get("gzip", qualities.get("*", 0.0)) > 0
 
 
 def create_app() -> FastAPI:
@@ -148,9 +191,9 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     @app.middleware("http")
-    async def reminder_no_store(request: Request, call_next):
+    async def private_response_no_store(request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith("/api/reminders"):
+        if request.url.path.startswith(("/api/", "/auth/")):
             response.headers["Cache-Control"] = "no-store"
         return response
 

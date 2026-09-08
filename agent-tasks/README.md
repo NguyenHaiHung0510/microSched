@@ -12,6 +12,7 @@ UI/UX readability work: [043 — calendar, private presentation and upcoming rem
 Public homepage / denied and live-link delivery: [044 — Owner-approved homepage](044-homepage-preview.md).
 One-shot reminders and bounded homepage/key assessment: [047 — reminders](047-one-shot-reminders.md).
 Neon autosuspend recovery: [048 — idle recovery](048-neon-idle-recovery.md).
+Minimal public static delivery: [049 — cache and build compression](049-static-delivery.md).
 Đọc header/acceptance của task được giao và re-query GitHub/runtime; không suy current queue từ snapshot dưới.
 
 ## Historical status snapshot — 2026-08-15, không phải hàng đợi hiện hành
