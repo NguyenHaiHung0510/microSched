@@ -233,3 +233,41 @@ CodeQL javascript-typescript=PASS 1m16s
 ```
 
 This docs-only receipt changes the PR head. These checks are not reused for merge; final exact-head checks must rerun and pass. Merge/deploy remain NO at this receipt point.
+
+## Final exact-head CI, CAS merge and deploy — 2026-09-14
+
+```text
+final_pr_head=1c45f865f6210026a72c5217973ad2847c12751f
+frozen_application_candidate=1c7af66582d574f43ab34493d4e3d8af856dbb23
+fresh_pr_state=OPEN; draft=false; mergeable=MERGEABLE; mergeStateStatus=CLEAN
+fresh_base=develop@7806f4e9f75ef66110ae3d485cffd036d42d94c1
+fresh_diff=21 files; scoped P0 diff confirmed
+Backend checks=PASS 24s
+Frontend checks=PASS 36s
+Repository hooks=PASS 1m
+Secret scan=PASS 6s
+Production dependency check=PASS 13s
+Migration QA=PASS 1m48s
+Frontend e2e=PASS 7m26s
+CodeQL python=PASS 1m10s
+CodeQL javascript-typescript=PASS 1m10s
+merge_command=gh pr merge 222 --merge --match-head-commit 1c45f865f6210026a72c5217973ad2847c12751f
+merge_exit=0
+merged_at=2026-09-14T15:01:26Z
+merge_commit=2f06ddca28ea5570f5d1bad018ce574b9f782881
+origin/develop=2f06ddca28ea5570f5d1bad018ce574b9f782881
+deploy_run=https://github.com/NguyenHaiHung0510/microSched/actions/runs/34859437210
+deploy=PASS 1m49s
+production_readyz.status=ok
+production_readyz.db=up
+production_readyz.commit=2f06ddca28ea5570f5d1bad018ce574b9f782881
+develop_ci_run=https://github.com/NguyenHaiHung0510/microSched/actions/runs/34859437135
+develop_ci=PASS; Backend/Frontend/hooks/secret/dependency/migration/e2e all green
+develop_frontend_e2e=PASS 7m54s
+develop_codeql_run=34859437148 PASS
+local_sandbox=stopped; volume/evidence retained
+cleanup=NOT_AUTHORIZED / NOT_RUN
+P1=NOT_STARTED
+```
+
+Non-blocking annotation: GitHub forced actions pinned to Node.js 20-compatible releases onto Node.js 24. Physical iPhone/Safari, real OAuth/profile, real data, live provider, combined 512 MB resource acceptance and all Mimi P1+ acceptance IDs remain NOT_RUN.

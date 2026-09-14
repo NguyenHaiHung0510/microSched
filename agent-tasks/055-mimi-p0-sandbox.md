@@ -1,8 +1,8 @@
 # 055 — Mimi P0 synthetic sandbox and contracts
 
-Status: **P0 DELIVERY READY FOR FINAL EXACT-HEAD CI / CAS MERGE (2026-09-14)**
+Status: **P0 DELIVERED / MERGED / PRODUCTION VERIFIED (2026-09-14)**
 
-> Executor/writer: T1 GPT-5.6 Sol/high, Economy · Owner grant: 2026-09-14 “còn lại đồng ý, thực thi” · Automation `mimi-p0-sol-handoff-once` · source task `01a05311-c272-7633-9ac0-5abdcf44c22e` · no merge/deploy/real data/paid provider/P1 start.
+> Executor/writer: T1 GPT-5.6 Sol/high, Economy · Owner grant: 2026-09-14 “còn lại đồng ý, thực thi” · Automation `mimi-p0-sol-handoff-once` · source task `01a05311-c272-7633-9ac0-5abdcf44c22e` · P0 merged/deployed; no real data/paid provider/P1 start.
 
 ## Delivery-closure startup — 2026-09-14
 
@@ -46,11 +46,11 @@ Raw concise receipts: `agent-tasks/task-055/terminal-receipt.md`.
 
 ## Status boundaries and next safe action
 
-- P0 implemented locally; no runtime Agent router/provider/orchestrator, production schema, real capture, migration beyond existing local migrations, Neon/Fly/R2 operation, paid model call, PR, push, merge, deploy, automation or P1 implementation.
+- P0 is merged and ordinarily deployed. It adds no runtime Agent router/provider/orchestrator, production schema, real capture, migration beyond existing migrations, Neon/R2 operation, paid model call, recurring automation or P1 implementation.
 - Production, CI, production-image, real OAuth/profile, physical iPhone/Safari, live-provider portability, combined 512 MB resource tests, and all Mimi P1+ acceptance IDs: **NOT_RUN**.
 - Existing `npm ci` audit reported 6 dependency vulnerabilities (3 moderate, 3 high); no dependency changes were authorized or made. This is not a P0 acceptance claim.
 - Before any live/full evidence capture, Owner decision is still required for exact TTL, per-run/per-chat/global caps, warning threshold/UX, verified export/extension, deletion mapping, key isolation and backup-aging truth. P0 enabled none of these.
-- Safe next action: review local commit/diff and this handoff; propose detailed P1 Task STANDARD read/create slice from observed seams. Do not auto-start P1.
+- Safe next action: Owner reviews the decision packet and proposed detailed P1 Task STANDARD read/create slice from observed seams. Do not auto-start P1.
 - Feedback review is not usable product functionality yet, so do **not** schedule the three-day review now. When P1 first makes capture/review usable, remind Owner to choose the CRON time/destination. At L2 remind Owner to retrieve the real planning Codex chat from about one month earlier.
 
 ## Independent-finding dispositions — delivery closure
@@ -74,4 +74,18 @@ First independent delta review (`T3 Luna/high`, fresh context, read-only) blocke
 
 - PR [#222](https://github.com/NguyenHaiHung0510/microSched/pull/222) opened non-draft into `develop`; first published head `a868fd06fa0ed47518272c60dab83e0e6992ccb2`, base `7806f4e9f75ef66110ae3d485cffd036d42d94c1`, mergeable and 21-file P0 scope.
 - On that exact head: Backend checks, Frontend checks, Repository hooks, Secret scan, Production dependency check, Migration QA, Frontend e2e, CodeQL Python and CodeQL JavaScript/TypeScript all PASS; Frontend e2e duration 7m29s. No repo labels named `codex` or `codex-automation` existed, so none were invented.
-- This receipt commit changes docs only and therefore creates a new PR head. Required action: push it, wait for all checks on the new exact head, then fresh-query open/non-draft/head/base/diff/mergeability/checks immediately before `gh pr merge --match-head-commit`. No cleanup.
+- This receipt commit changed docs only and therefore created a new PR head. The required fresh exact-head checks and `gh pr merge --match-head-commit` action were completed as recorded below. No cleanup.
+
+## Final P0 delivery receipt — 2026-09-14
+
+- Final PR head `1c45f865f6210026a72c5217973ad2847c12751f` was receipt-only over frozen application candidate `1c7af66582d574f43ab34493d4e3d8af856dbb23`. Fresh audit observed PR #222 OPEN/non-draft, base `develop@7806f4e9f75ef66110ae3d485cffd036d42d94c1`, head exact, mergeable/CLEAN, and the expected 21-file P0 diff.
+- All final exact-head gates passed: Backend checks, Frontend checks, Repository hooks, Secret scan, Production dependency check, Migration QA, Frontend e2e, CodeQL Python and CodeQL JavaScript/TypeScript.
+- CAS merge command `gh pr merge 222 --merge --match-head-commit 1c45f865f6210026a72c5217973ad2847c12751f` exited 0. PR merged at 2026-09-14T15:01:26Z as `2f06ddca28ea5570f5d1bad018ce574b9f782881`; refreshed `origin/develop` matched that SHA.
+- Ordinary `develop` deployment run [34859437210](https://github.com/NguyenHaiHung0510/microSched/actions/runs/34859437210) passed. Direct production `/api/readyz` returned `status=ok`, `db=up`, `commit=2f06ddca28ea5570f5d1bad018ce574b9f782881`.
+- The post-merge `develop` CI run [34859437135](https://github.com/NguyenHaiHung0510/microSched/actions/runs/34859437135) passed every lane, including Frontend e2e in 7m54s. The parallel CodeQL push run 34859437148 also passed.
+- Non-blocking GitHub annotation: actions pinned to Node.js 20-compatible releases are being forced onto Node.js 24 by the runner. No workflow/dependency expansion was authorized in this P0 delivery.
+- Local synthetic sandbox is stopped; its named volume and evidence are retained. No branch/worktree/container-volume cleanup was authorized or performed.
+
+P0 delivery proves only the synthetic local substrate, contracts, repository gates and ordinary production deployment of that code. Physical iPhone/Safari, real OAuth/browser profile, real data, live provider portability, combined 512 MB resource tests and every Mimi P1+ acceptance ID remain **NOT_RUN**.
+
+Next action is Owner review of the P1 decision packet only: exact TTL; per-run/per-chat/global caps; warning threshold/UX; verified export/extension; deletion mapping; key isolation; backup-aging truth; and the proposed Task STANDARD read/create walking skeleton. Do not start P1 from this closeout. When feedback capture/review becomes usable in P1, remind Owner to choose a three-day review schedule; at L2 remind Owner to retrieve the real planning Codex chat from about one month earlier.
