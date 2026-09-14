@@ -90,6 +90,14 @@ def test_complete_bundle_cannot_claim_an_absent_payload_part() -> None:
         {"config": {"nested": {"private_key": "synthetic"}}},
         {"usage": {"metadata": {"thinking": "hidden"}}},
         {"assembled_prompt": 'prefix {"Authorization": "Bearer synthetic"}'},
+        {"response": {"serialized": '{"password":"synthetic"}'}},
+        {"response": {"serialized": '{"token":"synthetic"}'}},
+        {"response": {"serialized": '{"private_key":"synthetic"}'}},
+        {"response": {"serialized": '{"reasoning_content":"hidden"}'}},
+        {"response": {"serialized": '{"reasoning_details":"hidden"}'}},
+        {"response": {"reasoning": "hidden"}},
+        {"response": {"reasoning_details": "hidden"}},
+        {"assembled_prompt": "Bearer synthetic-token-value"},
     ],
 )
 def test_evidence_rejects_auth_headers_cookies_and_secret_fields(payload: dict) -> None:
@@ -124,8 +132,14 @@ def test_evidence_rejects_unknown_top_level_provider_fields() -> None:
 
 
 def test_visible_reasoning_summary_is_allowed() -> None:
-    payload = EvidencePayload(response={"reasoning_summary": "Application-visible summary"})
-    assert payload.response == {"reasoning_summary": "Application-visible summary"}
+    payload = EvidencePayload(
+        response={
+            "reasoning_summary": "Application-visible summary",
+            "serialized": '{"reasoning_summary":"Application-visible summary"}',
+        },
+        config={"reasoning_effort": "high"},
+    )
+    assert payload.response["reasoning_summary"] == "Application-visible summary"
 
 
 def test_change_set_digest_is_canonical_and_excludes_declared_digest() -> None:

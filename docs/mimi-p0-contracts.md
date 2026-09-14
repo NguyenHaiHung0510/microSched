@@ -60,6 +60,8 @@ Reminder/cache hook: existing domain mutation/reload code is an integration refe
 
 P0 review state lives under ignored `.local/mimi-p0/review`, while disposable domain fixtures are rows with exact manifest-owned IDs. Ordinary `reset` deletes only those IDs and cannot address the review directory. The local store encrypts every bundle, feedback row, and idempotency binding through `app.core.crypto`; filenames contain only UUIDs or SHA-256 of client IDs. It stores no API keys, Authorization/proxy headers, cookies, refresh/access tokens, auth headers, or provider hidden reasoning.
 
+The P0 evidence contract accepts only application-visible content. `reasoning_summary` is the only reasoning content field permitted; `reasoning_effort` is permitted as non-content configuration. Raw/serialized provider reasoning, credentials, auth headers/cookies and credential-bearing aliases are rejected recursively, including JSON encoded inside strings. The adapter that constructs this application-visible DTO from a live provider remains P1 and is NOT_RUN; P0 does not claim semantic secret detection for arbitrary prose.
+
 The P0 store enforces a 1 MiB plaintext cap per evidence bundle, 64 KiB per feedback record and 8 KiB per client binding. These are local substrate safety ceilings, not approved production retention policy. Same-process writers share a per-root lock, and an encrypted pending intent completes an interrupted entity/binding write when the store reopens. Multi-process/distributed concurrency, exact production caps and quota UX remain P1/pre-live gates.
 
 This local filesystem implementation is synthetic substrate only. Before real capture the Owner must approve a finite packet containing:

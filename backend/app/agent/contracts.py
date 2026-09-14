@@ -235,6 +235,8 @@ _FORBIDDEN_KEYS = {
     "refresh_token",
     "client-secret",
     "client_secret",
+    "credential",
+    "credentials",
     "password",
     "passwd",
     "token",
@@ -253,13 +255,26 @@ _HIDDEN_REASONING_KEYS = {
     "hidden_reasoning",
     "reasoning-content",
     "reasoning_content",
+    "reasoning-details",
+    "reasoning_details",
+    "reasoning",
     "thinking",
     "thoughts",
 }
+_VISIBLE_REASONING_KEYS = {"reasoning_effort", "reasoning_summary"}
 _FORBIDDEN_TEXT = re.compile(
     r"(?i)[\"']?(?:authorization|proxy-authorization|cookie|set-cookie|"
     r"x-api-key|api-key)[\"']?\s*[:=]"
 )
+_FORBIDDEN_SERIALIZED_KEY = re.compile(
+    r"(?i)[\"']?(?:"
+    + "|".join(
+        re.escape(key)
+        for key in sorted((_FORBIDDEN_KEYS | _HIDDEN_REASONING_KEYS) - _VISIBLE_REASONING_KEYS)
+    )
+    + r")[\"']?\s*[:=]"
+)
+_FORBIDDEN_BEARER = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
 
 
 def _reject_secret_material(value: Any, path: str = "payload") -> None:
@@ -272,8 +287,8 @@ def _reject_secret_material(value: Any, path: str = "payload") -> None:
     elif isinstance(value, (list, tuple)):
         for index, child in enumerate(value):
             _reject_secret_material(child, f"{path}[{index}]")
-    elif isinstance(value, str) and _FORBIDDEN_TEXT.search(value):
-        raise ValueError(f"serialized auth header/cookie is forbidden at {path}")
+    elif isinstance(value, str):
+        _reject_serialized_material(value, path)
 
 
 def _reject_evidence_material(value: Any, path: str = "payload") -> None:
@@ -288,5 +303,19 @@ def _reject_evidence_material(value: Any, path: str = "payload") -> None:
     elif isinstance(value, (list, tuple)):
         for index, child in enumerate(value):
             _reject_evidence_material(child, f"{path}[{index}]")
-    elif isinstance(value, str) and _FORBIDDEN_TEXT.search(value):
-        raise ValueError(f"serialized auth header/cookie is forbidden at {path}")
+    elif isinstance(value, str):
+        _reject_serialized_material(value, path)
+
+
+def _reject_serialized_material(value: str, path: str) -> None:
+    if _FORBIDDEN_TEXT.search(value) or _FORBIDDEN_SERIALIZED_KEY.search(value):
+        raise ValueError(f"serialized secret or hidden-reasoning field is forbidden at {path}")
+    if _FORBIDDEN_BEARER.search(value):
+        raise ValueError(f"serialized bearer credential is forbidden at {path}")
+    stripped = value.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            structured = json.loads(stripped)
+        except json.JSONDecodeError:
+            return
+        _reject_evidence_material(structured, f"{path}<json>")
