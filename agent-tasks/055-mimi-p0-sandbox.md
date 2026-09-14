@@ -18,7 +18,7 @@ Status: **P0 DELIVERY REMEDIATION IN PROGRESS (2026-09-14)**
 - Refreshed base: `origin/develop@7806f4e9f75ef66110ae3d485cffd036d42d94c1`, fetched 2026-09-14; upstream commit timestamp 2026-09-09T18:10:24+07:00.
 - Duplicate-writer inventory: no Mimi P0 task/branch/worktree/open PR existed before creation. Existing dirty root (`.gitignore`, Task031/doc drafts/backup script) and all unrelated worktrees were preserved.
 - Canonical task/progress path: this file. Evidence directory: `agent-tasks/task-055/`. Contract/seam map: `docs/mimi-p0-contracts.md`.
-- Frozen application/test candidate: `572209231f833a0a5c6d9e4066e6ad2204aace85`; this supersedes the pre-remediation candidate `5ef0ba2c1a7656dd199c4ff545d777cf51ee84bd`. Any later commit is receipt-only unless this line is explicitly revised with new verification.
+- Frozen application/test candidate: `1c7af66582d574f43ab34493d4e3d8af856dbb23`; this supersedes remediation candidate `572209231f833a0a5c6d9e4066e6ad2204aace85` after independent review found a serialized-secret blocker. Any later commit is receipt-only unless this line is explicitly revised with new verification.
 - Source authority read: dispatcher `dispatch-p0/launch.md`, package08, scoped current04 §1–4/§7A–9, 06/07, repo AGENTS/harness-policy/project-guide and relevant architecture/schema/auth/QA briefs. Current grant superseded historical proposed/no-grant lines.
 
 ## Delivered P0 artifacts
@@ -67,3 +67,5 @@ Raw concise receipts: `agent-tasks/task-055/terminal-receipt.md`.
 | Raw receipt provenance/internal metadata | **CONFIRMED EVIDENCE/PUBLICATION WORK** | This task is canonical; final candidate SHA, commands/exits, review, CI, PR, merge and deploy receipts will be appended here/terminal receipt. Private dispatch/thread metadata is not needed in PR copy. |
 
 Rejected as a P0 behavior change: silently deleting dynamic P1 rows during reset. That would violate manifest ownership. The accepted behavior is fail-closed with an exact blocker count; P1 test orchestration may explicitly own/delete its own dynamic rows later.
+
+First independent delta review (`T3 Luna/high`, fresh context, read-only) blocked publication of `5722092`: serialized JSON containing `password`, `token`, `private_key`, `reasoning_content`, `reasoning_details`, or `reasoning` remained accepted. This was adjudicated **VALID P0 blocker**, fixed at `1c7af66`, and covered by explicit regressions. Only application-visible `reasoning_summary` content and non-content `reasoning_effort` config are allowed; semantic secret detection in arbitrary prose and live-provider DTO construction remain P1/NOT_RUN. Bounded re-review of `5722092..1c7af66` directly probed every listed alias, ran the focused contract suite (`25 passed`), found no new delta regression, and **closed the blocker**. Publication for CI is now allowed.

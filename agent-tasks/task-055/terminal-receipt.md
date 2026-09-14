@@ -169,3 +169,46 @@ physical iPhone/Safari=NOT_RUN
 ```
 
 Independent delta review was dispatched read-only to a fresh T3 Luna/high context against exact candidate `5722092`; result pending. No push/PR/CI/merge/deploy occurred at this receipt point.
+
+## Independent-review blocker and final candidate `1c7af66582d574f43ab34493d4e3d8af856dbb23`
+
+```text
+reviewer=T3 GPT-5.6 Luna/high; fresh read-only context
+reviewed=572209231f833a0a5c6d9e4066e6ad2204aace85 against b772e1c2a6e513527df7835e2a7c778e841730b5
+verdict=BLOCK publication
+valid blocker=serialized password/token/private_key and reasoning/reasoning_details/reasoning_content aliases accepted
+review runtime rerun=UNVERIFIED because reviewer hit Windows pytest temp ACL and uv-cache ACL; not treated as candidate failure
+fix_commit=1c7af66582d574f43ab34493d4e3d8af856dbb23
+focused contracts/store=32 passed
+full backend non-PG=487 passed, 1 skipped, 211 deselected, one existing Starlette/httpx warning
+full Ruff=PASS, 144 files formatted
+repository hooks=PASS
+```
+
+Fresh full-app/runtime/browser sequence was repeated after the blocker fix:
+
+```text
+readyz.db=up
+readyz.commit=1c7af66582d574f43ab34493d4e3d8af856dbb23
+browser_session=mimi-p0-final2
+Note/Tracker STANDARD fixtures visible; private gate locked; PRIVATE fixtures absent
+browser_console_before_logout=0 errors, 0 warnings
+logout=PASS; browser closed; post-logout /api/me unauthorized remains expected
+verify -> reset/reseed -> verify -> stop -> start -> verify -> stop=PASS
+counts_match=true; fixture digest unchanged
+bundle_roundtrip=true; feedback_acknowledged=true; feedback_unresolved=true
+final backend=false; frontend=false; postgres=false; volume/evidence retained
+```
+
+Bounded re-review of exact delta `5722092..1c7af66`:
+
+```text
+verdict=prior P0 sanitizer blocker CLOSED; no new delta regression
+direct probes=serialized password/token/private_key/reasoning_content/reasoning_details + direct reasoning/reasoning_details + raw Bearer rejected
+allowed probes=response.reasoning_summary + config.reasoning_effort + serialized reasoning_summary accepted
+independent focused contracts=25 passed
+feedback-store rerun=UNVERIFIED in reviewer lane due Windows pytest temp ACL; store code unchanged by this delta
+publication_for_CI=ALLOWED
+```
+
+Push/PR/CI/merge/deploy remain NO at this receipt point.
