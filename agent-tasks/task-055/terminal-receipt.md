@@ -9,6 +9,7 @@ task_id=mimi-p0-055
 branch=feat/055-mimi-p0-sandbox
 base=origin/develop
 base_sha=7806f4e9f75ef66110ae3d485cffd036d42d94c1
+application_candidate=5ef0ba2c1a7656dd199c4ff545d777cf51ee84bd
 docker_server=29.7.2
 container=microsched-mimi-p0-055
 container_label=microsched.synthetic=mimi-p0-055
