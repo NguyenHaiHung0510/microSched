@@ -212,3 +212,24 @@ publication_for_CI=ALLOWED
 ```
 
 Push/PR/CI/merge/deploy remain NO at this receipt point.
+
+## PR #222 first published-head CI — 2026-09-14
+
+```text
+pr=https://github.com/NguyenHaiHung0510/microSched/pull/222
+state=OPEN; draft=false; mergeable=MERGEABLE
+base=develop@7806f4e9f75ef66110ae3d485cffd036d42d94c1
+head=a868fd06fa0ed47518272c60dab83e0e6992ccb2
+files=21; scoped P0 diff confirmed
+Backend checks=PASS 33s
+Frontend checks=PASS 37s
+Repository hooks=PASS 39s
+Secret scan=PASS 9s
+Production dependency check=PASS 17s
+Migration QA=PASS 1m49s
+Frontend e2e=PASS 7m29s
+CodeQL python=PASS 1m5s
+CodeQL javascript-typescript=PASS 1m16s
+```
+
+This docs-only receipt changes the PR head. These checks are not reused for merge; final exact-head checks must rerun and pass. Merge/deploy remain NO at this receipt point.

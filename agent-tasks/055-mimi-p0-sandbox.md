@@ -1,6 +1,6 @@
 # 055 — Mimi P0 synthetic sandbox and contracts
 
-Status: **P0 DELIVERY REMEDIATION IN PROGRESS (2026-09-14)**
+Status: **P0 DELIVERY READY FOR FINAL EXACT-HEAD CI / CAS MERGE (2026-09-14)**
 
 > Executor/writer: T1 GPT-5.6 Sol/high, Economy · Owner grant: 2026-09-14 “còn lại đồng ý, thực thi” · Automation `mimi-p0-sol-handoff-once` · source task `01a05311-c272-7633-9ac0-5abdcf44c22e` · no merge/deploy/real data/paid provider/P1 start.
 
@@ -69,3 +69,9 @@ Raw concise receipts: `agent-tasks/task-055/terminal-receipt.md`.
 Rejected as a P0 behavior change: silently deleting dynamic P1 rows during reset. That would violate manifest ownership. The accepted behavior is fail-closed with an exact blocker count; P1 test orchestration may explicitly own/delete its own dynamic rows later.
 
 First independent delta review (`T3 Luna/high`, fresh context, read-only) blocked publication of `5722092`: serialized JSON containing `password`, `token`, `private_key`, `reasoning_content`, `reasoning_details`, or `reasoning` remained accepted. This was adjudicated **VALID P0 blocker**, fixed at `1c7af66`, and covered by explicit regressions. Only application-visible `reasoning_summary` content and non-content `reasoning_effort` config are allowed; semantic secret detection in arbitrary prose and live-provider DTO construction remain P1/NOT_RUN. Bounded re-review of `5722092..1c7af66` directly probed every listed alias, ran the focused contract suite (`25 passed`), found no new delta regression, and **closed the blocker**. Publication for CI is now allowed.
+
+## PR and first CI receipt
+
+- PR [#222](https://github.com/NguyenHaiHung0510/microSched/pull/222) opened non-draft into `develop`; first published head `a868fd06fa0ed47518272c60dab83e0e6992ccb2`, base `7806f4e9f75ef66110ae3d485cffd036d42d94c1`, mergeable and 21-file P0 scope.
+- On that exact head: Backend checks, Frontend checks, Repository hooks, Secret scan, Production dependency check, Migration QA, Frontend e2e, CodeQL Python and CodeQL JavaScript/TypeScript all PASS; Frontend e2e duration 7m29s. No repo labels named `codex` or `codex-automation` existed, so none were invented.
+- This receipt commit changes docs only and therefore creates a new PR head. Required action: push it, wait for all checks on the new exact head, then fresh-query open/non-draft/head/base/diff/mergeability/checks immediately before `gh pr merge --match-head-commit`. No cleanup.
