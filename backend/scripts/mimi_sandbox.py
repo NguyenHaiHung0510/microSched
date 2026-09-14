@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -45,6 +46,21 @@ DOMAIN_RECEIPT = LOCAL_ROOT / "domain" / "seed-receipt.json"
 REVIEW_ROOT = LOCAL_ROOT / "review"
 REVIEW_BUNDLE_ID = UUID("50000000-0000-7000-8000-000000000001")
 REVIEW_FEEDBACK_ID = UUID("50000000-0000-7000-8000-000000000002")
+_ENV_ALLOWLIST = {
+    "APPDATA",
+    "COMSPEC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR",
+}
 
 
 class SandboxRefusal(RuntimeError):
@@ -58,6 +74,7 @@ def _new_state() -> dict[str, Any]:
         "task_id": TASK_ID,
         "environment_id": ENVIRONMENT_ID,
         "container": CONTAINER,
+        "volume": VOLUME,
         "database": DATABASE,
         "postgres_password": password,
         "migrator_password": secrets.token_urlsafe(24),
@@ -78,10 +95,14 @@ def _load_state(*, create: bool = False) -> dict[str, Any]:
         _atomic_json(STATE_PATH, state)
     else:
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    if state.get("schema_version") == "mimi.sandbox-runtime.v1" and "volume" not in state:
+        state["volume"] = VOLUME
+        _atomic_json(STATE_PATH, state)
     if (
         state.get("task_id") != TASK_ID
         or state.get("environment_id") != ENVIRONMENT_ID
         or state.get("container") != CONTAINER
+        or state.get("volume") != VOLUME
         or state.get("database") != DATABASE
     ):
         raise SandboxRefusal("runtime marker does not match the exact Mimi P0 sandbox")
@@ -133,7 +154,7 @@ def fixture_digest() -> str:
 
 def _runtime_env(state: dict[str, Any]) -> dict[str, str]:
     _, migrator, app = _validated_urls(state)
-    env = os.environ.copy()
+    env = {key: value for key, value in os.environ.items() if key.upper() in _ENV_ALLOWLIST}
     env.update(
         {
             "APP_ENV": "local",
@@ -144,10 +165,22 @@ def _runtime_env(state: dict[str, Any]) -> dict[str, str]:
             "OAUTH_STATE_SECRET": state["oauth_state_secret"],
             "ALLOWED_EMAILS": "owner@test.local",
             "ENABLE_INPROCESS_CRON": "false",
+            "MIMI_P0_DISABLE_DOTENV": "1",
             "GIT_SHA": _git_sha(),
         }
     )
     return env
+
+
+def _activate_synthetic_settings(state: dict[str, Any]) -> None:
+    """Replace every application setting source without inspecting host values."""
+
+    from app.core.settings import Settings, get_settings
+
+    for field_name in Settings.model_fields:
+        os.environ.pop(field_name.upper(), None)
+    os.environ.update(_runtime_env(state))
+    get_settings.cache_clear()
 
 
 def _git_sha() -> str:
@@ -177,6 +210,26 @@ def _docker_inspect() -> dict[str, Any] | None:
     payload = json.loads(result.stdout)[0]
     if payload.get("Config", {}).get("Labels", {}).get("microsched.synthetic") != TASK_ID:
         raise SandboxRefusal(f"container {CONTAINER!r} exists without the required task label")
+    bindings = payload.get("HostConfig", {}).get("PortBindings", {}).get("5432/tcp") or []
+    exact_binding = any(
+        binding.get("HostIp") == "127.0.0.1" and binding.get("HostPort") == str(POSTGRES_PORT)
+        for binding in bindings
+    )
+    if len(bindings) != 1 or not exact_binding:
+        raise SandboxRefusal(f"container {CONTAINER!r} does not own the exact loopback port")
+    mounts = payload.get("Mounts", [])
+    exact_volume = any(
+        mount.get("Type") == "volume"
+        and mount.get("Name") == VOLUME
+        and mount.get("Destination") == "/var/lib/postgresql"
+        for mount in mounts
+    )
+    if len(mounts) != 1 or not exact_volume:
+        raise SandboxRefusal(f"container {CONTAINER!r} does not own the exact sandbox volume")
+    expected_image = "pgvector/pgvector:pg18"
+    configured_image = payload.get("Config", {}).get("Image")
+    if configured_image != expected_image:
+        raise SandboxRefusal(f"container {CONTAINER!r} uses unexpected image {configured_image!r}")
     return payload
 
 
@@ -255,11 +308,9 @@ def _encrypted(value: str) -> str:
 
 
 async def seed(state: dict[str, Any]) -> dict[str, int]:
-    os.environ.update(_runtime_env(state))
+    _activate_synthetic_settings(state)
     from app.core import crypto
-    from app.core.settings import get_settings
 
-    get_settings.cache_clear()
     crypto._cipher.cache_clear()
     fixture = _load_domain_fixture()
     _, _, app_url = _validated_urls(state)
@@ -435,6 +486,12 @@ async def reset(state: dict[str, Any]) -> dict[str, int]:
     )
     try:
         async with connection.transaction():
+            blockers = await _reset_dependent_blockers(connection, fixture)
+            if any(blockers.values()):
+                raise SandboxRefusal(
+                    "reset refuses unowned rows that depend on manifest fixtures: "
+                    + ", ".join(f"{table}={count}" for table, count in blockers.items() if count)
+                )
             for table, key in deletion_order:
                 ids = [UUID(row["id"]) for row in fixture[key]]
                 await connection.execute(
@@ -443,6 +500,57 @@ async def reset(state: dict[str, Any]) -> dict[str, int]:
     finally:
         await connection.close()
     return await seed(state)
+
+
+async def _reset_dependent_blockers(connection, fixture: dict[str, Any]) -> dict[str, int]:
+    ids = {key: [UUID(row["id"]) for row in rows] for key, rows in fixture.items()}
+    checks = {
+        "task_item": (
+            "SELECT count(*) FROM microsched.task_item WHERE task_id = ANY($1::uuid[])",
+            (ids["tasks"],),
+        ),
+        "note_item": (
+            "SELECT count(*) FROM microsched.note_item WHERE note_id = ANY($1::uuid[])",
+            (ids["notes"],),
+        ),
+        "calendar_event": (
+            "SELECT count(*) FROM microsched.calendar_event "
+            "WHERE source_id = ANY($1::uuid[]) AND NOT (id = ANY($2::uuid[]))",
+            (ids["calendar_sources"], ids["calendar_events"]),
+        ),
+        "tracker": (
+            "SELECT count(*) FROM microsched.tracker "
+            "WHERE group_id = ANY($1::uuid[]) AND NOT (id = ANY($2::uuid[]))",
+            (ids["tracker_groups"], ids["trackers"]),
+        ),
+        "entry": (
+            "SELECT count(*) FROM microsched.entry "
+            "WHERE tracker_id = ANY($1::uuid[]) AND NOT (id = ANY($2::uuid[]))",
+            (ids["trackers"], ids["entries"]),
+        ),
+        "subscription": (
+            "SELECT count(*) FROM microsched.subscription "
+            "WHERE tracker_id = ANY($1::uuid[]) AND NOT (id = ANY($2::uuid[]))",
+            (ids["trackers"], ids["subscriptions"]),
+        ),
+        "one_shot_reminder": (
+            "SELECT count(*) FROM microsched.one_shot_reminder "
+            "WHERE task_id = ANY($1::uuid[]) OR event_id = ANY($2::uuid[]) "
+            "OR tracker_id = ANY($3::uuid[])",
+            (ids["tasks"], ids["calendar_events"], ids["trackers"]),
+        ),
+        "reminder_dispatch": (
+            "SELECT count(*) FROM microsched.reminder_dispatch "
+            "WHERE confirmed_entry_id = ANY($1::uuid[]) "
+            "OR (subject_type = 'tracker' AND subject_id = ANY($2::uuid[])) "
+            "OR (subject_type = 'subscription' AND subject_id = ANY($3::uuid[]))",
+            (ids["entries"], ids["trackers"], ids["subscriptions"]),
+        ),
+    }
+    return {
+        table: await connection.fetchval(statement, *parameters)
+        for table, (statement, parameters) in checks.items()
+    }
 
 
 async def verify(state: dict[str, Any]) -> dict[str, Any]:
@@ -470,12 +578,10 @@ async def verify(state: dict[str, Any]) -> dict[str, Any]:
     finally:
         await connection.close()
     expected = {key: len(fixture[key]) for key in mapping}
-    os.environ.update(_runtime_env(state))
+    _activate_synthetic_settings(state)
     from app.agent.feedback_store import EncryptedReviewStore
     from app.core import crypto
-    from app.core.settings import get_settings
 
-    get_settings.cache_clear()
     crypto._cipher.cache_clear()
     review_store = EncryptedReviewStore(REVIEW_ROOT)
     review_bundle = review_store.load_bundle(REVIEW_BUNDLE_ID)
@@ -579,7 +685,7 @@ def _start_processes(state: dict[str, Any], *, install: bool) -> None:
     env = _runtime_env(state)
     if install:
         _run([_npm_command(), "ci"], cwd=FRONTEND_ROOT, env=env)
-    vite = FRONTEND_ROOT / "node_modules" / ".bin" / "vite.cmd"
+    vite = FRONTEND_ROOT / "node_modules" / ".bin" / ("vite.cmd" if os.name == "nt" else "vite")
     if not vite.exists():
         raise RuntimeError("frontend dependencies missing; rerun start with --install")
     logs = LOCAL_ROOT / "logs"
@@ -587,12 +693,8 @@ def _start_processes(state: dict[str, Any], *, install: bool) -> None:
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
         subprocess, "CREATE_NO_WINDOW", 0
     )
-    if _http_ok(f"http://127.0.0.1:{BACKEND_PORT}/api/healthz") and not _pid_alive(
-        state.get("backend_pid")
-    ):
-        raise SandboxRefusal("backend port 8000 is owned by an unrecorded process")
-    if _http_ok(f"http://127.0.0.1:{FRONTEND_PORT}/") and not _pid_alive(state.get("frontend_pid")):
-        raise SandboxRefusal("frontend port 5173 is owned by an unrecorded process")
+    _assert_app_ports_owned(state)
+
     if not _pid_alive(state.get("backend_pid")):
         backend_log = (logs / "backend.log").open("ab")
         backend = subprocess.Popen(
@@ -651,6 +753,25 @@ def _start_processes(state: dict[str, Any], *, install: bool) -> None:
         _atomic_json(STATE_PATH, state)
 
 
+def _assert_app_ports_owned(state: dict[str, Any]) -> None:
+    if _pid_alive(state.get("backend_pid")) and not _recorded_listener_matches(
+        state.get("backend_pid"), BACKEND_PORT
+    ):
+        raise SandboxRefusal("recorded backend PID no longer owns port 8000")
+    if _pid_alive(state.get("frontend_pid")) and not _recorded_listener_matches(
+        state.get("frontend_pid"), FRONTEND_PORT
+    ):
+        raise SandboxRefusal("recorded frontend PID no longer owns port 5173")
+    if _port_bound(BACKEND_PORT) and not _recorded_listener_matches(
+        state.get("backend_pid"), BACKEND_PORT
+    ):
+        raise SandboxRefusal("backend port 8000 is owned by an unrecorded process")
+    if _port_bound(FRONTEND_PORT) and not _recorded_listener_matches(
+        state.get("frontend_pid"), FRONTEND_PORT
+    ):
+        raise SandboxRefusal("frontend port 5173 is owned by an unrecorded process")
+
+
 def _wait_http(url: str, seconds: int) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -687,6 +808,20 @@ def _http_json(url: str) -> dict[str, Any] | None:
             return json.loads(response.read())
     except OSError, ValueError, urllib.error.URLError:
         return None
+
+
+def _port_bound(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.25)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _recorded_listener_matches(pid: int | None, port: int) -> bool:
+    if not _pid_alive(pid):
+        return False
+    if os.name == "nt":
+        return _listener_pid(port) == pid
+    return True
 
 
 def _npm_command() -> str:
@@ -753,6 +888,22 @@ def _stop_pid(pid: int | None) -> None:
         os.kill(pid, signal.SIGTERM)
 
 
+def _owned_listener_or_refuse(pid: int | None, port: int, name: str) -> int | None:
+    if not _pid_alive(pid):
+        if _port_bound(port):
+            raise SandboxRefusal(
+                f"loopback port {port} is occupied without a live recorded {name} PID"
+            )
+        return None
+    if os.name == "nt":
+        listener = _listener_pid(port)
+        if listener != pid:
+            raise SandboxRefusal(
+                f"recorded {name} PID {pid} does not own loopback port {port}; refusing stop"
+            )
+    return pid
+
+
 def status() -> dict[str, Any]:
     state = _load_state() if STATE_PATH.exists() else None
     inspected = _docker_inspect()
@@ -783,11 +934,9 @@ def start(*, with_app: bool, install: bool) -> dict[str, Any]:
     _ensure_postgres(state)
     asyncio.run(_bootstrap(state))
     _migrate(state)
-    os.environ.update(_runtime_env(state))
+    _activate_synthetic_settings(state)
     from app.core import crypto
-    from app.core.settings import get_settings
 
-    get_settings.cache_clear()
     crypto._cipher.cache_clear()
     seed_review_fixture(state)
     asyncio.run(seed(state))
@@ -798,23 +947,30 @@ def start(*, with_app: bool, install: bool) -> dict[str, Any]:
 
 def stop() -> dict[str, Any]:
     state = _load_state()
-    _stop_pid(state.get("frontend_pid"))
-    _stop_pid(state.get("backend_pid"))
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        backend_down = not _http_ok(f"http://127.0.0.1:{BACKEND_PORT}/api/healthz")
-        frontend_down = not _http_ok(f"http://127.0.0.1:{FRONTEND_PORT}/")
-        if backend_down and frontend_down:
-            break
-        time.sleep(0.1)
-    else:
-        raise RuntimeError("recorded local app process tree did not stop within 10 seconds")
+    frontend_pid = _owned_listener_or_refuse(state.get("frontend_pid"), FRONTEND_PORT, "frontend")
+    backend_pid = _owned_listener_or_refuse(state.get("backend_pid"), BACKEND_PORT, "backend")
+    stop_error: RuntimeError | None = None
+    try:
+        _stop_pid(frontend_pid)
+        _stop_pid(backend_pid)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if not _port_bound(BACKEND_PORT) and not _port_bound(FRONTEND_PORT):
+                break
+            time.sleep(0.1)
+        else:
+            stop_error = RuntimeError(
+                "recorded local app process tree did not stop within 10 seconds"
+            )
+    finally:
+        inspected = _docker_inspect()
+        if inspected and inspected.get("State", {}).get("Running"):
+            _run(["docker", "stop", CONTAINER], capture=True)
+    if stop_error:
+        raise stop_error
     state["frontend_pid"] = None
     state["backend_pid"] = None
     _atomic_json(STATE_PATH, state)
-    inspected = _docker_inspect()
-    if inspected and inspected.get("State", {}).get("Running"):
-        _run(["docker", "stop", CONTAINER], capture=True)
     return status()
 
 

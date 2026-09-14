@@ -2,6 +2,7 @@
 
 import base64
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -153,3 +154,50 @@ def test_feedback_retry_is_deduplicated(fresh_key, tmp_path: Path) -> None:
 
     with pytest.raises(IdempotencyConflict, match="different content"):
         store.save_feedback(_feedback(bundle.bundle_id, comment="Khác nội dung"))
+
+
+def test_two_store_instances_serialize_same_client_retry(fresh_key, tmp_path: Path) -> None:
+    root = tmp_path / "review"
+    first_store = EncryptedReviewStore(root)
+    second_store = EncryptedReviewStore(root)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        receipts = list(
+            pool.map(lambda store: store.save_bundle(_bundle()), (first_store, second_store))
+        )
+
+    assert sorted(receipt.created for receipt in receipts) == [False, True]
+    assert receipts[0].server_id == receipts[1].server_id
+
+
+def test_pending_intent_recovers_interrupted_bundle_binding(fresh_key, tmp_path: Path) -> None:
+    root = tmp_path / "review"
+    store = EncryptedReviewStore(root)
+    bundle = _bundle()
+    digest = bundle.content_digest()
+    pending = store._write_pending(
+        "bundle", bundle.client_id, bundle.bundle_id, digest, bundle.model_dump(mode="json")
+    )
+    store._write_encrypted(
+        store.bundles / f"{bundle.bundle_id}.enc",
+        bundle.model_dump(mode="json"),
+        max_plaintext_bytes=store.MAX_BUNDLE_BYTES,
+    )
+
+    restarted = EncryptedReviewStore(root)
+
+    assert not pending.exists()
+    retry = restarted.save_bundle(_bundle())
+    assert retry.created is False
+    assert retry.server_id == bundle.bundle_id
+
+
+def test_bundle_size_cap_applies_before_encrypted_write(fresh_key, tmp_path: Path) -> None:
+    store = EncryptedReviewStore(tmp_path / "review")
+    store.MAX_BUNDLE_BYTES = 512
+    bundle = _bundle(prompt="x" * 2_000)
+
+    with pytest.raises(ValueError, match="byte P0 cap"):
+        store.save_bundle(bundle)
+    assert list(store.bundles.glob("*.enc")) == []
+    assert list(store.clients.glob("bundle-*.enc")) == []

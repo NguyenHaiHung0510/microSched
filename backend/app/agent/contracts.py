@@ -10,7 +10,7 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Sensitivity(StrEnum):
@@ -61,7 +61,7 @@ class ExecutionLease(BaseModel):
 
 class ChangeOperation(BaseModel):
     operation_id: UUID
-    tool: str
+    tool: str = Field(min_length=1, max_length=200)
     args: dict[str, Any]
     expected_entity_version: str | None = None
     reversible: bool
@@ -79,6 +79,13 @@ class FrozenChangeSet(BaseModel):
     digest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     idempotency_key: str = Field(min_length=1, max_length=160)
 
+    def calculated_digest(self) -> str:
+        """Canonical digest of the immutable proposal content bound by digest_sha256."""
+
+        body = self.model_dump(mode="json", exclude={"digest_sha256"})
+        canonical = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
 
 class ToolExchange(BaseModel):
     call_id: str = Field(min_length=1, max_length=200)
@@ -91,6 +98,8 @@ class ToolExchange(BaseModel):
 class EvidencePayload(BaseModel):
     """Application-visible provider data only; hidden reasoning is not a field."""
 
+    model_config = ConfigDict(extra="forbid")
+
     assembled_prompt: str | None = None
     request: dict[str, Any] | None = None
     response: dict[str, Any] | None = None
@@ -101,7 +110,7 @@ class EvidencePayload(BaseModel):
 
     @model_validator(mode="after")
     def reject_secret_material(self) -> EvidencePayload:
-        _reject_secret_material(self.model_dump(mode="python"))
+        _reject_evidence_material(self.model_dump(mode="python"))
         return self
 
 
@@ -226,10 +235,30 @@ _FORBIDDEN_KEYS = {
     "refresh_token",
     "client-secret",
     "client_secret",
+    "password",
+    "passwd",
+    "token",
+    "session-token",
+    "session_token",
+    "secret",
+    "secret-key",
+    "secret_key",
+    "private-key",
+    "private_key",
+}
+_HIDDEN_REASONING_KEYS = {
+    "chain-of-thought",
+    "chain_of_thought",
+    "hidden-reasoning",
+    "hidden_reasoning",
+    "reasoning-content",
+    "reasoning_content",
+    "thinking",
+    "thoughts",
 }
 _FORBIDDEN_TEXT = re.compile(
-    r"(?i)(?:^|[\r\n])\s*(?:authorization|proxy-authorization|cookie|set-cookie|"
-    r"x-api-key|api-key)\s*[:=]"
+    r"(?i)[\"']?(?:authorization|proxy-authorization|cookie|set-cookie|"
+    r"x-api-key|api-key)[\"']?\s*[:=]"
 )
 
 
@@ -243,5 +272,21 @@ def _reject_secret_material(value: Any, path: str = "payload") -> None:
     elif isinstance(value, (list, tuple)):
         for index, child in enumerate(value):
             _reject_secret_material(child, f"{path}[{index}]")
+    elif isinstance(value, str) and _FORBIDDEN_TEXT.search(value):
+        raise ValueError(f"serialized auth header/cookie is forbidden at {path}")
+
+
+def _reject_evidence_material(value: Any, path: str = "payload") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = str(key).strip().lower()
+            if normalized in _HIDDEN_REASONING_KEYS:
+                raise ValueError(f"provider-internal hidden reasoning is forbidden at {path}.{key}")
+            if normalized in _FORBIDDEN_KEYS:
+                raise ValueError(f"secret-bearing field is forbidden at {path}.{key}")
+            _reject_evidence_material(child, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _reject_evidence_material(child, f"{path}[{index}]")
     elif isinstance(value, str) and _FORBIDDEN_TEXT.search(value):
         raise ValueError(f"serialized auth header/cookie is forbidden at {path}")

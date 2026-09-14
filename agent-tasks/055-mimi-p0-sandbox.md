@@ -1,8 +1,16 @@
 # 055 — Mimi P0 synthetic sandbox and contracts
 
-Status: **IMPLEMENTED LOCALLY / P0 COMPLETE CANDIDATE (2026-09-14)**
+Status: **P0 DELIVERY REMEDIATION IN PROGRESS (2026-09-14)**
 
 > Executor/writer: T1 GPT-5.6 Sol/high, Economy · Owner grant: 2026-09-14 “còn lại đồng ý, thực thi” · Automation `mimi-p0-sol-handoff-once` · source task `01a05311-c272-7633-9ac0-5abdcf44c22e` · no merge/deploy/real data/paid provider/P1 start.
+
+## Delivery-closure startup — 2026-09-14
+
+- Owner grant source: `dispatch-p0/p0-remediation-handoff.md`; executor may reconcile the eight P0 allegations, apply bounded corrections, verify, obtain independent delta review, and deliver through PR/exact-head CI/CAS merge. Grant ends at P0 delivery or an Owner-reserved blocker.
+- Startup observed: clean `feat/055-mimi-p0-sandbox@b772e1c2a6e513527df7835e2a7c778e841730b5`; local `develop@6507a54d3149bab77e4e4381ee87f26a41969afd`; no known open PR. GitHub refresh initially blocked by sandbox proxy and the local `gh` keyring reporting an invalid token, so remote/PR facts remain UNVERIFIED until retried through an authorized network path.
+- Writer check: Git status/worktree inventory showed this exact worktree clean and uniquely bound to the branch. System-wide command-line inventory was denied by Windows access control; no concurrent Git mutations were observed. Recheck status before edits/commit/publication.
+- Topology: tightly coupled remediation stays with the single T1 writer. A fresh read-only T3 review will run only after the final candidate is frozen. No T2 contributor handoff is needed; no Astra route is invoked.
+- Preliminary disposition: Docker-context exclusion, dotenv/host-environment isolation, exact container/port/volume identity, nested secret/hidden-reasoning rejection, bounded atomic review records, PID ownership, and final-candidate provenance are P0 closure work. Dynamic P1 rows are not silently deleted during P0 reset; an unowned-dependent preflight must fail closed. P1 runtime/provider/device/real-data gates remain NOT_RUN.
 
 ## Identity, grant and baseline
 
@@ -44,3 +52,18 @@ Raw concise receipts: `agent-tasks/task-055/terminal-receipt.md`.
 - Before any live/full evidence capture, Owner decision is still required for exact TTL, per-run/per-chat/global caps, warning threshold/UX, verified export/extension, deletion mapping, key isolation and backup-aging truth. P0 enabled none of these.
 - Safe next action: review local commit/diff and this handoff; propose detailed P1 Task STANDARD read/create slice from observed seams. Do not auto-start P1.
 - Feedback review is not usable product functionality yet, so do **not** schedule the three-day review now. When P1 first makes capture/review usable, remind Owner to choose the CRON time/destination. At L2 remind Owner to retrieve the real planning Codex chat from about one month earlier.
+
+## Independent-finding dispositions — delivery closure
+
+| Finding | Disposition | Evidence / boundary |
+|---|---|---|
+| `.local` absent from Docker ignore | **CONFIRMED / FIXED P0** | Narrow `.local` exclusion added. Docker canary build transferred a `2B` context and failed with `CopyIgnoredFile` / canary not found. |
+| Host environment + backend dotenv can activate external config | **CONFIRMED / FIXED P0** | Sandbox children now receive an allowlisted OS environment plus exact synthetic settings; `MIMI_P0_DISABLE_DOTENV=1` makes `get_settings()` ignore dotenv only for this runner. Regression proves host Google/Neon variables are absent without reading their values. |
+| Reset/container/volume identity incomplete | **CONFIRMED / FIXED P0** | Container inspect now binds label, exact image, one loopback port mapping and one named volume mount. Reset preflights all current FK/semantic dependents and refuses unowned rows. Exact synthetic integration inserted an unowned Entry, observed refusal `entry=1`, removed only that row, then reset/reseed/verify passed. |
+| Arbitrary nested evidence may contain secrets/hidden reasoning | **CONFIRMED / FIXED P0 CONTRACT** | Evidence payload forbids unknown top-level provider fields and recursively rejects nested credential aliases, serialized auth/cookie material and provider-internal reasoning keys across prompt/request/response/tools/route/config/usage. Application-visible `reasoning_summary` remains allowed; raw provider ingestion/runtime remains P1 NOT_RUN. |
+| Entity + client binding durability/concurrency; missing caps | **CONFIRMED / BOUNDED P0 FIX** | Per-root same-process lock, encrypted pending intent recovery and rollback-on-error cover the local single-process substrate; exact per-record P0 ceilings are 1 MiB bundle / 64 KiB feedback / 8 KiB binding. Multi-process/distributed concurrency and production quota/TTL UX remain explicit P1/pre-live gates. |
+| Stored PID may be reused; stop can strand Postgres | **CONFIRMED / FIXED P0** | On Windows a live recorded PID must still own the exact listener before start/stop. Occupied unrecorded ports refuse. Container stop executes in `finally` even if app shutdown times out. |
+| Runtime receipt predates candidate SHA | **CONFIRMED EVIDENCE GAP** | Prior receipt is retained as working-tree evidence, not mislabeled absent. Closure requires a fresh sequence after the remediation commit, with `/api/readyz.commit` equal to that final candidate. |
+| Raw receipt provenance/internal metadata | **CONFIRMED EVIDENCE/PUBLICATION WORK** | This task is canonical; final candidate SHA, commands/exits, review, CI, PR, merge and deploy receipts will be appended here/terminal receipt. Private dispatch/thread metadata is not needed in PR copy. |
+
+Rejected as a P0 behavior change: silently deleting dynamic P1 rows during reset. That would violate manifest ownership. The accepted behavior is fail-closed with an exact blocker count; P1 test orchestration may explicitly own/delete its own dynamic rows later.

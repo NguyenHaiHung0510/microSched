@@ -12,6 +12,7 @@ from app.agent.contracts import (
     EvidenceBundle,
     EvidencePayload,
     ExecutionLease,
+    FrozenChangeSet,
     Sensitivity,
 )
 
@@ -74,6 +75,21 @@ def test_complete_bundle_cannot_claim_an_absent_payload_part() -> None:
         {"response": {"cookie": "synthetic=value"}},
         {"assembled_prompt": "Authorization: Bearer synthetic"},
         {"route": {"client_secret": "synthetic"}},
+        {"request": {"input": [{"password": "synthetic"}]}},
+        {"response": {"output": [{"reasoning_content": "hidden"}]}},
+        {
+            "tool_exchanges": [
+                {
+                    "call_id": "x",
+                    "tool_name": "x",
+                    "arguments": {"token": "synthetic"},
+                    "outcome": "failed",
+                }
+            ]
+        },
+        {"config": {"nested": {"private_key": "synthetic"}}},
+        {"usage": {"metadata": {"thinking": "hidden"}}},
+        {"assembled_prompt": 'prefix {"Authorization": "Bearer synthetic"}'},
     ],
 )
 def test_evidence_rejects_auth_headers_cookies_and_secret_fields(payload: dict) -> None:
@@ -100,3 +116,28 @@ def test_execution_lease_is_bounded_and_server_issued() -> None:
 
     with pytest.raises(ValidationError, match="deadline"):
         ExecutionLease.model_validate({**lease.model_dump(), "deadline": issued})
+
+
+def test_evidence_rejects_unknown_top_level_provider_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        EvidencePayload.model_validate({"thinking": "hidden"})
+
+
+def test_visible_reasoning_summary_is_allowed() -> None:
+    payload = EvidencePayload(response={"reasoning_summary": "Application-visible summary"})
+    assert payload.response == {"reasoning_summary": "Application-visible summary"}
+
+
+def test_change_set_digest_is_canonical_and_excludes_declared_digest() -> None:
+    change_set = FrozenChangeSet(
+        change_set_id=UUID("00000000-0000-7000-8000-000000000020"),
+        run_id=UUID("00000000-0000-7000-8000-000000000021"),
+        operations=(),
+        expires_at=datetime(2030, 1, 15, tzinfo=UTC),
+        nonce=UUID("00000000-0000-7000-8000-000000000022"),
+        digest_sha256="0" * 64,
+        idempotency_key="change-client-1",
+    )
+    digest = change_set.calculated_digest()
+    assert len(digest) == 64
+    assert change_set.model_copy(update={"digest_sha256": "f" * 64}).calculated_digest() == digest

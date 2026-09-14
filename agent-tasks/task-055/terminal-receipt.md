@@ -89,3 +89,48 @@ Mimi orchestrator and P1 acceptance=NOT_RUN
 P1 auto-start=NO
 merge/deploy/PR/push=NO
 ```
+
+## Delivery-closure remediation receipts — 2026-09-14 21:20 +07:00
+
+```text
+startup_head=b772e1c2a6e513527df7835e2a7c778e841730b5
+origin_develop_refreshed=7806f4e9f75ef66110ae3d485cffd036d42d94c1
+working_tree_at_start=clean
+github_pr_query_initial=UNVERIFIED (sandbox proxy denied; gh keyring reported invalid token)
+systemwide_process_inventory=UNVERIFIED (Windows access denied)
+concurrent_git_mutation_observed=false
+```
+
+Deliberate RED against archived candidate `5ef0ba2` with the new regression tests:
+
+```text
+contracts/environment/docker-context/PID/store subset: 12 failed, 4 passed; exit 1
+direct environment-isolation rerun after removing Git-metadata noise: 1 failed; exit 1
+observed violation: inherited GOOGLE_CLIENT_SECRET remained in old child environment
+observed violations: nested password/reasoning/token/private_key/thinking/inline auth accepted
+observed violations: .local missing from Docker ignore; no PID ownership helper; duplicate writers both created; no pending recovery; no size cap
+```
+
+GREEN on remediated working tree:
+
+```text
+focused contracts/store/testing/sandbox/settings: 59 passed, 1 integration-only skipped; exit 0
+exact synthetic reset dependent guard: 1 passed; exit 0
+post-guard verify: counts_match=true; bundle_roundtrip=true; feedback_acknowledged=true; feedback_unresolved=true
+post-guard stop: backend=false; frontend=false; postgres=false; volume/evidence retained
+full backend non-PG: 479 passed, 1 skipped, 211 deselected, one existing Starlette/httpx deprecation warning; exit 0
+full backend Ruff check: PASS; formatter: 144 files already formatted
+frontend lint: PASS; Vitest: 20 files / 145 tests passed; production build + apple icon + PWA surface + precompress: PASS
+```
+
+Docker ignore mechanism proof (synthetic canary only):
+
+```text
+docker build --no-cache --progress plain -f .local/mimi-p0/dockerignore-probe.Dockerfile .
+context_transfer=2B
+result=EXPECTED_FAIL exit 1
+diagnostic=CopyIgnoredFile; /.local/mimi-p0/docker-context-canary.txt not found
+image_created=false
+```
+
+Final committed-candidate runtime, independent delta review, CI/PR/CAS merge and production readyz receipts remain pending below this point.

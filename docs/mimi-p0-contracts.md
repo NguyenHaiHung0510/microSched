@@ -60,6 +60,8 @@ Reminder/cache hook: existing domain mutation/reload code is an integration refe
 
 P0 review state lives under ignored `.local/mimi-p0/review`, while disposable domain fixtures are rows with exact manifest-owned IDs. Ordinary `reset` deletes only those IDs and cannot address the review directory. The local store encrypts every bundle, feedback row, and idempotency binding through `app.core.crypto`; filenames contain only UUIDs or SHA-256 of client IDs. It stores no API keys, Authorization/proxy headers, cookies, refresh/access tokens, auth headers, or provider hidden reasoning.
 
+The P0 store enforces a 1 MiB plaintext cap per evidence bundle, 64 KiB per feedback record and 8 KiB per client binding. These are local substrate safety ceilings, not approved production retention policy. Same-process writers share a per-root lock, and an encrypted pending intent completes an interrupted entity/binding write when the store reopens. Multi-process/distributed concurrency, exact production caps and quota UX remain P1/pre-live gates.
+
 This local filesystem implementation is synthetic substrate only. Before real capture the Owner must approve a finite packet containing:
 
 1. exact full-evidence TTL and per-run/per-chat/global byte caps;
@@ -83,5 +85,7 @@ uv run --frozen python -m scripts.mimi_sandbox stop
 ```
 
 `start` owns one exact labeled container (`microsched-mimi-p0-055`), local volume and loopback database/ports. `reset` never truncates and never removes the encrypted review store. `stop` stops only exact recorded processes/container and deletes nothing. There is intentionally no broad cleanup command or production-like target override.
+
+The runner starts children from an allowlisted process environment, disables dotenv loading for those children, and injects only synthetic database/auth/encryption values. Existing containers must match the exact task label, image, `127.0.0.1:55455` binding and named volume mount. A manifest reset refuses rather than deletes any unowned Entry/Subscription rows that depend on the synthetic trackers. On Windows, recorded application PIDs must still own the expected loopback listeners before stop; a stop timeout still reaches the exact-container stop path.
 
 When feedback capture becomes usable in P1, remind the Owner to schedule the microSched feedback review every three days and choose time/destination then; P0 creates no automation. When L2 begins, remind the Owner to retrieve the actual Codex planning chat from about one month earlier; never import it into these synthetic fixtures automatically.
