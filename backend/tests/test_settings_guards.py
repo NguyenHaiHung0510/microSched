@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.database_urls import async_postgres_url
-from app.core.settings import Settings
+from app.core.settings import Settings, get_settings
 
 DEVELOP_URL = "postgresql://dev:pw@ep-develop-pooler.example.neon.tech/db?sslmode=require"
 PROD_URL = "postgresql://prod:pw@ep-prod.example.neon.tech/db?sslmode=require"
@@ -203,3 +203,15 @@ def test_local_ipv6_mapped_loopback_urls_are_accepted(monkeypatch, host) -> None
         DATABASE_URL=f"postgresql://u:p@[{host}]:5432/db",
     )
     assert "5432/db" in settings.database_url
+
+
+def test_get_settings_can_explicitly_disable_dotenv(monkeypatch, tmp_path) -> None:
+    (tmp_path / ".env").write_text("APP_ENV=production\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MIMI_P0_DISABLE_DOTENV", "1")
+    monkeypatch.setenv("APP_ENV", "local")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().app_env == "local"
+    finally:
+        get_settings.cache_clear()

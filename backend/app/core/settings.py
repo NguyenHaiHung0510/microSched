@@ -1,6 +1,7 @@
 """Application settings loaded from the environment."""
 
 import ipaddress
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -215,4 +216,6 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Return the process-wide settings instance."""
+    if os.environ.get("MIMI_P0_DISABLE_DOTENV") == "1":
+        return Settings(_env_file=None)
     return Settings()

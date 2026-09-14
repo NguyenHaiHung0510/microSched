@@ -1,0 +1,183 @@
+{
+  "tasks": [
+    {
+      "id": "10000000-0000-7000-8000-000000000001",
+      "ref": "task-internship",
+      "title": "Ca thực tập synthetic",
+      "body_md": "Chuẩn bị báo cáo tuần; đây không phải dữ liệu thật.",
+      "due_precision": "datetime",
+      "due_at": "2030-01-15T13:00:00+07:00",
+      "priority": "p1",
+      "is_private": false
+    },
+    {
+      "id": "10000000-0000-7000-8000-000000000002",
+      "ref": "task-reminder",
+      "title": "Nộp bài synthetic",
+      "body_md": "Intentional overlap với lịch học để kiểm cảnh báo.",
+      "due_precision": "datetime",
+      "due_at": "2030-01-15T13:30:00+07:00",
+      "priority": "p2",
+      "is_private": false
+    },
+    {
+      "id": "10000000-0000-7000-8000-000000000003",
+      "ref": "private-task",
+      "title": "Synthetic private task",
+      "body_md": "Private fixture only.",
+      "due_precision": "date",
+      "due_on": "2030-01-16",
+      "priority": "p2",
+      "is_private": true
+    }
+  ],
+  "notes": [
+    {
+      "id": "20000000-0000-7000-8000-000000000001",
+      "ref": "note-plan",
+      "title": "Kế hoạch tuần synthetic",
+      "body_md": "- [ ] Học\n- [ ] Thực tập\n- [ ] Rà overlap",
+      "priority": "p2",
+      "is_private": false
+    },
+    {
+      "id": "20000000-0000-7000-8000-000000000002",
+      "ref": "private-note",
+      "title": "Synthetic private note",
+      "body_md": "Private fixture only.",
+      "priority": "p3",
+      "is_private": true
+    }
+  ],
+  "calendar_sources": [
+    {
+      "id": "30000000-0000-7000-8000-000000000001",
+      "ref": "calendar-source-school",
+      "name": "Lịch học synthetic",
+      "kind": "manual",
+      "color": "rose"
+    }
+  ],
+  "calendar_events": [
+    {
+      "id": "31000000-0000-7000-8000-000000000001",
+      "ref": "calendar-class",
+      "source_id": "30000000-0000-7000-8000-000000000001",
+      "title": "Lớp synthetic",
+      "starts_at": "2030-01-15T12:45:00+07:00",
+      "ends_at": "2030-01-15T14:15:00+07:00",
+      "description_md": "Cố ý chồng lịch với Task để kiểm warning, không hard-block."
+    }
+  ],
+  "day_annotations": [
+    {
+      "id": "32000000-0000-7000-8000-000000000001",
+      "ref": "private-day",
+      "starts_on": "2030-01-17",
+      "ends_on": "2030-01-17",
+      "label": "Synthetic private day",
+      "note_md": "Private fixture only.",
+      "is_private": true
+    }
+  ],
+  "tracker_groups": [
+    {
+      "id": "40000000-0000-7000-8000-000000000001",
+      "name": "Synthetic finance",
+      "kind": "finance",
+      "position": 0
+    },
+    {
+      "id": "40000000-0000-7000-8000-000000000002",
+      "name": "Synthetic habits",
+      "kind": "general",
+      "position": 1
+    }
+  ],
+  "trackers": [
+    {
+      "id": "41000000-0000-7000-8000-000000000001",
+      "ref": "tracker-ai-cost",
+      "name": "Chi phí AI synthetic",
+      "kind": "finance",
+      "direction": "out",
+      "input_mode": "money",
+      "group_id": "40000000-0000-7000-8000-000000000001",
+      "is_private": false
+    },
+    {
+      "id": "41000000-0000-7000-8000-000000000002",
+      "ref": "tracker-habit",
+      "name": "Đọc sách synthetic",
+      "kind": "general",
+      "direction": "out",
+      "input_mode": "event",
+      "group_id": "40000000-0000-7000-8000-000000000002",
+      "is_private": false
+    },
+    {
+      "id": "41000000-0000-7000-8000-000000000003",
+      "ref": "private-tracker",
+      "name": "Synthetic private tracker",
+      "kind": "general",
+      "direction": "out",
+      "input_mode": "event",
+      "group_id": "40000000-0000-7000-8000-000000000002",
+      "is_private": true
+    }
+  ],
+  "subscriptions": [
+    {
+      "id": "42000000-0000-7000-8000-000000000001",
+      "ref": "subscription-fake-provider",
+      "tracker_id": "41000000-0000-7000-8000-000000000001",
+      "name": "Fake provider plan",
+      "amount": "200000",
+      "period_count": 1,
+      "period_unit": "month",
+      "started_on": "2030-01-01",
+      "expires_on": "2030-01-31",
+      "auto_renew": false
+    }
+  ],
+  "entries": [
+    {
+      "id": "43000000-0000-7000-8000-000000000001",
+      "ref": "entry-cost-a",
+      "tracker_id": "41000000-0000-7000-8000-000000000001",
+      "amount": "45000",
+      "occurred_at": "2030-01-10T09:00:00+07:00",
+      "note_md": "Fake provider A"
+    },
+    {
+      "id": "43000000-0000-7000-8000-000000000002",
+      "ref": "entry-cost-b",
+      "tracker_id": "41000000-0000-7000-8000-000000000001",
+      "amount": "55000",
+      "occurred_at": "2030-01-12T11:00:00+07:00",
+      "note_md": "Fake provider B"
+    },
+    {
+      "id": "43000000-0000-7000-8000-000000000003",
+      "ref": "entry-habit-1",
+      "tracker_id": "41000000-0000-7000-8000-000000000002",
+      "occurred_at": "2030-01-08T20:00:00+07:00",
+      "note_md": "Synthetic habit entry"
+    },
+    {
+      "id": "43000000-0000-7000-8000-000000000004",
+      "ref": "entry-habit-2",
+      "tracker_id": "41000000-0000-7000-8000-000000000002",
+      "occurred_at": "2030-01-11T20:00:00+07:00",
+      "note_md": "Synthetic irregular gap"
+    },
+    {
+      "id": "43000000-0000-7000-8000-000000000005",
+      "ref": "entry-habit-reversal",
+      "tracker_id": "41000000-0000-7000-8000-000000000002",
+      "occurred_at": "2030-01-12T20:00:00+07:00",
+      "note_md": "Synthetic reversal input",
+      "deleted": true
+    }
+  ]
+}

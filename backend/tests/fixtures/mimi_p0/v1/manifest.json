@@ -1,0 +1,25 @@
+{
+  "schema_version": "mimi.fixture-manifest.v1",
+  "fixture_version": "mimi-p0.v1",
+  "environment_id": "mimi-p0-local-055",
+  "clock": {
+    "mode": "fixed",
+    "now": "2030-01-15T08:00:00+07:00",
+    "timezone": "Asia/Ho_Chi_Minh"
+  },
+  "files": [
+    "domain.json",
+    "cases.json",
+    "j01-course-table.md"
+  ],
+  "journeys": {
+    "J01": ["document-source", "conflicting-instruction"],
+    "J02": ["task-internship", "task-reminder", "calendar-class", "calendar-overlap", "note-plan"],
+    "J03": ["tracker-habit", "entry-habit-1", "entry-habit-2", "entry-habit-reversal"],
+    "J04": ["tracker-ai-cost", "subscription-fake-provider", "entry-cost-a", "entry-cost-b"],
+    "J05": ["stale-task-version", "preview-v1", "preview-v2"],
+    "J06": ["private-task", "private-note", "private-tracker", "private-day", "expired-lease", "revoked-lease"]
+  },
+  "data_classification": "synthetic-only",
+  "contains_real_data": false
+}
