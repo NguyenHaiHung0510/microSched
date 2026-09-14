@@ -134,3 +134,38 @@ image_created=false
 ```
 
 Final committed-candidate runtime, independent delta review, CI/PR/CAS merge and production readyz receipts remain pending below this point.
+
+## Frozen remediation candidate runtime — `572209231f833a0a5c6d9e4066e6ad2204aace85`
+
+```text
+commit=572209231f833a0a5c6d9e4066e6ad2204aace85
+commit_hooks=large-file/EOF/whitespace/conflict/YAML/private-key/gitleaks PASS
+fresh_start=PASS; migration prerequisites=ok; Alembic head unchanged at 0013
+readyz.db=up
+readyz.commit=572209231f833a0a5c6d9e4066e6ad2204aace85
+fixture_sha256=39661bc7b78d88b310257077e75834613ffc7e968062524022c0691b2f5003cc
+explicit reset/reseed counts=Task 3, Note 2, Calendar source/event 1/1, private day 1, Tracker group/tracker 2/3, Subscription 1, Entry 5
+before/after reset bundle_roundtrip=true; feedback_acknowledged=true; feedback_unresolved=true
+full stop -> full start -> verify -> final stop=PASS
+final backend=false; frontend=false; postgres=false; volume/evidence retained
+```
+
+Isolated Playwright CLI browser receipt on the same running candidate:
+
+```text
+session=mimi-p0-final; synthetic local dev-session only
+wrapper prerequisite npx=available; bundled bash wrapper=UNAVAILABLE because WSL /bin/bash missing
+fallback=same @playwright/cli package invoked directly through npx
+authenticated app=PASS; role=allowed local synthetic owner
+observed Note=Kế hoạch tuần synthetic
+observed Tracker=Chi phí AI synthetic, Đọc sách synthetic
+observed groups=Synthetic finance, Synthetic habits; subscription count=1
+private gate=locked; PRIVATE seeded Note/Tracker absent from visible lists
+calendar surface=loaded; dated 2030 fixture event not brought into the current 2026 viewport in this smoke
+console before logout=0 errors, 0 warnings
+logout=PASS; public homepage restored; browser session closed
+post-logout console=one expected unauthorized /api/me check (same known behavior as prior receipt)
+physical iPhone/Safari=NOT_RUN
+```
+
+Independent delta review was dispatched read-only to a fresh T3 Luna/high context against exact candidate `5722092`; result pending. No push/PR/CI/merge/deploy occurred at this receipt point.

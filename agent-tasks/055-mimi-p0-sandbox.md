@@ -18,7 +18,7 @@ Status: **P0 DELIVERY REMEDIATION IN PROGRESS (2026-09-14)**
 - Refreshed base: `origin/develop@7806f4e9f75ef66110ae3d485cffd036d42d94c1`, fetched 2026-09-14; upstream commit timestamp 2026-09-09T18:10:24+07:00.
 - Duplicate-writer inventory: no Mimi P0 task/branch/worktree/open PR existed before creation. Existing dirty root (`.gitignore`, Task031/doc drafts/backup script) and all unrelated worktrees were preserved.
 - Canonical task/progress path: this file. Evidence directory: `agent-tasks/task-055/`. Contract/seam map: `docs/mimi-p0-contracts.md`.
-- Frozen application/test candidate: `5ef0ba2c1a7656dd199c4ff545d777cf51ee84bd`; any later commit is receipt-only unless this line is explicitly revised with new verification.
+- Frozen application/test candidate: `572209231f833a0a5c6d9e4066e6ad2204aace85`; this supersedes the pre-remediation candidate `5ef0ba2c1a7656dd199c4ff545d777cf51ee84bd`. Any later commit is receipt-only unless this line is explicitly revised with new verification.
 - Source authority read: dispatcher `dispatch-p0/launch.md`, package08, scoped current04 §1–4/§7A–9, 06/07, repo AGENTS/harness-policy/project-guide and relevant architecture/schema/auth/QA briefs. Current grant superseded historical proposed/no-grant lines.
 
 ## Delivered P0 artifacts
