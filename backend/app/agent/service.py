@@ -325,6 +325,11 @@ async def send_message(
         deadline=deadline,
     )
     db.add(run)
+    # These ledger rows intentionally expose only scalar foreign keys rather
+    # than ORM relationships. Establish the parent durably before SQLAlchemy
+    # batches event/message/provider-call inserts, otherwise PostgreSQL may
+    # order independent pending INSERTs ahead of mimi_run.
+    await db.flush()
     db.add(MimiEvent(run_id=run_id, sequence=1, kind="run.accepted", payload={}))
     db.add(
         MimiEvent(

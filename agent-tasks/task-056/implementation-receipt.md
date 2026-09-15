@@ -30,7 +30,11 @@ Date: 2026-09-15 · Candidate branch: `feat/056-mimi-p1-task-walking-skeleton`
 | Frontend production build/PWA guards | PASS |
 | Playwright Mimi mobile 390×844 + desktop 1280×800 | PASS — 2 tests |
 | Alembic graph | PASS — single head `0014` |
-| Docker/PostgreSQL migration + API integration | NOT_RUN — Docker Desktop daemon unavailable (`dockerDesktopLinuxEngine` pipe absent) |
+| Migration drop guard | PASS — `migration_drop_guard=ok` |
+| PostgreSQL clean upgrade + drift | PASS — `base -> 0014`; `migration_drift=empty` |
+| PostgreSQL full round-trip + drift | PASS — `0014 -> base -> 0014`; `migration_drift=empty` |
+| Focused Mimi PostgreSQL API | PASS — 1 passed |
+| Full PostgreSQL lane | PASS — 212 passed, 496 deselected |
 | Live provider route card | NOT_RUN — no approved exact route pin/secret supplied; production gate remains off |
 
 The failed initial non-PG regression after adding scheduler reconciliation was not
@@ -44,10 +48,22 @@ retries bind the original nonce as well as digest; and any distinct new user tur
 marks an earlier pending preview stale because P1 cannot safely prove a supplement
 is harmless. Change-set operations are encrypted at rest, not retained as JSONB.
 
+The real PostgreSQL lane found two issues hidden by the fast tests. Alembic's asyncpg
+driver rejects multi-statement prepared commands, so `0014` now executes each DDL
+statement separately and the schema/model registry explicitly includes every Mimi
+table, constraint and partial index. PostgreSQL also ordered scalar-FK child inserts
+before `mimi_run`; the service now flushes the parent run before writing its events,
+message and provider-call intent. Both fixes are covered by the clean migration
+round-trip, empty-drift checks and focused API test above.
+
+Two exploratory full-PG invocations were red and were not accepted: the first omitted
+the CI role variables; the second used non-canonical local role passwords. After the
+throwaway database was reset to `base` and configured exactly like the Migration QA
+workflow, the canonical full lane passed 212 tests. No Neon or real user data was used.
+
 ## Remaining closure gate
 
-After Docker Desktop is running, execute migration upgrade/downgrade safety on the
-throwaway Postgres, run `tests/test_mimi_p1_api.py`, then run repository hooks. Only
-after those checks pass should the candidate be independently delta-reviewed,
-published as a PR and considered for exact-head merge. Production real chat remains
-separately disabled until MIDEX selects an exact route and its route card passes.
+Freeze and commit the PostgreSQL fixes, rerun proportional regression and repository
+hooks, then publish the candidate as a PR and require its exact-head CI gates before
+merge. Production real chat remains separately disabled until MIDEX selects an exact
+route and its route card passes.

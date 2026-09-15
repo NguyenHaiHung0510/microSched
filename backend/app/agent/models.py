@@ -12,6 +12,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
@@ -82,7 +83,14 @@ class MimiMessage(UUIDTimestampModel, table=True):
             nullable=False,
         )
     )
-    run_id: UUID | None = Field(default=None, sa_column=Column(PGUUID(as_uuid=True), nullable=True))
+    run_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.mimi_run.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
     client_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     sequence: int = Field(sa_column=Column(Integer, nullable=False))
     role: str = Field(sa_column=Column(Text, nullable=False))
@@ -203,6 +211,7 @@ class MimiChangeSet(UUIDTimestampModel, table=True):
             "state IN ('pending','confirmed','rejected','expired','stale','executed')", name="state"
         ),
         CheckConstraint("digest_sha256 ~ '^[0-9a-f]{64}$'", name="digest"),
+        CheckConstraint("operation_ciphertext LIKE 'mimi:v1:%'", name="operation_ciphertext"),
         UniqueConstraint("run_id", name="uq_mimi_change_set_run"),
         {"schema": SCHEMA},
     )
@@ -300,6 +309,10 @@ class MimiFeedback(UUIDTimestampModel, table=True):
             name="state",
         ),
         CheckConstraint("comment_ciphertext LIKE 'mimi:v1:%'", name="comment_ciphertext"),
+        CheckConstraint(
+            "expected_ciphertext IS NULL OR expected_ciphertext LIKE 'mimi:v1:%'",
+            name="expected_ciphertext",
+        ),
         UniqueConstraint(
             "conversation_id", "client_id", name="uq_mimi_feedback_conversation_client"
         ),
@@ -366,3 +379,10 @@ class MimiEvidence(UUIDTimestampModel, table=True):
         default=0, sa_column=Column(Integer, nullable=False, server_default=text("0"))
     )
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+
+
+Index(
+    "ix_mimi_refresh_marker_pending",
+    MimiRefreshMarker.__table__.c.created_at,
+    postgresql_where=text("state = 'pending'"),
+)
