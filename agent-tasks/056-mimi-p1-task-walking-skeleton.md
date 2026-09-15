@@ -1,6 +1,6 @@
 # 056 — Mimi P1 STANDARD Task walking skeleton
 
-Status: **PACKAGE READY / D1–D4 AND MIDEX-v1 OWNER-APPROVED (2026-09-15)**
+Status: **IMPLEMENTATION CANDIDATE / LOCAL NON-PG VERIFIED; PG MIGRATION LANE PENDING DOCKER (2026-09-15)**
 
 > Executor/integrator: T1 GPT-5.6 Sol/high · Profile: Balanced · Owner grant: current task, 2026-09-15, “tự lập detailed next package, triển khai, kiểm chứng và giao hoàn chỉnh” · Skill: `ui-ux-pro-max` within `docs/ui-brief.md` · Browser verification: isolated Playwright/local synthetic only · No Astra delegation.
 
@@ -41,6 +41,15 @@ STANDARD source boundary remains active: the run must reject private Task rows b
 ## 4. Delivery decomposition
 
 The outcome may use sequential reviewable PRs, but the task closes only when the end-to-end capability reaches its declared state. Each merge remains default-disabled until its enablement gate.
+
+Implementation candidate `056A–056C` now exists in this worktree: additive `0014`
+ledger, per-conversation envelope encryption, Mimi-scoped CSRF, server-issued
+authority, bounded STANDARD Task context, deterministic preview/confirm execution,
+idempotent receipt, durable scheduler refresh marker, feedback persistence and the
+responsive Mimi tab. The exact OpenRouter adapter/config contract is implemented
+but remains disabled until an approved route pin and secret are supplied. See
+[implementation receipt](task-056/implementation-receipt.md) for literal checks and
+the remaining PostgreSQL boundary.
 
 ### 056A — Persistence, authority and protected API foundation
 

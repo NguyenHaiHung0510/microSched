@@ -8,6 +8,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import CheckConstraint, Text
 from sqlmodel import SQLModel
 
+import app.agent.models  # noqa: F401 - Mimi keeps its bounded ledger in this module
 import app.domain.models  # noqa: F401 - importing registers every table
 from app.domain.models import Gate
 
@@ -32,6 +33,16 @@ EXPECTED_TABLES = {
     "one_shot_reminder",
     "tracker_reminder_batch",
     "tracker_reminder_batch_item",
+    "mimi_conversation",
+    "mimi_message",
+    "mimi_run",
+    "mimi_event",
+    "mimi_provider_call",
+    "mimi_change_set",
+    "mimi_execution_receipt",
+    "mimi_refresh_marker",
+    "mimi_feedback",
+    "mimi_evidence",
 }
 
 GATE_AXES = {
@@ -106,11 +117,27 @@ def assert_gate_declarations_match_columns(
             parent_fullnames = {
                 foreign_key.column.table.fullname for foreign_key in model_table.foreign_keys
             }
+
+            def reaches_guarded_parent(parent_name: str, seen: set[str]) -> bool:
+                if parent_name in seen or parent_name not in models:
+                    return False
+                parent = models[parent_name]
+                parent_gate = vars(parent).get(flag_name)
+                if parent_gate is Gate.APPLIES:
+                    return True
+                if parent_gate is not Gate.VIA_PARENT:
+                    return False
+                parent_table = vars(parent)["__table__"]
+                return any(
+                    reaches_guarded_parent(fk.column.table.fullname, seen | {parent_name})
+                    for fk in parent_table.foreign_keys
+                    if not fk.parent.nullable
+                )
+
             guarded_parents = [
                 parent_name
                 for parent_name in parent_fullnames
-                if parent_name in models
-                and vars(models[parent_name]).get(flag_name) is Gate.APPLIES
+                if reaches_guarded_parent(parent_name, {fullname})
             ]
             assert guarded_parents, (
                 f"{table_name}.{flag_name}=VIA_PARENT nhưng không có FK tới "
