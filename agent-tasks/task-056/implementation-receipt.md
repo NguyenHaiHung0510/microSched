@@ -61,9 +61,14 @@ the CI role variables; the second used non-canonical local role passwords. After
 throwaway database was reset to `base` and configured exactly like the Migration QA
 workflow, the canonical full lane passed 212 tests. No Neon or real user data was used.
 
-## Remaining closure gate
+## Delivery closure
 
-Freeze and commit the PostgreSQL fixes, rerun proportional regression and repository
-hooks, then publish the candidate as a PR and require its exact-head CI gates before
-merge. Production real chat remains separately disabled until MIDEX selects an exact
-route and its route card passes.
+PR #223 passed all exact-head gates at `698cce0231ef3a31899b6dfae2a97d3dba2622ef`
+and was squash-merged into `develop` as
+`bd1e4f5c46b9e4881191f3923726a2204001bd4a`. Deploy run `34954992231` passed; its
+smoke receipt observed `/api/readyz` with `status=ok`, `db=up` and that exact merge
+commit. The task-owned PostgreSQL container was stopped and retained for recovery.
+
+Production real chat remains separately disabled until MIDEX selects an exact route,
+its route card passes, and the additive ledger migration is deliberately rolled out.
+The deployed default-off code path does not query the Mimi ledger for ordinary users.
