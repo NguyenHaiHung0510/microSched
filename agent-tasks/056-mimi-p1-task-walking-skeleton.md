@@ -1,6 +1,6 @@
 # 056 — Mimi P1 STANDARD Task walking skeleton
 
-Status: **PACKAGE READY / D1 ROUTE+BENCH AND D2–D4 OWNER-APPROVED; MIDEX-v1 FORMULA PENDING (2026-09-15)**
+Status: **PACKAGE READY / D1–D4 AND MIDEX-v1 OWNER-APPROVED (2026-09-15)**
 
 > Executor/integrator: T1 GPT-5.6 Sol/high · Profile: Balanced · Owner grant: current task, 2026-09-15, “tự lập detailed next package, triển khai, kiểm chứng và giao hoàn chỉnh” · Skill: `ui-ux-pro-max` within `docs/ui-brief.md` · Browser verification: isolated Playwright/local synthetic only · No Astra delegation.
 
@@ -81,7 +81,7 @@ The outcome may use sequential reviewable PRs, but the task closes only when the
 
 ## 5. Owner decisions
 
-### D1 — Model/route selection and benchmark — **ROUTE/BENCH OWNER-APPROVED; MIDEX-v1 PENDING**
+### D1 — Model/route selection and benchmark — **OWNER APPROVED 2026-09-15**
 
 The earlier five-model list validated Owner nominations plus two incumbent references; it was not a complete independent market scan and is superseded. Canonical research, formulas, current catalog receipts and the resumable benchmark design now live in [Task 056 model-selection research](task-056/model-selection-research.md).
 
@@ -151,17 +151,17 @@ Every `(bench_id, case_id, repetition, model_config_hash)` is a durable checkpoi
 
 Keep the Task walking skeleton independent of search, then add a STANDARD-only, explicit Owner-enabled `Research mode` after the core route is GREEN: one pinned engine, at most 2 searches/run, 5 results/search and 10 total results, citations required, untrusted-result boundary and exact usage receipt. PRIVATE web search remains disabled until the search processor's own retention path is proved.
 
-#### D1.f — MIDEX-v1 ranking — **FORMULA OWNER APPROVAL PENDING**
+#### D1.f — MIDEX-v1 ranking — **OWNER APPROVED 2026-09-15**
 
 Rank the exact `(model, provider, quantization, reasoning effort, route-policy version)`, not a model name alone. Publish category champions for cost, task intelligence, correctness, truthfulness/calibration, agentic reliability, speed and uptime, plus separate composite `MIDEX-S` and `MIDEX-P` for STANDARD and PRIVATE eligibility.
 
 Hard gates cannot be averaged away: privacy/retention/context contract, zero unauthorized/private egress, zero duplicate mutation and exact tool/schema behavior. Provider route uptime below 90% is excluded; 90–<95% is benchmark/degraded only; production eligibility requires at least 95% using the lower of current OpenRouter endpoint availability and Mimi's own observed terminal-success rate.
 
-Recommended composite after gates is a weighted geometric mean: cost efficiency 25%, exact correctness 20%, truthfulness/calibration 15%, agentic reliability 15%, task intelligence 10%, speed 10%, uptime 5%. Cost uses log-scaled **cost per correctly completed Task**, not raw token price, with Owner-approved ideal/unacceptable anchors frozen before S3. This heavily penalizes a model that costs ~20× more without a matching quality gain but does not alter cases to make it fail.
+Approved composite after gates is a weighted geometric mean: cost efficiency 25%, exact correctness 20%, truthfulness/calibration 15%, agentic reliability 15%, task intelligence 10%, speed 10%, uptime 5%. Cost uses log-scaled **cost per correctly completed Task**, not raw token price. `C_good` is the lowest positive paid route cost with a reliable S2 upper confidence bound; zero-cost routes receive cost score 100 without becoming the logarithmic anchor. `C_bad = 22 × C_good`. This heavily penalizes a much more expensive model without altering cases to make it fail. Free routes still need every safety, capacity, uptime and quality gate.
 
-Publish point estimate plus stratified-bootstrap 95% interval; overlapping intervals or <3 MIDEX points are reported as tied. Freeze formula/weights/anchors before seeing S3 results. Any later change creates a new MIDEX version and rescoring; Owner retains final route choice.
+Publish point estimate plus stratified-bootstrap 95% interval; overlapping intervals or <3 MIDEX points are reported as tied. Freeze formula/weights/anchors before seeing S3 results. Any later change creates a new MIDEX version and rescoring; Owner retains final route choice. Future public MIDEX artifacts must label cost provenance and abstract private/local acquisition details as specified in the research artifact.
 
-All other D1 choices are approved: discovery → S1/S2 → Owner-selected S3 finalists; provisional 0.5M/5M/35M token ceilings with equal 25M expansion tranches; centralized OpenRouter route contract; Owner-guaranteed 9router local abstraction; STANDARD Research mode after core GREEN; S3 24 hours/model resumable.
+All D1 choices are approved: discovery → S1/S2 → Owner-selected S3 finalists; provisional 0.5M/5M/35M token ceilings with equal 25M expansion tranches; centralized OpenRouter route contract; Owner-guaranteed 9router local abstraction; STANDARD Research mode after core GREEN; S3 24 hours/model resumable; MIDEX-v1 weights, hard gates, uncertainty and `22×` cost anchor rule.
 
 ### D2 — Full diagnostic evidence lifecycle — **OWNER APPROVED 2026-09-15**
 
@@ -222,3 +222,4 @@ Stop only the affected live-route/web-search work while D1 remains undecided. St
 - Raw concise command receipts: `agent-tasks/task-056/terminal-receipt.md`.
 - UI screenshots/manifests: ignored local task evidence first; only sanitized reviewed artifacts may be published.
 - Closeout must separate local/PG/browser/live-route/CI/deploy/device/production and exact enabled state. Physical iPhone/Safari, real OAuth and real-personal-data acceptance are never inferred from Chromium/synthetic gates.
+- Future direction, not Task 056 implementation scope: [public homepage ecosystem and MIDEX publication](task-056/future-homepage-ecosystem.md).

@@ -1,6 +1,6 @@
 # Task 056 — Mimi model-selection research
 
-Status: **ROUTE/BENCH OWNER-APPROVED / MIDEX-v1 FORMULA PENDING**
+Status: **OWNER-APPROVED RESEARCH AND MIDEX-v1 CONTRACT**
 Checked: 2026-09-15
 Scope: model discovery, OpenRouter route policy, cache-aware forecasting and resumable Mimi-specific evaluation. This artifact contains no credential, account identifier or raw screenshot.
 
@@ -271,11 +271,19 @@ Cost is the largest single weight because it is the Owner's main daily-use const
 
 All components are normalized to `[0,100]` using anchors frozen before S3. Quality axes use the same stratified cases and rubrics for every route. Speed and cost use log scaling because their practical ranges are multiplicative.
 
-For cost per correct Task `C`, with pre-approved ideal `C_good` and unacceptable `C_bad`:
+For cost per correct Task `C`, with approved ideal `C_good` and unacceptable `C_bad`:
 
 `S_cost = clamp(10 + 90 × ln(C_bad / C) / ln(C_bad / C_good), 10, 100)`
 
-This gives the cost dimension a floor of 10 rather than zero: a route around 20× more expensive is heavily penalized if `C_bad/C_good=20`, but exceptional quality can still partially compensate. The same anchored log pattern applies to P90 latency.
+Anchor rules:
+
+- `C_good` is the lowest **positive paid-route** cost per correctly completed Task whose S2 upper confidence bound is reliable;
+- a truly zero-billed route receives `S_cost=100` but does not become a logarithmic anchor;
+- `C_bad = 22 × C_good`; 22 is a transparent Owner-chosen MIDEX-v1 policy constant, not an empirically fitted value;
+- if no positive paid route qualifies, all qualifying zero-cost routes receive 100 for cost and the axis does not distinguish them;
+- free routes must still meet capacity for the declared workload plus all privacy, uptime, correctness and reliability gates.
+
+This gives the cost dimension a floor of 10 rather than zero: a route around 22× more expensive is heavily penalized, but exceptional quality can still partially compensate. The same anchored log pattern applies to P90 latency, with `L_bad = 4 × L_good` approved for MIDEX-v1.
 
 For qualifying uptime, use piecewise anchors: 90%=0, 95%=80, 99.9%=100; interpolate between anchors. Routes below 95% remain non-production regardless of their composite.
 
@@ -292,6 +300,20 @@ The weighted geometric mean penalizes an imbalanced route more than a weighted a
 - Freeze weights, anchors, hard gates and dataset manifest before S3 results are visible.
 - Formula changes create a new version such as `MIDEX-v1.1` and rescore all frozen receipts; never tune weights to promote a preferred model after seeing results.
 - Owner makes the final champion/challenger choice and may override MIDEX with a recorded rationale.
+
+### Cost provenance and public abstraction
+
+Every cost value carries one provenance label:
+
+- `OBSERVED_BILLED`: terminal billing record from the serving API;
+- `ROUTER_REPORTED`: 9router/OpenRouter dashboard or local API reports a cost estimate;
+- `CATALOG_ESTIMATED`: token counters priced against a frozen public catalog snapshot;
+- `OWNER_SUPPLIED_ESTIMATE`: Owner provides a bounded estimate without publishing acquisition details;
+- `NOT_AVAILABLE`: no defensible cost evidence; no composite cost ranking is claimed.
+
+For an Owner-guaranteed 9router heavy bench, use available token/cache counters and dashboard/local-API estimates. The public MIDEX artifact identifies the transport only as `LOCAL_ABSTRACTED`, publishes the pricing assumption and provenance, and does not disclose or speculate about the underlying account, credential, subscription or purchase source. If provider/quantization is not observable, the result is a model/config research score rather than a production-route certification.
+
+Open-source MIDEX publishes schema, fixtures where safe, graders, formula/version, public pricing snapshot, sanitized aggregate receipts and limitations. It must not publish Mimi/private content, secrets, provider identifiers that reveal private acquisition arrangements, or raw account screenshots.
 
 This follows holistic evaluation principles: broad scenario coverage, multiple explicit metrics and standardized comparison. Artificial Analysis likewise constructs domain indices from separately run component benchmarks and role-specific task weights, while noting that any index has limits for a specific use case.
 

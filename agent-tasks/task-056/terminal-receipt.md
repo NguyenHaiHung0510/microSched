@@ -97,3 +97,20 @@ provider_inference_calls=none
 external_purchase=none
 checks=git diff --check PASS; repository hooks PASS on package, research artifact and receipt
 ```
+
+## MIDEX-v1 approval and future homepage direction — 2026-09-15
+
+```text
+owner_decision=all remaining D1/MIDEX proposal approved with cost-anchor refinement
+midex_cost_anchor=C_good lowest positive paid route with reliable S2 upper confidence bound; zero-billed route scores 100 but is not logarithmic anchor; C_bad=22*C_good
+midex_free=free remains subject to declared capacity, privacy, uptime, correctness and reliability hard gates
+latency_anchor=L_bad=4*L_good
+cost_provenance=OBSERVED_BILLED; ROUTER_REPORTED; CATALOG_ESTIMATED; OWNER_SUPPLIED_ESTIMATE; NOT_AVAILABLE
+9router_public_abstraction=LOCAL_ABSTRACTED; token/cache and dashboard/local-API estimates accepted when available; underlying acquisition source stays private/out of T1 scope
+future_direction=public homepage ecosystem tabs for microSched, ready products Mimi/miGarden/microLink, MIDEX and Owner profile; MIDEX serves Mimi first and is designed for later open-source publication
+scope_boundary=future homepage is recorded only; separate significant-UI/product package required; no Task 056 implementation authorization
+secrets_accessed=none
+provider_inference_calls=none
+external_purchase=none
+checks=git diff --check PASS; repository hooks PASS on package, research, future-direction artifact and receipt after trailing-whitespace auto-fix/re-run
+```
