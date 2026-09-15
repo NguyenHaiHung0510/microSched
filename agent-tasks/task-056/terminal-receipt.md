@@ -79,3 +79,21 @@ external_purchase=none
 D1_pending=Owner confirmation of governance/token envelopes, centralized OpenRouter contract, Research mode and S3 wall-clock ceiling
 checks=git diff --check PASS; repository hooks PASS on package, research artifact and receipt after trailing-whitespace auto-fix/re-run
 ```
+
+## Route/bench approval and MIDEX proposal — 2026-09-15
+
+```text
+owner_approved=discovery to S1/S2 to Owner-selected S3; 0.5M/5M/35M provisional token ceilings; equal 25M expansion tranches; centralized OpenRouter contract; 9router local abstraction; STANDARD Research mode after core GREEN; S3 24h/model resumable
+free_quota=Owner reports USD 10 purchased and >USD 9 spent; prior eligibility observed; request live dashboard confirmation immediately before free smoke
+uptime_gate=<90 percent excluded; 90 to <95 benchmark/degraded only; >=95 production eligible; use lower of current endpoint availability and Mimi terminal-success rate
+midex_unit=model+provider+quantization+reasoning+route-policy version; separate STANDARD and PRIVATE indexes
+midex_categories=cost; task intelligence; exact correctness; truthfulness/calibration; agentic reliability; speed; uptime
+midex_weights=25/10/20/15/15/10/5 respectively; weighted geometric mean after hard gates
+midex_cost=log-scaled cost per correctly completed Task with pre-S3 Owner-approved ideal/unacceptable anchors and score floor 10
+midex_uncertainty=stratified bootstrap 95 percent interval; overlapping interval or delta <3 points is a tie
+midex_pending=Owner approval of v1 formula, weights, normalization anchors and tie rule
+secrets_accessed=none
+provider_inference_calls=none
+external_purchase=none
+checks=git diff --check PASS; repository hooks PASS on package, research artifact and receipt
+```

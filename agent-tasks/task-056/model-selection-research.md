@@ -1,6 +1,6 @@
 # Task 056 — Mimi model-selection research
 
-Status: **CURRENT RESEARCH SNAPSHOT / OWNER CONFIRMATION PENDING**
+Status: **ROUTE/BENCH OWNER-APPROVED / MIDEX-v1 FORMULA PENDING**
 Checked: 2026-09-15
 Scope: model discovery, OpenRouter route policy, cache-aware forecasting and resumable Mimi-specific evaluation. This artifact contains no credential, account identifier or raw screenshot.
 
@@ -41,6 +41,8 @@ This is only a discovery filter. The model-level catalog aggregates endpoint cap
 | `google/gemma-4-26b-a4b-it:free` | 262K | coding 39.3; no agentic index in snapshot | Optional third smoke candidate. |
 
 Free variants are useful for capability falsification, not assumed production defaults. OpenRouter documents 50 free-model requests/day without the qualifying credit threshold and 1,000/day after at least USD 10 purchased credits; availability differs from paid routes.
+
+Owner reports the account has already purchased USD 10 and spent more than USD 9, so it previously met the documented purchase condition. Treat current 1,000/day eligibility as `OWNER_OBSERVED / LIVE_CHECK_REQUIRED`: immediately before free smoke, ask the Owner to confirm the dashboard still grants the higher quota. Remaining balance alone is not inferred to change the purchase-history condition.
 
 ### Ultra-cheap paid/ZDR discovery queue
 
@@ -217,7 +219,83 @@ Completed atomic units are immutable and skipped on resume. A retryable rate-lim
 
 Recommended initial S3 wall-clock ceiling is 24 hours/model, resumable. The Owner can stop between units without corrupting receipts.
 
-## 8. Sources checked
+## 8. MIDEX-v1 proposal
+
+### Unit and outputs
+
+MIDEX ranks an exact route configuration:
+
+`model + provider + quantization + reasoning effort + route-policy version`
+
+Publish separate `MIDEX-S` and `MIDEX-P`; a route without current ZDR eligibility has no PRIVATE score. Always publish the component scores and these category champions alongside the composite:
+
+- `M-Cost`: lowest cost per correctly completed Task;
+- `M-Intel`: best performance on difficult planning/reasoning scenarios;
+- `M-Accuracy`: highest exact expected-state correctness;
+- `M-Truth`: strongest groundedness, abstention and confidence calibration;
+- `M-Agent`: best tool/schema/recovery/action reliability;
+- `M-Speed`: best P90 end-to-end latency per correct Task;
+- `M-Uptime`: strongest qualifying endpoint and observed reliability.
+
+MIDEX is decision support, not an automatic Owner decision.
+
+### Hard gates
+
+A route is unranked if it fails privacy/retention/context policy, leaks PRIVATE data, silently truncates/compresses, performs an unauthorized or duplicate mutation, or cannot satisfy required tool/schema semantics. These failures cannot be compensated by price or intelligence.
+
+Uptime policy:
+
+- `<90%`: excluded/quarantined;
+- `90%–<95%`: benchmark/degraded lane only;
+- `≥95%`: production-eligible;
+- use `U = min(current OpenRouter endpoint availability, Mimi terminal-success rate)`;
+- missing or insufficient current uptime evidence is benchmark-only, not production PASS.
+
+Use p90/p99 latency rather than only averages and bind provider/quantization because identical model slugs can behave differently across serving endpoints.
+
+### Component weights
+
+| Component | Weight | Primary measurement |
+|---|---:|---|
+| Cost efficiency | 25% | Observed cost per correctly completed Task, including retries, reasoning, cache writes/reads and server tools. |
+| Exact correctness | 20% | Expected final response/state/receipt match on the stratified Mimi set. |
+| Truthfulness/calibration | 15% | Unsupported-claim rate, citation entailment where applicable, correct abstention and confidence calibration. |
+| Agentic reliability | 15% | Tool/argument/schema validity, recovery, stop discipline and non-duplicate action behavior beyond hard gates. |
+| Task intelligence | 10% | Difficult planning, instruction/data separation and multi-step solution quality. |
+| Speed | 10% | P90 end-to-end latency per correctly completed Task; TTFT and throughput remain visible submetrics. |
+| Uptime | 5% | Qualified route availability and Mimi terminal-success observations. |
+
+Cost is the largest single weight because it is the Owner's main daily-use constraint. Correctness, truthfulness and agentic reliability together retain 50%, so cheap hallucination cannot win.
+
+### Normalization and composite
+
+All components are normalized to `[0,100]` using anchors frozen before S3. Quality axes use the same stratified cases and rubrics for every route. Speed and cost use log scaling because their practical ranges are multiplicative.
+
+For cost per correct Task `C`, with pre-approved ideal `C_good` and unacceptable `C_bad`:
+
+`S_cost = clamp(10 + 90 × ln(C_bad / C) / ln(C_bad / C_good), 10, 100)`
+
+This gives the cost dimension a floor of 10 rather than zero: a route around 20× more expensive is heavily penalized if `C_bad/C_good=20`, but exceptional quality can still partially compensate. The same anchored log pattern applies to P90 latency.
+
+For qualifying uptime, use piecewise anchors: 90%=0, 95%=80, 99.9%=100; interpolate between anchors. Routes below 95% remain non-production regardless of their composite.
+
+Recommended composite:
+
+`MIDEX = 100 × product((S_i / 100) ^ w_i)`
+
+The weighted geometric mean penalizes an imbalanced route more than a weighted arithmetic mean. Category champions remain visible, so MIDEX never hides why one route ranks above another.
+
+### Uncertainty, ties and versioning
+
+- Compute a stratified bootstrap 95% interval by resampling benchmark cases, not merely repetitions of the same case.
+- Report routes as tied when intervals overlap or point estimates differ by less than 3 MIDEX points.
+- Freeze weights, anchors, hard gates and dataset manifest before S3 results are visible.
+- Formula changes create a new version such as `MIDEX-v1.1` and rescore all frozen receipts; never tune weights to promote a preferred model after seeing results.
+- Owner makes the final champion/challenger choice and may override MIDEX with a recorded rationale.
+
+This follows holistic evaluation principles: broad scenario coverage, multiple explicit metrics and standardized comparison. Artificial Analysis likewise constructs domain indices from separately run component benchmarks and role-specific task weights, while noting that any index has limits for a specific use case.
+
+## 9. Sources checked
 
 - [OpenRouter public model catalog](https://openrouter.ai/api/v1/models?zdr=true)
 - [OpenRouter model API/filter documentation](https://openrouter.ai/docs/api/api-reference/models/get-models)
@@ -231,3 +309,7 @@ Recommended initial S3 wall-clock ceiling is 24 hours/model, resumable. The Owne
 - [Official OpenAI Responses reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)
 - [Official OpenAI prompt-caching/model guidance](https://developers.openai.com/api/docs/guides/latest-model)
 - [Official OpenAI GPT-5.6 Luna pricing](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
+- [Stanford HELM holistic evaluation](https://crfm.stanford.edu/2022/11/17/helm.html)
+- [Artificial Analysis capability-index methodology](https://artificialanalysis.ai/methodology/capability-indices)
+- [OpenRouter provider performance methodology](https://openrouter.ai/blog/insights/evaluate-llm-provider-performance/)
+- [NIST statistical models for AI evaluation](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.800-3.pdf)

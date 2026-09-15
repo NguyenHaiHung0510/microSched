@@ -1,6 +1,6 @@
 # 056 — Mimi P1 STANDARD Task walking skeleton
 
-Status: **PACKAGE READY / D2–D4 OWNER-APPROVED; D1 MODEL/WEB-SEARCH CHOICE PENDING (2026-09-15)**
+Status: **PACKAGE READY / D1 ROUTE+BENCH AND D2–D4 OWNER-APPROVED; MIDEX-v1 FORMULA PENDING (2026-09-15)**
 
 > Executor/integrator: T1 GPT-5.6 Sol/high · Profile: Balanced · Owner grant: current task, 2026-09-15, “tự lập detailed next package, triển khai, kiểm chứng và giao hoàn chỉnh” · Skill: `ui-ux-pro-max` within `docs/ui-brief.md` · Browser verification: isolated Playwright/local synthetic only · No Astra delegation.
 
@@ -81,7 +81,7 @@ The outcome may use sequential reviewable PRs, but the task closes only when the
 
 ## 5. Owner decisions
 
-### D1 — Model/route selection and benchmark — **RESEARCH REVISED; OWNER CONFIRMATION PENDING**
+### D1 — Model/route selection and benchmark — **ROUTE/BENCH OWNER-APPROVED; MIDEX-v1 PENDING**
 
 The earlier five-model list validated Owner nominations plus two incumbent references; it was not a complete independent market scan and is superseded. Canonical research, formulas, current catalog receipts and the resumable benchmark design now live in [Task 056 model-selection research](task-056/model-selection-research.md).
 
@@ -147,16 +147,21 @@ Count cached input at its full token count. Also track separate uncached input, 
 
 Every `(bench_id, case_id, repetition, model_config_hash)` is a durable checkpoint. Reserve tokens before dispatch; persist dispatch intent, generation/route ID, terminal usage and result hash; resume by skipping completed units. Rate limit/network errors pause or retry the atomic unit within its retry allowance. Unknown outcomes remain counted/resolved separately; a restart never reruns the whole bench. Record wall time and use a hard wall-clock deadline in addition to token ceilings.
 
-#### D1.e — Optional web-search server tool
+#### D1.e — Optional web-search server tool — **OWNER APPROVED 2026-09-15**
 
 Keep the Task walking skeleton independent of search, then add a STANDARD-only, explicit Owner-enabled `Research mode` after the core route is GREEN: one pinned engine, at most 2 searches/run, 5 results/search and 10 total results, citations required, untrusted-result boundary and exact usage receipt. PRIVATE web search remains disabled until the search processor's own retention path is proved.
 
-Owner confirmations still needed:
+#### D1.f — MIDEX-v1 ranking — **FORMULA OWNER APPROVAL PENDING**
 
-- approve this discovery → smoke → heavy-bench governance and the S1/S2/S3 token envelopes;
-- approve OpenRouter as production abstraction with separate STANDARD/PRIVATE keys and the centralized route contract;
-- approve or defer bounded STANDARD-only Research mode;
-- choose a wall-clock ceiling for S3 (recommended 24 hours/model, resumable).
+Rank the exact `(model, provider, quantization, reasoning effort, route-policy version)`, not a model name alone. Publish category champions for cost, task intelligence, correctness, truthfulness/calibration, agentic reliability, speed and uptime, plus separate composite `MIDEX-S` and `MIDEX-P` for STANDARD and PRIVATE eligibility.
+
+Hard gates cannot be averaged away: privacy/retention/context contract, zero unauthorized/private egress, zero duplicate mutation and exact tool/schema behavior. Provider route uptime below 90% is excluded; 90–<95% is benchmark/degraded only; production eligibility requires at least 95% using the lower of current OpenRouter endpoint availability and Mimi's own observed terminal-success rate.
+
+Recommended composite after gates is a weighted geometric mean: cost efficiency 25%, exact correctness 20%, truthfulness/calibration 15%, agentic reliability 15%, task intelligence 10%, speed 10%, uptime 5%. Cost uses log-scaled **cost per correctly completed Task**, not raw token price, with Owner-approved ideal/unacceptable anchors frozen before S3. This heavily penalizes a model that costs ~20× more without a matching quality gain but does not alter cases to make it fail.
+
+Publish point estimate plus stratified-bootstrap 95% interval; overlapping intervals or <3 MIDEX points are reported as tied. Freeze formula/weights/anchors before seeing S3 results. Any later change creates a new MIDEX version and rescoring; Owner retains final route choice.
+
+All other D1 choices are approved: discovery → S1/S2 → Owner-selected S3 finalists; provisional 0.5M/5M/35M token ceilings with equal 25M expansion tranches; centralized OpenRouter route contract; Owner-guaranteed 9router local abstraction; STANDARD Research mode after core GREEN; S3 24 hours/model resumable.
 
 ### D2 — Full diagnostic evidence lifecycle — **OWNER APPROVED 2026-09-15**
 
