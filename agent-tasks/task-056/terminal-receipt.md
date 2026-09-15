@@ -39,3 +39,20 @@ provider_calls=none
 external_purchase=none
 tests=git diff --check PASS; repository hooks PASS on both changed Markdown files; implementation checks NOT_RUN because D1-D4 remain Owner-gated
 ```
+
+## D2–D4 approval and D1 research revision — 2026-09-15
+
+```text
+owner_decision=D2 recommended 7-day bounded evidence lifecycle approved; D3 Mimi-scoped CSRF posture approved; D4 per-conversation DEK with real-chat default-off approved
+D1_correction=USD 2 label clarified as one-time Mimi adapter/model benchmark inference allowance; Codex development usage and future Mimi production runtime budget are separate
+production_transport_direction=OpenRouter preferred; existing OpenAI/Google AI Studio provider keys may be integrated as filtered BYOK; 9router is local benchmark only and never a production dependency
+provider_invariants=NO_PROVIDER_STATE and NO_SILENT_TRUNCATION apply to every adapter/route, regardless of parameter names
+openrouter_public_zdr_query_2026-09-15=deepseek/deepseek-v4.1-flash, z-ai/glm-5.3-flash, google/gemini-3.8-flash and openai/gpt-5.6-luna observed in models?zdr=true; meta/muse-spark-1.3 absent
+candidate_funnel=cost-first GLM 5.3 Flash and DeepSeek V4.1 Flash added; Luna, Gemini 3.8 Flash and Muse Spark 1.3 retained as cross-cost/quality references
+web_search=bounded STANDARD-only Research mode proposed after core route GREEN; PRIVATE remains disabled pending search-processor retention proof
+secrets_accessed=none
+provider_inference_calls=none
+external_purchase=none
+D1_pending=Owner approval of funnel, OpenRouter dual-key posture, Research mode and any actual top-up
+checks=git diff --check PASS; repository hooks PASS on both changed Markdown files
+```
