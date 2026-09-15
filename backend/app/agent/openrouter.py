@@ -38,8 +38,7 @@ TASK_CREATE_TOOL = {
     "function": {
         "name": "task.create.v1",
         "description": (
-            "Propose one STANDARD microSched Task. "
-            "The server still requires confirmation."
+            "Propose one STANDARD microSched Task. The server still requires confirmation."
         ),
         "strict": True,
         "parameters": {
