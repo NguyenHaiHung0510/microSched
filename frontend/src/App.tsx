@@ -2,6 +2,7 @@ import { ReminderConfirmScreen } from '@/ReminderConfirmScreen'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Activity,
+  Bot,
   CalendarDays,
   ListTodo,
   BookOpen,
@@ -29,12 +30,14 @@ import { cn } from '@/lib/utils'
 import { LiveStatus } from '@/LiveStatus'
 import HomePage from '@/HomePage'
 import { ReminderCenter } from '@/ReminderCenter'
+import { MimiScreen } from '@/MimiScreen'
 import { isHomepage, type PublicAuthState } from '@/public-navigation'
 
 type SessionResponse = PrivateSessionState & {
   email: string
   signed_in_at: string | null
   expires_at: string
+  mimi_available: boolean
 }
 
 async function fetchSession(): Promise<SessionResponse> {
@@ -62,7 +65,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
   const reminderDispatchKey = queryParams(location).get('dispatch') ?? ''
   const isTrackersRoute = location.startsWith('/trackers')
   const [activeScreen, setActiveScreen] = useState<
-    'tasks' | 'notes' | 'calendar' | 'tracker'
+    'tasks' | 'notes' | 'calendar' | 'tracker' | 'mimi'
   >(() => (isTrackersRoute ? 'tracker' : 'tasks'))
 
   const currentTab = isTrackersRoute ? 'tracker' : activeScreen
@@ -74,7 +77,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
     setActiveScreen('tasks')
   }, [location])
 
-  function selectTab(tab: 'tasks' | 'notes' | 'calendar' | 'tracker') {
+  function selectTab(tab: 'tasks' | 'notes' | 'calendar' | 'tracker' | 'mimi') {
     if (isTrackersRoute) {
       navigate('/')
     }
@@ -119,7 +122,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           </Button>
           </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
-          {currentTab !== 'calendar' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
+          {currentTab !== 'calendar' && currentTab !== 'mimi' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
             <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} /></div>
           ) : null}
         </div>
@@ -149,7 +152,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <ReminderConfirmScreen key={reminderDispatchKey} />
         ) : (
           <>
-        <div className="mb-4 grid grid-cols-4 gap-1 sm:flex sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs [&>button]:transition-colors sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
+        <div className="mb-4 grid grid-cols-3 gap-1 sm:flex sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs [&>button]:transition-colors sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
             size="lg"
@@ -190,6 +193,18 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <Activity data-icon="inline-start" />
             Theo dõi
           </Button>
+          {session.mimi_available ? (
+            <Button
+              role="tab"
+              size="lg"
+              variant={currentTab === 'mimi' ? 'selected' : 'ghost'}
+              aria-selected={currentTab === 'mimi'}
+              onClick={() => selectTab('mimi')}
+            >
+              <Bot data-icon="inline-start" />
+              Mimi
+            </Button>
+          ) : null}
         </div>
         <div role="tabpanel">
           {currentTab === 'tasks' ? <TasksScreen key={`tasks-${privateScopeVersion}`} /> : null}
@@ -197,6 +212,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           {currentTab === 'calendar' ? <CalendarScreen key={`calendar-${privateScopeVersion}`} /> : null}
           {currentTab === 'tracker' ? (
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
+          ) : null}
+          {currentTab === 'mimi' && session.mimi_available ? (
+            <MimiScreen onOpenTasks={() => selectTab('tasks')} />
           ) : null}
         </div>
           </>

@@ -10,6 +10,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlmodel import SQLModel
 
+import app.agent.models  # noqa: F401 - register the bounded Mimi ledger
 import app.domain.models  # noqa: F401 - importing registers every table
 from alembic import context
 from app.core.database_urls import async_postgres_url
