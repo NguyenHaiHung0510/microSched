@@ -56,3 +56,26 @@ external_purchase=none
 D1_pending=Owner approval of funnel, OpenRouter dual-key posture, Research mode and any actual top-up
 checks=git diff --check PASS; repository hooks PASS on both changed Markdown files
 ```
+
+## Independent catalog scan and benchmark correction — 2026-09-15
+
+```text
+correction=previous five-model list validated Owner nominations plus incumbent references; it was not a complete independent market scan and is superseded
+catalog_source=public OpenRouter GET /api/v1/models?zdr=true; no account key used
+static_filter=text output; context >=131072; tools; tool_choice; structured_outputs or response_format
+observed_counts=zdr models 321; statically eligible 230; free statically eligible 3
+independent_candidates=deepseek/deepseek-v4-flash-0731; inclusionai/ling-3.0-flash-vl; xiaomi/mimo-v2.5; qwen/qwen3.8-27b; z-ai/glm-5.3
+free_smoke_candidates=google/gemma-4-31b-it:free; nvidia/nemotron-3-super-120b-a12b:free; optional google/gemma-4-26b-a4b-it:free
+owner_screenshot_sanitized=340M tokens; 3K requests; USD 9.46; 95.2 percent cache hit; about USD 0.03 blended per 1M; raw screenshots not committed
+cost_revision=separate uncached input, cached read, cache write, output/reasoning and tool charges; publish cold 0 percent, warm 70 percent and ideal 93 percent scenarios with dynamic eligible floor and max_price ceiling
+cache_boundary=provider prompt caching allowed and measured; OpenRouter full-response caching disabled for action-bearing Mimi traffic
+measurement=hybrid estimate plus exact terminal usage; versioned P50/P90/P95 cold/warm cohorts; invalidate on route, model, price, prompt, tool, schema or workload drift
+bench_governance=token and case based, not dollar based; S1 0.5M, S2 5M, S3 35M tokens per model provisional; cached tokens counted at full volume; equal case/repetition policy
+resume=durable atomic bench_id/case_id/repetition/model_config_hash checkpoint; reserve budget before dispatch; skip completed units; unknown outcome distinct
+9router=Owner-guaranteed local abstraction; upstream source out of T1 scope; technical behavior only; never production dependency
+secrets_accessed=none
+provider_inference_calls=none
+external_purchase=none
+D1_pending=Owner confirmation of governance/token envelopes, centralized OpenRouter contract, Research mode and S3 wall-clock ceiling
+checks=git diff --check PASS; repository hooks PASS on package, research artifact and receipt after trailing-whitespace auto-fix/re-run
+```
