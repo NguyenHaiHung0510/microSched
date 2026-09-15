@@ -115,6 +115,12 @@ def test_preview_confirm_reload_feedback_and_recovery_are_durable(pg_dsn) -> Non
                 )
                 assert retried_message.status_code == 200
                 assert len(retried_message.json()["messages"]) == 2
+                changed_message = await client.post(
+                    f"/api/mimi/conversations/{conversation_id}/messages",
+                    json={**message_body, "content": "Nội dung khác"},
+                    headers=CSRF_HEADERS,
+                )
+                assert changed_message.status_code == 409
 
                 wrong_binding = await client.post(
                     f"/api/mimi/change-sets/{change_set['id']}/decision",
@@ -182,6 +188,12 @@ def test_preview_confirm_reload_feedback_and_recovery_are_durable(pg_dsn) -> Non
                     headers=CSRF_HEADERS,
                 )
                 assert feedback_retry.json()["id"] == feedback.json()["id"]
+                feedback_conflict = await client.post(
+                    f"/api/mimi/conversations/{conversation_id}/feedback",
+                    json={**feedback_body, "comment": "Nội dung feedback khác"},
+                    headers=CSRF_HEADERS,
+                )
+                assert feedback_conflict.status_code == 409
 
                 private = await client.post(
                     "/api/tasks", json={"title": "Bí mật", "is_private": True}

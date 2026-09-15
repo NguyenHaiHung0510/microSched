@@ -251,12 +251,42 @@ async def send_message(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if existing.content_sha256 != hashlib.sha256(payload.content.encode("utf-8")).hexdigest():
+            raise _conflict("message_client_id_reused_with_different_content")
         return await conversation_view(db, auth, conversation_id)
     if (
         payload.expected_generation is not None
         and payload.expected_generation != conversation.generation
     ):
         raise _conflict("conversation_generation_stale")
+
+    # This P1 route cannot prove a supplement is harmless, so every distinct
+    # new user turn conservatively revises the frontier and invalidates an old
+    # preview. It never leaves two confirmable mutations behind the UI.
+    pending_previews = (
+        await db.execute(
+            select(MimiChangeSet, MimiRun)
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .where(
+                MimiRun.conversation_id == conversation.id,
+                MimiChangeSet.state == "pending",
+            )
+            .with_for_update()
+        )
+    ).all()
+    for old_change_set, old_run in pending_previews:
+        old_change_set.state = "stale"
+        old_run.state = "halted"
+        old_run.error_code = "superseded_by_new_turn"
+        old_run.completed_at = datetime.now(UTC)
+        db.add(
+            MimiEvent(
+                run_id=old_run.id,
+                sequence=5,
+                kind="change_set.superseded",
+                payload={"change_set_id": str(old_change_set.id)},
+            )
+        )
 
     now = datetime.now(UTC)
     settings = get_settings()
@@ -565,7 +595,11 @@ async def confirm_change_set(
     ).first()
     if existing_by_key is not None:
         receipt, existing_change_set, _, _ = existing_by_key
-        if existing_change_set.id != change_set_id or receipt.digest_sha256 != payload.digest:
+        if (
+            existing_change_set.id != change_set_id
+            or receipt.digest_sha256 != payload.digest
+            or existing_change_set.nonce != payload.nonce
+        ):
             raise _conflict("idempotency_key_reused_with_different_digest")
         return _receipt_read(receipt)
 
@@ -724,6 +758,29 @@ async def save_feedback(
         )
         db.add(existing)
         await db.flush()
+    else:
+        existing_comment = mimi_crypto.open_content(
+            dek,
+            existing.comment_ciphertext,
+            aad=mimi_crypto.feedback_aad(conversation.id, existing.id, "comment"),
+        )
+        existing_expected = (
+            mimi_crypto.open_content(
+                dek,
+                existing.expected_ciphertext,
+                aad=mimi_crypto.feedback_aad(conversation.id, existing.id, "expected"),
+            )
+            if existing.expected_ciphertext is not None
+            else None
+        )
+        if (
+            existing.target_type != payload.target_type
+            or existing.target_id != payload.target_id
+            or existing_comment != payload.comment
+            or existing_expected != payload.expected
+            or existing.evidence_bundle_ids != [str(item) for item in payload.evidence_bundle_ids]
+        ):
+            raise _conflict("feedback_client_id_reused_with_different_content")
     return {
         "id": existing.id,
         "client_id": existing.client_id,

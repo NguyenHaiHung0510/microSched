@@ -38,6 +38,12 @@ accepted as green: the hook had altered test/runtime seams. The implementation n
 injects the hook only into the enabled app timer; focused CronTimer/lifespan
 regression then passed 62 tests and the full backend suite passed as recorded above.
 
+Frozen-candidate self-review also closed three fail-closed gaps before publication:
+same client IDs with changed message/feedback content now return 409; confirmation
+retries bind the original nonce as well as digest; and any distinct new user turn
+marks an earlier pending preview stale because P1 cannot safely prove a supplement
+is harmless. Change-set operations are encrypted at rest, not retained as JSONB.
+
 ## Remaining closure gate
 
 After Docker Desktop is running, execute migration upgrade/downgrade safety on the
