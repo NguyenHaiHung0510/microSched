@@ -22,3 +22,20 @@ owner_decisions_pending=D1 live route/spend; D2 evidence TTL/caps/export; D3 Mim
 ```
 
 Open PR inventory contained unrelated Dependabot/Bolt/Palette/Task037 work; no Mimi P1 branch/PR collision was observed. GitHub and origin facts were refreshed live rather than inferred from P0 memory.
+
+## Owner decision packet expansion — 2026-09-15
+
+```text
+trigger=Owner requested decision context, multiple cases/trade-offs/recommendations, model research, round-zero filters, and API procurement-source choice
+research_sources=official OpenAI model/Responses docs; official Google Gemini model/function/structured-output/pricing docs; official 9router docs/repository; official OpenRouter routing/metadata/privacy/FAQ docs
+D1_previous_recommendation=superseded before implementation; no model call or purchase occurred
+D1_current_recommendation=round-zero route/capability gate, then gpt-5.6-luna medium versus gemini-3.8-flash medium on identical synthetic journey; add gpt-5.6-terra medium only if both fail
+route_cases=9router BYOK/API-key only after exact fidelity probe; otherwise OpenRouter pinned/audited benchmark; direct official APIs remain preferred long-term baseline
+hard_route_exclusions=subscription/OAuth/CLI/MITM treated as app API entitlement; aliases; automatic fallback; hidden transforms/compression/retries; content logging
+proposed_spend=USD 0.05 per run; USD 2 package inference; optional OpenRouter purchase capped at USD 5 plus disclosed fee; no auto top-up
+D2_D3_D4=expanded with scenario/trade-off tables; original recommendations retained
+secrets_accessed=none
+provider_calls=none
+external_purchase=none
+tests=git diff --check PASS; repository hooks PASS on both changed Markdown files; implementation checks NOT_RUN because D1-D4 remain Owner-gated
+```

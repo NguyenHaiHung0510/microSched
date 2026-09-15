@@ -83,29 +83,86 @@ The outcome may use sequential reviewable PRs, but the task closes only when the
 
 ### D1 — Initial live route and spend
 
-**Recommended:** OpenAI Responses API `gpt-5.6-luna`, reasoning `medium`; application functions/structured outputs only. Per run: 30k input tokens, 4k output+reasoning budget, 6 provider calls, existing 24-tool ceiling, hard estimated-cost ceiling **USD 0.05**. Package-wide live synthetic acceptance budget **USD 2.00**, no auto-purchase/fallback/Batch.
+This decision has two independent parts: **which model family** and **which API procurement/transport route**. Passing model quality does not make an opaque or unauthorized route acceptable, and a compatible gateway does not prove model quality.
 
-Reason: official OpenAI documentation currently lists Responses, streaming, function calling and structured outputs, with text pricing USD 0.20/M input and USD 1.20/M output. Exact account availability/rate tier still requires a route probe after approval.
+#### D1.a — Round-zero route/capability filter
 
-Alternative: `gpt-5.6-terra` medium for higher initial quality at materially higher token price; keep the same hard per-run/package caps. No Astra route.
+A candidate is excluded before quality scoring if any of these cannot be proved with a synthetic route card:
+
+1. exact model/version and actual upstream provider are observable; no alias, automatic model/provider fallback or hidden retry;
+2. route use is authorized for application API traffic; subscription/OAuth/CLI/MITM access is not treated as an API entitlement;
+3. streaming, cancellation, error/unknown-outcome mapping, usage accounting and application-executed function calls preserve stable IDs across the full round trip;
+4. the Mimi structured-output subset is accepted and then independently validated by the application;
+5. no silent context truncation/compression, prompt injection, server-side tool or request/response content logging;
+6. STANDARD data policy is explicit; any future PRIVATE route additionally needs separately proved zero-retention eligibility;
+7. hard request/token/cost caps and a request-level route receipt are available.
+
+For direct OpenAI Responses calls, set `store=false` and `truncation=disabled`; provider `max_tool_calls` does not replace Mimi's application-level function-call ceiling. Gateway claims of OpenAI compatibility are not accepted as proof of Responses event/tool/recovery semantics.
+
+#### D1.b — First quality round
+
+**Recommended finalists:** run the same deterministic synthetic Task read → preview → confirm/create journey on:
+
+| Candidate | Why it enters round 1 | Main trade-off |
+|---|---|---|
+| OpenAI `gpt-5.6-luna`, `medium` | Official Responses, streaming, function calling and structured-output support; USD 0.20/M input and USD 1.20/M output makes repeated harness tuning inexpensive. | Cheapest candidate may need more harness guidance or fail difficult planning/tool discipline; quality must be measured, not inferred from price. |
+| Google `gemini-3.8-flash`, `medium` | Current GA Flash candidate with 1M context, function calling and structured output; gives a genuinely different model family. Paid promotional pricing through 2026-12-31 is USD 0.75/M input and USD 3.75/M output including thinking. | Native Interactions semantics differ from Responses; a gateway translation adds a fidelity seam. Free-tier content may be used to improve Google products. |
+
+Score both on exact action correctness, unsupported-action refusal, no duplicate mutation, tool/argument validity, schema validity, recovery after injected transient/unknown outcomes, instruction/data separation, latency and observed cost. A hard safety/correctness failure is disqualifying; do not average it away with style scores.
+
+If neither passes, add **OpenAI `gpt-5.6-terra`, `medium`** as the escalation finalist. It has the same needed API capabilities but currently costs USD 2/M input and USD 12/M output, so it is not the economical first probe. No Astra route.
+
+#### D1.c — Procurement/transport cases
+
+| Case | When it is eligible | Trade-off | Recommendation |
+|---|---|---|---|
+| Existing 9router connections | Only when each connection is an official provider API key/BYOK route and a probe shows exact upstream/model. Disable smart fallback, combinations, RTK/Headroom/Caveman/Ponytail transforms and content logging; localhost only. | No new credit purchase and one local endpoint, but 9router's translation layer must be tested. Its subscription/OAuth/MITM modes are not eligible for Mimi application traffic without separate terms/authority proof. | Use first if the Owner confirms both OpenAI and Google connections are BYOK/API-key routes. |
+| OpenRouter prepaid credits | Pin the exact model and provider; `allow_fallbacks=false`, `require_parameters=true`, `data_collection=deny`; enable router metadata and reject any unexpected pipeline transform. | Easiest apples-to-apples purchase source and route receipt, but introduces a proxy and a 5.5% credit-purchase fee (USD 0.80 minimum). | Preferred neutral benchmark source if 9router route type/fidelity is uncertain. Buy only after checking existing balance; auto top-up stays off. |
+| Direct OpenAI + Google API keys | Separate paid API projects/accounts are available. | Fewest translation layers and strongest native semantics, but two billing/config surfaces and potentially new purchases. | Preferred long-term production baseline after the benchmark, not required to start P1. |
+
+**Recommended budget:** per run 30k input tokens, 4k output+reasoning budget, 6 provider calls, existing 24-tool ceiling and hard estimated-cost ceiling **USD 0.05**. Package-wide live synthetic acceptance spend ceiling **USD 2.00**, with no Batch, automatic fallback or auto top-up. If OpenRouter has no balance, authorize at most a **USD 5 credit purchase plus its disclosed purchase fee**; this purchase cap is separate from the USD 2 inference-spend ceiling.
+
+Owner inputs needed for D1 (never paste a key into chat):
+
+- for each 9router OpenAI/Google connection, identify `official API key/BYOK`, `subscription/OAuth/CLI bridge`, or `OpenRouter passthrough`;
+- state whether Google free-tier synthetic prompts being used to improve Google products is acceptable; otherwise all tests use paid/no-training routes;
+- state whether OpenRouter already has credit, and whether the capped USD 5 top-up is approved if needed.
+
+Research checked 2026-09-15: [OpenAI GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna), [OpenAI model comparison](https://developers.openai.com/api/docs/models/compare), [OpenAI Responses create](https://developers.openai.com/api/reference/cli/resources/responses/methods/create), [Google latest model](https://ai.google.dev/gemini-api/docs/latest-model), [Google pricing](https://ai.google.dev/gemini-api/docs/pricing), [Google function calling](https://ai.google.dev/gemini-api/docs/function-calling), [9router documentation](https://docs.9router.com/), [9router repository](https://github.com/decolua/9router), [OpenRouter provider selection](https://openrouter.ai/docs/guides/routing/provider-selection), [OpenRouter router metadata](https://openrouter.ai/docs/guides/features/router-metadata), [OpenRouter privacy/ZDR](https://openrouter.ai/docs/guides/privacy/zdr) and [OpenRouter FAQ](https://openrouter.ai/docs/faq).
 
 ### D2 — Full diagnostic evidence lifecycle
 
-**Recommended P1 limits:** 1 MiB per complete bundle (P0 ceiling), 4 MiB per run, 16 MiB per conversation, 64 MiB global. Full bundle TTL 7 days from capture; warn at 80% of any cap and 48 hours before expiry. At cap, stop additional capture and mark `INCOMPLETE/CAP_REACHED`; never silent truncate/evict. Explicit Owner extension adds 7 days but cannot outlive conversation retention/deletion.
+The choice balances a reproducible debugging window against retaining sensitive conversation/tool payloads:
+
+| Case | Trade-off | Recommendation |
+|---|---|---|
+| Synthetic/local evidence only | Lowest privacy and storage risk, but weak production diagnosis and slower dogfooding. | Acceptable while real chat remains default-off; insufficient by itself for later production enablement. |
+| 7-day bounded full evidence | Covers the expected short review/debug cycle while bounding payload retention. | **Recommended P1:** 1 MiB per complete bundle (P0 ceiling), 4 MiB/run, 16 MiB/conversation, 64 MiB global; warn at 80% and 48 hours before expiry. |
+| 14+ days or larger global cap | More time for intermittent defects, but meaningfully raises privacy, deletion and storage burden before value is measured. | Defer; expand only from observed missed-debug incidents. |
+
+At cap, stop additional capture and mark `INCOMPLETE/CAP_REACHED`; never silent truncate/evict. Explicit Owner extension adds 7 days but cannot outlive conversation retention/deletion.
 
 P1 export is a versioned JSON bundle plus SHA-256 manifest, explicitly downloaded by Owner; production export containing real content remains disabled until its encryption/destination flow is separately verified. Operational metadata trace remains the already-proposed 30 days and does not inherit this payload TTL.
 
 ### D3 — CSRF posture for Mimi writes
 
-**Recommended:** keep session cookie `HttpOnly + Secure + SameSite=Lax`; additionally require JSON content type, exact same-origin `Origin`, non-cross-site Fetch Metadata, and a Mimi request header on every unsafe `/api/mimi/*` operation. Reject missing/mismatched browser provenance before body/model processing. Keep all mutations POST/PUT/PATCH/DELETE; confirmation nonce/digest/idempotency are separate integrity guards, not CSRF substitutes.
+| Case | Trade-off | Recommendation |
+|---|---|---|
+| SameSite cookie only | Smallest change, but does not meet the approved auth brief and leaves browser edge cases without an explicit application check. | Reject. |
+| Mimi-scoped provenance/header checks | Keeps session cookie `HttpOnly + Secure + SameSite=Lax`; additionally requires JSON, exact same-origin `Origin`, non-cross-site Fetch Metadata and a Mimi header for every unsafe `/api/mimi/*` request. | **Recommended P1:** explicit protection with bounded regression surface. Reject before body/model processing. |
+| Session-bound synchronizer token for every app write | Strong and uniform across domains, but expands Task 056 into every protected client/test and raises unrelated regression risk. | Good follow-up platform hardening, not the P1 critical path. |
 
-Alternative: add a session-bound synchronizer token across every protected app write now. It is stronger and more uniform but expands this package into all existing domain clients/tests.
+All mutations remain POST/PUT/PATCH/DELETE. Confirmation nonce/digest/idempotency are separate integrity guards, not CSRF substitutes.
 
 ### D4 — Key/deletion/production enablement truth
 
-**Recommended:** P1 persists content with a per-conversation random DEK wrapped by the existing application master key; content-bearing feedback/evidence uses the conversation key. Live deletion removes live rows and the live wrapped DEK, but UI/receipt must say old backups may retain a recoverable historical copy until their actual retention window expires. Do not claim instant backup purge or crypto-shred.
+| Case | Trade-off | Recommendation |
+|---|---|---|
+| One shared content key | Simpler schema/operations, but weak per-conversation isolation and deletion semantics; deleting a row cannot make one conversation's ciphertext uniquely inaccessible. | Reject for persisted Mimi content. |
+| Per-conversation DEK, real chat default-off | Each conversation has a random DEK wrapped by the existing application master key; content-bearing feedback/evidence uses that DEK. Live deletion removes live rows and its wrapped DEK. | **Recommended P1:** implement and fully test synthetic/local/live-route behavior, then deploy capability default-off. |
+| Per-conversation DEK and enable real chat immediately | Fastest dogfooding, but backup retention may still preserve recoverable historical ciphertext/key material; an instant crypto-shred claim would be false. | Reject until retention truth and restore/deletion rehearsal are observed. |
 
-Merge/deploy code default-off for real personal chat. Enable only after a disposable deletion/restore rehearsal and Owner confirmation of the actual Neon/manual-backup aging window. Synthetic local/CI and synthetic live-route acceptance may proceed before that confirmation.
+UI/receipt must state that old backups may retain a recoverable historical copy until the actual retention window expires. Do not claim instant backup purge or crypto-shred. Enable real personal chat only after a disposable deletion/restore rehearsal and Owner confirmation of the actual Neon/manual-backup aging window. Synthetic local/CI and synthetic live-route acceptance may proceed before that confirmation.
 
 ## 6. Acceptance matrix
 
