@@ -30,7 +30,8 @@ import { cn } from '@/lib/utils'
 import { LiveStatus } from '@/LiveStatus'
 import HomePage from '@/HomePage'
 import { ReminderCenter } from '@/ReminderCenter'
-import { MimiScreen } from '@/MimiScreen'
+import { MimiControlCenter } from '@/MimiControlCenter'
+import { MimiDock, MimiDockButton } from '@/MimiDock'
 import { isHomepage, type PublicAuthState } from '@/public-navigation'
 
 type SessionResponse = PrivateSessionState & {
@@ -67,6 +68,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
   const [activeScreen, setActiveScreen] = useState<
     'tasks' | 'notes' | 'calendar' | 'tracker' | 'mimi'
   >(() => (isTrackersRoute ? 'tracker' : 'tasks'))
+  const [mimiDockOpen, setMimiDockOpen] = useState(false)
 
   const currentTab = isTrackersRoute ? 'tracker' : activeScreen
 
@@ -101,7 +103,11 @@ function SignedIn({ session }: { session: SessionResponse }) {
   })
 
   return (
-    <div className={cn('mx-auto overflow-hidden rounded-xl bg-background shadow-3', currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl')}>
+    <div className={cn(
+      'mx-auto grid w-full items-start gap-4',
+      mimiDockOpen ? 'max-w-[1920px] xl:grid-cols-[minmax(0,1fr)_minmax(24rem,28rem)]' : currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl',
+    )}>
+    <div className="min-w-0 overflow-hidden rounded-xl bg-background shadow-3">
       <header className="flex items-center justify-between gap-4 px-5 pt-5 pb-2 sm:px-6">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
           <h1>
@@ -127,6 +133,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {session.mimi_available ? (
+            <MimiDockButton open={mimiDockOpen} onToggle={() => setMimiDockOpen((open) => !open)} />
+          ) : null}
           <ReminderCenter key={`reminders-${privateScopeVersion}`} />
             <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
           <Button
@@ -214,7 +223,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}
           {currentTab === 'mimi' && session.mimi_available ? (
-            <MimiScreen onOpenTasks={() => selectTab('tasks')} />
+            <MimiControlCenter onOpenTasks={() => selectTab('tasks')} />
           ) : null}
         </div>
           </>
@@ -223,6 +232,10 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>
         ) : null}
       </div>
+    </div>
+    {session.mimi_available ? (
+      <MimiDock open={mimiDockOpen} onOpenChange={setMimiDockOpen} onOpenTasks={() => selectTab('tasks')} />
+    ) : null}
     </div>
   )
 }
@@ -258,7 +271,7 @@ function App() {
             bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
             Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}
         <div
-          className="mx-auto max-w-[1680px]"
+          className="mx-auto max-w-[1920px]"
         >
           {session.isPending ? (
             <Card

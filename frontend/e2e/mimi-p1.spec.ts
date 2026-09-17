@@ -3,6 +3,8 @@ import { expect } from '@playwright/test'
 import { test } from './fixtures/tasks'
 import type { MimiConversation } from '../src/mimi-api'
 
+const capturePreview = process.env.CAPTURE_MIMI_PREVIEW === '1'
+
 const conversationId = '01990000-0000-7000-8000-000000000056'
 const runId = '01990000-0000-7000-8000-000000000057'
 const changeSetId = '01990000-0000-7000-8000-000000000058'
@@ -23,7 +25,7 @@ function emptyConversation(): MimiConversation {
   }
 }
 
-test('Mimi preview-confirm-receipt-feedback stays usable without horizontal overflow', async ({
+test('Mimi Control Center and shared thread keep preview-confirm-receipt usable', async ({
   page,
 }) => {
   let conversation: MimiConversation | null = null
@@ -108,6 +110,15 @@ test('Mimi preview-confirm-receipt-feedback stays usable without horizontal over
 
   await page.goto('/')
   await page.getByRole('tab', { name: 'Mimi' }).click()
+  await expect(page.getByRole('heading', { name: 'Mimi Control Center' })).toBeVisible()
+  await expect(page.getByText('Route hiệu lực')).toBeVisible()
+  if (capturePreview) {
+    await page.screenshot({
+      path: `test-results/task-058/control-center-${page.viewportSize()?.width ?? 'unknown'}.png`,
+      fullPage: true,
+    })
+  }
+  await page.getByRole('button', { name: 'Hội thoại' }).click()
   await page.getByRole('button', { name: 'Bắt đầu conversation STANDARD' }).click()
   await expect(page.getByLabel('Nhắn Mimi')).toBeVisible()
   await page.getByLabel('Nhắn Mimi').fill('Tạo task Chuẩn bị demo Mimi')
@@ -130,4 +141,53 @@ test('Mimi preview-confirm-receipt-feedback stays usable without horizontal over
     return [root.scrollWidth, root.clientWidth]
   })
   expect(overflow[0]).toBeLessThanOrEqual(overflow[1])
+})
+
+test('Mimi side-chat stays available from the Task surface without page overflow', async ({
+  page,
+}) => {
+  let conversation: MimiConversation | null = emptyConversation()
+  await page.route('**/api/me', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        email: 'synthetic@example.test',
+        signed_in_at: '2026-09-17T00:00:00Z',
+        expires_at: '2026-09-18T00:00:00Z',
+        private_until: null,
+        private_locked_until: null,
+        pin_is_set: true,
+        pin_is_bootstrap: false,
+        mimi_available: true,
+      }),
+    })
+  })
+  await page.route('**/api/mimi/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (route.request().method() === 'GET' && path.endsWith('/conversations/current')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation) })
+      return
+    }
+    await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('tab', { name: 'Task' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByTestId('mimi-dock-toggle').click()
+  await expect(page.getByTestId('mimi-side-chat')).toBeVisible()
+  await expect(page.getByLabel('Nhắn Mimi')).toBeVisible()
+  if (capturePreview) {
+    await page.screenshot({
+      path: `test-results/task-058/side-chat-${page.viewportSize()?.width ?? 'unknown'}.png`,
+      fullPage: false,
+    })
+  }
+
+  const overflow = await page.evaluate(() => {
+    const root = document.scrollingElement ?? document.documentElement
+    return [root.scrollWidth, root.clientWidth]
+  })
+  expect(overflow[0]).toBeLessThanOrEqual(overflow[1])
+
+  conversation = null
 })

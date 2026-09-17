@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, Check, LoaderCircle, MessageSquareWarning, ReceiptText, Send, X } from 'lucide-react'
+import { Bot, Check, CircleDot, LoaderCircle, MessageSquareWarning, ReceiptText, Send, Wifi, WifiOff, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { ApiError, TimeoutError } from '@/api'
@@ -16,6 +16,7 @@ import {
   type MimiChangeSet,
   type MimiConversation,
 } from '@/mimi-api'
+import { mimiRunLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 const QUERY_KEY = ['mimi', 'current'] as const
@@ -109,7 +110,13 @@ function ChangeSetPreview({
   )
 }
 
-export function MimiScreen({ onOpenTasks }: { onOpenTasks: () => void }) {
+export function MimiScreen({
+  onOpenTasks,
+  variant = 'workspace',
+}: {
+  onOpenTasks: () => void
+  variant?: 'workspace' | 'dock'
+}) {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState('')
   const [online, setOnline] = useState(() => navigator.onLine)
@@ -239,17 +246,30 @@ export function MimiScreen({ onOpenTasks }: { onOpenTasks: () => void }) {
   }
 
   return (
-    <section className="space-y-4" aria-labelledby="mimi-title">
+    <section className="min-w-0 space-y-4" aria-labelledby={`mimi-title-${variant}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 id="mimi-title" className="text-xl font-extrabold text-primary">Mimi</h2>
-          <p className="text-sm text-muted-foreground">Conversation STANDARD · deterministic local route</p>
+          <h3 id={`mimi-title-${variant}`} className="text-lg font-extrabold text-primary">Conversation hiện tại</h3>
+          <p className="text-sm text-muted-foreground">STANDARD · route đang chờ backend công bố</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={online ? 'secondary' : 'destructive'}>{online ? 'Online' : 'Offline'}</Badge>
-          {latestRun ? <Badge variant="outline">{latestRun.state.replaceAll('_', ' ')}</Badge> : null}
+          <Badge variant={online ? 'secondary' : 'destructive'}>
+            {online ? <Wifi aria-hidden="true" /> : <WifiOff aria-hidden="true" />}
+            {online ? 'Thiết bị có mạng' : 'Thiết bị mất mạng'}
+          </Badge>
+          {latestRun ? <Badge variant="outline"><CircleDot aria-hidden="true" />{mimiRunLabel(latestRun.state)}</Badge> : null}
         </div>
       </div>
+
+      {send.isPending ? (
+        <div role="status" aria-atomic="true" className="rounded-lg bg-accent p-3 text-sm text-accent-foreground">
+          <div className="flex items-center gap-2 font-semibold">
+            <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            Mimi đang xử lý yêu cầu
+          </div>
+          <p className="mt-1 text-xs">Đang chờ provider · lượt chạy dài sẽ tiếp tục hiển thị heartbeat và thời gian đã chờ sau 058C.</p>
+        </div>
+      ) : null}
 
       {!online ? (
         <p role="status" className="rounded-lg bg-warn-bg p-3 text-sm text-foreground">
@@ -257,7 +277,9 @@ export function MimiScreen({ onOpenTasks }: { onOpenTasks: () => void }) {
         </p>
       ) : null}
 
-      <div className="max-h-[28rem] space-y-3 overflow-y-auto rounded-xl bg-muted/50 p-3" data-testid="mimi-messages">
+      <div className={variant === 'dock'
+        ? 'max-h-[42dvh] min-h-56 space-y-3 overflow-y-auto rounded-xl bg-muted/50 p-3 xl:max-h-[calc(100vh-28rem)] xl:min-h-72'
+        : 'max-h-[32rem] min-h-64 space-y-3 overflow-y-auto rounded-xl bg-muted/50 p-3'} data-testid="mimi-messages">
         {current.messages.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Hãy nói Task bạn muốn tạo.</p>
         ) : current.messages.map((message) => (
@@ -348,7 +370,7 @@ export function MimiScreen({ onOpenTasks }: { onOpenTasks: () => void }) {
 
       {current.events.length ? (
         <details className="rounded-lg border p-3 text-sm">
-          <summary className="cursor-pointer font-semibold">Execution events ({current.events.length})</summary>
+          <summary className="cursor-pointer font-semibold">Chi tiết kỹ thuật ({current.events.length})</summary>
           <ol className="mt-3 space-y-1 text-xs text-muted-foreground">
             {current.events.slice(-30).map((event) => (
               <li key={event.id}>{event.kind}</li>
