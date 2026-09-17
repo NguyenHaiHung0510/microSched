@@ -1,23 +1,14 @@
-import { useQuery } from '@tanstack/react-query'
-import {
-  Activity,
-  Bot,
-  BrainCircuit,
-  CheckCircle2,
-  CircleAlert,
-  Gauge,
-  MessagesSquare,
-  Orbit,
-  Settings2,
-  ShieldCheck,
-  SlidersHorizontal,
-} from 'lucide-react'
-import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Activity, Archive, Bot, BrainCircuit, CheckCircle2, CircleAlert, CircleDot, Clock3, Database, Gauge, History, LoaderCircle, MessagesSquare, Orbit, Play, ReceiptText, RotateCcw, Settings2, ShieldCheck, Sparkles, TimerReset, WalletCards, Wrench } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { fetchCurrentMimiConversation } from '@/mimi-api'
+import { fetchMimiPreview, selectMimiPreviewScenario, type MimiPreviewRange, type MimiPreviewState, type MimiReasoningLevel } from '@/mimi-preview'
 import { MimiScreen } from '@/MimiScreen'
 import { mimiRunLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
@@ -31,221 +22,82 @@ const sections: Array<{ id: CenterSection; label: string; icon: typeof Gauge }> 
   { id: 'settings', label: 'Cấu hình', icon: Settings2 },
 ]
 
-function StatCard({
-  title,
-  value,
-  description,
-  icon: Icon,
-}: {
-  title: string
-  value: string
-  description: string
-  icon: typeof Gauge
-}) {
-  return (
-    <Card className="gap-3">
-      <CardHeader className="gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <CardDescription>{title}</CardDescription>
-          <Icon className="size-5 text-primary" aria-hidden="true" />
-        </div>
-        <CardTitle className="text-lg">{value}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </CardContent>
-    </Card>
-  )
+const ranges: Array<{ id: MimiPreviewRange; label: string }> = [
+  { id: 'today', label: 'Hôm nay' }, { id: '7d', label: '7 ngày' }, { id: '30d', label: '30 ngày' },
+  { id: '3m', label: '3 tháng' }, { id: '6m', label: '6 tháng' }, { id: '1y', label: '1 năm' },
+]
+
+const reasoningLevels: Array<{ id: MimiReasoningLevel; label: string; detail: string }> = [
+  { id: 'minimal', label: 'Tối giản', detail: 'Trạng thái, elapsed time và tool đang chạy.' },
+  { id: 'balanced', label: 'Cân bằng', detail: 'Thêm các mốc và suy luận công khai ngắn gọn.' },
+  { id: 'detailed', label: 'Chi tiết', detail: 'Thêm toàn bộ reasoning summary và kết quả tool an toàn.' },
+  { id: 'full', label: 'Đầy đủ', detail: 'Thêm timeline kỹ thuật, route, token và timing.' },
+]
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value)
+}
+
+function formatCompact(value: number) {
+  return new Intl.NumberFormat('vi-VN', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+}
+
+function useElapsed(acceptedAt?: string, running = false) {
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running) return
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [running])
+  if (!acceptedAt) return '—'
+  const seconds = Math.max(0, Math.floor((nowMs - new Date(acceptedAt).getTime()) / 1000))
+  return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
+}
+
+function StatCard({ title, value, description, icon: Icon }: { title: string; value: string; description: string; icon: typeof Gauge }) {
+  return <Card className="gap-3"><CardHeader className="gap-2"><div className="flex items-center justify-between gap-3"><CardDescription>{title}</CardDescription><Icon className="size-5 text-primary" aria-hidden="true" /></div><CardTitle className="text-lg">{value}</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{description}</p></CardContent></Card>
+}
+
+function UsagePanel({ preview, range, onRange }: { preview: MimiPreviewState; range: MimiPreviewRange; onRange: (range: MimiPreviewRange) => void }) {
+  const maxCost = Math.max(...preview.usage.points.map((point) => point.cost), 0.01)
+  return <Card className="min-w-0"><CardHeader><div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between"><div><div className="flex flex-wrap items-center gap-2"><CardTitle>Mức dùng AI</CardTitle><Badge variant="secondary">SYNTHETIC</Badge></div><CardDescription>{preview.usage.source}. Sản phẩm thật chỉ hiện range mà nguồn dữ liệu hỗ trợ.</CardDescription></div><div className="flex flex-wrap gap-1" aria-label="Khoảng thời gian mức dùng">{ranges.map((item) => <Button key={item.id} size="sm" variant={range === item.id ? 'selected' : 'ghost'} onClick={() => onRange(item.id)}>{item.label}</Button>)}</div></div></CardHeader><CardContent className="space-y-4"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div><p className="text-xs text-muted-foreground">Chi phí</p><p className="text-xl font-extrabold">{formatMoney(preview.usage.cost)}</p></div><div><p className="text-xs text-muted-foreground">Requests</p><p className="text-xl font-extrabold">{formatCompact(preview.usage.requests)}</p></div><div><p className="text-xs text-muted-foreground">Token</p><p className="text-xl font-extrabold">{formatCompact(preview.usage.total_tokens)}</p></div><div><p className="text-xs text-muted-foreground">Cache hit</p><p className="text-xl font-extrabold">{preview.usage.cache_hit_rate}%</p><p className="text-xs text-muted-foreground">{formatCompact(preview.usage.cached_tokens)} cached token</p></div></div><div className="flex h-36 items-end gap-2 rounded-xl bg-muted/50 p-3" role="img" aria-label="Chi phí theo các mốc trong khoảng đang chọn">{preview.usage.points.map((point) => <div key={point.label} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1"><span className="text-[11px] font-semibold">{formatMoney(point.cost)}</span><div className="w-full rounded-t bg-primary/80" style={{ height: `${Math.max(8, point.cost / maxCost * 82)}px` }} /><span className="max-w-full truncate text-[10px] text-muted-foreground">{point.label}</span></div>)}</div><details className="text-sm"><summary className="cursor-pointer font-semibold">Xem dữ liệu biểu đồ</summary><div className="mt-2 overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th className="py-2">Mốc</th><th>Chi phí</th><th>Requests</th><th>Cache</th></tr></thead><tbody>{preview.usage.points.map((point) => <tr key={point.label} className="border-t"><td className="py-2">{point.label}</td><td>{formatMoney(point.cost)}</td><td>{point.requests}</td><td>{point.cache_hit_rate}%</td></tr>)}</tbody></table></div></details></CardContent></Card>
+}
+
+function LiveRunPanel({ preview, reasoningLevel }: { preview: MimiPreviewState; reasoningLevel: MimiReasoningLevel }) {
+  const running = preview.run.state === 'running' || preview.run.state === 'recovering'
+  const elapsed = useElapsed(preview.run.accepted_at, running)
+  const levelIndex = reasoningLevels.findIndex((item) => item.id === reasoningLevel)
+  const stateLabel = preview.run.state === 'awaiting_owner' ? 'Chờ bạn' : preview.run.state === 'paused_deadline' ? 'Đã tạm dừng' : preview.run.state === 'recovering' ? 'Đang khôi phục' : preview.run.state === 'running' ? 'Đang chạy' : 'Đã xong'
+  return <Card className={running ? 'border-primary/30' : undefined}><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Sparkles className={running ? 'size-5 animate-pulse text-primary motion-reduce:animate-none' : 'size-5 text-primary'} aria-hidden="true" /><CardTitle>Run đang theo dõi</CardTitle></div><CardDescription>{preview.run.stage}</CardDescription></div><Badge variant={preview.run.state === 'recovering' ? 'destructive' : 'outline'}><CircleDot aria-hidden="true" />{stateLabel}</Badge></div></CardHeader><CardContent className="space-y-4"><div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg bg-muted/60 p-3"><p className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="size-4" />Thời gian từ khi nhận request</p><p className="mt-1 font-mono text-2xl font-extrabold">{elapsed}</p></div><div className="rounded-lg bg-muted/60 p-3"><p className="flex items-center gap-2 text-xs text-muted-foreground"><TimerReset className="size-4" />Giới hạn run hiện tại</p><p className="mt-1 font-bold">30 phút · có thể chỉnh</p><p className="text-xs text-muted-foreground">Chạm giới hạn sẽ tạm dừng rõ ràng và cho Resume.</p></div></div><p className="text-sm">{preview.run.summary}</p><ol className="space-y-2">{preview.run.tools.map((tool) => <li key={tool.label} className="flex items-center gap-3 rounded-lg border p-2.5 text-sm">{tool.state === 'done' ? <CheckCircle2 className="size-4 text-ok" /> : tool.state === 'running' ? <LoaderCircle className="size-4 animate-spin text-primary motion-reduce:animate-none" /> : <CircleDot className="size-4 text-muted-foreground" />}<span className="flex-1">{tool.label}</span><span className="text-xs text-muted-foreground">{tool.state === 'done' ? 'Xong' : tool.state === 'running' ? 'Đang làm' : 'Chờ'}</span></li>)}</ol>{levelIndex >= 1 && preview.run.reasoning.length ? <details open={reasoningLevel === 'detailed' || reasoningLevel === 'full'} className="rounded-lg bg-accent p-3 text-sm"><summary className="cursor-pointer font-semibold">Suy luận</summary><ul className="mt-2 space-y-1 text-accent-foreground">{preview.run.reasoning.slice(0, reasoningLevel === 'balanced' ? 1 : undefined).map((line) => <li key={line}>• {line}</li>)}</ul></details> : null}{levelIndex >= 3 ? <p className="rounded-lg border p-3 font-mono text-xs text-muted-foreground">run_id={preview.run.id} · route={preview.route.provider} · deadline={new Date(preview.run.deadline).toLocaleTimeString('vi-VN')}</p> : null}{preview.run.resumable ? <Button variant="outline"><Play />Resume sau khi reconcile</Button> : null}</CardContent></Card>
 }
 
 export function MimiControlCenter({ onOpenTasks }: { onOpenTasks: () => void }) {
+  const queryClient = useQueryClient()
   const [section, setSection] = useState<CenterSection>('overview')
-  const conversation = useQuery({
-    queryKey: ['mimi', 'current'],
-    queryFn: fetchCurrentMimiConversation,
-    ...NO_POLLING_QUERY_OPTIONS,
-  })
+  const [range, setRange] = useState<MimiPreviewRange>('7d')
+  const [reasoningLevel, setReasoningLevel] = useState<MimiReasoningLevel>('balanced')
+  const [leaseMinutes, setLeaseMinutes] = useState('30')
+  const conversation = useQuery({ queryKey: ['mimi', 'current'], queryFn: fetchCurrentMimiConversation, ...NO_POLLING_QUERY_OPTIONS })
+  const preview = useQuery({ queryKey: ['mimi', 'preview', range], queryFn: () => fetchMimiPreview(range), retry: false, staleTime: 0 })
+  const selectScenario = useMutation({ mutationFn: selectMimiPreviewScenario, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['mimi', 'preview'] }); void queryClient.invalidateQueries({ queryKey: ['mimi', 'current'] }) } })
   const current = conversation.data
+  const synthetic = preview.data
   const latestRun = current?.runs.at(-1)
-  const pendingApprovals = current?.change_sets.filter((item) => item.state === 'pending').length ?? 0
-  const unresolvedFeedback = current?.feedback.filter((item) => item.unresolved).length ?? 0
+  const pendingApprovals = synthetic?.attention.pending_approvals ?? current?.change_sets.filter((item) => item.state === 'pending').length ?? 0
+  const unresolvedFeedback = synthetic?.attention.unresolved_feedback ?? current?.feedback.filter((item) => item.unresolved).length ?? 0
+  const scenarioDescription = useMemo(() => synthetic?.scenarios.find((item) => item.id === synthetic.scenario)?.description, [synthetic])
 
-  return (
-    <section className="space-y-5" aria-labelledby="mimi-control-title">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Bot className="size-6 text-primary" aria-hidden="true" />
-            <h2 id="mimi-control-title" className="text-2xl font-extrabold text-primary">
-              Mimi Control Center
-            </h2>
-          </div>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            Quản lý trạng thái, hoạt động, hội thoại và cấu hình đang thực sự có hiệu lực.
-          </p>
-        </div>
-        <Badge variant="outline">P1R · local preview</Badge>
-      </div>
+  return <section className="space-y-5" aria-labelledby="mimi-control-title">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="space-y-1"><div className="flex items-center gap-2"><Bot className="size-6 text-primary" aria-hidden="true" /><h2 id="mimi-control-title" className="text-2xl font-extrabold text-primary">Mimi Control Center</h2></div><p className="max-w-2xl text-sm text-muted-foreground">Quản lý trạng thái, mức dùng, hoạt động, hội thoại và cấu hình đang thực sự có hiệu lực.</p></div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">P1R · local preview</Badge>{synthetic ? <Badge variant="secondary">Synthetic data</Badge> : null}</div></div>
+    {synthetic ? <Card className="border-dashed bg-muted/30"><CardContent className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-bold">Kịch bản để duyệt UX</p><p className="text-xs text-muted-foreground">{scenarioDescription}</p></div><Select value={synthetic.scenario} onValueChange={(value) => selectScenario.mutate(value)} disabled={selectScenario.isPending}><SelectTrigger className="min-h-11 w-full bg-card sm:w-56" aria-label="Kịch bản synthetic"><SelectValue /></SelectTrigger><SelectContent>{synthetic.scenarios.map((scenario) => <SelectItem key={scenario.id} value={scenario.id}>{scenario.label}</SelectItem>)}</SelectContent></Select></CardContent></Card> : null}
+    <nav className="flex gap-2 overflow-x-auto pb-1" aria-label="Khu quản lý Mimi">{sections.map(({ id, label, icon: Icon }) => <Button key={id} size="lg" variant={section === id ? 'selected' : 'ghost'} aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}><Icon aria-hidden="true" />{label}</Button>)}</nav>
 
-      <nav className="flex gap-2 overflow-x-auto pb-1" aria-label="Khu quản lý Mimi">
-        {sections.map(({ id, label, icon: Icon }) => (
-          <Button
-            key={id}
-            size="lg"
-            variant={section === id ? 'selected' : 'ghost'}
-            aria-current={section === id ? 'page' : undefined}
-            onClick={() => setSection(id)}
-          >
-            <Icon aria-hidden="true" />
-            {label}
-          </Button>
-        ))}
-      </nav>
+    {section === 'overview' ? <div className="space-y-5"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><StatCard title="Trạng thái Mimi" value={conversation.isError ? 'Cần kết nối lại' : synthetic?.run.state === 'running' ? 'Đang làm việc' : 'Sẵn sàng'} description="Browser focus không quyết định vòng đời run." icon={conversation.isError ? CircleAlert : CheckCircle2} /><StatCard title="Route hiệu lực" value={synthetic ? synthetic.route.model : 'Chưa đủ route-card'} description={synthetic ? `${synthetic.route.provider} · ${synthetic.route.mode}` : 'Backend thật sẽ công bố model/provider.'} icon={BrainCircuit} /><StatCard title="Chờ bạn" value={`${pendingApprovals} preview`} description={`${unresolvedFeedback} feedback còn mở · mọi ghi Task vẫn cần xác nhận.`} icon={ShieldCheck} /><StatCard title="Run gần nhất" value={synthetic ? synthetic.run.stage : latestRun ? mimiRunLabel(latestRun.state) : 'Chưa có'} description="Elapsed, route, tool và terminal state nằm ở Activity." icon={Activity} /></div>{synthetic ? <UsagePanel preview={synthetic} range={range} onRange={setRange} /> : null}<div className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)]">{synthetic ? <LiveRunPanel preview={synthetic} reasoningLevel={reasoningLevel} /> : null}<Card><CardHeader><CardTitle>Health & capability</CardTitle><CardDescription>Trạng thái tách bạch, không gộp “Online” thành một nhãn mơ hồ.</CardDescription></CardHeader><CardContent className="space-y-3">{synthetic?.health.map((item) => <div key={item.label} className="flex items-start gap-3 rounded-lg bg-muted/50 p-3"><span className={`mt-1 size-2.5 rounded-full ${item.state === 'good' ? 'bg-ok' : item.state === 'idle' ? 'bg-muted-foreground' : item.state === 'warning' ? 'bg-warn' : 'bg-bad'}`} /><div><p className="text-sm font-semibold">{item.label}</p><p className="text-xs text-muted-foreground">{item.detail}</p></div></div>) ?? <p className="text-sm text-muted-foreground">Chờ backend công bố health có provenance.</p>}<div className="border-t pt-3 text-sm"><p className="flex items-center gap-2 font-semibold"><Orbit className="size-4" />Orbit chưa bật</p><p className="mt-1 text-xs text-muted-foreground">Chỉ xuất hiện thành module khi có jobs/report thật.</p></div></CardContent></Card></div></div> : null}
 
-      {section === 'overview' ? (
-        <div className="space-y-5">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              title="Trạng thái Mimi"
-              value={conversation.isError ? 'Cần kết nối lại' : 'Local dogfood'}
-              description="Production vẫn tắt. Preview này không thay route-card hoặc Owner acceptance."
-              icon={conversation.isError ? CircleAlert : CheckCircle2}
-            />
-            <StatCard
-              title="Route hiệu lực"
-              value="Chưa đủ route-card"
-              description="Model/provider thật sẽ do backend công bố; không dùng nhãn hard-code trong UI."
-              icon={BrainCircuit}
-            />
-            <StatCard
-              title="Chờ Owner"
-              value={`${pendingApprovals} preview`}
-              description={`${unresolvedFeedback} feedback còn mở · mọi ghi Task vẫn cần xác nhận.`}
-              icon={ShieldCheck}
-            />
-            <StatCard
-              title="Run gần nhất"
-              value={latestRun ? mimiRunLabel(latestRun.state) : 'Chưa có'}
-              description="Activity giữ timing, route, usage và terminal state; transcript không gánh diagnostics."
-              icon={Activity}
-            />
-          </div>
+    {section === 'activity' ? <div className="space-y-4">{synthetic ? <LiveRunPanel preview={synthetic} reasoningLevel={reasoningLevel} /> : null}<Card><CardHeader><CardTitle>Runs, receipts và diagnostics</CardTitle><CardDescription>Run không chết khi đóng side-chat, đổi tab, đổi hội thoại hoặc đóng browser; server lease mới là ranh giới.</CardDescription></CardHeader><CardContent><div className="grid gap-3 sm:grid-cols-3"><div className="rounded-lg bg-muted/50 p-3"><ReceiptText className="mb-2 size-5 text-primary" /><p className="font-bold">Receipt bền vững</p><p className="text-xs text-muted-foreground">Gắn đúng operation, không trộn transcript.</p></div><div className="rounded-lg bg-muted/50 p-3"><History className="mb-2 size-5 text-primary" /><p className="font-bold">Replay theo sequence</p><p className="text-xs text-muted-foreground">Reconnect cùng run ID, không dispatch lần hai.</p></div><div className="rounded-lg bg-muted/50 p-3"><Database className="mb-2 size-5 text-primary" /><p className="font-bold">Checkpoint có ý nghĩa</p><p className="text-xs text-muted-foreground">Không poll DB để giữ Neon luôn bật.</p></div></div></CardContent></Card></div> : null}
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
-            <Card>
-              <CardHeader>
-                <CardTitle>Khả năng đang có</CardTitle>
-                <CardDescription>Chỉ hiển thị capability thật, không dựng tab rỗng.</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-2">
-                {[
-                  ['Đọc Task STANDARD', 'Có provenance và source version'],
-                  ['Tạo Task có preview', 'Frozen digest · confirm/reject'],
-                  ['Receipt và feedback', 'Durable, gắn đúng operation'],
-                  ['Side-chat toàn app', 'Đang ở preview gate Task 058'],
-                ].map(([title, detail]) => (
-                  <div key={title} className="rounded-lg bg-muted/60 p-3">
-                    <p className="font-semibold">{title}</p>
-                    <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+    {section === 'conversations' ? <div className="grid min-w-0 gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]"><Card className="content-start"><CardHeader><CardTitle>Hội thoại</CardTitle><CardDescription>Title tự sinh tối đa 80 ký tự; rename của bạn sẽ khóa title.</CardDescription></CardHeader><CardContent className="space-y-2"><Button className="w-full justify-start"><MessagesSquare />Hội thoại mới</Button>{synthetic?.conversations.map((item, index) => <button key={item.id} type="button" className={`w-full rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${index === 0 ? 'border-primary bg-primary/5' : 'bg-card'} ${item.archived ? 'opacity-60' : ''}`}><div className="flex items-start gap-2"><span className="line-clamp-2 flex-1 text-sm font-semibold">{item.title}</span>{item.unread ? <span className="mt-1 size-2 rounded-full bg-primary" aria-label="Có cập nhật mới" /> : null}</div><div className="mt-2 flex items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{item.state}</span>{item.archived ? <Archive className="size-3.5 text-muted-foreground" /> : null}</div></button>) ?? <Button className="w-full justify-start" variant="selected"><MessagesSquare />Conversation hiện tại</Button>}</CardContent></Card><Card className="min-w-0"><CardContent className="p-4 sm:p-5"><MimiScreen onOpenTasks={onOpenTasks} variant="workspace" /></CardContent></Card></div> : null}
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Bước tiếp theo</CardTitle>
-                <CardDescription>Capability-gated roadmap</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <div className="flex items-start gap-3">
-                  <Orbit className="mt-0.5 size-5 text-muted-foreground" aria-hidden="true" />
-                  <div><p className="font-semibold">Orbit</p><p className="text-muted-foreground">Chưa bật · cần jobs/report thật.</p></div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <BrainCircuit className="mt-0.5 size-5 text-muted-foreground" aria-hidden="true" />
-                  <div><p className="font-semibold">Memory & Skills</p><p className="text-muted-foreground">Không xuất hiện như module hoạt động trước capability.</p></div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      ) : null}
-
-      {section === 'activity' ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Runs, receipts và diagnostics</CardTitle>
-            <CardDescription>Thông tin vận hành tách khỏi transcript hội thoại.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {!current?.runs.length ? <p className="text-sm text-muted-foreground">Chưa có run nào trong conversation hiện tại.</p> : null}
-            {current?.runs.slice(-8).reverse().map((run) => (
-              <article key={run.id} className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="font-semibold">Run {run.generation}</p>
-                  <p className="truncate text-xs text-muted-foreground">{run.id}</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline">{mimiRunLabel(run.state)}</Badge>
-                  <Badge variant="secondary">{run.provider_outcome === 'succeeded' ? 'Provider hoàn tất' : run.provider_outcome === 'failed' ? 'Provider lỗi' : 'Chưa có kết quả provider'}</Badge>
-                </div>
-              </article>
-            ))}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {section === 'conversations' ? (
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]">
-          <Card className="content-start">
-            <CardHeader>
-              <CardTitle>Hội thoại</CardTitle>
-              <CardDescription>New/switch/rename/archive được nối ở 058B.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Button className="w-full justify-start" variant="selected">
-                <MessagesSquare aria-hidden="true" /> Conversation hiện tại
-              </Button>
-              <Button className="w-full justify-start" variant="outline" disabled>
-                <Bot aria-hidden="true" /> Hội thoại mới · chờ 058B
-              </Button>
-            </CardContent>
-          </Card>
-          <Card className="min-w-0">
-            <CardContent className="p-4 sm:p-5">
-              <MimiScreen onOpenTasks={onOpenTasks} variant="workspace" />
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
-
-      {section === 'settings' ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2"><SlidersHorizontal className="size-5 text-primary" aria-hidden="true" /><CardTitle>Interactive runtime</CardTitle></div>
-              <CardDescription>Requested và effective phải tách biệt.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div className="flex items-center justify-between gap-3"><span>Requested ceiling</span><Badge>7 phút</Badge></div>
-              <div className="flex items-center justify-between gap-3"><span>Effective P1 client</span><Badge variant="destructive">20 giây · cần sửa</Badge></div>
-              <div className="flex items-center justify-between gap-3"><span>Streaming</span><Badge variant="outline">Đã duyệt · chưa effective</Badge></div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Provider policy</CardTitle>
-              <CardDescription>Không hiển thị hoặc chỉnh API key trong client.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div className="flex items-center justify-between gap-3"><span>Evaluation</span><Badge variant="outline">Exact pin</Badge></div>
-              <div className="flex items-center justify-between gap-3"><span>Dogfood</span><Badge variant="outline">Eligible pool</Badge></div>
-              <div className="flex items-center justify-between gap-3"><span>Privacy</span><Badge variant="secondary">ZDR + data deny</Badge></div>
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
-    </section>
-  )
+    {section === 'settings' ? <div className="grid gap-4 lg:grid-cols-2"><Card><CardHeader><div className="flex items-center gap-2"><TimerReset className="size-5 text-primary" /><CardTitle>Runtime & hiển thị</CardTitle></div><CardDescription>Một cụm cấu hình, một nút về mặc định.</CardDescription></CardHeader><CardContent className="space-y-5"><div className="space-y-2"><label className="text-sm font-semibold" htmlFor="mimi-lease">Giới hạn mỗi run</label><Select value={leaseMinutes} onValueChange={setLeaseMinutes}><SelectTrigger id="mimi-lease" className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="15">15 phút</SelectItem><SelectItem value="30">30 phút · mặc định</SelectItem><SelectItem value="60">60 phút</SelectItem><SelectItem value="120">120 phút</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Hết thời gian: tạm dừng rõ ràng, checkpoint và cho Resume; không tự retry outcome chưa biết.</p></div><div className="space-y-2"><label className="text-sm font-semibold" htmlFor="mimi-reasoning">Mức hiển thị hoạt động</label><Select value={reasoningLevel} onValueChange={(value) => setReasoningLevel(value as MimiReasoningLevel)}><SelectTrigger id="mimi-reasoning" className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent>{reasoningLevels.map((level) => <SelectItem key={level.id} value={level.id}>{level.label}</SelectItem>)}</SelectContent></Select><ol className="space-y-1 text-xs text-muted-foreground">{reasoningLevels.slice(0, reasoningLevels.findIndex((item) => item.id === reasoningLevel) + 1).map((level) => <li key={level.id}><b className="text-foreground">{level.label}:</b> {level.detail}</li>)}</ol></div><Dialog><DialogTrigger asChild><Button variant="outline"><RotateCcw />Về mặc định</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Đưa Runtime & hiển thị về mặc định?</DialogTitle><DialogDescription>Giới hạn run sẽ là 30 phút và mức hiển thị sẽ là Cân bằng. Run đang chạy không bị thay đổi.</DialogDescription></DialogHeader><DialogFooter><DialogClose asChild><Button variant="outline">Giữ nguyên</Button></DialogClose><DialogClose asChild><Button onClick={() => { setLeaseMinutes('30'); setReasoningLevel('balanced') }}>Về mặc định</Button></DialogClose></DialogFooter></DialogContent></Dialog></CardContent></Card><Card><CardHeader><div className="flex items-center gap-2"><WalletCards className="size-5 text-primary" /><CardTitle>Nguồn dữ liệu & credential</CardTitle></div><CardDescription>Chỉ hiện cấu hình có thật; secret không bao giờ xuống browser.</CardDescription></CardHeader><CardContent className="space-y-3 text-sm"><div className="flex items-start gap-3 rounded-lg bg-muted/50 p-3"><ShieldCheck className="mt-0.5 size-5 text-primary" /><div><p className="font-semibold">OpenRouter management key</p><p className="text-xs text-muted-foreground">Server-only, quyền tối thiểu cho analytics. Sẽ xin bạn cung cấp khi bắt đầu tích hợp live.</p></div></div><div className="flex items-start gap-3 rounded-lg bg-muted/50 p-3"><Gauge className="mt-0.5 size-5 text-primary" /><div><p className="font-semibold">Range theo capability</p><p className="text-xs text-muted-foreground">3/6/12 tháng chỉ bật khi API nguồn hỗ trợ; không tự ước lượng để lấp dữ liệu.</p></div></div><div className="flex items-start gap-3 rounded-lg bg-muted/50 p-3"><Wrench className="mt-0.5 size-5 text-primary" /><div><p className="font-semibold">Reasoning là capability phụ</p><p className="text-xs text-muted-foreground">Không có vẫn route và MIDEX bình thường; UI rơi về stage/tool events.</p></div></div></CardContent></Card></div> : null}
+  </section>
 }

@@ -8,6 +8,134 @@ const now = () => new Date().toISOString()
 const emptyPage = () => ({ items: [], next_cursor: null })
 
 let conversation = null
+let previewScenario = 'healthy'
+let scenarioStartedAt = Date.now()
+
+const scenarios = [
+  { id: 'healthy', label: 'Ngày bình thường', description: 'Route ổn định, cache tốt và các run kết thúc sạch.' },
+  { id: 'long_run', label: 'Run dài đang chạy', description: 'Hiển thị elapsed time, reasoning công khai và tool progress.' },
+  { id: 'degraded', label: 'Provider suy giảm', description: 'Cache/uptime giảm, route phục hồi và diagnostics có ngữ cảnh.' },
+  { id: 'owner_queue', label: 'Đang chờ Owner', description: 'Preview, feedback và hội thoại dài/archived cùng xuất hiện.' },
+]
+
+const rangeDays = { today: 1, '7d': 7, '30d': 30, '3m': 90, '6m': 180, '1y': 365 }
+
+function compactPoints(range, dailyCost, requestsPerDay, cacheBase) {
+  const days = rangeDays[range] ?? 7
+  const pointCount = days <= 7 ? days : days <= 30 ? 10 : 12
+  return Array.from({ length: pointCount }, (_, index) => {
+    const wave = 0.78 + ((index * 7) % 5) * 0.09
+    return {
+      label: days === 1 ? 'Hôm nay' : `${Math.max(1, Math.round(((index + 1) * days) / pointCount))}d`,
+      cost: Number((dailyCost * days / pointCount * wave).toFixed(3)),
+      requests: Math.max(1, Math.round(requestsPerDay * days / pointCount * wave)),
+      cache_hit_rate: Number(Math.max(0, Math.min(99.9, cacheBase + ((index % 3) - 1) * 1.7)).toFixed(1)),
+    }
+  })
+}
+
+function previewState(range = '7d') {
+  const safeRange = Object.hasOwn(rangeDays, range) ? range : '7d'
+  const days = rangeDays[safeRange]
+  const degraded = previewScenario === 'degraded'
+  const dailyCost = degraded ? 0.42 : 0.093
+  const requestsPerDay = degraded ? 76 : 118
+  const cacheRate = degraded ? 61.4 : 94.2
+  const running = previewScenario === 'long_run'
+  const ownerQueue = previewScenario === 'owner_queue'
+  const acceptedAt = running ? scenarioStartedAt - 4 * 60_000 - 37_000 : scenarioStartedAt - 18 * 60_000
+  const deadlineAt = acceptedAt + 30 * 60_000
+
+  return {
+    synthetic: true,
+    scenario: previewScenario,
+    scenarios,
+    checked_at: now(),
+    usage: {
+      range: safeRange,
+      available_ranges: ['today', '7d', '30d', '3m', '6m', '1y'],
+      cost: Number((dailyCost * days).toFixed(2)),
+      requests: Math.round(requestsPerDay * days),
+      total_tokens: Math.round(12_400_000 * days),
+      cached_tokens: Math.round(12_400_000 * days * cacheRate / 100),
+      cache_hit_rate: cacheRate,
+      source: 'Synthetic · mô phỏng số liệu trực tiếp từ bên mua API',
+      points: compactPoints(safeRange, dailyCost, requestsPerDay, cacheRate),
+    },
+    route: {
+      model: 'DeepSeek V4 Flash 0731',
+      provider: degraded ? 'Eligible pool · đang phục hồi' : 'Relace · synthetic',
+      mode: 'Adaptive local dogfood',
+      uptime_30d: degraded ? 82.7 : 97.8,
+      median_ttft_ms: degraded ? 4200 : 680,
+      privacy: 'ZDR · data collection deny',
+    },
+    run: {
+      id: `run-${previewScenario}-058`,
+      state: running ? 'running' : degraded ? 'recovering' : ownerQueue ? 'awaiting_owner' : 'completed',
+      accepted_at: new Date(acceptedAt).toISOString(),
+      deadline: new Date(deadlineAt).toISOString(),
+      stage: running ? 'Đang sắp xếp lịch và kiểm tra xung đột' : degraded ? 'Đang đối soát provider trước khi tiếp tục' : ownerQueue ? 'Chờ bạn duyệt preview' : 'Đã hoàn tất và lưu receipt',
+      summary: running ? 'Mimi vẫn làm việc ở server; đóng side-chat hoặc đổi hội thoại không làm dừng run.' : degraded ? 'Kết nối stream đã rớt. Mimi giữ nguyên run ID và chưa gửi lại request.' : ownerQueue ? 'Có một thay đổi an toàn đang chờ xác nhận; chưa ghi Task.' : 'Run kết thúc đúng một lần, không còn hành động chờ.',
+      reasoning: running
+        ? ['Đã đọc 14 Task STANDARD liên quan.', 'Phát hiện hai khung giờ có xung đột.', 'Đang so sánh phương án ít làm xáo trộn lịch nhất.']
+        : degraded
+          ? ['Provider outcome hiện chưa chắc chắn.', 'Đang reconcile cùng run ID trước khi cho phép resume.']
+          : ['Đã kiểm tra scope STANDARD.', 'Không có write nào ngoài preview đã duyệt.'],
+      tools: running
+        ? [{ label: 'Đọc Task liên quan', state: 'done' }, { label: 'Kiểm tra lịch', state: 'done' }, { label: 'Xếp phương án', state: 'running' }, { label: 'Tạo preview', state: 'waiting' }]
+        : degraded
+          ? [{ label: 'Provider stream', state: 'done' }, { label: 'Reconcile outcome', state: 'running' }, { label: 'Tiếp tục run', state: 'waiting' }]
+          : [{ label: 'Đọc dữ liệu', state: 'done' }, { label: 'Kiểm tra policy', state: 'done' }, { label: 'Lưu receipt', state: 'done' }],
+      resumable: degraded,
+    },
+    attention: {
+      pending_approvals: ownerQueue ? 2 : 0,
+      unresolved_feedback: ownerQueue ? 3 : 0,
+      incidents: degraded ? 1 : 0,
+    },
+    health: [
+      { label: 'microSched API', state: 'good', detail: 'Sẵn sàng · vừa kiểm tra' },
+      { label: 'Database', state: running ? 'good' : 'idle', detail: running ? 'Đang dùng cho checkpoint có ý nghĩa' : 'Không có keepalive · có thể idle tự nhiên' },
+      { label: 'Provider route', state: degraded ? 'warning' : 'good', detail: degraded ? 'Stream gián đoạn · đang reconcile' : 'Trong eligible pool' },
+      { label: 'Cache', state: degraded ? 'bad' : 'good', detail: `${cacheRate}% hit rate trong khoảng đang xem` },
+    ],
+    conversations: [
+      { id: 'conv-a', title: 'Chuẩn bị slide báo cáo Mimi P1', updated_at: now(), archived: false, unread: running, state: running ? 'Đang chạy' : 'Sẵn sàng' },
+      { id: 'conv-b', title: 'Rà soát lịch học, deadline và ba phương án tránh xung đột trong tuần tới', updated_at: new Date(Date.now() - 3_600_000).toISOString(), archived: false, unread: ownerQueue, state: ownerQueue ? 'Chờ duyệt' : 'Đã xong' },
+      { id: 'conv-c', title: 'Tổng duyệt demo Mimi và kiểm tra receipt', updated_at: new Date(Date.now() - 86_400_000).toISOString(), archived: false, unread: false, state: 'Có feedback' },
+      { id: 'conv-d', title: 'Hội thoại đã lưu trữ', updated_at: new Date(Date.now() - 12 * 86_400_000).toISOString(), archived: true, unread: false, state: 'Đã lưu trữ' },
+    ],
+  }
+}
+
+function conversationForScenario() {
+  const base = newConversation()
+  const timestamp = now()
+  const run = previewState('7d').run
+  const runRow = {
+    id: run.id,
+    generation: 1,
+    state: run.state,
+    provider_outcome: run.state === 'completed' ? 'succeeded' : run.state === 'recovering' ? 'unknown' : null,
+    deadline: run.deadline,
+    error_code: run.state === 'recovering' ? 'transport_disconnected' : null,
+    created_at: run.accepted_at,
+    completed_at: run.state === 'completed' ? timestamp : null,
+  }
+  return {
+    ...base,
+    messages: [
+      { id: randomUUID(), run_id: run.id, client_id: randomUUID(), sequence: 1, role: 'user', content: previewScenario === 'long_run' ? 'Sắp xếp lại lịch tuần tới, giữ nguyên ba deadline quan trọng.' : 'Kiểm tra trạng thái Mimi hôm nay.', created_at: run.accepted_at },
+      { id: randomUUID(), run_id: run.id, client_id: null, sequence: 2, role: 'assistant', content: run.summary, created_at: timestamp },
+    ],
+    runs: [runRow],
+    events: [
+      { id: randomUUID(), run_id: run.id, sequence: 1, kind: 'run.accepted', payload: {}, created_at: run.accepted_at },
+      ...run.tools.map((tool, index) => ({ id: randomUUID(), run_id: run.id, sequence: index + 2, kind: `tool.${tool.state}`, payload: { label: tool.label }, created_at: timestamp })),
+    ],
+  }
+}
 
 function send(response, status, body) {
   response.writeHead(status, {
@@ -81,6 +209,8 @@ function taskRows(url) {
   return { items: tasks, next_cursor: null, has_previous: false, has_next: false }
 }
 
+conversation = conversationForScenario()
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? '/', `http://${HOST}:${PORT}`)
@@ -93,6 +223,22 @@ const server = createServer(async (request, response) => {
     }
     if (pathname === '/api/mimi/conversations/current' && method === 'GET') {
       send(response, 200, conversation)
+      return
+    }
+    if (pathname === '/api/mimi/preview' && method === 'GET') {
+      send(response, 200, previewState(url.searchParams.get('range') ?? '7d'))
+      return
+    }
+    if (pathname === '/api/mimi/preview/scenario' && method === 'POST') {
+      const body = await readJson(request)
+      if (!scenarios.some((item) => item.id === body.scenario)) {
+        send(response, 422, { detail: 'Synthetic scenario không hợp lệ.' })
+        return
+      }
+      previewScenario = body.scenario
+      scenarioStartedAt = Date.now()
+      conversation = conversationForScenario()
+      send(response, 200, previewState('7d'))
       return
     }
     if (pathname === '/api/mimi/conversations' && method === 'POST') {

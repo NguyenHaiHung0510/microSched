@@ -1,6 +1,6 @@
 # 058 — Mimi P1R dogfood recovery and interaction shell
 
-Status: **OWNER UI PREVIEW READY — 058A IMPLEMENTED; 058B–058D NOT STARTED (2026-09-17)**
+Status: **OWNER UI PREVIEW READY — 058A.1 IMPLEMENTED; 058B–058D NOT STARTED (2026-09-17)**
 
 > Executor/integrator: T1 GPT-5.6 Sol · Profile: Balanced · Owner grant: continue the approved Mimi delivery flow, correct the failed P1 local dogfood, build the local UI/UX continuously for Owner review, then implement and verify the bounded package. No Astra delegation.
 
@@ -25,8 +25,41 @@ Owner decisions approved 2026-09-17:
 - Mimi tab is dashboard/general information/configuration/management; chat inside it is secondary deep-work capability;
 - Control Center MVP contains real `Overview`, `Activity`, `Conversations` and `Settings`; Orbit, Memory and Skills appear only when corresponding capability is real;
 - use streaming; a several-minute turn is acceptable when progress/tool activity is honest and visually clear;
-- remove the accidental 20-second Mimi cutoff. P1R uses a configurable seven-minute interactive safety ceiling, not a latency acceptance target; actual elapsed/TTFT/tool/terminal time is recorded;
+- remove the accidental 20-second Mimi cutoff. The UI has no generic run timeout;
+  the server uses an Owner-adjustable 30-minute default lease, records actual
+  elapsed/TTFT/tool/terminal time, pauses clearly at the deadline and offers a
+  checkpoint-safe Resume;
 - no P2 domain expansion until this correction passes Owner local dogfood.
+
+Additional Owner approvals for 058A.1 on 2026-09-17:
+
+- dashboard Level B (balanced) and direct-provider usage windows: today, 7/30
+  days and 3/6/12 months when the source API exposes those windows; unsupported
+  history stays unavailable rather than being locally estimated;
+- a server-only, least-privilege OpenRouter management key may be used for the
+  approved analytics integration. Request it from Owner only when live
+  integration starts; never send it to the browser or logs;
+- hybrid conversation titles: deterministic first-message title, normalized
+  whitespace, maximum 80 visible Unicode characters, fallback title with local
+  date/time; an Owner rename locks the title against later auto-renaming;
+- one confirmed “Về mặc định” action per coherent settings group is sufficient;
+- display elapsed time from request acceptance without guessing whether a run
+  is “slower than usual”;
+- provider-public reasoning is optional. It is not a route/MIDEX requirement;
+  absence falls back to truthful stage/tool events. Presentation has four
+  accumulating levels: Tối giản, Cân bằng (default), Chi tiết, Đầy đủ;
+- closing side-chat, switching app tabs/conversations, browser unfocus, closing
+  the browser or shutting the Owner device does not kill a server-owned run.
+  A local-development run necessarily stops when its host machine stops;
+- no foreground keepalive or database polling exists merely to keep Neon awake.
+  Persist meaningful checkpoints/terminal events only, allowing Neon to idle
+  naturally when no request/run needs it;
+- visual direction is “Blossom Companion”: Mimi origami bud states and Orbit
+  orbital blossom states, with semantic motion and reduced-motion support.
+  Reference-board Japanese copy is not approved product copy;
+- the new microSched mark is “Layered Calendar Bloom”. Prepare its real
+  vector/favicon/app-icon/wordmark set for the next deployment/release; Task
+  058A.1 does not silently replace the current app assets.
 
 This interpretation is independently supported by the pre-P1 product records:
 
@@ -74,7 +107,9 @@ Default landing is **Overview**:
 - enabled/disabled capabilities and their gates;
 - health/error summary;
 - pending approvals and recent activity;
-- concise usage/cache/cost fields with `OBSERVED / ESTIMATED / UNAVAILABLE` provenance.
+- concise request/token/cache/cost fields sourced directly from the purchasing
+  provider/API, with exact source and checked-at time. Do not self-estimate
+  billing history to fill unsupported windows.
 
 Other real areas:
 
@@ -90,8 +125,18 @@ Orbit, Memory and Skills remain capability-gated; their absence is not represent
 - Provider request uses streaming where the exact endpoint supports required tool behavior. Provider chunks are normalized into application events before reaching UI.
 - Persist run/provider intent before dispatch. Terminal provider result and usage are persisted before materializing canonical assistant message/change set.
 - Allowed public event types are bounded and versioned, for example: `run.accepted`, `context.reading`, `provider.connected`, `assistant.delta`, `tool.proposed`, `tool.validating`, `preview.ready`, `run.recovering`, `run.terminal`, `heartbeat`.
-- Never stream raw hidden chain-of-thought. UI may show truthful stage animation and an approved application-visible reasoning summary only; partial tool JSON stays server-side until complete and validated.
-- Heartbeat is liveness, not fake progress. One active stream per run; seven-minute default ceiling; Owner cancel closes dispatch and records a distinct terminal state. No unbounded background loop or dense polling.
+- Reasoning is an optional provider capability. UI may show provider-public
+  reasoning text and application-visible summaries at the selected detail
+  level, but never hidden/encrypted/redacted reasoning, secrets or incomplete
+  tool JSON. A route remains valid without reasoning text.
+- Heartbeat is liveness, not fake progress. One active observation stream per
+  run; no UI timeout; default server lease is 30 minutes and Owner-adjustable.
+  Deadline pause, cancel and resume are distinct durable states. Resume links a
+  successor attempt to its parent/checkpoint and reconciles unknown provider
+  outcome before any redispatch.
+- Run ownership is server-side. Presentation surfaces may close or switch
+  without cancelling work. The observation channel replays durable sequenced
+  events after reconnect and does not poll/write Neon merely to show a timer.
 - Disconnect is ambiguous until reconciliation. On reconnect, query the durable run/client ID; never create a second turn merely because the transport ended.
 - The generic 20-second API helper remains for ordinary requests. Mimi streaming has an explicit longer deadline and its own reconciliation path.
 
@@ -121,6 +166,13 @@ Cache hit rate is important but not sufficient. It reduces only eligible repeate
 1. Build the Control Center Overview and persistent side-chat against synthetic, adversarial fixture states using existing tokens/components.
 2. Keep a real local app reachable with hot reload for Owner review.
 3. Review desktop 1280/1440/1920 and mobile 390; iterate until Owner accepts the product shape.
+
+058A.1 adds four explicit synthetic scenarios (healthy, long-running,
+provider/cache degradation and Owner queue), direct-source-shaped usage cards
+from one day through one year, elapsed/tool/reasoning states, health/database
+idle states, adversarial conversation titles/archive state, four accumulated
+detail levels and group reset confirmation. Synthetic values are visibly marked
+and are not product telemetry.
 
 Preview approval is not backend/full QA acceptance. Do not implement broad runtime/migration work before this gate.
 

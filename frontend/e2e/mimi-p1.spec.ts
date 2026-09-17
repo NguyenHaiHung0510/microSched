@@ -51,6 +51,10 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation) })
       return
     }
+    if (request.method() === 'GET' && path.endsWith('/preview')) {
+      await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
+      return
+    }
     expect(request.headers()['x-mimi-csrf']).toBe('1')
     if (request.method() === 'POST' && path.endsWith('/conversations')) {
       conversation = emptyConversation()
