@@ -836,19 +836,19 @@ class TaskStore:
                 date_conditions.append(Task.due_on < to_day)
                 datetime_conditions.append(Task.due_at < to_instant)
             stmt = stmt.where(or_(and_(*date_conditions), and_(*datetime_conditions)))
-        total = int(
-            await db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
-        )
+        # ⚡ Bolt Optimization: Use with_only_columns instead of subquery for count
+        # This avoids full result set evaluation overhead in PostgreSQL
+        total = int(await db.scalar(stmt.with_only_columns(func.count()).order_by(None)) or 0)
         base_stmt = stmt
         has_previous = False
         if last:
+            # ⚡ Bolt Optimization: Use with_only_columns instead of subquery for count
+            # This avoids full result set evaluation overhead in PostgreSQL
             has_previous = bool(
                 await db.scalar(
-                    select(func.count()).select_from(
-                        base_stmt.where(_keyset_relative(Task, last, bucket, after=False))
-                        .order_by(None)
-                        .subquery()
-                    )
+                    base_stmt.where(_keyset_relative(Task, last, bucket, after=False))
+                    .with_only_columns(func.count())
+                    .order_by(None)
                 )
             )
             stmt = stmt.where(_keyset_relative(Task, last, bucket, after=True))
@@ -931,28 +931,32 @@ class TaskStore:
         from_day = from_instant.astimezone(VIETNAM_TZ).date()
         to_day = to_instant.astimezone(VIETNAM_TZ).date()
         dated_scope = dated_scope.where(precision.in_(("date", "datetime")))
+        # ⚡ Bolt Optimization: Use with_only_columns instead of subquery for count
+        # This avoids full result set evaluation overhead in PostgreSQL
         has_previous = bool(
             await db.scalar(
-                select(func.count()).select_from(
-                    dated_scope.where(
-                        or_(
-                            and_(precision == "date", Task.due_on < from_day),
-                            and_(precision == "datetime", Task.due_at < from_instant),
-                        )
-                    ).subquery()
+                dated_scope.where(
+                    or_(
+                        and_(precision == "date", Task.due_on < from_day),
+                        and_(precision == "datetime", Task.due_at < from_instant),
+                    )
                 )
+                .with_only_columns(func.count())
+                .order_by(None)
             )
         )
+        # ⚡ Bolt Optimization: Use with_only_columns instead of subquery for count
+        # This avoids full result set evaluation overhead in PostgreSQL
         has_next = bool(
             await db.scalar(
-                select(func.count()).select_from(
-                    dated_scope.where(
-                        or_(
-                            and_(precision == "date", Task.due_on >= to_day),
-                            and_(precision == "datetime", Task.due_at >= to_instant),
-                        )
-                    ).subquery()
+                dated_scope.where(
+                    or_(
+                        and_(precision == "date", Task.due_on >= to_day),
+                        and_(precision == "datetime", Task.due_at >= to_instant),
+                    )
                 )
+                .with_only_columns(func.count())
+                .order_by(None)
             )
         )
         return TaskTimeline(
