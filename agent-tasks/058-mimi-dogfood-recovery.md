@@ -1,6 +1,6 @@
 # 058 — Mimi P1R dogfood recovery and interaction shell
 
-Status: **OWNER UI PREVIEW READY — 058A.1 IMPLEMENTED; 058B–058D NOT STARTED (2026-09-17)**
+Status: **OWNER UI PREVIEW READY — 058B IMPLEMENTED; 058C–058D NOT STARTED (2026-09-17)**
 
 > Executor/integrator: T1 GPT-5.6 Sol · Profile: Balanced · Owner grant: continue the approved Mimi delivery flow, correct the failed P1 local dogfood, build the local UI/UX continuously for Owner review, then implement and verify the bounded package. No Astra delegation.
 
@@ -33,9 +33,10 @@ Owner decisions approved 2026-09-17:
 
 Additional Owner approvals for 058A.1 on 2026-09-17:
 
-- dashboard Level B (balanced) and direct-provider usage windows: today, 7/30
-  days and 3/6/12 months when the source API exposes those windows; unsupported
-  history stays unavailable rather than being locally estimated;
+- dashboard Level B (balanced) and two direct-provider usage period families:
+  rolling today/7/30 days, plus calendar week/month/quarter/year. Unsupported
+  source history is retained as compact provider snapshots after live
+  integration rather than locally estimated;
 - a server-only, least-privilege OpenRouter management key may be used for the
   approved analytics integration. Request it from Owner only when live
   integration starts; never send it to the browser or logs;
@@ -119,6 +120,13 @@ Other real areas:
 
 Orbit, Memory and Skills remain capability-gated; their absence is not represented as working empty tabs.
 
+The Conversations deep-work surface is a three-column workspace on wide
+screens: conversation management, shared transcript, and a right rail. The
+right rail can show read-only native Task, Calendar, Notes and Tracker views
+before or during a run, plus the selected conversation's Preview and Run. What
+the Owner can see in this rail does not itself expand model context or tool
+authority. Smaller screens disclose the same rail in an explicit dialog.
+
 ## 5. Streaming and long-run contract
 
 - Browser sends an authenticated unsafe request and consumes a `text/event-stream` response through fetch streaming, preserving Mimi CSRF checks; do not use a state-changing GET.
@@ -178,9 +186,18 @@ Preview approval is not backend/full QA acceptance. Do not implement broad runti
 
 ### 058B — Conversation and truthful status foundation
 
-- Add only schema/API fields needed for conversation management and status/route metadata.
-- Reuse per-conversation DEK; title/content-bearing metadata remains encrypted as required.
-- Add list/new/get/rename/archive/restore with ownership, idempotency, pagination and lock-safe presentation.
+- **Implemented, awaiting Owner preview approval.**
+- Added only schema/API fields needed for conversation presentation management;
+  no streamed runtime or provider-policy work from 058C was pulled forward.
+- Reused the per-conversation DEK. Titles are encrypted with conversation-bound
+  AAD; deterministic first-message title is bounded to 80 visible characters,
+  while an Owner rename locks the title against later auto-title changes.
+- Added list/new/get/rename/archive/restore with ownership, idempotent create,
+  stable cursor pagination, optimistic metadata versioning and row locks.
+- Archive is reversible; permanent delete remains out of scope.
+- Added the three-column conversation workspace and compact right rail described
+  in section 4.2. The synthetic API exercises multiple active conversations,
+  adversarial titles, latest run state and archived-state transitions.
 
 ### 058C — Streamed run and provider-policy correction
 

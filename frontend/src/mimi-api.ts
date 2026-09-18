@@ -79,7 +79,13 @@ export type MimiEvent = {
 export type MimiConversation = {
   id: string
   sensitivity: 'standard'
+  title?: string
+  title_source?: 'auto' | 'owner'
+  title_locked?: boolean
   generation: number
+  metadata_version?: number
+  archived_at?: string | null
+  updated_at?: string
   messages: MimiMessage[]
   runs: MimiRun[]
   change_sets: MimiChangeSet[]
@@ -88,17 +94,65 @@ export type MimiConversation = {
   feedback: MimiFeedback[]
 }
 
+export type MimiConversationSummary = {
+  id: string
+  sensitivity: 'standard'
+  title: string
+  title_source: 'auto' | 'owner'
+  title_locked: boolean
+  generation: number
+  metadata_version: number
+  archived_at: string | null
+  updated_at: string
+  latest_run_state: string | null
+}
+
+export type MimiConversationPage = {
+  items: MimiConversationSummary[]
+  next_cursor: string | null
+}
+
 const MIMI_WRITE_HEADERS = { 'X-Mimi-CSRF': '1' }
 
 export function fetchCurrentMimiConversation(): Promise<MimiConversation | null> {
   return apiRequest('/api/mimi/conversations/current')
 }
 
-export function createMimiConversation(): Promise<Pick<MimiConversation, 'id' | 'sensitivity' | 'generation'>> {
+export function fetchMimiConversation(conversationId: string): Promise<MimiConversation> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}`)
+}
+
+export function fetchMimiConversations(state: 'active' | 'archived' | 'all' = 'active'): Promise<MimiConversationPage> {
+  return apiRequest(`/api/mimi/conversations?state=${state}&limit=50`)
+}
+
+export function createMimiConversation(clientId = crypto.randomUUID()): Promise<MimiConversationSummary> {
   return apiRequest('/api/mimi/conversations', {
     method: 'POST',
     headers: MIMI_WRITE_HEADERS,
-    body: JSON.stringify({}),
+    body: JSON.stringify({ client_id: clientId }),
+  })
+}
+
+export function renameMimiConversation(
+  conversation: MimiConversationSummary,
+  title: string,
+): Promise<MimiConversationSummary> {
+  return apiRequest(`/api/mimi/conversations/${conversation.id}`, {
+    method: 'PATCH',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({ title, expected_metadata_version: conversation.metadata_version }),
+  })
+}
+
+export function setMimiConversationArchived(
+  conversation: MimiConversationSummary,
+  archived: boolean,
+): Promise<MimiConversationSummary> {
+  return apiRequest(`/api/mimi/conversations/${conversation.id}/${archived ? 'archive' : 'restore'}`, {
+    method: 'POST',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({ expected_metadata_version: conversation.metadata_version }),
   })
 }
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -10,15 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.service import (
     ConfirmationDecision,
+    ConversationCreate,
+    ConversationRename,
+    ConversationStateChange,
     FeedbackCreate,
     MessageCreate,
     confirm_change_set,
     conversation_view,
     create_conversation,
     current_conversation,
+    list_conversations,
     list_standard_tasks,
+    rename_conversation,
     save_feedback,
     send_message,
+    set_conversation_archived,
 )
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
@@ -43,8 +49,26 @@ def require_mimi_available() -> None:
     dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
     status_code=status.HTTP_201_CREATED,
 )
-async def start_conversation(db: Database, session: CurrentSession) -> dict:
-    return await create_conversation(db, session)
+async def start_conversation(
+    payload: ConversationCreate, db: Database, session: CurrentSession
+) -> dict:
+    return await create_conversation(db, session, payload)
+
+
+@router.get(
+    "/conversations",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_conversations(
+    db: Database,
+    session: CurrentSession,
+    state: Annotated[Literal["active", "archived", "all"], Query()] = "active",
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    cursor: Annotated[str | None, Query(max_length=500)] = None,
+) -> dict:
+    return await list_conversations(
+        db, session, state=state, limit=limit, cursor=cursor
+    )
 
 
 @router.get(
@@ -61,6 +85,49 @@ async def read_current_conversation(db: Database, session: CurrentSession) -> di
 )
 async def read_conversation(conversation_id: UUID, db: Database, session: CurrentSession) -> dict:
     return await conversation_view(db, session, conversation_id)
+
+
+@router.patch(
+    "/conversations/{conversation_id}",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def patch_conversation(
+    conversation_id: UUID,
+    payload: ConversationRename,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await rename_conversation(db, session, conversation_id, payload)
+
+
+@router.post(
+    "/conversations/{conversation_id}/archive",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def archive_conversation(
+    conversation_id: UUID,
+    payload: ConversationStateChange,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await set_conversation_archived(
+        db, session, conversation_id, payload, archived=True
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/restore",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def restore_conversation(
+    conversation_id: UUID,
+    payload: ConversationStateChange,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await set_conversation_archived(
+        db, session, conversation_id, payload, archived=False
+    )
 
 
 @router.post(

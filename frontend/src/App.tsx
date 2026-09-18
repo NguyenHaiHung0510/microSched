@@ -105,7 +105,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
   return (
     <div className={cn(
       'mx-auto grid w-full items-start gap-4',
-      mimiDockOpen ? 'max-w-[1920px] xl:grid-cols-[minmax(0,1fr)_minmax(24rem,28rem)]' : currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl',
+      mimiDockOpen ? 'max-w-[1920px] xl:grid-cols-[minmax(0,1fr)_minmax(24rem,28rem)]' : currentTab === 'mimi' ? 'max-w-[1920px]' : currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl',
     )}>
     <div className="min-w-0 overflow-hidden rounded-xl bg-background shadow-3">
       <header className="flex items-center justify-between gap-4 px-5 pt-5 pb-2 sm:px-6">
@@ -223,7 +223,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}
           {currentTab === 'mimi' && session.mimi_available ? (
-            <MimiControlCenter onOpenTasks={() => selectTab('tasks')} />
+            <MimiControlCenter onOpenDomain={(domain) => selectTab(domain)} />
           ) : null}
         </div>
           </>

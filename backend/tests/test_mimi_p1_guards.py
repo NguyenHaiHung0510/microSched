@@ -3,6 +3,8 @@
 import asyncio
 import base64
 import os
+from datetime import UTC, datetime
+from uuid import uuid7
 
 import httpx
 import pytest
@@ -10,6 +12,14 @@ from cryptography.exceptions import InvalidTag
 from fastapi import Depends, FastAPI
 
 from app.agent import crypto as mimi_crypto
+from app.agent.models import MimiConversation
+from app.agent.service import (
+    ConversationRename,
+    _decode_conversation_cursor,
+    _encode_conversation_cursor,
+    _open_conversation_title,
+    _seal_conversation_title,
+)
 from app.core import crypto
 from app.core.settings import Settings, get_settings
 from app.web.mimi_csrf import require_mimi_csrf
@@ -40,6 +50,33 @@ def test_conversation_dek_is_wrapped_and_content_is_resource_bound() -> None:
     assert mimi_crypto.open_content(dek, ciphertext, aad="message:1") == "nội dung"
     with pytest.raises(InvalidTag):
         mimi_crypto.open_content(dek, ciphertext, aad="message:2")
+
+
+def test_conversation_title_is_normalized_bounded_and_resource_bound() -> None:
+    conversation = MimiConversation(
+        id=uuid7(),
+        owner_id=uuid7(),
+        sensitivity="standard",
+        dek_wrapped=mimi_crypto.create_wrapped_dek(),
+    )
+    payload = ConversationRename(title="  Lịch   học tuần tới  ", expected_metadata_version=1)
+    assert payload.title == "Lịch học tuần tới"
+    conversation.title_ciphertext = _seal_conversation_title(conversation, payload.title)
+    assert payload.title not in conversation.title_ciphertext
+    assert _open_conversation_title(conversation) == payload.title
+    other = conversation.model_copy(update={"id": uuid7()})
+    with pytest.raises(InvalidTag):
+        _open_conversation_title(other)
+
+
+def test_conversation_cursor_round_trips_and_rejects_invalid_input() -> None:
+    updated_at = datetime.now(UTC)
+    conversation_id = uuid7()
+    assert _decode_conversation_cursor(
+        _encode_conversation_cursor(updated_at, conversation_id)
+    ) == (updated_at, conversation_id)
+    with pytest.raises(Exception, match="422"):
+        _decode_conversation_cursor("not-a-cursor")
 
 
 def test_live_route_cannot_be_enabled_without_real_chat_gate() -> None:

@@ -5,13 +5,15 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid7
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import false, select, text
+from sqlalchemy import and_, false, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import crypto as mimi_crypto
@@ -43,6 +45,8 @@ POLICY_VERSION = "mimi-standard-task-create.v1"
 TOOL_VERSION = "task.create.v1"
 MAX_MESSAGES = 100
 MAX_EVENTS = 100
+MAX_CONVERSATION_TITLE = 80
+OWNER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 class MessageCreate(BaseModel):
@@ -80,6 +84,27 @@ class FeedbackCreate(BaseModel):
         return value
 
 
+class ConversationCreate(BaseModel):
+    client_id: str | None = Field(default=None, min_length=1, max_length=160)
+
+
+class ConversationRename(BaseModel):
+    title: str = Field(min_length=1, max_length=MAX_CONVERSATION_TITLE)
+    expected_metadata_version: int = Field(ge=1)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("title must not be blank")
+        return normalized
+
+
+class ConversationStateChange(BaseModel):
+    expected_metadata_version: int = Field(ge=1)
+
+
 def _owner_id(auth: AuthSession) -> UUID:
     """Derive a stable opaque owner UUID without persisting the login address."""
     secret = (get_settings().oauth_state_secret or get_settings().app_name).encode("utf-8")
@@ -109,6 +134,56 @@ def _task_title(content: str) -> str:
             title = title[len(prefix) :].strip()
             break
     return (title or "Task từ Mimi")[:200]
+
+
+def _conversation_title(content: str) -> str:
+    normalized = " ".join(content.split())
+    return (normalized or "Hội thoại mới")[:MAX_CONVERSATION_TITLE]
+
+
+def _fallback_conversation_title(value: datetime) -> str:
+    return f"Hội thoại mới · {value.astimezone(OWNER_TIMEZONE):%d/%m %H:%M}"
+
+
+def _seal_conversation_title(conversation: MimiConversation, title: str) -> str:
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    return mimi_crypto.seal_content(
+        dek,
+        title,
+        aad=mimi_crypto.conversation_title_aad(conversation.id),
+    )
+
+
+def _open_conversation_title(conversation: MimiConversation) -> str:
+    if conversation.title_ciphertext is None:
+        return _fallback_conversation_title(conversation.created_at)
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    return mimi_crypto.open_content(
+        dek,
+        conversation.title_ciphertext,
+        aad=mimi_crypto.conversation_title_aad(conversation.id),
+    )
+
+
+def _encode_conversation_cursor(updated_at: datetime, conversation_id: UUID) -> str:
+    raw = json.dumps(
+        {"updated_at": updated_at.isoformat(), "id": str(conversation_id)},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_conversation_cursor(value: str) -> tuple[datetime, UUID]:
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = json.loads(urlsafe_b64decode(padded).decode("utf-8"))
+        updated_at = datetime.fromisoformat(decoded["updated_at"])
+        conversation_id = UUID(decoded["id"])
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=422, detail="invalid_conversation_cursor") from error
+    if updated_at.tzinfo is None:
+        raise HTTPException(status_code=422, detail="invalid_conversation_cursor")
+    return updated_at, conversation_id
 
 
 async def _conversation(
@@ -181,22 +256,153 @@ def _add_assistant_message(
     conversation.next_message_sequence += 1
 
 
-async def create_conversation(db: AsyncSession, auth: AuthSession) -> dict[str, Any]:
+async def create_conversation(
+    db: AsyncSession, auth: AuthSession, payload: ConversationCreate
+) -> dict[str, Any]:
+    owner_id = _owner_id(auth)
+    if payload.client_id is not None:
+        existing = (
+            await db.execute(
+                select(MimiConversation).where(
+                    MimiConversation.owner_id == owner_id,
+                    MimiConversation.client_id == payload.client_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return _conversation_summary(existing, latest_run_state=None)
+    now = datetime.now(UTC)
     row = MimiConversation(
-        owner_id=_owner_id(auth),
+        id=uuid7(),
+        owner_id=owner_id,
+        client_id=payload.client_id,
         sensitivity=Sensitivity.STANDARD.value,
         dek_wrapped=mimi_crypto.create_wrapped_dek(),
     )
+    row.title_ciphertext = _seal_conversation_title(row, _fallback_conversation_title(now))
     db.add(row)
     await db.flush()
-    return {"id": row.id, "sensitivity": row.sensitivity, "generation": row.generation}
+    return _conversation_summary(row, latest_run_state=None)
+
+
+def _conversation_summary(
+    row: MimiConversation, *, latest_run_state: str | None
+) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "sensitivity": row.sensitivity,
+        "title": _open_conversation_title(row),
+        "title_source": row.title_source,
+        "title_locked": row.title_locked,
+        "generation": row.generation,
+        "metadata_version": row.metadata_version,
+        "archived_at": row.archived_at,
+        "updated_at": row.updated_at,
+        "latest_run_state": latest_run_state,
+    }
+
+
+async def list_conversations(
+    db: AsyncSession,
+    auth: AuthSession,
+    *,
+    state: Literal["active", "archived", "all"],
+    limit: int,
+    cursor: str | None,
+) -> dict[str, Any]:
+    latest_run_state = (
+        select(MimiRun.state)
+        .where(MimiRun.conversation_id == MimiConversation.id)
+        .order_by(MimiRun.created_at.desc(), MimiRun.id.desc())
+        .limit(1)
+        .correlate(MimiConversation)
+        .scalar_subquery()
+    )
+    statement = select(MimiConversation, latest_run_state.label("latest_run_state")).where(
+        MimiConversation.owner_id == _owner_id(auth)
+    )
+    if state == "active":
+        statement = statement.where(MimiConversation.archived_at.is_(None))
+    elif state == "archived":
+        statement = statement.where(MimiConversation.archived_at.is_not(None))
+    if cursor:
+        cursor_at, cursor_id = _decode_conversation_cursor(cursor)
+        statement = statement.where(
+            or_(
+                MimiConversation.updated_at < cursor_at,
+                and_(
+                    MimiConversation.updated_at == cursor_at,
+                    MimiConversation.id < cursor_id,
+                ),
+            )
+        )
+    rows = (
+        await db.execute(
+            statement.order_by(MimiConversation.updated_at.desc(), MimiConversation.id.desc())
+            .limit(limit + 1)
+        )
+    ).all()
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = None
+    if has_more and page:
+        last = page[-1][0]
+        next_cursor = _encode_conversation_cursor(last.updated_at, last.id)
+    return {
+        "items": [
+            _conversation_summary(row, latest_run_state=run_state) for row, run_state in page
+        ],
+        "next_cursor": next_cursor,
+    }
+
+
+async def rename_conversation(
+    db: AsyncSession,
+    auth: AuthSession,
+    conversation_id: UUID,
+    payload: ConversationRename,
+) -> dict[str, Any]:
+    row = await _conversation(db, auth, conversation_id, lock=True)
+    current_title = _open_conversation_title(row)
+    if row.title_locked and current_title == payload.title:
+        return _conversation_summary(row, latest_run_state=None)
+    if row.metadata_version != payload.expected_metadata_version:
+        raise _conflict("conversation_metadata_stale")
+    row.title_ciphertext = _seal_conversation_title(row, payload.title)
+    row.title_source = "owner"
+    row.title_locked = True
+    row.metadata_version += 1
+    await db.flush()
+    return _conversation_summary(row, latest_run_state=None)
+
+
+async def set_conversation_archived(
+    db: AsyncSession,
+    auth: AuthSession,
+    conversation_id: UUID,
+    payload: ConversationStateChange,
+    *,
+    archived: bool,
+) -> dict[str, Any]:
+    row = await _conversation(db, auth, conversation_id, lock=True)
+    if (row.archived_at is not None) == archived:
+        return _conversation_summary(row, latest_run_state=None)
+    if row.metadata_version != payload.expected_metadata_version:
+        raise _conflict("conversation_metadata_stale")
+    row.archived_at = datetime.now(UTC) if archived else None
+    row.metadata_version += 1
+    await db.flush()
+    return _conversation_summary(row, latest_run_state=None)
 
 
 async def current_conversation(db: AsyncSession, auth: AuthSession) -> dict[str, Any] | None:
     conversation_id = (
         await db.execute(
             select(MimiConversation.id)
-            .where(MimiConversation.owner_id == _owner_id(auth))
+            .where(
+                MimiConversation.owner_id == _owner_id(auth),
+                MimiConversation.archived_at.is_(None),
+            )
             .order_by(MimiConversation.updated_at.desc(), MimiConversation.id.desc())
             .limit(1)
         )
@@ -259,6 +465,11 @@ async def send_message(
         and payload.expected_generation != conversation.generation
     ):
         raise _conflict("conversation_generation_stale")
+
+    if conversation.next_message_sequence == 1 and not conversation.title_locked:
+        conversation.title_ciphertext = _seal_conversation_title(
+            conversation, _conversation_title(payload.content)
+        )
 
     # This P1 route cannot prove a supplement is harmless, so every distinct
     # new user turn conservatively revises the frontier and invalidates an old
@@ -882,7 +1093,13 @@ async def conversation_view(
     return {
         "id": conversation.id,
         "sensitivity": conversation.sensitivity,
+        "title": _open_conversation_title(conversation),
+        "title_source": conversation.title_source,
+        "title_locked": conversation.title_locked,
         "generation": conversation.generation,
+        "metadata_version": conversation.metadata_version,
+        "archived_at": conversation.archived_at,
+        "updated_at": conversation.updated_at,
         "messages": [_message_read(row, dek) for row in messages],
         "runs": [
             {

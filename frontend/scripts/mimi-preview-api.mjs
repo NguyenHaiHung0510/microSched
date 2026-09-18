@@ -10,6 +10,12 @@ const emptyPage = () => ({ items: [], next_cursor: null })
 let conversation = null
 let previewScenario = 'healthy'
 let scenarioStartedAt = Date.now()
+let previewConversations = [
+  { id: conversationId, title: 'Chuẩn bị slide báo cáo Mimi P1', updated_at: now(), archived_at: null, metadata_version: 1, title_source: 'auto', title_locked: false, latest_run_state: 'completed' },
+  { id: '01990000-0000-7000-8000-000000000059', title: 'Rà soát lịch học, deadline và ba phương án tránh xung đột trong tuần tới', updated_at: new Date(Date.now() - 3_600_000).toISOString(), archived_at: null, metadata_version: 2, title_source: 'owner', title_locked: true, latest_run_state: 'completed' },
+  { id: '01990000-0000-7000-8000-000000000060', title: 'Tổng duyệt demo Mimi và kiểm tra receipt', updated_at: new Date(Date.now() - 86_400_000).toISOString(), archived_at: null, metadata_version: 1, title_source: 'auto', title_locked: false, latest_run_state: 'waiting_confirmation' },
+  { id: '01990000-0000-7000-8000-000000000061', title: 'Hội thoại đã lưu trữ', updated_at: new Date(Date.now() - 12 * 86_400_000).toISOString(), archived_at: new Date(Date.now() - 10 * 86_400_000).toISOString(), metadata_version: 2, title_source: 'owner', title_locked: true, latest_run_state: 'completed' },
+]
 
 const scenarios = [
   { id: 'healthy', label: 'Ngày bình thường', description: 'Route ổn định, cache tốt và các run kết thúc sạch.' },
@@ -18,7 +24,7 @@ const scenarios = [
   { id: 'owner_queue', label: 'Đang chờ Owner', description: 'Preview, feedback và hội thoại dài/archived cùng xuất hiện.' },
 ]
 
-const rangeDays = { today: 1, '7d': 7, '30d': 30, '3m': 90, '6m': 180, '1y': 365 }
+const rangeDays = { today: 1, '7d': 7, '30d': 30, week: 7, month: 30, quarter: 91, year: 365 }
 
 function compactPoints(range, dailyCost, requestsPerDay, cacheBase) {
   const days = rangeDays[range] ?? 7
@@ -53,7 +59,7 @@ function previewState(range = '7d') {
     checked_at: now(),
     usage: {
       range: safeRange,
-      available_ranges: ['today', '7d', '30d', '3m', '6m', '1y'],
+      available_ranges: ['today', '7d', '30d', 'week', 'month', 'quarter', 'year'],
       cost: Number((dailyCost * days).toFixed(2)),
       requests: Math.round(requestsPerDay * days),
       total_tokens: Math.round(12_400_000 * days),
@@ -100,12 +106,7 @@ function previewState(range = '7d') {
       { label: 'Provider route', state: degraded ? 'warning' : 'good', detail: degraded ? 'Stream gián đoạn · đang reconcile' : 'Trong eligible pool' },
       { label: 'Cache', state: degraded ? 'bad' : 'good', detail: `${cacheRate}% hit rate trong khoảng đang xem` },
     ],
-    conversations: [
-      { id: 'conv-a', title: 'Chuẩn bị slide báo cáo Mimi P1', updated_at: now(), archived: false, unread: running, state: running ? 'Đang chạy' : 'Sẵn sàng' },
-      { id: 'conv-b', title: 'Rà soát lịch học, deadline và ba phương án tránh xung đột trong tuần tới', updated_at: new Date(Date.now() - 3_600_000).toISOString(), archived: false, unread: ownerQueue, state: ownerQueue ? 'Chờ duyệt' : 'Đã xong' },
-      { id: 'conv-c', title: 'Tổng duyệt demo Mimi và kiểm tra receipt', updated_at: new Date(Date.now() - 86_400_000).toISOString(), archived: false, unread: false, state: 'Có feedback' },
-      { id: 'conv-d', title: 'Hội thoại đã lưu trữ', updated_at: new Date(Date.now() - 12 * 86_400_000).toISOString(), archived: true, unread: false, state: 'Đã lưu trữ' },
-    ],
+    conversations: previewConversations.map((item) => ({ ...item, archived: Boolean(item.archived_at), unread: running && item.id === conversationId, state: item.archived_at ? 'Đã lưu trữ' : ownerQueue ? 'Chờ duyệt' : item.latest_run_state === 'completed' ? 'Đã xong' : 'Sẵn sàng' })),
   }
 }
 
@@ -152,10 +153,16 @@ async function readJson(request) {
   return raw ? JSON.parse(raw) : {}
 }
 
-function newConversation() {
+function newConversation(id = conversationId, title = 'Hội thoại mới') {
   return {
-    id: conversationId,
+    id,
     sensitivity: 'standard',
+    title,
+    title_source: 'auto',
+    title_locked: false,
+    metadata_version: 1,
+    archived_at: null,
+    updated_at: now(),
     generation: 1,
     messages: [],
     runs: [],
@@ -225,6 +232,12 @@ const server = createServer(async (request, response) => {
       send(response, 200, conversation)
       return
     }
+    if (pathname === '/api/mimi/conversations' && method === 'GET') {
+      const state = url.searchParams.get('state') ?? 'active'
+      const items = previewConversations.filter((item) => state === 'all' || (state === 'archived') === Boolean(item.archived_at))
+      send(response, 200, { items, next_cursor: null })
+      return
+    }
     if (pathname === '/api/mimi/preview' && method === 'GET') {
       send(response, 200, previewState(url.searchParams.get('range') ?? '7d'))
       return
@@ -242,8 +255,37 @@ const server = createServer(async (request, response) => {
       return
     }
     if (pathname === '/api/mimi/conversations' && method === 'POST') {
-      conversation ??= newConversation()
-      send(response, 201, conversation)
+      const id = randomUUID()
+      const title = `Hội thoại mới · ${new Date().toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}`
+      const summary = { id, sensitivity: 'standard', title, title_source: 'auto', title_locked: false, generation: 1, metadata_version: 1, archived_at: null, updated_at: now(), latest_run_state: null }
+      previewConversations = [summary, ...previewConversations]
+      conversation = newConversation(id, title)
+      send(response, 201, summary)
+      return
+    }
+    if (/^\/api\/mimi\/conversations\/[^/]+$/.test(pathname) && method === 'GET') {
+      const id = pathname.split('/').at(-1)
+      const summary = previewConversations.find((item) => item.id === id)
+      send(response, summary ? 200 : 404, summary ? { ...conversation, ...summary } : { detail: 'Mimi resource not found' })
+      return
+    }
+    if (/^\/api\/mimi\/conversations\/[^/]+$/.test(pathname) && method === 'PATCH') {
+      const id = pathname.split('/').at(-1)
+      const body = await readJson(request)
+      const index = previewConversations.findIndex((item) => item.id === id)
+      if (index < 0) { send(response, 404, { detail: 'Mimi resource not found' }); return }
+      previewConversations[index] = { ...previewConversations[index], title: String(body.title).trim().slice(0, 80), title_source: 'owner', title_locked: true, metadata_version: previewConversations[index].metadata_version + 1, updated_at: now() }
+      send(response, 200, previewConversations[index])
+      return
+    }
+    if (/^\/api\/mimi\/conversations\/[^/]+\/(archive|restore)$/.test(pathname) && method === 'POST') {
+      const parts = pathname.split('/')
+      const id = parts.at(-2)
+      const archived = parts.at(-1) === 'archive'
+      const index = previewConversations.findIndex((item) => item.id === id)
+      if (index < 0) { send(response, 404, { detail: 'Mimi resource not found' }); return }
+      previewConversations[index] = { ...previewConversations[index], archived_at: archived ? now() : null, metadata_version: previewConversations[index].metadata_version + 1, updated_at: now() }
+      send(response, 200, previewConversations[index])
       return
     }
     if (/^\/api\/mimi\/conversations\/[^/]+\/messages$/.test(pathname) && method === 'POST') {

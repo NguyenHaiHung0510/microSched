@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   createMimiConversation,
   decideMimiChangeSet,
+  fetchMimiConversation,
   fetchCurrentMimiConversation,
   saveMimiFeedback,
   sendMimiMessage,
@@ -18,8 +19,6 @@ import {
 } from '@/mimi-api'
 import { mimiRunLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
-
-const QUERY_KEY = ['mimi', 'current'] as const
 
 function errorMessage(error: unknown): string {
   if (error instanceof TimeoutError) return error.message
@@ -113,9 +112,13 @@ function ChangeSetPreview({
 export function MimiScreen({
   onOpenTasks,
   variant = 'workspace',
+  conversationId,
+  onConversationCreated,
 }: {
   onOpenTasks: () => void
   variant?: 'workspace' | 'dock'
+  conversationId?: string | null
+  onConversationCreated?: (conversationId: string) => void
 }) {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState('')
@@ -135,14 +138,18 @@ export function MimiScreen({
   }, [])
 
   const conversation = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: fetchCurrentMimiConversation,
+    queryKey: conversationId ? ['mimi', 'conversation', conversationId] : ['mimi', 'current'],
+    queryFn: () => conversationId ? fetchMimiConversation(conversationId) : fetchCurrentMimiConversation(),
     ...NO_POLLING_QUERY_OPTIONS,
   })
+  const queryKey = conversationId ? ['mimi', 'conversation', conversationId] : ['mimi', 'current']
 
   const createConversation = useMutation({
-    mutationFn: createMimiConversation,
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: QUERY_KEY }),
+    mutationFn: () => createMimiConversation(),
+    onSuccess: (created) => {
+      onConversationCreated?.(created.id)
+      void queryClient.invalidateQueries({ queryKey: ['mimi'] })
+    },
   })
 
   const send = useMutation({
@@ -152,8 +159,9 @@ export function MimiScreen({
       clientId: string
     }) => sendMimiMessage(current.id, content, current.generation, clientId),
     onSuccess: (data) => {
-      queryClient.setQueryData(QUERY_KEY, data)
+      queryClient.setQueryData(queryKey, data)
       setDraft('')
+      void queryClient.invalidateQueries({ queryKey: ['mimi', 'conversations'] })
     },
   })
 
@@ -163,7 +171,7 @@ export function MimiScreen({
       choice: 'confirm' | 'reject'
       key: string
     }) => decideMimiChangeSet(changeSet, choice, key),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: QUERY_KEY }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey }),
   })
 
   const feedback = useMutation({
@@ -176,7 +184,7 @@ export function MimiScreen({
     onSuccess: () => {
       setFeedbackDraft('')
       setFeedbackClientId(null)
-      void queryClient.invalidateQueries({ queryKey: QUERY_KEY })
+      void queryClient.invalidateQueries({ queryKey })
     },
   })
 
@@ -249,7 +257,7 @@ export function MimiScreen({
     <section className="min-w-0 space-y-4" aria-labelledby={`mimi-title-${variant}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 id={`mimi-title-${variant}`} className="text-lg font-extrabold text-primary">Conversation hiện tại</h3>
+          <h3 id={`mimi-title-${variant}`} className="text-lg font-extrabold text-primary">{current.title ?? 'Conversation hiện tại'}</h3>
           <p className="text-sm text-muted-foreground">STANDARD · route đang chờ backend công bố</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

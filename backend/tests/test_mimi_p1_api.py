@@ -61,6 +61,7 @@ def test_preview_confirm_reload_feedback_and_recovery_are_durable(pg_dsn) -> Non
         app = create_app()
         auth = _auth()
         created_task_ids: list[str] = []
+        conversation_ids: list[str] = []
         conversation_id = None
 
         async def current_session() -> AuthSession:
@@ -88,7 +89,71 @@ def test_preview_confirm_reload_feedback_and_recovery_are_durable(pg_dsn) -> Non
                 )
                 assert started.status_code == 201
                 conversation_id = started.json()["id"]
+                conversation_ids.append(conversation_id)
                 assert started.json()["sensitivity"] == "standard"
+                assert started.json()["title"].startswith("Hội thoại mới ·")
+
+                created_again = await client.post(
+                    "/api/mimi/conversations",
+                    json={"client_id": "create-idempotency-1"},
+                    headers=CSRF_HEADERS,
+                )
+                repeated_create = await client.post(
+                    "/api/mimi/conversations",
+                    json={"client_id": "create-idempotency-1"},
+                    headers=CSRF_HEADERS,
+                )
+                assert created_again.status_code == 201
+                assert repeated_create.status_code == 201
+                assert repeated_create.json()["id"] == created_again.json()["id"]
+                conversation_ids.append(created_again.json()["id"])
+
+                conversations = await client.get("/api/mimi/conversations?state=active&limit=1")
+                assert conversations.status_code == 200
+                assert len(conversations.json()["items"]) == 1
+                assert conversations.json()["next_cursor"] is not None
+                second_page = await client.get(
+                    "/api/mimi/conversations?state=active&limit=1",
+                    params={"cursor": conversations.json()["next_cursor"]},
+                )
+                assert second_page.status_code == 200
+                assert (
+                    second_page.json()["items"][0]["id"]
+                    != conversations.json()["items"][0]["id"]
+                )
+
+                renamed = await client.patch(
+                    f"/api/mimi/conversations/{conversation_id}",
+                    json={
+                        "title": "  Kế hoạch Mimi tuần này  ",
+                        "expected_metadata_version": 1,
+                    },
+                    headers=CSRF_HEADERS,
+                )
+                assert renamed.status_code == 200
+                assert renamed.json()["title"] == "Kế hoạch Mimi tuần này"
+                assert renamed.json()["title_locked"] is True
+
+                archived = await client.post(
+                    f"/api/mimi/conversations/{conversation_id}/archive",
+                    json={"expected_metadata_version": 2},
+                    headers=CSRF_HEADERS,
+                )
+                assert archived.status_code == 200
+                assert archived.json()["archived_at"] is not None
+                archived_retry = await client.post(
+                    f"/api/mimi/conversations/{conversation_id}/archive",
+                    json={"expected_metadata_version": 2},
+                    headers=CSRF_HEADERS,
+                )
+                assert archived_retry.status_code == 200
+                restored = await client.post(
+                    f"/api/mimi/conversations/{conversation_id}/restore",
+                    json={"expected_metadata_version": 3},
+                    headers=CSRF_HEADERS,
+                )
+                assert restored.status_code == 200
+                assert restored.json()["archived_at"] is None
 
                 message_body = {
                     "client_id": "message-1",
@@ -103,6 +168,7 @@ def test_preview_confirm_reload_feedback_and_recovery_are_durable(pg_dsn) -> Non
                 assert preview.status_code == 200
                 view = preview.json()
                 assert [item["role"] for item in view["messages"]] == ["user", "assistant"]
+                assert view["title"] == "Kế hoạch Mimi tuần này"
                 assert view["runs"][0]["state"] == "waiting_confirmation"
                 change_set = view["change_sets"][0]
                 assert change_set["operation"]["tool"] == "task.create.v1"
@@ -216,6 +282,12 @@ def test_preview_confirm_reload_feedback_and_recovery_are_durable(pg_dsn) -> Non
                 assert all(
                     "Chuẩn bị demo Mimi" not in row["content_ciphertext"] for row in ciphertexts
                 )
+                title_ciphertext = await conn.fetchval(
+                    "SELECT title_ciphertext FROM microsched.mimi_conversation WHERE id = $1",
+                    UUID(conversation_id),
+                )
+                assert title_ciphertext.startswith("mimi:v1:")
+                assert "Kế hoạch Mimi tuần này" not in title_ciphertext
                 assert (
                     await conn.fetchval(
                         "SELECT count(*) FROM microsched.mimi_execution_receipt r "
@@ -258,9 +330,10 @@ def test_preview_confirm_reload_feedback_and_recovery_are_durable(pg_dsn) -> Non
                         "DELETE FROM microsched.audit_log WHERE trace_id = $1",
                         UUID(conversation_id),
                     )
+                for stored_conversation_id in conversation_ids:
                     await conn.execute(
                         "DELETE FROM microsched.mimi_conversation WHERE id = $1",
-                        UUID(conversation_id),
+                        UUID(stored_conversation_id),
                     )
                 for task_id in created_task_ids:
                     await conn.execute("DELETE FROM microsched.task WHERE id = $1", UUID(task_id))

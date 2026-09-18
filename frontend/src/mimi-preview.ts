@@ -1,6 +1,6 @@
 import { apiRequest } from '@/api'
 
-export type MimiPreviewRange = 'today' | '7d' | '30d' | '3m' | '6m' | '1y'
+export type MimiPreviewRange = 'today' | '7d' | '30d' | 'week' | 'month' | 'quarter' | 'year'
 export type MimiReasoningLevel = 'minimal' | 'balanced' | 'detailed' | 'full'
 
 export type MimiPreviewScenario = {

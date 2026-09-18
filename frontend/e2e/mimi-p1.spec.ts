@@ -15,13 +15,34 @@ function emptyConversation(): MimiConversation {
   return {
     id: conversationId,
     sensitivity: 'standard',
+    title: 'Hội thoại Mimi · 15/09 08:00',
+    title_source: 'auto',
+    title_locked: false,
     generation: 1,
+    metadata_version: 1,
+    archived_at: null,
+    updated_at: '2026-09-15T01:00:00Z',
     messages: [],
     runs: [],
     change_sets: [],
     receipts: [],
     events: [],
     feedback: [],
+  }
+}
+
+function summary(conversation: MimiConversation) {
+  return {
+    id: conversation.id,
+    sensitivity: conversation.sensitivity,
+    title: conversation.title ?? 'Hội thoại Mimi',
+    title_source: conversation.title_source ?? 'auto',
+    title_locked: conversation.title_locked ?? false,
+    generation: conversation.generation,
+    metadata_version: conversation.metadata_version ?? 1,
+    archived_at: conversation.archived_at ?? null,
+    updated_at: conversation.updated_at ?? '2026-09-15T01:00:00Z',
+    latest_run_state: conversation.runs.at(-1)?.state ?? null,
   }
 }
 
@@ -48,7 +69,17 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
     const request = route.request()
     const path = new URL(request.url()).pathname
     if (request.method() === 'GET' && path.endsWith('/conversations/current')) {
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation) })
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation?.archived_at ? null : conversation) })
+      return
+    }
+    if (request.method() === 'GET' && path.endsWith('/conversations')) {
+      const state = new URL(request.url()).searchParams.get('state') ?? 'active'
+      const visible = conversation && ((state === 'archived') === Boolean(conversation.archived_at))
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: visible ? [summary(conversation)] : [], next_cursor: null }) })
+      return
+    }
+    if (request.method() === 'GET' && path.endsWith(`/conversations/${conversationId}`)) {
+      await route.fulfill({ status: conversation ? 200 : 404, contentType: 'application/json', body: JSON.stringify(conversation ?? {}) })
       return
     }
     if (request.method() === 'GET' && path.endsWith('/preview')) {
@@ -58,13 +89,29 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
     expect(request.headers()['x-mimi-csrf']).toBe('1')
     if (request.method() === 'POST' && path.endsWith('/conversations')) {
       conversation = emptyConversation()
-      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(conversation) })
+      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(summary(conversation)) })
+      return
+    }
+    if (request.method() === 'PATCH' && path.endsWith(`/conversations/${conversationId}`)) {
+      const title = request.postDataJSON().title
+      conversation = { ...conversation!, title, title_source: 'owner', title_locked: true, metadata_version: (conversation!.metadata_version ?? 1) + 1 }
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(summary(conversation)) })
+      return
+    }
+    if (request.method() === 'POST' && path.endsWith(`/conversations/${conversationId}/archive`)) {
+      conversation = { ...conversation!, archived_at: '2026-09-15T01:03:00Z', metadata_version: (conversation!.metadata_version ?? 1) + 1 }
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(summary(conversation)) })
+      return
+    }
+    if (request.method() === 'POST' && path.endsWith(`/conversations/${conversationId}/restore`)) {
+      conversation = { ...conversation!, archived_at: null, metadata_version: (conversation!.metadata_version ?? 1) + 1 }
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(summary(conversation)) })
       return
     }
     if (request.method() === 'POST' && path.endsWith('/messages')) {
       const content = request.postDataJSON().content
       conversation = {
-        ...emptyConversation(),
+        ...conversation!,
         generation: 2,
         messages: [
           { id: 'message-1', run_id: runId, client_id: 'client-1', sequence: 1, role: 'user', content, created_at: '2026-09-15T01:00:00Z' },
@@ -125,6 +172,10 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
   await page.getByRole('button', { name: 'Hội thoại' }).click()
   await page.getByRole('button', { name: 'Bắt đầu conversation STANDARD' }).click()
   await expect(page.getByLabel('Nhắn Mimi')).toBeVisible()
+  await page.getByRole('button', { name: /^Đổi tên / }).click()
+  await page.getByRole('textbox', { name: 'Tên hội thoại' }).fill('Tổng duyệt demo Mimi')
+  await page.getByRole('button', { name: 'Lưu tên' }).click()
+  await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
   await page.getByLabel('Nhắn Mimi').fill('Tạo task Chuẩn bị demo Mimi')
   await page.getByRole('button', { name: 'Gửi' }).click()
   await expect(page.getByTestId('mimi-change-set')).toContainText('Chuẩn bị demo Mimi')
@@ -139,6 +190,13 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
   await page.getByLabel('Feedback về kết quả này').fill('Preview cần hiển thị nguồn rõ hơn')
   await page.getByRole('button', { name: 'Lưu feedback' }).click()
   await expect(page.getByText('Feedback đã lưu · còn mở để xử lý.')).toBeVisible()
+
+  await page.getByRole('button', { name: /^Lưu trữ / }).click()
+  await page.getByRole('button', { name: 'Đã lưu' }).click()
+  await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
+  await page.getByRole('button', { name: /^Khôi phục / }).click()
+  await page.getByRole('button', { name: 'Đang dùng' }).click()
+  await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
 
   const overflow = await page.evaluate(() => {
     const root = document.scrollingElement ?? document.documentElement
