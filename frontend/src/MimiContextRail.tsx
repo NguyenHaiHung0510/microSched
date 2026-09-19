@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import type { MimiConversation } from '@/mimi-api'
-import { mimiRunLabel } from '@/mimi-presentation'
+import { mimiRunLabel, mimiTaskScheduleLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 type Domain = 'tasks' | 'notes' | 'calendar' | 'tracker'
@@ -60,7 +60,7 @@ function ContextPanel({ onOpenDomain }: { onOpenDomain: (domain: Domain) => void
 function PreviewPanel({ conversation }: { conversation: MimiConversation | null | undefined }) {
   const pending = [...(conversation?.change_sets ?? [])].reverse().find((item) => item.state === 'pending')
   if (!pending) return <div className="py-8 text-center"><ReceiptText className="mx-auto mb-2 size-7 text-muted-foreground" /><p className="font-semibold">Không có preview chờ duyệt</p><p className="mt-1 text-xs text-muted-foreground">Preview mới sẽ mở ở đây mà không che transcript.</p></div>
-  return <div className="space-y-3"><div className="flex flex-wrap gap-2"><Badge>Chờ xác nhận</Badge><Badge variant="outline">{pending.operation.tool}</Badge></div><div className="rounded-lg bg-primary/5 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Thay đổi đề xuất</p><p className="mt-1 font-bold">{pending.operation.args.title}</p></div><dl className="space-y-2 text-xs"><div><dt className="font-semibold">Hết hạn</dt><dd>{new Date(pending.expires_at).toLocaleString('vi-VN')}</dd></div><div><dt className="font-semibold">Digest</dt><dd className="break-all font-mono">{pending.digest}</dd></div><div><dt className="font-semibold">Quyền ghi</dt><dd>Chưa ghi gì khi bạn chưa xác nhận.</dd></div></dl></div>
+  return <div className="space-y-3"><div className="flex flex-wrap gap-2"><Badge>Chờ xác nhận</Badge><Badge variant="outline">{pending.operation.tool}</Badge></div><div className="rounded-lg bg-primary/5 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Thay đổi đề xuất</p><p className="mt-1 font-bold">{pending.operation.args.title}</p></div><dl className="space-y-2 text-xs"><div><dt className="font-semibold">Lịch Task</dt><dd>{mimiTaskScheduleLabel(pending.operation.args)}</dd></div><div><dt className="font-semibold">Preview hết hạn</dt><dd>{new Date(pending.expires_at).toLocaleString('vi-VN')}</dd></div><div><dt className="font-semibold">Digest</dt><dd className="break-all font-mono">{pending.digest}</dd></div><div><dt className="font-semibold">Quyền ghi</dt><dd>Chưa ghi gì khi bạn chưa xác nhận.</dd></div></dl></div>
 }
 
 function RunPanel({ conversation }: { conversation: MimiConversation | null | undefined }) {

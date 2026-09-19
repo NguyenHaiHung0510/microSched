@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import httpx
+from pydantic import ValidationError
 
 from app.core.settings import Settings, get_settings
 from app.domain.tasks import TaskCreate
@@ -188,8 +189,6 @@ def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
         raw_content = message.get("content")
         content = raw_content.strip() if isinstance(raw_content, str) else ""
         calls = message.get("tool_calls") or []
-        if content and calls:
-            raise RouteContractError("provider_terminal_must_be_text_xor_tool")
         common = {
             "response_id": str(payload.get("id", "")),
             "usage": payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
@@ -198,16 +197,48 @@ def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
             ),
             "model": payload.get("model") if isinstance(payload.get("model"), str) else None,
         }
-        if content:
+        # Some OpenAI-compatible providers emit a short narration alongside a
+        # single tool call. The tool proposal is the only canonical terminal
+        # result; discard the untrusted narration rather than failing an
+        # otherwise valid preview. Multiple or unknown calls still fail below.
+        if content and not calls:
             return ProviderCompletion(kind="text", task=None, text=content, **common)
         if len(calls) != 1 or calls[0]["function"]["name"] != "task.create.v1":
             raise RouteContractError("provider_must_return_text_or_one_task_create_call")
         arguments = calls[0]["function"]["arguments"]
-        decoded = json.loads(arguments) if isinstance(arguments, str) else arguments
-        task = TaskCreate.model_validate(decoded)
+        try:
+            decoded = json.loads(arguments) if isinstance(arguments, str) else arguments
+        except json.JSONDecodeError as error:
+            raise RouteContractError("provider_tool_arguments_not_json") from error
+        if not isinstance(decoded, dict):
+            raise RouteContractError("provider_tool_arguments_not_object")
+        # P1 owns the lifecycle state. A provider has no legitimate choice for
+        # this field, so normalize it at the trust boundary rather than letting
+        # harmless casing/default drift turn a valid preview into a dead run.
+        decoded = {**decoded, "status": "open"}
+        # Providers sometimes populate both nullable schedule siblings despite
+        # the strict schema. Precision is authoritative; clear only the sibling
+        # that cannot be represented by that precision, while still requiring
+        # the selected value itself to validate below.
+        if decoded.get("due_precision") == "datetime":
+            decoded["due_on"] = None
+        elif decoded.get("due_precision") == "date":
+            decoded["due_at"] = None
+        elif decoded.get("due_precision") == "none":
+            decoded["due_on"] = None
+            decoded["due_at"] = None
+        try:
+            task = TaskCreate.model_validate(decoded)
+        except ValidationError as error:
+            first = error.errors(include_url=False, include_context=False, include_input=False)[0]
+            location = "_".join(str(item) for item in first["loc"]) or "root"
+            error_type = str(first["type"])
+            raise RouteContractError(
+                f"provider_task_schema_invalid_{location}_{error_type}"
+            ) from error
     except RouteContractError:
         raise
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+    except (KeyError, TypeError, ValueError) as error:
         raise RouteContractError("invalid_provider_terminal_payload") from error
     if task.is_private:
         raise RouteContractError("standard_route_proposed_private_task")

@@ -13,12 +13,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent.models import MimiEvent, MimiProviderCall
-from app.agent.openrouter import ProviderCompletion, ProviderDispatchError
+from app.agent.openrouter import (
+    ProviderCompletion,
+    ProviderDispatchError,
+    RouteContractError,
+)
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.db import get_engine, get_sessionmaker
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
+from app.domain.tasks import TaskCreate
 from app.main import create_app
 from app.web.deps import get_session, require_session
 
@@ -54,20 +59,81 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
 
     retry_attempts = 0
     cancel_started = asyncio.Event()
+    hello_calls = 0
 
     async def fake_complete_stream(messages, *, settings, session_id, on_event, client=None):
-        nonlocal retry_attempts
+        nonlocal hello_calls, retry_attempts
         del settings, session_id, client
+        system_prompt = messages[0]["content"]
+        assert "Không gọi tool cho lời chào" in system_prompt
+        assert "yêu cầu chưa đủ dữ kiện" in system_prompt
+        assert "Chỉ gọi task.create.v1 khi user rõ ràng yêu cầu" in system_prompt
+        assert "tối đa một proposal STANDARD" in system_prompt
+        assert "QUY TẮC NGÔN NGỮ BẮT BUỘC" in system_prompt
+        assert "Do not infer a language switch" in system_prompt
+        assert "title là dữ kiện bắt buộc duy nhất" in system_prompt
+        assert "không hỏi về private" in system_prompt
+        assert "Asia/Ho_Chi_Minh, UTC+07:00" in system_prompt
+        assert "không hỏi lại ngày tuyệt đối nếu đã đủ rõ" in system_prompt
+        current_message = messages[-1]["content"]
+        if current_message == "Tạo task chuẩn bị demo Mimi":
+            assert "Previous pending preview: []" in system_prompt
+            await on_event("provider.connected", {"status": 200})
+            return ProviderCompletion(
+                kind="task",
+                task=TaskCreate(
+                    title="Chuẩn bị demo Mimi",
+                    priority="p1",
+                    items=["Kiểm tra slide"],
+                ),
+                text=None,
+                response_id="gen-preview",
+                usage={"prompt_tokens": 20, "completion_tokens": 10},
+                provider="Synthetic",
+                model="synthetic/model",
+            )
+        if current_message == "Sửa preview: đổi tiêu đề và thêm kiểm tra receipt":
+            assert '"title": "Chuẩn bị demo Mimi"' in system_prompt
+            assert '"items": ["Kiểm tra slide"]' in system_prompt
+            await on_event("provider.connected", {"status": 200})
+            return ProviderCompletion(
+                kind="task",
+                task=TaskCreate(
+                    title="Tổng duyệt demo Mimi",
+                    priority="p1",
+                    items=["Kiểm tra slide", "Kiểm tra receipt"],
+                ),
+                text=None,
+                response_id="gen-preview-revision",
+                usage={"prompt_tokens": 30, "completion_tokens": 12},
+                provider="Synthetic",
+                model="synthetic/model",
+            )
+        if current_message == "hello":
+            if hello_calls == 0:
+                assert [item["role"] for item in messages] == ["system", "user"]
+            else:
+                assert [item["role"] for item in messages] == [
+                    "system",
+                    "user",
+                    "assistant",
+                    "user",
+                ]
+                assert messages[1]["content"] == "hello"
+                assert messages[2]["content"] == "Xin chào"
+            hello_calls += 1
         assert on_event is not None
         await on_event("provider.connected", {"status": 200})
-        if messages[-1]["content"] == "cancel me":
+        if current_message == "cancel me":
             cancel_started.set()
             await asyncio.Event().wait()
-        if messages[-1]["content"] == "retry me" and retry_attempts == 0:
+        if current_message == "retry me" and retry_attempts == 0:
             retry_attempts += 1
             raise ProviderDispatchError("retryable", 503)
-        if messages[-1]["content"] == "unknown me":
+        if current_message == "unknown me":
             raise ProviderDispatchError("unknown", None, response_id="gen-unknown")
+        if current_message == "contract me":
+            raise RouteContractError("provider_task_id_missing")
         await on_event("assistant.delta", {"text": "Xin "})
         await on_event("assistant.delta", {"text": "chào"})
         return ProviderCompletion(
@@ -157,6 +223,68 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                         for item in view.json()["events"]
                         if item["kind"] == "assistant.delta"
                     )
+
+                    follow_up = await client.post(
+                        f"/api/mimi/conversations/{conversation_id}/messages/stream",
+                        json={
+                            "client_id": "stream-message-2",
+                            "content": "hello",
+                            "expected_generation": 2,
+                        },
+                        headers=CSRF_HEADERS,
+                    )
+                    assert follow_up.status_code == 200
+                    assert "event: conversation.snapshot" in follow_up.text
+
+                    before_preview = await client.get(
+                        f"/api/mimi/conversations/{conversation_id}"
+                    )
+                    preview = await client.post(
+                        f"/api/mimi/conversations/{conversation_id}/messages/stream",
+                        json={
+                            "client_id": "stream-message-preview",
+                            "content": "Tạo task chuẩn bị demo Mimi",
+                            "expected_generation": before_preview.json()["generation"],
+                        },
+                        headers=CSRF_HEADERS,
+                    )
+                    assert preview.status_code == 200
+                    preview_view = await client.get(
+                        f"/api/mimi/conversations/{conversation_id}"
+                    )
+                    first_change_set = preview_view.json()["change_sets"][-1]
+                    assert first_change_set["state"] == "pending"
+                    assert first_change_set["operation"]["args"]["title"] == (
+                        "Chuẩn bị demo Mimi"
+                    )
+
+                    revised = await client.post(
+                        f"/api/mimi/conversations/{conversation_id}/messages/stream",
+                        json={
+                            "client_id": "stream-message-preview-revision",
+                            "content": (
+                                "Sửa preview: đổi tiêu đề và thêm kiểm tra receipt"
+                            ),
+                            "expected_generation": preview_view.json()["generation"],
+                        },
+                        headers=CSRF_HEADERS,
+                    )
+                    assert revised.status_code == 200
+                    revised_view = await client.get(
+                        f"/api/mimi/conversations/{conversation_id}"
+                    )
+                    change_sets = revised_view.json()["change_sets"]
+                    assert [item["state"] for item in change_sets[-2:]] == [
+                        "stale",
+                        "pending",
+                    ]
+                    assert change_sets[-1]["operation"]["args"]["title"] == (
+                        "Tổng duyệt demo Mimi"
+                    )
+                    assert change_sets[-1]["operation"]["args"]["items"] == [
+                        "Kiểm tra slide",
+                        "Kiểm tra receipt",
+                    ]
 
                     retry_conversation = await client.post(
                         "/api/mimi/conversations", json={}, headers=CSRF_HEADERS
@@ -261,6 +389,29 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                     )
                     unknown_run = unknown_view.json()["runs"][0]
                     assert unknown_run["state"] == "outcome_unknown"
+
+                    contract_conversation = await client.post(
+                        "/api/mimi/conversations", json={}, headers=CSRF_HEADERS
+                    )
+                    contract_id = contract_conversation.json()["id"]
+                    conversation_ids.append(contract_id)
+                    contract = await client.post(
+                        f"/api/mimi/conversations/{contract_id}/messages/stream",
+                        json={
+                            "client_id": "stream-message-contract",
+                            "content": "contract me",
+                            "expected_generation": 1,
+                        },
+                        headers=CSRF_HEADERS,
+                    )
+                    assert "event: provider.failed" in contract.text
+                    contract_view = await client.get(
+                        f"/api/mimi/conversations/{contract_id}"
+                    )
+                    assert contract_view.json()["runs"][0]["error_code"] == (
+                        "provider_contract_provider_task_id_missing"
+                    )
+
                     refused_resume = await client.post(
                         f"/api/mimi/runs/{unknown_run['id']}/resume",
                         json={},

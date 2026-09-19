@@ -20,7 +20,7 @@ import {
   type MimiChangeSet,
   type MimiConversation,
 } from '@/mimi-api'
-import { mimiRunLabel } from '@/mimi-presentation'
+import { mimiRunLabel, mimiTaskScheduleLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 function errorMessage(error: unknown): string {
@@ -90,7 +90,11 @@ function ChangeSetPreview({
             <dd>Task công khai · trạng thái mở</dd>
           </div>
           <div>
-            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Hết hạn</dt>
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lịch Task</dt>
+            <dd>{mimiTaskScheduleLabel(task)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Preview hết hạn</dt>
             <dd>{expiryLabel(changeSet.expires_at)}</dd>
           </div>
           <div>

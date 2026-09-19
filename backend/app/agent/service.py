@@ -49,6 +49,8 @@ TOOL_VERSION = "task.create.v1"
 MAX_MESSAGES = 100
 MAX_EVENTS = 100
 MAX_CONVERSATION_TITLE = 80
+PROVIDER_HISTORY_MESSAGES = 24
+PROVIDER_HISTORY_BYTES = 65_536
 OWNER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
@@ -329,6 +331,51 @@ def _conversation_summary(
     }
 
 
+async def _provider_history(
+    db: AsyncSession,
+    conversation: MimiConversation,
+    dek: bytes,
+) -> list[dict[str, str]]:
+    """Return a newest-bounded, complete-message provider history window."""
+    rows = (
+        (
+            await db.execute(
+                select(MimiMessage)
+                .where(
+                    MimiMessage.conversation_id == conversation.id,
+                    MimiMessage.role.in_(("user", "assistant")),
+                )
+                .order_by(MimiMessage.sequence.desc())
+                .limit(PROVIDER_HISTORY_MESSAGES)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    selected: list[MimiMessage] = []
+    used_bytes = 0
+    for row in rows:
+        if used_bytes + row.content_bytes > PROVIDER_HISTORY_BYTES:
+            break
+        selected.append(row)
+        used_bytes += row.content_bytes
+    return [
+        {
+            "role": row.role,
+            "content": mimi_crypto.open_content(
+                dek,
+                row.content_ciphertext,
+                aad=mimi_crypto.message_aad(
+                    conversation.id,
+                    row.sequence,
+                    row.role,
+                ),
+            ),
+        }
+        for row in reversed(selected)
+    ]
+
+
 def _event_read(row: MimiEvent, dek: bytes) -> dict[str, Any]:
     payload = row.payload
     if row.kind == "assistant.delta" and "content_ciphertext" in payload:
@@ -531,6 +578,9 @@ async def send_message(
             conversation, _conversation_title(payload.content)
         )
 
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    provider_history = await _provider_history(db, conversation, dek)
+
     # This P1 route cannot prove a supplement is harmless, so every distinct
     # new user turn conservatively revises the frontier and invalidates an old
     # preview. It never leaves two confirmable mutations behind the UI.
@@ -545,6 +595,16 @@ async def send_message(
             .with_for_update()
         )
     ).all()
+    prior_preview_operations = [
+        json.loads(
+            mimi_crypto.open_content(
+                dek,
+                old_change_set.operation_ciphertext,
+                aad=mimi_crypto.change_set_aad(conversation.id, old_change_set.id),
+            )
+        )
+        for old_change_set, _ in pending_previews
+    ]
     for old_change_set, old_run in pending_previews:
         old_change_set.state = "stale"
         old_run.state = "halted"
@@ -607,7 +667,6 @@ async def send_message(
         {"count": len(task_context), "private_allowed": False},
     )
 
-    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
     user_sequence = conversation.next_message_sequence
     user_bytes = payload.content.encode("utf-8")
     if record_user_message:
@@ -634,11 +693,33 @@ async def send_message(
         {
             "role": "system",
             "content": (
-                "Bạn là Mimi. Chỉ đề xuất một task.create.v1 STANDARD; không thực thi. "
+                "Bạn là Mimi, trợ lý hội thoại của microSched. Trả lời bằng văn bản cho "
+                "lời chào, câu hỏi, trao đổi thông thường và yêu cầu chưa đủ dữ kiện. "
+                "QUY TẮC NGÔN NGỮ BẮT BUỘC: luôn trả lời user bằng tiếng Việt, trừ khi "
+                "user yêu cầu rõ ràng một ngôn ngữ khác. Một lời chào đơn lẻ như 'hello' "
+                "không phải yêu cầu đổi ngôn ngữ; hãy đáp ngắn gọn bằng tiếng Việt. "
+                "MANDATORY LANGUAGE RULE: default every user-facing response to Vietnamese. "
+                "Do not infer a language switch from a greeting or isolated foreign word. "
+                "Không gọi tool cho lời chào hoặc khi user chưa rõ ràng muốn tạo, thêm "
+                "hay lên lịch một Task. Khi thiếu dữ kiện cần thiết, hãy hỏi lại ngắn gọn "
+                "bằng văn bản. Trong P1 chỉ tạo Task STANDARD: title là dữ kiện bắt buộc "
+                "duy nhất; body, lịch, priority và checklist đều tùy chọn. Nếu user chỉ nói "
+                "'Tạo task', chỉ hỏi title bằng một câu ngắn và không hỏi về private. "
+                "Chỉ gọi task.create.v1 khi user rõ ràng yêu cầu tạo một "
+                "Task; tối đa một proposal STANDARD và tuyệt đối không tự thực thi. "
+                "Nếu user yêu cầu sửa preview đang chờ, hãy dùng previous pending preview "
+                "bên dưới làm nền và tạo một proposal thay thế duy nhất. "
+                "Mốc thời gian hiện tại của Owner là "
+                f"{now.astimezone(OWNER_TIMEZONE).isoformat(timespec='seconds')} "
+                "(Asia/Ho_Chi_Minh, UTC+07:00). Hãy diễn giải hôm nay, ngày mai và các "
+                "mốc tương đối từ chính mốc này; không hỏi lại ngày tuyệt đối nếu đã đủ rõ. "
                 f"Server-reserved task id: {task_id}. Current STANDARD Task context: "
                 + json.dumps(task_context, ensure_ascii=False, default=str)
+                + ". Previous pending preview: "
+                + json.dumps(prior_preview_operations, ensure_ascii=False, default=str)
             ),
         },
+        *provider_history,
         {"role": "user", "content": payload.content},
     ]
     route_kind = (
@@ -649,6 +730,8 @@ async def send_message(
     request_body = {
         "route": route_kind,
         "message_sha256": hashlib.sha256(user_bytes).hexdigest(),
+        "history_sha256": _canonical_digest(provider_history),
+        "prior_preview_sha256": _canonical_digest(prior_preview_operations),
         "tools": [TOOL_VERSION],
         "source_versions": source_versions,
     }
@@ -761,6 +844,7 @@ async def send_message(
         except (ProviderDispatchError, RouteContractError) as error:
             outcome = error.outcome if isinstance(error, ProviderDispatchError) else "failed"
             status_code = error.status if isinstance(error, ProviderDispatchError) else None
+            contract_error = str(error) if isinstance(error, RouteContractError) else None
             conversation = await _conversation(db, auth, conversation_id, lock=True)
             run = (
                 await db.execute(select(MimiRun).where(MimiRun.id == run_id).with_for_update())
@@ -776,6 +860,7 @@ async def send_message(
             call.result = {
                 "terminal": outcome,
                 "status": status_code,
+                "contract_error": contract_error,
                 "response_id": (
                     error.response_id if isinstance(error, ProviderDispatchError) else None
                 ),
@@ -792,7 +877,15 @@ async def send_message(
                     "failed": "halted",
                 }[outcome]
             )
-            run.error_code = "run_deadline_exceeded" if deadline_hit else f"provider_{outcome}"
+            run.error_code = (
+                "run_deadline_exceeded"
+                if deadline_hit
+                else (
+                    f"provider_contract_{contract_error}"
+                    if contract_error
+                    else f"provider_{outcome}"
+                )
+            )
             run.completed_at = terminal_at
             await _append_event(
                 db,

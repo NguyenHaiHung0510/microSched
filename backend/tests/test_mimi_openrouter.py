@@ -128,7 +128,96 @@ def test_terminal_tool_args_are_independently_validated() -> None:
     assert completion.kind == "task"
 
 
-def test_terminal_text_is_valid_but_mixed_text_and_tool_is_rejected() -> None:
+def test_terminal_tool_validation_reports_only_safe_field_and_type() -> None:
+    with pytest.raises(
+        RouteContractError,
+        match=r"provider_task_schema_invalid_id_uuid_parsing",
+    ):
+        parse_completion(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "task.create.v1",
+                                        "arguments": {
+                                            "id": "not-a-uuid",
+                                            "title": "secret title must not enter the error",
+                                        },
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+
+
+def test_terminal_tool_server_owns_open_status() -> None:
+    task_id = uuid7()
+    completion = parse_completion(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "task.create.v1",
+                                    "arguments": {
+                                        "id": str(task_id),
+                                        "title": "Task STANDARD",
+                                        "status": "pending",
+                                        "is_private": False,
+                                    },
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+    assert completion.task is not None
+    assert completion.task.status == "open"
+
+
+def test_terminal_tool_canonicalizes_schedule_sibling_from_precision() -> None:
+    task_id = uuid7()
+    completion = parse_completion(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "task.create.v1",
+                                    "arguments": {
+                                        "id": str(task_id),
+                                        "title": "Task có giờ",
+                                        "due_precision": "datetime",
+                                        "due_on": "2026-09-20",
+                                        "due_at": "2026-09-20T21:00:00+07:00",
+                                        "is_private": False,
+                                    },
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+    assert completion.task is not None
+    assert completion.task.due_on is None
+    assert completion.task.due_at is not None
+
+
+def test_terminal_text_is_valid_and_single_tool_wins_over_narration() -> None:
     completion = parse_completion(
         {
             "id": "generation-text",
@@ -139,26 +228,34 @@ def test_terminal_text_is_valid_but_mixed_text_and_tool_is_rejected() -> None:
     assert completion.kind == "text"
     assert completion.text == "Xin chào!"
     assert completion.task is None
-    with pytest.raises(RouteContractError, match="text_xor_tool"):
-        parse_completion(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": "Mình sẽ tạo task.",
-                            "tool_calls": [
-                                {
-                                    "function": {
-                                        "name": "task.create.v1",
-                                        "arguments": {},
-                                    }
+    task_id = uuid7()
+    mixed = parse_completion(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Mình sẽ tạo task.",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "task.create.v1",
+                                    "arguments": {
+                                        "id": str(task_id),
+                                        "title": "Task có preview",
+                                        "is_private": False,
+                                    },
                                 }
-                            ],
-                        }
+                            }
+                        ],
                     }
-                ]
-            }
-        )
+                }
+            ]
+        }
+    )
+    assert mixed.kind == "task"
+    assert mixed.text is None
+    assert mixed.task is not None
+    assert mixed.task.title == "Task có preview"
 
 
 @pytest.mark.anyio
