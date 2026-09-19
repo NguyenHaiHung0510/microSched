@@ -1,4 +1,4 @@
-import { apiRequest } from '@/api'
+import { ApiError, apiRequest } from '@/api'
 
 export type MimiMessage = {
   id: string
@@ -171,6 +171,117 @@ export function sendMimiMessage(
       expected_generation: expectedGeneration,
     }),
   })
+}
+
+export type MimiStreamEnvelope = {
+  event: string
+  data: Record<string, unknown>
+}
+
+export async function streamMimiMessage(
+  conversationId: string,
+  content: string,
+  expectedGeneration: number,
+  clientId: string,
+  onEvent: (envelope: MimiStreamEnvelope) => void,
+): Promise<MimiConversation> {
+  const response = await fetch(`/api/mimi/conversations/${conversationId}/messages/stream`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { ...MIMI_WRITE_HEADERS, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: clientId,
+      content,
+      expected_generation: expectedGeneration,
+    }),
+  })
+  return consumeMimiStream(response, onEvent)
+}
+
+async function consumeMimiStream(
+  response: Response,
+  onEvent: (envelope: MimiStreamEnvelope) => void,
+): Promise<MimiConversation> {
+  if (!response.ok) {
+    let body: unknown
+    try { body = await response.json() } catch { /* proxy may return non-JSON */ }
+    const detail = body && typeof body === 'object' && 'detail' in body
+      ? (body as { detail?: unknown }).detail
+      : undefined
+    throw new ApiError(
+      response.status,
+      typeof detail === 'string' ? detail : `Mimi stream failed (${response.status})`,
+      body,
+    )
+  }
+  if (!response.body) throw new Error('Mimi stream không có response body.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalSnapshot: MimiConversation | null = null
+
+  function consume(block: string) {
+    let event = 'message'
+    const dataLines: string[] = []
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim()
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+    }
+    if (!dataLines.length) return
+    const data = JSON.parse(dataLines.join('\n')) as Record<string, unknown>
+    onEvent({ event, data })
+    if (event === 'conversation.snapshot') finalSnapshot = data as unknown as MimiConversation
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done }).replaceAll('\r\n', '\n')
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary >= 0) {
+      consume(buffer.slice(0, boundary))
+      buffer = buffer.slice(boundary + 2)
+      boundary = buffer.indexOf('\n\n')
+    }
+    if (done) break
+  }
+  if (buffer.trim()) consume(buffer)
+  if (!finalSnapshot) throw new Error('Mimi stream kết thúc trước terminal snapshot.')
+  return finalSnapshot
+}
+
+export function cancelMimiRun(runId: string): Promise<{ run_id: string; state: string }> {
+  return apiRequest(`/api/mimi/runs/${runId}/cancel`, {
+    method: 'POST',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({}),
+  })
+}
+
+export function reconcileMimiRun(runId: string): Promise<{
+  run_id: string
+  state: string
+  provider_outcome: string
+  result_available: boolean
+}> {
+  return apiRequest(`/api/mimi/runs/${runId}/reconcile`, {
+    method: 'POST',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({}),
+  })
+}
+
+export async function resumeMimiRun(
+  runId: string,
+  onEvent: (envelope: MimiStreamEnvelope) => void,
+): Promise<MimiConversation> {
+  const response = await fetch(`/api/mimi/runs/${runId}/resume`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { ...MIMI_WRITE_HEADERS, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  return consumeMimiStream(response, onEvent)
 }
 
 export function decideMimiChangeSet(

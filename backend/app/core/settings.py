@@ -89,11 +89,14 @@ class Settings(BaseSettings):
     mimi_live_provider_enabled: bool = False
     mimi_public_origin: str | None = None
     mimi_preview_ttl_minutes: int = 15
-    mimi_run_deadline_seconds: int = 120
+    mimi_run_deadline_seconds: int = 1_800
     mimi_standard_api_key: str | None = None
+    mimi_route_mode: Literal["exact", "adaptive"] = "exact"
     mimi_route_model: str | None = None
     mimi_route_provider: str | None = None
     mimi_route_quantization: str | None = None
+    mimi_route_allowed_providers: str = ""
+    mimi_route_allowed_quantizations: str = ""
     mimi_route_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] = "low"
     mimi_route_context_tokens: int = 131_072
     mimi_route_max_output_tokens: int = 4_096
@@ -216,12 +219,30 @@ class Settings(BaseSettings):
             required_route = {
                 "MIMI_STANDARD_API_KEY": self.mimi_standard_api_key,
                 "MIMI_ROUTE_MODEL": self.mimi_route_model,
-                "MIMI_ROUTE_PROVIDER": self.mimi_route_provider,
-                "MIMI_ROUTE_QUANTIZATION": self.mimi_route_quantization,
                 "MIMI_ROUTE_MAX_INPUT_PRICE": self.mimi_route_max_input_price,
                 "MIMI_ROUTE_MAX_OUTPUT_PRICE": self.mimi_route_max_output_price,
             }
-            missing = [name for name, value in required_route.items() if value is None]
+            if self.mimi_route_mode == "exact":
+                required_route.update(
+                    {
+                        "MIMI_ROUTE_PROVIDER": self.mimi_route_provider,
+                        "MIMI_ROUTE_QUANTIZATION": self.mimi_route_quantization,
+                    }
+                )
+            else:
+                required_route.update(
+                    {
+                        "MIMI_ROUTE_ALLOWED_PROVIDERS": self.mimi_route_allowed_providers.strip(),
+                        "MIMI_ROUTE_ALLOWED_QUANTIZATIONS": (
+                            self.mimi_route_allowed_quantizations.strip()
+                        ),
+                    }
+                )
+            missing = [
+                name
+                for name, value in required_route.items()
+                if value is None or (isinstance(value, str) and not value.strip())
+            ]
             if missing:
                 raise ValueError("live Mimi route requires exact config: " + ", ".join(missing))
         if self.mimi_route_context_tokens < 16_384:
@@ -234,9 +255,25 @@ class Settings(BaseSettings):
                 raise ValueError(f"{field_name.upper()} cannot be negative")
         if not 1 <= self.mimi_preview_ttl_minutes <= 60:
             raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 60")
-        if not 30 <= self.mimi_run_deadline_seconds <= 600:
-            raise ValueError("MIMI_RUN_DEADLINE_SECONDS must be between 30 and 600")
+        if not 30 <= self.mimi_run_deadline_seconds <= 7_200:
+            raise ValueError("MIMI_RUN_DEADLINE_SECONDS must be between 30 and 7200")
         return self
+
+    @property
+    def mimi_allowed_provider_list(self) -> tuple[str, ...]:
+        return tuple(
+            item.strip()
+            for item in self.mimi_route_allowed_providers.split(",")
+            if item.strip()
+        )
+
+    @property
+    def mimi_allowed_quantization_list(self) -> tuple[str, ...]:
+        return tuple(
+            item.strip()
+            for item in self.mimi_route_allowed_quantizations.split(",")
+            if item.strip()
+        )
 
     @property
     def is_production(self) -> bool:

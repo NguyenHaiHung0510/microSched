@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, Check, CircleDot, LoaderCircle, MessageSquareWarning, ReceiptText, Send, Wifi, WifiOff, X } from 'lucide-react'
+import { Bot, Check, CircleDot, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, Wifi, WifiOff, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { ApiError, TimeoutError } from '@/api'
@@ -9,11 +9,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Textarea } from '@/components/ui/textarea'
 import {
   createMimiConversation,
+  cancelMimiRun,
   decideMimiChangeSet,
   fetchMimiConversation,
   fetchCurrentMimiConversation,
+  reconcileMimiRun,
+  resumeMimiRun,
   saveMimiFeedback,
-  sendMimiMessage,
+  streamMimiMessage,
   type MimiChangeSet,
   type MimiConversation,
 } from '@/mimi-api'
@@ -38,6 +41,21 @@ function expiryLabel(value: string): string {
     day: '2-digit',
     month: '2-digit',
   }).format(new Date(value))
+}
+
+function useElapsed(startedAt: number | null, active: boolean): number {
+  const [now, setNow] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [active])
+  return startedAt ? Math.max(0, Math.floor((now - startedAt) / 1_000)) : 0
+}
+
+function elapsedLabel(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes.toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
 }
 
 function ChangeSetPreview({
@@ -125,6 +143,27 @@ export function MimiScreen({
   const [online, setOnline] = useState(() => navigator.onLine)
   const [feedbackDraft, setFeedbackDraft] = useState('')
   const [feedbackClientId, setFeedbackClientId] = useState<string | null>(null)
+  const [activeRunId, setActiveRunId] = useState<string | null>(null)
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
+  const [runStage, setRunStage] = useState('Sẵn sàng')
+  const [streamedText, setStreamedText] = useState('')
+
+  function handleStreamEvent({ event, data }: { event: string; data: Record<string, unknown> }) {
+    if (event === 'run.reserved' && typeof data.run_id === 'string') {
+      setActiveRunId(data.run_id)
+      setRunStage('Đã nhận yêu cầu')
+    } else if (event === 'context.tasks_read') setRunStage('Đã đọc Task STANDARD')
+    else if (event === 'provider.connected') setRunStage('Đã kết nối provider')
+    else if (event === 'assistant.delta') {
+      setRunStage('Mimi đang trả lời')
+      if (typeof data.payload === 'object' && data.payload && 'text' in data.payload) {
+        const text = (data.payload as { text?: unknown }).text
+        if (typeof text === 'string') setStreamedText((currentText) => currentText + text)
+      }
+    } else if (event === 'provider.succeeded') setRunStage('Đã nhận kết quả')
+    else if (event === 'change_set.ready') setRunStage('Chờ bạn xác nhận')
+    else if (event === 'run.heartbeat') setRunStage('Đang khởi tạo run')
+  }
 
   useEffect(() => {
     const connected = () => setOnline(true)
@@ -157,12 +196,53 @@ export function MimiScreen({
       current: MimiConversation
       content: string
       clientId: string
-    }) => sendMimiMessage(current.id, content, current.generation, clientId),
+    }) => streamMimiMessage(
+      current.id,
+      content,
+      current.generation,
+      clientId,
+      handleStreamEvent,
+    ),
+    onMutate: () => {
+      setRunStartedAt(Date.now())
+      setRunStage('Đang gửi yêu cầu')
+      setStreamedText('')
+    },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKey, data)
       setDraft('')
+      setRunStage(data.runs.at(-1)?.state === 'waiting_confirmation' ? 'Chờ bạn xác nhận' : 'Đã hoàn tất')
+      setActiveRunId(null)
+      setStreamedText('')
       void queryClient.invalidateQueries({ queryKey: ['mimi', 'conversations'] })
     },
+    onError: () => setRunStage('Mất kết nối quan sát · run có thể vẫn tiếp tục'),
+  })
+
+  const cancel = useMutation({
+    mutationFn: (runId: string) => cancelMimiRun(runId),
+    onSuccess: () => setRunStage('Đang huỷ theo yêu cầu'),
+  })
+
+  const resume = useMutation({
+    mutationFn: (runId: string) => resumeMimiRun(runId, handleStreamEvent),
+    onMutate: () => {
+      setRunStartedAt(Date.now())
+      setRunStage('Đang tiếp tục từ checkpoint')
+      setStreamedText('')
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKey, data)
+      setActiveRunId(null)
+      setStreamedText('')
+      setRunStage(data.runs.at(-1)?.state === 'waiting_confirmation' ? 'Chờ bạn xác nhận' : 'Đã hoàn tất')
+    },
+    onError: () => setRunStage('Không thể Resume; checkpoint vẫn được giữ nguyên'),
+  })
+
+  const reconcile = useMutation({
+    mutationFn: (runId: string) => reconcileMimiRun(runId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey }),
   })
 
   const decision = useMutation({
@@ -195,10 +275,12 @@ export function MimiScreen({
   )
   const latestReceipt = current?.receipts.at(-1)
   const latestRun = current?.runs.at(-1)
+  const runPending = send.isPending || resume.isPending
+  const elapsed = useElapsed(runStartedAt, runPending)
 
   function submitMessage(event: React.FormEvent) {
     event.preventDefault()
-    if (!current || !draft.trim() || send.isPending || !online) return
+    if (!current || !draft.trim() || runPending || !online) return
     send.mutate({ current, content: draft, clientId: crypto.randomUUID() })
   }
 
@@ -256,9 +338,12 @@ export function MimiScreen({
   return (
     <section className="min-w-0 space-y-4" aria-labelledby={`mimi-title-${variant}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 id={`mimi-title-${variant}`} className="text-lg font-extrabold text-primary">{current.title ?? 'Conversation hiện tại'}</h3>
-          <p className="text-sm text-muted-foreground">STANDARD · route đang chờ backend công bố</p>
+        <div className="flex items-center gap-3">
+          <Bot className="size-8 text-primary" aria-hidden="true" />
+          <div>
+            <h3 id={`mimi-title-${variant}`} className="text-lg font-extrabold text-primary">{current.title ?? 'Conversation hiện tại'}</h3>
+            <p className="text-sm text-muted-foreground">STANDARD · {runPending ? runStage : 'sẵn sàng'}</p>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={online ? 'secondary' : 'destructive'}>
@@ -269,13 +354,57 @@ export function MimiScreen({
         </div>
       </div>
 
-      {send.isPending ? (
+      {runPending ? (
         <div role="status" aria-atomic="true" className="rounded-lg bg-accent p-3 text-sm text-accent-foreground">
           <div className="flex items-center gap-2 font-semibold">
-            <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-            Mimi đang xử lý yêu cầu
+            <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            {runStage}
           </div>
-          <p className="mt-1 text-xs">Đang chờ provider · lượt chạy dài sẽ tiếp tục hiển thị heartbeat và thời gian đã chờ sau 058C.</p>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="font-mono tabular-nums">Đã chạy {elapsedLabel(elapsed)}</span>
+            {activeRunId ? (
+              <Button size="sm" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(activeRunId)}>
+                {cancel.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Square />}
+                Huỷ run
+              </Button>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs">Đóng side-chat hoặc chuyển tab không dừng run; mở lại conversation để xem trạng thái mới nhất.</p>
+        </div>
+      ) : null}
+
+      {send.isError && activeRunId ? (
+        <div role="alert" className="rounded-lg bg-warn-bg p-3 text-sm">
+          <p className="font-semibold">Kênh quan sát đã ngắt; run không bị gửi lại.</p>
+          <p className="mt-1 text-xs">Mở lại conversation để đọc event bền vững, hoặc huỷ run đang chạy.</p>
+          <Button className="mt-2" size="sm" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(activeRunId)}>
+            {cancel.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Square />}
+            Huỷ run
+          </Button>
+        </div>
+      ) : null}
+
+      {latestRun && (
+        ['retryable', 'deadline_exceeded', 'outcome_unknown'].includes(latestRun.state)
+        || (latestRun.state === 'cancelled' && latestRun.provider_outcome === 'unknown')
+      ) ? (
+        <div className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
+          <p className="font-semibold">Run đã dừng tại checkpoint provider.</p>
+          {latestRun.provider_outcome === 'unknown' ? (
+            <div className="mt-1 space-y-2">
+              <p className="text-xs">Kết quả provider chưa xác định nên Mimi không tự gửi lại. Reconcile trước khi quyết định bước tiếp.</p>
+              <Button size="sm" variant="outline" disabled={reconcile.isPending} onClick={() => reconcile.mutate(latestRun.id)}>
+                {reconcile.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <RotateCcw />}
+                Reconcile provider
+              </Button>
+              {reconcile.isError ? <p role="alert" className="text-xs text-bad">Chưa thể xác minh generation; Mimi vẫn giữ outcome unknown và không retry.</p> : null}
+            </div>
+          ) : (
+            <Button className="mt-2" size="sm" variant="outline" disabled={resume.isPending} onClick={() => resume.mutate(latestRun.id)}>
+              {resume.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <RotateCcw />}
+              Resume
+            </Button>
+          )}
         </div>
       ) : null}
 
@@ -300,6 +429,11 @@ export function MimiScreen({
             <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
           </article>
         ))}
+        {streamedText ? (
+          <article aria-live="polite" className="mr-auto max-w-[88%] rounded-xl bg-card px-4 py-3 ring-1 ring-primary/20">
+            <p className="whitespace-pre-wrap break-words text-sm">{streamedText}</p>
+          </article>
+        ) : null}
       </div>
 
       {pendingChangeSet ? (
@@ -361,16 +495,16 @@ export function MimiScreen({
           value={draft}
           maxLength={12_000}
           placeholder="Ví dụ: Tạo task chuẩn bị demo vào thứ Sáu"
-          disabled={send.isPending}
+          disabled={runPending}
           onChange={(event) => setDraft(event.target.value)}
         />
         {send.isError ? <p role="alert" className="text-sm text-bad">{errorMessage(send.error)}</p> : null}
         <div className="flex items-center justify-between gap-3">
           <p aria-live="polite" className="text-xs text-muted-foreground">
-            {send.isPending ? 'Mimi đang tạo preview…' : 'Không có thay đổi nào được ghi khi chưa xác nhận.'}
+            {runPending ? 'Mimi đang làm việc…' : 'Không có thay đổi nào được ghi khi chưa xác nhận.'}
           </p>
-          <Button type="submit" className="min-h-11" disabled={!draft.trim() || send.isPending || !online}>
-            {send.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Send />}
+          <Button type="submit" className="min-h-11" disabled={!draft.trim() || runPending || !online}>
+            {runPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Send />}
             Gửi
           </Button>
         </div>

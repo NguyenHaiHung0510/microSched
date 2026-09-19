@@ -1,6 +1,6 @@
 # 058 — Mimi P1R dogfood recovery and interaction shell
 
-Status: **OWNER UI PREVIEW READY — 058B IMPLEMENTED; 058C–058D NOT STARTED (2026-09-17)**
+Status: **058B OWNER-APPROVED; 058C IMPLEMENTED + AUTOMATED LOCAL GATES GREEN; 058D LIVE DOGFOOD OPEN (2026-09-19)**
 
 > Executor/integrator: T1 GPT-5.6 Sol · Profile: Balanced · Owner grant: continue the approved Mimi delivery flow, correct the failed P1 local dogfood, build the local UI/UX continuously for Owner review, then implement and verify the bounded package. No Astra delegation.
 
@@ -186,7 +186,7 @@ Preview approval is not backend/full QA acceptance. Do not implement broad runti
 
 ### 058B — Conversation and truthful status foundation
 
-- **Implemented, awaiting Owner preview approval.**
+- **Implemented and Owner-approved on 2026-09-18.**
 - Added only schema/API fields needed for conversation presentation management;
   no streamed runtime or provider-policy work from 058C was pulled forward.
 - Reused the per-conversation DEK. Titles are encrypted with conversation-bound
@@ -201,9 +201,13 @@ Preview approval is not backend/full QA acceptance. Do not implement broad runti
 
 ### 058C — Streamed run and provider-policy correction
 
-- Implement normalized stream, long-run deadline/cancel/reconcile and text-or-one-tool terminal union.
-- Port the Task 057 unsupported-parameter correction with focused regression coverage.
-- Implement exact-pin route card and adaptive eligible-pool policy as separate versioned configurations.
+- **Implemented; automated local gates passed on 2026-09-18. Live-model dogfood remains 058D.**
+- Normalized fetch/SSE stream, encrypted durable deltas, server-owned lifecycle,
+  elapsed/heartbeat/cancel, checkpoint Resume and fail-closed unknown-outcome
+  Reconcile are present. Browser disconnect does not own the worker lifetime.
+- Ported the Task 057 unsupported-parameter correction with focused regression coverage.
+- Exact-pin route card and adaptive eligible-pool policy are separate versioned configurations.
+- Receipt: [058c-streamed-run-receipt](task-058/058c-streamed-run-receipt.md).
 
 ### 058D — Full local acceptance
 

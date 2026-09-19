@@ -108,7 +108,7 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(summary(conversation)) })
       return
     }
-    if (request.method() === 'POST' && path.endsWith('/messages')) {
+    if (request.method() === 'POST' && path.endsWith('/messages/stream')) {
       const content = request.postDataJSON().content
       conversation = {
         ...conversation!,
@@ -136,7 +136,14 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
         events: [{ id: 'event-1', run_id: runId, sequence: 1, kind: 'run.accepted', payload: {}, created_at: '2026-09-15T01:00:00Z' }],
         feedback: [],
       }
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation) })
+      const stream = [
+        `event: run.reserved\ndata: ${JSON.stringify({ run_id: runId })}\n\n`,
+        `event: provider.connected\ndata: ${JSON.stringify({ id: 'event-connected', run_id: runId, sequence: 2, kind: 'provider.connected', payload: { status: 200 }, created_at: '2026-09-15T01:00:00Z' })}\n\n`,
+        `event: assistant.delta\ndata: ${JSON.stringify({ id: 'event-delta', run_id: runId, sequence: 3, kind: 'assistant.delta', payload: { text: 'Đang chuẩn bị preview…' }, created_at: '2026-09-15T01:00:01Z' })}\n\n`,
+        `event: change_set.ready\ndata: ${JSON.stringify({ id: 'event-ready', run_id: runId, sequence: 4, kind: 'change_set.ready', payload: { change_set_id: changeSetId }, created_at: '2026-09-15T01:00:02Z' })}\n\n`,
+        `event: conversation.snapshot\ndata: ${JSON.stringify(conversation)}\n\n`,
+      ].join('')
+      await route.fulfill({ contentType: 'text/event-stream', body: stream })
       return
     }
     if (request.method() === 'POST' && path.endsWith('/decision')) {

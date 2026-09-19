@@ -67,3 +67,7 @@ def change_set_aad(conversation_id: UUID, change_set_id: UUID) -> str:
 
 def conversation_title_aad(conversation_id: UUID) -> str:
     return f"mimi-conversation:{conversation_id}:title"
+
+
+def event_content_aad(run_id: UUID, sequence: int, kind: str) -> str:
+    return f"mimi-event:{run_id}:{sequence}:{kind}:content"
