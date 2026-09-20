@@ -165,9 +165,10 @@ def build_request(
         # of an existing preview is different: text claiming that a preview was
         # changed is not a state transition, so require the typed replacement.
         "tool_choice": (
-            {"type": "function", "function": {"name": "task.create.v1"}}
-            if force_task_tool
-            else "auto"
+            # There is exactly one offered tool, so `required` preserves the
+            # same contract while remaining compatible with endpoints that
+            # support forced tool use but reject named-function selection.
+            "required" if force_task_tool else "auto"
         ),
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the

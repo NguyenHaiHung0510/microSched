@@ -86,10 +86,10 @@ def test_explicit_preview_revision_can_require_the_task_tool() -> None:
         _settings(),
         force_task_tool=True,
     )
-    assert request["tool_choice"] == {
-        "type": "function",
-        "function": {"name": "task.create.v1"},
-    }
+    assert request["tool_choice"] == "required"
+    assert [tool["function"]["name"] for tool in request["tools"]] == [
+        "task.create.v1"
+    ]
 
 
 def test_preflight_refuses_overflow_instead_of_truncating() -> None:
