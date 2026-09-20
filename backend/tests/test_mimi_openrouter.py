@@ -80,6 +80,18 @@ def test_adaptive_request_has_bounded_pool_without_manual_order() -> None:
     assert "sort" not in request["provider"]
 
 
+def test_explicit_preview_revision_can_require_the_task_tool() -> None:
+    request = build_request(
+        [{"role": "user", "content": "Sửa preview"}],
+        _settings(),
+        force_task_tool=True,
+    )
+    assert request["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "task.create.v1"},
+    }
+
+
 def test_preflight_refuses_overflow_instead_of_truncating() -> None:
     settings = _settings(
         mimi_route_context_tokens=16_384,

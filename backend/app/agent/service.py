@@ -331,6 +331,19 @@ def _conversation_summary(
     }
 
 
+def _requests_preview_revision(content: str) -> bool:
+    normalized = " ".join(content.casefold().split())
+    return normalized.startswith(
+        (
+            "sửa preview",
+            "chỉnh preview",
+            "cập nhật preview",
+            "update preview",
+            "revise preview",
+        )
+    )
+
+
 async def _provider_history(
     db: AsyncSession,
     conversation: MimiConversation,
@@ -581,9 +594,9 @@ async def send_message(
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
     provider_history = await _provider_history(db, conversation, dek)
 
-    # This P1 route cannot prove a supplement is harmless, so every distinct
-    # new user turn conservatively revises the frontier and invalidates an old
-    # preview. It never leaves two confirmable mutations behind the UI.
+    # Keep the existing preview confirmable until a typed replacement has
+    # validated. A provider failure or ordinary text must never erase the
+    # Owner's pending decision.
     pending_previews = (
         await db.execute(
             select(MimiChangeSet, MimiRun)
@@ -605,17 +618,7 @@ async def send_message(
         )
         for old_change_set, _ in pending_previews
     ]
-    for old_change_set, old_run in pending_previews:
-        old_change_set.state = "stale"
-        old_run.state = "halted"
-        old_run.error_code = "superseded_by_new_turn"
-        old_run.completed_at = datetime.now(UTC)
-        await _append_event(
-            db,
-            old_run.id,
-            "change_set.superseded",
-            {"change_set_id": str(old_change_set.id)},
-        )
+    force_task_tool = bool(pending_previews) and _requests_preview_revision(payload.content)
 
     now = datetime.now(UTC)
     settings = get_settings()
@@ -833,6 +836,7 @@ async def send_message(
                     settings=settings,
                     session_id=_provider_session_id(conversation.id),
                     on_event=persist_stream_event,
+                    force_task_tool=force_task_tool,
                 )
                 await flush_stream_buffer()
             else:
@@ -840,7 +844,10 @@ async def send_message(
                     live_messages,
                     settings=settings,
                     session_id=_provider_session_id(conversation.id),
+                    force_task_tool=force_task_tool,
                 )
+            if force_task_tool and completion.kind != "task":
+                raise RouteContractError("provider_revision_must_return_task_tool")
         except (ProviderDispatchError, RouteContractError) as error:
             outcome = error.outcome if isinstance(error, ProviderDispatchError) else "failed"
             status_code = error.status if isinstance(error, ProviderDispatchError) else None
@@ -998,6 +1005,32 @@ async def send_message(
         call.usage = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "cost": 0}
         run.provider_outcome = "succeeded"
         await _append_event(db, run_id, "provider.succeeded", {"attempt": 1})
+
+    # Only a validated task proposal may replace pending authority. Re-query
+    # after provider I/O because the conversation lock was released while the
+    # external request ran.
+    current_pending_previews = (
+        await db.execute(
+            select(MimiChangeSet, MimiRun)
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .where(
+                MimiRun.conversation_id == conversation.id,
+                MimiChangeSet.state == "pending",
+            )
+            .with_for_update()
+        )
+    ).all()
+    for old_change_set, old_run in current_pending_previews:
+        old_change_set.state = "stale"
+        old_run.state = "halted"
+        old_run.error_code = "superseded_by_validated_preview"
+        old_run.completed_at = datetime.now(UTC)
+        await _append_event(
+            db,
+            old_run.id,
+            "change_set.superseded",
+            {"change_set_id": str(old_change_set.id)},
+        )
 
     change_set_id = uuid7()
     operation_id = uuid7()

@@ -148,6 +148,7 @@ def build_request(
     *,
     stream: bool = False,
     session_id: str | None = None,
+    force_task_tool: bool = False,
 ) -> dict[str, Any]:
     """Build either the attributable exact lane or bounded adaptive dogfood lane."""
     route = settings or get_settings()
@@ -160,8 +161,14 @@ def build_request(
         "model": model,
         "messages": messages,
         "tools": [TASK_CREATE_TOOL],
-        # `auto` implements Mimi's terminal union: ordinary text or one task.
-        "tool_choice": "auto",
+        # Ordinary turns implement Mimi's terminal union. An explicit revision
+        # of an existing preview is different: text claiming that a preview was
+        # changed is not a state transition, so require the typed replacement.
+        "tool_choice": (
+            {"type": "function", "function": {"name": "task.create.v1"}}
+            if force_task_tool
+            else "auto"
+        ),
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the
         # terminal parser independently enforces at most one tool call.
@@ -262,11 +269,17 @@ async def complete(
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
     session_id: str | None = None,
+    force_task_tool: bool = False,
 ) -> ProviderCompletion:
     """Dispatch once. Retry authority belongs to persisted run state."""
     route = settings or get_settings()
     api_key, _ = _route_identity(route)
-    request = build_request(messages, route, session_id=session_id)
+    request = build_request(
+        messages,
+        route,
+        session_id=session_id,
+        force_task_tool=force_task_tool,
+    )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
         timeout=httpx.Timeout(float(route.mimi_run_deadline_seconds), connect=10.0)
@@ -305,11 +318,18 @@ async def complete_stream(
     client: httpx.AsyncClient | None = None,
     session_id: str | None = None,
     on_event: ProviderEventSink | None = None,
+    force_task_tool: bool = False,
 ) -> ProviderCompletion:
     """Normalize OpenRouter SSE without exposing raw chunks or partial tool JSON."""
     route = settings or get_settings()
     api_key, _ = _route_identity(route)
-    request = build_request(messages, route, stream=True, session_id=session_id)
+    request = build_request(
+        messages,
+        route,
+        stream=True,
+        session_id=session_id,
+        force_task_tool=force_task_tool,
+    )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
         timeout=httpx.Timeout(float(route.mimi_run_deadline_seconds), connect=10.0)

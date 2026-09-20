@@ -61,7 +61,15 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
     cancel_started = asyncio.Event()
     hello_calls = 0
 
-    async def fake_complete_stream(messages, *, settings, session_id, on_event, client=None):
+    async def fake_complete_stream(
+        messages,
+        *,
+        settings,
+        session_id,
+        on_event,
+        client=None,
+        force_task_tool=False,
+    ):
         nonlocal hello_calls, retry_attempts
         del settings, session_id, client
         system_prompt = messages[0]["content"]
@@ -92,7 +100,20 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                 provider="Synthetic",
                 model="synthetic/model",
             )
+        if current_message == "Sửa preview nhưng provider chỉ trả text":
+            assert force_task_tool is True
+            await on_event("provider.connected", {"status": 200})
+            return ProviderCompletion(
+                kind="text",
+                task=None,
+                text="Mình đã sửa preview.",
+                response_id="gen-invalid-revision-text",
+                usage={"prompt_tokens": 25, "completion_tokens": 6},
+                provider="Synthetic",
+                model="synthetic/model",
+            )
         if current_message == "Sửa preview: đổi tiêu đề và thêm kiểm tra receipt":
+            assert force_task_tool is True
             assert '"title": "Chuẩn bị demo Mimi"' in system_prompt
             assert '"items": ["Kiểm tra slide"]' in system_prompt
             await on_event("provider.connected", {"status": 200})
@@ -109,6 +130,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                 provider="Synthetic",
                 model="synthetic/model",
             )
+        assert force_task_tool is False
         if current_message == "hello":
             if hello_calls == 0:
                 assert [item["role"] for item in messages] == ["system", "user"]
@@ -258,6 +280,25 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                         "Chuẩn bị demo Mimi"
                     )
 
+                    invalid_revision = await client.post(
+                        f"/api/mimi/conversations/{conversation_id}/messages/stream",
+                        json={
+                            "client_id": "stream-message-invalid-revision",
+                            "content": "Sửa preview nhưng provider chỉ trả text",
+                            "expected_generation": preview_view.json()["generation"],
+                        },
+                        headers=CSRF_HEADERS,
+                    )
+                    assert "event: provider.failed" in invalid_revision.text
+                    after_invalid_revision = await client.get(
+                        f"/api/mimi/conversations/{conversation_id}"
+                    )
+                    still_pending = after_invalid_revision.json()["change_sets"][-1]
+                    assert still_pending["state"] == "pending"
+                    assert still_pending["operation"]["args"]["title"] == (
+                        "Chuẩn bị demo Mimi"
+                    )
+
                     revised = await client.post(
                         f"/api/mimi/conversations/{conversation_id}/messages/stream",
                         json={
@@ -265,7 +306,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                             "content": (
                                 "Sửa preview: đổi tiêu đề và thêm kiểm tra receipt"
                             ),
-                            "expected_generation": preview_view.json()["generation"],
+                            "expected_generation": after_invalid_revision.json()["generation"],
                         },
                         headers=CSRF_HEADERS,
                     )
