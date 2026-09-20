@@ -291,8 +291,8 @@ export function MimiScreen({
   const runPending = send.isPending || resume.isPending
   const elapsed = useElapsed(runStartedAt, runPending)
 
-  function submitMessage(event: React.FormEvent) {
-    event.preventDefault()
+  function submitMessage(event?: React.SyntheticEvent) {
+    event?.preventDefault()
     if (!current || !draft.trim() || runPending || !online) return
     const revision = pendingChangeSet && requestsPreviewRevision(draft)
       ? { id: pendingChangeSet.id, digest: pendingChangeSet.digest }
@@ -514,9 +514,16 @@ export function MimiScreen({
           data-testid="mimi-input"
           value={draft}
           maxLength={12_000}
-          placeholder="Ví dụ: Tạo task chuẩn bị demo vào thứ Sáu"
+          placeholder="Ví dụ: Tạo task chuẩn bị demo vào thứ Sáu (Nhấn Enter để gửi, Shift+Enter để xuống dòng)"
           disabled={runPending}
           onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.altKey) {
+              if ((event.nativeEvent as KeyboardEvent).isComposing) return
+              event.preventDefault()
+              submitMessage(event)
+            }
+          }}
         />
         {send.isError ? <p role="alert" className="text-sm text-bad">{errorMessage(send.error)}</p> : null}
         <div className="flex items-center justify-between gap-3">

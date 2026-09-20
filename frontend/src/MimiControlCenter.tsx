@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Archive, ArchiveRestore, Bot, BrainCircuit, CheckCircle2, CircleAlert, CircleDot, Clock3, Database, Gauge, History, LoaderCircle, MessagesSquare, Orbit, PanelRightOpen, Pencil, Play, Plus, ReceiptText, RotateCcw, Settings2, ShieldCheck, Sparkles, TimerReset, WalletCards, Wrench } from 'lucide-react'
+import { Activity, Archive, ArchiveRestore, BrainCircuit, CheckCircle2, CircleAlert, CircleDot, Clock3, Database, Gauge, History, LoaderCircle, MessagesSquare, Orbit, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Plus, ReceiptText, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, TimerReset, WalletCards, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { createMimiConversation, fetchCurrentMimiConversation, fetchMimiConversation, fetchMimiConversations, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
 import { fetchMimiPreview, selectMimiPreviewScenario, type MimiPreviewRange, type MimiPreviewState, type MimiReasoningLevel } from '@/mimi-preview'
+import { MimiAvatar } from '@/components/brand'
 import { MimiContextRail } from '@/MimiContextRail'
 import { MimiScreen } from '@/MimiScreen'
 import { mimiRunLabel } from '@/mimi-presentation'
@@ -83,11 +84,19 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
   const queryClient = useQueryClient()
   const [listState, setListState] = useState<'active' | 'archived'>('active')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [leftOpen, setLeftOpen] = useState(true)
+  const [rightOpen, setRightOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const [renameTarget, setRenameTarget] = useState<MimiConversationSummary | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [railOpen, setRailOpen] = useState(false)
   const conversations = useQuery({ queryKey: ['mimi', 'conversations', listState], queryFn: () => fetchMimiConversations(listState), ...NO_POLLING_QUERY_OPTIONS })
-  const conversationItems = conversations.data?.items ?? []
+  const conversationItems = useMemo(() => conversations.data?.items ?? [], [conversations.data?.items])
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return conversationItems
+    return conversationItems.filter((item) => item.title.toLowerCase().includes(q))
+  }, [conversationItems, searchQuery])
   const effectiveSelectedId = selectedId && conversationItems.some((item) => item.id === selectedId) ? selectedId : conversationItems[0]?.id ?? null
   const selected = useQuery({ queryKey: ['mimi', 'conversation', effectiveSelectedId], queryFn: () => fetchMimiConversation(effectiveSelectedId!), enabled: Boolean(effectiveSelectedId), ...NO_POLLING_QUERY_OPTIONS })
 
@@ -98,11 +107,135 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
 
   const rail = <MimiContextRail conversation={selected.data} onOpenDomain={onOpenDomain} />
   return <div className="space-y-3">
-    <div className="flex justify-end xl:hidden"><Button variant="outline" onClick={() => setRailOpen(true)}><PanelRightOpen />Mở workspace rail</Button></div>
-    <div className="grid min-w-0 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[17rem_minmax(0,1fr)_20rem]">
-      <Card className="content-start"><CardHeader><CardTitle>Hội thoại</CardTitle><CardDescription>Tên tự sinh tối đa 80 ký tự; rename của bạn sẽ khóa title.</CardDescription></CardHeader><CardContent className="space-y-3"><Button className="w-full justify-start" disabled={create.isPending} onClick={() => create.mutate()}>{create.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Plus />}Hội thoại mới</Button><div className="grid grid-cols-2 gap-1"><Button size="sm" variant={listState === 'active' ? 'selected' : 'ghost'} onClick={() => setListState('active')}>Đang dùng</Button><Button size="sm" variant={listState === 'archived' ? 'selected' : 'ghost'} onClick={() => setListState('archived')}>Đã lưu</Button></div>{conversations.isPending ? <p role="status" className="py-6 text-center text-sm text-muted-foreground">Đang tải hội thoại…</p> : null}{conversations.isError ? <p role="alert" className="text-sm text-bad">Không tải được danh sách hội thoại.</p> : null}<div className="space-y-2">{conversations.data?.items.map((item) => <div key={item.id} className={`rounded-lg border p-2 ${effectiveSelectedId === item.id ? 'border-primary bg-primary/5' : 'bg-card'}`}><button type="button" className="min-h-11 w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSelectedId(item.id)}><p className="line-clamp-2 text-sm font-semibold">{item.title}</p><div className="mt-1 flex items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{item.latest_run_state ? mimiRunLabel(item.latest_run_state) : 'Sẵn sàng'}</span>{item.archived_at ? <Archive className="size-3.5 text-muted-foreground" /> : null}</div></button><div className="mt-1 flex justify-end gap-1"><Button size="icon-sm" variant="ghost" aria-label={`Đổi tên ${item.title}`} onClick={() => { setRenameTarget(item); setRenameDraft(item.title) }}><Pencil /></Button><Button size="icon-sm" variant="ghost" aria-label={item.archived_at ? `Khôi phục ${item.title}` : `Lưu trữ ${item.title}`} disabled={archive.isPending} onClick={() => archive.mutate({ item, archived: !item.archived_at })}>{item.archived_at ? <ArchiveRestore /> : <Archive />}</Button></div></div>)}</div></CardContent></Card>
-      <Card className="min-w-0"><CardContent className="p-4 sm:p-5"><MimiScreen onOpenTasks={() => onOpenDomain('tasks')} variant="workspace" conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} /></CardContent></Card>
-      <div className="hidden min-w-0 xl:block">{rail}</div>
+    <div className="flex items-center justify-between gap-2 border-b pb-2">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 text-xs"
+          onClick={() => setLeftOpen(!leftOpen)}
+          title={leftOpen ? 'Thu gọn danh sách hội thoại' : 'Mở danh sách hội thoại'}
+        >
+          {leftOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
+          <span>{leftOpen ? 'Thu gọn hội thoại' : ('Hội thoại (' + conversationItems.length + ')')}</span>
+        </Button>
+        <span className="text-xs text-muted-foreground truncate max-w-[9rem] sm:max-w-sm font-medium">
+          {selected.data?.title ? ('Đang mở: ' + selected.data.title) : 'Mimi Workspace'}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant={rightOpen ? 'selected' : 'outline'}
+          size="sm"
+          className="gap-1.5 text-xs"
+          onClick={() => {
+            setRightOpen(!rightOpen)
+            setRailOpen(!rightOpen)
+          }}
+          title={rightOpen ? 'Đóng workspace rail' : 'Mở workspace rail (Task, Lịch, Notes)'}
+        >
+          {rightOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
+          <span>{rightOpen ? 'Đóng dữ liệu' : 'Xem dữ liệu liên quan'}</span>
+        </Button>
+      </div>
+    </div>
+    <div className="flex flex-col lg:flex-row min-w-0 items-start gap-4 w-full">
+      {leftOpen ? (
+        <Card className="w-full lg:w-72 shrink-0 content-start shadow-xs">
+          <CardHeader className="p-3.5 pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-bold">Cuộc trò chuyện</CardTitle>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Thu gọn danh sách"
+                onClick={() => setLeftOpen(false)}
+              >
+                <PanelLeftClose className="size-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2.5 p-3.5 pt-0">
+            <Button className="w-full justify-start gap-2 rounded-xl text-xs font-semibold shadow-xs" disabled={create.isPending} onClick={() => create.mutate()}>
+              {create.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none size-4" /> : <Plus className="size-4" />}
+              Cuộc trò chuyện mới
+            </Button>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" aria-hidden="true" />
+              <Input
+                className="h-8 pl-8 text-xs rounded-lg bg-muted/40"
+                placeholder="Tìm kiếm trong các cuộc trò chuyện…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted/50 p-0.5">
+              <Button size="sm" variant={listState === 'active' ? 'selected' : 'ghost'} className="h-7 text-xs" onClick={() => setListState('active')}>
+                Đang dùng
+              </Button>
+              <Button size="sm" variant={listState === 'archived' ? 'selected' : 'ghost'} className="h-7 text-xs" onClick={() => setListState('archived')}>
+                Đã lưu
+              </Button>
+            </div>
+            {conversations.isPending ? <p role="status" className="py-4 text-center text-xs text-muted-foreground">Đang tải hội thoại…</p> : null}
+            {conversations.isError ? <p role="alert" className="text-xs text-bad">Không tải được danh sách hội thoại.</p> : null}
+            <div className="max-h-[calc(100vh-22rem)] space-y-1 overflow-y-auto pr-0.5">
+              {filteredItems.map((item) => (
+                <div
+                  key={item.id}
+                  className={'group relative flex items-center justify-between rounded-lg p-2 transition-colors ' + (effectiveSelectedId === item.id ? 'border border-primary/40 bg-primary/5 font-semibold text-primary' : 'hover:bg-muted/60 text-foreground')}
+                >
+                  <button
+                    type="button"
+                    className="min-h-9 flex-1 min-w-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={() => setSelectedId(item.id)}
+                  >
+                    <p className="line-clamp-1 text-xs">{item.title}</p>
+                    <div className="mt-0.5 flex items-center justify-between gap-1 text-[11px] font-normal text-muted-foreground">
+                      <span>{item.latest_run_state ? mimiRunLabel(item.latest_run_state) : 'Sẵn sàng'}</span>
+                      {item.archived_at ? <Archive className="size-3 text-muted-foreground" /> : null}
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-0.5 shrink-0 opacity-80 group-hover:opacity-100">
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      aria-label={'Đổi tên ' + item.title}
+                      onClick={() => { setRenameTarget(item); setRenameDraft(item.title) }}
+                    >
+                      <Pencil className="size-3" />
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      aria-label={item.archived_at ? ('Khôi phục ' + item.title) : ('Lưu trữ ' + item.title)}
+                      disabled={archive.isPending}
+                      onClick={() => archive.mutate({ item, archived: !item.archived_at })}
+                    >
+                      {item.archived_at ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+      <div className="flex-1 min-w-0 flex justify-center">
+        <Card className="w-full max-w-4xl min-w-0 shadow-sm">
+          <CardContent className="p-4 sm:p-6">
+            <MimiScreen
+              onOpenTasks={() => onOpenDomain('tasks')}
+              variant="workspace"
+              conversationId={effectiveSelectedId}
+              onConversationCreated={setSelectedId}
+            />
+          </CardContent>
+        </Card>
+      </div>
+      {rightOpen ? <div className="hidden min-w-0 xl:block w-80 shrink-0">{rail}</div> : null}
     </div>
     <Dialog open={railOpen} onOpenChange={setRailOpen}><DialogContent className="max-h-[90dvh] content-start overflow-y-auto sm:max-w-lg"><DialogHeader><DialogTitle>Workspace rail</DialogTitle><DialogDescription>Xem nhanh microSched, preview và run mà không rời conversation.</DialogDescription></DialogHeader>{rail}</DialogContent></Dialog>
     <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}><DialogContent><DialogHeader><DialogTitle>Đổi tên hội thoại</DialogTitle><DialogDescription>Tên bạn đặt sẽ không bị auto-title ghi đè.</DialogDescription></DialogHeader><div className="space-y-2"><label htmlFor="mimi-conversation-title" className="text-sm font-semibold">Tên hội thoại</label><Input id="mimi-conversation-title" value={renameDraft} maxLength={80} onChange={(event) => setRenameDraft(event.target.value)} /><p className="text-right text-xs text-muted-foreground">{renameDraft.length}/80</p></div><DialogFooter><DialogClose asChild><Button variant="outline">Huỷ</Button></DialogClose><Button disabled={!renameDraft.trim() || rename.isPending || !renameTarget} onClick={() => { if (renameTarget) rename.mutate({ item: renameTarget, title: renameDraft }) }}>{rename.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : null}Lưu tên</Button></DialogFooter></DialogContent></Dialog>
@@ -126,7 +259,7 @@ export function MimiControlCenter({ onOpenDomain }: { onOpenDomain: (domain: Wor
   const scenarioDescription = useMemo(() => synthetic?.scenarios.find((item) => item.id === synthetic.scenario)?.description, [synthetic])
 
   return <section className="space-y-5" aria-labelledby="mimi-control-title">
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="space-y-1"><div className="flex items-center gap-2"><Bot className="size-6 text-primary" aria-hidden="true" /><h2 id="mimi-control-title" className="text-2xl font-extrabold text-primary">Mimi Control Center</h2></div><p className="max-w-2xl text-sm text-muted-foreground">Quản lý trạng thái, mức dùng, hoạt động, hội thoại và cấu hình đang thực sự có hiệu lực.</p></div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">P1R · local preview</Badge>{synthetic ? <Badge variant="secondary">Synthetic data</Badge> : null}</div></div>
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="space-y-1"><div className="flex items-center gap-2"><MimiAvatar size="sm" state="idle" /><h2 id="mimi-control-title" className="text-2xl font-extrabold text-primary">Mimi Control Center</h2></div><p className="max-w-2xl text-sm text-muted-foreground">Quản lý trạng thái, mức dùng, hoạt động, hội thoại và cấu hình đang thực sự có hiệu lực.</p></div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">P1R · local preview</Badge>{synthetic ? <Badge variant="secondary">Synthetic data</Badge> : null}</div></div>
     {synthetic ? <Card className="border-dashed bg-muted/30"><CardContent className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-bold">Kịch bản để duyệt UX</p><p className="text-xs text-muted-foreground">{scenarioDescription}</p></div><Select value={synthetic.scenario} onValueChange={(value) => selectScenario.mutate(value)} disabled={selectScenario.isPending}><SelectTrigger className="min-h-11 w-full bg-card sm:w-56" aria-label="Kịch bản synthetic"><SelectValue /></SelectTrigger><SelectContent>{synthetic.scenarios.map((scenario) => <SelectItem key={scenario.id} value={scenario.id}>{scenario.label}</SelectItem>)}</SelectContent></Select></CardContent></Card> : null}
     <nav className="flex gap-2 overflow-x-auto pb-1" aria-label="Khu quản lý Mimi">{sections.map(({ id, label, icon: Icon }) => <Button key={id} size="lg" variant={section === id ? 'selected' : 'ghost'} aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}><Icon aria-hidden="true" />{label}</Button>)}</nav>
 
