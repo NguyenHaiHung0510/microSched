@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Archive, ArchiveRestore, BrainCircuit, CheckCircle2, CircleAlert, CircleDot, Clock3, Database, Gauge, History, LoaderCircle, MessagesSquare, Orbit, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Pin, PinOff, Play, Plus, ReceiptText, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, TimerReset, WalletCards, Wrench } from 'lucide-react'
+import { Activity, Archive, ArchiveRestore, BrainCircuit, CheckCircle2, CircleAlert, CircleDot, Clock3, Database, Gauge, History, LoaderCircle, MessagesSquare, MoreVertical, Orbit, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Pin, PinOff, Play, Plus, ReceiptText, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, TimerReset, WalletCards, Wrench } from 'lucide-react'
+import { DropdownMenu } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -134,6 +135,11 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
   const archive = useMutation({ mutationFn: ({ item, archived }: { item: MimiConversationSummary; archived: boolean }) => setMimiConversationArchived(item, archived), onSuccess: refresh })
 
   function renderConversationRow(item: MimiConversationSummary, isPinned: boolean) {
+    const isRunning = item.latest_run_state === 'running' || item.latest_run_state === 'recovering'
+    const isWaiting = item.latest_run_state === 'waiting_confirmation'
+    const isUnreadCompleted = item.id !== effectiveSelectedId && item.latest_run_state === 'completed'
+    const infoTooltip = [item.title, '• Chế độ: ' + (item.sensitivity ? item.sensitivity.toUpperCase() : 'STANDARD'), '• Trạng thái: ' + (item.latest_run_state ? mimiRunLabel(item.latest_run_state) : 'Sẵn sàng')].join('\n')
+
     return (
       <div
         key={item.id}
@@ -143,46 +149,71 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
           type="button"
           className="min-h-9 flex-1 min-w-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           onClick={() => setSelectedId(item.id)}
+          title={infoTooltip}
         >
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             {isPinned ? <Pin className="size-3 text-primary fill-primary/30 shrink-0" aria-hidden="true" /> : null}
-            <p className="line-clamp-1 text-xs">{item.title}</p>
+            <p className="line-clamp-1 text-xs truncate flex-1">{item.title}</p>
+            {isRunning ? (
+              <span title="Mimi đang xử lý ở nền" className="inline-flex shrink-0">
+                <LoaderCircle className="size-3 animate-spin text-primary" aria-hidden="true" />
+              </span>
+            ) : null}
+            {isWaiting ? (
+              <span className="size-2 rounded-full bg-amber-500 shrink-0" title="Cần bạn xác nhận" aria-label="Cần bạn xác nhận" />
+            ) : null}
+            {isUnreadCompleted ? (
+              <span className="size-1.5 rounded-full bg-primary/70 shrink-0" title="Đã có kết quả" />
+            ) : null}
           </div>
           <div className="mt-0.5 flex items-center justify-between gap-1 text-[11px] font-normal text-muted-foreground">
             <span>{item.latest_run_state ? mimiRunLabel(item.latest_run_state) : 'Sẵn sàng'}</span>
             {item.archived_at ? <Archive className="size-3 text-muted-foreground" /> : null}
           </div>
         </button>
-        <div className="flex items-center gap-0.5 shrink-0 opacity-80 group-hover:opacity-100">
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            className="h-7 w-7"
-            aria-label={isPinned ? ('Bỏ ghim ' + item.title) : ('Ghim ' + item.title)}
-            title={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'}
-            onClick={() => togglePin(item.id)}
-          >
-            {isPinned ? <PinOff className="size-3 text-primary" /> : <Pin className="size-3 text-muted-foreground" />}
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            className="h-7 w-7"
-            aria-label={'Đổi tên ' + item.title}
-            onClick={() => { setRenameTarget(item); setRenameDraft(item.title) }}
-          >
-            <Pencil className="size-3" />
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            className="h-7 w-7"
-            aria-label={item.archived_at ? ('Khôi phục ' + item.title) : ('Lưu trữ ' + item.title)}
-            disabled={archive.isPending}
-            onClick={() => archive.mutate({ item, archived: !item.archived_at })}
-          >
-            {item.archived_at ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
-          </Button>
+        <div className="shrink-0 ml-1">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                aria-label={'Tùy chọn ' + item.title}
+                title="Tùy chọn"
+              >
+                <MoreVertical className="size-3.5" />
+              </Button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                className="z-50 min-w-[9.5rem] overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-md"
+              >
+                <DropdownMenu.Item
+                  className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs outline-none hover:bg-muted focus:bg-muted"
+                  onSelect={() => togglePin(item.id)}
+                >
+                  {isPinned ? <PinOff className="size-3.5 text-muted-foreground" /> : <Pin className="size-3.5 text-muted-foreground" />}
+                  <span>{isPinned ? 'Bỏ ghim' : 'Ghim lên đầu'}</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs outline-none hover:bg-muted focus:bg-muted"
+                  onSelect={() => { setRenameTarget(item); setRenameDraft(item.title) }}
+                >
+                  <Pencil className="size-3.5 text-muted-foreground" />
+                  <span>Đổi tên</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="my-1 h-px bg-muted" />
+                <DropdownMenu.Item
+                  className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs outline-none hover:bg-muted focus:bg-muted text-destructive"
+                  onSelect={() => archive.mutate({ item, archived: !item.archived_at })}
+                >
+                  {item.archived_at ? <ArchiveRestore className="size-3.5" /> : <Archive className="size-3.5" />}
+                  <span>{item.archived_at ? 'Khôi phục' : 'Lưu trữ'}</span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </div>
       </div>
     )
@@ -219,7 +250,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
         </Button>
       </div>
     </div>
-    <div className="flex flex-col lg:flex-row min-w-0 items-start gap-4 w-full h-[calc(100vh-14rem)] min-h-[32rem]">
+    <div className="flex flex-col lg:flex-row min-w-0 items-start gap-4 w-full h-[calc(100dvh-5.5rem)] min-h-[40rem]">
       {leftOpen ? (
         <Card className="w-full lg:w-72 shrink-0 content-start shadow-xs h-full flex flex-col">
           <CardHeader className="p-3.5 pb-2">

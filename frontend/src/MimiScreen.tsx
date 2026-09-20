@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, CircleDot, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, Wifi, WifiOff, X } from 'lucide-react'
+import { Check, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
@@ -21,7 +21,7 @@ import {
   type MimiChangeSet,
   type MimiConversation,
 } from '@/mimi-api'
-import { mimiRunLabel, mimiTaskScheduleLabel } from '@/mimi-presentation'
+import { mimiTaskScheduleLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 function errorMessage(error: unknown): string {
@@ -357,20 +357,21 @@ export function MimiScreen({
 
   return (
     <section className="min-w-0 flex flex-col h-full space-y-4" aria-labelledby={`mimi-title-${variant}`}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <MimiAvatar size="md" state={mimiState} showGlow={runPending} />
-          <div>
-            <h3 id={`mimi-title-${variant}`} className="text-lg font-extrabold text-primary">{current.title ?? 'Conversation hiện tại'}</h3>
-            <p className="text-sm text-muted-foreground">STANDARD · {runPending ? runStage : 'sẵn sàng'}</p>
-          </div>
+      <div className="flex items-center justify-between gap-2 border-b pb-2 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <MimiAvatar size="xs" state={mimiState} showGlow={runPending} />
+          <h3 id={`mimi-title-${variant}`} className="text-sm font-bold text-foreground truncate">
+            {current.title ?? 'Conversation hiện tại'}
+          </h3>
+          <span className="text-[11px] text-muted-foreground shrink-0">· STANDARD</span>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={online ? 'secondary' : 'destructive'}>
-            {online ? <Wifi aria-hidden="true" /> : <WifiOff aria-hidden="true" />}
-            {online ? 'Thiết bị có mạng' : 'Thiết bị mất mạng'}
-          </Badge>
-          {latestRun ? <Badge variant="outline"><CircleDot aria-hidden="true" />{mimiRunLabel(latestRun.state)}</Badge> : null}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {!online ? <Badge variant="destructive" className="text-[10px] h-5">Mất mạng</Badge> : null}
+          {latestRun?.state === 'waiting_confirmation' ? (
+            <Badge variant="outline" className="text-[10px] h-5 border-amber-500/50 text-amber-600 bg-amber-50/50">
+              Chờ xác nhận
+            </Badge>
+          ) : null}
         </div>
       </div>
 
