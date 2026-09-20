@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid7
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import false, select, text
+from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy import and_, false, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import crypto as mimi_crypto
@@ -34,6 +37,8 @@ from app.agent.openrouter import (
 from app.agent.openrouter import (
     complete as openrouter_complete,
 )
+from app.agent.openrouter import complete_stream as openrouter_complete_stream
+from app.agent.openrouter import get_generation as openrouter_get_generation
 from app.core.settings import get_settings
 from app.domain.models import AuditLog, AuthSession, Task
 from app.domain.tasks import TaskCreate, TaskStore
@@ -43,12 +48,19 @@ POLICY_VERSION = "mimi-standard-task-create.v1"
 TOOL_VERSION = "task.create.v1"
 MAX_MESSAGES = 100
 MAX_EVENTS = 100
+MAX_CONVERSATION_TITLE = 80
+PROVIDER_HISTORY_MESSAGES = 24
+PROVIDER_HISTORY_BYTES = 65_536
+OWNER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 class MessageCreate(BaseModel):
     client_id: str = Field(min_length=1, max_length=160)
     content: str = Field(min_length=1, max_length=12_000)
     expected_generation: int | None = Field(default=None, ge=1)
+    intent: Literal["auto", "revise_pending_preview"] = "auto"
+    expected_change_set_id: UUID | None = None
+    expected_change_set_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("content")
     @classmethod
@@ -56,6 +68,15 @@ class MessageCreate(BaseModel):
         if not value.strip():
             raise ValueError("content must not be blank")
         return value
+
+    @model_validator(mode="after")
+    def bind_revision_to_pending_preview(self) -> MessageCreate:
+        target = (self.expected_change_set_id, self.expected_change_set_digest)
+        if self.intent == "revise_pending_preview" and any(item is None for item in target):
+            raise ValueError("preview revision requires id and digest")
+        if self.intent == "auto" and any(item is not None for item in target):
+            raise ValueError("preview target requires revise_pending_preview intent")
+        return self
 
 
 class ConfirmationDecision(BaseModel):
@@ -80,6 +101,27 @@ class FeedbackCreate(BaseModel):
         return value
 
 
+class ConversationCreate(BaseModel):
+    client_id: str | None = Field(default=None, min_length=1, max_length=160)
+
+
+class ConversationRename(BaseModel):
+    title: str = Field(min_length=1, max_length=MAX_CONVERSATION_TITLE)
+    expected_metadata_version: int = Field(ge=1)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("title must not be blank")
+        return normalized
+
+
+class ConversationStateChange(BaseModel):
+    expected_metadata_version: int = Field(ge=1)
+
+
 def _owner_id(auth: AuthSession) -> UUID:
     """Derive a stable opaque owner UUID without persisting the login address."""
     secret = (get_settings().oauth_state_secret or get_settings().app_name).encode("utf-8")
@@ -92,12 +134,36 @@ def _canonical_digest(value: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _provider_session_id(conversation_id: UUID) -> str:
+    secret = (get_settings().oauth_state_secret or get_settings().app_name).encode("utf-8")
+    digest = hmac.new(secret, conversation_id.bytes, hashlib.sha256).hexdigest()
+    return f"mimi-{digest[:32]}"
+
+
 def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mimi resource not found")
 
 
 def _conflict(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+async def _append_event(
+    db: AsyncSession,
+    run_id: UUID,
+    kind: str,
+    payload: dict[str, Any],
+) -> int:
+    # The run row is the per-run append fence. Cancellation, provider progress,
+    # confirmation and reconciliation can therefore never reuse a sequence.
+    await db.execute(select(MimiRun.id).where(MimiRun.id == run_id).with_for_update())
+    latest = (
+        await db.execute(select(func.max(MimiEvent.sequence)).where(MimiEvent.run_id == run_id))
+    ).scalar_one()
+    sequence = (latest or 0) + 1
+    db.add(MimiEvent(run_id=run_id, sequence=sequence, kind=kind, payload=payload))
+    await db.flush()
+    return sequence
 
 
 def _task_title(content: str) -> str:
@@ -109,6 +175,56 @@ def _task_title(content: str) -> str:
             title = title[len(prefix) :].strip()
             break
     return (title or "Task từ Mimi")[:200]
+
+
+def _conversation_title(content: str) -> str:
+    normalized = " ".join(content.split())
+    return (normalized or "Hội thoại mới")[:MAX_CONVERSATION_TITLE]
+
+
+def _fallback_conversation_title(value: datetime) -> str:
+    return f"Hội thoại mới · {value.astimezone(OWNER_TIMEZONE):%d/%m %H:%M}"
+
+
+def _seal_conversation_title(conversation: MimiConversation, title: str) -> str:
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    return mimi_crypto.seal_content(
+        dek,
+        title,
+        aad=mimi_crypto.conversation_title_aad(conversation.id),
+    )
+
+
+def _open_conversation_title(conversation: MimiConversation) -> str:
+    if conversation.title_ciphertext is None:
+        return _fallback_conversation_title(conversation.created_at)
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    return mimi_crypto.open_content(
+        dek,
+        conversation.title_ciphertext,
+        aad=mimi_crypto.conversation_title_aad(conversation.id),
+    )
+
+
+def _encode_conversation_cursor(updated_at: datetime, conversation_id: UUID) -> str:
+    raw = json.dumps(
+        {"updated_at": updated_at.isoformat(), "id": str(conversation_id)},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_conversation_cursor(value: str) -> tuple[datetime, UUID]:
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = json.loads(urlsafe_b64decode(padded).decode("utf-8"))
+        updated_at = datetime.fromisoformat(decoded["updated_at"])
+        conversation_id = UUID(decoded["id"])
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=422, detail="invalid_conversation_cursor") from error
+    if updated_at.tzinfo is None:
+        raise HTTPException(status_code=422, detail="invalid_conversation_cursor")
+    return updated_at, conversation_id
 
 
 async def _conversation(
@@ -181,22 +297,218 @@ def _add_assistant_message(
     conversation.next_message_sequence += 1
 
 
-async def create_conversation(db: AsyncSession, auth: AuthSession) -> dict[str, Any]:
+async def create_conversation(
+    db: AsyncSession, auth: AuthSession, payload: ConversationCreate
+) -> dict[str, Any]:
+    owner_id = _owner_id(auth)
+    if payload.client_id is not None:
+        existing = (
+            await db.execute(
+                select(MimiConversation).where(
+                    MimiConversation.owner_id == owner_id,
+                    MimiConversation.client_id == payload.client_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return _conversation_summary(existing, latest_run_state=None)
+    now = datetime.now(UTC)
     row = MimiConversation(
-        owner_id=_owner_id(auth),
+        id=uuid7(),
+        owner_id=owner_id,
+        client_id=payload.client_id,
         sensitivity=Sensitivity.STANDARD.value,
         dek_wrapped=mimi_crypto.create_wrapped_dek(),
     )
+    row.title_ciphertext = _seal_conversation_title(row, _fallback_conversation_title(now))
     db.add(row)
     await db.flush()
-    return {"id": row.id, "sensitivity": row.sensitivity, "generation": row.generation}
+    return _conversation_summary(row, latest_run_state=None)
+
+
+def _conversation_summary(row: MimiConversation, *, latest_run_state: str | None) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "sensitivity": row.sensitivity,
+        "title": _open_conversation_title(row),
+        "title_source": row.title_source,
+        "title_locked": row.title_locked,
+        "generation": row.generation,
+        "metadata_version": row.metadata_version,
+        "archived_at": row.archived_at,
+        "updated_at": row.updated_at,
+        "latest_run_state": latest_run_state,
+    }
+
+
+async def _provider_history(
+    db: AsyncSession,
+    conversation: MimiConversation,
+    dek: bytes,
+) -> list[dict[str, str]]:
+    """Return a newest-bounded, complete-message provider history window."""
+    rows = (
+        (
+            await db.execute(
+                select(MimiMessage)
+                .where(
+                    MimiMessage.conversation_id == conversation.id,
+                    MimiMessage.role.in_(("user", "assistant")),
+                )
+                .order_by(MimiMessage.sequence.desc())
+                .limit(PROVIDER_HISTORY_MESSAGES)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    selected: list[MimiMessage] = []
+    used_bytes = 0
+    for row in rows:
+        if used_bytes + row.content_bytes > PROVIDER_HISTORY_BYTES:
+            break
+        selected.append(row)
+        used_bytes += row.content_bytes
+    return [
+        {
+            "role": row.role,
+            "content": mimi_crypto.open_content(
+                dek,
+                row.content_ciphertext,
+                aad=mimi_crypto.message_aad(
+                    conversation.id,
+                    row.sequence,
+                    row.role,
+                ),
+            ),
+        }
+        for row in reversed(selected)
+    ]
+
+
+def _event_read(row: MimiEvent, dek: bytes) -> dict[str, Any]:
+    payload = row.payload
+    if row.kind == "assistant.delta" and "content_ciphertext" in payload:
+        payload = {
+            "text": mimi_crypto.open_content(
+                dek,
+                str(payload["content_ciphertext"]),
+                aad=mimi_crypto.event_content_aad(row.run_id, row.sequence, row.kind),
+            ),
+            "content_bytes": payload.get("content_bytes"),
+        }
+    return {
+        "id": row.id,
+        "run_id": row.run_id,
+        "sequence": row.sequence,
+        "kind": row.kind,
+        "payload": payload,
+        "created_at": row.created_at,
+    }
+
+
+async def list_conversations(
+    db: AsyncSession,
+    auth: AuthSession,
+    *,
+    state: Literal["active", "archived", "all"],
+    limit: int,
+    cursor: str | None,
+) -> dict[str, Any]:
+    latest_run_state = (
+        select(MimiRun.state)
+        .where(MimiRun.conversation_id == MimiConversation.id)
+        .order_by(MimiRun.created_at.desc(), MimiRun.id.desc())
+        .limit(1)
+        .correlate(MimiConversation)
+        .scalar_subquery()
+    )
+    statement = select(MimiConversation, latest_run_state.label("latest_run_state")).where(
+        MimiConversation.owner_id == _owner_id(auth)
+    )
+    if state == "active":
+        statement = statement.where(MimiConversation.archived_at.is_(None))
+    elif state == "archived":
+        statement = statement.where(MimiConversation.archived_at.is_not(None))
+    if cursor:
+        cursor_at, cursor_id = _decode_conversation_cursor(cursor)
+        statement = statement.where(
+            or_(
+                MimiConversation.updated_at < cursor_at,
+                and_(
+                    MimiConversation.updated_at == cursor_at,
+                    MimiConversation.id < cursor_id,
+                ),
+            )
+        )
+    rows = (
+        await db.execute(
+            statement.order_by(
+                MimiConversation.updated_at.desc(), MimiConversation.id.desc()
+            ).limit(limit + 1)
+        )
+    ).all()
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = None
+    if has_more and page:
+        last = page[-1][0]
+        next_cursor = _encode_conversation_cursor(last.updated_at, last.id)
+    return {
+        "items": [
+            _conversation_summary(row, latest_run_state=run_state) for row, run_state in page
+        ],
+        "next_cursor": next_cursor,
+    }
+
+
+async def rename_conversation(
+    db: AsyncSession,
+    auth: AuthSession,
+    conversation_id: UUID,
+    payload: ConversationRename,
+) -> dict[str, Any]:
+    row = await _conversation(db, auth, conversation_id, lock=True)
+    current_title = _open_conversation_title(row)
+    if row.title_locked and current_title == payload.title:
+        return _conversation_summary(row, latest_run_state=None)
+    if row.metadata_version != payload.expected_metadata_version:
+        raise _conflict("conversation_metadata_stale")
+    row.title_ciphertext = _seal_conversation_title(row, payload.title)
+    row.title_source = "owner"
+    row.title_locked = True
+    row.metadata_version += 1
+    await db.flush()
+    return _conversation_summary(row, latest_run_state=None)
+
+
+async def set_conversation_archived(
+    db: AsyncSession,
+    auth: AuthSession,
+    conversation_id: UUID,
+    payload: ConversationStateChange,
+    *,
+    archived: bool,
+) -> dict[str, Any]:
+    row = await _conversation(db, auth, conversation_id, lock=True)
+    if (row.archived_at is not None) == archived:
+        return _conversation_summary(row, latest_run_state=None)
+    if row.metadata_version != payload.expected_metadata_version:
+        raise _conflict("conversation_metadata_stale")
+    row.archived_at = datetime.now(UTC) if archived else None
+    row.metadata_version += 1
+    await db.flush()
+    return _conversation_summary(row, latest_run_state=None)
 
 
 async def current_conversation(db: AsyncSession, auth: AuthSession) -> dict[str, Any] | None:
     conversation_id = (
         await db.execute(
             select(MimiConversation.id)
-            .where(MimiConversation.owner_id == _owner_id(auth))
+            .where(
+                MimiConversation.owner_id == _owner_id(auth),
+                MimiConversation.archived_at.is_(None),
+            )
             .order_by(MimiConversation.updated_at.desc(), MimiConversation.id.desc())
             .limit(1)
         )
@@ -240,16 +552,24 @@ async def send_message(
     auth: AuthSession,
     conversation_id: UUID,
     payload: MessageCreate,
+    *,
+    reserved_run_id: UUID | None = None,
+    provider_stream: bool = False,
+    on_run_accepted: Callable[[UUID], Awaitable[None]] | None = None,
+    record_user_message: bool = True,
+    parent_run_id: UUID | None = None,
 ) -> dict[str, Any]:
     conversation = await _conversation(db, auth, conversation_id, lock=True)
-    existing = (
-        await db.execute(
-            select(MimiMessage).where(
-                MimiMessage.conversation_id == conversation.id,
-                MimiMessage.client_id == payload.client_id,
+    existing = None
+    if record_user_message:
+        existing = (
+            await db.execute(
+                select(MimiMessage).where(
+                    MimiMessage.conversation_id == conversation.id,
+                    MimiMessage.client_id == payload.client_id,
+                )
             )
-        )
-    ).scalar_one_or_none()
+        ).scalar_one_or_none()
     if existing is not None:
         if existing.content_sha256 != hashlib.sha256(payload.content.encode("utf-8")).hexdigest():
             raise _conflict("message_client_id_reused_with_different_content")
@@ -260,9 +580,21 @@ async def send_message(
     ):
         raise _conflict("conversation_generation_stale")
 
-    # This P1 route cannot prove a supplement is harmless, so every distinct
-    # new user turn conservatively revises the frontier and invalidates an old
-    # preview. It never leaves two confirmable mutations behind the UI.
+    if (
+        record_user_message
+        and conversation.next_message_sequence == 1
+        and not conversation.title_locked
+    ):
+        conversation.title_ciphertext = _seal_conversation_title(
+            conversation, _conversation_title(payload.content)
+        )
+
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    provider_history = await _provider_history(db, conversation, dek)
+
+    # Keep the existing preview confirmable until a typed replacement has
+    # validated. A provider failure or ordinary text must never erase the
+    # Owner's pending decision.
     pending_previews = (
         await db.execute(
             select(MimiChangeSet, MimiRun)
@@ -274,19 +606,31 @@ async def send_message(
             .with_for_update()
         )
     ).all()
-    for old_change_set, old_run in pending_previews:
-        old_change_set.state = "stale"
-        old_run.state = "halted"
-        old_run.error_code = "superseded_by_new_turn"
-        old_run.completed_at = datetime.now(UTC)
-        db.add(
-            MimiEvent(
-                run_id=old_run.id,
-                sequence=5,
-                kind="change_set.superseded",
-                payload={"change_set_id": str(old_change_set.id)},
+    if len(pending_previews) > 1:
+        raise _conflict("multiple_pending_previews_require_reconciliation")
+    observed_pending = pending_previews[0] if pending_previews else None
+    if payload.intent == "revise_pending_preview":
+        if observed_pending is None:
+            raise _conflict("pending_preview_missing")
+        observed_change_set, _ = observed_pending
+        if (
+            observed_change_set.id != payload.expected_change_set_id
+            or observed_change_set.digest_sha256 != payload.expected_change_set_digest
+        ):
+            raise _conflict("pending_preview_stale")
+    prior_preview_operations = [
+        json.loads(
+            mimi_crypto.open_content(
+                dek,
+                old_change_set.operation_ciphertext,
+                aad=mimi_crypto.change_set_aad(conversation.id, old_change_set.id),
             )
         )
+        for old_change_set, _ in pending_previews
+    ]
+    force_task_tool = payload.intent == "revise_pending_preview"
+    observed_pending_id = observed_pending[0].id if observed_pending else None
+    observed_pending_digest = observed_pending[0].digest_sha256 if observed_pending else None
 
     now = datetime.now(UTC)
     settings = get_settings()
@@ -298,7 +642,7 @@ async def send_message(
         for item in task_context
         if item["source_version"] is not None
     }
-    run_id = uuid7()
+    run_id = reserved_run_id or uuid7()
     task_id = uuid7()
     generation = conversation.generation
     deadline = now + timedelta(seconds=settings.mimi_run_deadline_seconds)
@@ -330,55 +674,79 @@ async def send_message(
     # batches event/message/provider-call inserts, otherwise PostgreSQL may
     # order independent pending INSERTs ahead of mimi_run.
     await db.flush()
-    db.add(MimiEvent(run_id=run_id, sequence=1, kind="run.accepted", payload={}))
-    db.add(
-        MimiEvent(
-            run_id=run_id,
-            sequence=2,
-            kind="context.tasks_read",
-            payload={"count": len(task_context), "private_allowed": False},
-        )
+    await _append_event(db, run_id, "run.accepted", {})
+    await _append_event(
+        db,
+        run_id,
+        "context.tasks_read",
+        {"count": len(task_context), "private_allowed": False},
     )
 
-    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
     user_sequence = conversation.next_message_sequence
     user_bytes = payload.content.encode("utf-8")
-    db.add(
-        MimiMessage(
-            conversation_id=conversation.id,
-            run_id=run_id,
-            client_id=payload.client_id,
-            sequence=user_sequence,
-            role="user",
-            content_ciphertext=mimi_crypto.seal_content(
-                dek,
-                payload.content,
-                aad=mimi_crypto.message_aad(conversation.id, user_sequence, "user"),
-            ),
-            content_bytes=len(user_bytes),
-            content_sha256=hashlib.sha256(user_bytes).hexdigest(),
+    if record_user_message:
+        db.add(
+            MimiMessage(
+                conversation_id=conversation.id,
+                run_id=run_id,
+                client_id=payload.client_id,
+                sequence=user_sequence,
+                role="user",
+                content_ciphertext=mimi_crypto.seal_content(
+                    dek,
+                    payload.content,
+                    aad=mimi_crypto.message_aad(conversation.id, user_sequence, "user"),
+                ),
+                content_bytes=len(user_bytes),
+                content_sha256=hashlib.sha256(user_bytes).hexdigest(),
+            )
         )
-    )
-    conversation.next_message_sequence += 1
+        conversation.next_message_sequence += 1
     conversation.generation += 1
 
     live_messages = [
         {
             "role": "system",
             "content": (
-                "Bạn là Mimi. Chỉ đề xuất một task.create.v1 STANDARD; không thực thi. "
+                "Bạn là Mimi, trợ lý hội thoại của microSched. Trả lời bằng văn bản cho "
+                "lời chào, câu hỏi, trao đổi thông thường và yêu cầu chưa đủ dữ kiện. "
+                "QUY TẮC NGÔN NGỮ BẮT BUỘC: luôn trả lời user bằng tiếng Việt, trừ khi "
+                "user yêu cầu rõ ràng một ngôn ngữ khác. Một lời chào đơn lẻ như 'hello' "
+                "không phải yêu cầu đổi ngôn ngữ; hãy đáp ngắn gọn bằng tiếng Việt. "
+                "MANDATORY LANGUAGE RULE: default every user-facing response to Vietnamese. "
+                "Do not infer a language switch from a greeting or isolated foreign word. "
+                "Không gọi tool cho lời chào hoặc khi user chưa rõ ràng muốn tạo, thêm "
+                "hay lên lịch một Task. Khi thiếu dữ kiện cần thiết, hãy hỏi lại ngắn gọn "
+                "bằng văn bản. Trong P1 chỉ tạo Task STANDARD: title là dữ kiện bắt buộc "
+                "duy nhất; body, lịch, priority và checklist đều tùy chọn. Nếu user chỉ nói "
+                "'Tạo task', chỉ hỏi title bằng một câu ngắn và không hỏi về private. "
+                "Chỉ gọi task.create.v1 khi user rõ ràng yêu cầu tạo một "
+                "Task; tối đa một proposal STANDARD và tuyệt đối không tự thực thi. "
+                "Nếu user yêu cầu sửa preview đang chờ, hãy dùng previous pending preview "
+                "bên dưới làm nền và tạo một proposal thay thế duy nhất. "
+                "Mốc thời gian hiện tại của Owner là "
+                f"{now.astimezone(OWNER_TIMEZONE).isoformat(timespec='seconds')} "
+                "(Asia/Ho_Chi_Minh, UTC+07:00). Hãy diễn giải hôm nay, ngày mai và các "
+                "mốc tương đối từ chính mốc này; không hỏi lại ngày tuyệt đối nếu đã đủ rõ. "
                 f"Server-reserved task id: {task_id}. Current STANDARD Task context: "
                 + json.dumps(task_context, ensure_ascii=False, default=str)
+                + ". Previous pending preview: "
+                + json.dumps(prior_preview_operations, ensure_ascii=False, default=str)
             ),
         },
+        *provider_history,
         {"role": "user", "content": payload.content},
     ]
     route_kind = (
-        "openrouter-exact-v1" if settings.mimi_live_provider_enabled else "deterministic-local-v1"
+        f"openrouter-{settings.mimi_route_mode}-v1"
+        if settings.mimi_live_provider_enabled
+        else "deterministic-local-v1"
     )
     request_body = {
         "route": route_kind,
         "message_sha256": hashlib.sha256(user_bytes).hexdigest(),
+        "history_sha256": _canonical_digest(provider_history),
+        "prior_preview_sha256": _canonical_digest(prior_preview_operations),
         "tools": [TOOL_VERSION],
         "source_versions": source_versions,
     }
@@ -390,17 +758,36 @@ async def send_message(
         route=(
             {
                 "kind": "openrouter",
+                "mode": settings.mimi_route_mode,
                 "model": settings.mimi_route_model,
-                "provider": settings.mimi_route_provider,
-                "quantization": settings.mimi_route_quantization,
+                "providers": (
+                    [settings.mimi_route_provider]
+                    if settings.mimi_route_mode == "exact"
+                    else list(settings.mimi_allowed_provider_list)
+                ),
+                "quantizations": (
+                    [settings.mimi_route_quantization]
+                    if settings.mimi_route_mode == "exact"
+                    else list(settings.mimi_allowed_quantization_list)
+                ),
                 "reasoning_effort": settings.mimi_route_reasoning_effort,
+                "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                "checkpoint": "provider_dispatch",
             }
             if settings.mimi_live_provider_enabled
-            else {"kind": "deterministic", "environment": "local"}
+            else {
+                "kind": "deterministic",
+                "environment": "local",
+                "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                "checkpoint": "provider_dispatch",
+            }
         ),
     )
     db.add(call)
     await db.flush()
+
+    if on_run_accepted is not None:
+        await on_run_accepted(run_id)
 
     if settings.mimi_live_provider_enabled:
         # The external dispatch is separated by two durable boundaries: intent
@@ -409,10 +796,72 @@ async def send_message(
         run.state = "running"
         await db.commit()
         try:
-            completion = await openrouter_complete(live_messages, settings=settings)
+            if provider_stream:
+                stream_buffer: list[str] = []
+
+                async def flush_stream_buffer() -> None:
+                    nonlocal stream_buffer
+                    if not stream_buffer:
+                        return
+                    text_delta = "".join(stream_buffer)
+                    stream_buffer = []
+                    sequence = await _append_event(db, run_id, "assistant.delta", {})
+                    event = (
+                        await db.execute(
+                            select(MimiEvent).where(
+                                MimiEvent.run_id == run_id,
+                                MimiEvent.sequence == sequence,
+                            )
+                        )
+                    ).scalar_one()
+                    event.payload = {
+                        "content_ciphertext": mimi_crypto.seal_content(
+                            dek,
+                            text_delta,
+                            aad=mimi_crypto.event_content_aad(run_id, sequence, "assistant.delta"),
+                        ),
+                        "content_bytes": len(text_delta.encode("utf-8")),
+                    }
+                    await db.commit()
+
+                async def persist_stream_event(kind: str, event_payload: dict[str, Any]) -> None:
+                    if kind == "assistant.delta":
+                        text_delta = str(event_payload.get("text", ""))
+                        if not text_delta:
+                            return
+                        stream_buffer.append(text_delta)
+                        # Keep the durable ledger useful without turning every token into
+                        # its own PostgreSQL write. The final callback flushes any tail.
+                        if sum(map(len, stream_buffer)) < 256:
+                            return
+                        await flush_stream_buffer()
+                    else:
+                        if kind == "provider.connected":
+                            call.state = "dispatched"
+                        await _append_event(db, run_id, kind, event_payload)
+                        await db.commit()
+
+                completion = await openrouter_complete_stream(
+                    live_messages,
+                    settings=settings,
+                    session_id=_provider_session_id(conversation.id),
+                    on_event=persist_stream_event,
+                    force_task_tool=force_task_tool,
+                )
+                await flush_stream_buffer()
+            else:
+                completion = await openrouter_complete(
+                    live_messages,
+                    settings=settings,
+                    session_id=_provider_session_id(conversation.id),
+                    force_task_tool=force_task_tool,
+                )
+            if force_task_tool and completion.kind != "task":
+                raise RouteContractError("provider_revision_must_return_task_tool")
         except (ProviderDispatchError, RouteContractError) as error:
             outcome = error.outcome if isinstance(error, ProviderDispatchError) else "failed"
             status_code = error.status if isinstance(error, ProviderDispatchError) else None
+            contract_error = str(error) if isinstance(error, RouteContractError) else None
             conversation = await _conversation(db, auth, conversation_id, lock=True)
             run = (
                 await db.execute(select(MimiRun).where(MimiRun.id == run_id).with_for_update())
@@ -425,21 +874,41 @@ async def send_message(
                 )
             ).scalar_one()
             call.state = "unknown" if outcome == "unknown" else "failed"
-            call.result = {"terminal": outcome, "status": status_code}
+            call.result = {
+                "terminal": outcome,
+                "status": status_code,
+                "contract_error": contract_error,
+                "response_id": (
+                    error.response_id if isinstance(error, ProviderDispatchError) else None
+                ),
+            }
             run.provider_outcome = "unknown" if outcome == "unknown" else "failed"
-            run.state = {
-                "unknown": "outcome_unknown",
-                "retryable": "retryable",
-                "failed": "halted",
-            }[outcome]
-            run.error_code = f"provider_{outcome}"
-            db.add(
-                MimiEvent(
-                    run_id=run_id,
-                    sequence=3,
-                    kind=f"provider.{outcome}",
-                    payload={"status": status_code},
+            terminal_at = datetime.now(UTC)
+            deadline_hit = terminal_at >= run.deadline
+            run.state = (
+                "deadline_exceeded"
+                if deadline_hit
+                else {
+                    "unknown": "outcome_unknown",
+                    "retryable": "retryable",
+                    "failed": "halted",
+                }[outcome]
+            )
+            run.error_code = (
+                "run_deadline_exceeded"
+                if deadline_hit
+                else (
+                    f"provider_contract_{contract_error}"
+                    if contract_error
+                    else f"provider_{outcome}"
                 )
+            )
+            run.completed_at = terminal_at
+            await _append_event(
+                db,
+                run_id,
+                "run.deadline_exceeded" if deadline_hit else f"provider.{outcome}",
+                {"status": status_code, "provider_outcome": run.provider_outcome},
             )
             assistant = (
                 "Kết quả provider chưa xác định; Mimi sẽ không tự gửi lại yêu cầu."
@@ -466,24 +935,40 @@ async def send_message(
                 .with_for_update()
             )
         ).scalar_one()
-        provider_args = completion.task.model_dump(mode="json")
-        provider_args["id"] = str(task_id)
-        provider_args["is_private"] = False
+        provider_args: dict[str, Any] | None = None
+        if completion.kind == "text":
+            if completion.text is None:
+                raise RouteContractError("provider_text_result_missing")
+            call.result = {
+                "response_id": completion.response_id,
+                "kind": "text",
+                "result_sha256": hashlib.sha256(completion.text.encode("utf-8")).hexdigest(),
+            }
+        else:
+            if completion.task is None:
+                raise RouteContractError("provider_task_result_missing")
+            provider_args = completion.task.model_dump(mode="json")
+            provider_args["id"] = str(task_id)
+            provider_args["is_private"] = False
+            call.result = {
+                "response_id": completion.response_id,
+                "kind": "task",
+                "result_sha256": _canonical_digest(provider_args),
+                "tool": TOOL_VERSION,
+            }
         call.state = "succeeded"
-        call.result = {
-            "response_id": completion.response_id,
-            "result_sha256": _canonical_digest(provider_args),
-            "tool": TOOL_VERSION,
-        }
         call.usage = completion.usage
+        call.route = {
+            **call.route,
+            "actual_provider": completion.provider,
+            "actual_model": completion.model,
+        }
         run.provider_outcome = "succeeded"
-        db.add(
-            MimiEvent(
-                run_id=run_id,
-                sequence=3,
-                kind="provider.succeeded",
-                payload={"attempt": 1, "provider": completion.provider},
-            )
+        await _append_event(
+            db,
+            run_id,
+            "provider.succeeded",
+            {"attempt": 1, "provider": completion.provider},
         )
         await db.flush()
         await db.commit()
@@ -492,6 +977,20 @@ async def send_message(
         run = (
             await db.execute(select(MimiRun).where(MimiRun.id == run_id).with_for_update())
         ).scalar_one()
+        if completion.kind == "text":
+            assert completion.text is not None
+            _add_assistant_message(db, conversation, run_id, dek, completion.text)
+            run.state = "completed"
+            run.completed_at = datetime.now(UTC)
+            await _append_event(
+                db,
+                run_id,
+                "run.terminal",
+                {"state": "completed", "result": "text"},
+            )
+            await db.flush()
+            return await conversation_view(db, auth, conversation_id)
+        assert provider_args is not None
         operation_args = provider_args
     else:
         run.state = "running"
@@ -515,13 +1014,69 @@ async def send_message(
         }
         call.usage = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "cost": 0}
         run.provider_outcome = "succeeded"
-        db.add(
-            MimiEvent(
-                run_id=run_id,
-                sequence=3,
-                kind="provider.succeeded",
-                payload={"attempt": 1},
+        await _append_event(db, run_id, "provider.succeeded", {"attempt": 1})
+
+    # Only a validated task proposal may replace pending authority. Re-query
+    # after provider I/O because the conversation lock was released while the
+    # external request ran.
+    expected_generation_after_accept = generation + 1
+    if conversation.generation != expected_generation_after_accept:
+        run.state = "halted"
+        run.error_code = "preview_frontier_changed"
+        run.completed_at = datetime.now(UTC)
+        await _append_event(db, run_id, "change_set.frontier_changed", {})
+        _add_assistant_message(
+            db,
+            conversation,
+            run_id,
+            dek,
+            "Conversation đã thay đổi trong lúc Mimi chuẩn bị preview; "
+            "preview hiện tại được giữ nguyên.",
+        )
+        await db.flush()
+        return await conversation_view(db, auth, conversation_id)
+
+    current_pending_preview: tuple[MimiChangeSet, MimiRun] | None = None
+    if observed_pending_id is not None:
+        current_pending_preview = (
+            await db.execute(
+                select(MimiChangeSet, MimiRun)
+                .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+                .where(
+                    MimiRun.conversation_id == conversation.id,
+                    MimiChangeSet.id == observed_pending_id,
+                    MimiChangeSet.digest_sha256 == observed_pending_digest,
+                    MimiChangeSet.state == "pending",
+                )
+                .with_for_update()
             )
+        ).one_or_none()
+        if current_pending_preview is None:
+            run.state = "halted"
+            run.error_code = "preview_frontier_changed"
+            run.completed_at = datetime.now(UTC)
+            await _append_event(db, run_id, "change_set.frontier_changed", {})
+            _add_assistant_message(
+                db,
+                conversation,
+                run_id,
+                dek,
+                "Preview nền đã thay đổi; Mimi không thay thế quyết định mới hơn của bạn.",
+            )
+            await db.flush()
+            return await conversation_view(db, auth, conversation_id)
+
+    if current_pending_preview is not None:
+        old_change_set, old_run = current_pending_preview
+        old_change_set.state = "stale"
+        old_run.state = "halted"
+        old_run.error_code = "superseded_by_validated_preview"
+        old_run.completed_at = datetime.now(UTC)
+        await _append_event(
+            db,
+            old_run.id,
+            "change_set.superseded",
+            {"change_set_id": str(old_change_set.id)},
         )
 
     change_set_id = uuid7()
@@ -564,13 +1119,11 @@ async def send_message(
 
     assistant = "Mình đã đóng băng một preview tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
     _add_assistant_message(db, conversation, run_id, dek, assistant)
-    db.add(
-        MimiEvent(
-            run_id=run_id,
-            sequence=4,
-            kind="change_set.ready",
-            payload={"change_set_id": str(change_set_id), "digest": digest},
-        )
+    await _append_event(
+        db,
+        run_id,
+        "change_set.ready",
+        {"change_set_id": str(change_set_id), "digest": digest},
     )
     await db.flush()
     return await conversation_view(db, auth, conversation_id)
@@ -639,7 +1192,7 @@ async def confirm_change_set(
         change_set.state = "expired"
         run.state = "deadline_exceeded"
         run.completed_at = now
-        db.add(MimiEvent(run_id=run.id, sequence=5, kind="change_set.expired", payload={}))
+        await _append_event(db, run.id, "change_set.expired", {})
         await db.flush()
         # Preserve the terminal expiry even though FastAPI will unwind the
         # request with 410 and the request dependency will roll back its next
@@ -651,7 +1204,7 @@ async def confirm_change_set(
         change_set.state = "rejected"
         run.state = "cancelled"
         run.completed_at = now
-        db.add(MimiEvent(run_id=run.id, sequence=5, kind="change_set.rejected", payload={}))
+        await _append_event(db, run.id, "change_set.rejected", {})
         await db.flush()
         return {"change_set_id": change_set.id, "state": "rejected"}
 
@@ -705,13 +1258,11 @@ async def confirm_change_set(
             payload={"receipt_id": str(receipt.id), "digest": change_set.digest_sha256},
         )
     )
-    db.add(
-        MimiEvent(
-            run_id=run.id,
-            sequence=5,
-            kind="change_set.executed",
-            payload={"receipt_id": str(receipt.id), "task_id": str(task.id)},
-        )
+    await _append_event(
+        db,
+        run.id,
+        "change_set.executed",
+        {"receipt_id": str(receipt.id), "task_id": str(task.id)},
     )
     change_set.state = "executed"
     run.state = "completed"
@@ -882,7 +1433,13 @@ async def conversation_view(
     return {
         "id": conversation.id,
         "sensitivity": conversation.sensitivity,
+        "title": _open_conversation_title(conversation),
+        "title_source": conversation.title_source,
+        "title_locked": conversation.title_locked,
         "generation": conversation.generation,
+        "metadata_version": conversation.metadata_version,
+        "archived_at": conversation.archived_at,
+        "updated_at": conversation.updated_at,
         "messages": [_message_read(row, dek) for row in messages],
         "runs": [
             {
@@ -917,17 +1474,7 @@ async def conversation_view(
             for row in change_sets
         ],
         "receipts": [_receipt_read(row) for row in receipts],
-        "events": [
-            {
-                "id": row.id,
-                "run_id": row.run_id,
-                "sequence": row.sequence,
-                "kind": row.kind,
-                "payload": row.payload,
-                "created_at": row.created_at,
-            }
-            for row in events
-        ],
+        "events": [_event_read(row, dek) for row in events],
         "feedback": [
             {
                 "id": row.id,
@@ -941,6 +1488,279 @@ async def conversation_view(
             for row in feedback
         ],
     }
+
+
+async def run_events_after(
+    db: AsyncSession,
+    auth: AuthSession,
+    run_id: UUID,
+    *,
+    after: int = 0,
+) -> dict[str, Any]:
+    found = (
+        await db.execute(
+            select(MimiRun, MimiConversation)
+            .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
+            .where(
+                MimiRun.id == run_id,
+                MimiConversation.owner_id == _owner_id(auth),
+            )
+        )
+    ).first()
+    if found is None:
+        raise _not_found()
+    run, conversation = found
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    events = (
+        (
+            await db.execute(
+                select(MimiEvent)
+                .where(MimiEvent.run_id == run.id, MimiEvent.sequence > after)
+                .order_by(MimiEvent.sequence)
+                .limit(MAX_EVENTS)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "run_id": run.id,
+        "conversation_id": conversation.id,
+        "state": run.state,
+        "provider_outcome": run.provider_outcome,
+        "deadline": run.deadline,
+        "completed_at": run.completed_at,
+        "events": [_event_read(row, dek) for row in events],
+    }
+
+
+async def prepare_run_resume(
+    db: AsyncSession,
+    auth: AuthSession,
+    run_id: UUID,
+) -> tuple[UUID, UUID, MessageCreate]:
+    """Fence one safe successor without redispatching an unknown outcome."""
+    found = (
+        await db.execute(
+            select(MimiRun, MimiConversation)
+            .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
+            .where(
+                MimiRun.id == run_id,
+                MimiConversation.owner_id == _owner_id(auth),
+            )
+            .with_for_update()
+        )
+    ).first()
+    if found is None:
+        raise _not_found()
+    run, conversation = found
+    if run.provider_outcome == "unknown" or run.state == "outcome_unknown":
+        raise _conflict("mimi_run_outcome_unknown_reconciliation_required")
+    if run.state not in {"retryable", "deadline_exceeded"}:
+        raise _conflict(f"mimi_run_{run.state}_cannot_resume")
+    if run.error_code and run.error_code.startswith("resumed_by:"):
+        raise _conflict(run.error_code)
+
+    source_message = (
+        await db.execute(
+            select(MimiMessage).where(
+                MimiMessage.run_id == run.id,
+                MimiMessage.role == "user",
+            )
+        )
+    ).scalar_one_or_none()
+    if source_message is None:
+        raise _conflict("mimi_run_resume_source_missing")
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    content = mimi_crypto.open_content(
+        dek,
+        source_message.content_ciphertext,
+        aad=mimi_crypto.message_aad(conversation.id, source_message.sequence, source_message.role),
+    )
+    successor_id = uuid7()
+    run.error_code = f"resumed_by:{successor_id}"
+    await _append_event(
+        db,
+        run.id,
+        "run.resume_reserved",
+        {"successor_run_id": str(successor_id), "checkpoint": "provider_dispatch"},
+    )
+    return (
+        conversation.id,
+        successor_id,
+        MessageCreate(
+            client_id=f"resume:{run.id}:{successor_id}",
+            content=content,
+            expected_generation=conversation.generation,
+        ),
+    )
+
+
+async def reconcile_unknown_run(
+    db: AsyncSession,
+    auth: AuthSession,
+    run_id: UUID,
+) -> dict[str, Any]:
+    def needs_reconciliation(candidate: MimiRun) -> bool:
+        return candidate.state == "outcome_unknown" or (
+            candidate.state in {"cancelled", "deadline_exceeded"}
+            and candidate.provider_outcome == "unknown"
+        )
+
+    run = (
+        await db.execute(
+            select(MimiRun)
+            .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
+            .where(
+                MimiRun.id == run_id,
+                MimiConversation.owner_id == _owner_id(auth),
+            )
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        raise _not_found()
+    if not needs_reconciliation(run):
+        raise _conflict(f"mimi_run_{run.state}_does_not_need_reconciliation")
+    call = (
+        await db.execute(
+            select(MimiProviderCall)
+            .where(MimiProviderCall.run_id == run.id)
+            .order_by(MimiProviderCall.attempt.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    call_id = call.id if call is not None else None
+    response_id = call.result.get("response_id") if call and call.result else None
+    if not isinstance(response_id, str) or not response_id:
+        raise _conflict("provider_generation_id_unavailable")
+    await db.rollback()
+    try:
+        metadata = await openrouter_get_generation(response_id)
+    except (ProviderDispatchError, RouteContractError) as error:
+        raise _conflict("provider_reconciliation_unavailable") from error
+
+    # Do not hold a database row lock across provider I/O. Re-lock and verify
+    # that cancel/resume/reconcile did not advance the run while we waited.
+    run = (
+        await db.execute(select(MimiRun).where(MimiRun.id == run_id).with_for_update())
+    ).scalar_one()
+    if not needs_reconciliation(run):
+        raise _conflict(f"mimi_run_{run.state}_changed_during_reconciliation")
+    call = (
+        await db.execute(
+            select(MimiProviderCall).where(MimiProviderCall.id == call_id).with_for_update()
+        )
+    ).scalar_one()
+    locked_response_id = call.result.get("response_id") if call.result else None
+    if locked_response_id != response_id:
+        raise _conflict("provider_generation_changed_during_reconciliation")
+
+    safe_fields = {
+        key: metadata[key]
+        for key in (
+            "id",
+            "model",
+            "provider_name",
+            "created_at",
+            "tokens_prompt",
+            "tokens_completion",
+            "native_tokens_prompt",
+            "native_tokens_completion",
+            "cache_discount",
+            "total_cost",
+            "latency",
+            "generation_time",
+        )
+        if key in metadata
+    }
+    call.state = "succeeded"
+    call.result = {
+        **(call.result or {}),
+        "terminal": "reconciled_generation_exists",
+        "generation": safe_fields,
+    }
+    run.provider_outcome = "succeeded"
+    run.state = "halted"
+    run.error_code = "provider_result_unavailable_after_reconcile"
+    run.completed_at = datetime.now(UTC)
+    await _append_event(
+        db,
+        run.id,
+        "run.reconciled",
+        {"provider_outcome": "succeeded", "result_available": False},
+    )
+    await db.flush()
+    return {
+        "run_id": run.id,
+        "state": run.state,
+        "provider_outcome": run.provider_outcome,
+        "result_available": False,
+    }
+
+
+async def finish_interrupted_run(
+    db: AsyncSession,
+    auth: AuthSession,
+    run_id: UUID,
+    *,
+    cancelled: bool,
+) -> None:
+    found = (
+        await db.execute(
+            select(MimiRun)
+            .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
+            .where(
+                MimiRun.id == run_id,
+                MimiConversation.owner_id == _owner_id(auth),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if found is None:
+        return
+    run = found
+    call = (
+        await db.execute(
+            select(MimiProviderCall)
+            .where(MimiProviderCall.run_id == run.id)
+            .order_by(MimiProviderCall.attempt.desc())
+            .limit(1)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if run.completed_at is not None or run.state in {
+        "completed",
+        "waiting_confirmation",
+        "cancelled",
+        "halted",
+        "retryable",
+        "outcome_unknown",
+        "deadline_exceeded",
+    }:
+        return
+
+    provider_may_have_received_request = call is not None and call.state == "dispatched"
+    run.completed_at = datetime.now(UTC)
+    if cancelled:
+        run.state = "cancelled"
+        run.error_code = "owner_cancelled"
+    else:
+        run.state = "halted"
+        run.error_code = "worker_failed"
+    if provider_may_have_received_request:
+        run.provider_outcome = "unknown"
+        call.state = "unknown"
+        call.result = {"terminal": "unknown", "reason": run.error_code}
+    elif call is not None:
+        call.state = "failed"
+        call.result = {"terminal": "failed", "reason": run.error_code}
+    await _append_event(
+        db,
+        run.id,
+        "run.cancelled" if cancelled else "run.halted",
+        {"provider_outcome": run.provider_outcome},
+    )
+    await db.flush()
 
 
 async def reconcile_refresh_markers(db: AsyncSession) -> int:

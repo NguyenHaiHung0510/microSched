@@ -36,11 +36,33 @@ class MimiConversation(UUIDTimestampModel, table=True):
         CheckConstraint("next_message_sequence >= 1", name="next_message_sequence"),
         CheckConstraint("context_frontier_sequence >= 0", name="context_frontier_sequence"),
         CheckConstraint("dek_wrapped LIKE 'enc:v1:%'", name="wrapped_dek"),
+        CheckConstraint(
+            "title_ciphertext IS NULL OR title_ciphertext LIKE 'mimi:v1:%'",
+            name="title_ciphertext",
+        ),
+        CheckConstraint("title_source IN ('auto', 'owner')", name="title_source"),
+        CheckConstraint("(title_source = 'owner') = title_locked", name="title_lock"),
+        CheckConstraint("metadata_version >= 1", name="metadata_version"),
         CheckConstraint("(sensitivity = 'private') = is_private", name="sensitivity_private_match"),
+        Index(
+            "uq_mimi_conversation_owner_client",
+            "owner_id",
+            "client_id",
+            unique=True,
+            postgresql_where=text("client_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_mimi_conversation_owner_archive_updated",
+            "owner_id",
+            "archived_at",
+            text("updated_at DESC"),
+            text("id DESC"),
+        ),
         {"schema": SCHEMA},
     )
 
     owner_id: UUID = Field(sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True))
+    client_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     sensitivity: str = Field(sa_column=Column(Text, nullable=False))
     generation: int = Field(
         default=1, sa_column=Column(Integer, nullable=False, server_default=text("1"))
@@ -52,6 +74,19 @@ class MimiConversation(UUIDTimestampModel, table=True):
         default=0, sa_column=Column(Integer, nullable=False, server_default=text("0"))
     )
     dek_wrapped: str = Field(sa_column=Column(Text, nullable=False))
+    title_ciphertext: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    title_source: str = Field(
+        default="auto", sa_column=Column(Text, nullable=False, server_default=text("'auto'"))
+    )
+    title_locked: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default=text("false"))
+    )
+    metadata_version: int = Field(
+        default=1, sa_column=Column(Integer, nullable=False, server_default=text("1"))
+    )
+    archived_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     is_private: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text("false")),

@@ -63,3 +63,11 @@ def feedback_aad(conversation_id: UUID, feedback_id: UUID, field: str) -> str:
 
 def change_set_aad(conversation_id: UUID, change_set_id: UUID) -> str:
     return f"mimi-change-set:{conversation_id}:{change_set_id}:operation"
+
+
+def conversation_title_aad(conversation_id: UUID) -> str:
+    return f"mimi-conversation:{conversation_id}:title"
+
+
+def event_content_aad(run_id: UUID, sequence: int, kind: str) -> str:
+    return f"mimi-event:{run_id}:{sequence}:{kind}:content"
