@@ -163,3 +163,31 @@ def test_mimi_csrf_requires_json_header_fetch_metadata_and_exact_origin() -> Non
             assert allowed.status_code == 200
 
     asyncio.run(scenario())
+
+
+def test_message_create_binds_preview_revision() -> None:
+    from uuid import uuid4
+
+    from app.agent.service import FeedbackCreate, MessageCreate
+
+    msg = MessageCreate(client_id="c1", content="hello")
+    assert msg.intent == "auto"
+
+    cs_id = uuid4()
+    digest = "a" * 64
+    msg_rev = MessageCreate(
+        client_id="c2",
+        content="fix title",
+        intent="revise_pending_preview",
+        expected_change_set_id=cs_id,
+        expected_change_set_digest=digest,
+    )
+    assert msg_rev.intent == "revise_pending_preview"
+
+    fb = FeedbackCreate(
+        client_id="fb1",
+        target_type="turn",
+        target_id="t1",
+        comment="good response",
+    )
+    assert fb.target_type == "turn"

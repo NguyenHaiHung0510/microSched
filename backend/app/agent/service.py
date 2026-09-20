@@ -60,9 +60,7 @@ class MessageCreate(BaseModel):
     expected_generation: int | None = Field(default=None, ge=1)
     intent: Literal["auto", "revise_pending_preview"] = "auto"
     expected_change_set_id: UUID | None = None
-    expected_change_set_digest: str | None = Field(
-        default=None, pattern=r"^[0-9a-f]{64}$"
-    )
+    expected_change_set_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("content")
     @classmethod
@@ -70,6 +68,15 @@ class MessageCreate(BaseModel):
         if not value.strip():
             raise ValueError("content must not be blank")
         return value
+
+    @model_validator(mode="after")
+    def bind_revision_to_pending_preview(self) -> MessageCreate:
+        target = (self.expected_change_set_id, self.expected_change_set_digest)
+        if self.intent == "revise_pending_preview" and any(item is None for item in target):
+            raise ValueError("preview revision requires id and digest")
+        if self.intent == "auto" and any(item is not None for item in target):
+            raise ValueError("preview target requires revise_pending_preview intent")
+        return self
 
 
 class ConfirmationDecision(BaseModel):
@@ -92,15 +99,6 @@ class FeedbackCreate(BaseModel):
         if not value.strip():
             raise ValueError("comment must not be blank")
         return value
-
-    @model_validator(mode="after")
-    def bind_revision_to_pending_preview(self) -> MessageCreate:
-        target = (self.expected_change_set_id, self.expected_change_set_digest)
-        if self.intent == "revise_pending_preview" and any(item is None for item in target):
-            raise ValueError("preview revision requires id and digest")
-        if self.intent == "auto" and any(item is not None for item in target):
-            raise ValueError("preview target requires revise_pending_preview intent")
-        return self
 
 
 class ConversationCreate(BaseModel):
@@ -328,9 +326,7 @@ async def create_conversation(
     return _conversation_summary(row, latest_run_state=None)
 
 
-def _conversation_summary(
-    row: MimiConversation, *, latest_run_state: str | None
-) -> dict[str, Any]:
+def _conversation_summary(row: MimiConversation, *, latest_run_state: str | None) -> dict[str, Any]:
     return {
         "id": row.id,
         "sensitivity": row.sensitivity,
@@ -447,8 +443,9 @@ async def list_conversations(
         )
     rows = (
         await db.execute(
-            statement.order_by(MimiConversation.updated_at.desc(), MimiConversation.id.desc())
-            .limit(limit + 1)
+            statement.order_by(
+                MimiConversation.updated_at.desc(), MimiConversation.id.desc()
+            ).limit(limit + 1)
         )
     ).all()
     has_more = len(rows) > limit
@@ -633,9 +630,7 @@ async def send_message(
     ]
     force_task_tool = payload.intent == "revise_pending_preview"
     observed_pending_id = observed_pending[0].id if observed_pending else None
-    observed_pending_digest = (
-        observed_pending[0].digest_sha256 if observed_pending else None
-    )
+    observed_pending_digest = observed_pending[0].digest_sha256 if observed_pending else None
 
     now = datetime.now(UTC)
     settings = get_settings()
@@ -823,9 +818,7 @@ async def send_message(
                         "content_ciphertext": mimi_crypto.seal_content(
                             dek,
                             text_delta,
-                            aad=mimi_crypto.event_content_aad(
-                                run_id, sequence, "assistant.delta"
-                            ),
+                            aad=mimi_crypto.event_content_aad(run_id, sequence, "assistant.delta"),
                         ),
                         "content_bytes": len(text_delta.encode("utf-8")),
                     }
@@ -1582,9 +1575,7 @@ async def prepare_run_resume(
     content = mimi_crypto.open_content(
         dek,
         source_message.content_ciphertext,
-        aad=mimi_crypto.message_aad(
-            conversation.id, source_message.sequence, source_message.role
-        ),
+        aad=mimi_crypto.message_aad(conversation.id, source_message.sequence, source_message.role),
     )
     successor_id = uuid7()
     run.error_code = f"resumed_by:{successor_id}"
