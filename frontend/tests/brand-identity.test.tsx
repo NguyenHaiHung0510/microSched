@@ -7,15 +7,12 @@ describe('Brand Identity System (microSched · Mimi · Orbit)', () => {
     it.each(['idle', 'thinking', 'executing', 'ready'] as const)('renders Mimi in %s state without Lucide Bot', (state) => {
       const html = renderToStaticMarkup(<MimiAvatar state={state} size="md" />)
       expect(html).toContain('data-testid="mimi-avatar"')
-      expect(html).toContain(`data-state="${state}"`)
+      expect(html).toContain('data-state="' + state + '"')
       expect(html).toContain('role="img"')
-      expect(html).toContain('<svg')
+      expect(html).toContain('src="/brand/mimi-' + state + '.svg"')
       // Guardrail: must not contain Lucide bot SVG or lucide classes
       expect(html).not.toContain('lucide-bot')
       expect(html).not.toContain('lucide')
-      // Must use brand colors
-      expect(html).toContain('#CFA348')
-      expect(html).toContain('#4A1521')
     })
 
     it('renders accessible state descriptions', () => {
@@ -37,17 +34,16 @@ describe('Brand Identity System (microSched · Mimi · Orbit)', () => {
     it('renders full brand logo with Layered Calendar Bloom mark and wordmark', () => {
       const html = renderToStaticMarkup(<BrandLogo variant="full" size="md" />)
       expect(html).toContain('data-testid="brand-logo"')
-      expect(html).toContain('micro')
-      expect(html).toContain('Sched')
+      expect(html).toContain('src="/brand/microsched-mark.svg"')
+      expect(html).toContain('src="/brand/microsched-wordmark.svg"')
       expect(html).toContain('Plan · Progress · Bloom')
       expect(html).toContain('#CFA348')
-      expect(html).toContain('#4A1521')
     })
 
     it('renders mark-only variant cleanly', () => {
       const html = renderToStaticMarkup(<BrandLogo variant="mark" size="sm" />)
       expect(html).toContain('data-testid="brand-logo"')
-      expect(html).toContain('<svg')
+      expect(html).toContain('src="/brand/microsched-mark.svg"')
       expect(html).not.toContain('Plan · Progress · Bloom')
     })
   })
@@ -56,10 +52,10 @@ describe('Brand Identity System (microSched · Mimi · Orbit)', () => {
     it.each(['standby', 'pulse', 'active', 'complete'] as const)('renders Orbit in %s status', (status) => {
       const html = renderToStaticMarkup(<OrbitIndicator status={status} size="md" />)
       expect(html).toContain('data-testid="orbit-indicator"')
-      expect(html).toContain(`data-status="${status}"`)
+      expect(html).toContain('data-status="' + status + '"')
       expect(html).toContain('role="status"')
-      expect(html).toContain('<svg')
-      expect(html).toContain('#CFA348')
+      expect(html).toContain('src="/brand/orbit-blossom.svg"')
+      expect(html).toContain('data-state="' + status + '"')
     })
   })
 })
