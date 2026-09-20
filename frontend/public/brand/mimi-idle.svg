@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Mimi — A Quiet Bud</title>
+  <desc id="desc">A calm ivory washi paper bud with sakura petal ears, gold foil folds, and deep berry bead eyes.</desc>
+  <defs>
+    <linearGradient id="ivory" x1="57" y1="34" x2="145" y2="164" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFDF9"/><stop offset=".48" stop-color="#FBF8F3"/><stop offset="1" stop-color="#EDE3D6"/></linearGradient>
+    <linearGradient id="ivoryShade" x1="65" y1="58" x2="127" y2="153" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFDF9"/><stop offset="1" stop-color="#E8DDCF"/></linearGradient>
+    <linearGradient id="sakura" x1="28" y1="70" x2="75" y2="151" gradientUnits="userSpaceOnUse"><stop stop-color="#FAD5D4"/><stop offset=".55" stop-color="#F5B8BA"/><stop offset="1" stop-color="#DE7A85"/></linearGradient>
+    <linearGradient id="sakuraRight" x1="172" y1="70" x2="125" y2="151" gradientUnits="userSpaceOnUse"><stop stop-color="#FAD5D4"/><stop offset=".55" stop-color="#F5B8BA"/><stop offset="1" stop-color="#DE7A85"/></linearGradient>
+    <linearGradient id="base" x1="70" y1="144" x2="124" y2="182" gradientUnits="userSpaceOnUse"><stop stop-color="#F5B8BA"/><stop offset="1" stop-color="#B94D61"/></linearGradient>
+    <linearGradient id="gold" x1="63" y1="31" x2="135" y2="166" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF1B9"/><stop offset=".22" stop-color="#CFA348"/><stop offset=".48" stop-color="#FFF0B0"/><stop offset=".73" stop-color="#B88125"/><stop offset="1" stop-color="#F2D47A"/></linearGradient>
+    <radialGradient id="eye"><stop stop-color="#7A2B3D"/><stop offset="1" stop-color="#4A1521"/></radialGradient>
+    <filter id="shadow" x="12" y="22" width="176" height="176" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feDropShadow dx="0" dy="6" stdDeviation="5" flood-color="#4A1521" flood-opacity=".15"/></filter>
+  </defs>
+  <ellipse cx="100" cy="179" rx="55" ry="7" fill="#4A1521" opacity=".09"/>
+  <g filter="url(#shadow)" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M65 74C48 67 33 75 24 92c8 9 12 25 16 38 4 14 14 25 31 31l13-41-19-46Z" fill="url(#sakura)" stroke="url(#gold)" stroke-width="1.6"/>
+    <path d="M24 92c18 8 31 21 47 38L40 130" fill="#DE7A85" fill-opacity=".3" stroke="#CFA348" stroke-width="1"/>
+    <path d="M135 74c17-7 32 1 41 18-8 9-12 25-16 38-4 14-14 25-31 31l-13-41 19-46Z" fill="url(#sakuraRight)" stroke="url(#gold)" stroke-width="1.6"/>
+    <path d="M176 92c-18 8-31 21-47 38l31-1" fill="#DE7A85" fill-opacity=".3" stroke="#CFA348" stroke-width="1"/>
+    <path d="M100 20C87 38 65 50 57 80c-8 31 3 68 43 91 40-23 51-60 43-91-8-30-30-42-43-60Z" fill="url(#ivory)" stroke="url(#gold)" stroke-width="1.9"/>
+    <path d="M100 20 71 64l29 19 29-19-29-44Z" fill="#FFFDF9" fill-opacity=".66"/>
+    <path d="m57 80 43 3-28 67c-16-20-21-45-15-70Z" fill="url(#ivoryShade)"/>
+    <path d="m143 80-43 3 28 67c16-20 21-45 15-70Z" fill="#F1E9DF" fill-opacity=".78"/>
+    <path d="m100 83-28 67 28 21 28-21-28-67Z" fill="#FFFDF9" fill-opacity=".32"/>
+    <path d="m100 20-29 44 29 19 29-19-29-44M57 80l43 3 43-3M100 83v88M72 150l28-67 28 67" stroke="url(#gold)" stroke-width="1.55"/>
+    <path d="M72 150c6 12 16 22 28 29 12-7 22-17 28-29l-28 21-28-21Z" fill="url(#base)" stroke="url(#gold)" stroke-width="1.7"/>
+    <path d="m72 150 28 21 28-21" stroke="#FFF1B9" stroke-width=".65" opacity=".85"/>
+  </g>
+  <ellipse cx="82" cy="103" rx="6.2" ry="9" fill="url(#eye)"/><ellipse cx="118" cy="103" rx="6.2" ry="9" fill="url(#eye)"/>
+  <circle cx="79.7" cy="99.7" r="1.8" fill="#FFFDF9"/><circle cx="115.7" cy="99.7" r="1.8" fill="#FFFDF9"/>
+  <circle cx="84.5" cy="107.4" r=".9" fill="#FFFDF9" opacity=".5"/><circle cx="120.5" cy="107.4" r=".9" fill="#FFFDF9" opacity=".5"/>
+</svg>

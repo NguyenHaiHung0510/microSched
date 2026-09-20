@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Mimi — All Set</title>
+  <desc id="desc">Mimi bows with joyful crescent eyes and presents a glowing gold diamond confirmation badge.</desc>
+  <defs>
+    <linearGradient id="ivory" x1="64" y1="31" x2="137" y2="148" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFDF9"/><stop offset=".55" stop-color="#FBF8F3"/><stop offset="1" stop-color="#E8DCCE"/></linearGradient>
+    <linearGradient id="pinkL" x1="31" y1="68" x2="82" y2="143" gradientUnits="userSpaceOnUse"><stop stop-color="#FAD8D7"/><stop offset=".58" stop-color="#F5B8BA"/><stop offset="1" stop-color="#DE7A85"/></linearGradient>
+    <linearGradient id="pinkR" x1="169" y1="68" x2="118" y2="143" gradientUnits="userSpaceOnUse"><stop stop-color="#FAD8D7"/><stop offset=".58" stop-color="#F5B8BA"/><stop offset="1" stop-color="#DE7A85"/></linearGradient>
+    <linearGradient id="gold" x1="43" y1="35" x2="158" y2="183" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF4C8"/><stop offset=".22" stop-color="#CFA348"/><stop offset=".48" stop-color="#FFF0A8"/><stop offset=".72" stop-color="#A96D19"/><stop offset="1" stop-color="#F3D477"/></linearGradient>
+    <radialGradient id="badge" cx="36%" cy="25%" r="85%"><stop stop-color="#FFF8D9"/><stop offset=".28" stop-color="#F3CF6D"/><stop offset=".68" stop-color="#CFA348"/><stop offset="1" stop-color="#9E6618"/></radialGradient>
+    <radialGradient id="aura"><stop stop-color="#F5CD64" stop-opacity=".55"/><stop offset="1" stop-color="#CFA348" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="18" y="21" width="164" height="172" filterUnits="userSpaceOnUse"><feDropShadow dx="0" dy="5" stdDeviation="4.5" flood-color="#4A1521" flood-opacity=".15"/></filter>
+    <filter id="badgeGlow" x="48" y="119" width="104" height="80" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="8"/></filter>
+  </defs>
+  <ellipse cx="100" cy="182" rx="55" ry="7" fill="#4A1521" opacity=".09"/><ellipse cx="100" cy="158" rx="48" ry="38" fill="url(#aura)" filter="url(#badgeGlow)"/>
+  <g filter="url(#shadow)" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M69 72C50 62 35 70 25 87c12 14 17 31 17 49 10 6 22 8 37 4l8-36-18-32Z" fill="url(#pinkL)" stroke="url(#gold)" stroke-width="1.6"/>
+    <path d="M131 72c19-10 34-2 44 15-12 14-17 31-17 49-10 6-22 8-37 4l-8-36 18-32Z" fill="url(#pinkR)" stroke="url(#gold)" stroke-width="1.6"/>
+    <path d="M100 26C85 42 66 54 60 81c-5 24 6 45 40 64 34-19 45-40 40-64-6-27-25-39-40-55Z" fill="url(#ivory)" stroke="url(#gold)" stroke-width="1.8"/>
+    <path d="m100 26-27 40 27 19 27-19-27-40ZM60 81l40 4 40-4M100 85v60M73 66l27 19 27-19" stroke="url(#gold)" stroke-width="1.45"/>
+    <path d="M60 81c-3 22 9 44 40 64V85l-40-4Z" fill="#FFFDF9" fill-opacity=".2"/>
+    <path d="M42 136c10 0 23 7 35 18l-10 15c-15-4-25-15-25-33Z" fill="#F5B8BA" stroke="url(#gold)" stroke-width="1.45"/>
+    <path d="M158 136c-10 0-23 7-35 18l10 15c15-4 25-15 25-33Z" fill="#F5B8BA" stroke="url(#gold)" stroke-width="1.45"/>
+  </g>
+  <path d="M76 102c4-7 13-7 18 0M106 102c5-7 14-7 18 0" stroke="#4A1521" stroke-width="3.1" stroke-linecap="round"/><path d="M94 115c4 3 8 3 12 0" stroke="#DE7A85" stroke-width="1.5" stroke-linecap="round"/>
+  <g stroke-linejoin="round" stroke-linecap="round"><path d="m100 132 28 27-28 28-28-28 28-27Z" fill="url(#badge)" stroke="#FFF4C8" stroke-width="2.3"/><path d="m100 137 22 22-22 22-22-22 22-22Z" stroke="url(#gold)" stroke-width="1.4"/><path d="m88 158 8 8 16-18" stroke="#FFFDF9" stroke-width="5"/><path d="m88 158 8 8 16-18" stroke="#4A1521" stroke-opacity=".16" stroke-width="1.2"/></g>
+  <g fill="#CFA348"><path d="m54 119 3-5 3 5-3 5-3-5Z"/><path d="m140 116 3-5 3 5-3 5-3-5Z"/><circle cx="51" cy="151" r="1.8"/><circle cx="149" cy="151" r="1.8"/></g>
+</svg>

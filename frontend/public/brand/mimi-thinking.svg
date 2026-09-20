@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Mimi — Ideas Unfurl</title>
+  <desc id="desc">Mimi rises from an unfurling sakura lotus, glowing warmly as golden idea crystals gather around her.</desc>
+  <defs>
+    <linearGradient id="ivory" x1="67" y1="35" x2="133" y2="145" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFDF9"/><stop offset=".55" stop-color="#FBF8F3"/><stop offset="1" stop-color="#E9DED0"/></linearGradient>
+    <linearGradient id="pink" x1="34" y1="125" x2="166" y2="176" gradientUnits="userSpaceOnUse"><stop stop-color="#DE7A85"/><stop offset=".42" stop-color="#F5B8BA"/><stop offset=".62" stop-color="#F8CED0"/><stop offset="1" stop-color="#DE7A85"/></linearGradient>
+    <linearGradient id="gold" x1="59" y1="28" x2="144" y2="174" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF1B9"/><stop offset=".24" stop-color="#CFA348"/><stop offset=".5" stop-color="#FFF0AD"/><stop offset=".78" stop-color="#B67D20"/><stop offset="1" stop-color="#F5DB86"/></linearGradient>
+    <radialGradient id="aura"><stop stop-color="#FFD978" stop-opacity=".72"/><stop offset=".45" stop-color="#F6C95B" stop-opacity=".25"/><stop offset="1" stop-color="#CFA348" stop-opacity="0"/></radialGradient>
+    <radialGradient id="eye"><stop stop-color="#7A2B3D"/><stop offset="1" stop-color="#4A1521"/></radialGradient>
+    <linearGradient id="crystal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#FFF4C9"/><stop offset=".45" stop-color="#E5B54D"/><stop offset="1" stop-color="#A86C18"/></linearGradient>
+    <filter id="glow" x="28" y="49" width="144" height="145" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="8"/></filter>
+    <filter id="shadow" x="18" y="22" width="164" height="176" filterUnits="userSpaceOnUse"><feDropShadow dx="0" dy="5" stdDeviation="4.5" flood-color="#4A1521" flood-opacity=".14"/></filter>
+  </defs>
+  <circle cx="100" cy="121" r="64" fill="url(#aura)" filter="url(#glow)"/><ellipse cx="100" cy="183" rx="62" ry="7" fill="#4A1521" opacity=".08"/>
+  <g fill="url(#crystal)" stroke="url(#gold)" stroke-width="1.1" stroke-linejoin="round"><path d="m37 56 8-13 8 13-8 14-8-14Z"/><path d="m157 68 6-10 7 10-7 11-6-11Z"/><path d="m94 21 6-10 6 10-6 10-6-10Z"/></g>
+  <g stroke="#FFF4C9" stroke-width=".8" opacity=".8"><path d="m45 43v27M37 56h16M163 58v21M157 68h13M100 11v20M94 21h12"/></g>
+  <g filter="url(#shadow)" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M100 142c-15-18-36-24-63-19 7 17 22 30 45 37l18-18Z" fill="url(#pink)" stroke="url(#gold)" stroke-width="1.55"/>
+    <path d="M100 142c15-18 36-24 63-19-7 17-22 30-45 37l-18-18Z" fill="url(#pink)" stroke="url(#gold)" stroke-width="1.55"/>
+    <path d="M82 160c-20-9-38-6-54 6 16 15 38 20 63 12l-9-18Z" fill="#F5B8BA" stroke="url(#gold)" stroke-width="1.5"/>
+    <path d="M118 160c20-9 38-6 54 6-16 15-38 20-63 12l9-18Z" fill="#F5B8BA" stroke="url(#gold)" stroke-width="1.5"/>
+    <path d="M82 155c2 16 8 27 18 34 10-7 16-18 18-34l-18-13-18 13Z" fill="#DE7A85" stroke="url(#gold)" stroke-width="1.65"/>
+    <path d="M100 30C87 45 69 56 64 82c-5 27 7 51 36 69 29-18 41-42 36-69-5-26-23-37-36-52Z" fill="url(#ivory)" stroke="url(#gold)" stroke-width="1.85"/>
+    <path d="m100 30-24 38 24 16 24-16-24-38ZM64 82l36 2 36-2M100 84v67M76 135l24-51 24 51" stroke="url(#gold)" stroke-width="1.45"/>
+    <path d="M64 82c-4 22 5 44 36 69V84L64 82Z" fill="#FFFDF9" fill-opacity=".2"/>
+    <path d="M100 142c-7 10-13 21-18 34m18-34c7 10 13 21 18 34M37 123l45 37m81-37-45 37" stroke="#F9DEA0" stroke-width=".9"/>
+  </g>
+  <ellipse cx="84" cy="102" rx="5.3" ry="7.8" fill="url(#eye)"/><ellipse cx="116" cy="102" rx="5.3" ry="7.8" fill="url(#eye)"/>
+  <circle cx="82" cy="99.1" r="1.55" fill="#FFFDF9"/><circle cx="114" cy="99.1" r="1.55" fill="#FFFDF9"/>
+  <circle cx="86.1" cy="105.8" r=".75" fill="#FFFDF9" opacity=".45"/><circle cx="118.1" cy="105.8" r=".75" fill="#FFFDF9" opacity=".45"/>
+</svg>
