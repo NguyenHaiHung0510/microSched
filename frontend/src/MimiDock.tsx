@@ -1,6 +1,7 @@
-import { Bot, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { MimiAvatar } from '@/components/brand'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { MimiScreen } from '@/MimiScreen'
@@ -60,7 +61,7 @@ export function MimiDock({
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <div className="flex items-center gap-2">
-              <Bot className="size-5 text-primary" aria-hidden="true" />
+              <MimiAvatar size="sm" state="idle" />
               <div>
                 <p className="font-extrabold text-primary">Mimi</p>
                 <p className="text-xs text-muted-foreground">Side-chat · conversation hiện tại</p>
@@ -86,7 +87,7 @@ export function MimiDock({
         className="inset-0 h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-4"
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Bot className="size-5 text-primary" aria-hidden="true" />Chat với Mimi</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><MimiAvatar size="sm" state="idle" />Chat với Mimi</DialogTitle>
           <DialogDescription>Conversation STANDARD hiện tại · nội dung chính vẫn giữ nguyên khi đóng.</DialogDescription>
         </DialogHeader>
         <MimiScreen onOpenTasks={onOpenTasks} variant="dock" />

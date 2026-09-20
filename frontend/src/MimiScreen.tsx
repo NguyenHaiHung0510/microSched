@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, Check, CircleDot, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, Wifi, WifiOff, X } from 'lucide-react'
+import { Check, CircleDot, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, Wifi, WifiOff, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
+import { MimiAvatar, type MimiState } from '@/components/brand'
 import { ApiError, TimeoutError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -329,7 +330,7 @@ export function MimiScreen({
     return (
       <Card className="mx-auto max-w-xl py-10 text-center">
         <CardHeader>
-          <Bot className="mx-auto size-10 text-primary" aria-hidden="true" />
+          <MimiAvatar className="mx-auto" size="lg" state="idle" />
           <CardTitle>Mimi sẵn sàng ở chế độ local</CardTitle>
           <CardDescription>
             P1 chỉ đọc Task STANDARD và luôn cho bạn xem preview trước khi ghi.
@@ -342,7 +343,7 @@ export function MimiScreen({
             disabled={createConversation.isPending || !online}
             onClick={() => createConversation.mutate()}
           >
-            {createConversation.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Bot />}
+            {createConversation.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <MimiAvatar size="xs" state="idle" />}
             Bắt đầu conversation STANDARD
           </Button>
         </CardContent>
@@ -350,11 +351,15 @@ export function MimiScreen({
     )
   }
 
+  const mimiState: MimiState = runPending
+    ? (runStage.includes('thực thi') || runStage.includes('áp dụng') ? 'executing' : 'thinking')
+    : (latestRun?.state === 'waiting_confirmation' ? 'ready' : 'idle')
+
   return (
     <section className="min-w-0 space-y-4" aria-labelledby={`mimi-title-${variant}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Bot className="size-8 text-primary" aria-hidden="true" />
+          <MimiAvatar size="md" state={mimiState} showGlow={runPending} />
           <div>
             <h3 id={`mimi-title-${variant}`} className="text-lg font-extrabold text-primary">{current.title ?? 'Conversation hiện tại'}</h3>
             <p className="text-sm text-muted-foreground">STANDARD · {runPending ? runStage : 'sẵn sàng'}</p>
