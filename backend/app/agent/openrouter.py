@@ -100,10 +100,7 @@ def _route_identity(settings: Settings) -> tuple[str, str]:
 
 
 def _price_policy(settings: Settings) -> dict[str, float]:
-    if (
-        settings.mimi_route_max_input_price is None
-        or settings.mimi_route_max_output_price is None
-    ):
+    if settings.mimi_route_max_input_price is None or settings.mimi_route_max_output_price is None:
         raise RouteContractError("Mimi route price caps are not configured")
     return {
         "prompt": settings.mimi_route_max_input_price,
@@ -227,6 +224,22 @@ def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
             raise RouteContractError("provider_tool_arguments_not_json") from error
         if not isinstance(decoded, dict):
             raise RouteContractError("provider_tool_arguments_not_object")
+        allowed_fields = {
+            "id",
+            "title",
+            "body_md",
+            "status",
+            "priority",
+            "due_precision",
+            "due_on",
+            "due_at",
+            "is_private",
+            "items",
+        }
+        if unknown_fields := set(decoded) - allowed_fields:
+            raise RouteContractError(
+                "provider_task_schema_invalid_extra_fields_" + "_".join(sorted(unknown_fields))
+            )
         # P1 owns the lifecycle state. A provider has no legitimate choice for
         # this field, so normalize it at the trust boundary rather than letting
         # harmless casing/default drift turn a valid preview into a dead run.
@@ -259,6 +272,14 @@ def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
         raise RouteContractError("standard_route_proposed_private_task")
     if task.id is None:
         raise RouteContractError("provider_task_id_missing")
+    if len(task.title) > 200:
+        raise RouteContractError("provider_task_schema_invalid_title_too_long")
+    if task.body_md is not None and len(task.body_md) > 20_000:
+        raise RouteContractError("provider_task_schema_invalid_body_md_too_long")
+    if len(task.items) > 20:
+        raise RouteContractError("provider_task_schema_invalid_items_too_long")
+    if any(len(item) > 500 for item in task.items):
+        raise RouteContractError("provider_task_schema_invalid_items_item_too_long")
     return ProviderCompletion(kind="task", task=task, text=None, **common)
 
 
@@ -304,7 +325,7 @@ async def complete(
             )
         except httpx.ConnectError as error:
             raise ProviderDispatchError("retryable", None) from error
-        except httpx.TimeoutException as error:
+        except (httpx.TimeoutException, httpx.TransportError) as error:
             raise ProviderDispatchError("unknown", None) from error
         _raise_for_status(response.status_code)
         try:
@@ -351,6 +372,9 @@ async def complete_stream(
     started_at = time.perf_counter()
     connected_at: float | None = None
     first_output_at: float | None = None
+    saw_done = False
+    saw_finish_reason = False
+    finish_reason: str | None = None
     try:
         try:
             async with active_client.stream(
@@ -370,14 +394,25 @@ async def complete_stream(
                     if not line.startswith("data:"):
                         continue
                     raw = line[5:].strip()
-                    if not raw or raw == "[DONE]":
+                    if not raw:
                         continue
+                    if raw == "[DONE]":
+                        saw_done = True
+                        break
                     try:
                         chunk = json.loads(raw)
                     except json.JSONDecodeError as error:
                         raise RouteContractError("provider_stream_chunk_is_not_json") from error
                     if not isinstance(chunk, dict):
                         raise RouteContractError("provider_stream_chunk_is_not_an_object")
+                    provider_error = chunk.get("error")
+                    if provider_error is not None:
+                        code = (
+                            provider_error.get("code") if isinstance(provider_error, dict) else None
+                        )
+                        if isinstance(code, int) and code >= 400:
+                            _raise_for_status(code)
+                        raise RouteContractError("provider_stream_error_envelope")
                     if isinstance(chunk.get("id"), str):
                         response_id = chunk["id"]
                     if isinstance(chunk.get("provider"), str):
@@ -387,8 +422,15 @@ async def complete_stream(
                     if isinstance(chunk.get("usage"), dict):
                         usage = chunk["usage"]
                     choices = chunk.get("choices")
-                    if not isinstance(choices, list) or not choices:
+                    if not isinstance(choices, list):
+                        raise RouteContractError("provider_stream_choices_invalid")
+                    if not choices:
                         continue
+                    if len(choices) != 1 or not isinstance(choices[0], dict):
+                        raise RouteContractError("provider_stream_must_return_one_choice")
+                    if isinstance(choices[0].get("finish_reason"), str):
+                        saw_finish_reason = True
+                        finish_reason = choices[0]["finish_reason"]
                     delta = choices[0].get("delta")
                     if not isinstance(delta, dict):
                         continue
@@ -397,8 +439,10 @@ async def complete_stream(
                         if first_output_at is None:
                             first_output_at = time.perf_counter()
                         content_parts.append(text)
-                        if on_event:
-                            await on_event("assistant.delta", {"text": text})
+                        # Do not expose narration until the terminal union is
+                        # known. Some compatible providers emit content before
+                        # a tool call; replaying it immediately would surface a
+                        # false text answer beside a later frozen preview.
                     raw_calls = delta.get("tool_calls")
                     if isinstance(raw_calls, list):
                         for raw_call in raw_calls:
@@ -414,19 +458,19 @@ async def complete_stream(
                                     target["name"] += function["name"]
                                 if isinstance(function.get("arguments"), str):
                                     target["arguments"] += function["arguments"]
+                if not saw_done and not saw_finish_reason:
+                    raise ProviderDispatchError("unknown", None, response_id=response_id or None)
+                if finish_reason not in {None, "stop", "tool_calls"}:
+                    raise RouteContractError("provider_stream_finish_reason_not_usable")
         except httpx.ConnectError as error:
             raise ProviderDispatchError("retryable", None) from error
-        except (httpx.TimeoutException, httpx.ReadError) as error:
-            raise ProviderDispatchError(
-                "unknown", None, response_id=response_id or None
-            ) from error
+        except (httpx.TimeoutException, httpx.TransportError) as error:
+            raise ProviderDispatchError("unknown", None, response_id=response_id or None) from error
         completed_at = time.perf_counter()
         timing = {
             "duration_ms": round((completed_at - started_at) * 1000, 3),
             "connect_ms": (
-                round((connected_at - started_at) * 1000, 3)
-                if connected_at is not None
-                else None
+                round((connected_at - started_at) * 1000, 3) if connected_at is not None else None
             ),
             "ttft_ms": (
                 round((first_output_at - started_at) * 1000, 3)
@@ -444,7 +488,7 @@ async def complete_stream(
             {"function": {"name": item["name"], "arguments": item["arguments"]}}
             for _, item in sorted(tool_calls.items())
         ]
-        return parse_completion(
+        completion = parse_completion(
             {
                 "id": response_id,
                 "provider": provider,
@@ -460,6 +504,10 @@ async def complete_stream(
                 ],
             }
         )
+        if completion.kind == "text" and on_event:
+            for text in content_parts:
+                await on_event("assistant.delta", {"text": text})
+        return completion
     finally:
         if owns_client:
             await active_client.aclose()
