@@ -1,6 +1,6 @@
 # 058 — Mimi P1R dogfood recovery and interaction shell
 
-Status: **058B OWNER-APPROVED; 058C IMPLEMENTED + AUTOMATED LOCAL GATES GREEN; 058D LIVE DOGFOOD OPEN (2026-09-19)**
+Status: **COMPLETED & OWNER-APPROVED — READY FOR MERGE INTO DEVELOP (2026-09-20)**
 
 > Executor/integrator: T1 GPT-5.6 Sol · Profile: Balanced · Owner grant: continue the approved Mimi delivery flow, correct the failed P1 local dogfood, build the local UI/UX continuously for Owner review, then implement and verify the bounded package. No Astra delegation.
 
