@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -13,7 +14,7 @@ from uuid import UUID, uuid7
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import and_, false, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -166,15 +167,74 @@ async def _append_event(
     return sequence
 
 
-def _task_title(content: str) -> str:
-    """Build a bounded deterministic preview title for the local route."""
-    title = " ".join(content.strip().split())
-    lowered = title.lower()
-    for prefix in ("tạo task ", "tạo việc ", "create task "):
-        if lowered.startswith(prefix):
-            title = title[len(prefix) :].strip()
-            break
-    return (title or "Task từ Mimi")[:200]
+def _deterministic_turn(
+    content: str,
+    task_id: UUID,
+    *,
+    awaiting_task_title: bool,
+) -> tuple[Literal["text", "task"], str | dict[str, Any]]:
+    """Classify the local route without pretending every message is a write intent."""
+    normalized = " ".join(content.strip().split())
+    folded = normalized.casefold().rstrip(".!?")
+    greetings = {
+        "chào",
+        "chào mimi",
+        "xin chào",
+        "xin chào mimi",
+        "hello",
+        "hello mimi",
+        "hi",
+        "hi mimi",
+    }
+    if folded in greetings:
+        return "text", "Chào bạn! Mình là Mimi. Hôm nay mình có thể giúp gì cho bạn?"
+
+    action = re.fullmatch(
+        r"(?is)(?:hãy\s+)?(?:tạo|thêm|lên\s+lịch|create|add)\s+"
+        r"(?:một\s+)?(?:task|việc|công\s+việc|nhiệm\s+vụ)"
+        r"(?:\s*[:\-]\s*|\s+)?(.*)",
+        normalized,
+    )
+    if action is None and not awaiting_task_title:
+        return (
+            "text",
+            "Mình đã nhận được tin nhắn. Ở route local, mình chỉ tạo preview khi "
+            "bạn yêu cầu rõ ràng tạo một Task.",
+        )
+    title = action.group(1).strip().strip('"“”') if action is not None else normalized.strip('"“”')
+    if awaiting_task_title and title.casefold() in {
+        "thôi",
+        "không",
+        "hủy",
+        "huỷ",
+        "bỏ qua",
+    }:
+        return "text", "Được, mình sẽ không tạo preview Task cho yêu cầu đó."
+    if title.casefold() in {"", "giúp tôi", "giúp mình", "cho tôi", "cho mình", "mới"}:
+        return "text", "Bạn muốn đặt tiêu đề Task là gì?"
+    operation_args = {
+        "id": str(task_id),
+        "title": title[:200],
+        "status": "open",
+        "priority": None,
+        "due_precision": "none",
+        "due_on": None,
+        "due_at": None,
+        "body_md": None,
+        "is_private": False,
+        "items": [],
+    }
+    return "task", operation_args
+
+
+def _provider_contract_code(error: str) -> str:
+    stable = re.sub(r"[^a-z0-9_]+", "_", error.casefold()).strip("_")
+    return stable[:120] or "invalid_terminal"
+
+
+def _transaction_lock_key(namespace: str, value: str) -> int:
+    raw = hashlib.sha256(f"{namespace}:{value}".encode("utf-8")).digest()[:8]
+    return int.from_bytes(raw, byteorder="big", signed=True)
 
 
 def _conversation_title(content: str) -> str:
@@ -795,6 +855,11 @@ async def send_message(
         # change set is materialized. Unknown outcomes never auto-retry.
         run.state = "running"
         await db.commit()
+        # Fence the may-have-been-sent boundary durably before entering the
+        # transport. Cancellation or an unexpected worker failure after this
+        # point is unknown unless the adapter returns a definitive outcome.
+        call.state = "dispatched"
+        await db.commit()
         try:
             if provider_stream:
                 stream_buffer: list[str] = []
@@ -822,7 +887,7 @@ async def send_message(
                         ),
                         "content_bytes": len(text_delta.encode("utf-8")),
                     }
-                    await db.commit()
+                    await db.flush()
 
                 async def persist_stream_event(kind: str, event_payload: dict[str, Any]) -> None:
                     if kind == "assistant.delta":
@@ -830,11 +895,6 @@ async def send_message(
                         if not text_delta:
                             return
                         stream_buffer.append(text_delta)
-                        # Keep the durable ledger useful without turning every token into
-                        # its own PostgreSQL write. The final callback flushes any tail.
-                        if sum(map(len, stream_buffer)) < 256:
-                            return
-                        await flush_stream_buffer()
                     else:
                         if kind == "provider.connected":
                             call.state = "dispatched"
@@ -848,7 +908,6 @@ async def send_message(
                     on_event=persist_stream_event,
                     force_task_tool=force_task_tool,
                 )
-                await flush_stream_buffer()
             else:
                 completion = await openrouter_complete(
                     live_messages,
@@ -858,6 +917,13 @@ async def send_message(
                 )
             if force_task_tool and completion.kind != "task":
                 raise RouteContractError("provider_revision_must_return_task_tool")
+            if (
+                completion.kind == "task"
+                and completion.task is not None
+                and completion.task.id is not None
+                and completion.task.id != task_id
+            ):
+                raise RouteContractError("provider_task_id_does_not_match_reservation")
         except (ProviderDispatchError, RouteContractError) as error:
             outcome = error.outcome if isinstance(error, ProviderDispatchError) else "failed"
             status_code = error.status if isinstance(error, ProviderDispatchError) else None
@@ -898,7 +964,7 @@ async def send_message(
                 "run_deadline_exceeded"
                 if deadline_hit
                 else (
-                    f"provider_contract_{contract_error}"
+                    f"provider_contract_{_provider_contract_code(contract_error)}"
                     if contract_error
                     else f"provider_{outcome}"
                 )
@@ -910,16 +976,23 @@ async def send_message(
                 "run.deadline_exceeded" if deadline_hit else f"provider.{outcome}",
                 {"status": status_code, "provider_outcome": run.provider_outcome},
             )
-            assistant = (
-                "Kết quả provider chưa xác định; Mimi sẽ không tự gửi lại yêu cầu."
-                if outcome == "unknown"
-                else (
-                    "Provider chưa hoàn tất được lượt này. Bạn có thể chủ động thử lượt mới."
-                    if outcome == "retryable"
-                    else "Route hiện tại không đáp ứng contract; lượt chạy đã dừng."
-                )
+            await _append_event(
+                db,
+                run_id,
+                "run.terminal",
+                {"state": run.state, "error_code": run.error_code},
             )
-            _add_assistant_message(db, conversation, run_id, dek, assistant)
+            if conversation.generation == generation + 1:
+                assistant = (
+                    "Kết quả provider chưa xác định; Mimi sẽ không tự gửi lại yêu cầu."
+                    if outcome == "unknown"
+                    else (
+                        "Provider chưa hoàn tất được lượt này. Bạn có thể chủ động thử lượt mới."
+                        if outcome == "retryable"
+                        else "Route hiện tại không đáp ứng contract; lượt chạy đã dừng."
+                    )
+                )
+                _add_assistant_message(db, conversation, run_id, dek, assistant)
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
 
@@ -977,8 +1050,29 @@ async def send_message(
         run = (
             await db.execute(select(MimiRun).where(MimiRun.id == run_id).with_for_update())
         ).scalar_one()
+        # Every provider result, including plain text and clarification, is
+        # accepted only on the generation that assembled its prompt. A newer
+        # Owner turn must not receive a stale assistant answer or preview.
+        expected_generation_after_accept = generation + 1
+        if run.state != "running":
+            return await conversation_view(db, auth, conversation_id)
+        if conversation.generation != expected_generation_after_accept:
+            run.state = "halted"
+            run.error_code = "response_frontier_changed"
+            run.completed_at = datetime.now(UTC)
+            await _append_event(db, run_id, "response.frontier_changed", {})
+            await _append_event(
+                db,
+                run_id,
+                "run.terminal",
+                {"state": "halted", "error_code": run.error_code},
+            )
+            await db.flush()
+            return await conversation_view(db, auth, conversation_id)
         if completion.kind == "text":
             assert completion.text is not None
+            if provider_stream:
+                await flush_stream_buffer()
             _add_assistant_message(db, conversation, run_id, dek, completion.text)
             run.state = "completed"
             run.completed_at = datetime.now(UTC)
@@ -995,26 +1089,51 @@ async def send_message(
     else:
         run.state = "running"
         call.state = "succeeded"
-        operation_args = {
-            "id": str(task_id),
-            "title": _task_title(payload.content),
-            "status": "open",
-            "priority": None,
-            "due_precision": "none",
-            "due_on": None,
-            "due_at": None,
-            "body_md": None,
-            "is_private": False,
-            "items": [],
-        }
-        call.result = {
-            "kind": "task_preview",
-            "tool": TOOL_VERSION,
-            "result_sha256": _canonical_digest(operation_args),
-        }
+        awaiting_task_title = bool(
+            provider_history
+            and provider_history[-1].get("role") == "assistant"
+            and provider_history[-1].get("content") == "Bạn muốn đặt tiêu đề Task là gì?"
+        )
+        local_kind, local_result = _deterministic_turn(
+            payload.content,
+            task_id,
+            awaiting_task_title=awaiting_task_title,
+        )
+        if force_task_tool and local_kind != "task":
+            # Explicit revisions are already bound to a pending preview. Keep
+            # the old authority intact unless a complete replacement exists.
+            local_kind = "text"
+            local_result = "Hãy nêu tiêu đề Task mới để mình thay preview đang chờ."
+        if local_kind == "text":
+            assert isinstance(local_result, str)
+            call.result = {
+                "kind": "text",
+                "result_sha256": hashlib.sha256(local_result.encode("utf-8")).hexdigest(),
+            }
+        else:
+            assert isinstance(local_result, dict)
+            operation_args = local_result
+            call.result = {
+                "kind": "task_preview",
+                "tool": TOOL_VERSION,
+                "result_sha256": _canonical_digest(operation_args),
+            }
         call.usage = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "cost": 0}
         run.provider_outcome = "succeeded"
         await _append_event(db, run_id, "provider.succeeded", {"attempt": 1})
+        if local_kind == "text":
+            assert isinstance(local_result, str)
+            _add_assistant_message(db, conversation, run_id, dek, local_result)
+            run.state = "completed"
+            run.completed_at = datetime.now(UTC)
+            await _append_event(
+                db,
+                run_id,
+                "run.terminal",
+                {"state": "completed", "result": "text"},
+            )
+            await db.flush()
+            return await conversation_view(db, auth, conversation_id)
 
     # Only a validated task proposal may replace pending authority. Re-query
     # after provider I/O because the conversation lock was released while the
@@ -1025,6 +1144,12 @@ async def send_message(
         run.error_code = "preview_frontier_changed"
         run.completed_at = datetime.now(UTC)
         await _append_event(db, run_id, "change_set.frontier_changed", {})
+        await _append_event(
+            db,
+            run_id,
+            "run.terminal",
+            {"state": "halted", "error_code": run.error_code},
+        )
         _add_assistant_message(
             db,
             conversation,
@@ -1056,6 +1181,12 @@ async def send_message(
             run.error_code = "preview_frontier_changed"
             run.completed_at = datetime.now(UTC)
             await _append_event(db, run_id, "change_set.frontier_changed", {})
+            await _append_event(
+                db,
+                run_id,
+                "run.terminal",
+                {"state": "halted", "error_code": run.error_code},
+            )
             _add_assistant_message(
                 db,
                 conversation,
@@ -1065,6 +1196,27 @@ async def send_message(
             )
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
+
+    if current_pending_preview is not None and not force_task_tool:
+        run.state = "halted"
+        run.error_code = "pending_preview_requires_decision"
+        run.completed_at = datetime.now(UTC)
+        await _append_event(
+            db,
+            run_id,
+            "run.terminal",
+            {"state": "halted", "error_code": run.error_code},
+        )
+        _add_assistant_message(
+            db,
+            conversation,
+            run_id,
+            dek,
+            "Bạn đang có một preview chờ quyết định. Hãy xác nhận, từ chối hoặc sửa preview đó "
+            "trước khi tạo preview mới.",
+        )
+        await db.flush()
+        return await conversation_view(db, auth, conversation_id)
 
     if current_pending_preview is not None:
         old_change_set, old_run = current_pending_preview
@@ -1139,6 +1291,13 @@ async def confirm_change_set(
     if not 1 <= len(idempotency_key) <= 160:
         raise HTTPException(status_code=422, detail="Idempotency-Key must be 1..160 characters")
 
+    # Serialize the global idempotency namespace before checking either the
+    # key or change-set row. Concurrent decisions on different change sets can
+    # no longer escape as a database uniqueness error.
+    await db.execute(
+        select(func.pg_advisory_xact_lock(_transaction_lock_key("mimi-confirm", idempotency_key)))
+    )
+
     existing_by_key = (
         await db.execute(
             select(MimiExecutionReceipt, MimiChangeSet, MimiRun, MimiConversation)
@@ -1176,6 +1335,22 @@ async def confirm_change_set(
         raise _not_found()
     change_set, run, conversation = found
 
+    async def invalidate_frozen_change_set(detail: str) -> None:
+        change_set.state = "stale"
+        run.state = "halted"
+        run.error_code = detail
+        run.completed_at = datetime.now(UTC)
+        await _append_event(db, run.id, "change_set.invalid", {"reason": detail})
+        await _append_event(
+            db,
+            run.id,
+            "run.terminal",
+            {"state": "halted", "error_code": detail},
+        )
+        await db.flush()
+        await db.commit()
+        raise _conflict(detail)
+
     existing_for_change_set = (
         await db.execute(
             select(MimiExecutionReceipt).where(MimiExecutionReceipt.change_set_id == change_set.id)
@@ -1185,6 +1360,8 @@ async def confirm_change_set(
         raise _conflict("change_set_already_executed_with_different_idempotency_key")
     if payload.digest != change_set.digest_sha256 or payload.nonce != change_set.nonce:
         raise _conflict("change_set_binding_mismatch")
+    if change_set.state == "rejected" and payload.decision == "reject":
+        return {"change_set_id": change_set.id, "state": "rejected"}
     if change_set.state != "pending":
         raise _conflict(f"change_set_{change_set.state}")
     now = datetime.now(UTC)
@@ -1193,6 +1370,12 @@ async def confirm_change_set(
         run.state = "deadline_exceeded"
         run.completed_at = now
         await _append_event(db, run.id, "change_set.expired", {})
+        await _append_event(
+            db,
+            run.id,
+            "run.terminal",
+            {"state": "deadline_exceeded", "error_code": "change_set_expired"},
+        )
         await db.flush()
         # Preserve the terminal expiry even though FastAPI will unwind the
         # request with 410 and the request dependency will roll back its next
@@ -1205,33 +1388,57 @@ async def confirm_change_set(
         run.state = "cancelled"
         run.completed_at = now
         await _append_event(db, run.id, "change_set.rejected", {})
+        await _append_event(
+            db,
+            run.id,
+            "run.terminal",
+            {"state": "cancelled", "result": "change_set_rejected"},
+        )
         await db.flush()
         return {"change_set_id": change_set.id, "state": "rejected"}
 
     run.state = "executing"
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
     try:
-        operation = json.loads(
+        raw_operation = json.loads(
             mimi_crypto.open_content(
                 dek,
                 change_set.operation_ciphertext,
                 aad=mimi_crypto.change_set_aad(conversation.id, change_set.id),
             )
         )
-    except (ValueError, json.JSONDecodeError) as error:
-        change_set.state = "stale"
-        raise _conflict("change_set_ciphertext_invalid") from error
-    if operation.get("tool") != TOOL_VERSION:
-        change_set.state = "stale"
-        raise _conflict("unsupported_or_stale_tool_version")
-    task_payload = TaskCreate.model_validate(operation["args"])
+        operation = ChangeOperation.model_validate(raw_operation)
+    except ValueError, json.JSONDecodeError, ValidationError:
+        await invalidate_frozen_change_set("change_set_ciphertext_invalid")
+        raise AssertionError("unreachable")
+    if operation.tool != TOOL_VERSION:
+        await invalidate_frozen_change_set("unsupported_or_stale_tool_version")
+        raise AssertionError("unreachable")
+    frozen = FrozenChangeSet(
+        change_set_id=change_set.id,
+        run_id=run.id,
+        operations=(operation,),
+        expires_at=change_set.expires_at,
+        nonce=change_set.nonce,
+        digest_sha256=change_set.digest_sha256,
+        idempotency_key=f"preview:{change_set.id}",
+    )
+    if frozen.calculated_digest() != change_set.digest_sha256:
+        await invalidate_frozen_change_set("change_set_digest_invalid")
+        raise AssertionError("unreachable")
+    try:
+        task_payload = TaskCreate.model_validate(operation.args)
+    except ValidationError:
+        await invalidate_frozen_change_set("change_set_task_payload_invalid")
+        raise AssertionError("unreachable")
     if task_payload.is_private:
-        raise _conflict("standard_change_set_cannot_create_private_task")
+        await invalidate_frozen_change_set("standard_change_set_cannot_create_private_task")
+        raise AssertionError("unreachable")
     task = await TaskStore().create(db, auth, task_payload)
     receipt = MimiExecutionReceipt(
         id=uuid7(),
         change_set_id=change_set.id,
-        operation_id=UUID(operation["operation_id"]),
+        operation_id=operation.operation_id,
         task_id=task.id,
         digest_sha256=change_set.digest_sha256,
         idempotency_key=idempotency_key,
@@ -1267,6 +1474,12 @@ async def confirm_change_set(
     change_set.state = "executed"
     run.state = "completed"
     run.completed_at = now
+    await _append_event(
+        db,
+        run.id,
+        "run.terminal",
+        {"state": "completed", "result": "change_set_executed"},
+    )
     db.info[CRON_TIMER_RELOAD_INFO_KEY] = "mimi_task_create"
     await db.flush()
     return _receipt_read(receipt)
@@ -1747,7 +1960,11 @@ async def finish_interrupted_run(
     else:
         run.state = "halted"
         run.error_code = "worker_failed"
-    if provider_may_have_received_request:
+    if call is not None and call.state == "succeeded":
+        # A local materialization failure after the durable provider terminal
+        # must not rewrite a known provider success into a provider failure.
+        run.provider_outcome = "succeeded"
+    elif provider_may_have_received_request:
         run.provider_outcome = "unknown"
         call.state = "unknown"
         call.result = {"terminal": "unknown", "reason": run.error_code}
@@ -1759,6 +1976,12 @@ async def finish_interrupted_run(
         run.id,
         "run.cancelled" if cancelled else "run.halted",
         {"provider_outcome": run.provider_outcome},
+    )
+    await _append_event(
+        db,
+        run.id,
+        "run.terminal",
+        {"state": run.state, "error_code": run.error_code},
     )
     await db.flush()
 
