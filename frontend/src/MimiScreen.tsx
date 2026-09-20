@@ -43,6 +43,12 @@ function expiryLabel(value: string): string {
   }).format(new Date(value))
 }
 
+function requestsPreviewRevision(content: string): boolean {
+  const normalized = content.trim().toLocaleLowerCase('vi-VN').replace(/\s+/g, ' ')
+  return ['sửa preview', 'chỉnh preview', 'cập nhật preview', 'update preview', 'revise preview']
+    .some((prefix) => normalized.startsWith(prefix))
+}
+
 function useElapsed(startedAt: number | null, active: boolean): number {
   const [now, setNow] = useState(0)
   useEffect(() => {
@@ -196,15 +202,17 @@ export function MimiScreen({
   })
 
   const send = useMutation({
-    mutationFn: ({ current, content, clientId }: {
+    mutationFn: ({ current, content, clientId, revision }: {
       current: MimiConversation
       content: string
       clientId: string
+      revision?: { id: string; digest: string } | null
     }) => streamMimiMessage(
       current.id,
       content,
       current.generation,
       clientId,
+      revision ?? null,
       handleStreamEvent,
     ),
     onMutate: () => {
@@ -285,7 +293,10 @@ export function MimiScreen({
   function submitMessage(event: React.FormEvent) {
     event.preventDefault()
     if (!current || !draft.trim() || runPending || !online) return
-    send.mutate({ current, content: draft, clientId: crypto.randomUUID() })
+    const revision = pendingChangeSet && requestsPreviewRevision(draft)
+      ? { id: pendingChangeSet.id, digest: pendingChangeSet.digest }
+      : null
+    send.mutate({ current, content: draft, clientId: crypto.randomUUID(), revision })
   }
 
   function submitFeedback(event: React.FormEvent) {

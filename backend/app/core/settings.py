@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     mimi_route_quantization: str | None = None
     mimi_route_allowed_providers: str = ""
     mimi_route_allowed_quantizations: str = ""
+    mimi_route_forced_tool_choice: Literal["none", "required", "function"] = "none"
     mimi_route_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] = "low"
     mimi_route_context_tokens: int = 131_072
     mimi_route_max_output_tokens: int = 4_096

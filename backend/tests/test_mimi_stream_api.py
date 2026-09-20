@@ -286,6 +286,9 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                             "client_id": "stream-message-invalid-revision",
                             "content": "Sửa preview nhưng provider chỉ trả text",
                             "expected_generation": preview_view.json()["generation"],
+                            "intent": "revise_pending_preview",
+                            "expected_change_set_id": first_change_set["id"],
+                            "expected_change_set_digest": first_change_set["digest"],
                         },
                         headers=CSRF_HEADERS,
                     )
@@ -307,6 +310,9 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                                 "Sửa preview: đổi tiêu đề và thêm kiểm tra receipt"
                             ),
                             "expected_generation": after_invalid_revision.json()["generation"],
+                            "intent": "revise_pending_preview",
+                            "expected_change_set_id": still_pending["id"],
+                            "expected_change_set_digest": still_pending["digest"],
                         },
                         headers=CSRF_HEADERS,
                     )

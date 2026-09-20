@@ -164,12 +164,7 @@ def build_request(
         # Ordinary turns implement Mimi's terminal union. An explicit revision
         # of an existing preview is different: text claiming that a preview was
         # changed is not a state transition, so require the typed replacement.
-        "tool_choice": (
-            # There is exactly one offered tool, so `required` preserves the
-            # same contract while remaining compatible with endpoints that
-            # support forced tool use but reject named-function selection.
-            "required" if force_task_tool else "auto"
-        ),
+        "tool_choice": _tool_choice(route, force_task_tool=force_task_tool),
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the
         # terminal parser independently enforces at most one tool call.
@@ -185,6 +180,18 @@ def build_request(
     if session_id:
         request["session_id"] = session_id
     return request
+
+
+def _tool_choice(settings: Settings, *, force_task_tool: bool) -> Any:
+    if not force_task_tool:
+        return "auto"
+    capability = settings.mimi_route_forced_tool_choice
+    if capability == "none":
+        raise RouteContractError("route_forced_tool_choice_not_qualified")
+    if capability == "required":
+        # Mimi exposes exactly one tool in this request.
+        return "required"
+    return {"type": "function", "function": {"name": "task.create.v1"}}
 
 
 def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:

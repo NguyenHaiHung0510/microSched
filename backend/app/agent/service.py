@@ -13,7 +13,7 @@ from uuid import UUID, uuid7
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, false, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,6 +58,11 @@ class MessageCreate(BaseModel):
     client_id: str = Field(min_length=1, max_length=160)
     content: str = Field(min_length=1, max_length=12_000)
     expected_generation: int | None = Field(default=None, ge=1)
+    intent: Literal["auto", "revise_pending_preview"] = "auto"
+    expected_change_set_id: UUID | None = None
+    expected_change_set_digest: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
 
     @field_validator("content")
     @classmethod
@@ -87,6 +92,15 @@ class FeedbackCreate(BaseModel):
         if not value.strip():
             raise ValueError("comment must not be blank")
         return value
+
+    @model_validator(mode="after")
+    def bind_revision_to_pending_preview(self) -> MessageCreate:
+        target = (self.expected_change_set_id, self.expected_change_set_digest)
+        if self.intent == "revise_pending_preview" and any(item is None for item in target):
+            raise ValueError("preview revision requires id and digest")
+        if self.intent == "auto" and any(item is not None for item in target):
+            raise ValueError("preview target requires revise_pending_preview intent")
+        return self
 
 
 class ConversationCreate(BaseModel):
@@ -329,19 +343,6 @@ def _conversation_summary(
         "updated_at": row.updated_at,
         "latest_run_state": latest_run_state,
     }
-
-
-def _requests_preview_revision(content: str) -> bool:
-    normalized = " ".join(content.casefold().split())
-    return normalized.startswith(
-        (
-            "sửa preview",
-            "chỉnh preview",
-            "cập nhật preview",
-            "update preview",
-            "revise preview",
-        )
-    )
 
 
 async def _provider_history(
@@ -608,6 +609,18 @@ async def send_message(
             .with_for_update()
         )
     ).all()
+    if len(pending_previews) > 1:
+        raise _conflict("multiple_pending_previews_require_reconciliation")
+    observed_pending = pending_previews[0] if pending_previews else None
+    if payload.intent == "revise_pending_preview":
+        if observed_pending is None:
+            raise _conflict("pending_preview_missing")
+        observed_change_set, _ = observed_pending
+        if (
+            observed_change_set.id != payload.expected_change_set_id
+            or observed_change_set.digest_sha256 != payload.expected_change_set_digest
+        ):
+            raise _conflict("pending_preview_stale")
     prior_preview_operations = [
         json.loads(
             mimi_crypto.open_content(
@@ -618,7 +631,11 @@ async def send_message(
         )
         for old_change_set, _ in pending_previews
     ]
-    force_task_tool = bool(pending_previews) and _requests_preview_revision(payload.content)
+    force_task_tool = payload.intent == "revise_pending_preview"
+    observed_pending_id = observed_pending[0].id if observed_pending else None
+    observed_pending_digest = (
+        observed_pending[0].digest_sha256 if observed_pending else None
+    )
 
     now = datetime.now(UTC)
     settings = get_settings()
@@ -1009,18 +1026,55 @@ async def send_message(
     # Only a validated task proposal may replace pending authority. Re-query
     # after provider I/O because the conversation lock was released while the
     # external request ran.
-    current_pending_previews = (
-        await db.execute(
-            select(MimiChangeSet, MimiRun)
-            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
-            .where(
-                MimiRun.conversation_id == conversation.id,
-                MimiChangeSet.state == "pending",
-            )
-            .with_for_update()
+    expected_generation_after_accept = generation + 1
+    if conversation.generation != expected_generation_after_accept:
+        run.state = "halted"
+        run.error_code = "preview_frontier_changed"
+        run.completed_at = datetime.now(UTC)
+        await _append_event(db, run_id, "change_set.frontier_changed", {})
+        _add_assistant_message(
+            db,
+            conversation,
+            run_id,
+            dek,
+            "Conversation đã thay đổi trong lúc Mimi chuẩn bị preview; "
+            "preview hiện tại được giữ nguyên.",
         )
-    ).all()
-    for old_change_set, old_run in current_pending_previews:
+        await db.flush()
+        return await conversation_view(db, auth, conversation_id)
+
+    current_pending_preview: tuple[MimiChangeSet, MimiRun] | None = None
+    if observed_pending_id is not None:
+        current_pending_preview = (
+            await db.execute(
+                select(MimiChangeSet, MimiRun)
+                .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+                .where(
+                    MimiRun.conversation_id == conversation.id,
+                    MimiChangeSet.id == observed_pending_id,
+                    MimiChangeSet.digest_sha256 == observed_pending_digest,
+                    MimiChangeSet.state == "pending",
+                )
+                .with_for_update()
+            )
+        ).one_or_none()
+        if current_pending_preview is None:
+            run.state = "halted"
+            run.error_code = "preview_frontier_changed"
+            run.completed_at = datetime.now(UTC)
+            await _append_event(db, run_id, "change_set.frontier_changed", {})
+            _add_assistant_message(
+                db,
+                conversation,
+                run_id,
+                dek,
+                "Preview nền đã thay đổi; Mimi không thay thế quyết định mới hơn của bạn.",
+            )
+            await db.flush()
+            return await conversation_view(db, auth, conversation_id)
+
+    if current_pending_preview is not None:
+        old_change_set, old_run = current_pending_preview
         old_change_set.state = "stale"
         old_run.state = "halted"
         old_run.error_code = "superseded_by_validated_preview"

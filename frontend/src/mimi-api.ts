@@ -183,6 +183,7 @@ export async function streamMimiMessage(
   content: string,
   expectedGeneration: number,
   clientId: string,
+  revision: { id: string; digest: string } | null,
   onEvent: (envelope: MimiStreamEnvelope) => void,
 ): Promise<MimiConversation> {
   const response = await fetch(`/api/mimi/conversations/${conversationId}/messages/stream`, {
@@ -193,6 +194,11 @@ export async function streamMimiMessage(
       client_id: clientId,
       content,
       expected_generation: expectedGeneration,
+      intent: revision ? 'revise_pending_preview' : 'auto',
+      ...(revision ? {
+        expected_change_set_id: revision.id,
+        expected_change_set_digest: revision.digest,
+      } : {}),
     }),
   })
   return consumeMimiStream(response, onEvent)

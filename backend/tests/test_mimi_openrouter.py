@@ -26,6 +26,7 @@ def _settings(**overrides) -> Settings:
         "mimi_route_model": "vendor/model",
         "mimi_route_provider": "provider-a",
         "mimi_route_quantization": "fp8",
+        "mimi_route_forced_tool_choice": "required",
         "mimi_route_max_input_price": 0.2,
         "mimi_route_max_output_price": 0.8,
     }
@@ -90,6 +91,28 @@ def test_explicit_preview_revision_can_require_the_task_tool() -> None:
     assert [tool["function"]["name"] for tool in request["tools"]] == [
         "task.create.v1"
     ]
+
+
+def test_unqualified_route_rejects_forced_tool_before_dispatch() -> None:
+    settings = _settings(mimi_route_forced_tool_choice="none")
+    with pytest.raises(RouteContractError, match="route_forced_tool_choice_not_qualified"):
+        build_request(
+            [{"role": "user", "content": "Sửa preview"}],
+            settings,
+            force_task_tool=True,
+        )
+
+
+def test_function_qualified_route_uses_named_tool_choice() -> None:
+    request = build_request(
+        [{"role": "user", "content": "Sửa preview"}],
+        _settings(mimi_route_forced_tool_choice="function"),
+        force_task_tool=True,
+    )
+    assert request["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "task.create.v1"},
+    }
 
 
 def test_preflight_refuses_overflow_instead_of_truncating() -> None:
