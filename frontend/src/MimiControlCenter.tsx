@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Archive, ArchiveRestore, BrainCircuit, CheckCircle2, CircleAlert, CircleDot, Clock3, Database, Gauge, History, LoaderCircle, MessagesSquare, Orbit, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Plus, ReceiptText, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, TimerReset, WalletCards, Wrench } from 'lucide-react'
+import { Activity, Archive, ArchiveRestore, BrainCircuit, CheckCircle2, CircleAlert, CircleDot, Clock3, Database, Gauge, History, LoaderCircle, MessagesSquare, Orbit, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Pin, PinOff, Play, Plus, ReceiptText, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, TimerReset, WalletCards, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -87,9 +87,17 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
   const [leftOpen, setLeftOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('mimi_pinned_conversations')
+      return saved ? JSON.parse(saved) : []
+    } catch (err) {
+      void err
+      return []
+    }
+  })
   const [renameTarget, setRenameTarget] = useState<MimiConversationSummary | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
-  const [railOpen, setRailOpen] = useState(false)
   const conversations = useQuery({ queryKey: ['mimi', 'conversations', listState], queryFn: () => fetchMimiConversations(listState), ...NO_POLLING_QUERY_OPTIONS })
   const conversationItems = useMemo(() => conversations.data?.items ?? [], [conversations.data?.items])
   const filteredItems = useMemo(() => {
@@ -97,13 +105,88 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
     if (!q) return conversationItems
     return conversationItems.filter((item) => item.title.toLowerCase().includes(q))
   }, [conversationItems, searchQuery])
+  const sortedItems = useMemo(() => {
+    const pinned: MimiConversationSummary[] = []
+    const unpinned: MimiConversationSummary[] = []
+    for (const item of filteredItems) {
+      if (pinnedIds.includes(item.id)) pinned.push(item)
+      else unpinned.push(item)
+    }
+    return { pinned, unpinned }
+  }, [filteredItems, pinnedIds])
   const effectiveSelectedId = selectedId && conversationItems.some((item) => item.id === selectedId) ? selectedId : conversationItems[0]?.id ?? null
   const selected = useQuery({ queryKey: ['mimi', 'conversation', effectiveSelectedId], queryFn: () => fetchMimiConversation(effectiveSelectedId!), enabled: Boolean(effectiveSelectedId), ...NO_POLLING_QUERY_OPTIONS })
 
+  function togglePin(id: string) {
+    setPinnedIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [id, ...prev]
+      try {
+        localStorage.setItem('mimi_pinned_conversations', JSON.stringify(next))
+      } catch (err) {
+        void err
+      }
+      return next
+    })
+  }
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['mimi'] })
   const create = useMutation({ mutationFn: () => createMimiConversation(), onSuccess: (item) => { setListState('active'); setSelectedId(item.id); refresh() } })
   const rename = useMutation({ mutationFn: ({ item, title }: { item: MimiConversationSummary; title: string }) => renameMimiConversation(item, title), onSuccess: () => { setRenameTarget(null); refresh() } })
   const archive = useMutation({ mutationFn: ({ item, archived }: { item: MimiConversationSummary; archived: boolean }) => setMimiConversationArchived(item, archived), onSuccess: refresh })
+
+  function renderConversationRow(item: MimiConversationSummary, isPinned: boolean) {
+    return (
+      <div
+        key={item.id}
+        className={'group relative flex items-center justify-between rounded-lg p-2 transition-colors ' + (effectiveSelectedId === item.id ? 'border border-primary/40 bg-primary/5 font-semibold text-primary' : 'hover:bg-muted/60 text-foreground')}
+      >
+        <button
+          type="button"
+          className="min-h-9 flex-1 min-w-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          onClick={() => setSelectedId(item.id)}
+        >
+          <div className="flex items-center gap-1.5">
+            {isPinned ? <Pin className="size-3 text-primary fill-primary/30 shrink-0" aria-hidden="true" /> : null}
+            <p className="line-clamp-1 text-xs">{item.title}</p>
+          </div>
+          <div className="mt-0.5 flex items-center justify-between gap-1 text-[11px] font-normal text-muted-foreground">
+            <span>{item.latest_run_state ? mimiRunLabel(item.latest_run_state) : 'Sẵn sàng'}</span>
+            {item.archived_at ? <Archive className="size-3 text-muted-foreground" /> : null}
+          </div>
+        </button>
+        <div className="flex items-center gap-0.5 shrink-0 opacity-80 group-hover:opacity-100">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            className="h-7 w-7"
+            aria-label={isPinned ? ('Bỏ ghim ' + item.title) : ('Ghim ' + item.title)}
+            title={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'}
+            onClick={() => togglePin(item.id)}
+          >
+            {isPinned ? <PinOff className="size-3 text-primary" /> : <Pin className="size-3 text-muted-foreground" />}
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            className="h-7 w-7"
+            aria-label={'Đổi tên ' + item.title}
+            onClick={() => { setRenameTarget(item); setRenameDraft(item.title) }}
+          >
+            <Pencil className="size-3" />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            className="h-7 w-7"
+            aria-label={item.archived_at ? ('Khôi phục ' + item.title) : ('Lưu trữ ' + item.title)}
+            disabled={archive.isPending}
+            onClick={() => archive.mutate({ item, archived: !item.archived_at })}
+          >
+            {item.archived_at ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   const rail = <MimiContextRail conversation={selected.data} onOpenDomain={onOpenDomain} />
   return <div className="space-y-3">
@@ -128,10 +211,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
           variant={rightOpen ? 'selected' : 'outline'}
           size="sm"
           className="gap-1.5 text-xs"
-          onClick={() => {
-            setRightOpen(!rightOpen)
-            setRailOpen(!rightOpen)
-          }}
+          onClick={() => setRightOpen(!rightOpen)}
           title={rightOpen ? 'Đóng workspace rail' : 'Mở workspace rail (Task, Lịch, Notes)'}
         >
           {rightOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
@@ -139,9 +219,9 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
         </Button>
       </div>
     </div>
-    <div className="flex flex-col lg:flex-row min-w-0 items-start gap-4 w-full">
+    <div className="flex flex-col lg:flex-row min-w-0 items-start gap-4 w-full h-[calc(100vh-14rem)] min-h-[32rem]">
       {leftOpen ? (
-        <Card className="w-full lg:w-72 shrink-0 content-start shadow-xs">
+        <Card className="w-full lg:w-72 shrink-0 content-start shadow-xs h-full flex flex-col">
           <CardHeader className="p-3.5 pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-bold">Cuộc trò chuyện</CardTitle>
@@ -155,7 +235,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-2.5 p-3.5 pt-0">
+          <CardContent className="space-y-2.5 p-3.5 pt-0 flex-1 min-h-0 flex flex-col">
             <Button className="w-full justify-start gap-2 rounded-xl text-xs font-semibold shadow-xs" disabled={create.isPending} onClick={() => create.mutate()}>
               {create.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none size-4" /> : <Plus className="size-4" />}
               Cuộc trò chuyện mới
@@ -179,53 +259,32 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
             </div>
             {conversations.isPending ? <p role="status" className="py-4 text-center text-xs text-muted-foreground">Đang tải hội thoại…</p> : null}
             {conversations.isError ? <p role="alert" className="text-xs text-bad">Không tải được danh sách hội thoại.</p> : null}
-            <div className="max-h-[calc(100vh-22rem)] space-y-1 overflow-y-auto pr-0.5">
-              {filteredItems.map((item) => (
-                <div
-                  key={item.id}
-                  className={'group relative flex items-center justify-between rounded-lg p-2 transition-colors ' + (effectiveSelectedId === item.id ? 'border border-primary/40 bg-primary/5 font-semibold text-primary' : 'hover:bg-muted/60 text-foreground')}
-                >
-                  <button
-                    type="button"
-                    className="min-h-9 flex-1 min-w-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    onClick={() => setSelectedId(item.id)}
-                  >
-                    <p className="line-clamp-1 text-xs">{item.title}</p>
-                    <div className="mt-0.5 flex items-center justify-between gap-1 text-[11px] font-normal text-muted-foreground">
-                      <span>{item.latest_run_state ? mimiRunLabel(item.latest_run_state) : 'Sẵn sàng'}</span>
-                      {item.archived_at ? <Archive className="size-3 text-muted-foreground" /> : null}
-                    </div>
-                  </button>
-                  <div className="flex items-center gap-0.5 shrink-0 opacity-80 group-hover:opacity-100">
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      aria-label={'Đổi tên ' + item.title}
-                      onClick={() => { setRenameTarget(item); setRenameDraft(item.title) }}
-                    >
-                      <Pencil className="size-3" />
-                    </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      aria-label={item.archived_at ? ('Khôi phục ' + item.title) : ('Lưu trữ ' + item.title)}
-                      disabled={archive.isPending}
-                      onClick={() => archive.mutate({ item, archived: !item.archived_at })}
-                    >
-                      {item.archived_at ? <ArchiveRestore className="size-3" /> : <Archive className="size-3" />}
-                    </Button>
-                  </div>
+            <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-0.5">
+              {sortedItems.pinned.length > 0 ? (
+                <div className="space-y-1">
+                  <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                    <Pin className="size-3" />Đã ghim
+                  </p>
+                  {sortedItems.pinned.map((item) => renderConversationRow(item, true))}
                 </div>
-              ))}
+              ) : null}
+              {sortedItems.unpinned.length > 0 ? (
+                <div className="space-y-1">
+                  {sortedItems.pinned.length > 0 ? (
+                    <p className="px-1 pt-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Gần đây
+                    </p>
+                  ) : null}
+                  {sortedItems.unpinned.map((item) => renderConversationRow(item, false))}
+                </div>
+              ) : null}
             </div>
           </CardContent>
         </Card>
       ) : null}
-      <div className="flex-1 min-w-0 flex justify-center">
-        <Card className="w-full max-w-4xl min-w-0 shadow-sm">
-          <CardContent className="p-4 sm:p-6">
+      <div className="flex-1 min-w-0 flex justify-center h-full">
+        <Card className="w-full max-w-4xl min-w-0 shadow-sm h-full flex flex-col">
+          <CardContent className="p-4 sm:p-5 flex-1 min-h-0 flex flex-col">
             <MimiScreen
               onOpenTasks={() => onOpenDomain('tasks')}
               variant="workspace"
@@ -235,9 +294,8 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
           </CardContent>
         </Card>
       </div>
-      {rightOpen ? <div className="hidden min-w-0 xl:block w-80 shrink-0">{rail}</div> : null}
+      {rightOpen ? <div className="w-full lg:w-80 shrink-0 h-full overflow-y-auto">{rail}</div> : null}
     </div>
-    <Dialog open={railOpen} onOpenChange={setRailOpen}><DialogContent className="max-h-[90dvh] content-start overflow-y-auto sm:max-w-lg"><DialogHeader><DialogTitle>Workspace rail</DialogTitle><DialogDescription>Xem nhanh microSched, preview và run mà không rời conversation.</DialogDescription></DialogHeader>{rail}</DialogContent></Dialog>
     <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}><DialogContent><DialogHeader><DialogTitle>Đổi tên hội thoại</DialogTitle><DialogDescription>Tên bạn đặt sẽ không bị auto-title ghi đè.</DialogDescription></DialogHeader><div className="space-y-2"><label htmlFor="mimi-conversation-title" className="text-sm font-semibold">Tên hội thoại</label><Input id="mimi-conversation-title" value={renameDraft} maxLength={80} onChange={(event) => setRenameDraft(event.target.value)} /><p className="text-right text-xs text-muted-foreground">{renameDraft.length}/80</p></div><DialogFooter><DialogClose asChild><Button variant="outline">Huỷ</Button></DialogClose><Button disabled={!renameDraft.trim() || rename.isPending || !renameTarget} onClick={() => { if (renameTarget) rename.mutate({ item: renameTarget, title: renameDraft }) }}>{rename.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : null}Lưu tên</Button></DialogFooter></DialogContent></Dialog>
   </div>
 }

@@ -356,7 +356,7 @@ export function MimiScreen({
     : (latestRun?.state === 'waiting_confirmation' ? 'ready' : 'idle')
 
   return (
-    <section className="min-w-0 space-y-4" aria-labelledby={`mimi-title-${variant}`}>
+    <section className="min-w-0 flex flex-col h-full space-y-4" aria-labelledby={`mimi-title-${variant}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <MimiAvatar size="md" state={mimiState} showGlow={runPending} />
@@ -435,8 +435,8 @@ export function MimiScreen({
       ) : null}
 
       <div className={variant === 'dock'
-        ? 'max-h-[42dvh] min-h-56 space-y-3 overflow-y-auto rounded-xl bg-muted/50 p-3 xl:max-h-[calc(100vh-28rem)] xl:min-h-72'
-        : 'max-h-[32rem] min-h-64 space-y-3 overflow-y-auto rounded-xl bg-muted/50 p-3'} data-testid="mimi-messages">
+        ? 'max-h-[calc(100vh-18rem)] min-h-72 space-y-3 overflow-y-auto rounded-xl bg-muted/40 p-3'
+        : 'flex-1 min-h-[22rem] space-y-3 overflow-y-auto rounded-xl bg-muted/30 p-4'} data-testid="mimi-messages">
         {current.messages.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Hãy nói Task bạn muốn tạo.</p>
         ) : current.messages.map((message) => (
@@ -507,37 +507,45 @@ export function MimiScreen({
         </Card>
       ) : null}
 
-      <form className="space-y-2" onSubmit={submitMessage}>
-        <label htmlFor="mimi-message" className="text-sm font-semibold">Nhắn Mimi</label>
-        <Textarea
-          id="mimi-message"
-          data-testid="mimi-input"
-          value={draft}
-          maxLength={12_000}
-          placeholder="Ví dụ: Tạo task chuẩn bị demo vào thứ Sáu (Nhấn Enter để gửi, Shift+Enter để xuống dòng)"
-          disabled={runPending}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.altKey) {
-              if ((event.nativeEvent as KeyboardEvent).isComposing) return
-              event.preventDefault()
-              submitMessage(event)
-            }
-          }}
-        />
-        {send.isError ? <p role="alert" className="text-sm text-bad">{errorMessage(send.error)}</p> : null}
-        <div className="flex items-center justify-between gap-3">
-          <p aria-live="polite" className="text-xs text-muted-foreground">
-            {runPending ? 'Mimi đang làm việc…' : 'Không có thay đổi nào được ghi khi chưa xác nhận.'}
-          </p>
-          <Button type="submit" className="min-h-11" disabled={!draft.trim() || runPending || !online}>
-            {runPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Send />}
-            Gửi
-          </Button>
+      <form onSubmit={submitMessage} className="mt-2 shrink-0">
+        <div className="relative flex flex-col rounded-2xl border border-input bg-card shadow-xs focus-within:ring-2 focus-within:ring-ring focus-within:border-primary transition-all p-2.5">
+          <Textarea
+            id="mimi-message"
+            data-testid="mimi-input"
+            aria-label="Nhắn Mimi"
+            value={draft}
+            maxLength={12_000}
+            placeholder="Nhắn Mimi… (Nhấn Enter để gửi, Shift+Enter để xuống dòng)"
+            disabled={runPending}
+            className="min-h-12 w-full resize-none border-none bg-transparent p-1 text-sm shadow-none focus-visible:ring-0 focus-visible:outline-none"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.altKey) {
+                if ((event.nativeEvent as KeyboardEvent).isComposing) return
+                event.preventDefault()
+                submitMessage(event)
+              }
+            }}
+          />
+          <div className="mt-1 flex items-center justify-between pt-1 text-xs text-muted-foreground border-t border-muted/50">
+            <span aria-live="polite" className="truncate pr-2">
+              {runPending ? 'Mimi đang làm việc…' : 'Chưa xác nhận thì chưa ghi thay đổi.'}
+            </span>
+            <Button
+              type="submit"
+              size="sm"
+              className="h-8 gap-1.5 rounded-xl px-3 font-semibold shrink-0"
+              disabled={!draft.trim() || runPending || !online}
+            >
+              {runPending ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Send className="size-3.5" />}
+              <span>Gửi</span>
+            </Button>
+          </div>
         </div>
+        {send.isError ? <p role="alert" className="mt-1 text-xs text-bad">{errorMessage(send.error)}</p> : null}
       </form>
 
-      {current.events.length ? (
+      {variant === 'dock' && current.events.length ? (
         <details className="rounded-lg border p-3 text-sm">
           <summary className="cursor-pointer font-semibold">Chi tiết kỹ thuật ({current.events.length})</summary>
           <ol className="mt-3 space-y-1 text-xs text-muted-foreground">
