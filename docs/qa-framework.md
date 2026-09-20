@@ -4,6 +4,10 @@
 > Đọc kèm `docs/ui-brief.md` §6 (luật UI cứng). **File này không lặp lại luật đó** — nó là
 > cách kiểm xem luật đó có còn được giữ không, cộng với những trục mà luật UI không nói tới.
 > Tự-chứa: đọc được ở phiên 0-context, dùng thẳng làm nguồn cho prompt giao T3/T2.
+> Với surface gọi AI agent/live model, đọc thêm
+> [`docs/qa-agent-framework.md`](qa-agent-framework.md): deterministic/probabilistic evidence,
+> SSE/recovery, frozen confirmation, route card, budget và isolation. Framework này vẫn điều khiển
+> UI/UX/device QA; companion không thay thế các trục bên dưới.
 
 ## 1. Vì sao có file này
 
