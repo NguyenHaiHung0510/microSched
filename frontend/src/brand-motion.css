@@ -1,0 +1,218 @@
+/* microSched · Mimi · Orbit motion primitives
+ * Motion communicates state; it never carries state by itself.
+ */
+
+:root {
+  --brand-motion-breathe-duration: 4.2s;
+  --brand-motion-orbit-duration: 8s;
+  --brand-motion-pulse-duration: 2.4s;
+  --brand-motion-ready-duration: 760ms;
+}
+
+/* 2.2s inhale · 0.4s hold · 1.6s exhale. */
+@keyframes brand-organic-breathe {
+  0% {
+    scale: 1;
+    filter: brightness(1);
+    animation-timing-function: cubic-bezier(0.36, 0.02, 0.2, 1);
+  }
+  52.381% {
+    scale: 1.025;
+    filter: brightness(1.035);
+    animation-timing-function: linear;
+  }
+  61.905% {
+    scale: 1.025;
+    filter: brightness(1.035);
+    animation-timing-function: cubic-bezier(0.42, 0, 0.58, 1);
+  }
+  100% {
+    scale: 1;
+    filter: brightness(1);
+  }
+}
+
+.brand-breathe,
+.mimi-breathe,
+.orbit-breathe,
+[data-brand-motion="breathe"] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-organic-breathe var(--brand-motion-breathe-duration) infinite;
+  will-change: scale, filter;
+}
+
+/* The ring rotates steadily; depth comes from independent satellite light and scale. */
+@keyframes brand-orbit-turn {
+  to { rotate: 1turn; }
+}
+
+@keyframes brand-orbit-depth {
+  0%, 100% {
+    scale: 0.72;
+    opacity: 0.48;
+    filter: brightness(0.72) saturate(0.82);
+    animation-timing-function: cubic-bezier(0.45, 0, 0.75, 0.55);
+  }
+  24% {
+    scale: 0.9;
+    opacity: 0.72;
+    filter: brightness(0.94) saturate(0.96);
+    animation-timing-function: cubic-bezier(0.2, 0.7, 0.28, 1);
+  }
+  50% {
+    scale: 1.16;
+    opacity: 1;
+    filter: brightness(1.34) saturate(1.12) drop-shadow(0 0 3px rgb(207 163 72 / 0.5));
+    animation-timing-function: cubic-bezier(0.4, 0, 0.72, 0.35);
+  }
+  76% {
+    scale: 0.9;
+    opacity: 0.72;
+    filter: brightness(0.94) saturate(0.96);
+  }
+}
+
+.orbit-satellites,
+.brand-orbit-rotor,
+[data-brand-motion="orbit"] {
+  transform-box: view-box;
+  transform-origin: center;
+  animation: brand-orbit-turn var(--brand-motion-orbit-duration) linear infinite;
+  will-change: rotate;
+}
+
+.orbit-satellite,
+.brand-orbit-satellite {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-orbit-depth var(--brand-motion-orbit-duration) linear infinite;
+  will-change: scale, opacity, filter;
+}
+
+.orbit-satellite--2,
+.brand-orbit-satellite:nth-child(2) {
+  animation-delay: calc(var(--brand-motion-orbit-duration) * -0.3333);
+}
+
+.orbit-satellite--3,
+.brand-orbit-satellite:nth-child(3) {
+  animation-delay: calc(var(--brand-motion-orbit-duration) * -0.6667);
+}
+
+/* Heartbeat travels outward: quick arrival, long soft release, full rest between beats. */
+@keyframes brand-pulse-glow {
+  0%, 16%, 100% {
+    scale: 0.82;
+    opacity: 0;
+    filter: drop-shadow(0 0 0 rgb(207 163 72 / 0));
+  }
+  28% {
+    scale: 1;
+    opacity: 0.92;
+    filter: drop-shadow(0 0 7px rgb(207 163 72 / 0.72));
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  58% {
+    scale: 1.32;
+    opacity: 0.24;
+    filter: drop-shadow(0 0 12px rgb(207 163 72 / 0.32));
+  }
+  76% {
+    scale: 1.42;
+    opacity: 0;
+    filter: drop-shadow(0 0 0 rgb(207 163 72 / 0));
+  }
+}
+
+.brand-pulse-glow,
+.mimi-thinking .mimi-core-glow,
+[data-state="thinking"] .mimi-core-glow,
+[data-state="pulse"] .orbit-pulse-wave {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-pulse-glow var(--brand-motion-pulse-duration) infinite;
+  will-change: scale, opacity, filter;
+}
+
+[data-state="pulse"] .orbit-pulse-wave--outer {
+  animation-delay: 140ms;
+}
+
+/* One soft overshoot and a small settling echo for Ready / Complete. */
+@keyframes brand-ready-bounce {
+  0% {
+    translate: 0 5px;
+    scale: 0.82;
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.22, 1.34, 0.36, 1);
+  }
+  55% {
+    translate: 0 -2px;
+    scale: 1.1;
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.34, 1.16, 0.64, 1);
+  }
+  76% {
+    translate: 0 1px;
+    scale: 0.97;
+  }
+  100% {
+    translate: 0 0;
+    scale: 1;
+    opacity: 1;
+  }
+}
+
+.brand-ready-badge,
+.mimi-ready .mimi-badge,
+[data-state="ready"] .mimi-badge,
+[data-state="complete"] .orbit-bloom,
+[data-state="complete"] .orbit-complete {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-ready-bounce var(--brand-motion-ready-duration) both;
+  will-change: translate, scale, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-breathe,
+  .mimi-breathe,
+  .orbit-breathe,
+  [data-brand-motion="breathe"],
+  .orbit-satellites,
+  .brand-orbit-rotor,
+  [data-brand-motion="orbit"],
+  .orbit-satellite,
+  .brand-orbit-satellite,
+  .brand-pulse-glow,
+  .mimi-thinking .mimi-core-glow,
+  [data-state="thinking"] .mimi-core-glow,
+  [data-state="pulse"] .orbit-pulse-wave,
+  .brand-ready-badge,
+  .mimi-ready .mimi-badge,
+  [data-state="ready"] .mimi-badge,
+  [data-state="complete"] .orbit-bloom,
+  [data-state="complete"] .orbit-complete {
+    animation: none !important;
+    translate: none;
+    rotate: none;
+    scale: 1;
+    filter: none;
+    will-change: auto;
+  }
+
+  .orbit-satellite,
+  .brand-orbit-satellite { opacity: 0.82; }
+
+  .brand-pulse-glow,
+  .mimi-thinking .mimi-core-glow,
+  [data-state="thinking"] .mimi-core-glow,
+  [data-state="pulse"] .orbit-pulse-wave { opacity: 0.38; }
+
+  .brand-ready-badge,
+  .mimi-ready .mimi-badge,
+  [data-state="ready"] .mimi-badge,
+  [data-state="complete"] .orbit-bloom,
+  [data-state="complete"] .orbit-complete { opacity: 1; }
+}
