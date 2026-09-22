@@ -44,11 +44,11 @@ Date: 2026-09-22
 - **D4 approved:** progressive-disclosure context UX, receipt-backed model/effort
   and context status, advanced inspector, and visible recoverable compaction
   checkpoints. Exact thresholds remain measured/route-specific.
-- **D5 remains open after correction:** Owner rejects a blanket ban on provider
+- **D5 was reopened after correction, then approved below:** Owner rejects a blanket ban on provider
   conversation/response cache and expects production acceptance eval to reflect
   the actual daily STANDARD routing/cache/fallback topology. T1 must present a
   layered cache policy and production-faithful plus controlled-diagnostic eval
-  lanes for approval.
+  lanes; the resulting policy is approved in the follow-up section below.
 - **Two-surface preview direction approved:** side-chat is a quick, compact chat
   surface balancing power and space; Mimi workspace is the detailed inspection
   surface. Both must project the same canonical run/preview state. Workspace uses
@@ -59,11 +59,45 @@ Date: 2026-09-22
   Tasks), explicit bulk preview, reasoning-versus-server authority, recovery and
   QA before T1 presents the final recommendation.
 
+## Owner follow-up decisions and research constraints — 2026-09-22
+
+- **D5 approved by “còn lại đồng ý”:** use layered cache policy and two evidence
+  lanes. Daily STANDARD acceptance must reproduce the approved daily adaptive
+  topology; controlled exact-pin/no-fallback/cache-declared lanes diagnose and
+  compare rather than replace production-faithful acceptance. Exact providers,
+  privacy promise and route allowlist remain a later route-card decision.
+- **D6 base direction approved; revised generalization needs review:** query,
+  selection snapshot, server materialization, whole/group atomic execution and no
+  silent partial commit are accepted as the base. Owner requested deeper research
+  before freezing the abstraction beyond the “100 Task rename” example.
+- **D7 approved:** use the durable bounded state machine/worker in the current
+  monolith, no external workflow engine now; side-chat and workspace project one
+  canonical run/preview with different disclosure; expose application events and
+  receipts, not raw hidden reasoning. The new storage-tier question refines where
+  state/cache lives and is tracked separately as D9.
+- **Execution-mode research added:** assess a NORMAL mode where every write preview
+  is confirmed and an AUTO mode with bounded automatic writes. Do not assume a
+  binary global toggle or treat provider automatic tool choice as authority.
+- **Hard-case generalization rule:** a difficult example is a probe into the real
+  product need, not permission to optimize only that example. Research must derive
+  the broader workflow, present the strongest counterargument and nearest simpler
+  alternative, then let Owner choose. For the “rename 100 Tasks” probe, include
+  filter/facet/cluster/rank/classify, strategy per group, explicit coverage and
+  grouped preview/execution.
+- **Storage-tier research added:** inventory current Mimi use of RAM, Fly rootfs,
+  browser storage and Neon; verify Fly lifecycle/capacity instead of assuming “8GB
+  Docker”; recommend how to use RAM → disposable local storage → durable DB without
+  turning ephemeral bytes into canonical state.
+- Side-chat remains the compact projection; workspace remains the detailed,
+  progressively disclosed review surface for these workflows.
+
 ## Explicitly not yet approved
 
-- No final system prompt. Context architecture D1–D4 is approved at direction
-  level and the two-surface constraint is approved, but implementation detail and
-  D5–D7 routing/cache/tool/loop policy remain open.
+- No final system prompt. Context architecture D1–D5 is approved at direction
+  level and the two-surface constraint is approved, but the generalized D6 tool
+  workflow, D8 execution modes and D9 storage tiers need Owner decisions after the
+  completed research synthesis. D7 loop direction is approved; exact schemas and
+  measured limits remain implementation/eval details.
 - No exact “small versus large” threshold.
 - No live eval matrix, token budget, model list, repetitions, judge, or scoring formula.
 - No runtime implementation, route adoption, deployment, or production enablement.

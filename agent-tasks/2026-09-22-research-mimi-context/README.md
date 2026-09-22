@@ -1,6 +1,6 @@
 # Mimi context research — 2026-09-22
 
-Status: **EVIDENCE COLLECTED — OWNER WORKSHOP PENDING — EVAL NOT AUTHORIZED**
+Status: **D1–D5 + D7 APPROVED — REVISED D6 + D8–D9 READY FOR OWNER — EVAL NOT AUTHORIZED**
 
 This folder is the canonical evidence workspace for research into Mimi's system policy,
 context assembly, tool/harness behavior, and context-control UX.
@@ -27,7 +27,9 @@ Mimi may need an iterative agent loop rather than a single terminal call:
 - explicit small and clear action requests may proceed directly to preview;
 - broad, ambiguous, multi-record, or explicitly requested planning work may produce a draft
   before any executable preview;
-- every write still requires the approved preview/confirmation boundary.
+- current NORMAL mode keeps the preview/confirmation boundary for every write;
+- a possible future AUTO mode is a separate scoped-authorization problem, not a provider
+  `tool_choice=auto` flag and not an implicit exception to confirmation.
 
 Exact thresholds and policies remain open until research and Owner review.
 
@@ -45,11 +47,14 @@ Exact thresholds and policies remain open until research and Owner review.
 | B07 | `08-provider-portability-cache-economics.md` | T3 Luna | COLLECTED |
 | B08 | `09-ui-ux-context-controls.md` | T3 Gemini 3.8 Flash | RAW PROPOSAL; SEE B11 |
 | B09 | `10-eval-design-draft.md` | T3 Gemini 3.8 Flash | DRAFT ONLY; SEE B11 |
-| B10 | `11-owner-workshop-and-t1-synthesis.md` | T1 | D1–D4 APPROVED; D5–D7 READY FOR OWNER |
+| B10 | `11-owner-workshop-and-t1-synthesis.md` | T1 | D1–D5 + D7 APPROVED; REVISED D6 + D8–D9 READY |
 | B11 | `12-independent-evidence-critique.md` | T3 Luna | COLLECTED |
 | B12 | `13-tool-granularity-and-bulk-operations.md` | T3 Luna | COLLECTED |
 | B13 | `14-current-tool-surface-and-bulk-gap.md` | T3 Luna | COLLECTED |
 | B14 | `15-loop-engine-and-harness.md` | T3 Luna | COLLECTED |
+| B15 | `16-execution-modes-normal-auto.md` | T3 Luna + T1 | SYNTHESIZED; OWNER DECISION OPEN |
+| B16 | `17-generalized-bulk-workflow.md` | T3 Luna + T1 | SYNTHESIZED; OWNER DECISION OPEN |
+| B17 | `18-storage-tiering-and-recovery.md` | T3 Luna + T1 | SYNTHESIZED; OWNER DECISION OPEN |
 
 ## Required report shape
 

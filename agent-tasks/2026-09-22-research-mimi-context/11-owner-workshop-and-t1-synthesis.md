@@ -1,10 +1,12 @@
 # B10 — T1 synthesis and Owner workshop packet
 
-Status: **D1–D4 OWNER-APPROVED — D5–D7 READY FOR OWNER — EVAL NOT AUTHORIZED**
+Status: **D1–D5 + D7 OWNER-APPROVED — REVISED D6 + D8–D9 READY — EVAL NOT AUTHORIZED**
 
 Date: 2026-09-22. Evidence base: B00–B09, independent critique B11, and
 tool/bulk/loop research B12–B14.
 Current code snapshot: `a4c7e8152bc83a07451eedbf8c1ec8f9de0b3ddf`.
+Additional evidence: execution modes B15, generalized workflow B16 and storage
+tiering B17.
 
 This packet does not select a final prompt, route, model, threshold or eval budget.
 It separates facts from proposals so T1 and Owner can close product behavior before
@@ -230,15 +232,12 @@ capability evidence and representative daily-route evidence.
 
 ### 7.3 Remaining Owner decisions
 
-- **D5-A:** daily STANDARD route: one pinned provider, or an adaptive allowlist with
-  sticky session and bounded fallback? T1 recommends adaptive allowlist only after
-  each endpoint independently passes privacy, tool/parameter and uptime gates.
-- **D5-B:** approve the layered cache defaults above: prompt cache eligible;
-  provider state optional; response cache selective and initially off for semantic
-  repetitions plus preview/mutation turns?
-- **D5-C:** PRIVATE promise: ordinary provider ZDR/no training, or stricter no
-  persistent provider conversation/explicit cache state? Both can still permit a
-  documented in-memory ZDR-compatible prompt cache.
+**OWNER-APPROVED 2026-09-22 by “còn lại đồng ý”:** layered cache policy and both
+evidence lanes are accepted. The daily STANDARD topology is adaptive only among
+individually eligible endpoints, with sticky session and bounded/visible fallback;
+Lane P reproduces that topology. Lane C remains exact-pin/no-silent-fallback with
+declared cache cohorts. Exact provider list, model/effort, privacy promise and route
+cards remain a separate later approval—not implicit approval of any endpoint.
 
 ## 8. Decision D6 — tool granularity and bulk operations
 
@@ -251,9 +250,12 @@ model tool. Current HTTP API can list a page of Tasks, but rename/update remains
 Tasks in one run; a row-level tool design would multiply latency, context and race
 surface.
 
-### 8.2 T1 recommendation — query, snapshot, transform, preview
+### 8.2 T1 recommendation — explicit fast path plus generalized workflow
 
-Use a small set of workflow-shaped tools rather than mirroring every CRUD endpoint:
+Use a small set of workflow-shaped tools rather than mirroring every CRUD endpoint.
+The original transform/mapping proposal is retained as a mutation-leaf design, but
+B16 shows that it does not cover inspect → facet/cluster/rank/classify → strategy
+comparison → draft → grouped heterogeneous changes. The revised design is:
 
 1. **Bounded query/list:** typed filter/range/sort/projection/detail + opaque cursor;
    return high-signal rows, aggregates, source versions, completeness/omission and
@@ -262,14 +264,20 @@ Use a small set of workflow-shaped tools rather than mirroring every CRUD endpoi
    scoped, expiring selection handle with exact visible IDs/source versions,
    query/projection hash, frontier, sensitivity and completeness. The handle is
    provenance, not write authority.
-3. **Typed transform or bounded mapping:** for deterministic changes such as
+3. **Plan candidate + strategic draft:** model may propose evidence-backed groups,
+   coverage, strategy options and uncertainty. Server validates membership,
+   completeness and allowlisted strategy kinds. The user-facing artifact is still
+   the ordinary conversational draft; it is not executable.
+4. **Typed transform or bounded mapping leaves:** for deterministic changes such as
    prefix/suffix/whitespace/template normalization, model proposes an allowlisted
    declarative rule. For heterogeneous semantic renames, it can propose per-ID
    mappings in bounded pages/checkpoints. No executable Python/JS/SQL/regex.
-4. **Server materialization:** server evaluates the proposal against the snapshot,
+5. **Internal WorkflowPlan + server materialization:** after Owner direction,
+   server builds a hierarchical typed group/strategy/dependency plan, evaluates it
+   against fresh source state,
    validates every result and builds exact before→after operations with expected
    versions, conflicts, no-ops, omissions, groups, inverse metadata and digests.
-5. **Frozen preview:** Owner reviews the materialized result; confirmation binds the
+6. **Frozen preview:** Owner reviews the materialized result; confirmation binds the
    exact top-level/group digest. Model text or selection handle cannot execute it.
 
 This reduces model/tool round trips without pretending the underlying 100 row
@@ -289,13 +297,18 @@ separate concepts.
 
 ### 8.4 Remaining D6 decisions
 
-- **D6-A:** approve query → selection snapshot → typed transform/mapping → server-
-  materialized frozen preview as the default bulk architecture?
-- **D6-B:** approve whole-batch atomic when measured-safe, deterministic group
+- **D6-A:** approve a dual path: explicit operation fast path plus query/aggregate
+  → selection snapshot → plan candidate/draft → approved direction → server-
+  materialized frozen preview for discovery/grouping workflows?
+- **D6-B:** approve typed transform and bounded ID→patch mapping as mutation leaves
+  within a typed hierarchical WorkflowPlan, not as the entire architecture; no
+  arbitrary executable DSL?
+- **D6-C:** approve whole-batch atomic when measured-safe, deterministic group
   atomic otherwise, and no silent per-row partial execution initially?
-- **D6-C:** first allowlisted transforms: T1 recommends title prefix/suffix,
-  whitespace/case normalization and approved templates; schedule/status or private
-  bulk changes remain separate capability packages.
+- **D6-D:** first vertical slice: Task query/aggregate/grouping plus title
+  prefix/suffix/whitespace/case normalization and approved templates; broader
+  semantic mappings, schedule/status/private and cross-domain plans remain later
+  capability packages?
 
 ## 9. Decision D7 — loop engine, preview and two surfaces
 
@@ -349,19 +362,68 @@ the work stopped. Crash after commit recovers from receipt; unknown provider res
 reconciles before retry; interrupted compaction preserves the previous active
 checkpoint. UI shows truthful phases and elapsed time, never invented percentages.
 
-### 9.4 Remaining D7 decisions
+### 9.4 D7 disposition
 
-- **D7-A:** approve the DB-backed bounded run state machine in the current monolith,
-  with no external workflow engine for this package?
-- **D7-B:** approve the side-chat compact/workspace detailed projection contract;
-  bulk previews require workspace review whenever material rows/conflicts are
-  collapsed in side-chat?
-- **D7-C:** approve application events/progress without raw hidden reasoning, with
-  detailed context/tool/receipt information progressively disclosed in workspace?
+**OWNER-APPROVED 2026-09-22 by “còn lại đồng ý”:** DB-backed bounded run state
+machine in the current monolith; no external workflow engine now; one canonical
+run/preview projected compactly in side-chat and in detail in workspace; application
+events/context/tool/receipt disclosure without raw hidden reasoning. B17/D9 refines
+storage tiers without reopening this durable-authority decision.
 
-## 10. Decision D8 — first eval approval packet, not execution
+## 10. Decision D8 — NORMAL and scoped automatic execution
 
-After D1–D7, T1 will submit a separate versioned approval packet containing:
+B15 establishes that provider automatic tool choice is not write authority. T1
+recommends:
+
+- NORMAL is the only next-package write mode: autonomous bounded reads, reasoning,
+  draft and preview preparation; exact preview confirmation before commit.
+- Do not expose decorative `AUTO-READ/AUTO-PREPARE` modes; that is ordinary agent
+  behavior and has no write side effect.
+- A future AUTO-write is an expiring, revocable per-operation grant bound to fields,
+  selection/sensitivity, row/group/cumulative risk budgets, route policy and proven
+  reversibility. It is neither a global nor per-domain toggle.
+- No pilot until one operation proves CAS, idempotency, atomic receipt,
+  reconciliation, inverse and revocation/cancel races. PRIVATE and external or
+  irreversible actions stay confirmation-required by default.
+
+### 10.1 Remaining D8 decisions
+
+- **D8-A:** approve NORMAL as the only write mode in the next package?
+- **D8-B:** approve future AUTO as scoped per-operation grants, not one global/
+  per-domain mode?
+- **D8-C:** approve the proof gates and default exclusions above before any pilot?
+
+## 11. Decision D9 — RAM, ephemeral rootfs and Neon
+
+B17 finds that current Mimi is already effectively RAM + Neon. Fly rootfs is not a
+configured Mimi tier; exact “8GB Docker” capacity is unverified. Official Fly docs
+classify normal rootfs as ephemeral/rebuildable and performance-limited.
+
+T1 recommends:
+
+- RAM for bounded live working sets and process supervision only;
+- Neon for canonical transcript, run/tool/provider/checkpoint, selection/plan,
+  frozen change/approval/grant, receipt/idempotency/recovery and bounded evidence;
+- Fly rootfs only for typed, bounded, rebuildable scratch/cache classes with hash,
+  sensitivity rules, quota/TTL/startup cleanup and a loss-safe fallback—after
+  measurement shows value;
+- future large durable attachments/evidence use encrypted object storage plus Neon
+  metadata, not rootfs as the only copy;
+- no Fly Volume or generic disk cache now. Cold-start recovery/startup sweep and
+  Neon idle/wake measurement are D7 acceptance gates regardless of disk cache.
+
+### 11.1 Remaining D9 decisions
+
+- **D9-A:** approve Neon canonical, RAM/rootfs/provider caches discardable?
+- **D9-B:** approve measure-first and no Fly Volume/generic rootfs cache now?
+- **D9-C:** approve encrypted object storage only when large durable artifacts
+  actually exceed measured Neon bounds?
+- **D9-D:** approve cold-start/stale-run recovery and Neon idle/wake as mandatory
+  acceptance evidence?
+
+## 12. Decision D10 — first eval approval packet, not execution
+
+After D1–D9, T1 will submit a separate versioned approval packet containing:
 
 - exact Git SHA; policy/context-builder/tool-schema/fixture/harness hashes;
 - exact model + effort + endpoint/provider route card and parameters;
@@ -380,7 +442,7 @@ The first approved run should be a small synthetic route-capability/behavior pil
 Heavy MIDEX/model comparison, judge calibration and long-context stress are later
 lanes, not prerequisites forced into the first experiment.
 
-## 11. Decisions deliberately deferred
+## 13. Decisions deliberately deferred
 
 - exact system-prompt wording and final policy hash;
 - exact context/reserve/tool/latency thresholds;
@@ -391,10 +453,10 @@ lanes, not prerequisites forced into the first experiment.
 - eval model list, repetitions, judge, token cap and scoring formula;
 - first P2 domain slice.
 
-## 12. Workshop completion rule
+## 14. Workshop completion rule
 
-B10 becomes `OWNER WORKSHOP COMPLETE` after Owner decisions on D5–D7 and any
-concrete example corrections. D1–D4 and the two-surface direction are already
+B10 becomes `OWNER WORKSHOP COMPLETE` after Owner decisions on revised D6 and
+D8–D9 plus any concrete example corrections. D1–D5, D7 and the two-surface direction are already
 approved. T1 may then draft the final context/
 system-policy package and the separate eval approval packet. No runtime edit,
 live route, key use, dogfood, deployment or P2 work is authorized by this packet.
