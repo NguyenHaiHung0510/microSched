@@ -1,7 +1,7 @@
 # B16 — Generalized bulk workflow: query, classify, plan, materialize
 
 Date: 2026-09-22
-Status: **T1 SYNTHESIS — OWNER DECISION REQUIRED — NOT IMPLEMENTED**
+Status: **OWNER-APPROVED revised D6 — NOT IMPLEMENTED**
 
 Scope: generalize beyond the example “rename 100 Tasks” to the real need: inspect
 many records, filter/facet/cluster/rank/classify them, compare strategies, obtain
@@ -272,7 +272,7 @@ approved here.
 
 ## 9. Owner decision D6 (revised)
 
-T1 recommends Owner approve:
+**OWNER-APPROVED 2026-09-22:**
 
 - **D6-A:** dual path: explicit operation fast path plus generalized bounded
   query/aggregate → selection → plan candidate/draft → approved direction →

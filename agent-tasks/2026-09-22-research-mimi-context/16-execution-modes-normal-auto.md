@@ -1,7 +1,7 @@
 # B15 — Execution modes: NORMAL và scoped AUTO
 
 Date: 2026-09-22
-Status: **T1 SYNTHESIS — OWNER DECISION REQUIRED — NOT IMPLEMENTED**
+Status: **OWNER-APPROVED D8 — NOT IMPLEMENTED**
 
 Scope: whether Mimi should always require confirmation of a frozen preview or also
 support an automatic-write mode. This report does not authorize a runtime mode,
@@ -196,7 +196,7 @@ budget is approved here.
 
 ## 9. Owner decision D8
 
-T1 recommends Owner approve:
+**OWNER-APPROVED 2026-09-22:**
 
 - **D8-A:** NORMAL remains the only write mode in the next package; automatic
   bounded reads/reasoning/preview preparation continue without a fake mode toggle.

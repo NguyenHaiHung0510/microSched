@@ -90,14 +90,28 @@ Date: 2026-09-22
   turning ephemeral bytes into canonical state.
 - Side-chat remains the compact projection; workspace remains the detailed,
   progressively disclosed review surface for these workflows.
+- **Revised D6 approved:** use the explicit-operation fast path plus generalized
+  query/aggregate → selection → plan candidate/draft → approved direction → server-
+  materialized frozen preview path. Typed transform/mapping are bounded leaves;
+  whole-batch/group atomicity is explicit and no silent per-item partial execution.
+- **D8 approved:** NORMAL is the only write mode in the next package. A future
+  AUTO-write is a scoped, expiring and revocable per-operation grant and cannot be
+  piloted before the approved CAS/idempotency/receipt/reconcile/inverse gates.
+- **D9 approved:** Neon remains canonical; RAM/rootfs/provider caches are
+  discardable; add no Fly Volume/generic disk cache before measurement; use future
+  encrypted object storage only for large durable artifacts; cold-start recovery
+  and Neon idle/wake are acceptance evidence.
+- **Owner-provided production observation at 09:58 2026-09-22:** `df -h` inside the
+  current `microsched` Fly Machine showed `/` and `/.fly-upper-layer` at `7.8G`
+  total, `37M` used and `7.4G` available. `/proc/meminfo` showed `MemTotal=469892
+  kB`, `MemAvailable=259624 kB`, `SwapTotal=524284 kB`, `SwapFree=524284 kB`.
+  This confirms current capacity at that instant; it does not change Fly rootfs
+  restart/deploy durability semantics.
 
 ## Explicitly not yet approved
 
-- No final system prompt. Context architecture D1–D5 is approved at direction
-  level and the two-surface constraint is approved, but the generalized D6 tool
-  workflow, D8 execution modes and D9 storage tiers need Owner decisions after the
-  completed research synthesis. D7 loop direction is approved; exact schemas and
-  measured limits remain implementation/eval details.
+- No final system prompt. D1–D9 and the two-surface direction are approved; exact
+  schemas, prompt text, route cards and measured limits remain package/eval work.
 - No exact “small versus large” threshold.
 - No live eval matrix, token budget, model list, repetitions, judge, or scoring formula.
 - No runtime implementation, route adoption, deployment, or production enablement.

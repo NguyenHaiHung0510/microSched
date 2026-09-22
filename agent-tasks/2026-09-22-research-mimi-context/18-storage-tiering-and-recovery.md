@@ -1,7 +1,7 @@
 # B17 — Mimi storage tiering and recovery
 
 Date: 2026-09-22
-Status: **T1 SYNTHESIS — OWNER DECISION REQUIRED — NOT IMPLEMENTED**
+Status: **OWNER-APPROVED D9 — NOT IMPLEMENTED**
 
 Scope: how Mimi should use Fly RAM, the Machine root filesystem, browser memory
 and Neon without assuming that faster/closer storage is durable or authoritative.
@@ -28,9 +28,9 @@ authority/recovery/audit → Neon
 large durable artifacts later → encrypted object storage + Neon pointer
 ```
 
-The Owner's “about 8GB Docker” should not be treated as confirmed capacity. The
-current repo defines 512MB RAM and 512MB swap, but not rootfs size, persistence or a
-mounted volume. Exact production space/free bytes remain runtime evidence.
+The repository defines 512MB RAM and 512MB swap, but not rootfs size, persistence
+or a mounted volume. The Owner then supplied a direct production shell receipt at
+09:58 on 2026-09-22 confirming the current Machine's capacity; see section 3.1.
 
 ## 2. Current inventory (`OBSERVED`)
 
@@ -81,6 +81,26 @@ These facts mean rootfs is not automatically a “fast second copy of DB”. It 
 reduce repeated serialization/decompression or hold spill/temp bytes, but it cannot
 be required for correctness and may be slower than expected for many tiny random
 operations.
+
+### 3.1 Current production resource receipt (`OBSERVED`, Owner-provided)
+
+At 09:58 on 2026-09-22 the Owner ran `flyctl ssh console -a microsched`, then
+`cat /proc/meminfo` and `df -h` inside Machine `d8d9564b42e9e8`:
+
+| Observation | Value |
+|---|---:|
+| `/` rootfs | `7.8G` total, `37M` used, `7.4G` available, 1% used |
+| `/.fly-upper-layer` (`/dev/vdb`) | `7.8G` total, `37M` used, `7.4G` available |
+| `MemTotal` | `469892 kB` |
+| `MemAvailable` | `259624 kB` |
+| `Cached` | `109500 kB` |
+| `SwapTotal` / `SwapFree` | `524284 kB` / `524284 kB` |
+
+This confirms that the current Machine had approximately 8GB rootfs with 7.4GB
+free at that instant. It does not establish persistence across restart/deploy,
+future Machine sizing, I/O suitability or permission to use the space for canonical
+data. The platform lifecycle facts above still control those questions. This
+receipt was supplied by the Owner and was not independently re-run by T1.
 
 ## 4. Recommended tiers (`PROPOSAL`)
 
@@ -201,8 +221,8 @@ add a Fly Volume merely to fill a conceptual middle tier.
 
 ## 7. QA and measurement before a rootfs tier
 
-- read actual live Machine rootfs size/free bytes, `persist_rootfs`, Machine count
-  and replacement behavior; exact 8GB remains `UNVERIFIED`;
+- retain the 2026-09-22 capacity receipt and separately verify effective
+  `persist_rootfs`, Machine count and replacement behavior before implementation;
 - measure cold/warm context assembly, repeated tool-result serialization, Neon
   round-trip and rootfs read/write under realistic payload sizes;
 - measure 512MB RAM + swap at maximum admitted context, evidence and concurrency;
@@ -224,7 +244,7 @@ synthetic/load pilot and resource headroom, then version them.
 
 ## 8. Owner decision D9
 
-T1 recommends Owner approve:
+**OWNER-APPROVED 2026-09-22:**
 
 - **D9-A:** Neon remains canonical for all conversation/run/authority/recovery and
   bounded evidence state; RAM/rootfs/provider caches are discardable optimizations.
@@ -239,7 +259,8 @@ T1 recommends Owner approve:
 ## 9. Limitations
 
 Static repo evidence and current official platform documentation were inspected.
-No production Fly/Neon configuration, disk capacity/free space, RSS, latency,
-restart fault injection, object storage or provider call was run. Current plan,
-backup/PITR retention, actual autosuspend and effective Machine rootfs settings are
-`UNVERIFIED` until an authorized live inspection.
+The Owner-provided production receipt confirms one current snapshot of rootfs,
+memory and swap capacity; T1 did not independently run it. No RSS/load/latency,
+restart fault injection, object storage or provider call was run. Current Neon
+plan, backup/PITR retention, actual autosuspend, effective `persist_rootfs` and
+replacement behavior remain `UNVERIFIED` until their authorized checks.

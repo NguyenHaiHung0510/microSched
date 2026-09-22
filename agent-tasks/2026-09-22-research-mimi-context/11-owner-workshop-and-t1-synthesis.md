@@ -1,6 +1,6 @@
 # B10 — T1 synthesis and Owner workshop packet
 
-Status: **D1–D5 + D7 OWNER-APPROVED — REVISED D6 + D8–D9 READY — EVAL NOT AUTHORIZED**
+Status: **OWNER WORKSHOP COMPLETE — D1–D9 OWNER-APPROVED — EVAL NOT AUTHORIZED**
 
 Date: 2026-09-22. Evidence base: B00–B09, independent critique B11, and
 tool/bulk/loop research B12–B14.
@@ -295,20 +295,22 @@ separate concepts.
 - Never silently downgrade whole-batch to grouped/partial after timeout. Unknown
   outcome must reconcile by change-set/group/idempotency identity before retry.
 
-### 8.4 Remaining D6 decisions
+### 8.4 D6 disposition
 
-- **D6-A:** approve a dual path: explicit operation fast path plus query/aggregate
+**OWNER-APPROVED 2026-09-22:**
+
+- **D6-A:** dual path: explicit operation fast path plus query/aggregate
   → selection snapshot → plan candidate/draft → approved direction → server-
-  materialized frozen preview for discovery/grouping workflows?
-- **D6-B:** approve typed transform and bounded ID→patch mapping as mutation leaves
+  materialized frozen preview for discovery/grouping workflows.
+- **D6-B:** typed transform and bounded ID→patch mapping are mutation leaves
   within a typed hierarchical WorkflowPlan, not as the entire architecture; no
-  arbitrary executable DSL?
-- **D6-C:** approve whole-batch atomic when measured-safe, deterministic group
-  atomic otherwise, and no silent per-row partial execution initially?
-- **D6-D:** first vertical slice: Task query/aggregate/grouping plus title
+  arbitrary executable DSL.
+- **D6-C:** whole-batch atomic when measured-safe, deterministic group atomic
+  otherwise, and no silent per-row partial execution initially.
+- **D6-D:** first vertical slice is Task query/aggregate/grouping plus title
   prefix/suffix/whitespace/case normalization and approved templates; broader
   semantic mappings, schedule/status/private and cross-domain plans remain later
-  capability packages?
+  capability packages.
 
 ## 9. Decision D7 — loop engine, preview and two surfaces
 
@@ -386,18 +388,20 @@ recommends:
   reconciliation, inverse and revocation/cancel races. PRIVATE and external or
   irreversible actions stay confirmation-required by default.
 
-### 10.1 Remaining D8 decisions
+### 10.1 D8 disposition
 
-- **D8-A:** approve NORMAL as the only write mode in the next package?
-- **D8-B:** approve future AUTO as scoped per-operation grants, not one global/
-  per-domain mode?
-- **D8-C:** approve the proof gates and default exclusions above before any pilot?
+**OWNER-APPROVED 2026-09-22:** NORMAL is the only write mode in the next package;
+future AUTO is a scoped per-operation grant rather than a global/per-domain mode;
+the stated proof gates and default exclusions are mandatory before any pilot.
 
 ## 11. Decision D9 — RAM, ephemeral rootfs and Neon
 
 B17 finds that current Mimi is already effectively RAM + Neon. Fly rootfs is not a
-configured Mimi tier; exact “8GB Docker” capacity is unverified. Official Fly docs
-classify normal rootfs as ephemeral/rebuildable and performance-limited.
+configured Mimi tier. The Owner-provided production shell receipt at 09:58 on
+2026-09-22 confirms the current Machine had `7.8G` rootfs, `37M` used and `7.4G`
+available, with `MemTotal=469892 kB` and `SwapTotal=524284 kB`. This is a capacity
+snapshot, not durability evidence. Official Fly docs classify normal rootfs as
+ephemeral/rebuildable and performance-limited.
 
 T1 recommends:
 
@@ -412,14 +416,13 @@ T1 recommends:
 - no Fly Volume or generic disk cache now. Cold-start recovery/startup sweep and
   Neon idle/wake measurement are D7 acceptance gates regardless of disk cache.
 
-### 11.1 Remaining D9 decisions
+### 11.1 D9 disposition
 
-- **D9-A:** approve Neon canonical, RAM/rootfs/provider caches discardable?
-- **D9-B:** approve measure-first and no Fly Volume/generic rootfs cache now?
-- **D9-C:** approve encrypted object storage only when large durable artifacts
-  actually exceed measured Neon bounds?
-- **D9-D:** approve cold-start/stale-run recovery and Neon idle/wake as mandatory
-  acceptance evidence?
+**OWNER-APPROVED 2026-09-22:** Neon remains canonical and RAM/rootfs/provider
+caches discardable; measure first and add no Fly Volume/generic rootfs cache now;
+use encrypted object storage only when large durable artifacts exceed measured
+Neon bounds; cold-start/stale-run recovery and Neon idle/wake remain mandatory
+acceptance evidence.
 
 ## 12. Decision D10 — first eval approval packet, not execution
 
@@ -455,8 +458,7 @@ lanes, not prerequisites forced into the first experiment.
 
 ## 14. Workshop completion rule
 
-B10 becomes `OWNER WORKSHOP COMPLETE` after Owner decisions on revised D6 and
-D8–D9 plus any concrete example corrections. D1–D5, D7 and the two-surface direction are already
-approved. T1 may then draft the final context/
-system-policy package and the separate eval approval packet. No runtime edit,
-live route, key use, dogfood, deployment or P2 work is authorized by this packet.
+**OWNER WORKSHOP COMPLETE 2026-09-22.** D1–D9 and the two-surface direction are
+approved. T1 may now draft the final context/system-policy package and the separate
+eval approval packet. No runtime edit, live route, key use, dogfood, deployment or
+P2 work is authorized by this packet.

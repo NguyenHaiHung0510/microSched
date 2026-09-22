@@ -1,6 +1,6 @@
 # Mimi context research — 2026-09-22
 
-Status: **D1–D5 + D7 APPROVED — REVISED D6 + D8–D9 READY FOR OWNER — EVAL NOT AUTHORIZED**
+Status: **OWNER WORKSHOP COMPLETE — D1–D9 APPROVED — EVAL NOT AUTHORIZED**
 
 This folder is the canonical evidence workspace for research into Mimi's system policy,
 context assembly, tool/harness behavior, and context-control UX.
@@ -47,14 +47,14 @@ Exact thresholds and policies remain open until research and Owner review.
 | B07 | `08-provider-portability-cache-economics.md` | T3 Luna | COLLECTED |
 | B08 | `09-ui-ux-context-controls.md` | T3 Gemini 3.8 Flash | RAW PROPOSAL; SEE B11 |
 | B09 | `10-eval-design-draft.md` | T3 Gemini 3.8 Flash | DRAFT ONLY; SEE B11 |
-| B10 | `11-owner-workshop-and-t1-synthesis.md` | T1 | D1–D5 + D7 APPROVED; REVISED D6 + D8–D9 READY |
+| B10 | `11-owner-workshop-and-t1-synthesis.md` | T1 | OWNER WORKSHOP COMPLETE; D1–D9 APPROVED |
 | B11 | `12-independent-evidence-critique.md` | T3 Luna | COLLECTED |
 | B12 | `13-tool-granularity-and-bulk-operations.md` | T3 Luna | COLLECTED |
 | B13 | `14-current-tool-surface-and-bulk-gap.md` | T3 Luna | COLLECTED |
 | B14 | `15-loop-engine-and-harness.md` | T3 Luna | COLLECTED |
-| B15 | `16-execution-modes-normal-auto.md` | T3 Luna + T1 | SYNTHESIZED; OWNER DECISION OPEN |
-| B16 | `17-generalized-bulk-workflow.md` | T3 Luna + T1 | SYNTHESIZED; OWNER DECISION OPEN |
-| B17 | `18-storage-tiering-and-recovery.md` | T3 Luna + T1 | SYNTHESIZED; OWNER DECISION OPEN |
+| B15 | `16-execution-modes-normal-auto.md` | T3 Luna + T1 | OWNER-APPROVED D8 |
+| B16 | `17-generalized-bulk-workflow.md` | T3 Luna + T1 | OWNER-APPROVED revised D6 |
+| B17 | `18-storage-tiering-and-recovery.md` | T3 Luna + T1 | OWNER-APPROVED D9; rootfs capacity receipt added |
 
 ## Required report shape
 
