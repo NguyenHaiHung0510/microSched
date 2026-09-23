@@ -56,6 +56,11 @@ backend/pytest-of-os/
 backend/pytest-temp-codex/
 backend/UsersosDesktopai_eng_pathmicrosched.pytest-basetemp-*/
 cover/
+# Root-level scratch paths created by ad-hoc test and uv runs.
+/.pytest-tmp-*.hold
+/.tmp-uv-*/
+/test-results/
+/agent-tasks/temp/pytest-tmp/
 
 # Translations
 *.mo
