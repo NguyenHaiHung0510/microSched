@@ -52,7 +52,7 @@ The frontend is a static SPA/PWA installed and used on a laptop or iPhone; the a
 
 - **Application:** FastAPI modular monolith + static React/TypeScript PWA.
 - **Data:** Neon PostgreSQL with `pgvector`; private fields use the app's encryption boundary.
-- **Actual delivery:** GitHub Actions builds and checks → Docker multi-stage build → one Fly.io Machine in `sin`, with a shared CPU, 256 MB RAM, and 512 MB swap; data lives in Neon PostgreSQL + `pgvector`. I use the app in real life on a laptop and iPhone.
+- **Actual delivery:** GitHub Actions builds and checks → Docker multi-stage build → one Fly.io Machine in `sin`, with a shared CPU, 512 MB RAM, and 512 MB swap; data lives in Neon PostgreSQL + `pgvector`. I use the app in real life on a laptop and iPhone.
 - **Auth:** Google OAuth allowlist and server-side sessions.
 
 ## Running locally
