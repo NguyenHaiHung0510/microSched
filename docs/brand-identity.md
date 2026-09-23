@@ -1,1 +1,86 @@
-# Quy chuẩn Bộ nhận diện Thương hiệu: microSched · Mimi · Orbit\n\n> Tài liệu quy chuẩn chính thức (Single Source of Truth) về mỹ thuật, tạo hình, mã màu và thành phần giao diện cho hệ sinh thái microSched.  \n> **Được Owner phê duyệt ngày 2026-09-20. Áp dụng bắt buộc cho tất cả lập trình viên và AI Agent tham gia phát triển dự án.**\n\n---\n\n## 1. Triết lý & Quyết định Kiến trúc (Architectural Decision)\n\n1. **Hệ thống Vector 100% Thuần khiết (Zero Raster Crop):**\n   - Tuyệt đối không sử dụng các bức ảnh crop thô từ bảng concept (tránh viền nền đục, răng cưa và cắt góc).\n   - Toàn bộ nhận diện (Logo microSched, trợ lý Mimi, tự động hóa Orbit, chữ Wordmark) đều là **mã nguồn vector SVG thuần khiết**, sở hữu nền trong suốt tuyệt đối (Pure Alpha Channel), co giãn vô hạn không vỡ nét trên mọi màn hình Retina/4K.\n2. **Nghệ thuật Gấp giấy Zen Origami & Giấy thủ công Washi:**\n   - Tạo hình dựa trên các đường cong Bézier hữu cơ, nếp gấp đa lớp có chiều sâu quang học mềm mại và viền dát vàng kim loại lấp lánh (*Gold Foil Creases*).\n   - Ngôn ngữ chuyển động vi mô phi tuyến tính mô phỏng nhịp thở tự nhiên (*Organic Breathing*).\n\n---\n\n## 2. Bảng mã màu chuẩn (Design Tokens)\n\nTất cả thành phần giao diện và đồ họa bắt buộc phải sử dụng hệ mã màu token sau (đã khai báo trong rontend/src/index.css):\n\n| Tên Token CSS | Mã HEX | Vai trò & Ứng dụng |\n| :--- | :--- | :--- |\n| --brand-ivory | #FBF8F3 | Nền giấy Washi ngà ấm, mặt sáng của nếp gấp origami, thân chính của Mimi. |\n| --brand-sakura-soft | #F5B8BA | Sắc hồng hoa anh đào ửng nhẹ, cánh tai của Mimi, mặt chính của cánh hoa Orbit. |\n| --brand-sakura-deep | #DE7A85 | Sắc hồng đậm tạo chiều sâu nếp gấp tối, chữ Sched trong wordmark. |\n| --brand-gold-leaf | #CFA348 | Đường viền gập dát vàng kim, 3 hạt nhụy hoa, vòng quỹ đạo Orbit, huy hiệu hoàn thành. |\n| --brand-deep-berry | #4A1521 | Màu hạt berry sẫm, đôi mắt của Mimi, chữ micro trong wordmark (độ tương phản cao nhất). |\n\n---\n\n## 3. Ba trụ cột nhận diện chính thức\n\n### 3.1. microSched — The Layered Calendar Bloom\n- **Biểu tượng:** Bông hoa origami 5 cánh xếp nếp xoay theo chiều kim đồng hồ (*Step-fold clockwise progression*), tượng trưng cho từng ngày kế hoạch mở ra liên tục hướng tới tương lai.\n- **Tâm hoa:** Cụm 3 viên ngọc vàng tròn xếp hình tam giác cân (*Plan – Progress – Bloom*), có phản quang lệch tâm và bóng tiếp xúc mềm.\n- **Wordmark:** Toàn bộ chữ cái microSched được vẽ bằng các đường path vector độc lập (không dùng font mạng), chữ micro màu Deep Berry, Sched màu Sakura Shadow.\n- **Tệp nguồn:** \n  - Mark: rontend/public/brand/microsched-mark.svg\n  - Wordmark: rontend/public/brand/microsched-wordmark.svg\n  - Favicon ứng dụng: rontend/public/microsched.svg\n\n### 3.2. Mimi — Zen Origami Spirit (Linh hồn trợ lý)\nMimi là một **búp hoa giấy origami sống**, một người bạn đồng hành tĩnh tại (papercraft companion).\n- **Gương mặt thuần khiết:** Tuyệt đối KHÔNG có lông mày, KHÔNG có miệng, KHÔNG có mắt xếch. Gương mặt là diện giấy Washi tối giản với đúng 2 mắt hạt berry tròn đứng thẳng, hiền từ và đáng yêu.\n- **4 trạng thái hoạt động (Runtime States):**\n  1. idle (A Quiet Bud): Búp hoa khép kín, 2 cánh tai hồng ôm sát má, nhịp thở êm ái 4.2s.\n  2. 	hinking (Ideas Unfurl): Đài sen hồng hé nở, thân vươn nhẹ, phát quầng sáng ấm và 3 tinh thể ý tưởng vàng lơ lửng.\n  3. xecuting (Turning Plans into Progress): Sải cánh bay origami, vòng quỹ đạo vàng quay tròn mang 3 thẻ tác vụ (Task, Calendar, Analytics).\n  4. eady (All Set): Cúi đầu chào nhẹ, mắt cười híp lại (^ ^), nâng huy hiệu kim cương viền vàng có dấu tick nảy nhịp điệu.\n- **Tệp nguồn:** mimi-idle.svg, mimi-thinking.svg, mimi-executing.svg, mimi-ready.svg trong rontend/public/brand/.\n\n### 3.3. Orbit — The Origami Blossom in Orbit (Hệ thống tự động hóa)\nOrbit đại diện cho hạ tầng tự động hóa ngầm (cron jobs, sync ghi chú, nhắc nhở định kỳ):\n- **Cấu trúc:** Lõi hoa Calendar Bloom 5 cánh lơ lửng giữa 2 vòng elip kim loại vàng chia tầng trước/sau, tạo chiều sâu phối cảnh pseudo-3D.\n- **4 trạng thái:**\n  - standby: Quỹ đạo tĩnh, 3 hạt vệ tinh vàng lơ lửng cân bằng.\n  - pulse: Sóng phát quang lan tỏa từ nhụy hoa theo nhịp heartbeat.\n  - ctive: 5 cánh hoa tách tâm, hóa thành 5 cánh bướm origami lượn dọc theo đường quỹ đạo.\n  - complete: Cánh hoa hội tụ khóa chặt vào tâm và bừng sáng hoàn tất.\n- **Tệp nguồn:** rontend/public/brand/orbit-blossom.svg.\n\n---\n\n## 4. Hệ thống chuyển động vi mô (brand-motion.css)\n\nToàn bộ quy luật vật lý chuyển động được định nghĩa tập trung tại rontend/src/brand-motion.css:\n- .brand-breathe: Nhịp thở sinh thái bất đối xứng (hít vào 2.2s, giữ 0.4s, thở ra 1.6s).\n- .brand-orbit-rotor & .brand-orbit-satellite: Xoay quỹ đạo kết hợp phóng to/thu nhỏ vệ tinh tạo chiều sâu 3D.\n- .brand-pulse-glow: Nhịp đập phát quang.\n- .brand-ready-badge: Nhịp nảy huy hiệu có độ giảm chấn.\n- Hỗ trợ nghiêm ngặt @media (prefers-reduced-motion: reduce) để đảm bảo chuẩn trợ năng.\n\n---\n\n## 5. Quy tắc bất khả kháng cho AI Agent & Lập trình viên\n\n1. **TUYỆT ĐỐI KHÔNG** sử dụng các icon generic từ lucide-react (Bot, Sparkles, Cpu, v.v.) làm đại diện cho Mimi hay Orbit.\n2. **TUYỆT ĐỐI KHÔNG** dùng ảnh chụp cắt cúp (raster crop) làm logo hay biểu tượng.\n3. **BẮT BUỘC** gọi các React Component chuẩn từ @/components/brand:\n   - <MimiAvatar state=\
+# Quy chuẩn bộ nhận diện: microSched · Mimi · Orbit
+
+> Tài liệu quy chuẩn chính thức về mỹ thuật, tạo hình, màu sắc và các thành phần nhận diện của hệ sinh thái microSched.
+> Owner phê duyệt ngày 2026-09-20. Áp dụng cho mọi lập trình viên và AI agent tham gia phát triển dự án.
+
+## 1. Triết lý thiết kế
+
+- **Vector, không raster crop:** Logo, Mimi và Orbit dùng artwork SVG nền trong suốt. Không lấy ảnh crop từ bảng concept làm logo hoặc biểu tượng.
+- **Zen origami và giấy Washi:** Hình khối gợi giấy gấp thủ công, các lớp có chiều sâu mềm, đường cong hữu cơ và điểm nhấn vàng kim. Chuyển động nhỏ mô phỏng nhịp thở tự nhiên.
+- Chuyển động chỉ bổ trợ trạng thái; trạng thái phải được biểu đạt bằng artwork và nội dung truy cập được, không phụ thuộc riêng vào animation.
+
+## 2. Màu nhận diện
+
+Các token được khai báo trong `frontend/src/index.css`:
+
+| Token | Giá trị | Vai trò |
+| --- | --- | --- |
+| `--brand-ivory` | `#FBF8F3` | Giấy Washi ngà, mặt sáng của nếp gấp và thân Mimi. |
+| `--brand-sakura-soft` | `#F5B8BA` | Hồng sakura nhẹ trên tai Mimi và cánh Orbit. |
+| `--brand-sakura-deep` | `#DE7A85` | Nếp gấp hồng đậm và điểm nhấn chữ Sched. |
+| `--brand-gold-leaf` | `#CFA348` | Nếp dát vàng, nhụy hoa, quỹ đạo và huy hiệu hoàn tất. |
+| `--brand-deep-berry` | `#4A1521` | Mắt Mimi và phần chữ micro có tương phản cao. |
+
+## 3. Các trụ cột nhận diện
+
+### 3.1 microSched — Layered Calendar Bloom
+
+Biểu tượng là bông hoa origami năm cánh xếp lớp, gợi một lịch kế hoạch mở ra liên tục. Tâm hoa có ba điểm vàng tượng trưng cho **Plan · Progress · Bloom**. Wordmark giữ tương phản màu Deep Berry và Sakura Deep.
+
+`BrandLogo` từ `@/components/brand` là component chuẩn. Component hỗ trợ `variant="mark" | "wordmark" | "full"`, `size="sm" | "md" | "lg"`; biến thể `full` mặc định hiện tagline và có thể tắt bằng `showTagline={false}`.
+
+- Mark: `frontend/public/brand/microsched-mark.svg`
+- Wordmark: `frontend/public/brand/microsched-wordmark.svg`
+- App icon artwork: `frontend/public/brand/microsched-app-icon.svg`
+
+### 3.2 Mimi — Zen Origami Spirit
+
+Mimi là người bạn đồng hành hình búp hoa giấy origami. Khuôn mặt tối giản có hai mắt tròn màu berry; không thêm lông mày, miệng hoặc mắt xếch.
+
+`MimiAvatar` hỗ trợ các trạng thái `idle`, `thinking`, `executing`, `ready` và kích thước `xs`, `sm`, `md`, `lg`, `xl`. Mỗi trạng thái có nhãn truy cập tiếng Việt mặc định; có thể ghi đè bằng `ariaLabel`. `showGlow` bật quầng sáng trang trí.
+
+| State | Ý nghĩa | Motion class | Artwork |
+| --- | --- | --- | --- |
+| `idle` | Búp hoa yên tĩnh, đang lắng nghe. | `brand-breathe` | `frontend/public/brand/mimi-idle.svg` |
+| `thinking` | Ý tưởng hé mở; ánh sáng biểu đạt hoạt động suy nghĩ. | `brand-pulse-glow` | `frontend/public/brand/mimi-thinking.svg` |
+| `executing` | Đang biến kế hoạch thành tiến độ. | `brand-orbit-rotor` | `frontend/public/brand/mimi-executing.svg` |
+| `ready` | Đã sẵn sàng; huy hiệu hoàn tất nảy nhẹ. | `brand-ready-badge` | `frontend/public/brand/mimi-ready.svg` |
+
+### 3.3 Orbit — Origami Blossom in Orbit
+
+Orbit đại diện cho hoạt động tự động hóa nền như cron jobs, đồng bộ ghi chú và nhắc nhở định kỳ. Artwork là Calendar Bloom nằm giữa các quỹ đạo vàng, với chiều sâu tạo bởi các lớp và vệ tinh.
+
+`OrbitIndicator` hỗ trợ trạng thái `standby`, `pulse`, `active`, `complete` và kích thước `sm`, `md`, `lg`. Component có vai trò truy cập `status`; nhãn tiếng Việt mặc định có thể ghi đè bằng `ariaLabel`.
+
+| Status | Ý nghĩa | Motion class |
+| --- | --- | --- |
+| `standby` | Tự động hóa sẵn sàng. | `brand-breathe` |
+| `pulse` | Nhịp heartbeat đang được gửi. | `brand-pulse-glow` |
+| `active` | Tự động hóa đang chạy; quỹ đạo chuyển động. | `brand-orbit-rotor` |
+| `complete` | Tự động hóa hoàn tất; hiệu ứng huy hiệu ngắn. | `brand-ready-badge` |
+
+Artwork dùng chung: `frontend/public/brand/orbit-blossom.svg`.
+
+## 4. Chuyển động và reduced motion
+
+Các quy tắc nằm trong `frontend/src/brand-motion.css` và được `MimiAvatar`/`OrbitIndicator` import.
+
+- Nhịp thở: chu kỳ 4.2 giây, gồm hít vào 2.2 giây, giữ 0.4 giây và thở ra 1.6 giây.
+- Quỹ đạo/vệ tinh: chu kỳ 8 giây; vệ tinh thay đổi tỷ lệ, độ sáng và opacity để tạo chiều sâu.
+- Pulse: chu kỳ 2.4 giây, phát sáng theo nhịp heartbeat.
+- Hiệu ứng ready/complete: chuyển động nảy 760 ms và không lặp vô hạn.
+- Với `prefers-reduced-motion: reduce`, animation bị tắt, transform/filter được đưa về trạng thái tĩnh; độ mờ tĩnh vẫn phân biệt pulse và vệ tinh, còn trạng thái ready/complete giữ opacity đầy đủ.
+
+## 5. Quy tắc sử dụng
+
+1. Dùng các component chuẩn `BrandLogo`, `MimiAvatar`, `OrbitIndicator` từ `@/components/brand` khi hiển thị nhận diện trong React.
+2. Không dùng icon generic như Bot, Sparkles hoặc Cpu từ `lucide-react` để thay Mimi hay Orbit.
+3. Không dùng ảnh raster crop làm logo hoặc biểu tượng; dùng artwork SVG trong `frontend/public/brand/`.
+4. Giữ màu nhận diện theo các token trong `frontend/src/index.css`. Không tự tạo biến thể trạng thái khác với API hiện tại của component.
+
+## 6. Nguồn triển khai và kiểm chứng
+
+- Components: `frontend/src/components/brand/BrandLogo.tsx`, `frontend/src/components/brand/MimiAvatar.tsx`, `frontend/src/components/brand/OrbitIndicator.tsx`.
+- Motion: `frontend/src/brand-motion.css`.
+- Regression test: `frontend/tests/brand-identity.test.tsx`.
+- SVG artwork: `frontend/public/brand/`.
