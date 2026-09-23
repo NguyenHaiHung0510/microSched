@@ -258,9 +258,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                     assert follow_up.status_code == 200
                     assert "event: conversation.snapshot" in follow_up.text
 
-                    before_preview = await client.get(
-                        f"/api/mimi/conversations/{conversation_id}"
-                    )
+                    before_preview = await client.get(f"/api/mimi/conversations/{conversation_id}")
                     preview = await client.post(
                         f"/api/mimi/conversations/{conversation_id}/messages/stream",
                         json={
@@ -271,14 +269,10 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                         headers=CSRF_HEADERS,
                     )
                     assert preview.status_code == 200
-                    preview_view = await client.get(
-                        f"/api/mimi/conversations/{conversation_id}"
-                    )
+                    preview_view = await client.get(f"/api/mimi/conversations/{conversation_id}")
                     first_change_set = preview_view.json()["change_sets"][-1]
                     assert first_change_set["state"] == "pending"
-                    assert first_change_set["operation"]["args"]["title"] == (
-                        "Chuẩn bị demo Mimi"
-                    )
+                    assert first_change_set["operation"]["args"]["title"] == ("Chuẩn bị demo Mimi")
 
                     invalid_revision = await client.post(
                         f"/api/mimi/conversations/{conversation_id}/messages/stream",
@@ -298,17 +292,13 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                     )
                     still_pending = after_invalid_revision.json()["change_sets"][-1]
                     assert still_pending["state"] == "pending"
-                    assert still_pending["operation"]["args"]["title"] == (
-                        "Chuẩn bị demo Mimi"
-                    )
+                    assert still_pending["operation"]["args"]["title"] == ("Chuẩn bị demo Mimi")
 
                     revised = await client.post(
                         f"/api/mimi/conversations/{conversation_id}/messages/stream",
                         json={
                             "client_id": "stream-message-preview-revision",
-                            "content": (
-                                "Sửa preview: đổi tiêu đề và thêm kiểm tra receipt"
-                            ),
+                            "content": ("Sửa preview: đổi tiêu đề và thêm kiểm tra receipt"),
                             "expected_generation": after_invalid_revision.json()["generation"],
                             "intent": "revise_pending_preview",
                             "expected_change_set_id": still_pending["id"],
@@ -317,17 +307,13 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                         headers=CSRF_HEADERS,
                     )
                     assert revised.status_code == 200
-                    revised_view = await client.get(
-                        f"/api/mimi/conversations/{conversation_id}"
-                    )
+                    revised_view = await client.get(f"/api/mimi/conversations/{conversation_id}")
                     change_sets = revised_view.json()["change_sets"]
                     assert [item["state"] for item in change_sets[-2:]] == [
                         "stale",
                         "pending",
                     ]
-                    assert change_sets[-1]["operation"]["args"]["title"] == (
-                        "Tổng duyệt demo Mimi"
-                    )
+                    assert change_sets[-1]["operation"]["args"]["title"] == ("Tổng duyệt demo Mimi")
                     assert change_sets[-1]["operation"]["args"]["items"] == [
                         "Kiểm tra slide",
                         "Kiểm tra receipt",
@@ -410,9 +396,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                     assert cancelled.status_code == 202
                     completed_stream = await asyncio.wait_for(streaming, timeout=3)
                     assert "event: run.cancelled" in completed_stream.text
-                    cancelled_view = await client.get(
-                        f"/api/mimi/conversations/{cancel_id}"
-                    )
+                    cancelled_view = await client.get(f"/api/mimi/conversations/{cancel_id}")
                     assert cancelled_view.json()["runs"][0]["state"] == "cancelled"
                     assert cancelled_view.json()["runs"][0]["provider_outcome"] == "unknown"
 
@@ -431,9 +415,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                         headers=CSRF_HEADERS,
                     )
                     assert "event: provider.unknown" in unknown.text
-                    unknown_view = await client.get(
-                        f"/api/mimi/conversations/{unknown_id}"
-                    )
+                    unknown_view = await client.get(f"/api/mimi/conversations/{unknown_id}")
                     unknown_run = unknown_view.json()["runs"][0]
                     assert unknown_run["state"] == "outcome_unknown"
 
@@ -452,9 +434,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                         headers=CSRF_HEADERS,
                     )
                     assert "event: provider.failed" in contract.text
-                    contract_view = await client.get(
-                        f"/api/mimi/conversations/{contract_id}"
-                    )
+                    contract_view = await client.get(f"/api/mimi/conversations/{contract_id}")
                     assert contract_view.json()["runs"][0]["error_code"] == (
                         "provider_contract_provider_task_id_missing"
                     )
@@ -481,9 +461,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                         "provider_outcome": "succeeded",
                         "result_available": False,
                     }
-                    reconciled_view = await client.get(
-                        f"/api/mimi/conversations/{unknown_id}"
-                    )
+                    reconciled_view = await client.get(f"/api/mimi/conversations/{unknown_id}")
                     assert reconciled_view.json()["runs"][0]["state"] == "halted"
                     assert any(
                         item["kind"] == "run.reconciled"
@@ -492,13 +470,17 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
 
             async with maker() as db:
                 raw = (
-                    await db.execute(
-                        select(MimiEvent).where(
-                            MimiEvent.run_id == UUID(run_id),
-                            MimiEvent.kind == "assistant.delta",
+                    (
+                        await db.execute(
+                            select(MimiEvent).where(
+                                MimiEvent.run_id == UUID(run_id),
+                                MimiEvent.kind == "assistant.delta",
+                            )
                         )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 event = raw[0]
                 assert "content_ciphertext" in event.payload
                 assert "Xin chào" not in str(event.payload)

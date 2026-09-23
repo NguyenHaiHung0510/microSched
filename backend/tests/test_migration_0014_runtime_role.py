@@ -64,10 +64,13 @@ def test_0014_app_role_has_crud_and_public_has_none(pg_dsn: str) -> None:
                 """,
                 uuid4(),
             )
-            assert await app.fetchval(
-                "SELECT count(*) FROM microsched.mimi_conversation WHERE id = $1",
-                conversation_id,
-            ) == 1
+            assert (
+                await app.fetchval(
+                    "SELECT count(*) FROM microsched.mimi_conversation WHERE id = $1",
+                    conversation_id,
+                )
+                == 1
+            )
             await app.execute(
                 """
                 UPDATE microsched.mimi_conversation
