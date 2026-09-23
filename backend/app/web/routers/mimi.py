@@ -127,9 +127,7 @@ async def read_conversations(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
     cursor: Annotated[str | None, Query(max_length=500)] = None,
 ) -> dict:
-    return await list_conversations(
-        db, session, state=state, limit=limit, cursor=cursor
-    )
+    return await list_conversations(db, session, state=state, limit=limit, cursor=cursor)
 
 
 @router.get(
@@ -171,9 +169,7 @@ async def archive_conversation(
     db: Database,
     session: CurrentSession,
 ) -> dict:
-    return await set_conversation_archived(
-        db, session, conversation_id, payload, archived=True
-    )
+    return await set_conversation_archived(db, session, conversation_id, payload, archived=True)
 
 
 @router.post(
@@ -186,9 +182,7 @@ async def restore_conversation(
     db: Database,
     session: CurrentSession,
 ) -> dict:
-    return await set_conversation_archived(
-        db, session, conversation_id, payload, archived=False
-    )
+    return await set_conversation_archived(db, session, conversation_id, payload, archived=False)
 
 
 @router.post(

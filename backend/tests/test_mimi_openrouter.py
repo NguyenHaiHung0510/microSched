@@ -88,9 +88,7 @@ def test_explicit_preview_revision_can_require_the_task_tool() -> None:
         force_task_tool=True,
     )
     assert request["tool_choice"] == "required"
-    assert [tool["function"]["name"] for tool in request["tools"]] == [
-        "task.create.v1"
-    ]
+    assert [tool["function"]["name"] for tool in request["tools"]] == ["task.create.v1"]
 
 
 def test_unqualified_route_rejects_forced_tool_before_dispatch() -> None:
@@ -363,9 +361,7 @@ async def test_generation_reconciliation_reads_only_canonical_metadata() -> None
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        metadata = await get_generation(
-            "generation-stream", settings=_settings(), client=client
-        )
+        metadata = await get_generation("generation-stream", settings=_settings(), client=client)
     assert metadata == {
         "id": "generation-stream",
         "provider_name": "provider-a",
