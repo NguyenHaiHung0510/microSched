@@ -11,6 +11,16 @@ from typing import Any, Literal
 import httpx
 from pydantic import ValidationError
 
+from app.agent.context import (
+    AGENT_RESPONSE_FORMAT,
+    TERMINAL_ADAPTER,
+    AssistantText,
+    PreviewCandidate,
+    TerminalOutcome,
+    ToolRequest,
+    ToolRequests,
+)
+from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, TOOLS
 from app.core.settings import Settings, get_settings
 from app.domain.tasks import TaskCreate
 
@@ -40,6 +50,15 @@ class ProviderCompletion:
     kind: Literal["text", "task"]
     task: TaskCreate | None
     text: str | None
+    response_id: str
+    usage: dict[str, Any]
+    provider: str | None
+    model: str | None
+
+
+@dataclass(frozen=True)
+class AgentCompletion:
+    outcome: TerminalOutcome
     response_id: str
     usage: dict[str, Any]
     provider: str | None
@@ -139,29 +158,48 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
     }
 
 
+def serialized_input_bytes(messages: list[dict[str, Any]], *, agent_contract: bool) -> int:
+    """Bound the full model-visible input, including output and tool schemas."""
+
+    payload = {
+        "messages": messages,
+        "tools": list(TOOLS) if agent_contract else [TASK_CREATE_TOOL],
+    }
+    if agent_contract:
+        payload["response_format"] = AGENT_RESPONSE_FORMAT
+    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 def build_request(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     settings: Settings | None = None,
     *,
     stream: bool = False,
     session_id: str | None = None,
     force_task_tool: bool = False,
+    agent_contract: bool = False,
 ) -> dict[str, Any]:
     """Build either the attributable exact lane or bounded adaptive dogfood lane."""
     route = settings or get_settings()
     _, model = _route_identity(route)
-    serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    active_tools = list(TOOLS) if agent_contract else [TASK_CREATE_TOOL]
     # Conservative preflight: it may reject early but cannot make overflow safe.
-    if len(serialized) + route.mimi_route_max_output_tokens > route.mimi_route_context_tokens:
+    if (
+        serialized_input_bytes(messages, agent_contract=agent_contract)
+        + route.mimi_route_max_output_tokens
+        > route.mimi_route_context_tokens
+    ):
         raise RouteContractError("context_overflow_preflight")
     request: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "tools": [TASK_CREATE_TOOL],
+        "tools": active_tools,
         # Ordinary turns implement Mimi's terminal union. An explicit revision
         # of an existing preview is different: text claiming that a preview was
         # changed is not a state transition, so require the typed replacement.
-        "tool_choice": _tool_choice(route, force_task_tool=force_task_tool),
+        "tool_choice": _tool_choice(
+            route, force_task_tool=force_task_tool, agent_contract=agent_contract
+        ),
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the
         # terminal parser independently enforces at most one tool call.
@@ -174,12 +212,85 @@ def build_request(
     }
     if stream:
         request["stream_options"] = {"include_usage": True}
+    if agent_contract:
+        request["response_format"] = AGENT_RESPONSE_FORMAT
     if session_id:
         request["session_id"] = session_id
     return request
 
 
-def _tool_choice(settings: Settings, *, force_task_tool: bool) -> Any:
+def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
+    """Validate one model turn before any server-owned read or preview transition."""
+
+    try:
+        choices = payload["choices"]
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise RouteContractError("provider_must_return_one_choice")
+        message = choices[0]["message"]
+        if not isinstance(message, dict):
+            raise RouteContractError("provider_message_invalid")
+        calls = message.get("tool_calls") or []
+        raw_content = message.get("content")
+        content = raw_content.strip() if isinstance(raw_content, str) else ""
+        if calls:
+            if not isinstance(calls, list) or len(calls) > 3:
+                raise RouteContractError("provider_tool_call_count_invalid")
+            requests: list[ToolRequest] = []
+            for index, call in enumerate(calls):
+                function = call["function"]
+                name = function["name"]
+                if name not in READ_TOOLS | {CREATE_CANDIDATE_TOOL}:
+                    raise RouteContractError("provider_tool_not_allowed")
+                arguments = function["arguments"]
+                decoded = json.loads(arguments) if isinstance(arguments, str) else arguments
+                if not isinstance(decoded, dict):
+                    raise RouteContractError("provider_tool_arguments_not_object")
+                requests.append(
+                    ToolRequest(
+                        call_id=str(call.get("id") or f"tool-{index}"),
+                        name=name,
+                        arguments=decoded,
+                    )
+                )
+            if any(item.name == CREATE_CANDIDATE_TOOL for item in requests):
+                if len(requests) != 1:
+                    raise RouteContractError("candidate_cannot_share_tool_turn")
+                request = requests[0]
+                if set(request.arguments) != {"task"} or not isinstance(
+                    request.arguments["task"], dict
+                ):
+                    raise RouteContractError("candidate_arguments_invalid")
+                outcome: TerminalOutcome = PreviewCandidate(
+                    tool=CREATE_CANDIDATE_TOOL, arguments=request.arguments["task"]
+                )
+            else:
+                outcome = ToolRequests(requests=tuple(requests))
+        elif content:
+            try:
+                decoded_content = json.loads(content)
+            except json.JSONDecodeError:
+                outcome = AssistantText(text=content)
+            else:
+                if isinstance(decoded_content, dict) and "kind" in decoded_content:
+                    outcome = TERMINAL_ADAPTER.validate_python(decoded_content)
+                else:
+                    outcome = AssistantText(text=content)
+        else:
+            raise RouteContractError("provider_terminal_empty")
+        return AgentCompletion(
+            outcome=outcome,
+            response_id=str(payload.get("id", "")),
+            usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            provider=payload.get("provider") if isinstance(payload.get("provider"), str) else None,
+            model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+        )
+    except RouteContractError:
+        raise
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        raise RouteContractError("invalid_agent_terminal_payload") from error
+
+
+def _tool_choice(settings: Settings, *, force_task_tool: bool, agent_contract: bool = False) -> Any:
     if not force_task_tool:
         return "auto"
     capability = settings.mimi_route_forced_tool_choice
@@ -188,7 +299,8 @@ def _tool_choice(settings: Settings, *, force_task_tool: bool) -> Any:
     if capability == "required":
         # Mimi exposes exactly one tool in this request.
         return "required"
-    return {"type": "function", "function": {"name": "task.create.v1"}}
+    name = CREATE_CANDIDATE_TOOL if agent_contract else "task.create.v1"
+    return {"type": "function", "function": {"name": name}}
 
 
 def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
@@ -286,20 +398,25 @@ def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
 def _raise_for_status(status_code: int) -> None:
     if status_code in {408, 409}:
         raise ProviderDispatchError("unknown", status_code)
-    if status_code == 429 or status_code >= 500:
+    if status_code >= 500:
+        # A gateway failure does not prove its upstream generation was never
+        # started. Reconcile before any Owner-triggered successor dispatch.
+        raise ProviderDispatchError("unknown", status_code)
+    if status_code == 429:
         raise ProviderDispatchError("retryable", status_code)
     if status_code >= 400:
         raise ProviderDispatchError("failed", status_code)
 
 
 async def complete(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
     session_id: str | None = None,
     force_task_tool: bool = False,
-) -> ProviderCompletion:
+    agent_contract: bool = False,
+) -> ProviderCompletion | AgentCompletion:
     """Dispatch once. Retry authority belongs to persisted run state."""
     route = settings or get_settings()
     api_key, _ = _route_identity(route)
@@ -308,6 +425,7 @@ async def complete(
         route,
         session_id=session_id,
         force_task_tool=force_task_tool,
+        agent_contract=agent_contract,
     )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
@@ -334,21 +452,22 @@ async def complete(
             raise RouteContractError("provider_terminal_payload_is_not_json") from error
         if not isinstance(payload, dict):
             raise RouteContractError("provider_terminal_payload_is_not_an_object")
-        return parse_completion(payload)
+        return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
     finally:
         if owns_client:
             await active_client.aclose()
 
 
 async def complete_stream(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
     session_id: str | None = None,
     on_event: ProviderEventSink | None = None,
     force_task_tool: bool = False,
-) -> ProviderCompletion:
+    agent_contract: bool = False,
+) -> ProviderCompletion | AgentCompletion:
     """Normalize OpenRouter SSE without exposing raw chunks or partial tool JSON."""
     route = settings or get_settings()
     api_key, _ = _route_identity(route)
@@ -358,6 +477,7 @@ async def complete_stream(
         stream=True,
         session_id=session_id,
         force_task_tool=force_task_tool,
+        agent_contract=agent_contract,
     )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
@@ -413,8 +533,13 @@ async def complete_stream(
                         if isinstance(code, int) and code >= 400:
                             _raise_for_status(code)
                         raise RouteContractError("provider_stream_error_envelope")
-                    if isinstance(chunk.get("id"), str):
-                        response_id = chunk["id"]
+                    if isinstance(chunk.get("id"), str) and chunk["id"]:
+                        if chunk["id"] != response_id:
+                            response_id = chunk["id"]
+                            if on_event:
+                                await on_event(
+                                    "provider.response_identity", {"response_id": response_id}
+                                )
                     if isinstance(chunk.get("provider"), str):
                         provider = chunk["provider"]
                     if isinstance(chunk.get("model"), str):
@@ -451,7 +576,11 @@ async def complete_stream(
                             index = raw_call.get("index", 0)
                             if not isinstance(index, int):
                                 raise RouteContractError("provider_tool_call_index_invalid")
-                            target = tool_calls.setdefault(index, {"name": "", "arguments": ""})
+                            target = tool_calls.setdefault(
+                                index, {"id": "", "name": "", "arguments": ""}
+                            )
+                            if isinstance(raw_call.get("id"), str):
+                                target["id"] += raw_call["id"]
                             function = raw_call.get("function")
                             if isinstance(function, dict):
                                 if isinstance(function.get("name"), str):
@@ -485,10 +614,14 @@ async def complete_stream(
             )
         usage = {**usage, "mimi_timing": timing}
         terminal_calls = [
-            {"function": {"name": item["name"], "arguments": item["arguments"]}}
+            {
+                "id": item["id"],
+                "function": {"name": item["name"], "arguments": item["arguments"]},
+            }
             for _, item in sorted(tool_calls.items())
         ]
-        completion = parse_completion(
+        parser = parse_agent_completion if agent_contract else parse_completion
+        completion = parser(
             {
                 "id": response_id,
                 "provider": provider,
@@ -504,7 +637,11 @@ async def complete_stream(
                 ],
             }
         )
-        if completion.kind == "text" and on_event:
+        is_text = (
+            isinstance(completion, AgentCompletion)
+            and isinstance(completion.outcome, AssistantText)
+        ) or (isinstance(completion, ProviderCompletion) and completion.kind == "text")
+        if is_text and on_event:
             for text in content_parts:
                 await on_event("assistant.delta", {"text": text})
         return completion

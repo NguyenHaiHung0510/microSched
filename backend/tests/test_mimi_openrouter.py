@@ -7,7 +7,9 @@ import httpx
 import pytest
 
 from app.agent.openrouter import (
+    ProviderDispatchError,
     RouteContractError,
+    _raise_for_status,
     build_request,
     complete_stream,
     get_generation,
@@ -32,6 +34,15 @@ def _settings(**overrides) -> Settings:
     }
     values.update(overrides)
     return Settings(**values)
+
+
+def test_gateway_5xx_is_unknown_not_safe_to_retry() -> None:
+    with pytest.raises(ProviderDispatchError) as raised:
+        _raise_for_status(500)
+    assert raised.value.outcome == "unknown"
+    with pytest.raises(ProviderDispatchError) as throttled:
+        _raise_for_status(429)
+    assert throttled.value.outcome == "retryable"
 
 
 def test_request_pins_provider_quantization_parameters_zdr_and_price() -> None:
@@ -339,6 +350,7 @@ async def test_stream_normalizes_text_deltas_and_usage() -> None:
     assert completion.usage["mimi_timing"]["output_tokens_per_second"] > 0
     assert observed == [
         ("provider.connected", {"status": 200}),
+        ("provider.response_identity", {"response_id": "generation-stream"}),
         ("assistant.delta", {"text": "Xin "}),
         ("assistant.delta", {"text": "chào"}),
     ]
