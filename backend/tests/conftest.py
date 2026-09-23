@@ -2,9 +2,11 @@
 
 The heavy invariants in this project - the private-ciphertext CHECKs and the 008
 privacy triggers - are only real against a live Postgres, so those tests connect to
-the schema-owner URL (``NEON_MIGRATOR_URL``) rather than an in-memory double
-(spec §2.7). CI runs them in the Migration QA job, which already stands up a
-``pgvector/pgvector:pg18`` service and applies every migration to head.
+the throwaway database rather than an in-memory double (spec §2.7). CI fixtures use
+the bootstrap URL for tests that intentionally exercise administrative operations,
+while Alembic still reads ``NEON_MIGRATOR_URL`` and runs as the schema owner. The
+Migration QA job already stands up a ``pgvector/pgvector:pg18`` service and applies
+every migration to head.
 
 Three guards, on purpose:
 
@@ -13,15 +15,15 @@ Three guards, on purpose:
   * ``pg_dsn`` skips rather than errors when no database URL is present, so a
     developer running the whole suite locally without Docker gets skips, not a wall
     of connection failures;
-  * ``pg_dsn`` REFUSES a non-local host. ``NEON_MIGRATOR_URL`` is the same variable
-    the owner exports from ``.env`` to apply migrations to the real Neon database by
-    hand, so an ordinary ``pytest -m pg`` on a dev machine would otherwise DELETE
-    rows and - via test_task_item_trigger.py's round-trip case - run
-    ``alembic downgrade`` against production, stripping the privacy triggers. CI
-    points the variable at the localhost pgvector service, so host-based refusal
-    costs nothing there and turns the accident into a loud red instead of silent
-    damage. Set ``NEON_QA_BRANCH=1`` (with a verified QA branch host) or
-    ``ALLOW_REMOTE_PG_TESTS=1`` to override deliberately.
+  * ``pg_dsn`` REFUSES a non-local host. ``CI_PG_BOOTSTRAP_URL`` and
+    ``NEON_MIGRATOR_URL`` are both destructive test inputs; the latter is also what
+    the owner exports from ``.env`` to apply migrations to real Neon by hand. An
+    ordinary ``pytest -m pg`` could otherwise DELETE rows and - via migration
+    round-trip tests - downgrade production. CI points both variables at the local
+    pgvector service, so host-based refusal costs nothing there and turns the
+    accident into a loud red instead of silent damage. Set ``NEON_QA_BRANCH=1``
+    (with a verified QA branch host) or ``ALLOW_REMOTE_PG_TESTS=1`` to override
+    deliberately.
 """
 
 import asyncio
@@ -43,11 +45,12 @@ EPHEMERAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
 
 @pytest.fixture
 def pg_dsn() -> str:
-    """Return a direct asyncpg DSN for the schema-owner URL, or skip without one."""
-    url = os.environ.get("NEON_MIGRATOR_URL")
+    """Return the throwaway test DSN, preferring CI's bootstrap identity."""
+    url = os.environ.get("CI_PG_BOOTSTRAP_URL") or os.environ.get("NEON_MIGRATOR_URL")
     if not url:
         pytest.skip(
-            "NEON_MIGRATOR_URL is unset; DB-backed (@pytest.mark.pg) tests need a live Postgres"
+            "CI_PG_BOOTSTRAP_URL and NEON_MIGRATOR_URL are unset; DB-backed "
+            "(@pytest.mark.pg) tests need a live Postgres"
         )
     host = (make_url(url).host or "").lower()
     is_qa_branch = (
@@ -62,9 +65,9 @@ def pg_dsn() -> str:
     ):
         pytest.fail(
             f"refusing to run destructive DB-backed tests against non-local host {host!r}. "
-            "These tests delete rows and downgrade the schema; point NEON_MIGRATOR_URL at a "
-            "throwaway Postgres, set NEON_QA_BRANCH=1 for an ephemeral QA branch, "
-            "or set ALLOW_REMOTE_PG_TESTS=1 if you really mean it.",
+            "These tests delete rows and downgrade the schema; point CI_PG_BOOTSTRAP_URL or "
+            "NEON_MIGRATOR_URL at a throwaway Postgres, set NEON_QA_BRANCH=1 for an "
+            "ephemeral QA branch, or set ALLOW_REMOTE_PG_TESTS=1 if you really mean it.",
             pytrace=False,
         )
     return asyncpg_dsn(url)
