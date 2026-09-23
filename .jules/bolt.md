@@ -7,3 +7,6 @@
 ## 2026-08-05 - Avoid subqueries for count in SQLAlchemy for PostgreSQL
 **Learning:** Using `select(func.count()).select_from(stmt.subquery())` in SQLAlchemy against PostgreSQL can lead to a full evaluation of the result set, causing severe performance overhead for large tables.
 **Action:** Always prefer `stmt.with_only_columns(func.count()).order_by(None)` instead of subqueries for performing count queries.
+## 2026-08-05 - Avoid with_only_columns for count in older SQLAlchemy versions
+**Learning:** In older SQLAlchemy versions, replacing `select(func.count()).select_from(stmt.subquery())` with `stmt.with_only_columns(func.count())` can result in compiling an unfiltered statement *without* a FROM clause. This makes the optimization unsafe as it completely changes the query logic, counting rows in an unintended way or failing. Use `maintain_column_froms=True` or verify the framework's specifics.
+**Action:** Always verify the specific SQLAlchemy version and its behavior regarding `with_only_columns(func.count())` before applying this pattern to ensure it correctly preserves the `FROM` and `WHERE` clauses.

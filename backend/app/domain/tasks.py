@@ -836,18 +836,23 @@ class TaskStore:
                 date_conditions.append(Task.due_on < to_day)
                 datetime_conditions.append(Task.due_at < to_instant)
             stmt = stmt.where(or_(and_(*date_conditions), and_(*datetime_conditions)))
-        # ⚡ Bolt Optimization: Use with_only_columns instead of subquery for count
+        # ⚡ Bolt Optimization: Use with_only_columns(maintain_column_froms=True) instead of subquery for count
         # This avoids full result set evaluation overhead in PostgreSQL
-        total = int(await db.scalar(stmt.with_only_columns(func.count()).order_by(None)) or 0)
+        total = int(
+            await db.scalar(
+                stmt.with_only_columns(func.count(), maintain_column_froms=True).order_by(None)
+            )
+            or 0
+        )
         base_stmt = stmt
         has_previous = False
         if last:
-            # ⚡ Bolt Optimization: Use with_only_columns instead of subquery for count
+            # ⚡ Bolt Optimization: Use with_only_columns(maintain_column_froms=True) instead of subquery for count
             # This avoids full result set evaluation overhead in PostgreSQL
             has_previous = bool(
                 await db.scalar(
                     base_stmt.where(_keyset_relative(Task, last, bucket, after=False))
-                    .with_only_columns(func.count())
+                    .with_only_columns(func.count(), maintain_column_froms=True)
                     .order_by(None)
                 )
             )
@@ -931,7 +936,7 @@ class TaskStore:
         from_day = from_instant.astimezone(VIETNAM_TZ).date()
         to_day = to_instant.astimezone(VIETNAM_TZ).date()
         dated_scope = dated_scope.where(precision.in_(("date", "datetime")))
-        # ⚡ Bolt Optimization: Use with_only_columns instead of subquery for count
+        # ⚡ Bolt Optimization: Use with_only_columns(maintain_column_froms=True) instead of subquery for count
         # This avoids full result set evaluation overhead in PostgreSQL
         has_previous = bool(
             await db.scalar(
@@ -941,11 +946,11 @@ class TaskStore:
                         and_(precision == "datetime", Task.due_at < from_instant),
                     )
                 )
-                .with_only_columns(func.count())
+                .with_only_columns(func.count(), maintain_column_froms=True)
                 .order_by(None)
             )
         )
-        # ⚡ Bolt Optimization: Use with_only_columns instead of subquery for count
+        # ⚡ Bolt Optimization: Use with_only_columns(maintain_column_froms=True) instead of subquery for count
         # This avoids full result set evaluation overhead in PostgreSQL
         has_next = bool(
             await db.scalar(
@@ -955,7 +960,7 @@ class TaskStore:
                         and_(precision == "datetime", Task.due_at >= to_instant),
                     )
                 )
-                .with_only_columns(func.count())
+                .with_only_columns(func.count(), maintain_column_froms=True)
                 .order_by(None)
             )
         )
