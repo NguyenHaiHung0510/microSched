@@ -7,6 +7,8 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
+from app.core.database_urls import asyncpg_dsn
+
 pytestmark = pytest.mark.pg
 
 MIMI_TABLES = (
@@ -25,25 +27,50 @@ MIMI_TABLES = (
 
 def test_0014_app_role_has_crud_and_public_has_none(pg_dsn: str) -> None:
     async def scenario() -> None:
-        owner = await asyncpg.connect(pg_dsn)
+        owner_dsn = pg_dsn
+        if ci_migrator_url := os.environ.get("CI_MIGRATOR_URL"):
+            owner_dsn = asyncpg_dsn(ci_migrator_url)
+        owner = await asyncpg.connect(owner_dsn)
         try:
+            assert await owner.fetchval("SELECT current_user") == "microsched_migrator"
             app_grants = await owner.fetchval(
                 """
-                SELECT count(*) FROM information_schema.role_table_grants
-                WHERE grantee = 'microsched_app'
-                  AND table_schema = 'microsched'
-                  AND table_name = ANY($1::text[])
-                  AND privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+                SELECT count(*)
+                FROM pg_class AS table_relation
+                JOIN pg_namespace AS table_namespace
+                  ON table_namespace.oid = table_relation.relnamespace
+                CROSS JOIN LATERAL aclexplode(
+                    COALESCE(
+                        table_relation.relacl,
+                        acldefault('r', table_relation.relowner)
+                    )
+                ) AS table_grant
+                JOIN pg_roles AS grantee_role ON grantee_role.oid = table_grant.grantee
+                WHERE grantee_role.rolname = 'microsched_app'
+                  AND table_namespace.nspname = 'microsched'
+                  AND table_relation.relname = ANY($1::text[])
+                  AND table_relation.relkind IN ('r', 'p')
+                  AND table_grant.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
                 """,
                 list(MIMI_TABLES),
             )
             assert app_grants == len(MIMI_TABLES) * 4
             public_grants = await owner.fetchval(
                 """
-                SELECT count(*) FROM information_schema.role_table_grants
-                WHERE grantee = 'PUBLIC'
-                  AND table_schema = 'microsched'
-                  AND table_name = ANY($1::text[])
+                SELECT count(*)
+                FROM pg_class AS table_relation
+                JOIN pg_namespace AS table_namespace
+                  ON table_namespace.oid = table_relation.relnamespace
+                CROSS JOIN LATERAL aclexplode(
+                    COALESCE(
+                        table_relation.relacl,
+                        acldefault('r', table_relation.relowner)
+                    )
+                ) AS table_grant
+                WHERE table_grant.grantee = 0
+                  AND table_namespace.nspname = 'microsched'
+                  AND table_relation.relname = ANY($1::text[])
+                  AND table_relation.relkind IN ('r', 'p')
                 """,
                 list(MIMI_TABLES),
             )
@@ -64,10 +91,13 @@ def test_0014_app_role_has_crud_and_public_has_none(pg_dsn: str) -> None:
                 """,
                 uuid4(),
             )
-            assert await app.fetchval(
-                "SELECT count(*) FROM microsched.mimi_conversation WHERE id = $1",
-                conversation_id,
-            ) == 1
+            assert (
+                await app.fetchval(
+                    "SELECT count(*) FROM microsched.mimi_conversation WHERE id = $1",
+                    conversation_id,
+                )
+                == 1
+            )
             await app.execute(
                 """
                 UPDATE microsched.mimi_conversation

@@ -118,8 +118,7 @@ def test_preview_confirm_reload_feedback_and_recovery_are_durable(pg_dsn) -> Non
                 )
                 assert second_page.status_code == 200
                 assert (
-                    second_page.json()["items"][0]["id"]
-                    != conversations.json()["items"][0]["id"]
+                    second_page.json()["items"][0]["id"] != conversations.json()["items"][0]["id"]
                 )
 
                 renamed = await client.patch(

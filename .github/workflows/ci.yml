@@ -154,6 +154,7 @@ jobs:
     env:
       CI_PG_BOOTSTRAP_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
       NEON_MIGRATOR_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
+      CI_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
       CI_MIGRATOR_PASSWORD: synthetic-migrator
       CI_APP_PASSWORD: synthetic-app
       CI_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@localhost:5432/microsched_ci
