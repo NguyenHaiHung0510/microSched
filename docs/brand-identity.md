@@ -69,7 +69,7 @@ Các quy tắc nằm trong `frontend/src/brand-motion.css` và được `MimiAva
 - Quỹ đạo/vệ tinh: chu kỳ 8 giây; vệ tinh thay đổi tỷ lệ, độ sáng và opacity để tạo chiều sâu.
 - Pulse: chu kỳ 2.4 giây, phát sáng theo nhịp heartbeat.
 - Hiệu ứng ready/complete: chuyển động nảy 760 ms và không lặp vô hạn.
-- Với `prefers-reduced-motion: reduce`, animation bị tắt, transform/filter được đưa về trạng thái tĩnh; độ mờ tĩnh vẫn phân biệt pulse và vệ tinh, còn trạng thái ready/complete giữ opacity đầy đủ.
+- Với `prefers-reduced-motion: reduce`, các animation do `brand-motion.css` điều khiển bị tắt, transform/filter được đưa về trạng thái tĩnh; độ mờ tĩnh vẫn phân biệt pulse và vệ tinh, còn trạng thái ready/complete giữ opacity đầy đủ. Glow tùy chọn của `MimiAvatar` hiện dùng utility `animate-pulse` riêng và chưa thuộc override này.
 
 ## 5. Quy tắc sử dụng
 
