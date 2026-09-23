@@ -39,6 +39,23 @@ async def lifespan(app: FastAPI):
     mimi_runs = MimiRunSupervisor()
     app.state.mimi_run_supervisor = mimi_runs
     try:
+        settings = get_settings()
+        if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+            from app.agent.service import reconcile_orphaned_mimi_runs
+            from app.core.db import get_sessionmaker
+
+            factory = get_sessionmaker()
+            if factory is not None:
+                try:
+                    async with factory() as recovery_db:
+                        recovered = await reconcile_orphaned_mimi_runs(recovery_db)
+                    if recovered:
+                        logger.info("mimi_startup_recovered_runs count=%s", recovered)
+                except Exception:
+                    # Do not relabel a run without proof that the old worker is
+                    # gone. The durable ledger remains available for later
+                    # reconciliation when Neon connectivity returns.
+                    logger.exception("mimi_startup_reconciliation_failed")
         if not getattr(app.state, "cron_runtime_enabled", False):
             yield
             return

@@ -1,14 +1,15 @@
 # B18 — Final context and system-policy implementation package
 
-Status: **DRAFT FOR OWNER APPROVAL — NOT IMPLEMENTED — NO PROVIDER EGRESS**
+Status: **OWNER-APPROVED 2026-09-23 — P1C-A IMPLEMENTATION IN PROGRESS — NO PROVIDER EGRESS**
 
 Date: 2026-09-22
 
 Proposed package name: **P1C — Mimi context, policy and bounded loop correction**
 
-This document turns Owner-approved decisions D1–D9 into an implementation contract. It does
-not authorize runtime edits, a database migration, external-model calls, use of `MIMI_DEMO_1`,
-deployment, or live dogfood.
+This document turns Owner-approved decisions D1–D9 into an implementation contract. Owner approved
+B18/B19/B20 and the proposed P1C-A implementation sequence on 2026-09-23. Approval does not by
+itself establish implementation, database migration, external-model results, deployment, or live
+dogfood. The `MIMI_DEMO_1` eval remains gated by B19 prerequisites.
 
 ## 1. Outcome first
 

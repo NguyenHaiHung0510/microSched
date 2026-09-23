@@ -67,7 +67,32 @@ function RunPanel({ conversation }: { conversation: MimiConversation | null | un
   const run = conversation?.runs.at(-1)
   const events = run ? conversation?.events.filter((item) => item.run_id === run.id) ?? [] : []
   if (!run) return <div className="py-8 text-center"><CircleDot className="mx-auto mb-2 size-7 text-muted-foreground" /><p className="font-semibold">Chưa có run</p></div>
-  return <div className="space-y-3"><div className="flex items-center justify-between gap-2"><Badge variant="outline">{mimiRunLabel(run.state)}</Badge><span className="text-xs text-muted-foreground">Run {run.generation}</span></div><dl className="grid gap-2 text-xs"><div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Bắt đầu</dt><dd>{new Date(run.created_at).toLocaleString('vi-VN')}</dd></div><div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Deadline</dt><dd>{new Date(run.deadline).toLocaleString('vi-VN')}</dd></div></dl><ol className="space-y-2">{events.slice(-8).map((event) => <li key={event.id} className="flex items-center gap-2 text-xs"><CheckCircle2 className="size-3.5 text-primary" /><span>{event.kind}</span></li>)}</ol></div>
+  const manifest = [...events].reverse().find((event) => event.kind === 'context.manifest')?.payload
+  const sources = Array.isArray(manifest?.sources) ? manifest.sources as Array<Record<string, unknown>> : []
+  const providerCall = conversation?.provider_calls?.filter((call) => call.run_id === run.id).at(-1)
+  const reported = providerCall?.usage ?? {}
+  return <div className="space-y-3">
+    <div className="flex items-center justify-between gap-2"><Badge variant="outline">{mimiRunLabel(run.state)}</Badge><span className="text-xs text-muted-foreground">Run {run.generation}</span></div>
+    <dl className="grid gap-2 text-xs">
+      <div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Bắt đầu</dt><dd>{new Date(run.created_at).toLocaleString('vi-VN')}</dd></div>
+      <div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Deadline</dt><dd>{new Date(run.deadline).toLocaleString('vi-VN')}</dd></div>
+    </dl>
+    <details className="rounded-lg border p-3 text-xs" data-testid="mimi-context-inspector">
+      <summary className="cursor-pointer font-semibold">Route, nguồn context và mức dùng</summary>
+      <dl className="mt-3 space-y-2">
+        <div><dt className="font-semibold">Model / effort yêu cầu</dt><dd>{providerCall?.requested_model ?? String(manifest?.requested_model ?? 'Chưa có')} · {providerCall?.requested_effort ?? String(manifest?.requested_effort ?? 'chưa rõ')}</dd></div>
+        <div><dt className="font-semibold">Route thực tế</dt><dd>{providerCall?.actual_model ?? 'Chưa có receipt'} · {providerCall?.actual_provider ?? 'Chưa rõ provider'}</dd></div>
+        <div><dt className="font-semibold">Context đã gửi / giới hạn</dt><dd>{typeof manifest?.input_upper_bound === 'number' ? `${manifest.input_upper_bound.toLocaleString('vi-VN')} byte (giới hạn trên)` : 'Chưa có'} / {typeof manifest?.context_limit === 'number' ? `${manifest.context_limit.toLocaleString('vi-VN')} token` : 'chưa rõ'}</dd></div>
+        <div><dt className="font-semibold">Checkpoint</dt><dd>{typeof manifest?.checkpoint_frontier === 'number' && manifest.checkpoint_frontier > 0 ? `Đến message ${manifest.checkpoint_frontier}` : 'Chưa compact'}</dd></div>
+        <div><dt className="font-semibold">Token / cache / chi phí do nguồn báo</dt><dd>{typeof reported.total_tokens === 'number' ? `${reported.total_tokens.toLocaleString('vi-VN')} token` : 'Chưa có token'} · {typeof reported.cache_read_tokens === 'number' ? `${reported.cache_read_tokens.toLocaleString('vi-VN')} cache read` : 'cache chưa báo'} · {typeof reported.cost === 'number' ? `$${reported.cost.toFixed(5)}` : 'chi phí chưa báo'}</dd></div>
+      </dl>
+      <div className="mt-3 space-y-2">
+        <p className="font-semibold">Nguồn được đưa vào model</p>
+        {sources.length ? <ul className="space-y-1">{sources.map((source, index) => <li key={`${String(source.source_id)}-${index}`} className="rounded-lg bg-muted/60 p-2"><p className="font-medium break-all">{String(source.source_id)}</p><p>{String(source.coverage)} · {String(source.count)} mục · {source.data_as_of ? new Date(String(source.data_as_of)).toLocaleString('vi-VN') : 'không có mốc nguồn'}</p>{Array.isArray(source.omitted_fields) && source.omitted_fields.length ? <p className="text-muted-foreground">Không gửi: {source.omitted_fields.join(', ')}</p> : null}</li>)}</ul> : <p className="text-muted-foreground">Chưa có manifest nguồn.</p>}
+      </div>
+    </details>
+    <ol className="space-y-2">{events.slice(-8).map((event) => <li key={event.id} className="flex items-center gap-2 text-xs"><CheckCircle2 className="size-3.5 text-primary" /><span>{event.kind}</span></li>)}</ol>
+  </div>
 }
 
 export function MimiContextRail({ conversation, onOpenDomain }: { conversation: MimiConversation | null | undefined; onOpenDomain: (domain: Domain) => void }) {

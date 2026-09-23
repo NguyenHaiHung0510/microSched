@@ -13,17 +13,21 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.policy import POLICY_ID, POLICY_SHA256
+from app.agent.runtime import hold_run_guard_if_enabled
 from app.agent.service import (
     ConfirmationDecision,
     ConversationCreate,
     ConversationRename,
     ConversationStateChange,
+    DraftDirectionDecision,
     FeedbackCreate,
     MessageCreate,
     confirm_change_set,
     conversation_view,
     create_conversation,
     current_conversation,
+    decide_draft_direction,
     finish_interrupted_run,
     list_conversations,
     list_standard_tasks,
@@ -59,9 +63,33 @@ def _encode_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str, separators=(',', ':'))}\n\n"
 
 
-async def _observe_run(factory, supervisor, auth, run_id: UUID, conversation_id: UUID):
+@router.get("/capabilities", dependencies=[Depends(require_mimi_available)])
+async def mimi_capabilities(_session: CurrentSession) -> dict:
+    """Expose only non-secret route capability actually configured for this app."""
+
+    settings = get_settings()
+    return {
+        "context_v1_enabled": settings.mimi_context_v1_enabled,
+        "live_provider_enabled": settings.mimi_live_provider_enabled,
+        "requested_model": (
+            settings.mimi_route_model if settings.mimi_live_provider_enabled else None
+        ),
+        "requested_effort": (
+            settings.mimi_route_reasoning_effort if settings.mimi_live_provider_enabled else None
+        ),
+        "route_mode": settings.mimi_route_mode if settings.mimi_live_provider_enabled else None,
+        "model_selection_enabled": False,
+        "context_limit": settings.mimi_route_context_tokens,
+        "output_reserve": settings.mimi_route_max_output_tokens,
+        "policy_id": POLICY_ID if settings.mimi_context_v1_enabled else None,
+        "policy_sha256": POLICY_SHA256 if settings.mimi_context_v1_enabled else None,
+    }
+
+
+async def _observe_run(
+    factory, supervisor, auth, run_id: UUID, conversation_id: UUID, *, after: int = 0
+):
     yield _encode_sse("run.reserved", {"run_id": str(run_id)})
-    after = 0
     last_emit = time.monotonic()
     terminal_states = {
         "waiting_confirmation",
@@ -195,7 +223,22 @@ async def post_message(
     db: Database,
     session: CurrentSession,
 ) -> dict:
-    return await send_message(db, session, conversation_id, payload)
+    run_id = uuid7()
+    async with hold_run_guard_if_enabled(run_id):
+        return await send_message(db, session, conversation_id, payload, reserved_run_id=run_id)
+
+
+@router.post(
+    "/conversations/{conversation_id}/draft-direction",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def post_draft_direction(
+    conversation_id: UUID,
+    payload: DraftDirectionDecision,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await decide_draft_direction(db, session, conversation_id, payload)
 
 
 @router.post(
@@ -215,7 +258,7 @@ async def stream_message(
     run_id = uuid7()
     detached_session = AuthSession.model_validate(session.model_dump())
 
-    async def work() -> None:
+    async def work_body() -> None:
         async with factory() as worker_db:
             try:
                 await send_message(
@@ -250,6 +293,10 @@ async def stream_message(
                     )
                     await terminal_db.commit()
 
+    async def work() -> None:
+        async with hold_run_guard_if_enabled(run_id):
+            await work_body()
+
     supervisor = request.app.state.mimi_run_supervisor
     supervisor.start(run_id, work())
 
@@ -271,6 +318,38 @@ async def read_run_events(
     after: Annotated[int, Query(ge=0)] = 0,
 ) -> dict:
     return await run_events_after(db, session, run_id, after=after)
+
+
+@router.get(
+    "/runs/{run_id}/events/stream",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def observe_existing_run(
+    run_id: UUID,
+    request: Request,
+    db: Database,
+    session: CurrentSession,
+    after: Annotated[int, Query(ge=0)] = 0,
+) -> StreamingResponse:
+    """Reattach to a durable run without creating a new model turn."""
+
+    snapshot = await run_events_after(db, session, run_id, after=after)
+    factory = get_sessionmaker()
+    if factory is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    detached_session = AuthSession.model_validate(session.model_dump())
+    return StreamingResponse(
+        _observe_run(
+            factory,
+            request.app.state.mimi_run_supervisor,
+            detached_session,
+            run_id,
+            snapshot["conversation_id"],
+            after=after,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post(
@@ -318,7 +397,7 @@ async def resume_run(
     await db.commit()
     detached_session = AuthSession.model_validate(session.model_dump())
 
-    async def work() -> None:
+    async def work_body() -> None:
         async with factory() as worker_db:
             try:
                 await send_message(
@@ -354,6 +433,10 @@ async def resume_run(
                         cancelled=False,
                     )
                     await terminal_db.commit()
+
+    async def work() -> None:
+        async with hold_run_guard_if_enabled(successor_id):
+            await work_body()
 
     supervisor = request.app.state.mimi_run_supervisor
     supervisor.start(successor_id, work())

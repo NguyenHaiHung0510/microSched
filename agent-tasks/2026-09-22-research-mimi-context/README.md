@@ -1,6 +1,6 @@
 # Mimi context research — 2026-09-22
 
-Status: **OWNER WORKSHOP COMPLETE — D1–D9 APPROVED — B18/B19 DRAFTED FOR REVIEW — EVAL NOT AUTHORIZED**
+Status: **OWNER-APPROVED B18/B19/B20 (2026-09-23) — P1C-A IMPLEMENTATION IN PROGRESS — D10 NOT RUN**
 
 This folder is the canonical evidence workspace for research into Mimi's system policy,
 context assembly, tool/harness behavior, and context-control UX.
@@ -55,9 +55,9 @@ Exact thresholds and policies remain open until research and Owner review.
 | B15 | `16-execution-modes-normal-auto.md` | T3 Luna + T1 | OWNER-APPROVED D8 |
 | B16 | `17-generalized-bulk-workflow.md` | T3 Luna + T1 | OWNER-APPROVED revised D6 |
 | B17 | `18-storage-tiering-and-recovery.md` | T3 Luna + T1 | OWNER-APPROVED D9; rootfs capacity receipt added |
-| B18 | `19-final-context-system-policy-package.md` | T1 | DRAFT FOR OWNER APPROVAL; NOT IMPLEMENTED |
-| B19 | `20-d10-eval-approval-packet.md` | T1 | AWAITING OWNER APPROVAL; NOT RUN |
-| B20 | `21-independent-package-ad-review.md` | T3 Luna + T1 | COMPLETE; FINDINGS RECONCILED; DOCUMENT REVIEW ONLY |
+| B18 | `19-final-context-system-policy-package.md` | T1 | OWNER-APPROVED 2026-09-23; P1C-A IN PROGRESS |
+| B19 | `20-d10-eval-approval-packet.md` | T1 | OWNER-APPROVED 2026-09-23; PREREQUISITES PENDING; NOT RUN |
+| B20 | `21-independent-package-ad-review.md` | T3 Luna + T1 | OWNER-ACKNOWLEDGED 2026-09-23; DOCUMENT REVIEW ONLY |
 
 ## Required report shape
 

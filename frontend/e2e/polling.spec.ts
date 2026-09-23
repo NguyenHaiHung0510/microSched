@@ -195,6 +195,9 @@ test('Calendar grid has no interval fanout after its initial fetches', async (
   await page.getByRole('tab', { name: 'Lịch' }).click()
   await expect(page.getByTestId('calendar-scroll-container')).toBeVisible()
   await expect.poll(() => calendarGets).toBeGreaterThan(0)
+  // Do not count the tail of the initial bounded page/month fetch as an
+  // interval poll; the assertion below still watches the full probe window.
+  await page.waitForLoadState('networkidle')
 
   calendarGets = 0
   taskApi.resetCounts()

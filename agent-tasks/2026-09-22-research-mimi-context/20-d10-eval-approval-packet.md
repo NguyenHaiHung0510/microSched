@@ -1,6 +1,6 @@
 # B19 — D10 first live-eval approval packet
 
-Status: **AWAITING OWNER APPROVAL — DO NOT ACCESS `MIMI_DEMO_1` — NOT RUN**
+Status: **OWNER-APPROVED 2026-09-23 — PREREQUISITES PENDING — DO NOT ACCESS `MIMI_DEMO_1` — NOT RUN**
 
 Date: 2026-09-22
 
@@ -385,20 +385,22 @@ expected behavior mid-run to obtain PASS.
 
 Owner is asked to approve or amend each item:
 
-- [ ] model `z-ai/glm-5.3-flash`;
-- [ ] requested effort `high`, with stop rather than silent downgrade;
-- [ ] Stage 0 metadata/capability preflight and selection rule;
-- [ ] Lane C exact controlled route and Lane P adaptive allowlist topology;
-- [ ] proposed P1C-A daily cache policy mirrored by Lane P;
-- [ ] ZDR plus `data_collection="deny"` for all inference;
-- [ ] 9 P1C-A scenarios, 42 scenario runs and repetition scheme;
-- [ ] 4M input + 1M output/reasoning + 192-call envelope;
-- [ ] per-run/aggregate monetary failsafe, route-admission price ceilings and cost-estimate method;
-- [ ] deterministic hard gates and semantic pass rule;
-- [ ] local-only raw evidence plus sanitized repository report;
-- [ ] `MIMI_DEMO_1` access limited to this approved eval after prerequisites pass.
+- [x] model `z-ai/glm-5.3-flash` for D10 only;
+- [x] requested effort `high`, with stop rather than silent downgrade;
+- [x] Stage 0 metadata/capability preflight and selection rule;
+- [x] Lane C exact controlled route and Lane P adaptive allowlist topology;
+- [x] proposed P1C-A daily cache policy mirrored by Lane P;
+- [x] ZDR plus `data_collection="deny"` for all inference;
+- [x] 9 P1C-A scenarios, 42 scenario runs and repetition scheme;
+- [x] 4M input + 1M output/reasoning + 192-call envelope;
+- [x] per-run/aggregate monetary failsafe, route-admission price ceilings and cost-estimate method;
+- [x] deterministic hard gates and semantic pass rule;
+- [x] local-only raw evidence plus sanitized repository report;
+- [x] `MIMI_DEMO_1` access limited to this approved eval after prerequisites pass.
 
-Until every checked item has Owner approval, this packet remains `NOT RUN`.
+Owner approved every item on 2026-09-23. The packet remains `NOT RUN` until its implementation,
+deterministic QA, frozen-spec and route preflight prerequisites are met. A later three-model
+MIDEX-mini comparison needs a separate versioned packet and cannot silently alter this D10 design.
 
 ## 14. Limitations
 
