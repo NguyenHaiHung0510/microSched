@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
+import app.agent.models  # noqa: F401 - register the bounded Mimi ledger
 import app.domain.models  # noqa: F401 - importing registers every table
 from app.core.database_urls import async_postgres_url
 from app.domain.models import SCHEMA

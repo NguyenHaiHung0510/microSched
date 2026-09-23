@@ -1,6 +1,7 @@
 """Application settings loaded from the environment."""
 
 import ipaddress
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -80,6 +81,29 @@ class Settings(BaseSettings):
     vapid_private_key: str | None = None
     vapid_public_key: str | None = None
     vapid_claims_sub: str | None = None
+
+    # Mimi P1 ships dark in production. The deterministic route is available
+    # only in APP_ENV=local; enabling real chat or live provider egress is a
+    # separate, explicit configuration decision.
+    mimi_real_chat_enabled: bool = False
+    mimi_live_provider_enabled: bool = False
+    mimi_public_origin: str | None = None
+    mimi_preview_ttl_minutes: int = 15
+    mimi_run_deadline_seconds: int = 1_800
+    mimi_standard_api_key: str | None = None
+    mimi_route_mode: Literal["exact", "adaptive"] = "exact"
+    mimi_route_model: str | None = None
+    mimi_route_provider: str | None = None
+    mimi_route_quantization: str | None = None
+    mimi_route_allowed_providers: str = ""
+    mimi_route_allowed_quantizations: str = ""
+    mimi_route_forced_tool_choice: Literal["none", "required", "function"] = "none"
+    mimi_route_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] = "low"
+    mimi_route_context_tokens: int = 131_072
+    mimi_route_max_output_tokens: int = 4_096
+    mimi_route_max_input_price: float | None = None
+    mimi_route_max_output_price: float | None = None
+    mimi_route_require_zdr: bool = True
 
     # auth-brief §2 allows 60-90 days; 90 chosen because the window is rolling, so it
     # only fires after 90 days of zero use. See the 007 PR for the full rationale.
@@ -186,7 +210,69 @@ class Settings(BaseSettings):
                         "when enable_inprocess_cron is True in production"
                     )
                 )
+        if self.is_production and self.mimi_real_chat_enabled and not self.mimi_public_origin:
+            raise ValueError(
+                "MIMI_PUBLIC_ORIGIN is required when Mimi real chat is enabled in production"
+            )
+        if self.mimi_live_provider_enabled and not self.mimi_real_chat_enabled:
+            raise ValueError("MIMI_LIVE_PROVIDER_ENABLED requires MIMI_REAL_CHAT_ENABLED")
+        if self.mimi_live_provider_enabled:
+            required_route = {
+                "MIMI_STANDARD_API_KEY": self.mimi_standard_api_key,
+                "MIMI_ROUTE_MODEL": self.mimi_route_model,
+                "MIMI_ROUTE_MAX_INPUT_PRICE": self.mimi_route_max_input_price,
+                "MIMI_ROUTE_MAX_OUTPUT_PRICE": self.mimi_route_max_output_price,
+            }
+            if self.mimi_route_mode == "exact":
+                required_route.update(
+                    {
+                        "MIMI_ROUTE_PROVIDER": self.mimi_route_provider,
+                        "MIMI_ROUTE_QUANTIZATION": self.mimi_route_quantization,
+                    }
+                )
+            else:
+                required_route.update(
+                    {
+                        "MIMI_ROUTE_ALLOWED_PROVIDERS": self.mimi_route_allowed_providers.strip(),
+                        "MIMI_ROUTE_ALLOWED_QUANTIZATIONS": (
+                            self.mimi_route_allowed_quantizations.strip()
+                        ),
+                    }
+                )
+            missing = [
+                name
+                for name, value in required_route.items()
+                if value is None or (isinstance(value, str) and not value.strip())
+            ]
+            if missing:
+                raise ValueError("live Mimi route requires exact config: " + ", ".join(missing))
+        if self.mimi_route_context_tokens < 16_384:
+            raise ValueError("MIMI_ROUTE_CONTEXT_TOKENS must be at least 16384")
+        if not 256 <= self.mimi_route_max_output_tokens <= 32_768:
+            raise ValueError("MIMI_ROUTE_MAX_OUTPUT_TOKENS must be between 256 and 32768")
+        for field_name in ("mimi_route_max_input_price", "mimi_route_max_output_price"):
+            price = getattr(self, field_name)
+            if price is not None and price < 0:
+                raise ValueError(f"{field_name.upper()} cannot be negative")
+        if not 1 <= self.mimi_preview_ttl_minutes <= 60:
+            raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 60")
+        if not 30 <= self.mimi_run_deadline_seconds <= 7_200:
+            raise ValueError("MIMI_RUN_DEADLINE_SECONDS must be between 30 and 7200")
         return self
+
+    @property
+    def mimi_allowed_provider_list(self) -> tuple[str, ...]:
+        return tuple(
+            item.strip() for item in self.mimi_route_allowed_providers.split(",") if item.strip()
+        )
+
+    @property
+    def mimi_allowed_quantization_list(self) -> tuple[str, ...]:
+        return tuple(
+            item.strip()
+            for item in self.mimi_route_allowed_quantizations.split(",")
+            if item.strip()
+        )
 
     @property
     def is_production(self) -> bool:
@@ -215,4 +301,6 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Return the process-wide settings instance."""
+    if os.environ.get("MIMI_P0_DISABLE_DOTENV") == "1":
+        return Settings(_env_file=None)
     return Settings()

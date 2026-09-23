@@ -25,6 +25,14 @@
   --rose-800: #8f3050;
   --rose-900: #762a45;
 
+  /* --- bộ nhận diện hệ sinh thái: mimi · orbit · microsched bloom ---
+     Quy chuẩn: docs/brand-identity.md */
+  --brand-ivory:       #fbf8f3;
+  --brand-sakura-soft: #f5b8ba;
+  --brand-sakura-deep: #de7a85;
+  --brand-gold-leaf:   #cfa348;
+  --brand-deep-berry:  #4a1521;
+
   /* --- trung tính ngả ấm: xám lạnh đặt cạnh hồng ấm sẽ trông bẩn --- */
   --n-0:   #ffffff;
   --n-25:  #fdfbfb;

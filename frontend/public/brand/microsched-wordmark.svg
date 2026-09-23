@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 140" role="img" aria-labelledby="wordmark-title wordmark-desc">
+  <title id="wordmark-title">microSched</title>
+  <desc id="wordmark-desc">The microSched name drawn as elegant custom serif vector letterforms, with micro in deep berry and Sched in sakura.</desc>
+
+  <!-- Custom path outlines: no font, text element, script, or external resource. -->
+  <g fill="none" stroke-linecap="square" stroke-linejoin="round">
+    <g id="wordmark-micro" stroke="#4A1521">
+      <!-- m -->
+      <path d="M20 112V58M16 58H27M16 112H28" stroke-width="7"/>
+      <path d="M24 70C32 57 43 55 50 62C54 66 55 72 55 81V112M55 72C63 58 76 55 83 63C87 68 87 76 87 85V112" stroke-width="6.5"/>
+      <path d="M48 112H62M80 112H94" stroke-width="4.5"/>
+
+      <!-- i -->
+      <path d="M106 60V112M99 60H113M99 112H115" stroke-width="6.5"/>
+      <path d="M106 38V42" stroke-width="8" stroke-linecap="round"/>
+
+      <!-- c -->
+      <path d="M169 69C163 60 154 56 144 58C130 61 123 72 123 86C123 102 133 113 148 114C158 114 166 110 172 102" stroke-width="6.5"/>
+      <path d="M163 64L168 58M166 106L172 111" stroke-width="3.5"/>
+
+      <!-- r -->
+      <path d="M187 112V59M180 59H192M180 112H197" stroke-width="6.5"/>
+      <path d="M190 74C198 61 207 56 219 59C224 60 228 63 231 67" stroke-width="6"/>
+      <path d="M225 61L230 56" stroke-width="3.5"/>
+
+      <!-- o -->
+      <path d="M268 57C251 57 241 69 241 86C241 103 251 114 268 114C285 114 295 103 295 86C295 69 285 57 268 57Z" stroke-width="6.5"/>
+      <path d="M263 58L269 53M268 118L274 113" stroke-width="3.5"/>
+    </g>
+
+    <g id="wordmark-Sched" stroke="#DE7A85">
+      <!-- S -->
+      <path d="M358 38C350 28 337 24 323 27C309 30 301 39 302 51C303 64 314 69 329 75C346 82 357 88 357 101C357 114 346 120 331 121C315 122 302 116 295 105" stroke-width="7"/>
+      <path d="M350 32L357 25M297 112L304 118" stroke-width="4"/>
+
+      <!-- c -->
+      <path d="M414 69C408 60 399 56 389 58C375 61 368 72 368 86C368 102 378 113 393 114C403 114 411 110 417 102" stroke-width="6.5"/>
+      <path d="M408 64L413 58M411 106L417 111" stroke-width="3.5"/>
+
+      <!-- h -->
+      <path d="M431 112V31M424 31H438M424 112H443" stroke-width="6.5"/>
+      <path d="M435 75C442 62 454 56 463 62C469 66 470 73 470 84V112" stroke-width="6.5"/>
+      <path d="M463 112H478" stroke-width="4.5"/>
+
+      <!-- e -->
+      <path d="M534 101C528 110 519 114 508 113C492 112 484 101 484 86C484 69 494 58 509 57C524 56 534 66 535 81L486 88" stroke-width="6.5"/>
+      <path d="M528 62L533 56M528 106L534 111" stroke-width="3.5"/>
+
+      <!-- d -->
+      <path d="M582 66C575 59 568 57 560 58C546 60 540 72 540 86C540 103 548 113 562 114C572 114 580 108 584 99" stroke-width="6.5"/>
+      <path d="M584 31V112M577 31H591M577 112H593" stroke-width="6.5"/>
+    </g>
+  </g>
+</svg>

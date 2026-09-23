@@ -161,6 +161,7 @@ class CronTimer:
         tracker_batch_dispatcher: Any | None = None,
         lock_connection_factory: Callable[[], Awaitable[Any]] | None = None,
         auto_reconnect: bool = False,
+        post_snapshot_hook: Callable[[AsyncSession], Awaitable[None]] | None = None,
     ):
         self.session_factory = session_factory
         # The dispatcher owns process-local delivery locks, so it belongs to
@@ -170,6 +171,7 @@ class CronTimer:
         self._one_shot_dispatcher = OneShotDispatcher()
         self._lock_connection_factory = lock_connection_factory
         self.auto_reconnect = auto_reconnect
+        self._post_snapshot_hook = post_snapshot_hook
         self._has_batch_items = True
         self._lock_connection: Any | None = None
         self._ownership_active = False
@@ -1377,6 +1379,8 @@ class CronTimer:
         try:
             async with self.session_factory() as db:
                 await self.load_snapshot(db)
+                if self._post_snapshot_hook is not None:
+                    await self._post_snapshot_hook(db)
         finally:
             self._snapshot_task = None
 
@@ -1625,7 +1629,11 @@ class CronTimer:
         self._log_ownership_transition("stopped")
 
 
-def build_cron_timer_if_enabled(session_factory: Any = None) -> CronTimer | None:
+def build_cron_timer_if_enabled(
+    session_factory: Any = None,
+    *,
+    post_snapshot_hook: Callable[[AsyncSession], Awaitable[None]] | None = None,
+) -> CronTimer | None:
     """Build and return a CronTimer instance if ENABLE_INPROCESS_CRON is True."""
     settings = get_settings()
     if not settings.enable_inprocess_cron:
@@ -1641,4 +1649,8 @@ def build_cron_timer_if_enabled(session_factory: Any = None) -> CronTimer | None
                 "(app.core.db.get_sessionmaker() returned None)"
             )
 
-    return CronTimer(session_factory, auto_reconnect=True)
+    return CronTimer(
+        session_factory,
+        auto_reconnect=True,
+        post_snapshot_hook=post_snapshot_hook,
+    )

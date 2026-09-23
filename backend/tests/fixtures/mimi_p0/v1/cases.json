@@ -1,0 +1,33 @@
+{
+  "schema_version": "mimi.case-fixtures.v1",
+  "fixture_version": "mimi-p0.v1",
+  "cases": [
+    {
+      "id": "stale-task-version",
+      "journey": "J05",
+      "source_ref": "task-internship",
+      "preview_v1": {"expected_version": "task-v1", "due_at": "2030-01-15T14:00:00+07:00"},
+      "owner_edit": {"new_version": "task-v2", "due_at": "2030-01-15T14:30:00+07:00"},
+      "expected": "STALE; no silent retry against latest"
+    },
+    {
+      "id": "expired-lease",
+      "journey": "J06",
+      "lease": {"deadline": "2030-01-15T07:59:59+07:00", "revoked_at": null},
+      "expected": "EXPIRED before dispatch"
+    },
+    {
+      "id": "revoked-lease",
+      "journey": "J06",
+      "lease": {"deadline": "2030-01-15T08:15:00+07:00", "revoked_at": "2030-01-15T07:58:00+07:00"},
+      "expected": "DENY before tool/commit boundary"
+    },
+    {
+      "id": "full-evidence-partial-stream",
+      "journey": "J06",
+      "captured": ["prompt", "request", "tools"],
+      "missing": ["response", "usage"],
+      "expected": "INCOMPLETE, never COMPLETE"
+    }
+  ]
+}

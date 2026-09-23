@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.settings import get_settings
 from app.domain.models import AuthSession
 from app.domain.private_gate import gate_status
 from app.web.deps import get_session, require_session
@@ -23,6 +24,7 @@ class SessionInfo(BaseModel):
     private_locked_until: datetime | None
     pin_is_set: bool
     pin_is_bootstrap: bool
+    mimi_available: bool
 
 
 @router.get("/me")
@@ -32,6 +34,7 @@ async def read_me(
 ) -> SessionInfo:
     """Return the signed-in identity and session window."""
     private = await gate_status(db, session)
+    settings = get_settings()
     return SessionInfo(
         email=session.user_email,
         signed_in_at=session.created_at,
@@ -40,4 +43,8 @@ async def read_me(
         private_locked_until=private.locked_until,
         pin_is_set=private.pin_is_set,
         pin_is_bootstrap=private.pin_is_bootstrap,
+        mimi_available=(
+            not settings.is_production
+            or (settings.mimi_real_chat_enabled and settings.mimi_live_provider_enabled)
+        ),
     )

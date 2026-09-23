@@ -1,0 +1,235 @@
+# Task 055 terminal receipt
+
+Run date/time: 2026-09-14 Asia/Saigon. Synthetic local data only.
+
+## Baseline and runner
+
+```text
+task_id=mimi-p0-055
+branch=feat/055-mimi-p0-sandbox
+base=origin/develop
+base_sha=7806f4e9f75ef66110ae3d485cffd036d42d94c1
+application_candidate=5ef0ba2c1a7656dd199c4ff545d777cf51ee84bd
+docker_server=29.7.2
+container=microsched-mimi-p0-055
+container_label=microsched.synthetic=mimi-p0-055
+database=microsched_mimi_p0_055
+database_host=127.0.0.1
+fixture_version=mimi-p0.v1
+fixture_sha256=39661bc7b78d88b310257077e75834613ffc7e968062524022c0691b2f5003cc
+```
+
+## Database/start/reset
+
+```text
+alembic=upgrade 0001 -> 0013 PASS
+migration_prerequisites=ok
+seed_counts=tasks:3 notes:2 calendar_sources:1 calendar_events:1 day_annotations:1 tracker_groups:2 trackers:3 subscriptions:1 entries:5
+repeat_start=PASS (no migration replay, no duplicate fixture IDs)
+verify_before_reset=counts_match:true review_store_preserved:true
+reset=exact manifest IDs only; reseed PASS
+verify_after_reset=counts_match:true review_store_preserved:true
+review_bundle_roundtrip_before_after_reset=true
+feedback_acknowledged_before_after_reset=true
+feedback_unresolved_before_after_reset=true
+```
+
+## Full app/browser
+
+```text
+backend_ready=true
+backend_db=up
+backend_commit=7806f4e9f75ef66110ae3d485cffd036d42d94c1
+frontend_ready=true
+browser=isolated Playwright CLI session mimi-p0-055
+observed=authenticated app + STANDARD seeded Note/Tracker/Calendar data
+private_state=locked; PRIVATE seeded rows not displayed
+cleanup=dev-session logout + browser close
+post_logout_console_401=/api/me on public page; expected auth check after logout
+restart=start -> stop -> start -> verify -> stop PASS
+restart_review_bundle_roundtrip=true
+restart_feedback_acknowledged=true
+restart_feedback_unresolved=true
+final_state=backend false; frontend false; postgres false; volume/evidence retained
+```
+
+## Code checks
+
+```text
+uv run --frozen pytest tests/test_mimi_p0_contracts.py tests/test_mimi_p0_feedback_store.py tests/test_mimi_p0_testing.py tests/test_mimi_p0_sandbox.py -q
+19 passed
+
+uv run --frozen pytest -m "not pg" -q
+459 passed, 211 deselected, one Starlette/httpx deprecation warning
+
+uv run --frozen ruff check <P0 Python scope>
+PASS
+
+uv run --frozen ruff format --check <P0 Python scope>
+PASS after applying project formatter
+
+git diff --check
+PASS
+```
+
+Resolved during verification: the first Windows stop implementation stored transient venv/npm launcher PIDs, so child listeners briefly survived and a restart failed closed on the occupied port. The corrected runner resolves/stores the actual loopback listener PIDs, waits for both ports to close, and uses a bounded exact-tree force only when graceful termination does not finish. The final two-cycle start/stop/restart/verify/stop receipt above passed.
+
+The focused tests cover full encrypted payload roundtrip, stable client retry dedup/conflict, completeness truth, secret/header/cookie exclusion, acknowledged unresolved feedback persistence across store reopen and fixture reseed simulation, local-target guard, manifest-scoped reset, fake provider failure, fake clock and deterministic barrier delay.
+
+## NOT_RUN / excluded
+
+```text
+CI=NOT_RUN
+production_image=NOT_RUN
+Neon/Fly/R2/production=NOT_RUN
+real_data/real_browser_profile/real_OAuth=NOT_RUN
+paid/live_model=NOT_RUN
+physical_iPhone/Safari=NOT_RUN
+Mimi orchestrator and P1 acceptance=NOT_RUN
+P1 auto-start=NO
+merge/deploy/PR/push=NO
+```
+
+## Delivery-closure remediation receipts — 2026-09-14 21:20 +07:00
+
+```text
+startup_head=b772e1c2a6e513527df7835e2a7c778e841730b5
+origin_develop_refreshed=7806f4e9f75ef66110ae3d485cffd036d42d94c1
+working_tree_at_start=clean
+github_pr_query_initial=UNVERIFIED (sandbox proxy denied; gh keyring reported invalid token)
+systemwide_process_inventory=UNVERIFIED (Windows access denied)
+concurrent_git_mutation_observed=false
+```
+
+Deliberate RED against archived candidate `5ef0ba2` with the new regression tests:
+
+```text
+contracts/environment/docker-context/PID/store subset: 12 failed, 4 passed; exit 1
+direct environment-isolation rerun after removing Git-metadata noise: 1 failed; exit 1
+observed violation: inherited GOOGLE_CLIENT_SECRET remained in old child environment
+observed violations: nested password/reasoning/token/private_key/thinking/inline auth accepted
+observed violations: .local missing from Docker ignore; no PID ownership helper; duplicate writers both created; no pending recovery; no size cap
+```
+
+GREEN on remediated working tree:
+
+```text
+focused contracts/store/testing/sandbox/settings: 59 passed, 1 integration-only skipped; exit 0
+exact synthetic reset dependent guard: 1 passed; exit 0
+post-guard verify: counts_match=true; bundle_roundtrip=true; feedback_acknowledged=true; feedback_unresolved=true
+post-guard stop: backend=false; frontend=false; postgres=false; volume/evidence retained
+full backend non-PG: 479 passed, 1 skipped, 211 deselected, one existing Starlette/httpx deprecation warning; exit 0
+full backend Ruff check: PASS; formatter: 144 files already formatted
+frontend lint: PASS; Vitest: 20 files / 145 tests passed; production build + apple icon + PWA surface + precompress: PASS
+```
+
+Docker ignore mechanism proof (synthetic canary only):
+
+```text
+docker build --no-cache --progress plain -f .local/mimi-p0/dockerignore-probe.Dockerfile .
+context_transfer=2B
+result=EXPECTED_FAIL exit 1
+diagnostic=CopyIgnoredFile; /.local/mimi-p0/docker-context-canary.txt not found
+image_created=false
+```
+
+Final committed-candidate runtime, independent delta review, CI/PR/CAS merge and production readyz receipts remain pending below this point.
+
+## Frozen remediation candidate runtime — `572209231f833a0a5c6d9e4066e6ad2204aace85`
+
+```text
+commit=572209231f833a0a5c6d9e4066e6ad2204aace85
+commit_hooks=large-file/EOF/whitespace/conflict/YAML/private-key/gitleaks PASS
+fresh_start=PASS; migration prerequisites=ok; Alembic head unchanged at 0013
+readyz.db=up
+readyz.commit=572209231f833a0a5c6d9e4066e6ad2204aace85
+fixture_sha256=39661bc7b78d88b310257077e75834613ffc7e968062524022c0691b2f5003cc
+explicit reset/reseed counts=Task 3, Note 2, Calendar source/event 1/1, private day 1, Tracker group/tracker 2/3, Subscription 1, Entry 5
+before/after reset bundle_roundtrip=true; feedback_acknowledged=true; feedback_unresolved=true
+full stop -> full start -> verify -> final stop=PASS
+final backend=false; frontend=false; postgres=false; volume/evidence retained
+```
+
+Isolated Playwright CLI browser receipt on the same running candidate:
+
+```text
+session=mimi-p0-final; synthetic local dev-session only
+wrapper prerequisite npx=available; bundled bash wrapper=UNAVAILABLE because WSL /bin/bash missing
+fallback=same @playwright/cli package invoked directly through npx
+authenticated app=PASS; role=allowed local synthetic owner
+observed Note=Kế hoạch tuần synthetic
+observed Tracker=Chi phí AI synthetic, Đọc sách synthetic
+observed groups=Synthetic finance, Synthetic habits; subscription count=1
+private gate=locked; PRIVATE seeded Note/Tracker absent from visible lists
+calendar surface=loaded; dated 2030 fixture event not brought into the current 2026 viewport in this smoke
+console before logout=0 errors, 0 warnings
+logout=PASS; public homepage restored; browser session closed
+post-logout console=one expected unauthorized /api/me check (same known behavior as prior receipt)
+physical iPhone/Safari=NOT_RUN
+```
+
+Independent delta review was dispatched read-only to a fresh T3 Luna/high context against exact candidate `5722092`; result pending. No push/PR/CI/merge/deploy occurred at this receipt point.
+
+## Independent-review blocker and final candidate `1c7af66582d574f43ab34493d4e3d8af856dbb23`
+
+```text
+reviewer=T3 GPT-5.6 Luna/high; fresh read-only context
+reviewed=572209231f833a0a5c6d9e4066e6ad2204aace85 against b772e1c2a6e513527df7835e2a7c778e841730b5
+verdict=BLOCK publication
+valid blocker=serialized password/token/private_key and reasoning/reasoning_details/reasoning_content aliases accepted
+review runtime rerun=UNVERIFIED because reviewer hit Windows pytest temp ACL and uv-cache ACL; not treated as candidate failure
+fix_commit=1c7af66582d574f43ab34493d4e3d8af856dbb23
+focused contracts/store=32 passed
+full backend non-PG=487 passed, 1 skipped, 211 deselected, one existing Starlette/httpx warning
+full Ruff=PASS, 144 files formatted
+repository hooks=PASS
+```
+
+Fresh full-app/runtime/browser sequence was repeated after the blocker fix:
+
+```text
+readyz.db=up
+readyz.commit=1c7af66582d574f43ab34493d4e3d8af856dbb23
+browser_session=mimi-p0-final2
+Note/Tracker STANDARD fixtures visible; private gate locked; PRIVATE fixtures absent
+browser_console_before_logout=0 errors, 0 warnings
+logout=PASS; browser closed; post-logout /api/me unauthorized remains expected
+verify -> reset/reseed -> verify -> stop -> start -> verify -> stop=PASS
+counts_match=true; fixture digest unchanged
+bundle_roundtrip=true; feedback_acknowledged=true; feedback_unresolved=true
+final backend=false; frontend=false; postgres=false; volume/evidence retained
+```
+
+Bounded re-review of exact delta `5722092..1c7af66`:
+
+```text
+verdict=prior P0 sanitizer blocker CLOSED; no new delta regression
+direct probes=serialized password/token/private_key/reasoning_content/reasoning_details + direct reasoning/reasoning_details + raw Bearer rejected
+allowed probes=response.reasoning_summary + config.reasoning_effort + serialized reasoning_summary accepted
+independent focused contracts=25 passed
+feedback-store rerun=UNVERIFIED in reviewer lane due Windows pytest temp ACL; store code unchanged by this delta
+publication_for_CI=ALLOWED
+```
+
+Push/PR/CI/merge/deploy remain NO at this receipt point.
+
+## PR #222 first published-head CI — 2026-09-14
+
+```text
+pr=https://github.com/NguyenHaiHung0510/microSched/pull/222
+state=OPEN; draft=false; mergeable=MERGEABLE
+base=develop@7806f4e9f75ef66110ae3d485cffd036d42d94c1
+head=a868fd06fa0ed47518272c60dab83e0e6992ccb2
+files=21; scoped P0 diff confirmed
+Backend checks=PASS 33s
+Frontend checks=PASS 37s
+Repository hooks=PASS 39s
+Secret scan=PASS 9s
+Production dependency check=PASS 17s
+Migration QA=PASS 1m49s
+Frontend e2e=PASS 7m29s
+CodeQL python=PASS 1m5s
+CodeQL javascript-typescript=PASS 1m16s
+```
+
+This docs-only receipt changes the PR head. These checks are not reused for merge; final exact-head checks must rerun and pass. Merge/deploy remain NO at this receipt point.

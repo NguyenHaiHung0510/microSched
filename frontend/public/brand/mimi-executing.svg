@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Mimi — Turning Plans into Progress</title>
+  <desc id="desc">Mimi flies with wide origami butterfly wings inside a golden orbit carrying task, calendar, and analytics cards.</desc>
+  <defs>
+    <linearGradient id="ivory" x1="78" y1="40" x2="125" y2="151" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFDF9"/><stop offset=".58" stop-color="#FBF8F3"/><stop offset="1" stop-color="#E9DED0"/></linearGradient>
+    <linearGradient id="wingL" x1="17" y1="49" x2="87" y2="133" gradientUnits="userSpaceOnUse"><stop stop-color="#FAD8D7"/><stop offset=".52" stop-color="#F5B8BA"/><stop offset="1" stop-color="#D96A78"/></linearGradient>
+    <linearGradient id="wingR" x1="183" y1="49" x2="113" y2="133" gradientUnits="userSpaceOnUse"><stop stop-color="#FAD8D7"/><stop offset=".52" stop-color="#F5B8BA"/><stop offset="1" stop-color="#D96A78"/></linearGradient>
+    <linearGradient id="gold" x1="21" y1="42" x2="178" y2="174" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF2BA"/><stop offset=".22" stop-color="#CFA348"/><stop offset=".47" stop-color="#FFF0A9"/><stop offset=".74" stop-color="#AA711C"/><stop offset="1" stop-color="#F1D171"/></linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#FFFDF9"/><stop offset="1" stop-color="#F0E7DB"/></linearGradient>
+    <radialGradient id="eye"><stop stop-color="#7A2B3D"/><stop offset="1" stop-color="#4A1521"/></radialGradient>
+    <filter id="shadow" x="4" y="24" width="192" height="166" filterUnits="userSpaceOnUse"><feDropShadow dx="0" dy="5" stdDeviation="4" flood-color="#4A1521" flood-opacity=".16"/></filter>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#4A1521" flood-opacity=".15"/></filter>
+  </defs>
+  <ellipse cx="100" cy="174" rx="77" ry="16" stroke="#CFA348" stroke-width="1" opacity=".25"/>
+  <path d="M22 128C53 171 146 184 181 132" stroke="url(#gold)" stroke-width="2.2" stroke-linecap="round"/><path d="M19 126C48 94 144 82 184 119" stroke="url(#gold)" stroke-width="1.1" stroke-linecap="round" opacity=".72"/>
+  <g filter="url(#cardShadow)" stroke-linejoin="round">
+    <g transform="translate(10 96) rotate(-8 16 18)"><rect width="32" height="37" rx="4" fill="url(#card)" stroke="#CFA348"/><path d="m7 10 2 2 4-5" stroke="#DE7A85" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 9h10M16 17h10M7 24h19M7 30h14" stroke="#CFA348" stroke-width="1.3" stroke-linecap="round"/></g>
+    <g transform="translate(82 157) rotate(4 18 15)"><rect width="36" height="30" rx="4" fill="url(#card)" stroke="#CFA348"/><path d="M0 8h36" stroke="#DE7A85"/><path d="M9 3v8M27 3v8M8 14h5v5H8zM16 14h5v5h-5zM24 14h5v5h-5zM8 22h5v4H8zM16 22h5v4h-5z" fill="#F5B8BA"/></g>
+    <g transform="translate(158 101) rotate(7 16 18)"><rect width="32" height="37" rx="4" fill="url(#card)" stroke="#CFA348"/><path d="M7 30h19" stroke="#CFA348"/><rect x="7" y="21" width="4" height="9" rx="1" fill="#F5B8BA"/><rect x="14" y="15" width="4" height="15" rx="1" fill="#DE7A85"/><rect x="21" y="8" width="4" height="22" rx="1" fill="#CFA348"/></g>
+  </g>
+  <g filter="url(#shadow)" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M78 78C59 57 36 44 12 39c5 24 17 44 38 59L17 112c18 12 41 14 68 3l-7-37Z" fill="url(#wingL)" stroke="url(#gold)" stroke-width="1.7"/>
+    <path d="M122 78c19-21 42-34 66-39-5 24-17 44-38 59l33 14c-18 12-41 14-68 3l7-37Z" fill="url(#wingR)" stroke="url(#gold)" stroke-width="1.7"/>
+    <path d="m12 39 38 59 28-20M17 112l33-14 35 17m103-76-38 59-28-20m61 34-33-14-35 17" stroke="url(#gold)" stroke-width="1.3"/>
+    <path d="M100 33C88 47 74 59 73 82c-2 27 8 49 27 70 19-21 29-43 27-70-1-23-15-35-27-49Z" fill="url(#ivory)" stroke="url(#gold)" stroke-width="1.8"/>
+    <path d="m100 33-20 37 20 15 20-15-20-37ZM73 82l27 3 27-3M100 85v67M80 133l20-48 20 48" stroke="url(#gold)" stroke-width="1.35"/>
+    <path d="M86 146c4 10 9 17 14 23 5-6 10-13 14-23l-14 6-14-6Z" fill="#DE7A85" stroke="url(#gold)" stroke-width="1.3"/>
+  </g>
+  <ellipse cx="88" cy="101" rx="5.3" ry="7.8" fill="url(#eye)"/><ellipse cx="112" cy="101" rx="5.3" ry="7.8" fill="url(#eye)"/>
+  <circle cx="86" cy="98.1" r="1.55" fill="#FFFDF9"/><circle cx="110" cy="98.1" r="1.55" fill="#FFFDF9"/>
+  <circle cx="90.1" cy="104.8" r=".75" fill="#FFFDF9" opacity=".45"/><circle cx="114.1" cy="104.8" r=".75" fill="#FFFDF9" opacity=".45"/>
+  <g fill="#CFA348"><path d="m49 159 3-5 3 5-3 5-3-5Z"/><path d="m145 154 3-5 3 5-3 5-3-5Z"/><circle cx="28" cy="141" r="2"/><circle cx="176" cy="146" r="2"/></g>
+</svg>

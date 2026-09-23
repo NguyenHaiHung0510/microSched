@@ -2,6 +2,7 @@
 .github
 .claude
 .playwright-cli
+.local
 agent-tasks
 docs
 scripts

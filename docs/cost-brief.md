@@ -7,9 +7,9 @@
 
 ## TL;DR
 
-**Gross resource cost hiện tại ~\$2,47–2,55/tháng; net payable kỳ vọng \$0 có điều kiện.**
+**Owner-approved planning estimate for 1×512MB always-on: ~\$4,05–4,18/tháng gross; waiver/net remains conditional and must be watched.**
 
-- Toàn bộ gross cost "cứng" hiện tại = 1× Fly `shared-cpu-1x` 256MB always-on ở `sin`.
+- Toàn bộ gross cost "cứng" hiện tại = 1× Fly `shared-cpu-1x` 512MB + 512MB swap, always-on ở `sin`.
 - Fly Support đã waive invoice khi finalized cost dưới \$5 cho original personal organization của chủ,
   nhưng đây **không** phải free tier/credit được pricing docs bảo đảm; xem điều kiện và cliff ở §7.6.
 - Neon, backup, auth, GitHub Actions CI/CD hiện đều \$0.
@@ -40,8 +40,8 @@
 
 ## 2. Chi tiết dòng hosting (Fly.io)
 
-- **1 máy always-on, giá `sin` re-check 2026-08-02:** 256MB `shared-cpu-1x` ≈ **\$2,47/30 ngày · \$2,54/31 ngày** (sai số làm tròn tới khoảng \$2,55). Đây là **gross resource cost**, không phải số net sau waiver. Chỉ tăng memory khi số đo OOM buộc phải tăng — 512MB ≈ \$4,05–4,18 đã sát cliff invoice \$5.
-- **Bẫy chi phí #1:** `fly launch` mặc định có thể tạo **2 máy** (HA) → 2×256MB ≈ \$4,92/30 ngày nhưng **\$5,09/31 ngày**, đủ vượt cliff waiver. `min_machines_running = 1` không đặt trần; kiểm live count = 1 sau deploy.
+- **1 máy always-on, planning estimate carried from re-check 2026-08-02:** Owner approved 512MB `shared-cpu-1x` ≈ **\$4,05/30 ngày · \$4,18/31 ngày** gross. Đây là planning estimate, **không** phải invoice/net receipt; re-check vendor billing before relying on it. It supersedes the former “increase only after measured OOM” threshold.
+- **Bẫy chi phí #1:** `fly launch` mặc định có thể tạo **2 máy** (HA); a second 512MB machine would exceed the former $5 waiver cliff by a wide margin. `min_machines_running = 1` không đặt trần; kiểm live count = 1 sau deploy.
 - **Không tốn thêm:** shared IPv4 = free (không cần dedicated \$2); TLS cert = free (Let's Encrypt qua `fly certs`); **không volume** (data ở Neon → \$0 lưu trữ; và volume snapshot tính phí từ 1/2026); bandwidth single-user ≈ \$0 (\$0.02/GB).
 - **Bắt buộc:** đặt **spending / budget alert gần \$4** (trước cliff \$5) — Fly pay-as-you-go, tính theo giây. Waiver dưới \$5 là hành vi invoice có điều kiện, **không phải free allowance** để tiêu dần.
 
@@ -192,11 +192,12 @@ Chính chủ yêu cầu tư vấn chi tiết hơn về mảng này **sau khi vá
 
 **Budget alert 88k VNĐ giờ gác chung hai thứ không liên quan** — LLM spend (Bước 1, dòng **không có trần**, xem §7.2) và hạ tầng cron (\$0, có trần cứng). Alert kêu thì không biết ngay là do cái nào. Chưa cần xử lý khi Cloud Scheduler còn free, nhưng **ghi ra để lần soi sau không phải suy lại**.
 
-### 7.6 🆕 2026-08-02 — always-on trở lại, gross ≠ net payable
+### 7.6 🆕 2026-09-09 — Owner-approved 512MB, gross ≠ net payable
 
-**Quyết định hiện hành:** giữ đúng một Fly Machine `shared-cpu-1x` 256MB ở `sin` chạy liên tục.
-Baseline kỳ vọng trở lại **~86.400 units/ngày**; gross compute khoảng **\$2,47–2,55/tháng**. Các
-con số scale-to-zero ở §7.5 là hồ sơ của cấu hình 23/07–02/08, không còn là dự phóng hiện hành.
+**Quyết định hiện hành:** giữ đúng một Fly Machine `shared-cpu-1x` **512MB RAM + 512MB swap** ở `sin`
+chạy liên tục. Planning estimate là **~\$4,05–4,18/tháng gross**, based on the previous 2026-08-02
+comparison; it is not a current invoice receipt. The Owner supersedes the previous 256MB/only-after-OOM
+constraint. Các con số scale-to-zero ở §7.5 là hồ sơ của cấu hình 23/07–02/08, không còn là dự phóng hiện hành.
 
 **Dữ kiện invoice:** Fly Support xác nhận invoice của chủ đã được waive vì finalized cost dưới \$5.
 Số **net payable kỳ vọng = \$0** chỉ khi đồng thời:
@@ -208,8 +209,8 @@ Số **net payable kỳ vọng = \$0** chỉ khi đồng thời:
 Đây **không phải** \$5 credit, compute allowance hay free tier được Fly pricing docs công khai bảo đảm.
 Nó là một **threshold cliff**: phải lập ngân sách như thể \$5,01 nghĩa là trả toàn invoice, không phải
 chỉ trả \$0,01. Vì scope là organization aggregate, Machine/workload khác trên cùng organization cũng
-ăn vào ngưỡng. Đặt alert gần **\$4** để còn khoảng phản ứng; không dùng 512MB hay Machine thứ hai nếu
-chưa tính lại cả tháng 31 ngày.
+ăn vào ngưỡng. 512MB now uses the prior $4 alert margin, so the Owner must re-check the organization-wide
+invoice/budget threshold; no second Machine is in scope and live count remains a required post-deploy receipt.
 
 **Dòng chi phí CI/CD \$0 không đổi:** GitHub Actions làm CI/CD và giữ nút `workflow_dispatch` để
 chạy CD thủ công. Google Cloud Scheduler đã bị **xoá hoàn toàn** để nhường chỗ cho `011d` in-process timer.

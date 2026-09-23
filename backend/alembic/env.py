@@ -10,6 +10,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlmodel import SQLModel
 
+import app.agent.models  # noqa: F401 - register the bounded Mimi ledger
 import app.domain.models  # noqa: F401 - importing registers every table
 from alembic import context
 from app.core.database_urls import async_postgres_url
@@ -25,15 +26,23 @@ class MigrationSettings(BaseSettings):
     )
 
     neon_migrator_url: str
+    # Migration QA keeps NEON_MIGRATOR_URL on the disposable bootstrap identity
+    # because many PG fixtures need database-level administration.  Alembic
+    # invocations in that lane must still use the schema owner so that every
+    # in-process downgrade/upgrade preserves production-like default grants.
+    ci_migrator_url: str | None = None
 
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+migration_settings = MigrationSettings()
 config.set_main_option(
     "sqlalchemy.url",
-    async_postgres_url(MigrationSettings().neon_migrator_url).replace("%", "%%"),
+    async_postgres_url(
+        migration_settings.ci_migrator_url or migration_settings.neon_migrator_url
+    ).replace("%", "%%"),
 )
 target_metadata = SQLModel.metadata
 
