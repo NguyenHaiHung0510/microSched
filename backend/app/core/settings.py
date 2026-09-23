@@ -263,9 +263,7 @@ class Settings(BaseSettings):
     @property
     def mimi_allowed_provider_list(self) -> tuple[str, ...]:
         return tuple(
-            item.strip()
-            for item in self.mimi_route_allowed_providers.split(",")
-            if item.strip()
+            item.strip() for item in self.mimi_route_allowed_providers.split(",") if item.strip()
         )
 
     @property
