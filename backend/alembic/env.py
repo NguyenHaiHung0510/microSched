@@ -26,6 +26,10 @@ class MigrationSettings(BaseSettings):
     )
 
     neon_migrator_url: str
+    # Migration QA keeps NEON_MIGRATOR_URL on the disposable bootstrap identity
+    # because many PG fixtures need database-level administration.  Alembic
+    # invocations in that lane must still use the schema owner so that every
+    # in-process downgrade/upgrade preserves production-like default grants.
     ci_migrator_url: str | None = None
 
 

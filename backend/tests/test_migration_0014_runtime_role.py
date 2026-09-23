@@ -7,6 +7,8 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
+from app.core.database_urls import asyncpg_dsn
+
 pytestmark = pytest.mark.pg
 
 MIMI_TABLES = (
@@ -25,8 +27,12 @@ MIMI_TABLES = (
 
 def test_0014_app_role_has_crud_and_public_has_none(pg_dsn: str) -> None:
     async def scenario() -> None:
-        owner = await asyncpg.connect(pg_dsn)
+        owner_dsn = pg_dsn
+        if ci_migrator_url := os.environ.get("CI_MIGRATOR_URL"):
+            owner_dsn = asyncpg_dsn(ci_migrator_url)
+        owner = await asyncpg.connect(owner_dsn)
         try:
+            assert await owner.fetchval("SELECT current_user") == "microsched_migrator"
             app_grants = await owner.fetchval(
                 """
                 SELECT count(*)
