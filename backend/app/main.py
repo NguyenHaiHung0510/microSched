@@ -21,6 +21,7 @@ from app.web.routers.auth import router as auth_router
 from app.web.routers.calendar import router as calendar_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
+from app.web.routers.mimi import router as mimi_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
 from app.web.routers.push import router as push_router
@@ -33,33 +34,41 @@ from app.web.routers.tracker import router as tracker_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not getattr(app.state, "cron_runtime_enabled", False):
-        yield
-        return
+    from app.agent.runtime import MimiRunSupervisor
 
-    # Import the timer implementation only in the explicitly enabled mode.
-    # Disabled deployments must stay a literal no-op: no CronTimer, dispatcher,
-    # Event, app.state fields, or timer database setup exists in that path.
-    from app.core.cron_timer import build_cron_timer_if_enabled
-
-    timer = build_cron_timer_if_enabled()
-    app.state.cron_timer = timer
-    app.state.cron_timer_task = None
-    if timer is None:  # pragma: no cover - settings gate above makes this unreachable.
-        raise RuntimeError("ENABLE_INPROCESS_CRON=true did not build a CronTimer")
-
-    # A detached create_task only exposes a fatal timer failure during shutdown,
-    # leaving HTTP healthy while reminders are dead. TaskGroup supervises the
-    # timer: exhausted bounded reload retries propagate through lifespan so Fly
-    # can restart and rehydrate from the durable dispatch rows.
-    async with asyncio.TaskGroup() as task_group:
-        app.state.cron_timer_task = task_group.create_task(
-            timer.run(), name="microsched-cron-timer"
-        )
-        try:
+    mimi_runs = MimiRunSupervisor()
+    app.state.mimi_run_supervisor = mimi_runs
+    try:
+        if not getattr(app.state, "cron_runtime_enabled", False):
             yield
-        finally:
-            await timer.stop()
+            return
+
+        # Import the timer implementation only in the explicitly enabled mode.
+        from app.agent.service import reconcile_refresh_markers_after_snapshot
+        from app.core.cron_timer import build_cron_timer_if_enabled
+
+        timer = build_cron_timer_if_enabled()
+        if timer is not None:
+            timer._post_snapshot_hook = reconcile_refresh_markers_after_snapshot
+        app.state.cron_timer = timer
+        app.state.cron_timer_task = None
+        if timer is None:  # pragma: no cover - settings gate above makes this unreachable.
+            raise RuntimeError("ENABLE_INPROCESS_CRON=true did not build a CronTimer")
+
+        # A detached create_task only exposes a fatal timer failure during shutdown,
+        # leaving HTTP healthy while reminders are dead. TaskGroup supervises the
+        # timer: exhausted bounded reload retries propagate through lifespan so Fly
+        # can restart and rehydrate from the durable dispatch rows.
+        async with asyncio.TaskGroup() as task_group:
+            app.state.cron_timer_task = task_group.create_task(
+                timer.run(), name="microsched-cron-timer"
+            )
+            try:
+                yield
+            finally:
+                await timer.stop()
+    finally:
+        await mimi_runs.stop()
 
 
 logger = logging.getLogger(__name__)
@@ -232,6 +241,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(settings_router)
     protected_api.include_router(push_router)
     protected_api.include_router(reminders_router)
+    protected_api.include_router(mimi_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:

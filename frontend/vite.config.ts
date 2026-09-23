@@ -4,6 +4,8 @@ import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+const backendOrigin = process.env.VITE_BACKEND_ORIGIN ?? 'http://localhost:8000'
+
 // https://vite.dev/config/
 export default defineConfig({
   test: {
@@ -52,8 +54,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:8000',
-      '/auth': 'http://localhost:8000',
+      '/api': backendOrigin,
+      '/auth': backendOrigin,
     },
   },
 })

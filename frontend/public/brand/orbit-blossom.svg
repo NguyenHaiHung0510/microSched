@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" role="img" aria-labelledby="orbit-title orbit-desc" data-state="standby">
+  <title id="orbit-title">Orbit — The Origami Blossom in Orbit</title>
+  <desc id="orbit-desc">A five-petal origami calendar blossom held by three gold beads inside two tilted gold orbits. Set data-state to standby, pulse, active, or complete.</desc>
+
+  <!-- Set data-state on the root SVG to standby | pulse | active | complete. -->
+  <defs>
+    <linearGradient id="orbit-gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8C6517"/><stop offset="0.18" stop-color="#CFA348"/><stop offset="0.4" stop-color="#FFF2C6"/><stop offset="0.58" stop-color="#DDB458"/><stop offset="0.8" stop-color="#FFF7D8"/><stop offset="1" stop-color="#9A6C19"/>
+    </linearGradient>
+    <linearGradient id="orbit-gold-reverse" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8C6517"/><stop offset="0.24" stop-color="#F4D985"/><stop offset="0.5" stop-color="#CFA348"/><stop offset="0.73" stop-color="#FFF2C6"/><stop offset="1" stop-color="#9A6C19"/>
+    </linearGradient>
+    <linearGradient id="orbit-ivory-paper" x1="0.08" y1="0.04" x2="0.92" y2="1">
+      <stop offset="0" stop-color="#FFFDF9"/><stop offset="0.5" stop-color="#FBF8F3"/><stop offset="1" stop-color="#EBCFD0"/>
+    </linearGradient>
+    <linearGradient id="orbit-sakura-paper" x1="0.12" y1="0" x2="0.88" y2="1">
+      <stop offset="0" stop-color="#FFD9D7"/><stop offset="0.42" stop-color="#F5B8BA"/><stop offset="0.76" stop-color="#EC969F"/><stop offset="1" stop-color="#DE7A85"/>
+    </linearGradient>
+    <linearGradient id="orbit-deep-fold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F2A4AA"/><stop offset="0.46" stop-color="#DE7A85"/><stop offset="0.8" stop-color="#A84256"/><stop offset="1" stop-color="#4A1521"/>
+    </linearGradient>
+    <radialGradient id="orbit-bead" cx="31%" cy="25%" r="72%">
+      <stop offset="0" stop-color="#FFFDEB"/><stop offset="0.2" stop-color="#FFF2C6"/><stop offset="0.48" stop-color="#E7BD60"/><stop offset="0.78" stop-color="#C78B25"/><stop offset="1" stop-color="#75490D"/>
+    </radialGradient>
+    <radialGradient id="orbit-center-light" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#FFFBE4" stop-opacity="0.98"/><stop offset="0.38" stop-color="#F3D991" stop-opacity="0.58"/><stop offset="1" stop-color="#CFA348" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="orbit-petal-shadow" x="-40%" y="-40%" width="180%" height="200%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0.8" dy="2.6" stdDeviation="2.8" flood-color="#4A1521" flood-opacity="0.2"/>
+    </filter>
+    <filter id="orbit-bead-shadow" x="-100%" y="-100%" width="300%" height="320%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0.5" dy="1.3" stdDeviation="1.1" flood-color="#4A1521" flood-opacity="0.4"/>
+    </filter>
+    <filter id="orbit-pulse-glow" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="3.8" result="blur"/><feFlood flood-color="#CFA348" flood-opacity="0.7"/><feComposite in2="blur" operator="in"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="orbit-complete-glow" x="-45%" y="-45%" width="190%" height="190%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#FFF2C6" flood-opacity="0.92"/><feDropShadow dx="0" dy="0" stdDeviation="7" flood-color="#CFA348" flood-opacity="0.52"/>
+    </filter>
+    <g id="orbit-petal">
+      <path d="M0 1C-5-7-13-15-21-21C-24-30-20-40 0-55C20-40 24-30 21-21C13-15 5-7 0 1Z" fill="url(#orbit-ivory-paper)" stroke="url(#orbit-gold)" stroke-width="1.05" stroke-linejoin="round" filter="url(#orbit-petal-shadow)"/>
+      <path d="M0-55C12-45 21-36 21-25C17-18 10-12 4-7C7-23 5-39 0-55Z" fill="url(#orbit-sakura-paper)"/>
+      <path d="M0 1C-5-7-13-15-21-21C-13-22-4-19 4-7C8-1 5 0 0 1Z" fill="url(#orbit-deep-fold)"/>
+      <path d="M0-55C2-35 3-18 4-7C-4-16-11-21-21-21" stroke="url(#orbit-gold)" stroke-width="0.72" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M-18-25C-10-27-4-31 0-55" stroke="#FFFDF9" stroke-width="0.72" stroke-linecap="round" opacity="0.82"/><path d="M2-51C9-42 15-34 19-25" stroke="#FFF2C6" stroke-width="0.52" stroke-linecap="round" opacity="0.76"/>
+    </g>
+    <g id="orbit-satellite">
+      <circle r="5.3" fill="url(#orbit-bead)" stroke="url(#orbit-gold)" stroke-width="0.9" filter="url(#orbit-bead-shadow)"/><ellipse cx="-1.8" cy="-2" rx="1.65" ry="1.1" fill="#FFFDEB" opacity="0.9" transform="rotate(-28)"/>
+    </g>
+  </defs>
+
+  <style>
+    .orbit-state-layer{opacity:0;pointer-events:none}
+    [data-state="standby"] .orbit-standby,[data-state="pulse"] .orbit-pulse,[data-state="active"] .orbit-active,[data-state="complete"] .orbit-complete{opacity:1}
+    [data-state="standby"] .orbit-bloom,[data-state="pulse"] .orbit-bloom,[data-state="complete"] .orbit-bloom{opacity:1}
+    [data-state="active"] .orbit-bloom{opacity:0}
+    [data-state="complete"] .orbit-bloom{filter:url(#orbit-complete-glow)}
+  </style>
+
+  <!-- Rear arcs establish the tilt and pass behind the paper bloom. -->
+  <g class="orbit-system" aria-hidden="true">
+    <path d="M18 74C37 36 102 24 154 46C186 60 193 88 176 112" stroke="url(#orbit-gold)" stroke-width="2.15" stroke-linecap="round"/>
+    <path d="M32 132C13 108 36 74 82 58C129 42 177 54 181 84" stroke="url(#orbit-gold-reverse)" stroke-width="1.25" stroke-linecap="round" opacity="0.78"/>
+  </g>
+
+  <g class="orbit-state-layer orbit-pulse" aria-hidden="true">
+    <circle class="orbit-pulse-wave orbit-pulse-wave--inner" cx="100" cy="100" r="22" stroke="#FFF2C6" stroke-width="2.4" opacity="0.88" filter="url(#orbit-pulse-glow)"/>
+    <ellipse class="orbit-pulse-wave orbit-pulse-wave--outer" cx="100" cy="100" rx="75" ry="34" transform="rotate(-18 100 100)" stroke="#CFA348" stroke-width="1.6" opacity="0.54" filter="url(#orbit-pulse-glow)"/>
+  </g>
+
+  <g class="orbit-state-layer orbit-complete" aria-hidden="true" stroke="url(#orbit-gold)" stroke-linecap="round">
+    <path d="M100 18V29M100 171V182M18 100H29M171 100H182" stroke-width="1.4"/><path d="M42 42L50 50M150 150L158 158M158 42L150 50M50 150L42 158" stroke-width="1" opacity="0.76"/><circle cx="100" cy="100" r="66" stroke="#FFF2C6" stroke-width="0.9" stroke-dasharray="1 8" opacity="0.8"/>
+  </g>
+
+  <g class="orbit-bloom" transform="translate(100 100) scale(.88)">
+    <use href="#orbit-petal"/><use href="#orbit-petal" transform="rotate(72)"/><use href="#orbit-petal" transform="rotate(144)"/><use href="#orbit-petal" transform="rotate(216)"/><use href="#orbit-petal" transform="rotate(288)"/>
+  </g>
+
+  <g class="orbit-state-layer orbit-active orbit-petals" aria-hidden="true">
+    <g class="orbit-flight-petal orbit-flight-petal--1" transform="translate(58 46) rotate(-44) scale(.48)"><use href="#orbit-petal"/></g>
+    <g class="orbit-flight-petal orbit-flight-petal--2" transform="translate(145 55) rotate(43) scale(.57)"><use href="#orbit-petal"/></g>
+    <g class="orbit-flight-petal orbit-flight-petal--3" transform="translate(166 118) rotate(104) scale(.43)"><use href="#orbit-petal"/></g>
+    <g class="orbit-flight-petal orbit-flight-petal--4" transform="translate(120 157) rotate(164) scale(.55)"><use href="#orbit-petal"/></g>
+    <g class="orbit-flight-petal orbit-flight-petal--5" transform="translate(40 128) rotate(-116) scale(.5)"><use href="#orbit-petal"/></g>
+  </g>
+
+  <g class="orbit-ring orbit-ring--foreground" aria-hidden="true">
+    <path d="M176 112C154 153 85 171 36 146C13 134 10 101 18 74" stroke="url(#orbit-gold)" stroke-width="2.15" stroke-linecap="round"/>
+    <path d="M181 84C186 111 156 139 110 148C76 154 45 148 32 132" stroke="url(#orbit-gold-reverse)" stroke-width="1.25" stroke-linecap="round" opacity="0.78"/>
+  </g>
+
+  <g class="orbit-satellites" aria-hidden="true">
+    <g class="orbit-satellite orbit-satellite--1" transform="translate(25 72) scale(.82)"><use href="#orbit-satellite"/></g>
+    <g class="orbit-satellite orbit-satellite--2" transform="translate(164 57) scale(.62)"><use href="#orbit-satellite"/></g>
+    <g class="orbit-satellite orbit-satellite--3" transform="translate(169 126)"><use href="#orbit-satellite"/></g>
+  </g>
+
+  <!-- Plan · Progress · Bloom remains anchored through every state. -->
+  <g class="orbit-center" filter="url(#orbit-bead-shadow)">
+    <circle class="orbit-center-aura" cx="100" cy="100" r="25" fill="url(#orbit-center-light)" opacity="0.66"/>
+    <circle cx="100" cy="92" r="5.7" fill="url(#orbit-bead)" stroke="url(#orbit-gold)" stroke-width="0.8"/><circle cx="92.4" cy="105" r="5.7" fill="url(#orbit-bead)" stroke="url(#orbit-gold)" stroke-width="0.8"/><circle cx="107.6" cy="105" r="5.7" fill="url(#orbit-bead)" stroke="url(#orbit-gold)" stroke-width="0.8"/>
+    <ellipse cx="98.2" cy="90" rx="1.7" ry="1.12" fill="#FFFDEB" opacity="0.9" transform="rotate(-24 98.2 90)"/><ellipse cx="90.6" cy="103" rx="1.7" ry="1.12" fill="#FFFDEB" opacity="0.9" transform="rotate(-24 90.6 103)"/><ellipse cx="105.8" cy="103" rx="1.7" ry="1.12" fill="#FFFDEB" opacity="0.9" transform="rotate(-24 105.8 103)"/>
+  </g>
+</svg>

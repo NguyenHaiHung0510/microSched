@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 200 200" role="img" aria-labelledby="title desc">
+  <title id="title">microSched Layered Calendar Bloom</title>
+  <desc id="desc">A five-petal origami calendar bloom folding clockwise around three polished gold beads.</desc>
+
+  <defs>
+    <linearGradient id="ivoryPaper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFDF9"/>
+      <stop offset="0.34" stop-color="#FBF8F3"/>
+      <stop offset="0.72" stop-color="#F8ECE8"/>
+      <stop offset="1" stop-color="#EBCFD0"/>
+    </linearGradient>
+    <linearGradient id="sakuraFace" x1="0.08" y1="0.12" x2="0.9" y2="0.92">
+      <stop offset="0" stop-color="#FFD9D7"/>
+      <stop offset="0.42" stop-color="#F5B8BA"/>
+      <stop offset="0.76" stop-color="#EC969F"/>
+      <stop offset="1" stop-color="#DE7A85"/>
+    </linearGradient>
+    <linearGradient id="deepFold" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#F2A4AA"/>
+      <stop offset="0.38" stop-color="#DE7A85"/>
+      <stop offset="0.78" stop-color="#A84256"/>
+      <stop offset="1" stop-color="#4A1521"/>
+    </linearGradient>
+    <linearGradient id="foldGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFF7EE" stop-opacity="0.74"/>
+      <stop offset="0.36" stop-color="#F5B8BA" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#DE7A85" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="goldFoil" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8C6517"/>
+      <stop offset="0.2" stop-color="#D6AA4E"/>
+      <stop offset="0.43" stop-color="#FFF2C6"/>
+      <stop offset="0.62" stop-color="#CFA348"/>
+      <stop offset="0.84" stop-color="#F3D991"/>
+      <stop offset="1" stop-color="#8C6517"/>
+    </linearGradient>
+    <radialGradient id="beadGold" cx="34%" cy="27%" r="72%">
+      <stop offset="0" stop-color="#FFFBE4"/>
+      <stop offset="0.14" stop-color="#FFF2C6"/>
+      <stop offset="0.38" stop-color="#E7BD60"/>
+      <stop offset="0.67" stop-color="#C78B25"/>
+      <stop offset="0.88" stop-color="#9A6714"/>
+      <stop offset="1" stop-color="#6E430A"/>
+    </radialGradient>
+    <radialGradient id="hubGlow" cx="50%" cy="45%" r="56%">
+      <stop offset="0" stop-color="#FFFDF9" stop-opacity="0.96"/>
+      <stop offset="0.66" stop-color="#FBF8F3" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#F5B8BA" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="petalShadow" x="-35%" y="-35%" width="170%" height="190%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0.8" dy="3" stdDeviation="3.2" flood-color="#4A1521" flood-opacity="0.20"/>
+    </filter>
+    <filter id="creaseShadow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="0.85" result="blur"/>
+      <feOffset dx="0.8" dy="1.1" result="offset"/>
+      <feFlood flood-color="#4A1521" flood-opacity="0.26" result="color"/>
+      <feComposite in="color" in2="offset" operator="in" result="shade"/>
+      <feMerge><feMergeNode in="shade"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="beadShadow" x="-80%" y="-80%" width="260%" height="280%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0.7" dy="1.9" stdDeviation="1.35" flood-color="#4A1521" flood-opacity="0.42"/>
+    </filter>
+
+    <path id="petalSilhouette" d="M100 97 C94 88 85 80 75 72 C71 62 72 51 77 43 C84 35 92 23 100 11 C108 23 116 35 121 47 C120 62 112 80 100 97 Z"/>
+    <clipPath id="petalClip"><use xlink:href="#petalSilhouette"/></clipPath>
+
+    <g id="petal">
+      <use xlink:href="#petalSilhouette" fill="url(#ivoryPaper)" stroke="url(#goldFoil)" stroke-width="1.15" stroke-linejoin="round" filter="url(#petalShadow)"/>
+
+      <!-- The advancing page: a warm, softly bowed calendar leaf. -->
+      <path d="M100 11 C108 23 116 35 121 47 C120 58 116 69 110 79 C108 61 105 40 100 11 Z" fill="url(#sakuraFace)" clip-path="url(#petalClip)"/>
+
+      <!-- The tucked-under face creates the clockwise step. -->
+      <path d="M100 97 C94 88 85 80 75 72 C79 64 87 57 97 51 C102 63 106 74 110 79 C107 86 103 92 100 97 Z" fill="url(#deepFold)" clip-path="url(#petalClip)" filter="url(#creaseShadow)"/>
+
+      <!-- Narrow reflected light keeps the fold papery instead of plastic. -->
+      <path d="M98.8 13 C101.4 35 102.2 48 97 51 C89 56 81 63 76 70 C81 58 89 40 98.8 13 Z" fill="url(#foldGlow)" opacity="0.8" clip-path="url(#petalClip)"/>
+
+      <!-- Gold foil creases trace page edges and the folded step. -->
+      <path d="M100 11 C101 31 100 44 97 51 C89 57 81 64 75 72" fill="none" stroke="url(#goldFoil)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M97 51 C101 63 106 74 110 79" fill="none" stroke="url(#goldFoil)" stroke-width="0.72" stroke-linecap="round"/>
+      <path d="M77 43 C85 47 91 49 97 51" fill="none" stroke="#FFFDF9" stroke-width="0.65" stroke-linecap="round" opacity="0.76"/>
+      <path d="M101.2 13 C107 28 113 38 119 47" fill="none" stroke="#FFF2C6" stroke-width="0.55" stroke-linecap="round" opacity="0.7"/>
+    </g>
+  </defs>
+
+  <!-- Five sequential layers: each next page advances 72 degrees clockwise. -->
+  <g>
+    <use xlink:href="#petal"/>
+    <use xlink:href="#petal" transform="rotate(72 100 100)"/>
+    <use xlink:href="#petal" transform="rotate(144 100 100)"/>
+    <use xlink:href="#petal" transform="rotate(216 100 100)"/>
+    <use xlink:href="#petal" transform="rotate(288 100 100)"/>
+  </g>
+
+  <!-- A quiet ivory hub separates the foil beads from the folded paper. -->
+  <circle cx="100" cy="100" r="18.2" fill="url(#hubGlow)"/>
+  <circle cx="100" cy="100" r="17.6" fill="none" stroke="url(#goldFoil)" stroke-width="0.45" stroke-dasharray="0.7 2.15" opacity="0.68"/>
+
+  <!-- Plan · Progress · Bloom: an upward triangle of polished gold beads. -->
+  <g filter="url(#beadShadow)">
+    <circle cx="100" cy="91.2" r="6.65" fill="url(#beadGold)" stroke="url(#goldFoil)" stroke-width="0.9"/>
+    <circle cx="91.6" cy="105.4" r="6.65" fill="url(#beadGold)" stroke="url(#goldFoil)" stroke-width="0.9"/>
+    <circle cx="108.4" cy="105.4" r="6.65" fill="url(#beadGold)" stroke="url(#goldFoil)" stroke-width="0.9"/>
+    <ellipse cx="97.8" cy="88.7" rx="2.05" ry="1.45" fill="#FFFDEB" opacity="0.88" transform="rotate(-24 97.8 88.7)"/>
+    <ellipse cx="89.4" cy="102.9" rx="2.05" ry="1.45" fill="#FFFDEB" opacity="0.88" transform="rotate(-24 89.4 102.9)"/>
+    <ellipse cx="106.2" cy="102.9" rx="2.05" ry="1.45" fill="#FFFDEB" opacity="0.88" transform="rotate(-24 106.2 102.9)"/>
+  </g>
+</svg>
