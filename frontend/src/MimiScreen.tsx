@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
 import { ApiError, TimeoutError } from '@/api'
@@ -11,15 +11,19 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   createMimiConversation,
   cancelMimiRun,
+  decideMimiDraftDirection,
   decideMimiChangeSet,
+  fetchMimiCapabilities,
   fetchMimiConversation,
   fetchCurrentMimiConversation,
+  observeMimiRun,
   reconcileMimiRun,
   resumeMimiRun,
   saveMimiFeedback,
   streamMimiMessage,
   type MimiChangeSet,
   type MimiConversation,
+  type MimiDraftDirection,
 } from '@/mimi-api'
 import { mimiTaskScheduleLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
@@ -159,11 +163,16 @@ export function MimiScreen({
   const [runStage, setRunStage] = useState('Sẵn sàng')
   const [streamedText, setStreamedText] = useState('')
 
-  function handleStreamEvent({ event, data }: { event: string; data: Record<string, unknown> }) {
+  const handleStreamEvent = useCallback(({ event, data }: { event: string; data: Record<string, unknown> }) => {
     if (event === 'run.reserved' && typeof data.run_id === 'string') {
       setActiveRunId(data.run_id)
       setRunStage('Đã nhận yêu cầu')
     } else if (event === 'context.tasks_read') setRunStage('Đã đọc Task STANDARD')
+    else if (event === 'context.manifest') setRunStage('Đã chuẩn bị ngữ cảnh')
+    else if (event === 'context.checkpoint.activated') setRunStage('Đã thu gọn ngữ cảnh')
+    else if (event === 'agent.awaiting_model') setRunStage('Mimi đang suy luận')
+    else if (event === 'agent.executing_read_tools') setRunStage('Mimi đang đọc dữ liệu')
+    else if (event === 'draft.ready') setRunStage('Chờ bạn duyệt hướng')
     else if (event === 'provider.connected') setRunStage('Đã kết nối provider')
     else if (event === 'assistant.delta') {
       setRunStage('Mimi đang trả lời')
@@ -174,7 +183,7 @@ export function MimiScreen({
     } else if (event === 'provider.succeeded') setRunStage('Đã nhận kết quả')
     else if (event === 'change_set.ready') setRunStage('Chờ bạn xác nhận')
     else if (event === 'run.heartbeat') setRunStage('Đang khởi tạo run')
-  }
+  }, [])
 
   useEffect(() => {
     const connected = () => setOnline(true)
@@ -193,6 +202,11 @@ export function MimiScreen({
     ...NO_POLLING_QUERY_OPTIONS,
   })
   const queryKey = conversationId ? ['mimi', 'conversation', conversationId] : ['mimi', 'current']
+  const capabilities = useQuery({
+    queryKey: ['mimi', 'capabilities'],
+    queryFn: fetchMimiCapabilities,
+    ...NO_POLLING_QUERY_OPTIONS,
+  })
 
   const createConversation = useMutation({
     mutationFn: () => createMimiConversation(),
@@ -267,6 +281,15 @@ export function MimiScreen({
     onSuccess: () => void queryClient.invalidateQueries({ queryKey }),
   })
 
+  const draftDirection = useMutation({
+    mutationFn: ({ conversationId, proposal, choice }: {
+      conversationId: string
+      proposal: MimiDraftDirection
+      choice: 'approve' | 'reject'
+    }) => decideMimiDraftDirection(conversationId, proposal, choice),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey }),
+  })
+
   const feedback = useMutation({
     mutationFn: ({ current, receiptId, comment, clientId }: {
       current: MimiConversation
@@ -289,11 +312,47 @@ export function MimiScreen({
   const latestReceipt = current?.receipts.at(-1)
   const latestRun = current?.runs.at(-1)
   const runPending = send.isPending || resume.isPending
-  const elapsed = useElapsed(runStartedAt, runPending)
+  const durableRunActive = !!latestRun && ['accepted', 'building', 'running', 'executing'].includes(latestRun.state)
+  const runtimeActive = runPending || durableRunActive
+  const cancelRunId = activeRunId ?? (durableRunActive ? latestRun?.id ?? null : null)
+  const elapsed = useElapsed(runStartedAt ?? (latestRun ? new Date(latestRun.created_at).getTime() : null), runtimeActive)
+  const observedRunId = latestRun?.id
+  const observedRunState = latestRun?.state
+
+  useEffect(() => {
+    if (!observedRunId || runPending) return
+    if (!['accepted', 'building', 'running', 'executing'].includes(observedRunState ?? '')) return
+    const controller = new AbortController()
+    let replayStarted = false
+    void observeMimiRun(observedRunId, (envelope) => {
+      // Observation replays from sequence zero. Clear partial text from the
+      // previous connection before appending canonical replay events.
+      if (!replayStarted) {
+        replayStarted = true
+        setStreamedText('')
+      }
+      handleStreamEvent(envelope)
+    }, controller.signal)
+      .then((snapshot) => {
+        if (controller.signal.aborted) return
+        queryClient.setQueryData(
+          conversationId ? ['mimi', 'conversation', conversationId] : ['mimi', 'current'],
+          snapshot,
+        )
+        setActiveRunId(null)
+        setStreamedText('')
+        setRunStage('Đã đồng bộ với server')
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setRunStage('Mất kết nối quan sát · run có thể vẫn tiếp tục')
+      })
+    return () => controller.abort()
+  }, [conversationId, handleStreamEvent, observedRunId, observedRunState, queryClient, runPending])
 
   function submitMessage(event?: React.SyntheticEvent) {
     event?.preventDefault()
-    if (!current || !draft.trim() || runPending || !online) return
+    if (!current || !draft.trim() || runtimeActive || !online) return
     const revision = pendingChangeSet && requestsPreviewRevision(draft)
       ? { id: pendingChangeSet.id, digest: pendingChangeSet.digest }
       : null
@@ -351,7 +410,7 @@ export function MimiScreen({
     )
   }
 
-  const mimiState: MimiState = runPending
+  const mimiState: MimiState = runtimeActive
     ? (runStage.includes('thực thi') || runStage.includes('áp dụng') ? 'executing' : 'thinking')
     : (latestRun?.state === 'waiting_confirmation' ? 'ready' : 'idle')
 
@@ -359,7 +418,7 @@ export function MimiScreen({
     <section className="min-w-0 flex flex-col h-full space-y-4" aria-labelledby={`mimi-title-${variant}`}>
       <div className="flex items-center justify-between gap-2 border-b pb-2 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <MimiAvatar size="xs" state={mimiState} showGlow={runPending} />
+          <MimiAvatar size="xs" state={mimiState} showGlow={runtimeActive} />
           <h3 id={`mimi-title-${variant}`} className="text-sm font-bold text-foreground truncate">
             {current.title ?? 'Conversation hiện tại'}
           </h3>
@@ -375,16 +434,16 @@ export function MimiScreen({
         </div>
       </div>
 
-      {runPending ? (
+      {runtimeActive ? (
         <div role="status" aria-atomic="true" className="rounded-lg bg-accent p-3 text-sm text-accent-foreground">
           <div className="flex items-center gap-2 font-semibold">
             <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-            {runStage}
+            {runStage === 'Sẵn sàng' && durableRunActive ? 'Mimi đang làm việc trên server' : runStage}
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-mono tabular-nums">Đã chạy {elapsedLabel(elapsed)}</span>
-            {activeRunId ? (
-              <Button size="sm" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(activeRunId)}>
+            {cancelRunId ? (
+              <Button size="sm" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(cancelRunId)}>
                 {cancel.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Square />}
                 Huỷ run
               </Button>
@@ -439,7 +498,7 @@ export function MimiScreen({
         ? 'max-h-[calc(100vh-18rem)] min-h-72 space-y-3 overflow-y-auto rounded-xl bg-muted/40 p-3'
         : 'flex-1 min-h-[22rem] space-y-3 overflow-y-auto rounded-xl bg-muted/30 p-4'} data-testid="mimi-messages">
         {current.messages.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">Hãy nói Task bạn muốn tạo.</p>
+          <p className="py-8 text-center text-sm text-muted-foreground">Hãy nhắn Mimi điều bạn muốn hỏi hoặc làm.</p>
         ) : current.messages.map((message) => (
           <article
             key={message.id}
@@ -456,6 +515,20 @@ export function MimiScreen({
           </article>
         ) : null}
       </div>
+
+      {current.draft?.direction_state === 'pending' ? (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-sm" data-testid="mimi-draft-direction">
+          <p className="font-semibold">Phương án nháp đang chờ bạn chọn hướng</p>
+          <p className="mt-1 text-xs text-muted-foreground">Duyệt hướng chỉ cho Mimi đi tiếp tới preview chi tiết; chưa ghi Task hay xác nhận preview.</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" disabled={draftDirection.isPending} onClick={() => draftDirection.mutate({ conversationId: current.id, proposal: current.draft!, choice: 'approve' })}>Duyệt hướng</Button>
+            <Button size="sm" variant="outline" disabled={draftDirection.isPending} onClick={() => draftDirection.mutate({ conversationId: current.id, proposal: current.draft!, choice: 'reject' })}>Chọn hướng khác</Button>
+          </div>
+          {draftDirection.isError ? <p role="alert" className="mt-2 text-xs text-bad">{errorMessage(draftDirection.error)}</p> : null}
+        </div>
+      ) : current.draft?.direction_state === 'approved' ? (
+        <p className="text-xs text-muted-foreground">Đã duyệt hướng nháp. Hãy nhắn Mimi để triển khai preview chi tiết.</p>
+      ) : null}
 
       {pendingChangeSet ? (
         <ChangeSetPreview
@@ -509,6 +582,13 @@ export function MimiScreen({
       ) : null}
 
       <form onSubmit={submitMessage} className="mt-2 shrink-0">
+        {variant === 'workspace' ? (
+          <p className="mb-2 text-xs text-muted-foreground" data-testid="mimi-route-summary">
+            {capabilities.data?.live_provider_enabled
+              ? `${capabilities.data.requested_model ?? 'Route chưa chọn'} · effort ${capabilities.data.requested_effort ?? 'không rõ'} · context ${capabilities.data.context_limit.toLocaleString('vi-VN')}`
+              : 'Route local · chưa gọi model ngoài'}
+          </p>
+        ) : null}
         <div className="relative flex flex-col rounded-2xl border border-input bg-card shadow-xs focus-within:ring-2 focus-within:ring-ring focus-within:border-primary transition-all p-2.5">
           <Textarea
             id="mimi-message"
@@ -517,10 +597,19 @@ export function MimiScreen({
             value={draft}
             maxLength={12_000}
             placeholder="Nhắn Mimi… (Nhấn Enter để gửi, Shift+Enter để xuống dòng)"
-            disabled={runPending}
+            disabled={runtimeActive}
             className="min-h-12 w-full resize-none border-none bg-transparent p-1 text-sm shadow-none focus-visible:ring-0 focus-visible:outline-none"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
+              if (event.key === 'Enter' && event.altKey) {
+                if ((event.nativeEvent as KeyboardEvent).isComposing) return
+                event.preventDefault()
+                const input = event.currentTarget
+                const caret = input.selectionStart
+                setDraft(input.value.slice(0, caret) + '\n' + input.value.slice(input.selectionEnd))
+                requestAnimationFrame(() => input.setSelectionRange(caret + 1, caret + 1))
+                return
+              }
               if (event.key === 'Enter' && !event.shiftKey && !event.altKey) {
                 if ((event.nativeEvent as KeyboardEvent).isComposing) return
                 event.preventDefault()
@@ -530,15 +619,15 @@ export function MimiScreen({
           />
           <div className="mt-1 flex items-center justify-between pt-1 text-xs text-muted-foreground border-t border-muted/50">
             <span aria-live="polite" className="truncate pr-2">
-              {runPending ? 'Mimi đang làm việc…' : 'Chưa xác nhận thì chưa ghi thay đổi.'}
+              {runtimeActive ? 'Mimi đang làm việc…' : 'Chưa xác nhận thì chưa ghi thay đổi.'}
             </span>
             <Button
               type="submit"
               size="sm"
               className="h-8 gap-1.5 rounded-xl px-3 font-semibold shrink-0"
-              disabled={!draft.trim() || runPending || !online}
+              disabled={!draft.trim() || runtimeActive || !online}
             >
-              {runPending ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Send className="size-3.5" />}
+              {runtimeActive ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Send className="size-3.5" />}
               <span>Gửi</span>
             </Button>
           </div>

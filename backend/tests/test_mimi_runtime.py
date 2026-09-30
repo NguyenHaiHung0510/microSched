@@ -3,7 +3,15 @@
 import asyncio
 from uuid import uuid7
 
-from app.agent.runtime import MimiRunSupervisor
+from app.agent.runtime import MimiRunSupervisor, run_guard_key
+
+
+def test_run_guard_key_is_stable_and_run_scoped() -> None:
+    first = uuid7()
+    second = uuid7()
+    assert run_guard_key(first) == run_guard_key(first)
+    assert run_guard_key(first) != run_guard_key(second)
+    assert -(2**63) <= run_guard_key(first) < 2**63
 
 
 def test_supervisor_keeps_work_alive_until_explicit_cancel() -> None:

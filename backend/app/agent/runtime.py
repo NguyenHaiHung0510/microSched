@@ -7,11 +7,54 @@ lifetimes so an HTTP disconnect does not cancel provider work accidentally.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Awaitable
+from contextlib import asynccontextmanager
 from uuid import UUID
 
+from sqlalchemy import text
+
+from app.core.db import get_engine
+from app.core.settings import get_settings
+
 logger = logging.getLogger(__name__)
+
+
+def run_guard_key(run_id: UUID) -> int:
+    """Namespace a signed PostgreSQL advisory key to one durable Mimi run."""
+
+    digest = hashlib.sha256(b"microsched.mimi.run.v1:" + run_id.bytes).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+@asynccontextmanager
+async def hold_run_guard(run_id: UUID):
+    """Keep one transaction lock while this process can dispatch a provider call.
+
+    A crashed process releases the PostgreSQL lock, without a periodic Neon
+    heartbeat. The lock is operational ownership, not user/model authority.
+    """
+
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("mimi_run_guard_database_unavailable")
+    async with engine.connect() as connection:
+        async with connection.begin():
+            await connection.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": run_guard_key(run_id)}
+            )
+            yield
+
+
+@asynccontextmanager
+async def hold_run_guard_if_enabled(run_id: UUID):
+    settings = get_settings()
+    if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+        async with hold_run_guard(run_id):
+            yield
+    else:
+        yield
 
 
 class MimiRunSupervisor:

@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     # separate, explicit configuration decision.
     mimi_real_chat_enabled: bool = False
     mimi_live_provider_enabled: bool = False
+    mimi_context_v1_enabled: bool = False
     mimi_public_origin: str | None = None
     mimi_preview_ttl_minutes: int = 15
     mimi_run_deadline_seconds: int = 1_800

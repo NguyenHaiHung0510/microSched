@@ -10,6 +10,8 @@ const runLabels: Record<string, string> = {
   cancelled: 'Đã huỷ',
   retryable: 'Có thể thử lại',
   outcome_unknown: 'Đang đối soát kết quả',
+  deadline_exceeded: 'Hết thời gian run',
+  budget_exceeded: 'Chạm giới hạn context',
 }
 
 export function mimiRunLabel(state: string): string {

@@ -19,7 +19,20 @@ from sqlalchemy import and_, false, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import crypto as mimi_crypto
+from app.agent.compaction import CheckpointSource, make_checkpoint
+from app.agent.context import (
+    AssistantText,
+    Blocked,
+    Clarification,
+    ContextEnvelope,
+    Draft,
+    PendingDraft,
+    PendingPreview,
+    PreviewCandidate,
+)
+from app.agent.context_builder import assemble_context, rebind_after_read
 from app.agent.contracts import ChangeOperation, ExecutionLease, FrozenChangeSet, Sensitivity
+from app.agent.loop import LoopLimits, run_read_loop
 from app.agent.models import (
     MimiChangeSet,
     MimiConversation,
@@ -32,6 +45,8 @@ from app.agent.models import (
     MimiRun,
 )
 from app.agent.openrouter import (
+    AgentCompletion,
+    ProviderCompletion,
     ProviderDispatchError,
     RouteContractError,
 )
@@ -40,6 +55,10 @@ from app.agent.openrouter import (
 )
 from app.agent.openrouter import complete_stream as openrouter_complete_stream
 from app.agent.openrouter import get_generation as openrouter_get_generation
+from app.agent.policy import load_standard_policy
+from app.agent.runtime import run_guard_key
+from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, execute_read_tool
+from app.core.db import get_engine, get_sessionmaker
 from app.core.settings import get_settings
 from app.domain.models import AuditLog, AuthSession, Task
 from app.domain.tasks import TaskCreate, TaskStore
@@ -84,6 +103,103 @@ class ConfirmationDecision(BaseModel):
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     nonce: UUID
     decision: Literal["confirm", "reject"]
+
+
+class DraftDirectionDecision(BaseModel):
+    draft_id: UUID
+    expected_revision: int = Field(ge=1)
+    expected_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decision: Literal["approve", "reject"]
+
+
+async def _latest_draft_state(
+    db: AsyncSession, conversation_id: UUID
+) -> tuple[PendingDraft | None, MimiEvent | None]:
+    ready = (
+        await db.execute(
+            select(MimiEvent)
+            .join(MimiRun, MimiEvent.run_id == MimiRun.id)
+            .where(MimiRun.conversation_id == conversation_id, MimiEvent.kind == "draft.ready")
+            .order_by(MimiEvent.created_at.desc(), MimiEvent.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if ready is None:
+        return None, None
+    draft_id = str(ready.payload["draft_id"])
+    decision = (
+        await db.execute(
+            select(MimiEvent)
+            .join(MimiRun, MimiEvent.run_id == MimiRun.id)
+            .where(
+                MimiRun.conversation_id == conversation_id,
+                MimiEvent.kind == "draft.direction_decision",
+                MimiEvent.payload["draft_id"].as_string() == draft_id,
+            )
+            .order_by(MimiEvent.created_at.desc(), MimiEvent.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    state = (
+        "approved"
+        if decision is not None and decision.payload.get("decision") == "approve"
+        else "rejected"
+        if decision is not None
+        else "pending"
+    )
+    return (
+        PendingDraft(
+            id=UUID(draft_id),
+            revision=int(ready.payload["revision"]),
+            content_sha256=str(ready.payload["content_sha256"]),
+            direction_state=state,
+        ),
+        ready,
+    )
+
+
+async def decide_draft_direction(
+    db: AsyncSession,
+    auth: AuthSession,
+    conversation_id: UUID,
+    payload: DraftDirectionDecision,
+) -> dict[str, Any]:
+    """Bind Owner direction to one exact draft; it never confirms a preview."""
+
+    await _conversation(db, auth, conversation_id, lock=True)
+    latest, ready = await _latest_draft_state(db, conversation_id)
+    if (
+        latest is None
+        or ready is None
+        or (
+            latest.id != payload.draft_id
+            or latest.revision != payload.expected_revision
+            or latest.content_sha256 != payload.expected_content_sha256
+        )
+    ):
+        raise _conflict("draft_direction_stale")
+    if latest.direction_state != "pending":
+        if latest.direction_state == ("approved" if payload.decision == "approve" else "rejected"):
+            return {"draft_id": latest.id, "state": latest.direction_state}
+        raise _conflict("draft_direction_already_decided")
+    await _append_event(
+        db,
+        ready.run_id,
+        "draft.direction_decision",
+        {
+            "draft_id": str(latest.id),
+            "expected_revision": latest.revision,
+            "expected_content_sha256": latest.content_sha256,
+            "decision": payload.decision,
+            "actor_id": str(_owner_id(auth)),
+            "decided_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    await db.flush()
+    return {
+        "draft_id": latest.id,
+        "state": "approved" if payload.decision == "approve" else "rejected",
+    }
 
 
 class FeedbackCreate(BaseModel):
@@ -133,6 +249,65 @@ def _owner_id(auth: AuthSession) -> UUID:
 def _canonical_digest(value: dict[str, Any]) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _manifest_receipt(envelope: ContextEnvelope) -> dict[str, Any]:
+    """Expose provenance metadata, never the source rows or untrusted query prose."""
+
+    manifest = envelope.manifest
+    return {
+        "manifest_sha256": manifest.sha256(),
+        "policy_id": manifest.policy_id,
+        "policy_sha256": manifest.policy_sha256,
+        "tool_registry_sha256": manifest.tool_registry_sha256,
+        "output_schema_sha256": manifest.output_schema_sha256,
+        "checkpoint_id": str(manifest.checkpoint_id) if manifest.checkpoint_id else None,
+        "checkpoint_frontier": manifest.checkpoint_frontier,
+        "transcript_range": manifest.transcript_range,
+        "input_upper_bound": manifest.budget.serialized_input_upper_bound,
+        "context_limit": manifest.budget.context_limit,
+        "output_reserve": manifest.budget.output_reserve,
+        "remaining_turns": manifest.budget.remaining_turns,
+        "remaining_tool_calls": manifest.budget.remaining_tool_calls,
+        "requested_model": manifest.route.requested_model,
+        "requested_effort": manifest.route.requested_effort,
+        "sources": [
+            {
+                "source_id": source.source_id,
+                "count": source.count,
+                "coverage": source.coverage,
+                "omitted_fields": source.omitted_fields,
+                "data_as_of": source.data_as_of.isoformat() if source.data_as_of else None,
+                "has_next_cursor": source.next_cursor is not None,
+                "content_sha256": source.content_sha256,
+                "version": source.version,
+            }
+            for source in manifest.sources
+        ],
+    }
+
+
+def _reported_usage(usage: dict[str, Any] | None) -> dict[str, int | float]:
+    """Return only buyer-reported numeric usage; absence is not estimated as zero."""
+
+    if not isinstance(usage, dict):
+        return {}
+    reported: dict[str, int | float] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost", "cached_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+            reported[key] = value
+    for field, output in (
+        ("prompt_tokens_details", "cache_read_tokens"),
+        ("completion_tokens_details", "reasoning_tokens"),
+    ):
+        details = usage.get(field)
+        key = "cached_tokens" if field == "prompt_tokens_details" else "reasoning_tokens"
+        if isinstance(details, dict):
+            value = details.get(key)
+            if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+                reported[output] = value
+    return reported
 
 
 def _provider_session_id(conversation_id: UUID) -> str:
@@ -446,6 +621,158 @@ async def _provider_history(
     ]
 
 
+async def _prepare_context_history(
+    db: AsyncSession,
+    conversation: MimiConversation,
+    dek: bytes,
+    run_id: UUID,
+    user_sequence: int,
+    pending_preview: dict[str, Any] | None,
+    pending_draft: dict[str, Any] | None,
+) -> tuple[list[dict[str, str]], tuple[int, int] | None, dict[str, Any] | None, UUID | None]:
+    """Use an active validated checkpoint, replacing it before any silent suffix loss."""
+
+    policy = load_standard_policy()
+    prior: dict[str, Any] | None = None
+    checkpoint_id: UUID | None = None
+    if conversation.context_frontier_sequence:
+        active = (
+            await db.execute(
+                select(MimiEvent)
+                .join(MimiRun, MimiEvent.run_id == MimiRun.id)
+                .where(
+                    MimiRun.conversation_id == conversation.id,
+                    MimiEvent.kind == "context.checkpoint.activated",
+                    MimiEvent.payload["frontier"].as_integer()
+                    == conversation.context_frontier_sequence,
+                )
+                .order_by(MimiEvent.created_at.desc(), MimiEvent.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if active is None:
+            raise _conflict("mimi_active_checkpoint_missing")
+        prior = json.loads(
+            mimi_crypto.open_content(
+                dek,
+                str(active.payload["content_ciphertext"]),
+                aad=mimi_crypto.event_content_aad(active.run_id, active.sequence, active.kind),
+            )
+        )
+        if (
+            prior.get("frontier") != conversation.context_frontier_sequence
+            or prior.get("policy_sha256") != policy.sha256
+            or _canonical_digest(prior) != active.payload.get("content_sha256")
+        ):
+            raise _conflict("mimi_active_checkpoint_invalid")
+        refs = prior.get("source_refs")
+        if not isinstance(refs, list) or len(refs) > 1000:
+            raise _conflict("mimi_active_checkpoint_sources_invalid")
+        source_ids = [UUID(str(item["id"])) for item in refs]
+        source_rows = (
+            await db.execute(
+                select(MimiMessage.id, MimiMessage.sequence, MimiMessage.content_sha256).where(
+                    MimiMessage.conversation_id == conversation.id,
+                    MimiMessage.id.in_(source_ids),
+                )
+            )
+        ).all()
+        by_id = {str(item.id): item for item in source_rows}
+        if any(
+            str(ref["id"]) not in by_id
+            or by_id[str(ref["id"])].sequence != ref["sequence"]
+            or by_id[str(ref["id"])].content_sha256 != ref["sha256"]
+            for ref in refs
+        ):
+            raise _conflict("mimi_active_checkpoint_source_drift")
+        checkpoint_id = active.id
+    rows = (
+        (
+            await db.execute(
+                select(MimiMessage)
+                .where(
+                    MimiMessage.conversation_id == conversation.id,
+                    MimiMessage.role.in_(("user", "assistant")),
+                    MimiMessage.sequence > conversation.context_frontier_sequence,
+                    MimiMessage.sequence < user_sequence,
+                )
+                .order_by(MimiMessage.sequence)
+                .limit(1001)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(rows) > 1000:
+        raise _conflict("mimi_history_exceeds_compaction_window")
+    compact_count = 0
+    suffix_bytes = sum(row.content_bytes for row in rows)
+    while len(rows) - compact_count > 12 or suffix_bytes > 32_768:
+        if compact_count >= len(rows):
+            raise _conflict("mimi_history_message_exceeds_context_window")
+        suffix_bytes -= rows[compact_count].content_bytes
+        compact_count += 1
+    if compact_count:
+        sources = [
+            CheckpointSource(
+                id=row.id,
+                sequence=row.sequence,
+                role=row.role,
+                content_sha256=row.content_sha256,
+                content=mimi_crypto.open_content(
+                    dek,
+                    row.content_ciphertext,
+                    aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
+                ),
+            )
+            for row in rows[:compact_count]
+        ]
+        checkpoint = make_checkpoint(
+            sources=sources,
+            prior=prior,
+            policy_sha256=policy.sha256,
+            pending_preview=pending_preview,
+            pending_draft=pending_draft,
+        )
+        sequence = await _append_event(db, run_id, "context.checkpoint.activated", {})
+        event = (
+            await db.execute(
+                select(MimiEvent).where(
+                    MimiEvent.run_id == run_id,
+                    MimiEvent.sequence == sequence,
+                )
+            )
+        ).scalar_one()
+        event.payload = {
+            "frontier": checkpoint["frontier"],
+            "source_count": len(sources),
+            "content_sha256": _canonical_digest(checkpoint),
+            "content_ciphertext": mimi_crypto.seal_content(
+                dek,
+                json.dumps(checkpoint, ensure_ascii=False),
+                aad=mimi_crypto.event_content_aad(run_id, sequence, event.kind),
+            ),
+        }
+        conversation.context_frontier_sequence = checkpoint["frontier"]
+        await db.flush()
+        prior = checkpoint
+        checkpoint_id = event.id
+        rows = rows[compact_count:]
+    messages = [
+        {
+            "role": row.role,
+            "content": mimi_crypto.open_content(
+                dek,
+                row.content_ciphertext,
+                aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
+            ),
+        }
+        for row in rows
+    ]
+    transcript_range = (rows[0].sequence, rows[-1].sequence) if rows else None
+    return messages, transcript_range, prior, checkpoint_id
+
+
 def _event_read(row: MimiEvent, dek: bytes) -> dict[str, Any]:
     payload = row.payload
     if row.kind == "assistant.delta" and "content_ciphertext" in payload:
@@ -456,6 +783,12 @@ def _event_read(row: MimiEvent, dek: bytes) -> dict[str, Any]:
                 aad=mimi_crypto.event_content_aad(row.run_id, row.sequence, row.kind),
             ),
             "content_bytes": payload.get("content_bytes"),
+        }
+    elif row.kind == "context.checkpoint.activated":
+        payload = {
+            "frontier": payload.get("frontier"),
+            "source_count": payload.get("source_count"),
+            "content_sha256": payload.get("content_sha256"),
         }
     return {
         "id": row.id,
@@ -650,7 +983,13 @@ async def send_message(
         )
 
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
-    provider_history = await _provider_history(db, conversation, dek)
+    settings = get_settings()
+    if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+        provider_history: list[dict[str, str]] = []
+        transcript_range: tuple[int, int] | None = None
+    else:
+        provider_history = await _provider_history(db, conversation, dek)
+        transcript_range = None
 
     # Keep the existing preview confirmable until a typed replacement has
     # validated. A provider failure or ordinary text must never erase the
@@ -669,6 +1008,28 @@ async def send_message(
     if len(pending_previews) > 1:
         raise _conflict("multiple_pending_previews_require_reconciliation")
     observed_pending = pending_previews[0] if pending_previews else None
+    pending_draft, draft_ready = await _latest_draft_state(db, conversation.id)
+    pending_draft_content: str | None = None
+    if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled and draft_ready:
+        draft_message = (
+            await db.execute(
+                select(MimiMessage).where(
+                    MimiMessage.conversation_id == conversation.id,
+                    MimiMessage.run_id == draft_ready.run_id,
+                    MimiMessage.sequence == draft_ready.payload["message_sequence"],
+                    MimiMessage.role == "assistant",
+                )
+            )
+        ).scalar_one_or_none()
+        if draft_message is None or draft_message.content_sha256 != pending_draft.content_sha256:
+            raise _conflict("pending_draft_content_missing_or_changed")
+        pending_draft_content = mimi_crypto.open_content(
+            dek,
+            draft_message.content_ciphertext,
+            aad=mimi_crypto.message_aad(
+                conversation.id, draft_message.sequence, draft_message.role
+            ),
+        )
     if payload.intent == "revise_pending_preview":
         if observed_pending is None:
             raise _conflict("pending_preview_missing")
@@ -693,7 +1054,6 @@ async def send_message(
     observed_pending_digest = observed_pending[0].digest_sha256 if observed_pending else None
 
     now = datetime.now(UTC)
-    settings = get_settings()
     if settings.is_production and not settings.mimi_live_provider_enabled:
         raise HTTPException(status_code=503, detail="mimi_live_route_not_enabled")
     task_context = await list_standard_tasks(db, auth, limit=10)
@@ -710,11 +1070,15 @@ async def send_message(
         lease_id=uuid7(),
         owner_id=conversation.owner_id,
         run_id=run_id,
-        capabilities=(TOOL_VERSION, "task.read.standard.v1"),
+        capabilities=(
+            (*sorted(READ_TOOLS), CREATE_CANDIDATE_TOOL)
+            if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
+            else (TOOL_VERSION, "task.read.standard.v1")
+        ),
         issued_at=now,
         deadline=deadline,
-        max_turns=1,
-        max_tool_calls=1,
+        max_turns=4 if settings.mimi_context_v1_enabled else 1,
+        max_tool_calls=6 if settings.mimi_context_v1_enabled else 1,
         cost_cap_minor=0,
         sensitivity=Sensitivity.STANDARD,
         source_versions=source_versions,
@@ -764,6 +1128,33 @@ async def send_message(
         conversation.next_message_sequence += 1
     conversation.generation += 1
 
+    checkpoint: dict[str, Any] | None = None
+    checkpoint_id: UUID | None = None
+    if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+        (
+            provider_history,
+            transcript_range,
+            checkpoint,
+            checkpoint_id,
+        ) = await _prepare_context_history(
+            db,
+            conversation,
+            dek,
+            run_id,
+            user_sequence,
+            (
+                {
+                    "id": str(observed_pending[0].id),
+                    "digest": observed_pending[0].digest_sha256,
+                    "expiry": observed_pending[0].expires_at.isoformat(),
+                    "source_versions": observed_pending[1].source_versions,
+                }
+                if observed_pending
+                else None
+            ),
+            pending_draft.model_dump(mode="json") if pending_draft else None,
+        )
+
     live_messages = [
         {
             "role": "system",
@@ -797,6 +1188,57 @@ async def send_message(
         *provider_history,
         {"role": "user", "content": payload.content},
     ]
+    context_envelope = None
+    if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+        pending_preview = (
+            PendingPreview(
+                id=observed_pending[0].id,
+                digest=observed_pending[0].digest_sha256,
+                source_versions=observed_pending[1].source_versions,
+                expiry=observed_pending[0].expires_at,
+            )
+            if observed_pending
+            else None
+        )
+        try:
+            context_envelope, live_messages = assemble_context(
+                lease=lease,
+                reserved_task_id=task_id,
+                conversation_id=conversation.id,
+                generation=generation,
+                request_id=payload.client_id,
+                transcript_suffix=provider_history,
+                current_user_turn=payload.content,
+                task_context=task_context,
+                pending_preview_content=prior_preview_operations,
+                pending_preview=pending_preview,
+                pending_draft=pending_draft,
+                checkpoint=checkpoint["summary"] if checkpoint else None,
+                checkpoint_id=checkpoint_id,
+                checkpoint_frontier=conversation.context_frontier_sequence,
+                transcript_range=transcript_range,
+                settings=settings,
+                remaining_turns=lease.max_turns,
+                remaining_tool_calls=lease.max_tool_calls,
+                pending_draft_content=pending_draft_content,
+            )
+        except ValueError as error:
+            run.state = "budget_exceeded"
+            run.error_code = str(error)[:120]
+            run.completed_at = datetime.now(UTC)
+            _add_assistant_message(
+                db,
+                conversation,
+                run_id,
+                dek,
+                "Ngữ cảnh vượt giới hạn an toàn của route; cần compact hoặc thu hẹp phạm vi.",
+            )
+            await _append_event(
+                db, run_id, "run.terminal", {"state": run.state, "error_code": run.error_code}
+            )
+            await db.flush()
+            return await conversation_view(db, auth, conversation_id)
+        await _append_event(db, run_id, "context.manifest", _manifest_receipt(context_envelope))
     route_kind = (
         f"openrouter-{settings.mimi_route_mode}-v1"
         if settings.mimi_live_provider_enabled
@@ -807,9 +1249,11 @@ async def send_message(
         "message_sha256": hashlib.sha256(user_bytes).hexdigest(),
         "history_sha256": _canonical_digest(provider_history),
         "prior_preview_sha256": _canonical_digest(prior_preview_operations),
-        "tools": [TOOL_VERSION],
+        "tools": list(lease.capabilities),
         "source_versions": source_versions,
     }
+    if context_envelope is not None:
+        request_body["context_manifest_sha256"] = context_envelope.manifest.sha256()
     call = MimiProviderCall(
         run_id=run_id,
         attempt=1,
@@ -833,6 +1277,11 @@ async def send_message(
                 "reasoning_effort": settings.mimi_route_reasoning_effort,
                 "parent_run_id": str(parent_run_id) if parent_run_id else None,
                 "checkpoint": "provider_dispatch",
+                **(
+                    {"run_guard_version": 1}
+                    if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
+                    else {}
+                ),
             }
             if settings.mimi_live_provider_enabled
             else {
@@ -840,6 +1289,11 @@ async def send_message(
                 "environment": "local",
                 "parent_run_id": str(parent_run_id) if parent_run_id else None,
                 "checkpoint": "provider_dispatch",
+                **(
+                    {"run_guard_version": 1}
+                    if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
+                    else {}
+                ),
             }
         ),
     )
@@ -860,8 +1314,260 @@ async def send_message(
         # point is unknown unless the adapter returns a definitive outcome.
         call.state = "dispatched"
         await db.commit()
+        agent_result_kind: str | None = None
+        agent_stop_code: str | None = None
         try:
-            if provider_stream:
+            if context_envelope is not None:
+                aggregate_read_seen = False
+
+                async def persist_agent_event(kind: str, event_payload: dict[str, Any]) -> None:
+                    if kind == "provider.response_identity":
+                        response_id = event_payload.get("response_id")
+                        if isinstance(response_id, str) and response_id:
+                            call.result = {**(call.result or {}), "response_id": response_id}
+                            await _append_event(db, run_id, kind, {"response_id_recorded": True})
+                    elif kind == "assistant.delta":
+                        delta = str(event_payload.get("text", ""))
+                        if not delta:
+                            return
+                        sequence = await _append_event(db, run_id, kind, {})
+                        event = (
+                            await db.execute(
+                                select(MimiEvent).where(
+                                    MimiEvent.run_id == run_id,
+                                    MimiEvent.sequence == sequence,
+                                )
+                            )
+                        ).scalar_one()
+                        event.payload = {
+                            "content_ciphertext": mimi_crypto.seal_content(
+                                dek,
+                                delta,
+                                aad=mimi_crypto.event_content_aad(run_id, sequence, kind),
+                            ),
+                            "content_bytes": len(delta.encode("utf-8")),
+                        }
+                    else:
+                        await _append_event(db, run_id, kind, event_payload)
+                    await db.commit()
+
+                async def invoke_agent_model(
+                    messages: list[dict[str, Any]], turn: int
+                ) -> AgentCompletion:
+                    nonlocal call
+                    if turn > 1:
+                        call = MimiProviderCall(
+                            run_id=run_id,
+                            attempt=turn,
+                            state="intent",
+                            request_fingerprint=_canonical_digest(
+                                {
+                                    "messages": messages,
+                                    "manifest": context_envelope.manifest.sha256(),
+                                }
+                            ),
+                            route={
+                                **call.route,
+                                "agent_turn": turn,
+                                "checkpoint": "provider_dispatch",
+                            },
+                        )
+                        db.add(call)
+                        await db.commit()
+                        call.state = "dispatched"
+                        await db.commit()
+                    if provider_stream:
+                        result = await openrouter_complete_stream(
+                            messages,
+                            settings=settings,
+                            session_id=_provider_session_id(conversation.id),
+                            on_event=persist_agent_event,
+                            force_task_tool=force_task_tool,
+                            agent_contract=True,
+                        )
+                    else:
+                        result = await openrouter_complete(
+                            messages,
+                            settings=settings,
+                            session_id=_provider_session_id(conversation.id),
+                            force_task_tool=force_task_tool,
+                            agent_contract=True,
+                        )
+                    if not isinstance(result, AgentCompletion):
+                        raise RouteContractError("agent_provider_result_type_invalid")
+                    call.state = "succeeded"
+                    call.result = {
+                        "response_id": result.response_id,
+                        "kind": result.outcome.kind,
+                        "result_sha256": _canonical_digest(result.outcome.model_dump(mode="json")),
+                        "terminal_ciphertext": mimi_crypto.seal_content(
+                            dek,
+                            json.dumps(result.outcome.model_dump(mode="json"), ensure_ascii=False),
+                            aad=mimi_crypto.provider_terminal_aad(run_id, turn),
+                        ),
+                    }
+                    call.usage = result.usage
+                    call.route = {
+                        **call.route,
+                        "actual_provider": result.provider,
+                        "actual_model": result.model,
+                    }
+                    await _append_event(
+                        db,
+                        run_id,
+                        "provider.succeeded",
+                        {"attempt": turn, "provider": result.provider},
+                    )
+                    await db.commit()
+                    return result
+
+                async def execute_agent_read(
+                    name: str, arguments: dict[str, Any]
+                ) -> dict[str, Any]:
+                    try:
+                        read_factory = get_sessionmaker()
+                        if read_factory is None:
+                            raise RouteContractError("mimi_read_database_unavailable")
+                        # A cancelled bounded read must not poison the ledger
+                        # transaction used to record the run's terminal state.
+                        async with read_factory() as read_db:
+                            result = await execute_read_tool(read_db, name, arguments)
+                    except ValueError as error:
+                        raise RouteContractError(str(error)) from error
+                    await _append_event(
+                        db,
+                        run_id,
+                        "tool.read_result",
+                        {
+                            "tool": name,
+                            "arguments_sha256": _canonical_digest(arguments),
+                            "result_sha256": _canonical_digest(result),
+                            "count": result.get("count", len(result.get("rows", []))),
+                            "coverage": result.get("coverage", "unavailable"),
+                            "has_next_cursor": bool(result.get("next_cursor")),
+                        },
+                    )
+                    await db.commit()
+                    return result
+
+                async def persist_agent_stage(kind: str, details: dict[str, Any]) -> None:
+                    await _append_event(db, run_id, f"agent.{kind}", details)
+                    await db.commit()
+
+                async def update_agent_context(
+                    messages: list[dict[str, Any]],
+                    tool_name: str,
+                    call_id: str,
+                    arguments: dict[str, Any],
+                    result: dict[str, Any],
+                    remaining_turns: int,
+                    remaining_tool_calls: int,
+                ) -> list[dict[str, Any]]:
+                    nonlocal context_envelope, aggregate_read_seen
+                    if context_envelope is None:
+                        raise ValueError("mimi_context_envelope_missing")
+                    if tool_name == "task.aggregate.v1":
+                        # Counts do not carry per-Task versions. They can guide
+                        # an answer or draft, but cannot safely ground a frozen
+                        # write preview in this P1C-A contract.
+                        aggregate_read_seen = True
+                    bound_versions: dict[str, str] = {}
+                    for row in result.get("rows", []):
+                        if not isinstance(row, dict):
+                            raise RouteContractError("task_read_row_invalid")
+                        try:
+                            task_id = UUID(str(row["id"]))
+                            source_version = str(row["source_version"])
+                            parsed_version = datetime.fromisoformat(source_version)
+                        except (KeyError, TypeError, ValueError) as error:
+                            raise RouteContractError("task_read_source_version_invalid") from error
+                        if parsed_version.tzinfo is None:
+                            raise RouteContractError("task_read_source_version_invalid")
+                        source_key = f"task:{task_id}"
+                        prior_version = bound_versions.get(source_key) or run.source_versions.get(
+                            source_key
+                        )
+                        if prior_version is not None and prior_version != source_version:
+                            raise RouteContractError("task_source_version_changed_during_run")
+                        bound_versions[source_key] = source_version
+                    if bound_versions:
+                        run.source_versions = {**run.source_versions, **bound_versions}
+                    context_envelope, rebound = rebind_after_read(
+                        context_envelope,
+                        messages,
+                        tool_name=tool_name,
+                        call_id=call_id,
+                        arguments=arguments,
+                        result=result,
+                        remaining_turns=remaining_turns,
+                        remaining_tool_calls=remaining_tool_calls,
+                    )
+                    await _append_event(
+                        db, run_id, "context.manifest", _manifest_receipt(context_envelope)
+                    )
+                    await db.commit()
+                    return rebound
+
+                loop_result = await run_read_loop(
+                    live_messages,
+                    limits=LoopLimits(
+                        max_turns=lease.max_turns,
+                        max_tool_calls=lease.max_tool_calls,
+                        max_serialized_bytes=(
+                            settings.mimi_route_context_tokens
+                            - settings.mimi_route_max_output_tokens
+                        ),
+                        deadline=deadline,
+                    ),
+                    invoke_model=invoke_agent_model,
+                    execute_read=execute_agent_read,
+                    on_stage=persist_agent_stage,
+                    on_context_update=update_agent_context,
+                )
+                outcome = loop_result.outcome
+                if isinstance(outcome, PreviewCandidate) and aggregate_read_seen:
+                    outcome = Blocked(
+                        reason=(
+                            "Số liệu tổng hợp có thể đã đổi. Mimi chưa thể tạo preview "
+                            "an toàn từ lượt đọc này; hãy yêu cầu kiểm tra lại dữ liệu cụ thể."
+                        )
+                    )
+                agent_result_kind = outcome.kind
+                agent_stop_code = loop_result.stop_code
+                last = loop_result.completion
+                common = {
+                    "response_id": last.response_id if last else "",
+                    "usage": last.usage if last else {},
+                    "provider": last.provider if last else None,
+                    "model": last.model if last else None,
+                }
+                if isinstance(outcome, PreviewCandidate):
+                    if outcome.tool != CREATE_CANDIDATE_TOOL:
+                        raise RouteContractError("preview_candidate_tool_invalid")
+                    try:
+                        candidate = TaskCreate.model_validate(outcome.arguments)
+                    except ValidationError as error:
+                        raise RouteContractError("preview_candidate_schema_invalid") from error
+                    if candidate.is_private:
+                        raise RouteContractError("standard_route_proposed_private_task")
+                    completion = ProviderCompletion(
+                        kind="task", task=candidate, text=None, **common
+                    )
+                else:
+                    if isinstance(outcome, AssistantText):
+                        text_result = outcome.text
+                    elif isinstance(outcome, Clarification):
+                        text_result = outcome.question
+                    elif isinstance(outcome, Draft):
+                        text_result = outcome.text
+                    elif isinstance(outcome, Blocked):
+                        text_result = outcome.reason
+                    else:
+                        raise RouteContractError("agent_loop_not_terminal")
+                    completion = ProviderCompletion(
+                        kind="text", task=None, text=text_result, **common
+                    )
+            elif provider_stream:
                 stream_buffer: list[str] = []
 
                 async def flush_stream_buffer() -> None:
@@ -890,7 +1596,13 @@ async def send_message(
                     await db.flush()
 
                 async def persist_stream_event(kind: str, event_payload: dict[str, Any]) -> None:
-                    if kind == "assistant.delta":
+                    if kind == "provider.response_identity":
+                        response_id = event_payload.get("response_id")
+                        if isinstance(response_id, str) and response_id:
+                            call.result = {**(call.result or {}), "response_id": response_id}
+                        await _append_event(db, run_id, kind, {"response_id_recorded": True})
+                        await db.commit()
+                    elif kind == "assistant.delta":
                         text_delta = str(event_payload.get("text", ""))
                         if not text_delta:
                             return
@@ -915,7 +1627,7 @@ async def send_message(
                     session_id=_provider_session_id(conversation.id),
                     force_task_tool=force_task_tool,
                 )
-            if force_task_tool and completion.kind != "task":
+            if force_task_tool and completion.kind != "task" and agent_stop_code is None:
                 raise RouteContractError("provider_revision_must_return_task_tool")
             if (
                 completion.kind == "task"
@@ -935,11 +1647,14 @@ async def send_message(
             call = (
                 await db.execute(
                     select(MimiProviderCall)
-                    .where(MimiProviderCall.run_id == run_id, MimiProviderCall.attempt == 1)
+                    .where(MimiProviderCall.run_id == run_id)
+                    .order_by(MimiProviderCall.attempt.desc())
+                    .limit(1)
                     .with_for_update()
                 )
             ).scalar_one()
             call.state = "unknown" if outcome == "unknown" else "failed"
+            retained_response_id = (call.result or {}).get("response_id")
             call.result = {
                 "terminal": outcome,
                 "status": status_code,
@@ -948,6 +1663,8 @@ async def send_message(
                     error.response_id if isinstance(error, ProviderDispatchError) else None
                 ),
             }
+            if call.result["response_id"] is None and retained_response_id:
+                call.result["response_id"] = retained_response_id
             run.provider_outcome = "unknown" if outcome == "unknown" else "failed"
             terminal_at = datetime.now(UTC)
             deadline_hit = terminal_at >= run.deadline
@@ -1004,7 +1721,9 @@ async def send_message(
         call = (
             await db.execute(
                 select(MimiProviderCall)
-                .where(MimiProviderCall.run_id == run_id, MimiProviderCall.attempt == 1)
+                .where(MimiProviderCall.run_id == run_id)
+                .order_by(MimiProviderCall.attempt.desc())
+                .limit(1)
                 .with_for_update()
             )
         ).scalar_one()
@@ -1012,23 +1731,25 @@ async def send_message(
         if completion.kind == "text":
             if completion.text is None:
                 raise RouteContractError("provider_text_result_missing")
-            call.result = {
-                "response_id": completion.response_id,
-                "kind": "text",
-                "result_sha256": hashlib.sha256(completion.text.encode("utf-8")).hexdigest(),
-            }
+            if context_envelope is None:
+                call.result = {
+                    "response_id": completion.response_id,
+                    "kind": "text",
+                    "result_sha256": hashlib.sha256(completion.text.encode("utf-8")).hexdigest(),
+                }
         else:
             if completion.task is None:
                 raise RouteContractError("provider_task_result_missing")
             provider_args = completion.task.model_dump(mode="json")
             provider_args["id"] = str(task_id)
             provider_args["is_private"] = False
-            call.result = {
-                "response_id": completion.response_id,
-                "kind": "task",
-                "result_sha256": _canonical_digest(provider_args),
-                "tool": TOOL_VERSION,
-            }
+            if context_envelope is None:
+                call.result = {
+                    "response_id": completion.response_id,
+                    "kind": "task",
+                    "result_sha256": _canonical_digest(provider_args),
+                    "tool": TOOL_VERSION,
+                }
         call.state = "succeeded"
         call.usage = completion.usage
         call.route = {
@@ -1037,12 +1758,20 @@ async def send_message(
             "actual_model": completion.model,
         }
         run.provider_outcome = "succeeded"
-        await _append_event(
-            db,
-            run_id,
-            "provider.succeeded",
-            {"attempt": 1, "provider": completion.provider},
-        )
+        if context_envelope is None:
+            await _append_event(
+                db,
+                run_id,
+                "provider.succeeded",
+                {"attempt": call.attempt, "provider": completion.provider},
+            )
+        else:
+            await _append_event(
+                db,
+                run_id,
+                "agent.terminal",
+                {"kind": agent_result_kind, "turns": call.attempt},
+            )
         await db.flush()
         await db.commit()
         conversation = await _conversation(db, auth, conversation_id, lock=True)
@@ -1071,16 +1800,40 @@ async def send_message(
             return await conversation_view(db, auth, conversation_id)
         if completion.kind == "text":
             assert completion.text is not None
-            if provider_stream:
+            if provider_stream and context_envelope is None:
                 await flush_stream_buffer()
             _add_assistant_message(db, conversation, run_id, dek, completion.text)
-            run.state = "completed"
+            if agent_result_kind == "draft":
+                draft_id = uuid7()
+                await _append_event(
+                    db,
+                    run_id,
+                    "draft.ready",
+                    {
+                        "draft_id": str(draft_id),
+                        "revision": 1,
+                        "content_sha256": hashlib.sha256(
+                            completion.text.encode("utf-8")
+                        ).hexdigest(),
+                        "message_sequence": conversation.next_message_sequence - 1,
+                        "state": "pending",
+                    },
+                )
+            if agent_result_kind == "blocked":
+                run.state = (
+                    agent_stop_code
+                    if agent_stop_code in {"deadline_exceeded", "budget_exceeded"}
+                    else "halted"
+                )
+                run.error_code = agent_stop_code or "provider_blocked"
+            else:
+                run.state = "completed"
             run.completed_at = datetime.now(UTC)
             await _append_event(
                 db,
                 run_id,
                 "run.terminal",
-                {"state": "completed", "result": "text"},
+                {"state": run.state, "result": agent_result_kind or "text"},
             )
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
@@ -1264,7 +2017,9 @@ async def send_message(
             json.dumps(operation.model_dump(mode="json"), ensure_ascii=False),
             aad=mimi_crypto.change_set_aad(conversation.id, change_set_id),
         ),
-        policy_version=POLICY_VERSION,
+        policy_version=(
+            context_envelope.manifest.policy_id if context_envelope is not None else POLICY_VERSION
+        ),
     )
     db.add(change_set)
     run.state = "waiting_confirmation"
@@ -1396,6 +2151,41 @@ async def confirm_change_set(
         )
         await db.flush()
         return {"change_set_id": change_set.id, "state": "rejected"}
+
+    # A preview is bound to the versioned Task evidence the model saw. Hold
+    # read locks through the domain write so a concurrent edit cannot pass the
+    # check and then change the source before this confirmation commits.
+    if run.source_versions:
+        try:
+            expected_sources = {
+                UUID(key.removeprefix("task:")): value
+                for key, value in run.source_versions.items()
+                if isinstance(key, str) and key.startswith("task:") and isinstance(value, str)
+            }
+        except ValueError:
+            await invalidate_frozen_change_set("change_set_source_binding_invalid")
+            raise AssertionError("unreachable")
+        if len(expected_sources) != len(run.source_versions):
+            await invalidate_frozen_change_set("change_set_source_binding_invalid")
+            raise AssertionError("unreachable")
+        source_rows = (
+            (
+                await db.execute(
+                    select(Task).where(Task.id.in_(expected_sources)).with_for_update(read=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(source_rows) != len(expected_sources) or any(
+            row.is_private
+            or row.deleted_at is not None
+            or row.updated_at is None
+            or row.updated_at.isoformat() != expected_sources[row.id]
+            for row in source_rows
+        ):
+            await invalidate_frozen_change_set("change_set_source_stale")
+            raise AssertionError("unreachable")
 
     run.state = "executing"
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
@@ -1566,6 +2356,7 @@ async def conversation_view(
 ) -> dict[str, Any]:
     conversation = await _conversation(db, auth, conversation_id)
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    current_draft, _ = await _latest_draft_state(db, conversation.id)
     messages = (
         (
             await db.execute(
@@ -1594,7 +2385,20 @@ async def conversation_view(
     change_sets = []
     receipts = []
     events = []
+    provider_calls = []
     if run_ids:
+        provider_calls = (
+            (
+                await db.execute(
+                    select(MimiProviderCall)
+                    .where(MimiProviderCall.run_id.in_(run_ids))
+                    .order_by(MimiProviderCall.created_at, MimiProviderCall.attempt)
+                    .limit(MAX_EVENTS)
+                )
+            )
+            .scalars()
+            .all()
+        )
         change_sets = (
             (
                 await db.execute(
@@ -1653,6 +2457,7 @@ async def conversation_view(
         "metadata_version": conversation.metadata_version,
         "archived_at": conversation.archived_at,
         "updated_at": conversation.updated_at,
+        "draft": current_draft.model_dump(mode="json") if current_draft else None,
         "messages": [_message_read(row, dek) for row in messages],
         "runs": [
             {
@@ -1688,6 +2493,19 @@ async def conversation_view(
         ],
         "receipts": [_receipt_read(row) for row in receipts],
         "events": [_event_read(row, dek) for row in events],
+        "provider_calls": [
+            {
+                "run_id": row.run_id,
+                "attempt": row.attempt,
+                "state": row.state,
+                "requested_model": row.route.get("model"),
+                "requested_effort": row.route.get("reasoning_effort"),
+                "actual_model": row.route.get("actual_model"),
+                "actual_provider": row.route.get("actual_provider"),
+                "usage": _reported_usage(row.usage),
+            }
+            for row in provider_calls
+        ],
         "feedback": [
             {
                 "id": row.id,
@@ -1967,7 +2785,11 @@ async def finish_interrupted_run(
     elif provider_may_have_received_request:
         run.provider_outcome = "unknown"
         call.state = "unknown"
-        call.result = {"terminal": "unknown", "reason": run.error_code}
+        call.result = {
+            "terminal": "unknown",
+            "reason": run.error_code,
+            "response_id": (call.result or {}).get("response_id"),
+        }
     elif call is not None:
         call.state = "failed"
         call.result = {"terminal": "failed", "reason": run.error_code}
@@ -1984,6 +2806,128 @@ async def finish_interrupted_run(
         {"state": run.state, "error_code": run.error_code},
     )
     await db.flush()
+
+
+async def reconcile_orphaned_mimi_runs(db: AsyncSession) -> int:
+    """Classify guarded runs abandoned by a crashed process, never redispatch them.
+
+    A live old Fly Machine holds the transaction advisory lock and is left
+    untouched. Runs from before this guard protocol are also left untouched:
+    they may still be active during an immediate rolling deploy.
+    """
+
+    engine = get_engine()
+    if engine is None:
+        return 0
+    recovered = 0
+    last_id: UUID | None = None
+    while True:
+        query = select(MimiRun.id).where(
+            MimiRun.state.in_(("accepted", "running")),
+            MimiRun.completed_at.is_(None),
+        )
+        if last_id is not None:
+            query = query.where(MimiRun.id > last_id)
+        ids = (await db.execute(query.order_by(MimiRun.id).limit(100))).scalars().all()
+        if not ids:
+            break
+        for candidate_id in ids:
+            async with engine.connect() as guard:
+                async with guard.begin():
+                    acquired = (
+                        await guard.execute(
+                            text("SELECT pg_try_advisory_xact_lock(:key)"),
+                            {"key": run_guard_key(candidate_id)},
+                        )
+                    ).scalar_one()
+                    if not acquired:
+                        continue
+                    run = (
+                        await db.execute(
+                            select(MimiRun).where(MimiRun.id == candidate_id).with_for_update()
+                        )
+                    ).scalar_one_or_none()
+                    if run is None or run.state not in {"accepted", "running"}:
+                        continue
+                    call = (
+                        await db.execute(
+                            select(MimiProviderCall)
+                            .where(MimiProviderCall.run_id == candidate_id)
+                            .order_by(MimiProviderCall.attempt.desc())
+                            .limit(1)
+                            .with_for_update()
+                        )
+                    ).scalar_one_or_none()
+                    if call is None or call.route.get("run_guard_version") != 1:
+                        continue
+                    if call.state == "intent":
+                        call.state = "fenced"
+                        run.state = "retryable"
+                        run.provider_outcome = "failed"
+                        run.error_code = "process_lost_before_dispatch"
+                        call.result = {"terminal": "not_dispatched", "reason": run.error_code}
+                    elif call.state in {"dispatched", "unknown"}:
+                        response_id = (call.result or {}).get("response_id")
+                        call.state = "unknown"
+                        run.state = "outcome_unknown"
+                        run.provider_outcome = "unknown"
+                        run.error_code = "process_lost_after_dispatch"
+                        call.result = {
+                            "terminal": "unknown",
+                            "reason": run.error_code,
+                            "response_id": response_id,
+                        }
+                    else:
+                        run.state = "halted"
+                        run.provider_outcome = (
+                            "succeeded" if call.state == "succeeded" else "failed"
+                        )
+                        # A successful provider turn is not yet an authorized
+                        # preview or delivered answer. Preserve its encrypted
+                        # terminal payload for diagnosis, but do not guess a
+                        # missing loop continuation or replay an external call.
+                        run.error_code = (
+                            "provider_result_not_delivered_after_restart"
+                            if call.state == "succeeded"
+                            else "process_lost_after_provider_result"
+                        )
+                        if call.state == "succeeded":
+                            conversation = (
+                                await db.execute(
+                                    select(MimiConversation)
+                                    .where(MimiConversation.id == run.conversation_id)
+                                    .with_for_update()
+                                )
+                            ).scalar_one()
+                            if conversation.generation == run.generation + 1:
+                                dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+                                _add_assistant_message(
+                                    db,
+                                    conversation,
+                                    run.id,
+                                    dek,
+                                    "Mimi đã nhận phản hồi từ model nhưng server bị ngắt trước khi "
+                                    "hoàn tất câu trả lời hoặc preview. Chưa có thay đổi nào được "
+                                    "ghi vào microSched. Bạn có thể gửi lại yêu cầu; Mimi sẽ "
+                                    "không tự gọi model lần nữa.",
+                                )
+                    run.completed_at = datetime.now(UTC)
+                    await _append_event(
+                        db,
+                        run.id,
+                        "run.recovered_after_process_loss",
+                        {"state": run.state, "provider_outcome": run.provider_outcome},
+                    )
+                    await _append_event(
+                        db,
+                        run.id,
+                        "run.terminal",
+                        {"state": run.state, "error_code": run.error_code},
+                    )
+                    await db.commit()
+                    recovered += 1
+        last_id = ids[-1]
+    return recovered
 
 
 async def reconcile_refresh_markers(db: AsyncSession) -> int:

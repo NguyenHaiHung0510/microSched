@@ -76,6 +76,37 @@ export type MimiEvent = {
   created_at: string
 }
 
+export type MimiDraftDirection = {
+  id: string
+  revision: number
+  content_sha256: string
+  direction_state: 'pending' | 'approved' | 'rejected'
+}
+
+export type MimiProviderCall = {
+  run_id: string
+  attempt: number
+  state: string
+  requested_model: string | null
+  requested_effort: string | null
+  actual_model: string | null
+  actual_provider: string | null
+  usage: Record<string, number>
+}
+
+export type MimiCapabilities = {
+  context_v1_enabled: boolean
+  live_provider_enabled: boolean
+  requested_model: string | null
+  requested_effort: string | null
+  route_mode: string | null
+  model_selection_enabled: boolean
+  context_limit: number
+  output_reserve: number
+  policy_id: string | null
+  policy_sha256: string | null
+}
+
 export type MimiConversation = {
   id: string
   sensitivity: 'standard'
@@ -92,6 +123,8 @@ export type MimiConversation = {
   receipts: MimiReceipt[]
   events: MimiEvent[]
   feedback: MimiFeedback[]
+  draft?: MimiDraftDirection | null
+  provider_calls?: MimiProviderCall[]
 }
 
 export type MimiConversationSummary = {
@@ -113,6 +146,27 @@ export type MimiConversationPage = {
 }
 
 const MIMI_WRITE_HEADERS = { 'X-Mimi-CSRF': '1' }
+
+export function fetchMimiCapabilities(): Promise<MimiCapabilities> {
+  return apiRequest('/api/mimi/capabilities')
+}
+
+export function decideMimiDraftDirection(
+  conversationId: string,
+  draft: MimiDraftDirection,
+  decision: 'approve' | 'reject',
+): Promise<{ draft_id: string; state: string }> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/draft-direction`, {
+    method: 'POST',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({
+      draft_id: draft.id,
+      expected_revision: draft.revision,
+      expected_content_sha256: draft.content_sha256,
+      decision,
+    }),
+  })
+}
 
 export function fetchCurrentMimiConversation(): Promise<MimiConversation | null> {
   return apiRequest('/api/mimi/conversations/current')
@@ -254,6 +308,19 @@ async function consumeMimiStream(
   if (buffer.trim()) consume(buffer)
   if (!finalSnapshot) throw new Error('Mimi stream kết thúc trước terminal snapshot.')
   return finalSnapshot
+}
+
+export async function observeMimiRun(
+  runId: string,
+  onEvent: (envelope: MimiStreamEnvelope) => void,
+  signal?: AbortSignal,
+): Promise<MimiConversation> {
+  const response = await fetch(`/api/mimi/runs/${runId}/events/stream?after=0`, {
+    method: 'GET',
+    credentials: 'same-origin',
+    signal,
+  })
+  return consumeMimiStream(response, onEvent)
 }
 
 export function cancelMimiRun(runId: string): Promise<{ run_id: string; state: string }> {
