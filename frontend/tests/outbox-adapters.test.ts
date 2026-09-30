@@ -1,0 +1,69 @@
+import { describe, expect, it } from 'vitest'
+import { adapterFor } from '../src/lib/outbox-adapters'
+
+describe('typed domain command encoding', () => {
+  it('keeps a task create UUID and server route/body with task query keys', () => {
+    const command = adapterFor('task.create').encodeCommand({
+      operationKind: 'task.create',
+      path: '/api/tasks',
+      body: { id: '0199abc0-0000-7000-8000-000000000001', title: 'Việc', status: 'open', items: [] },
+    })
+    expect(command).toMatchObject({
+      operation_kind: 'task.create',
+      resource: 'task',
+      method: 'POST',
+      path: '/api/tasks',
+      entity_id: '0199abc0-0000-7000-8000-000000000001',
+      parent_id: null,
+      requires_private: false,
+      idempotency_mode: 'client_uuid',
+      affected_query_keys: [['tasks'], ['calendar']],
+    })
+    expect(command.body).toEqual({ id: '0199abc0-0000-7000-8000-000000000001', title: 'Việc', status: 'open', items: [] })
+    expect(Object.keys(command).sort()).toEqual([
+      'affected_query_keys', 'body', 'dependency_operation_id', 'entity_id', 'group_id',
+      'idempotency_mode', 'method', 'operation_kind', 'parent_id', 'path', 'requires_private', 'resource',
+    ].sort())
+  })
+
+  it('encodes atomic note-item reorder as one absolute command', () => {
+    const input = {
+      operationKind: 'note_item.reorder' as const,
+      path: '/api/notes/note-1/items/positions',
+      body: { items: [{ id: 'item-1', position: 1 }, { id: 'item-2', position: 0 }] },
+      parentId: 'note-1',
+    }
+    const command = adapterFor('note_item.reorder').encodeCommand(input)
+    expect(command).toMatchObject({
+      method: 'PATCH',
+      path: '/api/notes/note-1/items/positions',
+      body: input.body,
+      parent_id: 'note-1',
+      idempotency_mode: 'absolute',
+      affected_query_keys: [['notes']],
+    })
+  })
+
+  it('rejects an operation paired with a different route and retains private metadata', () => {
+    expect(() => adapterFor('task.delete').encodeCommand({
+      operationKind: 'task.delete',
+      path: '/api/notes/note-1',
+      entityId: 'task-1',
+    })).toThrow(/Invalid route/)
+    const command = adapterFor('note.update').encodeCommand({
+      operationKind: 'note.update',
+      path: '/api/notes/note-1',
+      body: { title: 'Riêng tư' },
+      entityId: 'note-1',
+      requiresPrivate: true,
+      dependencyOperationId: 7,
+      groupId: 'group-2',
+    })
+    expect(command).toMatchObject({
+      entity_id: 'note-1',
+      requires_private: true,
+      dependency_operation_id: 7,
+      group_id: 'group-2',
+    })
+  })
+})
