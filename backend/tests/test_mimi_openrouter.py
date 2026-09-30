@@ -381,6 +381,27 @@ async def test_generation_reconciliation_reads_only_canonical_metadata() -> None
     }
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("transport_error", [httpx.ReadError, httpx.RemoteProtocolError])
+async def test_generation_reconciliation_transport_failure_is_unknown_without_retry(
+    transport_error: type[httpx.TransportError],
+) -> None:
+    requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        raise transport_error("synthetic metadata transport failure", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ProviderDispatchError) as raised:
+            await get_generation("generation-stream", settings=_settings(), client=client)
+
+    assert raised.value.outcome == "unknown"
+    assert raised.value.response_id == "generation-stream"
+    assert requests == 1
+
+
 def test_terminal_payload_cannot_cross_standard_private_boundary() -> None:
     with pytest.raises(RouteContractError):
         parse_completion(

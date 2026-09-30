@@ -672,6 +672,10 @@ async def get_generation(
             raise ProviderDispatchError("retryable", None) from error
         except httpx.TimeoutException as error:
             raise ProviderDispatchError("unknown", None, response_id=response_id) from error
+        except httpx.TransportError as error:
+            # An interrupted metadata read does not establish whether the
+            # original generation exists; never re-dispatch it implicitly.
+            raise ProviderDispatchError("unknown", None, response_id=response_id) from error
         _raise_for_status(response.status_code)
         try:
             payload = response.json()
