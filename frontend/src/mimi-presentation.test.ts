@@ -30,6 +30,27 @@ describe('mimiTaskScheduleLabel', () => {
 })
 
 describe('mimiFeedbackTargets', () => {
+  it('distinguishes calls when two runs each have an unknown first attempt', () => {
+    const source = {
+      messages: [],
+      runs: [
+        { id: 'deadline-run', generation: 7, state: 'deadline_exceeded' },
+        { id: 'cancelled-run', generation: 8, state: 'cancelled' },
+      ],
+      provider_calls: [
+        { id: 'deadline-call', run_id: 'deadline-run', attempt: 1, state: 'unknown' },
+        { id: 'cancelled-call', run_id: 'cancelled-run', attempt: 1, state: 'unknown' },
+      ],
+      receipts: [],
+    }
+    const calls = mimiFeedbackTargets(source).filter((target) => target.target_type === 'call')
+    expect(new Set(calls.map((target) => target.label)).size).toBe(2)
+    expect(calls).toEqual([
+      { target_type: 'call', target_id: 'deadline-call', label: 'Run 7 · Lần gọi 1 · chưa rõ kết quả' },
+      { target_type: 'call', target_id: 'cancelled-call', label: 'Run 8 · Lần gọi 2 · chưa rõ kết quả' },
+    ])
+  })
+
   it('offers an answer target when a text-only conversation has no receipt', () => {
     expect(mimiFeedbackTargets({
       messages: [

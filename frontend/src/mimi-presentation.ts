@@ -19,7 +19,7 @@ const runLabels: Record<string, string> = {
 export function mimiFeedbackTargets(source: {
   messages: Array<{ id: string; role: string; sequence: number }>
   runs: Array<{ id: string; generation: number; state: string }>
-  provider_calls?: Array<{ id: string; attempt: number; state: string }> | null
+  provider_calls?: Array<{ id: string; run_id?: string; attempt: number; state: string }> | null
   receipts: Array<{ id: string }>
 }): MimiFeedbackTarget[] {
   return [
@@ -35,10 +35,12 @@ export function mimiFeedbackTargets(source: {
       target_id: run.id,
       label: `Run ${run.generation} · ${mimiRunLabel(run.state)}`,
     })),
-    ...(source.provider_calls ?? []).map((call) => ({
+    ...(source.provider_calls ?? []).map((call, index) => {
+      const run = source.runs.find((item) => item.id === call.run_id)
+      return {
       target_type: 'call' as const,
       target_id: call.id,
-      label: `Lần gọi ${call.attempt} · ${({
+      label: `${run ? `Run ${run.generation} · ` : ''}Lần gọi ${index + 1} · ${({
         intent: 'đang chuẩn bị',
         dispatched: 'đã gửi',
         succeeded: 'hoàn tất',
@@ -46,7 +48,8 @@ export function mimiFeedbackTargets(source: {
         unknown: 'chưa rõ kết quả',
         fenced: 'đã chặn',
       } as Record<string, string>)[call.state] ?? 'chưa rõ trạng thái'}`,
-    })),
+      }
+    }),
     ...source.receipts.map((receipt, index) => ({
       target_type: 'receipt' as const,
       target_id: receipt.id,
