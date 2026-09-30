@@ -1,11 +1,17 @@
-﻿/// <reference lib="webworker" />
+/// <reference lib="webworker" />
 
+import { clientsClaim } from 'workbox-core'
 import { createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
 
 import { type PushNotificationPayload, showPushNotification } from './sw-notification'
 
 declare const self: ServiceWorkerGlobalScope
+
+// injectManifest keeps lifecycle ownership in this custom worker; match the
+// existing autoUpdate registration so the first online visit becomes controlled.
+void self.skipWaiting()
+clientsClaim()
 
 precacheAndRoute(self.__WB_MANIFEST)
 
