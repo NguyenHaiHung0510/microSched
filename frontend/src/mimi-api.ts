@@ -67,6 +67,12 @@ export type MimiFeedback = {
   created_at: string
 }
 
+export type MimiFeedbackTarget = {
+  target_type: 'turn' | 'run' | 'call' | 'operation' | 'receipt'
+  target_id: string
+  label: string
+}
+
 export type MimiEvent = {
   id: string
   run_id: string
@@ -84,6 +90,7 @@ export type MimiDraftDirection = {
 }
 
 export type MimiProviderCall = {
+  id: string
   run_id: string
   attempt: number
   state: string
@@ -375,8 +382,9 @@ export function decideMimiChangeSet(
 
 export function saveMimiFeedback(
   conversationId: string,
-  receiptId: string,
+  target: Pick<MimiFeedbackTarget, 'target_type' | 'target_id'>,
   comment: string,
+  expected: string,
   clientId: string,
 ): Promise<MimiFeedback> {
   return apiRequest(`/api/mimi/conversations/${conversationId}/feedback`, {
@@ -384,9 +392,10 @@ export function saveMimiFeedback(
     headers: MIMI_WRITE_HEADERS,
     body: JSON.stringify({
       client_id: clientId,
-      target_type: 'receipt',
-      target_id: receiptId,
+      target_type: target.target_type,
+      target_id: target.target_id,
       comment,
+      expected: expected.trim() || null,
       evidence_bundle_ids: [],
     }),
   })

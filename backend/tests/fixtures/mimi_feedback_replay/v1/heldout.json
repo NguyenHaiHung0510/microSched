@@ -1,11 +1,11 @@
 {
   "schema_version": "mimi.synthetic-replay.v1",
   "synthetic_only": true,
-  "source_sha256": "d647359eda7beb832d62543629e1d1d0388d2ed6d9d1c24660a8ecb5f5f3bcb5",
+  "source_sha256": "5aa90de66b63e600d0a1e149c3f7548bed004956c97f2d259052415d7823263f",
   "policy_sha256": "1fc6a94ba6fd56cc300f259bfd1112c6efe5354d61fa66ed2292fe2ac772d0e2",
   "cases": [
     {
-      "case_id": "heldout-greeting",
+      "case_id": "synthetic-greeting",
       "synthetic_input": "Chào Mimi, hôm nay bạn có thể giúp gì?",
       "expected_classification": "answer",
       "baseline": {
@@ -34,7 +34,7 @@
       }
     },
     {
-      "case_id": "heldout-read-only",
+      "case_id": "synthetic-read-only",
       "synthetic_input": "Cho mình xem danh sách quy trình chuẩn bị buổi học.",
       "expected_classification": "read_only",
       "baseline": {
@@ -63,7 +63,7 @@
       }
     },
     {
-      "case_id": "heldout-missing-date",
+      "case_id": "synthetic-missing-date",
       "synthetic_input": "Tạo Task nhắc mình chuẩn bị bài vào ngày nào đó tuần sau.",
       "expected_classification": "clarify",
       "baseline": {
@@ -92,7 +92,7 @@
       }
     },
     {
-      "case_id": "heldout-task-preview",
+      "case_id": "synthetic-task-preview",
       "synthetic_input": "Tạo Task chuẩn bị slide cho buổi học ngày mai.",
       "expected_classification": "preview",
       "baseline": {
@@ -121,7 +121,7 @@
       }
     },
     {
-      "case_id": "heldout-uncertain",
+      "case_id": "synthetic-uncertain",
       "synthetic_input": "Có thể làm giúp việc gì đó, mình chưa nói rõ là việc nào.",
       "expected_classification": "abstain",
       "baseline": {

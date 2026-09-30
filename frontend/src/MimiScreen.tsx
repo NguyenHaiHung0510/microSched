@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
 import { ApiError, TimeoutError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import {
   createMimiConversation,
@@ -25,7 +26,13 @@ import {
   type MimiConversation,
   type MimiDraftDirection,
 } from '@/mimi-api'
-import { mimiTaskScheduleLabel } from '@/mimi-presentation'
+import {
+  mimiFeedbackTargets,
+  mimiTerminalRunStage,
+  resolveCancelAcknowledgment,
+  mimiTaskScheduleLabel,
+  resolveMimiFeedbackTarget,
+} from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 function errorMessage(error: unknown): string {
@@ -157,17 +164,39 @@ export function MimiScreen({
   const [draft, setDraft] = useState('')
   const [online, setOnline] = useState(() => navigator.onLine)
   const [feedbackDraft, setFeedbackDraft] = useState('')
+  const [feedbackExpected, setFeedbackExpected] = useState('')
   const [feedbackClientId, setFeedbackClientId] = useState<string | null>(null)
+  const [feedbackTargetKey, setFeedbackTargetKey] = useState('')
+  const [feedbackBinding, setFeedbackBinding] = useState<{
+    conversationId: string
+    targetKey: string
+  } | null>(null)
+  const [feedbackAcknowledgment, setFeedbackAcknowledgment] = useState<{
+    conversationId: string
+    targetKey: string
+  } | null>(null)
+  const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null)
+  const feedbackDraftRevision = useRef(0)
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
   const [runStage, setRunStage] = useState('Sẵn sàng')
+  const [cancelRequestedRunId, setCancelRequestedRunId] = useState<string | null>(null)
   const [streamedText, setStreamedText] = useState('')
+  const runStageRunId = useRef<string | null>(null)
+  const previousRunConversation = useRef<string | null>(null)
 
   const handleStreamEvent = useCallback(({ event, data }: { event: string; data: Record<string, unknown> }) => {
     if (event === 'run.reserved' && typeof data.run_id === 'string') {
+      if (runStageRunId.current && runStageRunId.current !== data.run_id) return
+      runStageRunId.current = data.run_id
+      setCancelRequestedRunId(null)
       setActiveRunId(data.run_id)
       setRunStage('Đã nhận yêu cầu')
-    } else if (event === 'context.tasks_read') setRunStage('Đã đọc Task STANDARD')
+    } else if (
+      typeof data.run_id === 'string'
+      && runStageRunId.current !== data.run_id
+    ) return
+    else if (event === 'context.tasks_read') setRunStage('Đã đọc Task STANDARD')
     else if (event === 'context.manifest') setRunStage('Đã chuẩn bị ngữ cảnh')
     else if (event === 'context.checkpoint.activated') setRunStage('Đã thu gọn ngữ cảnh')
     else if (event === 'agent.awaiting_model') setRunStage('Mimi đang suy luận')
@@ -202,6 +231,7 @@ export function MimiScreen({
     ...NO_POLLING_QUERY_OPTIONS,
   })
   const queryKey = conversationId ? ['mimi', 'conversation', conversationId] : ['mimi', 'current']
+  const current = conversation.data
   const capabilities = useQuery({
     queryKey: ['mimi', 'capabilities'],
     queryFn: fetchMimiCapabilities,
@@ -222,6 +252,7 @@ export function MimiScreen({
       content: string
       clientId: string
       revision?: { id: string; digest: string } | null
+      startedAt: number
     }) => streamMimiMessage(
       current.id,
       content,
@@ -230,39 +261,51 @@ export function MimiScreen({
       revision ?? null,
       handleStreamEvent,
     ),
-    onMutate: () => {
-      setRunStartedAt(Date.now())
+    onMutate: ({ startedAt }) => {
+      runStageRunId.current = null
+      setActiveRunId(null)
+      setCancelRequestedRunId(null)
+      setRunStartedAt(startedAt)
       setRunStage('Đang gửi yêu cầu')
       setStreamedText('')
     },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKey, data)
       setDraft('')
-      setRunStage(data.runs.at(-1)?.state === 'waiting_confirmation' ? 'Chờ bạn xác nhận' : 'Đã hoàn tất')
-      setActiveRunId(null)
-      setStreamedText('')
+      const terminalRun = data.runs.at(-1)
+      if (terminalRun && runStageRunId.current === terminalRun.id) {
+        runStageRunId.current = null
+        setRunStage(mimiTerminalRunStage(terminalRun.state, terminalRun.provider_outcome))
+        setActiveRunId((active) => active === terminalRun.id ? null : active)
+        setCancelRequestedRunId((pending) => pending === terminalRun.id ? null : pending)
+        setStreamedText('')
+      }
       void queryClient.invalidateQueries({ queryKey: ['mimi', 'conversations'] })
     },
     onError: () => setRunStage('Mất kết nối quan sát · run có thể vẫn tiếp tục'),
   })
 
-  const cancel = useMutation({
-    mutationFn: (runId: string) => cancelMimiRun(runId),
-    onSuccess: () => setRunStage('Đang huỷ theo yêu cầu'),
-  })
-
   const resume = useMutation({
-    mutationFn: (runId: string) => resumeMimiRun(runId, handleStreamEvent),
-    onMutate: () => {
-      setRunStartedAt(Date.now())
+    mutationFn: ({ runId }: { runId: string; startedAt: number }) => resumeMimiRun(runId, handleStreamEvent),
+    onMutate: ({ startedAt }) => {
+      runStageRunId.current = null
+      setActiveRunId(null)
+      setCancelRequestedRunId(null)
+      setRunStartedAt(startedAt)
       setRunStage('Đang tiếp tục từ checkpoint')
       setStreamedText('')
     },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKey, data)
-      setActiveRunId(null)
-      setStreamedText('')
-      setRunStage(data.runs.at(-1)?.state === 'waiting_confirmation' ? 'Chờ bạn xác nhận' : 'Đã hoàn tất')
+      const terminalRun = data.runs.at(-1)
+      if (terminalRun && runStageRunId.current === terminalRun.id) {
+        const completedRunId = terminalRun.id
+        runStageRunId.current = null
+        setActiveRunId((active) => active === completedRunId ? null : active)
+        setStreamedText('')
+        setRunStage(mimiTerminalRunStage(terminalRun.state, terminalRun.provider_outcome))
+        setCancelRequestedRunId((pending) => pending === completedRunId ? null : pending)
+      }
     },
     onError: () => setRunStage('Không thể Resume; checkpoint vẫn được giữ nguyên'),
   })
@@ -291,33 +334,133 @@ export function MimiScreen({
   })
 
   const feedback = useMutation({
-    mutationFn: ({ current, receiptId, comment, clientId }: {
+    mutationFn: ({ current, target, comment, expected, clientId }: {
       current: MimiConversation
-      receiptId: string
+      target: { target_type: 'turn' | 'run' | 'call' | 'operation' | 'receipt'; target_id: string }
       comment: string
+      expected: string
       clientId: string
-    }) => saveMimiFeedback(current.id, receiptId, comment, clientId),
-    onSuccess: () => {
-      setFeedbackDraft('')
-      setFeedbackClientId(null)
-      void queryClient.invalidateQueries({ queryKey })
+      draftRevision: number
+    }) => saveMimiFeedback(current.id, target, comment, expected, clientId),
+    onSuccess: (_saved, variables) => {
+      const targetKey = `${variables.target.target_type}:${variables.target.target_id}`
+      setFeedbackAcknowledgment({ conversationId: variables.current.id, targetKey })
+      if (current?.id === variables.current.id && feedbackDraftRevision.current === variables.draftRevision) {
+        setFeedbackDraft('')
+        setFeedbackExpected('')
+        setFeedbackClientId(null)
+        setFeedbackBinding(null)
+        feedbackDraftRevision.current += 1
+      }
+      void queryClient.invalidateQueries({ queryKey: ['mimi'] })
     },
   })
 
-  const current = conversation.data
   const pendingChangeSet = useMemo(
     () => [...(current?.change_sets ?? [])].reverse().find((item) => item.state === 'pending'),
     [current?.change_sets],
   )
   const latestReceipt = current?.receipts.at(-1)
   const latestRun = current?.runs.at(-1)
+  const cancel = useMutation({
+    mutationFn: (runId: string) => cancelMimiRun(runId),
+    onMutate: (runId) => {
+      if (runStageRunId.current === null && latestRun?.id === runId) {
+        runStageRunId.current = runId
+      }
+      setCancelRequestedRunId(runId)
+      if (runStageRunId.current === runId) setRunStage('Đang gửi yêu cầu huỷ')
+    },
+    onSuccess: (acknowledgment, runId) => {
+      void queryClient.invalidateQueries({ queryKey })
+      void queryClient.invalidateQueries({ queryKey: ['mimi', 'conversations'] })
+      if (acknowledgment.run_id !== runId) return
+
+      const latestRunNow = queryClient.getQueryData<MimiConversation>(queryKey)?.runs.at(-1) ?? latestRun
+      const update = resolveCancelAcknowledgment(
+        runId,
+        runStageRunId.current,
+        latestRunNow
+          ? {
+            id: latestRunNow.id,
+            state: latestRunNow.state,
+            provider_outcome: latestRunNow.provider_outcome,
+          }
+          : null,
+        acknowledgment.state,
+      )
+      if (update.clearActiveRun) {
+        setActiveRunId((active) => active === runId ? null : active)
+      }
+      if (update.stage && (
+        runStageRunId.current === runId
+        || (runStageRunId.current === null && latestRunNow?.id === runId)
+      )) {
+        setRunStage(update.stage)
+      }
+      if (update.apply && acknowledgment.state === 'cancelling') {
+        setCancelRequestedRunId(runId)
+      } else {
+        setCancelRequestedRunId((pending) => pending === runId ? null : pending)
+      }
+      if (latestRunNow?.id === runId && update.needsReconcile) {
+        runStageRunId.current = null
+      }
+    },
+    onError: (_error, runId) => {
+      setCancelRequestedRunId((pending) => pending === runId ? null : pending)
+      if (runStageRunId.current === runId) setRunStage('Chưa gửi được yêu cầu huỷ')
+    },
+  })
+  const feedbackTargets = current ? mimiFeedbackTargets(current) : []
+  const hasFeedbackDraft = !!feedbackDraft.trim() || !!feedbackExpected.trim()
+  const feedbackNoticeText = hasFeedbackDraft
+    && !!feedbackBinding
+    && !!current
+    && feedbackBinding.conversationId !== current.id
+    ? 'Cuộc hội thoại đã đổi. Bản nháp được giữ nguyên; hãy chọn rõ mục mới để gắn lại.'
+    : feedbackNotice
+  const effectiveFeedbackTargetKey = feedbackTargetKey || (
+    feedbackBinding && hasFeedbackDraft && feedbackBinding.conversationId === current?.id
+      ? feedbackBinding.targetKey
+      : ''
+  )
+  const selectedFeedbackTarget = current
+    ? resolveMimiFeedbackTarget(
+      feedbackTargets,
+      effectiveFeedbackTargetKey,
+      current.id,
+      hasFeedbackDraft,
+      feedbackBinding,
+    )
+    : null
+  const resolvedFeedbackTargetKey = selectedFeedbackTarget
+    ? `${selectedFeedbackTarget.target_type}:${selectedFeedbackTarget.target_id}`
+    : ''
   const runPending = send.isPending || resume.isPending
   const durableRunActive = !!latestRun && ['accepted', 'building', 'running', 'executing'].includes(latestRun.state)
   const runtimeActive = runPending || durableRunActive
-  const cancelRunId = activeRunId ?? (durableRunActive ? latestRun?.id ?? null : null)
+  const cancelRunId = durableRunActive
+    ? latestRun?.id ?? null
+    : runPending ? activeRunId : null
   const elapsed = useElapsed(runStartedAt ?? (latestRun ? new Date(latestRun.created_at).getTime() : null), runtimeActive)
   const observedRunId = latestRun?.id
   const observedRunState = latestRun?.state
+
+  useEffect(() => {
+    if (!current || previousRunConversation.current === current.id) return
+    previousRunConversation.current = current.id
+    runStageRunId.current = null
+    setActiveRunId(null)
+    setCancelRequestedRunId(null)
+    setRunStage('Sẵn sàng')
+  }, [current])
+
+  useEffect(() => {
+    if (latestRun && durableRunActive && runStageRunId.current === null) {
+      runStageRunId.current = latestRun.id
+    }
+  }, [latestRun, durableRunActive])
 
   useEffect(() => {
     if (!observedRunId || runPending) return
@@ -339,9 +482,20 @@ export function MimiScreen({
           conversationId ? ['mimi', 'conversation', conversationId] : ['mimi', 'current'],
           snapshot,
         )
-        setActiveRunId(null)
-        setStreamedText('')
-        setRunStage('Đã đồng bộ với server')
+        const observedRun = snapshot.runs.find((run) => run.id === observedRunId)
+        if (observedRun && runStageRunId.current === observedRunId) {
+          runStageRunId.current = null
+          setActiveRunId((active) => active === observedRunId ? null : active)
+          setCancelRequestedRunId((pending) => pending === observedRunId ? null : pending)
+          setStreamedText('')
+          const terminalStates = [
+            'waiting_confirmation', 'completed', 'halted', 'cancelled', 'retryable',
+            'outcome_unknown', 'deadline_exceeded', 'budget_exceeded',
+          ]
+          setRunStage(terminalStates.includes(observedRun.state)
+            ? mimiTerminalRunStage(observedRun.state, observedRun.provider_outcome)
+            : 'Đã đồng bộ với server')
+        }
       })
       .catch(() => {
         if (controller.signal.aborted) return
@@ -356,15 +510,22 @@ export function MimiScreen({
     const revision = pendingChangeSet && requestsPreviewRevision(draft)
       ? { id: pendingChangeSet.id, digest: pendingChangeSet.digest }
       : null
-    send.mutate({ current, content: draft, clientId: crypto.randomUUID(), revision })
+    send.mutate({ current, content: draft, clientId: crypto.randomUUID(), revision, startedAt: Date.now() })
   }
 
   function submitFeedback(event: React.FormEvent) {
     event.preventDefault()
-    if (!current || !latestReceipt || !feedbackDraft.trim() || feedback.isPending) return
+    if (!current || !selectedFeedbackTarget || !feedbackDraft.trim() || feedback.isPending) return
     const clientId = feedbackClientId ?? crypto.randomUUID()
     setFeedbackClientId(clientId)
-    feedback.mutate({ current, receiptId: latestReceipt.id, comment: feedbackDraft, clientId })
+    feedback.mutate({
+      current,
+      target: selectedFeedbackTarget,
+      comment: feedbackDraft,
+      expected: feedbackExpected,
+      clientId,
+      draftRevision: feedbackDraftRevision.current,
+    })
   }
 
   if (conversation.isPending) {
@@ -442,7 +603,11 @@ export function MimiScreen({
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-mono tabular-nums">Đã chạy {elapsedLabel(elapsed)}</span>
-            {cancelRunId ? (
+            {cancelRunId && cancelRequestedRunId === cancelRunId ? (
+              <span className="text-xs" role="status">
+                {cancel.isPending ? 'Đang gửi yêu cầu huỷ…' : 'Đã gửi yêu cầu, đang chờ trạng thái mới…'}
+              </span>
+            ) : cancelRunId ? (
               <Button size="sm" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(cancelRunId)}>
                 {cancel.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Square />}
                 Huỷ run
@@ -453,11 +618,11 @@ export function MimiScreen({
         </div>
       ) : null}
 
-      {send.isError && activeRunId ? (
+      {send.isError && cancelRunId ? (
         <div role="alert" className="rounded-lg bg-warn-bg p-3 text-sm">
           <p className="font-semibold">Kênh quan sát đã ngắt; run không bị gửi lại.</p>
           <p className="mt-1 text-xs">Mở lại conversation để đọc event bền vững, hoặc huỷ run đang chạy.</p>
-          <Button className="mt-2" size="sm" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(activeRunId)}>
+          <Button className="mt-2" size="sm" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(cancelRunId)}>
             {cancel.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Square />}
             Huỷ run
           </Button>
@@ -480,7 +645,7 @@ export function MimiScreen({
               {reconcile.isError ? <p role="alert" className="text-xs text-bad">Chưa thể xác minh generation; Mimi vẫn giữ outcome unknown và không retry.</p> : null}
             </div>
           ) : (
-            <Button className="mt-2" size="sm" variant="outline" disabled={resume.isPending} onClick={() => resume.mutate(latestRun.id)}>
+            <Button className="mt-2" size="sm" variant="outline" disabled={resume.isPending} onClick={() => resume.mutate({ runId: latestRun.id, startedAt: Date.now() })}>
               {resume.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <RotateCcw />}
               Resume
             </Button>
@@ -554,25 +719,134 @@ export function MimiScreen({
           </CardHeader>
           <CardContent className="space-y-4">
             <Button variant="outline" onClick={onOpenTasks}>Mở Task</Button>
-            <form className="space-y-2 border-t pt-4" onSubmit={submitFeedback}>
-              <label htmlFor="mimi-feedback" className="text-sm font-semibold">Feedback về kết quả này</label>
-              <Textarea
-                id="mimi-feedback"
-                value={feedbackDraft}
-                maxLength={10_000}
-                placeholder="Điều gì chưa đúng hoặc cần rõ hơn?"
-                onChange={(event) => setFeedbackDraft(event.target.value)}
-              />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {feedbackTargets.length ? (
+        <Card data-testid="mimi-feedback">
+          <CardHeader>
+            <CardTitle>Gửi feedback</CardTitle>
+            <CardDescription>Feedback được gắn với đúng câu trả lời, run, lần gọi hoặc receipt bạn chọn.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-3" onSubmit={submitFeedback}>
+              <div className="space-y-1.5">
+                <label htmlFor="mimi-feedback-target" className="text-sm font-semibold">Mục cần góp ý</label>
+                <Select
+                  value={resolvedFeedbackTargetKey}
+                  disabled={feedback.isPending}
+                  onValueChange={(value) => {
+                    const hadDraft = !!feedbackDraft.trim() || !!feedbackExpected.trim()
+                    setFeedbackTargetKey(value)
+                    setFeedbackClientId(null)
+                    feedbackDraftRevision.current += 1
+                    setFeedbackBinding(feedbackDraft.trim() || feedbackExpected.trim()
+                      ? { conversationId: current.id, targetKey: value }
+                      : null)
+                    setFeedbackAcknowledgment(null)
+                    setFeedbackNotice(hadDraft
+                      ? 'Bản nháp hiện tại đã được gắn rõ với mục bạn vừa chọn.'
+                      : null)
+                    feedback.reset()
+                  }}
+                >
+                  <SelectTrigger id="mimi-feedback-target" className="min-h-11 w-full bg-card">
+                    <SelectValue placeholder="Chọn câu trả lời hoặc run" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {feedbackTargets.map((target) => (
+                      <SelectItem key={`${target.target_type}:${target.target_id}`} value={`${target.target_type}:${target.target_id}`}>
+                        {target.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="mimi-feedback" className="text-sm font-semibold">Điều gì cần sửa hoặc làm rõ?</label>
+                <Textarea
+                  id="mimi-feedback"
+                  value={feedbackDraft}
+                  maxLength={10_000}
+                  aria-describedby="mimi-feedback-help"
+                  disabled={feedback.isPending}
+                  placeholder="Mô tả kết quả chưa đúng hoặc thiếu điều gì."
+                  onChange={(event) => {
+                    feedbackDraftRevision.current += 1
+                    setFeedbackDraft(event.target.value)
+                    setFeedbackClientId(null)
+                    setFeedbackAcknowledgment(null)
+                    if (!event.target.value.trim() && !feedbackExpected.trim()) setFeedbackNotice(null)
+                    setFeedbackBinding(event.target.value.trim() && selectedFeedbackTarget
+                      ? {
+                        conversationId: current.id,
+                        targetKey: `${selectedFeedbackTarget.target_type}:${selectedFeedbackTarget.target_id}`,
+                      }
+                      : event.target.value.trim() && feedbackBinding
+                        ? feedbackBinding
+                        : null)
+                    feedback.reset()
+                  }}
+                />
+                <p id="mimi-feedback-help" className="text-xs text-muted-foreground">Nội dung được mã hoá khi lưu.</p>
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="mimi-feedback-expected" className="text-sm font-semibold">Kết quả bạn mong đợi (không bắt buộc)</label>
+                <Textarea
+                  id="mimi-feedback-expected"
+                  value={feedbackExpected}
+                  maxLength={10_000}
+                  disabled={feedback.isPending}
+                  placeholder="Ví dụ: cần hỏi lại ngày trước khi tạo Task."
+                  onChange={(event) => {
+                    feedbackDraftRevision.current += 1
+                    setFeedbackExpected(event.target.value)
+                    setFeedbackClientId(null)
+                    setFeedbackAcknowledgment(null)
+                    if (!event.target.value.trim() && !feedbackDraft.trim()) setFeedbackNotice(null)
+                    setFeedbackBinding(event.target.value.trim() && selectedFeedbackTarget
+                      ? {
+                        conversationId: current.id,
+                        targetKey: `${selectedFeedbackTarget.target_type}:${selectedFeedbackTarget.target_id}`,
+                      }
+                      : event.target.value.trim() && feedbackBinding
+                        ? feedbackBinding
+                        : null)
+                    feedback.reset()
+                  }}
+                />
+              </div>
               {feedback.isError ? (
                 <p role="alert" className="flex items-center gap-2 text-sm text-bad">
                   <MessageSquareWarning className="size-4" />
-                  Chưa lưu feedback. {errorMessage(feedback.error)}
+                  Chưa lưu feedback. {errorMessage(feedback.error)} Nội dung vẫn được giữ để thử lại.
                 </p>
               ) : null}
-              {current.feedback.some((item) => item.target_id === latestReceipt.id) ? (
-                <p role="status" className="text-sm text-ok">Feedback đã lưu · còn mở để xử lý.</p>
+              {(feedbackAcknowledgment?.conversationId === current.id
+                && feedbackAcknowledgment.targetKey === resolvedFeedbackTargetKey
+                && !!resolvedFeedbackTargetKey)
+                || current.feedback.some((item) =>
+                  item.target_type === selectedFeedbackTarget?.target_type
+                  && item.target_id === selectedFeedbackTarget?.target_id,
+                ) ? (
+                <p role="status" className="text-sm text-ok">Feedback đã được xác nhận và gắn với mục đã chọn.</p>
               ) : null}
-              <Button type="submit" variant="secondary" disabled={!feedbackDraft.trim() || feedback.isPending}>
+              {feedbackNoticeText ? (
+                <p role="status" className="text-sm text-warn">{feedbackNoticeText}</p>
+              ) : null}
+              {hasFeedbackDraft && !selectedFeedbackTarget && !feedbackNoticeText ? (
+                <p role="status" className="text-sm text-warn">
+                  Bản nháp đang giữ liên kết cũ. Chọn rõ mục mới để gắn bản nháp trước khi lưu.
+                </p>
+              ) : null}
+              {!feedback.isPending && current.feedback.some((item) =>
+                item.target_type === selectedFeedbackTarget?.target_type
+                && item.target_id === selectedFeedbackTarget?.target_id,
+              ) ? (
+                <p role="status" className="text-sm text-ok">Đã có feedback lưu cho mục này.</p>
+              ) : null}
+              <Button type="submit" variant="secondary" className="min-h-11" disabled={!selectedFeedbackTarget || !feedbackDraft.trim() || feedback.isPending}>
                 {feedback.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : null}
                 Lưu feedback
               </Button>

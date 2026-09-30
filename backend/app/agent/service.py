@@ -2394,6 +2394,14 @@ async def save_feedback(
     payload: FeedbackCreate,
 ) -> dict[str, Any]:
     conversation = await _conversation(db, auth, conversation_id, lock=True)
+    target_query = _feedback_target_query(conversation.id, payload.target_type, payload.target_id)
+    target_exists = (
+        target_query is not None
+        and (await db.execute(target_query.limit(1))).scalar_one_or_none() is not None
+    )
+    if not target_exists:
+        raise _not_found()
+
     existing = (
         await db.execute(
             select(MimiFeedback).where(
@@ -2461,6 +2469,57 @@ async def save_feedback(
         "unresolved": existing.unresolved,
         "created_at": existing.created_at,
     }
+
+
+def _feedback_target_query(conversation_id: UUID, target_type: str, target_id: str):
+    try:
+        target_uuid = UUID(target_id)
+    except ValueError:
+        return None
+
+    if target_type == "turn":
+        target_query = select(MimiMessage.id).where(
+            MimiMessage.id == target_uuid,
+            MimiMessage.conversation_id == conversation_id,
+            MimiMessage.role == "assistant",
+        )
+    elif target_type == "run":
+        target_query = select(MimiRun.id).where(
+            MimiRun.id == target_uuid,
+            MimiRun.conversation_id == conversation_id,
+        )
+    elif target_type == "call":
+        target_query = (
+            select(MimiProviderCall.id)
+            .join(MimiRun, MimiProviderCall.run_id == MimiRun.id)
+            .where(
+                MimiProviderCall.id == target_uuid,
+                MimiRun.conversation_id == conversation_id,
+            )
+        )
+    elif target_type == "receipt":
+        target_query = (
+            select(MimiExecutionReceipt.id)
+            .join(MimiChangeSet, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .where(
+                MimiExecutionReceipt.id == target_uuid,
+                MimiRun.conversation_id == conversation_id,
+            )
+        )
+    elif target_type == "operation":  # operation IDs are receipt-owned.
+        target_query = (
+            select(MimiExecutionReceipt.operation_id)
+            .join(MimiChangeSet, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .where(
+                MimiExecutionReceipt.operation_id == target_uuid,
+                MimiRun.conversation_id == conversation_id,
+            )
+        )
+    else:
+        return None
+    return target_query
 
 
 async def conversation_view(
@@ -2607,6 +2666,7 @@ async def conversation_view(
         "events": [_event_read(row, dek) for row in events],
         "provider_calls": [
             {
+                "id": row.id,
                 "run_id": row.run_id,
                 "attempt": row.attempt,
                 "state": row.state,

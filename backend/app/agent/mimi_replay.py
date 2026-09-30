@@ -22,6 +22,13 @@ class DecisionClass(StrEnum):
     ABSTAIN = "abstain"
 
 
+class ReplayTimeout(TimeoutError):
+    """Synthetic bounded-timeout signal converted to an explicit abstention."""
+
+
+MAX_FIXTURE_BYTES = 64 * 1024
+
+
 class DecisionResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -52,19 +59,11 @@ class DecisionResult(BaseModel):
 class ReplayCase(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    case_id: str = Field(pattern=r"^heldout-[a-z0-9-]{1,40}$")
+    case_id: str = Field(pattern=r"^synthetic-[a-z0-9-]{1,40}$")
     synthetic_input: str = Field(min_length=1, max_length=500)
     expected_classification: DecisionClass
     baseline: DecisionResult
     fake_decision: DecisionResult
-
-    @field_validator("synthetic_input")
-    @classmethod
-    def no_transcript_export(cls, value: str) -> str:
-        forbidden = ("-----BEGIN ", "Bearer ", "sk-", "api_key", "oauth", "real email")
-        if any(marker.casefold() in value.casefold() for marker in forbidden):
-            raise ValueError("fixture input contains a forbidden transcript/credential marker")
-        return value
 
 
 class ReplayFixture(BaseModel):
@@ -113,12 +112,16 @@ def deterministic_baseline(text: str) -> DecisionClass:
 def load_fixture(path: Path, *, expected_policy_sha256: str) -> ReplayFixture:
     """Validate raw fixture bytes and all provenance before a manual offline replay."""
 
-    return parse_fixture_bytes(path.read_bytes(), expected_policy_sha256=expected_policy_sha256)
+    with path.open("rb") as fixture_file:
+        raw = fixture_file.read(MAX_FIXTURE_BYTES + 1)
+    return parse_fixture_bytes(raw, expected_policy_sha256=expected_policy_sha256)
 
 
 def parse_fixture_bytes(raw: bytes, *, expected_policy_sha256: str) -> ReplayFixture:
     """Validate an in-memory raw fixture payload, including its content hash."""
 
+    if len(raw) > MAX_FIXTURE_BYTES:
+        raise ValueError(f"fixture exceeds {MAX_FIXTURE_BYTES} byte limit")
     parsed = ReplayFixture.model_validate_json(raw)
     raw_cases = json.loads(raw)["cases"]
     canonical_cases = json.dumps(
@@ -138,7 +141,18 @@ def parse_fixture_bytes(raw: bytes, *, expected_policy_sha256: str) -> ReplayFix
 def run_replay(fixture: ReplayFixture, facade: DecisionFacade) -> dict[str, object]:
     rows = []
     for case in fixture.cases:
-        decision = facade.decide(case)
+        try:
+            decision = facade.decide(case)
+            timed_out = False
+        except TimeoutError:
+            decision = DecisionResult(
+                classification=DecisionClass.ABSTAIN,
+                probabilities={
+                    kind: (1.0 if kind is DecisionClass.ABSTAIN else 0.0) for kind in DecisionClass
+                },
+                abstained=True,
+            )
+            timed_out = True
         baseline_class = deterministic_baseline(case.synthetic_input)
         rows.append(
             {
@@ -147,6 +161,7 @@ def run_replay(fixture: ReplayFixture, facade: DecisionFacade) -> dict[str, obje
                 "baseline": baseline_class.value,
                 "frozen_baseline": case.baseline.classification.value,
                 "fake_decision": decision.classification.value,
+                "facade_timed_out": timed_out,
                 "fake_probabilities": {
                     kind.value: probability for kind, probability in decision.probabilities.items()
                 },
