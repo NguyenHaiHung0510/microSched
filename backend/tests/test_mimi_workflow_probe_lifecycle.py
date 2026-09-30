@@ -87,6 +87,94 @@ async def counts(store, run_id):
 
 @pytest.mark.pg
 @pytest.mark.parametrize("engine", ["control", "graph"])
+def test_terminal_cap_is_atomic_with_receipt_and_preserves_pending(probe_database, engine):
+    async def scenario():
+        store = PgFrameStore(probe_database)
+        owner = f"synthetic-{uuid4()}"
+        ids = [uuid4() for _ in range(18)]
+        runner = {"control": run_control, "graph": run_graph}[engine]
+        now = datetime.now(UTC)
+        try:
+            for run_id in ids[:16]:
+                frame = await store.create(
+                    run_id,
+                    owner=owner,
+                    generation=1,
+                    engine=engine,
+                    content={},
+                    now=now,
+                    expires_at=now + timedelta(hours=24),
+                )
+                await store.save(frame, phase="cancelled", content={})
+            held = Workflow(store, ids[16], owner)
+            await held.create("task", engine, (Record("a", 1, "Held synthetic"),))
+            await runner(held)
+            await held.accept(generation=1, direction="apply_prefix")
+            pending = await runner(held)
+            assert pending["phase"] == "confirmation"
+            workflow = Workflow(store, ids[17], owner)
+            await workflow.create("task", engine, (Record("a", 1, "New synthetic"),))
+            await runner(workflow)
+            await workflow.accept(generation=1, direction="apply_prefix")
+            preview = await runner(workflow)
+            await workflow.accept(
+                generation=1,
+                confirmation=ConfirmationContent(
+                    owner=owner,
+                    generation=1,
+                    preview_digest=preview["preview_digest"],
+                ),
+            )
+
+            async def fault(point):
+                if point == "before_commit":
+                    raise RuntimeError("synthetic_before_commit")
+
+            workflow.fault = fault
+            with pytest.raises(RuntimeError):
+                await runner(workflow)
+            connection = await asyncpg.connect(store._dsn)
+            try:
+                assert (
+                    await connection.fetchval(
+                        "SELECT count(*) FROM mimi_probe_068.run WHERE id=ANY($1::uuid[])", ids[:16]
+                    )
+                    == 16
+                )  # pruning rolls back with domain writes and receipt
+                assert await counts(store, ids[17]) == {"dispatches": 2, "receipts": 0}
+
+                async def after_commit(point):
+                    if point == "after_commit":
+                        raise RuntimeError("synthetic_after_commit")
+
+                workflow.fault = after_commit
+                with pytest.raises(RuntimeError):
+                    await runner(workflow)
+                # Inspect committed rows before any CLI or explicit cleanup.
+                assert (
+                    await connection.fetchval(
+                        "SELECT count(*) FROM mimi_probe_068.run WHERE engine=$1 "
+                        "AND phase IN ('succeeded','expired','cancelled')",
+                        engine,
+                    )
+                    == 16
+                )
+                assert await counts(store, ids[17]) == {"dispatches": 2, "receipts": 1}
+                assert (await runner(Workflow(store, ids[17], owner)))["phase"] == "succeeded"
+                held_again = await held.status()
+                assert held_again["phase"] == "confirmation"
+                assert held_again["preview_digest"] == pending["preview_digest"]
+            finally:
+                await connection.close()
+        finally:
+            for run_id in ids:
+                await cleanup_owned(store, run_id)
+
+    run(scenario())
+
+
+@pytest.mark.pg
+@pytest.mark.parametrize("engine", ["control", "graph"])
 @pytest.mark.parametrize("domain", ["task", "note"])
 def test_two_domains_pause_resume_and_atomic_receipt(probe_database, engine, domain):
     async def scenario():

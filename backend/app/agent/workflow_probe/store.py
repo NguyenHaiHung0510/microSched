@@ -236,9 +236,13 @@ class PgFrameStore:
             await connection.close()
         return result
 
-    async def _save_on(self, connection, previous, phase, content, encoded=None):
+    async def _save_on(
+        self, connection, previous, phase, content, encoded=None, *, prune_terminal=True
+    ):
+        if phase in TERMINAL_PHASES:
+            await connection.execute("SELECT pg_advisory_xact_lock(68068)")
         row = await connection.fetchrow(
-            "SELECT wrapped_dek,phase FROM mimi_probe_068.run "
+            "SELECT wrapped_dek,phase,engine FROM mimi_probe_068.run "
             "WHERE id=$1 AND owner_ref=$2 AND generation=$3 AND revision=$4 FOR UPDATE",
             previous.run_id,
             previous.owner,
@@ -264,6 +268,10 @@ class PgFrameStore:
             revision,
             ciphertext,
         )
+        if phase in TERMINAL_PHASES and prune_terminal:
+            await self._prune_terminal_on(
+                connection, engines=(row["engine"],), keep_run=previous.run_id
+            )
         return StoredFrame(
             previous.run_id,
             previous.owner,
@@ -326,6 +334,8 @@ class PgFrameStore:
         connection = await asyncpg.connect(self._dsn)
         try:
             async with connection.transaction():
+                # Same lock order as admission/cleanup, before locking the run row.
+                await connection.execute("SELECT pg_advisory_xact_lock(68068)")
                 row = await connection.fetchrow(
                     "SELECT * FROM mimi_probe_068.run WHERE id=$1 AND owner_ref=$2 FOR UPDATE",
                     previous.run_id,
@@ -433,33 +443,44 @@ class PgFrameStore:
                     frame = self._decode(row)
                     body = dict(frame.content)
                     body["stop_reason"] = "expired"
-                    await self._save_on(connection, frame, "expired", body)
+                    await self._save_on(connection, frame, "expired", body, prune_terminal=False)
                     expired += 1
-                tables = ["checkpoint_writes", "checkpoint_blobs", "checkpoints"]
-                present = [
-                    await connection.fetchval("SELECT to_regclass($1)", f"public.{t}")
-                    for t in tables
-                ]
-                if any(present) and not all(present):
-                    raise ProbeBlocked("checkpoint_cleanup_schema_incomplete")
-                for engine in ("control", "graph"):
-                    victims = await connection.fetch(
-                        "SELECT id,generation FROM mimi_probe_068.run WHERE engine=$1 "
-                        "AND phase IN ('succeeded','expired','cancelled') "
-                        "ORDER BY completed_at DESC,id DESC OFFSET 16 LIMIT 64 FOR UPDATE",
-                        engine,
-                    )
-                    for victim in victims:
-                        if all(present):
-                            thread = checkpoint_thread(victim["id"], victim["generation"])
-                            for table in tables:
-                                await connection.execute(
-                                    f"DELETE FROM public.{table} WHERE thread_id=$1", thread
-                                )
-                        await connection.execute(
-                            "DELETE FROM mimi_probe_068.run WHERE id=$1", victim["id"]
-                        )
-                        pruned += 1
+                pruned = await self._prune_terminal_on(connection)
             return {"expired": expired, "pruned": pruned}
         finally:
             await connection.close()
+
+    async def _prune_terminal_on(
+        self, connection, *, engines=("control", "graph"), keep_run=None
+    ) -> int:
+        """Caller holds admission lock; terminal frame and pruning commit together."""
+        tables = ["checkpoint_writes", "checkpoint_blobs", "checkpoints"]
+        present = [
+            await connection.fetchval("SELECT to_regclass($1)", f"public.{t}") for t in tables
+        ]
+        if any(present) and not all(present):
+            raise ProbeBlocked("checkpoint_cleanup_schema_incomplete")
+        pruned = 0
+        for engine in engines:
+            # Always retain the frame being completed, including timestamp ties.
+            exclusion = "AND id<>$2 " if keep_run is not None else ""
+            retained_others = 15 if keep_run is not None else 16
+            args = (engine, keep_run) if keep_run is not None else (engine,)
+            victims = await connection.fetch(
+                "SELECT id,generation FROM mimi_probe_068.run WHERE engine=$1 "
+                "AND phase IN ('succeeded','expired','cancelled') "
+                + exclusion
+                + f"ORDER BY completed_at DESC,id DESC OFFSET {retained_others} "
+                "LIMIT 64 FOR UPDATE",
+                *args,
+            )
+            for victim in victims:
+                if all(present):
+                    thread = checkpoint_thread(victim["id"], victim["generation"])
+                    for table in tables:
+                        await connection.execute(
+                            f"DELETE FROM public.{table} WHERE thread_id=$1", thread
+                        )
+                await connection.execute("DELETE FROM mimi_probe_068.run WHERE id=$1", victim["id"])
+                pruned += 1
+        return pruned
