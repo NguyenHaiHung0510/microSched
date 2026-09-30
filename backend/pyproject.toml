@@ -32,6 +32,8 @@ dev = [
 prototype = [
     "langgraph==1.2.12",
     "langgraph-checkpoint-postgres==3.1.2",
+    # The slim Linux QA image has no system libpq; keep it in this optional group.
+    "psycopg[binary]==3.3.6",
 ]
 
 [tool.ruff]
