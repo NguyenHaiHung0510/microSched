@@ -1,0 +1,154 @@
+{
+  "schema_version": "mimi.synthetic-replay.v1",
+  "synthetic_only": true,
+  "source_sha256": "d647359eda7beb832d62543629e1d1d0388d2ed6d9d1c24660a8ecb5f5f3bcb5",
+  "policy_sha256": "1fc6a94ba6fd56cc300f259bfd1112c6efe5354d61fa66ed2292fe2ac772d0e2",
+  "cases": [
+    {
+      "case_id": "heldout-greeting",
+      "synthetic_input": "Chào Mimi, hôm nay bạn có thể giúp gì?",
+      "expected_classification": "answer",
+      "baseline": {
+        "classification": "answer",
+        "probabilities": {
+          "answer": 1,
+          "read_only": 0,
+          "clarify": 0,
+          "draft": 0,
+          "preview": 0,
+          "blocked": 0,
+          "abstain": 0
+        }
+      },
+      "fake_decision": {
+        "classification": "answer",
+        "probabilities": {
+          "answer": 1,
+          "read_only": 0,
+          "clarify": 0,
+          "draft": 0,
+          "preview": 0,
+          "blocked": 0,
+          "abstain": 0
+        }
+      }
+    },
+    {
+      "case_id": "heldout-read-only",
+      "synthetic_input": "Cho mình xem danh sách quy trình chuẩn bị buổi học.",
+      "expected_classification": "read_only",
+      "baseline": {
+        "classification": "read_only",
+        "probabilities": {
+          "answer": 0,
+          "read_only": 1,
+          "clarify": 0,
+          "draft": 0,
+          "preview": 0,
+          "blocked": 0,
+          "abstain": 0
+        }
+      },
+      "fake_decision": {
+        "classification": "read_only",
+        "probabilities": {
+          "answer": 0,
+          "read_only": 1,
+          "clarify": 0,
+          "draft": 0,
+          "preview": 0,
+          "blocked": 0,
+          "abstain": 0
+        }
+      }
+    },
+    {
+      "case_id": "heldout-missing-date",
+      "synthetic_input": "Tạo Task nhắc mình chuẩn bị bài vào ngày nào đó tuần sau.",
+      "expected_classification": "clarify",
+      "baseline": {
+        "classification": "clarify",
+        "probabilities": {
+          "answer": 0,
+          "read_only": 0,
+          "clarify": 1,
+          "draft": 0,
+          "preview": 0,
+          "blocked": 0,
+          "abstain": 0
+        }
+      },
+      "fake_decision": {
+        "classification": "clarify",
+        "probabilities": {
+          "answer": 0,
+          "read_only": 0,
+          "clarify": 1,
+          "draft": 0,
+          "preview": 0,
+          "blocked": 0,
+          "abstain": 0
+        }
+      }
+    },
+    {
+      "case_id": "heldout-task-preview",
+      "synthetic_input": "Tạo Task chuẩn bị slide cho buổi học ngày mai.",
+      "expected_classification": "preview",
+      "baseline": {
+        "classification": "preview",
+        "probabilities": {
+          "answer": 0,
+          "read_only": 0,
+          "clarify": 0,
+          "draft": 0,
+          "preview": 1,
+          "blocked": 0,
+          "abstain": 0
+        }
+      },
+      "fake_decision": {
+        "classification": "preview",
+        "probabilities": {
+          "answer": 0,
+          "read_only": 0,
+          "clarify": 0,
+          "draft": 0,
+          "preview": 1,
+          "blocked": 0,
+          "abstain": 0
+        }
+      }
+    },
+    {
+      "case_id": "heldout-uncertain",
+      "synthetic_input": "Có thể làm giúp việc gì đó, mình chưa nói rõ là việc nào.",
+      "expected_classification": "abstain",
+      "baseline": {
+        "classification": "answer",
+        "probabilities": {
+          "answer": 1,
+          "read_only": 0,
+          "clarify": 0,
+          "draft": 0,
+          "preview": 0,
+          "blocked": 0,
+          "abstain": 0
+        }
+      },
+      "fake_decision": {
+        "classification": "abstain",
+        "probabilities": {
+          "answer": 0,
+          "read_only": 0,
+          "clarify": 0,
+          "draft": 0,
+          "preview": 0,
+          "blocked": 0,
+          "abstain": 1
+        },
+        "abstained": true
+      }
+    }
+  ]
+}
