@@ -2,6 +2,8 @@
 
 Status: **OWNER-APPROVED 2026-09-30 — IMPLEMENTATION / NO PROVIDER EGRESS**.
 
+Closeout 2026-09-30: integrated into066 frozen code945b324, with [scoped PG/browser feedback and replay evidence](2026-09-30-mimi-research/prototype-result.md). Actual call-label ambiguity repaired. Scripted local feedback acceptance is separate from full visual/device/live-model evidence and runner adoption.
+
 Scope inside the 066 prototype grant: narrow existing full-app feedback for answer/turn/run/call in addition to receipt; validate target membership/ownership and preserve encrypted comments/expected outcome/idempotency. Associated labels, existing shadcn controls/tokens/light Nunito; draft retained on error, truthful saved/pending/error states. No separate design system/provider SDK/schema migration.
 
 Prepare a synthetic-only manual replay contract and optional fake DecisionFacade outside ordinary runtime: bounded enum, probabilities/abstention, explicit source/policy/fixture versions, expected classification, no model-created authority/action payload. No automatic API call on normal turns, no real transcript export. Fake decisions prove protocol/error behavior, not Jev/Vietnamese quality. Real Jev/Kev semantic cohort requires its own exact endpoint/data eligibility and call/token/billed cap approval.

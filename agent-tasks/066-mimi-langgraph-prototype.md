@@ -2,6 +2,8 @@
 
 Status: **OWNER-APPROVED 2026-09-30 — IMPLEMENTATION / NO PROVIDER EGRESS**.
 
+Closeout 2026-09-30: [local experiment result](2026-09-30-mimi-research/prototype-result.md). Frozen code945b324: final synthetic browser2/2PASS, separate backend/PG/frontend receipts and independent Luna+Gemini reviews retained. Overall adoption readiness NOT_PASS: retention NOT_MET and full reconstruction absent. Current runner stays the control; long-term LangGraph candidacy remains open. No merge/deploy/live inference in this grant.
+
 Owner approved T1's steps 1–5 in the current chat: freeze baseline and curate research; isolated full LangGraph runner using current provider transport control; no-key contract/disposable-PG/full-app QA and measured comparison/rollback; narrow feedback and offline DecisionFacade/replay preparation; final independent Luna/high plus Gemini 3.8 Flash/high reviews. This authorizes an experiment, not adoption, live provider/key use, production migration or deployment. T1 owns integration and acceptance.
 
 ## Target and controls
