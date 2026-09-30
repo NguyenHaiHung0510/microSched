@@ -833,6 +833,16 @@ class TrackerStore:
         self, db: AsyncSession, auth: AuthSession, payload: TrackerCreate
     ) -> TrackerRead:
         """Create a tracker (unconditionally encrypted name), or idempotent on ID."""
+        if payload.id is not None:
+            existing = await self._tracker(db, auth, payload.id)
+            if existing is not None:
+                result = await self._read_tracker(db, auth, existing)
+                result.created = False
+                return result
+            physical = await db.execute(select(Tracker.id).where(Tracker.id == payload.id))
+            if physical.scalar_one_or_none() is not None:
+                raise TrackerIdConflict
+
         if payload.is_private and not can_see_private(auth):
             raise PrivateWriteLocked
         if payload.group_id is not None:
@@ -848,7 +858,7 @@ class TrackerStore:
             raise TrackerInvalid("unit chỉ được dùng cho tracker kiểu 'quantity'.")
         if payload.input_mode == "quantity" and not payload.unit:
             raise TrackerInvalid("Tracker kiểu 'quantity' phải có đơn vị (unit).")
-        if await self._tracker_name_taken(db, auth, payload.name):
+        if await self._tracker_name_taken(db, auth, payload.name, exclude_id=payload.id):
             raise TrackerNameTaken
         values = {
             "name": _sealed(payload.name),

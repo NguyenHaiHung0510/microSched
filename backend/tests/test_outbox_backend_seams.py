@@ -337,6 +337,8 @@ def test_tracker_create_replays_same_uuidv7_before_name_conflict(pg_dsn: str) ->
         app.dependency_overrides[get_session] = request_session
         transport = httpx.ASGITransport(app=app)
         tracker_id = _uuid7()
+        hidden_tracker_id = _uuid7()
+        tracker_ids = [tracker_id, hidden_tracker_id]
         payload = {
             "id": str(tracker_id),
             "name": f"outbox070 replay {tracker_id}",
@@ -350,10 +352,49 @@ def test_tracker_create_replays_same_uuidv7_before_name_conflict(pg_dsn: str) ->
                 assert first.status_code == 201
                 assert replay.status_code == 200
                 assert replay.json() == first.json()
+
+                changed_replay = await client.post(
+                    "/api/tracker/trackers",
+                    json={**payload, "name": "different retry title", "kind": "finance"},
+                )
+                assert changed_replay.status_code == 200
+                assert changed_replay.json() == first.json()
+
+                duplicate_name = await client.post(
+                    "/api/tracker/trackers",
+                    json={**payload, "id": str(_uuid7())},
+                )
+                assert duplicate_name.status_code == 409
+
+                private = await client.post(
+                    "/api/tracker/trackers",
+                    json={
+                        "id": str(hidden_tracker_id),
+                        "name": f"outbox070 hidden {hidden_tracker_id}",
+                        "kind": "health",
+                        "input_mode": "event",
+                        "is_private": True,
+                    },
+                )
+                assert private.status_code == 201
+                auth_state["value"] = _auth(unlocked=False)
+                hidden_collision = await client.post(
+                    "/api/tracker/trackers",
+                    json={
+                        "id": str(hidden_tracker_id),
+                        "name": f"outbox070 collision {hidden_tracker_id}",
+                        "kind": "health",
+                        "input_mode": "event",
+                    },
+                )
+                assert hidden_collision.status_code == 409
+                assert hidden_collision.content == b""
         finally:
             conn = await asyncpg.connect(pg_dsn)
             try:
-                await conn.execute("DELETE FROM microsched.tracker WHERE id = $1", tracker_id)
+                await conn.execute(
+                    "DELETE FROM microsched.tracker WHERE id = ANY($1)", tracker_ids
+                )
             finally:
                 await conn.close()
                 await engine.dispose()
