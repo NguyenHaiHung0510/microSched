@@ -80,6 +80,8 @@ async def main(args):
             )
         result = await {"control": run_control, "graph": run_graph}[frame.engine](workflow)
         await store.cleanup(now=clock())
+    if result.get("phase") in {"direction", "confirmation"}:
+        await fault("after_pause")
     print(json.dumps({"pid": os.getpid(), **result}, ensure_ascii=False), flush=True)
 
 
