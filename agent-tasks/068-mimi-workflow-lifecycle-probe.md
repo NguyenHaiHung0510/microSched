@@ -1,6 +1,6 @@
 # 068 — Mimi workflow lifecycle probe
 
-Status: CONTRACT_READY; implementation NOT_RUN.
+Status: FOUNDATION_IN_PROGRESS; shared preview/confirmation contracts and encrypted PG frame store implemented. Focused tests: 18 PASS (including live dedicated local PG); orchestration, restart, retention, version upgrade, browser QA and independent acceptance NOT_RUN.
 Authority: Owner approved second probe with “duyệt, tiếp tục” on 2026-09-30; subsequently authorized this same chat to continue overnight via scheduled wake-ups until completion. T1 owns integration and acceptance; architecture adoption remains an Owner decision.
 Baseline: 066 closeout 378e77fa97eb707119b1676a7dfe138b438a3793; isolated branch feat/068-mimi-workflow-lifecycle-probe.
 
@@ -43,3 +43,9 @@ Do not add a cron retention daemon. Bounded admission/completion cleanup or an e
 T1 is the sole writer of this worktree. Separable evidence workers may write only their specifically granted private report files. Source contract/result remain in this branch; raw reports/receipts under C:/Users/os/.codex/visualizations/2026/09/30/01a0f1d8-b288-7012-8bb0-36417caed247/probe2/.
 
 Before repeating an operation after timeout, inspect disk/process/database state. Preserve all other worktrees, the 066 preview and unrelated root files. Do not use a shared benchmark database concurrently with UI journeys. Authority-expanding blockers await Owner; continue unaffected work and save an explicit blocker rather than silently reducing acceptance.
+
+## First implementation checkpoint (2026-09-30)
+
+Shared task/note adapters freeze source versions and server operations; pure exact-confirmation gate binds owner/generation/digest/policy/expiry. PG frame store uses existing envelope/AES-GCM helpers, resource+revision AAD, owner-bound reads, revision compare-and-swap, serialized active admission (8 per engine), encrypted JSON size and event/provider-count bounds. Explicit setup created only mimi_probe_068.run in dedicated local microsched_p1ca_068; no app wiring or startup DDL.
+
+Focused contract/store suite 18 PASS and Ruff PASS. Owner mismatch and local-host guard each have intended-violation RED → restored GREEN receipts. This is foundation evidence only: the store does not yet implement atomic domain mutation/receipt, provider reconciliation, phase-transition enforcement, checkpoint cleanup, terminal retention or schema upgrade. Database CAS/quota mutation-proof evidence remains pending alongside those integrations. No lifecycle/adoption acceptance is claimed.
