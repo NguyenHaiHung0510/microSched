@@ -176,11 +176,19 @@ def test_create_subscription_is_idempotent_by_id(pg_dsn: str):
                 "expires_on": _today_vn(),
                 "auto_renew": True,
             }
-            first = await client.post("/api/subscriptions", json=payload)
-            assert first.status_code == 201, first.text
-            second = await client.post("/api/subscriptions", json=payload)
-            assert second.status_code == 200, second.text
-            assert second.json()["id"] == str(sub_id)
+            concurrent = await asyncio.gather(
+                *(client.post("/api/subscriptions", json=payload) for _ in range(5))
+            )
+            assert sorted(response.status_code for response in concurrent) == [
+                200,
+                200,
+                200,
+                200,
+                201,
+            ], [response.text for response in concurrent]
+            replay = await client.post("/api/subscriptions", json=payload)
+            assert replay.status_code == 200, replay.text
+            assert replay.json()["id"] == str(sub_id)
             subscription_ids.append(sub_id)
             listed = await client.get("/api/subscriptions")
             assert listed.status_code == 200

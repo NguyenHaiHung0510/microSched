@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import AuthSession, DayAnnotation
@@ -91,6 +92,10 @@ class AnnotationRead(BaseModel):
     created: bool | None = Field(default=None, exclude=True)
 
 
+class AnnotationIdConflict(Exception):
+    """A client-selected annotation ID exists but is hidden by the reading gate."""
+
+
 class AnnotationNotFound(Exception):
     """The requested annotation does not exist or is hidden by a reading gate."""
 
@@ -150,9 +155,43 @@ class AnnotationStore:
                 result.created = False
                 return result
 
-        annotation = DayAnnotation(**payload.model_dump())
-        db.add(annotation)
-        await db.flush()
+        values = payload.model_dump(exclude={"id"})
+        if payload.id is None:
+            annotation = DayAnnotation(**values)
+            db.add(annotation)
+            await db.flush()
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(DayAnnotation)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[DayAnnotation.id])
+                    .returning(DayAnnotation.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                existing = await db.scalar(
+                    readable(
+                        select(DayAnnotation).where(DayAnnotation.id == payload.id),
+                        DayAnnotation,
+                        auth,
+                    )
+                )
+                if existing is None:
+                    physical = await db.scalar(
+                        select(DayAnnotation.id).where(DayAnnotation.id == payload.id)
+                    )
+                    if physical is not None:
+                        raise AnnotationIdConflict
+                    raise RuntimeError("conflicting annotation disappeared")
+                result = self._read(existing)
+                result.created = False
+                return result
+            annotation = await db.scalar(
+                select(DayAnnotation).where(DayAnnotation.id == inserted_id)
+            )
+            if annotation is None:
+                raise RuntimeError("created annotation disappeared")
         result = self._read(annotation)
         result.created = True
         return result

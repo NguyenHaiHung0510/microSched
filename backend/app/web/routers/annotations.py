@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.annotations import (
     AnnotationCreate,
+    AnnotationIdConflict,
     AnnotationNotFound,
     AnnotationRead,
     AnnotationStore,
@@ -55,7 +56,10 @@ async def create_annotation(
     response: Response,
 ) -> AnnotationRead:
     """Create an annotation or idempotently return an existing explicit ID."""
-    annotation = await store.create(db, session, payload)
+    try:
+        annotation = await store.create(db, session, payload)
+    except AnnotationIdConflict:
+        return Response(status_code=status.HTTP_409_CONFLICT)
     response.status_code = status.HTTP_201_CREATED if annotation.created else status.HTTP_200_OK
     return annotation
 

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -161,6 +162,7 @@ class EventRead(BaseModel):
     description_md: str | None
     created_at: datetime | None
     updated_at: datetime | None
+    created: bool | None = Field(default=None, exclude=True)
 
 
 class ImportRequest(BaseModel):
@@ -192,6 +194,14 @@ class SourceNameTaken(Exception):
 
     def __init__(self, existing_source_id: UUID):
         self.existing_source_id = existing_source_id
+
+
+class SourceIdConflict(Exception):
+    """A client-selected source ID exists but is not readable as a replay."""
+
+
+class EventIdConflict(Exception):
+    """A client-selected event ID could not be read after an insert conflict."""
 
 
 class SourceNotFound(Exception):
@@ -306,25 +316,65 @@ class CalendarStore:
         if existing is not None:
             raise SourceNameTaken(existing.id)
 
-        source = CalendarSource(
-            id=payload.id,
-            name=payload.name,
-            kind=payload.kind,
-            color=payload.color,
-        )
-        try:
-            async with db.begin_nested():
-                db.add(source)
-                await db.flush()
-        except IntegrityError as error:
-            existing = await db.scalar(
-                select(CalendarSource).where(
-                    func.lower(CalendarSource.name) == payload.name.lower()
+        values = {"name": payload.name, "kind": payload.kind, "color": payload.color}
+        if payload.id is None:
+            source = CalendarSource(**values)
+            try:
+                async with db.begin_nested():
+                    db.add(source)
+                    await db.flush()
+            except IntegrityError as error:
+                existing = await db.scalar(
+                    select(CalendarSource).where(
+                        func.lower(CalendarSource.name) == payload.name.lower()
+                    )
                 )
+                if existing is not None:
+                    raise SourceNameTaken(existing.id) from error
+                raise
+        else:
+            try:
+                async with db.begin_nested():
+                    inserted_id = (
+                        await db.execute(
+                            insert(CalendarSource)
+                            .values(id=payload.id, **values)
+                            .on_conflict_do_nothing(index_elements=[CalendarSource.id])
+                            .returning(CalendarSource.id)
+                        )
+                    ).scalar_one_or_none()
+            except IntegrityError as error:
+                existing = await db.scalar(
+                    select(CalendarSource).where(
+                        func.lower(CalendarSource.name) == payload.name.lower()
+                    )
+                )
+                if existing is not None:
+                    raise SourceNameTaken(existing.id) from error
+                raise
+            if inserted_id is None:
+                existing = await db.scalar(
+                    readable(
+                        select(CalendarSource).where(CalendarSource.id == payload.id),
+                        CalendarSource,
+                        auth,
+                    )
+                )
+                if existing is None:
+                    physical = await db.scalar(
+                        select(CalendarSource.id).where(CalendarSource.id == payload.id)
+                    )
+                    if physical is not None:
+                        raise SourceIdConflict
+                    raise RuntimeError("conflicting calendar source disappeared")
+                result = await self._source_read(db, existing)
+                result.created = False
+                return result
+            source = await db.scalar(
+                select(CalendarSource).where(CalendarSource.id == inserted_id)
             )
-            if existing is not None:
-                raise SourceNameTaken(existing.id) from error
-            raise
+            if source is None:
+                raise RuntimeError("created calendar source disappeared")
         result = await self._source_read(db, source)
         result.created = True
         return result
@@ -441,10 +491,44 @@ class CalendarStore:
         source = await self._source(db, auth, payload.source_id, for_update=True)
         if source.kind == "ics":
             raise IcsEventCreationForbidden
-        event = CalendarEvent(**payload.model_dump())
-        db.add(event)
-        await db.flush()
-        return self._event_read(event)
+        values = payload.model_dump(exclude={"id"})
+        if payload.id is None:
+            event = CalendarEvent(**values)
+            db.add(event)
+            await db.flush()
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(CalendarEvent)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[CalendarEvent.id])
+                    .returning(CalendarEvent.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                existing = await db.scalar(
+                    readable(
+                        select(CalendarEvent).where(CalendarEvent.id == payload.id),
+                        CalendarEvent,
+                        auth,
+                    )
+                )
+                if existing is None:
+                    physical = await db.scalar(
+                        select(CalendarEvent.id).where(CalendarEvent.id == payload.id)
+                    )
+                    if physical is not None:
+                        raise EventIdConflict
+                    raise RuntimeError("conflicting calendar event disappeared")
+                result = self._event_read(existing)
+                result.created = False
+                return result
+            event = await db.scalar(select(CalendarEvent).where(CalendarEvent.id == inserted_id))
+            if event is None:
+                raise RuntimeError("created calendar event disappeared")
+        result = self._event_read(event)
+        result.created = True
+        return result
 
     async def update_event(
         self, db: AsyncSession, auth: AuthSession, event_id: UUID, payload: EventUpdate

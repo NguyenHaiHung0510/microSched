@@ -11,6 +11,7 @@ from app.domain.calendar import (
     CalendarImportRejected,
     CalendarStore,
     EventCreate,
+    EventIdConflict,
     EventNotFound,
     EventRead,
     EventUpdate,
@@ -19,6 +20,7 @@ from app.domain.calendar import (
     ImportRequest,
     ManualSourceImportForbidden,
     SourceCreate,
+    SourceIdConflict,
     SourceNameTaken,
     SourceNotFound,
     SourceRead,
@@ -77,6 +79,8 @@ async def create_source(
         source = await store.create_source(db, session, payload)
     except SourceNameTaken as error:
         raise _name_taken(error) from error
+    except SourceIdConflict:
+        return Response(status_code=status.HTTP_409_CONFLICT)
     response.status_code = status.HTTP_201_CREATED if source.created else status.HTTP_200_OK
     return source
 
@@ -154,11 +158,18 @@ async def list_events(
     }
 
 
-@router.post("/calendar/events", response_model=EventRead, status_code=status.HTTP_201_CREATED)
-async def create_event(payload: EventCreate, db: Database, session: CurrentSession) -> EventRead:
-    """Create one event under a manual source."""
+@router.post("/calendar/events", response_model=EventRead)
+async def create_event(
+    payload: EventCreate,
+    db: Database,
+    session: CurrentSession,
+    response: Response,
+) -> EventRead | Response:
+    """Create an event or return its readable explicit-ID replay."""
     try:
-        return await store.create_event(db, session, payload)
+        event = await store.create_event(db, session, payload)
+    except EventIdConflict:
+        return Response(status_code=status.HTTP_409_CONFLICT)
     except SourceNotFound as error:
         raise _source_not_found() from error
     except IcsEventCreationForbidden as error:
@@ -166,6 +177,8 @@ async def create_event(payload: EventCreate, db: Database, session: CurrentSessi
             status_code=status.HTTP_409_CONFLICT,
             detail="Không thể tạo buổi thủ công dưới nguồn nhập từ file.",
         ) from error
+    response.status_code = status.HTTP_201_CREATED if event.created else status.HTTP_200_OK
+    return event
 
 
 @router.patch("/calendar/events/{event_id}", response_model=EventRead)

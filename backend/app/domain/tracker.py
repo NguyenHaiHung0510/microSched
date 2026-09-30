@@ -751,9 +751,34 @@ class TrackerStore:
                 result = self._group_read(group)
                 result.created = False
                 return result
-        group = TrackerGroup(**payload.model_dump())
-        db.add(group)
-        await db.flush()
+        values = payload.model_dump(exclude={"id"})
+        if payload.id is None:
+            group = TrackerGroup(**values)
+            db.add(group)
+            await db.flush()
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(TrackerGroup)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[TrackerGroup.id])
+                    .returning(TrackerGroup.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                group = await db.scalar(
+                    select(TrackerGroup).where(TrackerGroup.id == payload.id)
+                )
+                if group is None:
+                    raise RuntimeError("conflicting tracker group disappeared")
+                result = self._group_read(group)
+                result.created = False
+                return result
+            group = await db.scalar(
+                select(TrackerGroup).where(TrackerGroup.id == inserted_id)
+            )
+            if group is None:
+                raise RuntimeError("created tracker group disappeared")
         result = self._group_read(group)
         result.created = True
         return result

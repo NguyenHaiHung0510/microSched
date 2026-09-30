@@ -48,7 +48,7 @@ def _not_found(kind: str = "Tracker") -> HTTPException:
 def _private_locked() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Private mode is locked",
+        detail={"code": "PRIVATE_UNLOCK_REQUIRED", "message": "Private mode is locked"},
     )
 
 
