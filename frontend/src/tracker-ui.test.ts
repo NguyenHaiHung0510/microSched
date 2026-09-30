@@ -20,12 +20,35 @@ import {
   upcomingReminderTime,
   groupTrackersByGroup,
   quantityToNumber,
+  reminderConfigurationChanged,
   quietAgo,
   sortTrackersForGrid,
   trackerKindLabel,
   type Tracker,
   type TrackerGroup,
 } from '@/tracker-ui'
+
+describe('tracker reminder registration gate', () => {
+  it('does not ask for push registration when only the tracker name changes', () => {
+    const current = tracker({ reminder_time: '08:00', reminder_text: 'Nhắc', reminder_mode: 'fixed', reminder_interval_days: 1, reminder_action: 'open_tracker' })
+    expect(reminderConfigurationChanged(current, {
+      reminder_time: current.reminder_time,
+      reminder_text: current.reminder_text,
+      reminder_mode: current.reminder_mode,
+      reminder_interval_days: current.reminder_interval_days,
+      reminder_action: current.reminder_action,
+    })).toBe(false)
+  })
+
+  it('detects an actual reminder enable or configuration change', () => {
+    const current = tracker()
+    expect(reminderConfigurationChanged(current, { reminder_time: '08:00', reminder_text: null, reminder_mode: 'fixed', reminder_interval_days: 1, reminder_action: 'confirm_event' })).toBe(true)
+    expect(reminderConfigurationChanged(
+      tracker({ reminder_time: '08:00', reminder_text: 'Nhắc', reminder_mode: 'fixed', reminder_interval_days: 1, reminder_action: 'confirm_event' }),
+      { reminder_time: '09:00', reminder_text: 'Nhắc', reminder_mode: 'fixed', reminder_interval_days: 1, reminder_action: 'confirm_event' },
+    )).toBe(true)
+  })
+})
 
 function tracker(overrides: Partial<Tracker> = {}): Tracker {
   return {

@@ -17,7 +17,7 @@ describe('typed domain command encoding', () => {
       parent_id: null,
       requires_private: false,
       idempotency_mode: 'client_uuid',
-      affected_query_keys: [['tasks'], ['calendar']],
+      affected_query_keys: [['tasks'], ['calendar', 'tasks']],
     })
     expect(command.body).toEqual({ id: '0199abc0-0000-7000-8000-000000000001', title: 'Việc', status: 'open', items: [] })
     expect(Object.keys(command).sort()).toEqual([
@@ -29,16 +29,16 @@ describe('typed domain command encoding', () => {
   it('encodes atomic note-item reorder as one absolute command', () => {
     const input = {
       operationKind: 'note_item.reorder' as const,
-      path: '/api/notes/note-1/items/positions',
-      body: { items: [{ id: 'item-1', position: 1 }, { id: 'item-2', position: 0 }] },
-      parentId: 'note-1',
+      path: '/api/notes/0199abc0-0000-7000-8000-000000000002/items/positions',
+      body: { items: [{ id: '0199abc0-0000-7000-8000-000000000003', position: 1 }, { id: '0199abc0-0000-7000-8000-000000000004', position: 0 }] },
+      parentId: '0199abc0-0000-7000-8000-000000000002',
     }
     const command = adapterFor('note_item.reorder').encodeCommand(input)
     expect(command).toMatchObject({
       method: 'PATCH',
-      path: '/api/notes/note-1/items/positions',
+      path: '/api/notes/0199abc0-0000-7000-8000-000000000002/items/positions',
       body: input.body,
-      parent_id: 'note-1',
+      parent_id: '0199abc0-0000-7000-8000-000000000002',
       idempotency_mode: 'absolute',
       affected_query_keys: [['notes']],
     })
@@ -47,20 +47,20 @@ describe('typed domain command encoding', () => {
   it('rejects an operation paired with a different route and retains private metadata', () => {
     expect(() => adapterFor('task.delete').encodeCommand({
       operationKind: 'task.delete',
-      path: '/api/notes/note-1',
+      path: '/api/notes/0199abc0-0000-7000-8000-000000000005',
       entityId: 'task-1',
     })).toThrow(/Invalid route/)
     const command = adapterFor('note.update').encodeCommand({
       operationKind: 'note.update',
-      path: '/api/notes/note-1',
+      path: '/api/notes/0199abc0-0000-7000-8000-000000000005',
       body: { title: 'Riêng tư' },
-      entityId: 'note-1',
+      entityId: '0199abc0-0000-7000-8000-000000000005',
       requiresPrivate: true,
       dependencyOperationId: 7,
       groupId: 'group-2',
     })
     expect(command).toMatchObject({
-      entity_id: 'note-1',
+      entity_id: '0199abc0-0000-7000-8000-000000000005',
       requires_private: true,
       dependency_operation_id: 7,
       group_id: 'group-2',

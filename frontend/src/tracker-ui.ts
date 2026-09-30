@@ -6,9 +6,9 @@
  * will wrap exactly this one place with its offline outbox.
  */
 
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 
-import { apiRequest } from '@/api'
+import { queuedRequest } from '@/lib/queued-mutation'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
 import { uuidv7 } from '@/lib/uuidv7'
 
@@ -32,6 +32,26 @@ export type TrackerWritePayload = {
   reminder_interval_days?: number | null
   reminder_action?: ReminderAction | null
   ensure_push?: boolean
+}
+
+type ReminderConfig = Pick<
+  Tracker,
+  'reminder_time' | 'reminder_text' | 'reminder_mode' |
+  'reminder_interval_days' | 'reminder_action'
+>
+
+export function reminderConfigurationChanged(
+  current: ReminderConfig,
+  next: Partial<ReminderConfig>,
+): boolean {
+  const fields: Array<keyof ReminderConfig> = [
+    'reminder_time',
+    'reminder_text',
+    'reminder_mode',
+    'reminder_interval_days',
+    'reminder_action',
+  ]
+  return fields.some((field) => (current[field] ?? null) !== (next[field] ?? null))
 }
 
 export function buildTrackerWritePayload({
@@ -546,12 +566,10 @@ export function capturePayload(
 
 /** Seam: every tracker write goes through these mutations (017 wraps this one door). */
 export function useTrackerWrites(refresh: () => void) {
+  const queryClient = useQueryClient()
   const createGroup = useMutation({
-    mutationFn: (payload: { id?: string; name: string; kind: TrackerKind }) =>
-      apiRequest<TrackerGroup>('/api/tracker/groups', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }),
+    mutationFn: (payload: { id: string; name: string; kind: TrackerKind }) =>
+      queuedRequest<TrackerGroup>(queryClient, 'tracker_group.create', { path: '/api/tracker/groups', body: payload, entityId: payload.id }),
     onSuccess: refresh,
   })
   const updateGroup = useMutation({
@@ -561,21 +579,16 @@ export function useTrackerWrites(refresh: () => void) {
     }: {
       groupId: string
       payload: Partial<Pick<TrackerGroup, 'name' | 'color' | 'position'>>
-    }) =>
-      apiRequest<TrackerGroup>(`/api/tracker/groups/${groupId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      }),
+    }) => queuedRequest<TrackerGroup>(queryClient, 'tracker_group.update', { path: `/api/tracker/groups/${groupId}`, body: payload, entityId: groupId }),
     onSuccess: refresh,
   })
   const deleteGroup = useMutation({
-    mutationFn: (groupId: string) =>
-      apiRequest<void>(`/api/tracker/groups/${groupId}`, { method: 'DELETE' }),
+    mutationFn: (groupId: string) => queuedRequest<void>(queryClient, 'tracker_group.delete', { path: `/api/tracker/groups/${groupId}`, entityId: groupId }),
     onSuccess: refresh,
   })
   const createTracker = useMutation({
     mutationFn: (payload: {
-      id?: string
+      id: string
       name: string
       kind: TrackerKind
       direction?: TrackerDirection
@@ -587,20 +600,18 @@ export function useTrackerWrites(refresh: () => void) {
       reminder_mode?: ReminderMode | null
       reminder_interval_days?: number | null
       reminder_action?: ReminderAction | null
-      is_private?: boolean
-    }) =>
-      apiRequest<Tracker>('/api/tracker/trackers', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }),
+      is_private: boolean
+    }) => queuedRequest<Tracker>(queryClient, 'tracker.create', { path: '/api/tracker/trackers', body: payload, entityId: payload.id, parentId: payload.group_id ?? null, requiresPrivate: payload.is_private }),
     onSuccess: refresh,
   })
   const updateTracker = useMutation({
     mutationFn: ({
       trackerId,
+      requiresPrivate,
       payload,
     }: {
       trackerId: string
+      requiresPrivate: boolean
       payload: Partial<
         Pick<
           Tracker,
@@ -618,59 +629,40 @@ export function useTrackerWrites(refresh: () => void) {
           | 'reminder_action'
         >
       >
-    }) =>
-      apiRequest<Tracker>(`/api/tracker/trackers/${trackerId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      }),
+    }) => queuedRequest<Tracker>(queryClient, 'tracker.update', { path: `/api/tracker/trackers/${trackerId}`, body: payload, entityId: trackerId, requiresPrivate }),
     onSuccess: refresh,
   })
   const archiveTracker = useMutation({
-    mutationFn: (trackerId: string) =>
-      apiRequest<void>(`/api/tracker/trackers/${trackerId}`, { method: 'DELETE' }),
+    mutationFn: ({ trackerId, requiresPrivate }: { trackerId: string; requiresPrivate: boolean }) => queuedRequest<void>(queryClient, 'tracker.archive', { path: `/api/tracker/trackers/${trackerId}`, entityId: trackerId, requiresPrivate }),
     onSuccess: refresh,
   })
   const restoreTracker = useMutation({
-    mutationFn: (trackerId: string) =>
-      apiRequest<{ id: string; status: 'restored' }>(
-        `/api/tracker/trackers/${trackerId}/restore`,
-        { method: 'POST' },
-      ),
+    mutationFn: ({ trackerId, requiresPrivate }: { trackerId: string; requiresPrivate: boolean }) => queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'tracker.restore', { path: `/api/tracker/trackers/${trackerId}/restore`, entityId: trackerId, requiresPrivate }),
     onSuccess: refresh,
   })
   const createEntry = useMutation({
-    mutationFn: (payload: EntryCreatePayload) =>
-      apiRequest<Entry>('/api/tracker/entries', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }),
+    mutationFn: ({ payload, requiresPrivate }: { payload: EntryCreatePayload; requiresPrivate: boolean }) =>
+      queuedRequest<Entry>(queryClient, 'entry.create', { path: '/api/tracker/entries', body: payload, entityId: payload.id, parentId: payload.tracker_id, requiresPrivate }),
     onSuccess: refresh,
   })
   const updateEntry = useMutation({
     mutationFn: ({
       entryId,
+      requiresPrivate,
       payload,
     }: {
       entryId: string
+      requiresPrivate: boolean
       payload: Partial<Pick<Entry, 'occurred_at' | 'quantity' | 'amount' | 'list_amount' | 'note_md'>>
-    }) =>
-      apiRequest<Entry>(`/api/tracker/entries/${entryId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      }),
+    }) => queuedRequest<Entry>(queryClient, 'entry.update', { path: `/api/tracker/entries/${entryId}`, body: payload, entityId: entryId, requiresPrivate }),
     onSuccess: refresh,
   })
   const deleteEntry = useMutation({
-    mutationFn: (entryId: string) =>
-      apiRequest<void>(`/api/tracker/entries/${entryId}`, { method: 'DELETE' }),
+    mutationFn: ({ entryId, requiresPrivate }: { entryId: string; requiresPrivate: boolean }) => queuedRequest<void>(queryClient, 'entry.delete', { path: `/api/tracker/entries/${entryId}`, entityId: entryId, requiresPrivate }),
     onSuccess: refresh,
   })
   const restoreEntry = useMutation({
-    mutationFn: (entryId: string) =>
-      apiRequest<{ id: string; status: 'restored' }>(
-        `/api/tracker/entries/${entryId}/restore`,
-        { method: 'POST' },
-      ),
+    mutationFn: ({ entryId, requiresPrivate }: { entryId: string; requiresPrivate: boolean }) => queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'entry.restore', { path: `/api/tracker/entries/${entryId}/restore`, entityId: entryId, requiresPrivate }),
     onSuccess: refresh,
   })
   return {

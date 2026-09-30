@@ -3,6 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, ChevronLeft, ChevronRight, Edit3, Plus, Trash2 } from 'lucide-react'
 
 import { apiRequest } from '@/api'
+import { queuedRequest } from '@/lib/queued-mutation'
+import type { Json } from '@/lib/outbox-db'
+import { uuidv7 } from '@/lib/uuidv7'
+import { useDomainReadControl } from '@/lib/use-domain-outbox'
+import { OutboxStatus } from '@/OutboxStatus'
 import { EventForm } from '@/EventForm'
 import {
   addVietnamDays,
@@ -136,6 +141,7 @@ const EventCard = memo(function EventCard({
 
 export function CalendarScreen() {
   const queryClient = useQueryClient()
+  const readControl = useDomainReadControl(['calendar'], false)
   const [view, setView] = useState<'grid' | 'list'>(() => {
     try {
       return window.localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'
@@ -161,11 +167,13 @@ export function CalendarScreen() {
     queryKey: ['calendar', 'sources'],
     queryFn: getSources,
     ...CALENDAR_QUERY_OPTIONS,
+    ...readControl,
   })
   const events = useQuery({
     queryKey: ['calendar', 'events', rangeStart],
     queryFn: () => getEvents(rangeStart),
     ...CALENDAR_QUERY_OPTIONS,
+    ...readControl,
   })
   const manualSources = useMemo(
     () => (sources.data?.items ?? []).filter((source) => source.kind === 'manual'),
@@ -185,11 +193,10 @@ export function CalendarScreen() {
     mutationFn: async ({ sourceId, file }: { sourceId: string; file: File }) => {
       const problem = validateFile(file)
       if (problem) throw new Error(problem)
-      return apiRequest<ImportReport>(`/api/calendar/sources/${sourceId}/import`, {
-        method: 'POST',
-        timeoutMs: 60_000,
-        body: JSON.stringify({ filename: file.name, content: await file.text() }),
-      })
+      return queuedRequest<ImportReport>(queryClient, 'calendar.import', {
+        path: `/api/calendar/sources/${sourceId}/import`,
+        body: { filename: file.name, content: await file.text() }, entityId: sourceId, parentId: sourceId,
+      }, { timeoutMs: 60_000 })
     },
     onSuccess: (report) => {
       setImportReport(report)
@@ -200,11 +207,8 @@ export function CalendarScreen() {
   })
 
   const createSource = useMutation({
-    mutationFn: (value: { name: string; kind: 'ics' | 'manual'; color: string }) =>
-      apiRequest<CalendarSource>('/api/calendar/sources', {
-        method: 'POST',
-        body: JSON.stringify(value),
-      }),
+    mutationFn: (value: { id: string; name: string; kind: 'ics' | 'manual'; color: string }) =>
+      queuedRequest<CalendarSource>(queryClient, 'calendar_source.create', { path: '/api/calendar/sources', body: value, entityId: value.id }),
     onSuccess: (source) => {
       setSourceDialogOpen(false)
       setSourceError(null)
@@ -237,10 +241,7 @@ export function CalendarScreen() {
       if (isVisible !== undefined) body.is_visible = isVisible
       if (name !== undefined) body.name = name
       if (color !== undefined) body.color = color
-      return apiRequest<CalendarSource>(`/api/calendar/sources/${sourceId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      })
+      return queuedRequest<CalendarSource>(queryClient, 'calendar_source.update', { path: `/api/calendar/sources/${sourceId}`, body: body as unknown as Json, entityId: sourceId })
     },
     onSuccess: () => {
       setEditingSource(null)
@@ -250,8 +251,7 @@ export function CalendarScreen() {
   })
 
   const deleteSource = useMutation({
-    mutationFn: (sourceId: string) =>
-      apiRequest<void>(`/api/calendar/sources/${sourceId}`, { method: 'DELETE' }),
+    mutationFn: (sourceId: string) => queuedRequest<void>(queryClient, 'calendar_source.delete', { path: `/api/calendar/sources/${sourceId}`, entityId: sourceId }),
     onSuccess: () => {
       setConfirm(null)
       refreshCalendar()
@@ -260,11 +260,8 @@ export function CalendarScreen() {
   })
 
   const createEvent = useMutation({
-    mutationFn: (value: Record<string, unknown>) =>
-      apiRequest<CalendarEvent>('/api/calendar/events', {
-        method: 'POST',
-        body: JSON.stringify(value),
-      }),
+    mutationFn: (value: Record<string, unknown> & { id: string }) =>
+      queuedRequest<CalendarEvent>(queryClient, 'calendar_event.create', { path: '/api/calendar/events', body: value as unknown as Json, entityId: value.id, parentId: typeof value.source_id === 'string' ? value.source_id : null }),
     onSuccess: () => {
       setEventDialogOpen(false)
       refreshCalendar()
@@ -274,10 +271,7 @@ export function CalendarScreen() {
 
   const updateEvent = useMutation({
     mutationFn: ({ eventId, value }: { eventId: string; value: Record<string, unknown> }) =>
-      apiRequest<CalendarEvent>(`/api/calendar/events/${eventId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(value),
-      }),
+      queuedRequest<CalendarEvent>(queryClient, 'calendar_event.update', { path: `/api/calendar/events/${eventId}`, body: value as unknown as Json, entityId: eventId }),
     onSuccess: () => {
       setEventDialogOpen(false)
       setEditingEvent(undefined)
@@ -287,8 +281,7 @@ export function CalendarScreen() {
   })
 
   const deleteEvent = useMutation({
-    mutationFn: (eventId: string) =>
-      apiRequest<void>(`/api/calendar/events/${eventId}`, { method: 'DELETE' }),
+    mutationFn: (eventId: string) => queuedRequest<void>(queryClient, 'calendar_event.delete', { path: `/api/calendar/events/${eventId}`, entityId: eventId }),
     onSuccess: () => {
       setConfirm(null)
       refreshCalendar()
@@ -336,7 +329,7 @@ export function CalendarScreen() {
       return
     }
     setSourceName(value.name)
-    createSource.mutate({ name: value.name, color: value.color, kind: sourceKind })
+    createSource.mutate({ id: uuidv7(), name: value.name, color: value.color, kind: sourceKind })
   }
 
   const openNewEvent = useCallback(() => {
@@ -362,6 +355,7 @@ export function CalendarScreen() {
 
   return (
     <div className="space-y-5">
+      <OutboxStatus queryKey={['calendar']} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-extrabold tracking-tight">Lịch</h2>
@@ -653,7 +647,7 @@ export function CalendarScreen() {
               if (editingEvent) {
                 updateEvent.mutate({ eventId: editingEvent.id, value })
               } else {
-                createEvent.mutate(value)
+                createEvent.mutate({ ...value, id: uuidv7() })
               }
             }}
             onCancel={() => setEventDialogOpen(false)}

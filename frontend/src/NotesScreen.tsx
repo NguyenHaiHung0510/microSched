@@ -21,6 +21,9 @@ import {
 import { toast } from 'sonner'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
+import { queuedRequest } from '@/lib/queued-mutation'
+import { useDomainReadControl } from '@/lib/use-domain-outbox'
+import { OutboxStatus } from '@/OutboxStatus'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -91,9 +94,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const refresh = () => void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
   const update = useMutation({
     mutationFn: (payload: Partial<NoteWritePayload>) =>
-      apiRequest<Note>(`/api/notes/${note.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
+      queuedRequest<Note>(queryClient, 'note.update', {
+        path: `/api/notes/${note.id}`, body: payload, entityId: note.id,
+        requiresPrivate: note.is_private,
       }),
     onSuccess: () => {
       setEditing(false)
@@ -101,7 +104,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     },
   })
   const remove = useMutation({
-    mutationFn: () => apiRequest<void>(`/api/notes/${note.id}`, { method: 'DELETE' }),
+    mutationFn: () => queuedRequest<void>(queryClient, 'note.delete', {
+      path: `/api/notes/${note.id}`, entityId: note.id, requiresPrivate: note.is_private,
+    }),
     onSuccess: () => {
       setDetailsOpen(false)
       refresh()
@@ -120,10 +125,10 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     },
   })
   const addItem = useMutation({
-    mutationFn: (content: string) =>
-      apiRequest<NoteItem>(`/api/notes/${note.id}/items`, {
-        method: 'POST',
-        body: JSON.stringify({ content, position: note.items.length }),
+    mutationFn: (item: { id: string; content: string; position: number }) =>
+      queuedRequest<NoteItem>(queryClient, 'note_item.create', {
+        path: `/api/notes/${note.id}/items`, body: item, entityId: item.id,
+        parentId: note.id, requiresPrivate: note.is_private,
       }),
     onSuccess: () => {
       setNewItem('')
@@ -132,9 +137,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   })
   const changeItem = useMutation({
     mutationFn: ({ item, changes }: { item: NoteItem; changes: Partial<NoteItem> }) =>
-      apiRequest<NoteItem>(`/api/notes/${note.id}/items/${item.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(changes),
+      queuedRequest<NoteItem>(queryClient, 'note_item.update', {
+        path: `/api/notes/${note.id}/items/${item.id}`, body: changes,
+        entityId: item.id, parentId: note.id, requiresPrivate: note.is_private,
       }),
     onSuccess: () => {
       setEditingItemId(null)
@@ -143,23 +148,19 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     },
   })
   const reorderItems = useMutation({
-    mutationFn: async ({ item, other }: { item: NoteItem; other: NoteItem }) => {
-      await Promise.all([
-        apiRequest<NoteItem>(`/api/notes/${note.id}/items/${item.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ position: other.position }),
-        }),
-        apiRequest<NoteItem>(`/api/notes/${note.id}/items/${other.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ position: item.position }),
-        }),
-      ])
-    },
+    mutationFn: ({ item, other }: { item: NoteItem; other: NoteItem }) =>
+      queuedRequest<NoteItem>(queryClient, 'note_item.reorder', {
+        path: `/api/notes/${note.id}/items/positions`,
+        body: { items: [{ id: item.id, position: other.position }, { id: other.id, position: item.position }] },
+        parentId: note.id, requiresPrivate: note.is_private,
+      }),
     onSuccess: refresh,
   })
   const removeItem = useMutation({
-    mutationFn: (item: NoteItem) =>
-      apiRequest<void>(`/api/notes/${note.id}/items/${item.id}`, { method: 'DELETE' }),
+    mutationFn: (item: NoteItem) => queuedRequest<void>(queryClient, 'note_item.delete', {
+      path: `/api/notes/${note.id}/items/${item.id}`, entityId: item.id,
+      parentId: note.id, requiresPrivate: note.is_private,
+    }),
     onSuccess: refresh,
   })
 
@@ -608,7 +609,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                   onSubmit={(event) => {
                     event.preventDefault()
                     const content = newItem.trim()
-                    if (content) addItem.mutate(content)
+                    if (content) addItem.mutate({ id: uuidv7(), content, position: Math.max(-1, ...note.items.map((entry) => entry.position)) + 1 })
                   }}
                 >
                   <Input
@@ -790,6 +791,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
 
 export function NotesScreen() {
   const queryClient = useQueryClient()
+  const readControl = useDomainReadControl(['notes'], standardRefetchInterval)
   const quickInputRef = useRef<HTMLInputElement>(null)
   const [quickTitle, setQuickTitle] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -820,7 +822,7 @@ export function NotesScreen() {
       fetchAllNotes((limit, offset) =>
         apiRequest<{ items: Note[] }>(`/api/notes?limit=${limit}&offset=${offset}`),
       ),
-    refetchInterval: standardRefetchInterval,
+    ...readControl,
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) &&
       !(error instanceof NotePageLimitError) &&
@@ -834,9 +836,9 @@ export function NotesScreen() {
 
   const create = useMutation({
     mutationFn: ({ payload }: { payload: NotePayload; source: CreateSource }) =>
-      apiRequest<Note>('/api/notes', {
-        method: 'POST',
-        body: JSON.stringify({ ...payload, items: [] }),
+      queuedRequest<Note>(queryClient, 'note.create', {
+        path: '/api/notes', body: { ...payload, id: payload.id ?? uuidv7(), items: [] },
+        entityId: payload.id,
       }),
     onSuccess: (_note, variables) => {
       if (variables.source === 'quick') {
@@ -866,6 +868,7 @@ export function NotesScreen() {
 
   return (
     <div className="space-y-4">
+      <OutboxStatus queryKey={['notes']} />
       <section aria-labelledby="quick-add-note-heading">
         <h2 className="sr-only" id="quick-add-note-heading">
           Thêm ghi chú

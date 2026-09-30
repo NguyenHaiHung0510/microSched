@@ -21,6 +21,9 @@ import {
 import { toast } from 'sonner'
 
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
+import { queuedRequest } from '@/lib/queued-mutation'
+import { useDomainReadControl } from '@/lib/use-domain-outbox'
+import { OutboxStatus } from '@/OutboxStatus'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -120,6 +123,7 @@ function sortTimelineTasks(
 
 export function TasksScreen() {
   const queryClient = useQueryClient()
+  const readControl = useDomainReadControl(['tasks'], taskRefetchInterval)
   const quickInputRef = useRef<HTMLInputElement>(null)
   const overdueRef = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState<ListView>('open')
@@ -187,7 +191,7 @@ export function TasksScreen() {
       apiRequest<TaskTimelineResponse>(
         `/api/tasks/timeline?status=${filter}&from=${encodeURIComponent(`${defaultStart}T00:00:00+07:00`)}&to=${encodeURIComponent(`${addVietnamDays(defaultEnd, 1)}T00:00:00+07:00`)}&limit=50`,
       ),
-    refetchInterval: taskRefetchInterval,
+    ...readControl,
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
@@ -524,6 +528,7 @@ export function TasksScreen() {
 
   return (
     <div className="space-y-4">
+      <OutboxStatus queryKey={['tasks']} />
       {groups.overdue.length > 0 && filter !== 'completed' ? (
         <Button
           data-testid="overdue-banner"
@@ -722,10 +727,7 @@ const TaskCard = memo(function TaskCard({
   }
   const reschedule = useMutation({
     mutationFn: (variables: { next: TaskSchedule; previous: TaskSchedule }) =>
-      apiRequest<Task>(`/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(variables.next),
-      }),
+      queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${task.id}`, body: variables.next, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: (_data, variables) => {
       refresh()
       toast(
@@ -747,17 +749,14 @@ const TaskCard = memo(function TaskCard({
     mutationFn: (
       payload: Partial<TaskPayload> & { status?: TaskStatus; pinned?: boolean },
     ) =>
-      apiRequest<Task>(`/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      }),
+      queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${task.id}`, body: payload, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setEditing(false)
       refresh()
     },
   })
   const remove = useMutation({
-    mutationFn: () => apiRequest<void>(`/api/tasks/${task.id}`, { method: 'DELETE' }),
+    mutationFn: () => queuedRequest<void>(queryClient, 'task.delete', { path: `/api/tasks/${task.id}`, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setDetailsOpen(false)
       refresh()
@@ -776,11 +775,8 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const addItem = useMutation({
-    mutationFn: (content: string) =>
-      apiRequest<TaskItem>(`/api/tasks/${task.id}/items`, {
-        method: 'POST',
-        body: JSON.stringify({ content, position: task.items.length }),
-      }),
+    mutationFn: (item: { id: string; content: string; position: number }) =>
+      queuedRequest<TaskItem>(queryClient, 'task_item.create', { path: `/api/tasks/${task.id}/items`, body: item, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setNewItem('')
       refresh()
@@ -788,15 +784,11 @@ const TaskCard = memo(function TaskCard({
   })
   const changeItem = useMutation({
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
-      apiRequest<TaskItem>(`/api/tasks/${task.id}/items/${item.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ is_completed: isCompleted }),
-      }),
+      queuedRequest<TaskItem>(queryClient, 'task_item.update', { path: `/api/tasks/${task.id}/items/${item.id}`, body: { is_completed: isCompleted }, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
     onSuccess: refresh,
   })
   const removeItem = useMutation({
-    mutationFn: (item: TaskItem) =>
-      apiRequest<void>(`/api/tasks/${task.id}/items/${item.id}`, { method: 'DELETE' }),
+    mutationFn: (item: TaskItem) => queuedRequest<void>(queryClient, 'task_item.delete', { path: `/api/tasks/${task.id}/items/${item.id}`, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
     onSuccess: refresh,
   })
 
@@ -1224,7 +1216,7 @@ const TaskCard = memo(function TaskCard({
                   onSubmit={(event) => {
                     event.preventDefault()
                     const content = newItem.trim()
-                    if (content) addItem.mutate(content)
+                    if (content) addItem.mutate({ id: uuidv7(), content, position: Math.max(-1, ...task.items.map((entry) => entry.position)) + 1 })
                   }}
                 >
                   <Input
@@ -1319,10 +1311,7 @@ export function LegacyTasksScreen() {
     queueMicrotask(() => setMigratingPins(true))
     void Promise.allSettled(
       pinnedIds.map((taskId) =>
-        apiRequest<Task>(`/api/tasks/${taskId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ pinned: true }),
-        }),
+      queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${taskId}`, body: { pinned: true }, entityId: taskId }),
       ),
     ).then((results) => {
       const retryIds = results.flatMap((result, index) => {
@@ -1370,10 +1359,7 @@ export function LegacyTasksScreen() {
 
   const create = useMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
-      apiRequest<Task>('/api/tasks', {
-        method: 'POST',
-        body: JSON.stringify({ ...payload, items: payload.items ?? [] }),
-      }),
+      queuedRequest<Task>(queryClient, 'task.create', { path: '/api/tasks', body: { ...payload, items: payload.items ?? [] }, entityId: payload.id }),
     // Cùng luật với `refresh()` của TaskCard, và đây mới là chỗ bug được BÁO:
     // nút "Đang thêm…" đọc `create.isPending`, mà React Query giữ `isPending` cho
     // tới khi `onSuccess` resolve. Await ở đây là bắt người dùng nhìn nút đứng im
