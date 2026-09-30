@@ -1,6 +1,6 @@
 # 068 — Mimi workflow lifecycle probe
 
-Status: LIFECYCLE_ENGINE_IN_PROGRESS; shared stages, encrypted PG frames/domain records and receipt, control and actual graph implemented. Focused tests: 30 PASS including live dedicated PG; actual OS-kill matrix, retention cohort, browser QA and independent acceptance NOT_RUN.
+Status: FINAL_CANDIDATE_PREPARATION; 42 focused tests PASS including dedicated PG and intended-violation safety receipts. Independent frozen process matrix: 10 families PASS, two partial due to harness assertions; no confirmed product defect. Final retention cohort, independent final diff review and browser UX acceptance NOT_RUN.
 Authority: Owner approved second probe with “duyệt, tiếp tục” on 2026-09-30; subsequently authorized this same chat to continue overnight via scheduled wake-ups until completion. T1 owns integration and acceptance; architecture adoption remains an Owner decision.
 Baseline: 066 closeout 378e77fa97eb707119b1676a7dfe138b438a3793; isolated branch feat/068-mimi-workflow-lifecycle-probe.
 
@@ -20,7 +20,7 @@ Does LangGraph materially improve development, diagnosis, recovery and user expe
 
 ## Finite resources and safety
 
-Local-only experimental entry point and dedicated database named microsched_p1ca_068* on loopback. Explicit setup only; no production Alembic migration, auto-DDL, Neon, live provider/key, deployment, adoption or merge.
+Local-only experimental entry point and dedicated database named microsched_p1ca_068* on loopback. Explicit setup only; no production Alembic migration, auto-DDL, Neon, deployment, adoption or merge. Separate Owner grant on 01/10 permits a bounded live-provider probe using ONLY MIMI_DEMO_1 from backend/.env, maximum total spend USD1.00 (key cap USD1.50; USD0.50 reserved and unauthorized to spend). This does not change fake-provider lifecycle comparison or permit production/real data. T1 alone reads the named credential in process; no key in logs, arguments, reports or delegates. Reserve conservative per-call cost before dispatch, disable automatic fallback/retry, record sanitized pre/post key usage and response cost; unresolved paid outcomes retain their reservation and stop additional paid calls. No obligation to exhaust the budget.
 
 Per run: at most 16 selected records, 8 fake model hops, 32 application events, 64 KiB serialized content frame and 120 seconds active execution excluding persisted Owner pauses. At most 8 retained active runs and 16 terminal runs per engine; an active quota overflow fails closed. Paused runs have an explicit 24-hour expiry and lose execution authority on expiry. Use an injected clock to exercise expiry without sleeping. Terminal cleanup removes exact probe-owned graph threads and subordinate data atomically where possible, with recoverable failure handling; never prune a still-authorized pending confirmation to satisfy a quota.
 

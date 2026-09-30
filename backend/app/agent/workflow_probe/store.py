@@ -117,8 +117,26 @@ class PgFrameStore:
         ):
             raise ProbeBlocked("invalid_run_identity_or_expiry")
         encoded = _validate_content(content, "query")
-        if len(records) > 16 or len({r.record_id for r in records}) != len(records):
+        if (
+            len(records) > 16
+            or len({r.record_id for r in records}) != len(records)
+            or any(
+                not isinstance(r.record_id, str)
+                or not r.record_id
+                or type(r.version) is not int
+                or r.version < 1
+                or not isinstance(r.title, str)
+                for r in records
+            )
+        ):
             raise ProbeBlocked("invalid_source_selection")
+        encode_frame(
+            {
+                "records": [
+                    {"id": r.record_id, "version": r.version, "title": r.title} for r in records
+                ]
+            }
+        )
         wrapped = create_wrapped_dek()
         ciphertext = seal_content(
             unwrap_dek(wrapped), encoded, aad=frame_aad(run_id, generation, 0)
@@ -335,6 +353,12 @@ class PgFrameStore:
                     preview.owner != current.owner or preview.generation != current.generation
                 ):
                     raise ProbeBlocked("frozen_preview_mismatch")
+                if current.content.get("confirmation") != {
+                    "owner": confirmation.owner,
+                    "generation": confirmation.generation,
+                    "preview_digest": confirmation.preview_digest,
+                }:
+                    raise ProbeBlocked("persisted_confirmation_required")
                 rows = await connection.fetch(
                     "SELECT id,version FROM mimi_probe_068.record WHERE run_id=$1 "
                     "ORDER BY id FOR UPDATE",

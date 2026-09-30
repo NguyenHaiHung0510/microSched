@@ -62,6 +62,7 @@ class Preview:
     domain: Domain
     sources: tuple[Record, ...]
     operations: tuple[tuple[str, str], ...]
+    groups: tuple[tuple[str, ...], ...] = ()
 
     def content(self) -> dict[str, object]:
         return {
@@ -75,6 +76,7 @@ class Preview:
                 for record in self.sources
             ],
             "operations": [{"id": key, "title": title} for key, title in self.operations],
+            "groups": [list(group) for group in self.groups],
         }
 
     @property
@@ -97,6 +99,7 @@ def freeze_preview(
     generation: int,
     policy: str,
     authority_ref: str | None = None,
+    groups: tuple[tuple[str, ...], ...] | None = None,
 ) -> Preview:
     """Server materialization freezes source versions and exact operations."""
     if not owner or not policy or type(generation) is not int or generation < 1:
@@ -112,6 +115,15 @@ def freeze_preview(
         for record in records
     ):
         raise ProbeBlocked("invalid_source_version")
+    groups = groups if groups is not None else (tuple(r.record_id for r in records),)
+    grouped_ids = [key for group in groups for key in group]
+    if (
+        not groups
+        or any(not group for group in groups)
+        or len(grouped_ids) != len(records)
+        or (set(grouped_ids) != {r.record_id for r in records})
+    ):
+        raise ProbeBlocked("invalid_group_partition")
     preview = Preview(
         authority_ref or str(uuid4()),
         owner,
@@ -120,6 +132,7 @@ def freeze_preview(
         adapter.domain,
         records,
         adapter.materialize(records),
+        groups,
     )
     encode_frame(preview.content())
     return preview

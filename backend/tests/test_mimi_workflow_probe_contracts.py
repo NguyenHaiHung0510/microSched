@@ -106,3 +106,33 @@ def test_old_confirmation_cannot_authorize_a_distinct_preview_instance(preview):
     )
     with pytest.raises(ProbeBlocked, match="confirmation_mismatch"):
         authorize(another, Confirmation(preview.owner, preview.generation, preview.digest))
+
+
+def test_grouping_is_part_of_the_frozen_preview(preview):
+    assert preview.content().get("groups") == [["a"]]
+
+
+def test_changed_grouping_requires_a_new_confirmation():
+    records = (Record("a", 1, "A"), Record("b", 1, "B"))
+    first = freeze_preview(
+        TASK_ADAPTER,
+        records,
+        owner="owner-a",
+        generation=2,
+        policy="policy-v1",
+        authority_ref="same-preview",
+        groups=(("a", "b"),),
+    )
+    changed = freeze_preview(
+        TASK_ADAPTER,
+        records,
+        owner="owner-a",
+        generation=2,
+        policy="policy-v1",
+        authority_ref="same-preview",
+        groups=(("a",), ("b",)),
+    )
+    with pytest.raises(ProbeBlocked, match="confirmation_mismatch"):
+        authorize(
+            changed, Confirmation("owner-a", 2, first.digest), source_versions={"a": 1, "b": 1}
+        )

@@ -1,17 +1,26 @@
 import asyncio
 import os
 import selectors
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import asyncpg
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from pydantic import ValidationError
 
-from app.agent.workflow_probe.contracts import Record
+from app.agent.workflow_probe.contracts import Confirmation, ProbeBlocked, Record
 from app.agent.workflow_probe.engines import run_control, run_graph, validate_refs
 from app.agent.workflow_probe.store import PgFrameStore, checkpoint_thread, local_probe_dsn
-from app.agent.workflow_probe.workflow import ConfirmationContent, Workflow
+from app.agent.workflow_probe.workflow import ConfirmationContent, Content, Workflow
 from app.core import crypto
+
+
+def test_schema_errors_do_not_disclose_private_frame_content():
+    with pytest.raises(ValidationError) as error:
+        Content.model_validate({"malformed": "PRIVATE_FRAME_MARKER"})
+    assert "PRIVATE_FRAME_MARKER" not in str(error.value)
 
 
 def test_graph_reference_guard_rejects_identity_version_and_content_channels():
@@ -20,6 +29,7 @@ def test_graph_reference_guard_rejects_identity_version_and_content_channels():
         "generation": 1,
         "state_schema_version": 2,
         "policy_hash": "frozen-policy",
+        "contract_hash": "frozen-handler-contract",
         "cursor": "query",
     }
     for changes in [
@@ -148,7 +158,7 @@ def test_provider_fence_and_saved_terminal_replay(probe_database, engine, point)
         try:
             workflow = Workflow(store, run_id, owner, fault=fault)
             await workflow.create("task", engine, (Record("a", 1, "Synthetic"),))
-            with pytest.raises(RuntimeError, match="synthetic_crash"):
+            with pytest.raises(RuntimeError, match="probe_stage_failed"):
                 await runner(workflow)
             result = await runner(Workflow(store, run_id, owner))
             expected = "reconcile" if point == "after_dispatch" else "direction"
@@ -183,6 +193,199 @@ def test_compatible_upgrade_and_changed_policy_stop(probe_database, engine):
             stopped = await runner(incompatible)
             assert stopped["phase"] == "repreview"
             assert (await counts(store, run_id))["dispatches"] == 2
+            assert (await counts(store, run_id))["receipts"] == 0
+        finally:
+            await cleanup_owned(store, run_id)
+
+    run(scenario())
+
+
+@pytest.mark.pg
+def test_graph_error_writes_do_not_contain_private_exception(probe_database):
+    async def scenario():
+        store = PgFrameStore(probe_database)
+        run_id, owner = uuid4(), f"synthetic-{uuid4()}"
+
+        async def fault(point):
+            if point == "after_dispatch":
+                raise RuntimeError("PRIVATE_RUNTIME_MARKER")
+
+        try:
+            workflow = Workflow(store, run_id, owner, fault=fault)
+            await workflow.create("task", "graph", (Record("a", 1, "Synthetic"),))
+            with pytest.raises(RuntimeError):
+                await run_graph(workflow)
+            connection = await asyncpg.connect(store._dsn)
+            try:
+                rows = await connection.fetch(
+                    "SELECT blob FROM public.checkpoint_writes WHERE thread_id=$1",
+                    checkpoint_thread(run_id, 1),
+                )
+                assert rows
+                assert all(b"PRIVATE_RUNTIME_MARKER" not in bytes(r["blob"] or b"") for r in rows)
+            finally:
+                await connection.close()
+        finally:
+            await cleanup_owned(store, run_id)
+
+    run(scenario())
+
+
+@pytest.mark.pg
+@pytest.mark.parametrize("engine", ["control", "graph"])
+@pytest.mark.parametrize("point", ["before_commit", "after_commit"])
+def test_atomic_execute_crash_is_rollback_or_one_receipt(probe_database, engine, point):
+    async def scenario():
+        store = PgFrameStore(probe_database)
+        run_id, owner = uuid4(), f"synthetic-{uuid4()}"
+        runner = {"control": run_control, "graph": run_graph}[engine]
+        original = (Record("a", 1, "Synthetic"),)
+
+        async def fault(current):
+            if current == point:
+                raise RuntimeError("synthetic_crash")
+
+        try:
+            workflow = Workflow(store, run_id, owner)
+            await workflow.create("task", engine, original)
+            await runner(workflow)
+            await workflow.accept(generation=1, direction="apply_prefix")
+            preview = await runner(workflow)
+            await workflow.accept(
+                generation=1,
+                confirmation=ConfirmationContent(
+                    owner=owner,
+                    generation=1,
+                    preview_digest=preview["preview_digest"],
+                ),
+            )
+            with pytest.raises(RuntimeError, match="probe_stage_failed"):
+                await runner(Workflow(store, run_id, owner, fault=fault))
+            persisted = await store.load(run_id, owner=owner)
+            before = point == "before_commit"
+            assert (await counts(store, run_id))["receipts"] == (0 if before else 1)
+            assert (await store.records(persisted))[0].version == (1 if before else 2)
+            result = await runner(Workflow(store, run_id, owner))
+            assert result["phase"] == "succeeded"
+            assert await counts(store, run_id) == {"dispatches": 2, "receipts": 1}
+            assert (await store.records(await store.load(run_id, owner=owner)))[0].version == 2
+        finally:
+            await cleanup_owned(store, run_id)
+
+    run(scenario())
+
+
+@pytest.mark.pg
+@pytest.mark.parametrize("engine", ["control", "graph"])
+def test_stale_snapshot_and_expired_confirmation_never_mutate(probe_database, engine):
+    async def scenario():
+        store = PgFrameStore(probe_database)
+        runner = {"control": run_control, "graph": run_graph}[engine]
+        for cause in ("source", "expiry", "contract"):
+            run_id, owner = uuid4(), f"synthetic-{uuid4()}"
+            workflow = Workflow(store, run_id, owner)
+            try:
+                await workflow.create("task", engine, (Record("a", 1, "Synthetic"),))
+                await runner(workflow)
+                await workflow.accept(generation=1, direction="apply_prefix")
+                preview = await runner(workflow)
+                await workflow.accept(
+                    generation=1,
+                    confirmation=ConfirmationContent(
+                        owner=owner,
+                        generation=1,
+                        preview_digest=preview["preview_digest"],
+                    ),
+                )
+                if cause == "source":
+                    connection = await asyncpg.connect(store._dsn)
+                    try:
+                        # Version-only drift must stop before title decryption.
+                        await connection.execute(
+                            "UPDATE mimi_probe_068.record SET version=2 WHERE run_id=$1", run_id
+                        )
+                    finally:
+                        await connection.close()
+                    result = await runner(Workflow(store, run_id, owner))
+                    assert result["phase"] == "repreview"
+                elif cause == "contract":
+                    frame = await store.load(run_id, owner=owner)
+                    body = dict(frame.content)
+                    body["contract_hash"] = "unknown-handler-contract"
+                    await store.save(frame, phase=frame.phase, content=body)
+                    result = await runner(Workflow(store, run_id, owner))
+                    assert result["phase"] == "repreview"
+                else:
+
+                    def clock():
+                        return datetime.now(UTC) + timedelta(hours=25)
+
+                    result = await runner(Workflow(store, run_id, owner, now=clock))
+                    assert result["phase"] == "expired"
+                assert (await counts(store, run_id))["receipts"] == 0
+                assert (await counts(store, run_id))["dispatches"] == 2
+            finally:
+                await cleanup_owned(store, run_id)
+
+    run(scenario())
+
+
+@pytest.mark.pg
+def test_client_replaced_operations_cannot_execute_even_with_matching_digest(probe_database):
+    async def scenario():
+        store = PgFrameStore(probe_database)
+        run_id, owner = uuid4(), f"synthetic-{uuid4()}"
+        workflow = Workflow(store, run_id, owner)
+        try:
+            await workflow.create("task", "control", (Record("a", 1, "Synthetic"),))
+            await run_control(workflow)
+            await workflow.accept(generation=1, direction="apply_prefix")
+            await run_control(workflow)
+            frame, body = await workflow.load()
+            preview = body.preview.preview()
+            forged = replace(preview, operations=(("a", "UNAUTHORIZED"),))
+            frame = await store.save(frame, phase="execute", content=frame.content)
+            with pytest.raises(ProbeBlocked, match="frozen_preview_mismatch"):
+                await store.execute(
+                    frame,
+                    forged,
+                    Confirmation(owner, 1, forged.digest),
+                    policy="probe-v1",
+                    now=datetime.now(UTC),
+                )
+            assert (await store.records(await store.load(run_id, owner=owner)))[
+                0
+            ].title == "Synthetic"
+            assert (await counts(store, run_id))["receipts"] == 0
+        finally:
+            await cleanup_owned(store, run_id)
+
+    run(scenario())
+
+
+@pytest.mark.pg
+def test_phase_cursor_alone_does_not_grant_confirmation_authority(probe_database):
+    async def scenario():
+        store = PgFrameStore(probe_database)
+        run_id, owner = uuid4(), f"synthetic-{uuid4()}"
+        workflow = Workflow(store, run_id, owner)
+        try:
+            await workflow.create("task", "control", (Record("a", 1, "Synthetic"),))
+            await run_control(workflow)
+            await workflow.accept(generation=1, direction="apply_prefix")
+            await run_control(workflow)
+            frame, body = await workflow.load()
+            preview = body.preview.preview()
+            assert body.confirmation is None
+            frame = await store.save(frame, phase="execute", content=frame.content)
+            with pytest.raises(ProbeBlocked, match="persisted_confirmation_required"):
+                await store.execute(
+                    frame,
+                    preview,
+                    Confirmation(owner, 1, preview.digest),
+                    policy="probe-v1",
+                    now=datetime.now(UTC),
+                )
             assert (await counts(store, run_id))["receipts"] == 0
         finally:
             await cleanup_owned(store, run_id)

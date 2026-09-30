@@ -38,13 +38,14 @@ class GraphRefs(TypedDict):
     generation: int
     state_schema_version: int
     policy_hash: str
+    contract_hash: str
     cursor: str
 
 
 def validate_refs(values: dict, expected: GraphRefs) -> None:
     if set(values) != set(expected):
         raise ProbeBlocked("graph_reference_shape_invalid")
-    for key in ("run_id", "generation", "policy_hash"):
+    for key in ("run_id", "generation", "policy_hash", "contract_hash"):
         if values[key] != expected[key] or type(values[key]) is not type(expected[key]):
             raise ProbeBlocked("graph_reference_identity_invalid")
     if type(values["state_schema_version"]) is not int or values["state_schema_version"] not in {
@@ -70,6 +71,7 @@ async def run_graph(workflow: Workflow) -> dict[str, object]:
         "generation": frame.generation,
         "state_schema_version": workflow.version,
         "policy_hash": hashlib.sha256(workflow.policy.encode()).hexdigest(),
+        "contract_hash": workflow.contract_hash,
         "cursor": frame.phase,
     }
     graph = StateGraph(GraphRefs)

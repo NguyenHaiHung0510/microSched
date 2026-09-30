@@ -8,7 +8,7 @@ import pytest
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from app.agent.workflow_probe.contracts import ProbeBlocked
+from app.agent.workflow_probe.contracts import ProbeBlocked, Record
 from app.agent.workflow_probe.store import PgFrameStore, local_probe_dsn
 from app.core import crypto
 
@@ -25,6 +25,30 @@ from app.core import crypto
 def test_probe_store_rejects_wrong_host_database_role_or_host_override(value):
     with pytest.raises(ProbeBlocked, match="local_probe_database_required"):
         local_probe_dsn(value)
+
+
+def test_record_storage_budget_blocks_before_crypto_or_connection(monkeypatch):
+    def forbidden_crypto():
+        raise AssertionError("record_budget_guard_was_bypassed")
+
+    monkeypatch.setattr(
+        "app.agent.workflow_probe.store.create_wrapped_dek", forbidden_crypto
+    )
+    store = PgFrameStore("postgresql://microsched_app@127.0.0.1:55466/microsched_p1ca_068")
+    now = datetime.now(UTC)
+    with pytest.raises(ProbeBlocked, match="frame_budget_exceeded"):
+        asyncio.run(
+            store.create(
+                uuid4(),
+                owner="synthetic-budget",
+                generation=1,
+                engine="control",
+                content={},
+                now=now,
+                expires_at=now + timedelta(hours=24),
+                records=(Record("synthetic-record", 1, "x" * 65536),),
+            )
+        )
 
 
 @pytest.mark.pg

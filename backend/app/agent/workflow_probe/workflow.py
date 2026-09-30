@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agent.workflow_probe.contracts import (
     NOTE_ADAPTER,
@@ -17,6 +18,7 @@ from app.agent.workflow_probe.contracts import (
     Preview,
     ProbeBlocked,
     Record,
+    canonical_json,
     freeze_preview,
 )
 from app.agent.workflow_probe.store import PgFrameStore, StoredFrame
@@ -27,7 +29,7 @@ Fault = Callable[[str], Awaitable[None]]
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
 
 class Source(StrictModel):
@@ -55,6 +57,7 @@ class PreviewContent(StrictModel):
     domain: Literal["task", "note"]
     sources: list[Source] = Field(max_length=16)
     operations: list[Operation] = Field(max_length=16)
+    groups: list[list[str]] = Field(min_length=1, max_length=16)
 
     def preview(self) -> Preview:
         return Preview(
@@ -65,6 +68,7 @@ class PreviewContent(StrictModel):
             self.domain,
             tuple(Record(s.id, s.version, s.title) for s in self.sources),
             tuple((o.id, o.title) for o in self.operations),
+            tuple(tuple(group) for group in self.groups),
         )
 
 
@@ -82,6 +86,7 @@ class Content(StrictModel):
     policy: str
     domain: Literal["task", "note"]
     authority_ref: str
+    contract_hash: str
     snapshot: list[Source] = Field(default_factory=list, max_length=16)
     groups: list[list[str]] = Field(default_factory=list, max_length=16)
     draft: str = ""
@@ -115,6 +120,18 @@ class Workflow:
         self.now = now or (lambda: datetime.now(UTC))
         self.fault = fault
         self.accounted_at = perf_counter()
+        self.contract_hash = hashlib.sha256(
+            canonical_json(
+                {
+                    "handler_contract": "synthetic-title-prefix-v1",
+                    "stages": STAGES,
+                    "task_prefix": TASK_ADAPTER.title_prefix,
+                    "note_prefix": NOTE_ADAPTER.title_prefix,
+                    "preview_schema": PreviewContent.model_json_schema(),
+                    "confirmation_schema": ConfirmationContent.model_json_schema(),
+                }
+            ).encode()
+        ).hexdigest()
 
     def wire(self, body: Content) -> dict[str, object]:
         value = body.model_dump()
@@ -126,7 +143,12 @@ class Workflow:
     async def create(self, domain: str, engine: str, records: tuple[Record, ...]) -> StoredFrame:
         if domain not in {"task", "note"}:
             raise ProbeBlocked("unsupported_synthetic_domain")
-        body = Content(policy=self.policy, domain=domain, authority_ref=str(uuid4()))
+        body = Content(
+            policy=self.policy,
+            domain=domain,
+            authority_ref=str(uuid4()),
+            contract_hash=self.contract_hash,
+        )
         created_at = self.now()
         return await self.store.create(
             self.run_id,
@@ -152,7 +174,10 @@ class Workflow:
                 raise ProbeBlocked("legacy_state_shape_invalid")
             raw["draft"] = raw.pop("draft_text")
             raw["schema_version"] = 2
-        body = Content.model_validate(raw)
+        try:
+            body = Content.model_validate(raw)
+        except ValidationError:
+            raise ProbeBlocked("invalid_content_schema") from None
         if stored_version == 1 and self.version == 2 and frame.phase not in STOPPED:
             body.events.append("representation_upgraded_v1_to_v2")
             frame = await self.store.save(frame, phase=frame.phase, content=self.wire(body))
@@ -160,7 +185,7 @@ class Workflow:
             if self.now() >= frame.expires_at:
                 body.stop_reason = "expired"
                 frame = await self.store.save(frame, phase="expired", content=self.wire(body))
-            elif body.policy != self.policy:
+            elif body.policy != self.policy or body.contract_hash != self.contract_hash:
                 body.confirmation = None
                 body.stop_reason = "policy_requires_repreview"
                 frame = await self.store.save(frame, phase="repreview", content=self.wire(body))
@@ -258,6 +283,15 @@ class Workflow:
         return frame, body, call.result
 
     async def step(self, expected: str) -> str:
+        try:
+            return await self._step(expected)
+        except ProbeBlocked:
+            raise
+        except Exception:
+            # Framework error writes must not serialize private provider/frame details.
+            raise RuntimeError("probe_stage_failed") from None
+
+    async def _step(self, expected: str) -> str:
         frame, body = await self.load()
         # A completed PG step may replay after a crash before the graph checkpoint.
         if frame.phase != expected:
@@ -305,6 +339,7 @@ class Workflow:
                 generation=frame.generation,
                 policy=body.policy,
                 authority_ref=body.authority_ref,
+                groups=tuple(tuple(group) for group in body.groups),
             )
             body.preview = PreviewContent.model_validate(preview.content())
             next_phase = "confirmation"
