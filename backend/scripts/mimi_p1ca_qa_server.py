@@ -25,6 +25,9 @@ from starlette.routing import Mount
 
 def _configure_synthetic_process() -> str:
     raw_url = os.environ.pop("MIMI_QA_DATABASE_URL", None)
+    selected_runner = os.environ.pop("MIMI_QA_RUNNER", "current")
+    if selected_runner not in {"current", "langgraph"}:
+        raise RuntimeError("MIMI_QA_RUNNER must be current or langgraph")
     if not raw_url:
         raise RuntimeError("MIMI_QA_DATABASE_URL is required for isolated browser QA")
     parsed = make_url(raw_url)
@@ -56,6 +59,7 @@ def _configure_synthetic_process() -> str:
             "MIMI_REAL_CHAT_ENABLED": "true",
             "MIMI_LIVE_PROVIDER_ENABLED": "true",
             "MIMI_CONTEXT_V1_ENABLED": "true",
+            "MIMI_RUNNER": selected_runner,
             "MIMI_RUN_DEADLINE_SECONDS": "30",
             "MIMI_STANDARD_API_KEY": "synthetic-never-sent",
             "MIMI_ROUTE_MODEL": "synthetic/p1ca-browser",
@@ -235,6 +239,20 @@ mimi_service.openrouter_get_generation = _fake_generation
 app = create_app()
 
 
+def main() -> None:
+    """Run this synthetic app with an explicit selector loop on Windows."""
+    import uvicorn
+
+    uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=8009,
+            loop="app.core.qa_event_loop:selector_loop_factory",
+        )
+    ).run()
+
+
 @app.middleware("http")
 async def qa_loopback_only(request: Request, call_next: Any) -> Any:
     """Fail closed if this test-only app is accidentally exposed off loopback."""
@@ -334,3 +352,7 @@ _spa_index = next(
     if isinstance(route, Mount) and route.path == ""
 )
 app.router.routes[_spa_index:_spa_index] = _qa_routes
+
+
+if __name__ == "__main__":
+    main()

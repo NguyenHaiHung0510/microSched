@@ -74,6 +74,33 @@ PROVIDER_HISTORY_BYTES = 65_536
 OWNER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
+async def _run_langgraph_agent(*args: Any, **kwargs: Any):
+    """Keep the optional prototype stack out of the default application import path."""
+    from app.agent.langgraph_runner import run_langgraph
+
+    if not kwargs.get("database_url"):
+        raise RouteContractError("mimi_langgraph_database_unavailable")
+    try:
+        return await run_langgraph(*args, **kwargs)
+    except (ProviderDispatchError, RouteContractError):
+        raise
+    except Exception as error:
+        raise RouteContractError("mimi_langgraph_checkpoint_runtime_failed") from error
+
+
+def _checkpoint_failure_outcome(error: BaseException, provider_call_state: str) -> str | None:
+    """Preserve journal truth when a graph checkpoint boundary refuses or fails."""
+    if not isinstance(error, RouteContractError) or not str(error).startswith(
+        "mimi_langgraph_checkpoint_"
+    ):
+        return None
+    if provider_call_state == "dispatched":
+        return "unknown"
+    if provider_call_state == "succeeded":
+        return "succeeded"
+    return None
+
+
 class MessageCreate(BaseModel):
     client_id: str = Field(min_length=1, max_length=160)
     content: str = Field(min_length=1, max_length=12_000)
@@ -1277,6 +1304,9 @@ async def send_message(
                 "reasoning_effort": settings.mimi_route_reasoning_effort,
                 "parent_run_id": str(parent_run_id) if parent_run_id else None,
                 "checkpoint": "provider_dispatch",
+                "runner_version": (
+                    "mimi-langgraph-v1" if settings.mimi_runner == "langgraph" else "current-v1"
+                ),
                 **(
                     {"run_guard_version": 1}
                     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
@@ -1508,21 +1538,46 @@ async def send_message(
                     await db.commit()
                     return rebound
 
-                loop_result = await run_read_loop(
-                    live_messages,
-                    limits=LoopLimits(
-                        max_turns=lease.max_turns,
-                        max_tool_calls=lease.max_tool_calls,
-                        max_serialized_bytes=(
-                            settings.mimi_route_context_tokens
-                            - settings.mimi_route_max_output_tokens
+                loop_result = (
+                    await run_read_loop(
+                        live_messages,
+                        limits=LoopLimits(
+                            max_turns=lease.max_turns,
+                            max_tool_calls=lease.max_tool_calls,
+                            max_serialized_bytes=(
+                                settings.mimi_route_context_tokens
+                                - settings.mimi_route_max_output_tokens
+                            ),
+                            deadline=deadline,
                         ),
-                        deadline=deadline,
-                    ),
-                    invoke_model=invoke_agent_model,
-                    execute_read=execute_agent_read,
-                    on_stage=persist_agent_stage,
-                    on_context_update=update_agent_context,
+                        invoke_model=invoke_agent_model,
+                        execute_read=execute_agent_read,
+                        on_stage=persist_agent_stage,
+                        on_context_update=update_agent_context,
+                    )
+                    if settings.mimi_runner == "current"
+                    else await _run_langgraph_agent(
+                        live_messages,
+                        limits=LoopLimits(
+                            max_turns=lease.max_turns,
+                            max_tool_calls=lease.max_tool_calls,
+                            max_serialized_bytes=(
+                                settings.mimi_route_context_tokens
+                                - settings.mimi_route_max_output_tokens
+                            ),
+                            deadline=deadline,
+                        ),
+                        invoke_model=invoke_agent_model,
+                        execute_read=execute_agent_read,
+                        run_id=run_id,
+                        generation=generation,
+                        policy_sha256=context_envelope.manifest.policy_sha256,
+                        tool_registry_sha256=context_envelope.manifest.tool_registry_sha256,
+                        output_schema_sha256=context_envelope.manifest.output_schema_sha256,
+                        database_url=settings.database_url,
+                        on_stage=persist_agent_stage,
+                        on_context_update=update_agent_context,
+                    )
                 )
                 outcome = loop_result.outcome
                 if isinstance(outcome, PreviewCandidate) and aggregate_read_seen:
@@ -1653,6 +1708,63 @@ async def send_message(
                     .with_for_update()
                 )
             ).scalar_one()
+            checkpoint_outcome = _checkpoint_failure_outcome(error, call.state)
+            if checkpoint_outcome == "unknown":
+                # The graph saver may contain a prior checkpoint for this run.
+                # Refusal to resume says nothing about provider delivery; keep
+                # the existing journal outcome unknown and let reconciliation own it.
+                call.state = "unknown"
+                call.result = {
+                    **(call.result or {}),
+                    "terminal": "unknown",
+                    "reason": str(error),
+                }
+                run.provider_outcome = "unknown"
+                run.state = "outcome_unknown"
+                run.error_code = "langgraph_checkpoint_requires_reconcile"
+                run.completed_at = datetime.now(UTC)
+                await _append_event(
+                    db,
+                    run_id,
+                    "run.terminal",
+                    {"state": run.state, "provider_outcome": "unknown"},
+                )
+                if conversation.generation == generation + 1:
+                    _add_assistant_message(
+                        db,
+                        conversation,
+                        run_id,
+                        dek,
+                        "Kết quả provider chưa xác định; Mimi sẽ không tự gửi lại yêu cầu.",
+                    )
+                await db.flush()
+                return await conversation_view(db, auth, conversation_id)
+            if checkpoint_outcome == "succeeded":
+                run.provider_outcome = "succeeded"
+                run.state = "halted"
+                run.error_code = "provider_result_not_delivered_after_checkpoint_failure"
+                run.completed_at = datetime.now(UTC)
+                await _append_event(
+                    db,
+                    run_id,
+                    "run.terminal",
+                    {
+                        "state": run.state,
+                        "provider_outcome": "succeeded",
+                        "error_code": run.error_code,
+                    },
+                )
+                if conversation.generation == generation + 1:
+                    _add_assistant_message(
+                        db,
+                        conversation,
+                        run_id,
+                        dek,
+                        "Mimi đã nhận phản hồi nhưng không thể lưu bước chạy tiếp theo. "
+                        "Chưa có thay đổi nào được ghi; bạn có thể gửi yêu cầu mới.",
+                    )
+                await db.flush()
+                return await conversation_view(db, auth, conversation_id)
             call.state = "unknown" if outcome == "unknown" else "failed"
             retained_response_id = (call.result or {}).get("response_id")
             call.result = {

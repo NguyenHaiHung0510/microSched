@@ -88,6 +88,8 @@ class Settings(BaseSettings):
     mimi_real_chat_enabled: bool = False
     mimi_live_provider_enabled: bool = False
     mimi_context_v1_enabled: bool = False
+    # Experimental execution engine. The default remains the shipped loop.
+    mimi_runner: Literal["current", "langgraph"] = "current"
     mimi_public_origin: str | None = None
     mimi_preview_ttl_minutes: int = 15
     mimi_run_deadline_seconds: int = 1_800
@@ -215,6 +217,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MIMI_PUBLIC_ORIGIN is required when Mimi real chat is enabled in production"
             )
+        if self.is_production and self.mimi_runner == "langgraph":
+            raise ValueError("MIMI_RUNNER=langgraph is local-prototype-only")
+        if self.mimi_runner == "langgraph" and not (
+            self.mimi_context_v1_enabled and self.mimi_live_provider_enabled
+        ):
+            raise ValueError("MIMI_RUNNER=langgraph requires the P1C-A context runner path")
         if self.mimi_live_provider_enabled and not self.mimi_real_chat_enabled:
             raise ValueError("MIMI_LIVE_PROVIDER_ENABLED requires MIMI_REAL_CHAT_ENABLED")
         if self.mimi_live_provider_enabled:
