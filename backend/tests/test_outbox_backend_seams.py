@@ -310,3 +310,52 @@ def test_client_id_replays_atomic_note_reorder_and_calendar_creates(pg_dsn: str)
                 await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_tracker_create_replays_same_uuidv7_before_name_conflict(pg_dsn: str) -> None:
+    """A readable same-ID retry returns the stored tracker, including same-name retries."""
+
+    async def scenario() -> None:
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        app = create_app()
+        auth_state = {"value": _auth()}
+
+        async def current_session() -> AuthSession:
+            return auth_state["value"]
+
+        async def request_session():
+            async with maker() as db:
+                try:
+                    yield db
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+        app.dependency_overrides[require_session] = current_session
+        app.dependency_overrides[get_session] = request_session
+        transport = httpx.ASGITransport(app=app)
+        tracker_id = _uuid7()
+        payload = {
+            "id": str(tracker_id),
+            "name": f"outbox070 replay {tracker_id}",
+            "kind": "health",
+            "input_mode": "event",
+        }
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                first = await client.post("/api/tracker/trackers", json=payload)
+                replay = await client.post("/api/tracker/trackers", json=payload)
+                assert first.status_code == 201
+                assert replay.status_code == 200
+                assert replay.json() == first.json()
+        finally:
+            conn = await asyncpg.connect(pg_dsn)
+            try:
+                await conn.execute("DELETE FROM microsched.tracker WHERE id = $1", tracker_id)
+            finally:
+                await conn.close()
+                await engine.dispose()
+
+    asyncio.run(scenario())

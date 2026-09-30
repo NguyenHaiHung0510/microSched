@@ -476,6 +476,12 @@ def test_entry_idempotent_create(pg_dsn: str):
             assert first.status_code == 201
             assert repeated.status_code == 200
             assert first.json() == repeated.json()
+            changed_retry = await client.post(
+                "/api/tracker/entries",
+                json={**payload, "amount": 99000, "note_md": "changed retry"},
+            )
+            assert changed_retry.status_code == 200
+            assert changed_retry.json() == first.json()
             conn = await asyncpg.connect(pg_dsn)
             try:
                 assert (
