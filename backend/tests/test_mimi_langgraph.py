@@ -31,7 +31,7 @@ from app.core.qa_event_loop import selector_loop_factory
 
 
 def _run(coroutine):
-    asyncio.run(coroutine, loop_factory=selector_loop_factory())
+    asyncio.run(coroutine, loop_factory=selector_loop_factory)
 
 
 def _completion(outcome):
@@ -384,7 +384,14 @@ def test_existing_checkpoint_blocks_dispatch_before_resume() -> None:
 
 
 def test_local_qa_selector_loop_factory_is_scoped_and_operational():
-    loop = selector_loop_factory()()
+    from uvicorn import Config
+
+    # Uvicorn passes a custom dotted callable directly to asyncio.Runner.
+    factory = Config(
+        "unused:app", loop="app.core.qa_event_loop:selector_loop_factory"
+    ).get_loop_factory()
+    assert factory is not None
+    loop = factory()
     try:
         assert isinstance(loop, asyncio.SelectorEventLoop)
         assert not isinstance(loop, asyncio.ProactorEventLoop)
