@@ -30,3 +30,13 @@ export function isFutureActivityDay(day: string, now = new Date()): boolean {
   const today = `${value('year')}-${value('month')}-${value('day')}`
   return day > today
 }
+
+/** Current Vietnamese week in this month; historical months start at their first week. */
+export function initialReportWeek(month: string, now = new Date()): number {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now)
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? ''
+  if (month !== `${value('year')}-${value('month')}`) return 0
+  return Math.floor((reportMonthOffset(month) + Number(value('day')) - 1) / 7)
+}

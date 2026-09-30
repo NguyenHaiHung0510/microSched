@@ -49,3 +49,17 @@ describe('route-aware retry decisions', () => {
     expect(classifyOutboxError(row(), error, true, 0).retryAt).toBe(5000)
   })
 })
+
+describe('I-JSON string safety', () => {
+  it.each([0xd800, 0xdfff])('rejects lone surrogate codepoint %i in values and keys', async (code) => {
+    const invalid = String.fromCharCode(code)
+    await expect(payloadReceipt(invalid)).rejects.toThrow()
+    await expect(payloadReceipt({ [invalid]: 'value' })).rejects.toThrow()
+  })
+  it('preserves valid supplementary Unicode and accepts HTTP-date Retry-After', async () => {
+    expect((await payloadReceipt('🌷')).payload_json).toBe('"🌷"')
+    const now = Date.parse('2026-09-30T16:00:00.000Z')
+    const error = new ApiError(429, 'retry', {}, new Headers({ 'Retry-After': 'Wed, 30 Sep 2026 16:00:05 GMT' }))
+    expect(classifyOutboxError(row(), error, true, now).retryAt).toBe(now + 5000)
+  })
+})

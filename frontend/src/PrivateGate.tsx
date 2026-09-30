@@ -27,6 +27,7 @@ import { taskInvalidationKey } from '@/task-ui'
 import { noteInvalidationKey } from '@/note-ui'
 import { trackerInvalidationKey } from '@/tracker-ui'
 import { subscriptionInvalidationKey } from '@/subscription-ui'
+import { purgePrivateSurface } from '@/lib/public-cache'
 
 type Props = {
   session: PrivateSessionState
@@ -81,6 +82,8 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
   const expireIfNeeded = useCallback(() => {
     if (!expirePrivateSession(queryClient, privateUntil)) return false
     setPrivateOverride(null)
+    queryClient.setQueryData(['session'], (old: PrivateSessionState | undefined) => old ? { ...old, private_until: null } : old)
+    void purgePrivateSurface(queryClient)
     invalidateStatus()
     void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
     void queryClient.invalidateQueries({ queryKey: ['calendar'] })
@@ -151,6 +154,8 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
     mutationFn: unlockPrivate,
     onSuccess: (result) => {
       setPrivateOverride(result.private_until)
+      queryClient.setQueryData(['session'], (old: PrivateSessionState | undefined) => old ? { ...old, private_until: result.private_until } : old)
+      window.dispatchEvent(new Event('microsched:outbox-session-changed'))
       setLockedOverride(null)
       setPin('')
       setErrorText(null)
@@ -179,6 +184,8 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
       queryClient.removeQueries({ queryKey: subscriptionInvalidationKey })
       queryClient.removeQueries({ queryKey: ['reminders'] })
       setPrivateOverride(null)
+      queryClient.setQueryData(['session'], (old: PrivateSessionState | undefined) => old ? { ...old, private_until: null } : old)
+      void purgePrivateSurface(queryClient)
       setErrorText(null)
       invalidateStatus()
       void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })

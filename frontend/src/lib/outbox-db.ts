@@ -1,13 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie'
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
-export type OutboxState =
-  | 'pending'
-  | 'auth_hold'
-  | 'private_hold'
-  | 'outcome_unknown'
-  | 'failed'
-  | 'suppressed'
+export type OutboxState = 'pending' | 'auth_hold' | 'private_hold' | 'outcome_unknown' | 'failed' | 'suppressed'
 
 export type OutboxRow = {
   operation_id?: number
@@ -31,6 +25,7 @@ export type OutboxRow = {
   next_attempt_at: number | null
   created_at: number
   last_error_code: string | null
+  timeout_ms?: number
 }
 
 type OutboxDb = Dexie & { outbox: EntityTable<OutboxRow, 'operation_id'> }
@@ -60,6 +55,7 @@ export async function outboxDatabase(): Promise<OutboxDb | null> {
 }
 
 function canonical(value: Json): string {
+  if (typeof value === 'string' && /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value)) throw new TypeError('Outbox payload must contain valid Unicode')
   if (value === null || typeof value === 'boolean' || typeof value === 'string') {
     return JSON.stringify(value)
   }
@@ -73,7 +69,7 @@ function canonical(value: Json): string {
   }
   return `{${Object.keys(value)
     .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+    .map((key) => `${canonical(key)}:${canonical(value[key])}`)
     .join(',')}}`
 }
 
@@ -95,20 +91,55 @@ export async function enqueueOutbox(
   const receipt = await payloadReceipt(row.body)
   const stored = { ...row, ...receipt }
   const operation_id = await db.transaction('rw', db.outbox, async () => {
-    if (row.idempotency_mode === 'absolute' && row.entity_id) {
-      const older = await db.outbox.where('entity_id').equals(row.entity_id).toArray()
-      const replaceable = older.filter(
-        (item) =>
-          item.operation_kind === row.operation_kind &&
-          item.state === 'pending' &&
-          item.attempts === 0,
-      )
-      if (replaceable.length) await db.outbox.bulkDelete(replaceable.map((item) => item.operation_id!))
+    const rows = await db.outbox.orderBy('operation_id').toArray()
+    const ownCreate = rows.find((item) => item.entity_id === row.entity_id && item.idempotency_mode === 'client_uuid')
+    const parent = ownCreate ?? rows.find((item) => item.entity_id === row.parent_id && item.idempotency_mode === 'client_uuid')
+    stored.dependency_operation_id ??= parent?.operation_id ?? null
+    if (stored.dependency_operation_id && !rows.some((item) => item.operation_id === stored.dependency_operation_id)) {
+      throw new Error('Outbox dependency must refer to an existing operation')
+    }
+    if (row.method === 'DELETE' && ownCreate) {
+      const ids = descendantIds(rows, ownCreate.operation_id!)
+      const tree = rows.filter((item) => ids.has(item.operation_id!))
+      if (tree.every((item) => item.state === 'pending' && item.attempts === 0)) {
+        await db.outbox.bulkDelete(tree.map((item) => item.operation_id!))
+        return undefined
+      }
+    }
+    const previous = [...rows].reverse().find((item) => item.entity_id === row.entity_id && item.path === row.path &&
+      item.operation_kind === row.operation_kind && item.requires_private === row.requires_private &&
+      item.state === 'pending' && item.attempts === 0 && !rows.some((child) => child.dependency_operation_id === item.operation_id))
+    if (row.method === 'PATCH' && row.idempotency_mode === 'absolute' && previous &&
+      previous.body && row.body && !Array.isArray(previous.body) && !Array.isArray(row.body) &&
+      typeof previous.body === 'object' && typeof row.body === 'object') {
+      stored.body = { ...previous.body, ...row.body }
+      Object.assign(stored, await Dexie.waitFor(payloadReceipt(stored.body)))
+      await db.outbox.delete(previous.operation_id!)
     }
     return db.outbox.add(stored)
   })
   emitChanged()
   return { ...stored, operation_id }
+}
+
+function descendantIds(rows: OutboxRow[], rootId: number) {
+  const ids = new Set([rootId])
+  for (const row of rows) {
+    if (row.dependency_operation_id && ids.has(row.dependency_operation_id)) ids.add(row.operation_id!)
+  }
+  return ids
+}
+
+export async function claimOutbox(id: number): Promise<OutboxRow | null> {
+  const db = await outboxDatabase()
+  if (!db) return null
+  return db.transaction('rw', db.outbox, async () => {
+    const row = await db.outbox.get(id)
+    if (!row || !['pending', 'outcome_unknown'].includes(row.state)) return null
+    const claimed = { ...row, state: 'outcome_unknown' as const, attempts: row.attempts + 1 }
+    await db.outbox.put(claimed)
+    return claimed
+  })
 }
 
 export async function listOutbox(): Promise<OutboxRow[]> {
@@ -119,12 +150,9 @@ export async function listOutbox(): Promise<OutboxRow[]> {
 export async function updateOutbox(id: number, changes: Partial<OutboxRow>) {
   const db = await outboxDatabase()
   if (!db) return
-  const immutable = { ...changes }
-  delete immutable.payload_json
-  delete immutable.payload_sha256
-  delete immutable.payload_byte_length
-  delete immutable.body
-  await db.outbox.update(id, immutable)
+  const runtimeKeys = ['state', 'attempts', 'next_attempt_at', 'last_error_code']
+  const mutable = Object.fromEntries(Object.entries(changes).filter(([key]) => runtimeKeys.includes(key))) as Partial<Pick<OutboxRow, 'state' | 'attempts' | 'next_attempt_at' | 'last_error_code'>>
+  await db.outbox.update(id, mutable)
   emitChanged()
 }
 
@@ -137,17 +165,8 @@ export async function removeOutbox(ids: number[]) {
 
 export async function discardOutboxTree(rootId: number): Promise<OutboxRow[]> {
   const rows = await listOutbox()
-  const ids = new Set([rootId])
-  for (const row of rows) {
-    if (row.dependency_operation_id && ids.has(row.dependency_operation_id)) ids.add(row.operation_id!)
-  }
+  const ids = descendantIds(rows, rootId)
   const discarded = rows.filter((row) => ids.has(row.operation_id!))
   await removeOutbox([...ids])
   return discarded
-}
-
-export function resetOutboxAvailabilityForTests() {
-  database?.close()
-  database = null
-  unavailable = false
 }

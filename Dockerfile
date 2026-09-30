@@ -5,6 +5,8 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
+ARG GIT_SHA=unknown
+ENV VITE_GIT_SHA=${GIT_SHA}
 COPY frontend/ ./
 RUN npm run build
 

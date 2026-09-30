@@ -1,74 +1,31 @@
 import type { QueryClient } from '@tanstack/react-query'
-
-import { ApiError, apiRequest, TimeoutError } from '@/api'
+import { ApiError, apiRequest } from '@/api'
 import { adapterFor, type CommandInput, type OperationKind } from '@/lib/outbox-adapters'
-import { enqueueOutbox, type Json, type OutboxRow } from '@/lib/outbox-db'
-
-function isTransportError(error: unknown) {
-  return error instanceof TimeoutError || error instanceof TypeError
-}
-
+import { enqueueOutbox, payloadReceipt, type Json } from '@/lib/outbox-db'
+import { persistConfirmedSnapshot } from '@/lib/public-cache'
 export async function queuedRequest<T>(
-  client: QueryClient,
-  operationKind: OperationKind,
-  input: CommandInput,
+  client: QueryClient, operationKind: OperationKind, input: CommandInput,
   init?: { timeoutMs?: number },
 ): Promise<T> {
   const adapter = adapterFor(operationKind)
-  const body = input.body ?? null
-  const base: Omit<
-    OutboxRow,
-    'operation_id' | 'payload_json' | 'payload_sha256' | 'payload_byte_length'
-  > = {
-    operation_kind: operationKind,
-    resource: adapter.resource,
-    method: adapter.method,
-    path: input.path,
-    body,
-    entity_id: input.entityId ?? entityIdFromBody(body),
-    parent_id: input.parentId ?? null,
-    requires_private: input.requiresPrivate ?? false,
-    idempotency_mode: adapter.idempotencyMode,
-    dependency_operation_id: input.dependencyOperationId ?? null,
-    group_id: input.groupId ?? null,
-    affected_query_keys: adapter.affectedQueryKeys(input).map((key) => [...key] as Json[]),
-    state: 'pending',
-    attempts: 0,
-    next_attempt_at: null,
-    created_at: Date.now(),
-    last_error_code: null,
+  const encoded = adapter.encodeCommand({ ...input, operationKind })
+  try { await persistConfirmedSnapshot(client) } catch { window.dispatchEvent(new Event('microsched:offline-unavailable')) }
+  const command = {
+    ...encoded, affected_query_keys: encoded.affected_query_keys.map((key) => [...key] as Json[]),
+    state: 'pending' as const, attempts: 0, next_attempt_at: null, created_at: Date.now(),
+    last_error_code: null, timeout_ms: init?.timeoutMs,
   }
-
-  if (navigator.onLine) {
-    try {
-      const response = await apiRequest<T>(input.path, {
-        method: adapter.method,
-        body: body === null ? undefined : JSON.stringify(body),
-        timeoutMs: init?.timeoutMs,
-      })
-      await adapter.reconcileSuccess(
-        client,
-        { ...base, payload_json: '', payload_sha256: '', payload_byte_length: 0 },
-        response,
-      )
-      return response
-    } catch (error) {
-      if (!isTransportError(error)) throw error
-      base.state = 'outcome_unknown'
-      base.attempts = 1
-      base.next_attempt_at = Date.now() + 1000
-      base.last_error_code = error instanceof TimeoutError ? 'TIMEOUT' : 'NETWORK'
-    }
+  const row = await enqueueOutbox(command)
+  if (!row) {
+    if (!navigator.onLine) throw new ApiError(507, 'Không thể lưu ngoại tuyến')
+    const confirmed = await apiRequest<T>(encoded.path, { method: encoded.method,
+      body: encoded.body === null ? undefined : JSON.stringify(encoded.body), timeoutMs: init?.timeoutMs })
+    try { await adapter.reconcileSuccess(client, { ...command, ...await payloadReceipt(command.body) }, confirmed) }
+    catch { window.dispatchEvent(new Event('microsched:outbox-reconcile-unavailable')) }
+    await Promise.all(encoded.affected_query_keys.map((queryKey) => client.invalidateQueries({ queryKey })))
+    return confirmed
   }
-
-  const row = await enqueueOutbox(base)
-  if (!row) throw new ApiError(507, 'Không thể lưu ngoại tuyến')
   await adapter.optimisticApply(client, row)
   window.dispatchEvent(new Event('microsched:outbox-flush-requested'))
   return adapter.optimisticResponse(row) as T
-}
-
-function entityIdFromBody(body: Json | null): string | null {
-  if (!body || Array.isArray(body) || typeof body !== 'object') return null
-  return typeof body.id === 'string' ? body.id : null
 }

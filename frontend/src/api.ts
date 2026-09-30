@@ -100,6 +100,7 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
     response.status === 401 &&
     (body === undefined || detail === 'Not authenticated')
   ) {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('microsched:unauthenticated'))
     throw new UnauthenticatedError('No active session')
   }
 

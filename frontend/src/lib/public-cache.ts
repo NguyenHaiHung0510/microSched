@@ -5,7 +5,8 @@ import {
   type PersistedClient,
   type Persister,
 } from '@tanstack/query-persist-client-core'
-import type { QueryClient } from '@tanstack/react-query'
+import { dehydrate, type QueryClient } from '@tanstack/react-query'
+import { listOutbox, type OutboxRow } from '@/lib/outbox-db'
 
 const DB_NAME = 'microsched-public-cache'
 const STORE = 'snapshots'
@@ -42,9 +43,11 @@ async function read<T>(key: string): Promise<T | undefined> {
 async function write(key: string, value: unknown) {
   const db = await openCacheDb()
   return new Promise<void>((resolve, reject) => {
-    const request = db.transaction(STORE, 'readwrite').objectStore(STORE).put(value, key)
-    request.onsuccess = () => resolve()
-    request.onerror = () => reject(request.error)
+    const transaction = db.transaction(STORE, 'readwrite')
+    transaction.objectStore(STORE).put(value, key)
+    transaction.oncomplete = () => resolve()
+    transaction.onabort = () => reject(transaction.error)
+    transaction.onerror = () => reject(transaction.error)
   }).finally(() => db.close())
 }
 
@@ -54,6 +57,7 @@ async function remove(keys: string[]) {
     const transaction = db.transaction(STORE, 'readwrite')
     for (const key of keys) transaction.objectStore(STORE).delete(key)
     transaction.oncomplete = () => resolve()
+    transaction.onabort = () => reject(transaction.error)
     transaction.onerror = () => reject(transaction.error)
   }).finally(() => db.close())
 }
@@ -100,7 +104,7 @@ export function sanitizePersistedClient(client: PersistedClient): PersistedClien
     let safe: unknown
     if (key[0] === 'notes' && key.length === 1 && Array.isArray(data)) {
       safe = publicItems(data)
-    } else if (key[0] === 'tasks' && ['all', 'timeline'].includes(String(key[1]))) {
+    } else if (key[0] === 'tasks' && ['all', 'open', 'completed', 'timeline'].includes(String(key[1]))) {
       if (Array.isArray(data)) safe = publicItems(data)
       else if (list) {
         safe = key[1] === 'timeline'
@@ -136,13 +140,54 @@ export function sanitizePersistedClient(client: PersistedClient): PersistedClien
   next.clientState.mutations = []
   return next
 }
+export function preserveConfirmedBaseline(
+  current: PersistedClient, previous: PersistedClient | undefined,
+  pending: Pick<OutboxRow, 'affected_query_keys'>[],
+): PersistedClient {
+  const compatible = previous?.buster === current.buster &&
+    current.timestamp - previous.timestamp <= QUERY_MAX_AGE ? previous : undefined
+  const overlaps = (key: readonly unknown[]) => pending.some((row) =>
+    row.affected_query_keys.some((affected) => affected.slice(0, Math.min(key.length, affected.length))
+      .every((part, index) => JSON.stringify(part) === JSON.stringify(key[index]))))
+  const queries = new Map(current.clientState.queries.filter((query) => !overlaps(keyOf(query)))
+    .map((query) => [query.queryHash, query]))
+  for (const query of compatible?.clientState.queries ?? []) {
+    if (overlaps(keyOf(query))) queries.set(query.queryHash, query)
+  }
+  return sanitizePersistedClient({ ...current, clientState: {
+    mutations: [], queries: [...queries.values()],
+  } })
+}
+
+let persistenceJobs = Promise.resolve()
+let persistenceEpoch = 0
+async function persistConfirmedClient(client: PersistedClient) {
+  const snapshot = structuredClone(client)
+  const epoch = persistenceEpoch
+  const job = persistenceJobs.catch(() => undefined).then(async () => {
+    if (epoch !== persistenceEpoch) return
+    const [previous, pending] = await Promise.all([read<PersistedClient>(CACHE_KEY), listOutbox()])
+    await write(CACHE_KEY, preserveConfirmedBaseline(snapshot, previous, pending))
+  })
+  persistenceJobs = job
+  return job
+}
+
+export async function persistConfirmedSnapshot(client: QueryClient) {
+  await persistConfirmedClient({ buster: CACHE_BUSTER, timestamp: Date.now(), clientState: dehydrate(client) })
+}
+
 const persister: Persister = {
-  persistClient: (client) => write(CACHE_KEY, sanitizePersistedClient(client)),
+  persistClient: persistConfirmedClient,
   restoreClient: async () => {
     const saved = await read<PersistedClient>(CACHE_KEY)
     return saved ? sanitizePersistedClient(saved) : undefined
   },
-  removeClient: () => remove([CACHE_KEY]),
+  removeClient: async () => {
+    persistenceEpoch += 1
+    await persistenceJobs.catch(() => undefined)
+    await remove([CACHE_KEY])
+  },
 }
 
 export async function initializePublicPersistence(client: QueryClient) {
@@ -167,6 +212,10 @@ export async function saveSessionBootstrap(session: SessionBootstrap) {
   } satisfies SessionBootstrap)
 }
 
+export async function publicSnapshotTimestamp(): Promise<number | null> {
+  try { return (await read<PersistedClient>(CACHE_KEY))?.timestamp ?? null } catch { return null }
+}
+
 export async function loadSessionBootstrap(): Promise<SessionBootstrap | null> {
   try {
     const snapshot = await read<SessionBootstrap>(BOOTSTRAP_KEY)
@@ -178,7 +227,9 @@ export async function loadSessionBootstrap(): Promise<SessionBootstrap | null> {
 
 export async function purgePrivateSurface(client: QueryClient, full = false) {
   if (full) {
+    persistenceEpoch += 1
     client.clear()
+    await persistenceJobs.catch(() => undefined)
     await remove([CACHE_KEY, BOOTSTRAP_KEY])
     return
   }

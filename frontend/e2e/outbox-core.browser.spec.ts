@@ -1,0 +1,120 @@
+import { expect, test } from '@playwright/test'
+
+test('real IndexedDB persists claims, atomic dependencies and unsent coalescing', async ({ page }) => {
+  // Core diagnostic lane only: no app shell, PWA or API acceptance claim.
+  await page.goto('/denied.html')
+  const result = await page.evaluate(async () => {
+    const moduleUrl = '/src/lib/outbox-db.ts'
+    const db = await import(moduleUrl)
+    const command = (id: string, body: Record<string, unknown>, parent: string | null = null) => ({
+      operation_kind: parent ? 'task_item.create' : 'task.create', resource: parent ? 'task_item' : 'task',
+      method: 'POST', path: parent ? `/api/tasks/${parent}/items` : '/api/tasks',
+      body, entity_id: id, parent_id: parent, requires_private: false, idempotency_mode: 'client_uuid',
+      dependency_operation_id: null, group_id: null, affected_query_keys: [['tasks']],
+      state: 'pending', attempts: 0, next_attempt_at: null, created_at: Date.now(), last_error_code: null,
+    })
+    const parent = await db.enqueueOutbox(command('parent', { id: 'parent', title: 'synthetic' }))
+    const child = await db.enqueueOutbox(command('child', { id: 'child', content: 'synthetic child' }, 'parent'))
+    const patch = await db.enqueueOutbox({ ...command('parent', { title: 'edited' }),
+      operation_kind: 'task.update', method: 'PATCH', path: '/api/tasks/parent', idempotency_mode: 'absolute' })
+    const first = await db.listOutbox()
+    const cancellation = await db.enqueueOutbox({ ...command('parent', null as unknown as Record<string, unknown>),
+      operation_kind: 'task.delete', method: 'DELETE', path: '/api/tasks/parent', idempotency_mode: 'postcondition' })
+    const afterCancellation = await db.listOutbox()
+    const original = await db.enqueueOutbox({ ...command('existing', { title: 'first' }),
+      operation_kind: 'task.update', method: 'PATCH', path: '/api/tasks/existing', idempotency_mode: 'absolute' })
+    const merged = await db.enqueueOutbox({ ...command('existing', { pinned: true }),
+      operation_kind: 'task.update', method: 'PATCH', path: '/api/tasks/existing', idempotency_mode: 'absolute' })
+    const mergedRows = await db.listOutbox()
+    const claimed = await db.claimOutbox(merged.operation_id)
+    await db.updateOutbox(claimed.operation_id, { body: { title: 'illegal mutation' }, payload_json: 'illegal mutation', attempts: 1 })
+    const reloaded = await db.listOutbox()
+    const discarded = []
+    const claimedOperation = claimed.operation_id
+    return { dependencies: [child.dependency_operation_id, patch.dependency_operation_id], parentId: parent.operation_id,
+      initialCount: first.length, cancelledOperation: cancellation.operation_id ?? null,
+      afterCancellation: afterCancellation.length, oldOperation: original.operation_id, newOperation: merged.operation_id,
+      mergedCount: mergedRows.length, mergedBody: merged.body, claimedState: claimed.state, claimedAttempts: claimed.attempts,
+      reloadedState: reloaded[0]?.state, immutable: reloaded[0]?.payload_sha256 === merged.payload_sha256 && reloaded[0]?.payload_json === merged.payload_json,
+      claimedOperation, confirmedDigest: merged.payload_sha256, discarded: discarded.length, remaining: (await db.listOutbox()).length }
+  })
+  expect(result.dependencies).toEqual([result.parentId, result.parentId])
+  expect(result.initialCount).toBe(3)
+  expect(result.cancelledOperation).toBeNull()
+  expect(result.afterCancellation).toBe(0)
+  expect(result.newOperation).not.toBe(result.oldOperation)
+  expect(result.mergedCount).toBe(1)
+  expect(result.mergedBody).toEqual({ title: 'first', pinned: true })
+  expect(result.claimedState).toBe('outcome_unknown')
+  expect(result.claimedAttempts).toBe(1)
+  expect(result.reloadedState).toBe('outcome_unknown')
+  expect(result.immutable).toBe(true)
+  await page.reload()
+  const reopened = await page.evaluate(async ({ operationId, digest }) => {
+    const moduleUrl = '/src/lib/outbox-db.ts'
+    const db = await import(moduleUrl)
+    const rows = await db.listOutbox()
+    const immutable = rows[0]?.payload_sha256 === digest &&
+      (await db.payloadReceipt(rows[0].body)).payload_sha256 === digest
+    const discarded = await db.discardOutboxTree(operationId)
+    return { state: rows[0]?.state, attempts: rows[0]?.attempts, immutable,
+      discarded: discarded.length, remaining: (await db.listOutbox()).length }
+  }, { operationId: result.claimedOperation, digest: result.confirmedDigest })
+  expect(reopened).toEqual({ state: 'outcome_unknown', attempts: 1, immutable: true, discarded: 1, remaining: 0 })
+  console.log(JSON.stringify({ lane: 'real-indexeddb-core-only', result, reopened }))
+})
+
+test('API acknowledgment survives a cache reconciliation failure', async ({ page }) => {
+  // A fixture transport proves this cache-failure boundary, not real API/PG/PWA.
+  let requests = 0
+  await page.route('**/api/tasks/confirmed-target', route => {
+    requests += 1
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"id":"confirmed-target","title":"saved"}' })
+  })
+  await page.goto('/denied.html')
+  const result = await page.evaluate(async () => {
+    const fixtureUrl = '/e2e/outbox-core-fixture.ts'
+    const fixture = await import(fixtureUrl)
+    const client = new fixture.QueryClient()
+    let recoveries = 0
+    client.invalidateQueries = async () => { recoveries += 1 }
+    fixture.outboxAdapters['task.update'].reconcileSuccess = async () => { throw new Error('synthetic cache failure') }
+    await fixture.enqueueOutbox({ operation_kind: 'task.update', resource: 'task', method: 'PATCH',
+      path: '/api/tasks/confirmed-target', body: { title: 'saved' }, entity_id: 'confirmed-target', parent_id: null,
+      requires_private: false, idempotency_mode: 'absolute', dependency_operation_id: null, group_id: null,
+      affected_query_keys: [['tasks']], state: 'pending', attempts: 0, next_attempt_at: null,
+      created_at: Date.now(), last_error_code: null })
+    await fixture.flushOutbox(client)
+    return { rows: (await fixture.listOutbox()).map((row: { state: string }) => row.state), recoveries }
+  })
+  expect(requests).toBe(1)
+  expect(result).toEqual({ rows: [], recoveries: 1 })
+  console.log(JSON.stringify({ lane: 'fixture-transport-cache-boundary', result, requests }))
+})
+
+test('known loss of connectivity before dispatch restores attempts and pending payload', async ({ page }) => {
+  let requests = 0
+  await page.route('**/api/tasks/not-dispatched', route => { requests += 1; return route.abort() })
+  await page.goto('/denied.html')
+  const result = await page.evaluate(async () => {
+    const fixtureUrl = '/e2e/outbox-core-fixture.ts'
+    const fixture = await import(fixtureUrl)
+    const client = new fixture.QueryClient()
+    let predispatchEvents = 0
+    window.addEventListener('microsched:outbox-not-attempted', () => { predispatchEvents += 1 })
+    // The deterministic transition occurs during cancellation, before API transport.
+    client.cancelQueries = async () => { Object.defineProperty(navigator, 'onLine', { configurable: true, value: false }) }
+    const original = await fixture.enqueueOutbox({ operation_kind: 'task.update', resource: 'task', method: 'PATCH',
+      path: '/api/tasks/not-dispatched', body: { title: 'retained' }, entity_id: 'not-dispatched', parent_id: null,
+      requires_private: false, idempotency_mode: 'absolute', dependency_operation_id: null, group_id: null,
+      affected_query_keys: [['tasks']], state: 'pending', attempts: 0, next_attempt_at: null,
+      created_at: Date.now(), last_error_code: null })
+    await fixture.flushOutbox(client)
+    const rows = await fixture.listOutbox()
+    return { state: rows[0]?.state, attempts: rows[0]?.attempts,
+      retained: rows[0]?.payload_sha256 === original.payload_sha256, predispatchEvents }
+  })
+  expect(requests).toBe(0)
+  expect(result).toEqual({ state: 'pending', attempts: 0, retained: true, predispatchEvents: 1 })
+  console.log(JSON.stringify({ lane: 'known-not-attempted-core-boundary', result, requests }))
+})

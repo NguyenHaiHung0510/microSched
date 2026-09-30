@@ -1,9 +1,9 @@
 import type { QueryClient } from '@tanstack/react-query'
-
 import { ApiError, apiRequest, TimeoutError, UnauthenticatedError } from '@/api'
 import { adapterFor } from '@/lib/outbox-adapters'
 import {
   listOutbox,
+  claimOutbox,
   removeOutbox,
   updateOutbox,
   type OutboxRow,
@@ -73,60 +73,73 @@ function backoff(attempt: number) {
   return Math.min(30, 2 ** Math.max(0, attempt - 1)) * 1000
 }
 
-function privateIsUnlocked(client: QueryClient): boolean {
+function privateIsUnlocked(client: QueryClient) {
   const session = client.getQueryData<{ private_until?: string | null }>(['session'])
   return Boolean(session?.private_until && Date.parse(session.private_until) > Date.now())
 }
 
-async function suppressDescendants(rows: OutboxRow[], parentId: number) {
-  const queue = [parentId]
-  while (queue.length) {
-    const id = queue.shift()!
-    for (const child of rows.filter((row) => row.dependency_operation_id === id)) {
-      await updateOutbox(child.operation_id!, { state: 'suppressed', last_error_code: 'PARENT_FAILED' })
-      queue.push(child.operation_id!)
-    }
-  }
-}
-
-async function executeRow(client: QueryClient, row: OutboxRow, rows: OutboxRow[]) {
-  try {
-    const response = await apiRequest<unknown>(row.path, {
-      method: row.method,
-      body: row.body === null ? undefined : row.payload_json,
-    })
-    await adapterFor(row.operation_kind).reconcileSuccess(client, row, response)
-    await removeOutbox([row.operation_id!])
-  } catch (error) {
-    const verdict = classifyOutboxError(row, error, privateIsUnlocked(client))
-    if (verdict.state === 'success') {
-      await removeOutbox([row.operation_id!])
-      return
-    }
-    const attempts = verdict.state === 'outcome_unknown' ? row.attempts + 1 : row.attempts
-    await updateOutbox(row.operation_id!, {
-      state: verdict.state,
-      attempts,
-      next_attempt_at: verdict.retryAt ?? null,
-      last_error_code: verdict.code ?? null,
-    })
-    if (verdict.state === 'failed') await suppressDescendants(rows, row.operation_id!)
-  }
-}
-
 async function runFlush(client: QueryClient) {
   const rows = await listOutbox()
-  const byId = new Map(rows.map((row) => [row.operation_id!, row]))
+  const active = new Map(rows.map((row) => [row.operation_id!, row]))
+  const touched = new Map<string, readonly unknown[]>()
   for (const row of rows) {
-    if (!['pending', 'outcome_unknown'].includes(row.state)) continue
-    if (row.next_attempt_at && row.next_attempt_at > Date.now()) continue
-    const parent = row.dependency_operation_id ? byId.get(row.dependency_operation_id) : null
-    if (parent && parent.state !== 'failed' && parent.state !== 'suppressed') continue
-    if (parent && ['failed', 'suppressed'].includes(parent.state)) {
-      await updateOutbox(row.operation_id!, { state: 'suppressed', last_error_code: 'PARENT_FAILED' })
+    if (!navigator.onLine) break
+    if (['failed', 'suppressed'].includes(row.state)) continue
+    const parent = row.dependency_operation_id ? active.get(row.dependency_operation_id) : null
+    if (parent) {
+      if (['failed', 'suppressed'].includes(parent.state)) {
+        row.state = 'suppressed'
+        await updateOutbox(row.operation_id!, { state: 'suppressed', last_error_code: 'PARENT_FAILED' })
+      }
       continue
     }
-    await executeRow(client, row, rows)
+    const unlocked = privateIsUnlocked(client)
+    if (row.requires_private && !unlocked) {
+      await updateOutbox(row.operation_id!, { state: 'private_hold' })
+      continue
+    }
+    if (row.state === 'auth_hold' && (client.getQueryData<{ offline_bootstrap?: boolean }>(['session'])?.offline_bootstrap || (client.getQueryState(['session'])?.dataUpdatedAt ?? 0) <= (row.next_attempt_at ?? Infinity))) continue
+    if (row.state === 'private_hold' && !unlocked) continue
+    if (row.state === 'auth_hold' || row.state === 'private_hold') {
+      row.next_attempt_at = null
+      await updateOutbox(row.operation_id!, { state: 'pending' })
+    }
+    if (row.next_attempt_at && row.next_attempt_at > Date.now()) continue
+    await Promise.all(row.affected_query_keys.map((queryKey) => client.cancelQueries({ queryKey })))
+    const claimed = await claimOutbox(row.operation_id!)
+    if (!claimed) continue
+    if (!navigator.onLine || (claimed.requires_private && !privateIsUnlocked(client))) {
+      await updateOutbox(claimed.operation_id!, { state: navigator.onLine ? 'private_hold' : 'pending', attempts: row.attempts })
+      window.dispatchEvent(new CustomEvent('microsched:outbox-not-attempted', { detail: { operation_id: claimed.operation_id } }))
+      continue
+    }
+    let response: unknown, acknowledged = false
+    try {
+      response = await apiRequest<unknown>(claimed.path, { method: claimed.method,
+        body: claimed.body === null ? undefined : claimed.payload_json, timeoutMs: claimed.timeout_ms })
+      acknowledged = true
+    } catch (error) {
+      const verdict = classifyOutboxError(row, error, privateIsUnlocked(client))
+      if (verdict.state === 'success') acknowledged = true
+      else {
+        row.state = verdict.state; if (verdict.state === 'private_hold') window.dispatchEvent(new Event('microsched:private-locked'))
+        await updateOutbox(claimed.operation_id!, { state: verdict.state,
+          attempts: ['auth_hold', 'private_hold'].includes(verdict.state) ? row.attempts : claimed.attempts,
+          next_attempt_at: verdict.state === 'auth_hold' ? Date.now() : verdict.retryAt ?? null, last_error_code: verdict.code ?? null })
+      }
+    }
+    if (acknowledged) {
+      await removeOutbox([claimed.operation_id!])
+      active.delete(claimed.operation_id!)
+      try { await adapterFor(claimed.operation_kind).reconcileSuccess(client, claimed, response) }
+      catch { window.dispatchEvent(new Event('microsched:outbox-reconcile-unavailable')) }
+      for (const key of claimed.affected_query_keys) touched.set(JSON.stringify(key), key)
+    }
+  }
+  const remaining = await listOutbox()
+  for (const key of touched.values()) {
+    if (!remaining.some((row) => row.affected_query_keys.some((affected) =>
+      affected.slice(0, Math.min(affected.length, key.length)).every((part, index) => key[index] === part)))) await client.invalidateQueries({ queryKey: key })
   }
 }
 
