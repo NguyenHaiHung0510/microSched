@@ -1,0 +1,14 @@
+# Selected primary sources — fetched 2026-09-30
+
+Research evidence, not Mimi runtime or adoption proof. Raw source/local receipts remain in the private task archive.
+
+| Question | Primary source | Transfer limit |
+|---|---|---|
+| Graph runtime | [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview), [persistence](https://docs.langchain.com/oss/python/langgraph/persistence), [interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) | Checkpoint/re-entry still needs app journal, encryption and transaction integration |
+| Typed runner alternative | [PydanticAI](https://pydantic.dev/docs/ai/), [chat example source](https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/chat_app.py) | Example app history storage isn't Mimi PG/restart proof |
+| Client seam | [OpenAI Python source](https://github.com/openai/openai-python), [OpenRouter integration](https://openrouter.ai/docs/guides/community/openai-sdk), [OpenRouter SDK](https://github.com/OpenRouterTeam/python-sdk) | Exact package/wire/retry parity NOT_RUN |
+| Comparable apps | [Khoj helpers](https://github.com/khoj-ai/khoj/blob/master/src/khoj/processor/conversation/openai/utils.py), [Open WebUI router](https://github.com/open-webui/open-webui/blob/main/backend/open_webui/routers/openai.py), [Aider models](https://github.com/Aider-AI/aider/blob/main/aider/models.py), [Elastic engineering case](https://www.elastic.co/blog/building-automatic-import-attack-discovery-langchain) | Code/operator stories show several seams; no market-majority or512MB guarantee |
+| Typed decisions | [TypeSafe System One](https://docs.typesafe.ai/concepts/system-one), [OpenRouter Decisions](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request), [triage/verification tutorial](https://openrouter.ai/blog/tutorials/jev-vs-llm-when-to-use-each/), [moderation tutorial](https://openrouter.ai/blog/tutorials/how-to-use-jev/), [Kev](https://github.com/jaredpalmer/kev) | Vendor/maintainer examples/evals; no Mimi/Vietnamese customer outcome proof |
+| Privacy/routing | [OpenRouter data collection](https://openrouter.ai/docs/guides/privacy/data-collection), [provider selection](https://openrouter.ai/docs/guides/routing/provider-selection) | Defaults not inspected buyer settings; Chat knobs not automatically Decision endpoint parity |
+| Four candidates | [GLM](https://openrouter.ai/z-ai/glm-5.3-flash), [Luna official](https://developers.openai.com/api/docs/models/gpt-6-luna), [DeepSeek publisher](https://api-docs.deepseek.com/quick_start/pricing/), [MiMo](https://openrouter.ai/xiaomi/mimo-v2.6-pro) | Catalog/publisher evidence, exact route capability and billing not qualified |
+| Discovery metrics | [OpenRouter rankings](https://openrouter.ai/rankings), [AA methodology](https://artificialanalysis.ai/methodology) | Traffic and benchmark task cost differ from Mimi task success/cost |

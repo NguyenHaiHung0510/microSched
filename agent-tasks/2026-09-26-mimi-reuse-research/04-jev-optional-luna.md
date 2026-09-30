@@ -1,0 +1,17 @@
+# Round 1C — Jev 1.13 optional typed decisions
+
+Research by GPT-6 Luna; T1 transcribed and will independently reconcile. Snapshot 2026-09-26. Read-only; no provider call or code edit.
+
+## Findings
+
+TypeSafe System One/Jev returns typed Choice, Score or Noul decisions and probabilities, not generative text or Mimi-compatible chat tool calls. TypeSafe documents a native `/v1/systemone` API; OpenRouter documents a separate `/api/alpha/decisions` endpoint. The exact `typesafe/jev-1.13` listing showed $0.042 per 1M input tokens, zero output-token price, 32k context, and rolling low-latency/availability figures on 2026-09-26. Those figures are neither an SLA nor Vietnamese-quality evidence. No official language parity matrix was found. Sources: [TypeSafe concepts](https://docs.typesafe.ai/concepts/system-one), [native API](https://api.typesafe.ai/docs), [OpenRouter Jev API](https://openrouter.ai/blog/insights/what-is-jev/), [exact model listing](https://openrouter.ai/typesafe/jev-1.13).
+
+The narrow plausible use is optional **preliminary semantic triage** or typed batch classification/ranking with fixed labels. Jev should not choose authorization, confirm writes, calculate date/number constraints, decide retry/timeout, or replace the generative model. Its protocol is distinct from `backend/app/agent/openrouter.py`; integration would need a separate adapter and a vendor-neutral decision-result seam. Server-owned authority and preview confirmation remain mandatory.
+
+OpenRouter's current provider listing indicated no training and zero retention for TypeSafe, but this does **not** prove the Decisions endpoint accepts the same request-level `provider.zdr` and `data_collection=deny` controls as Chat Completions; no endpoint feed or API was queried. Single visible TypeSafe provider also means same-model high-availability fallback is unproven. Exact privacy/route proof is a gate, not a footnote. Sources: [OpenRouter providers](https://openrouter.ai/providers/), [TypeSafe catalog](https://openrouter.ai/provider/typesafe/), [ZDR](https://openrouter.ai/docs/guides/features/zdr), [provider logging](https://openrouter.ai/docs/guides/privacy/provider-logging), [data collection](https://openrouter.ai/docs/guides/privacy/data-collection).
+
+## Proposed research gate, not implementation approval
+
+Evaluate deterministic rules, Mimi's incumbent strict-schema model, and Jev on a held-out synthetic Vietnamese/English set: casual chat, read/query vs aggregate/batch, create-now vs draft vs clarify, relative dates, multi-intent, private/out-of-scope and injected tool text. Record per-class errors (especially false-create), coverage versus error at confidence thresholds, calibration, p50/p95 in region, actual cost and failures. For benign triage, low confidence/timeout means `UNDECIDED` → existing Mimi path; security/write gate is fail-closed independently of model decision. If every request still requires a generative answer, Jev adds latency/cost and may be a net loss. At 1,000 input tokens, list-price-only Jev inference is ~$0.000042, before routing/operations; use buyer receipts for any real comparison.
+
+Confidence: high for public protocol shape and Mimi boundary; medium for current provider-level policy and rolling listing numbers; unknown for Vietnamese performance, exact Decisions-endpoint ZDR behavior and regional tail latency. **Recommendation:** no production dependency or runtime route now; only a separately approved synthetic spike after privacy proof.

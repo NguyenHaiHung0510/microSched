@@ -1,0 +1,27 @@
+# Round 1B — agent runtime and reuse audit
+
+Research by GPT-6 Luna; T1 transcribed and checked core files. Snapshot 2026-09-26. Read-only, no package install, test or API call.
+
+## Current complexity
+
+`backend/app/agent/loop.py` is a finite read-only loop with 4 model turns, 6 read calls, no-progress stop, serialized-byte bound and deadline. `tools/registry.py` has Task query/aggregate/inspect-batch plus one create-candidate proposal; writes execute only after frozen preview and separate confirmation in `service.py`. `context_builder.py` binds policy, authority, source manifests and budgets. `compaction.py` makes validated extractive checkpoints over encrypted canonical messages. `runtime.py` keeps in-process work alive across browser disconnect, while PostgreSQL guards and service ledger classify crash/unknown outcomes. B24 explicitly does **not** claim exact candidate-to-preview rematerialization after crash. These are observed seams, not evidence that every solution is optimal.
+
+| Candidate | Helps with | Does not own for Mimi | Initial assessment |
+| --- | --- | --- | --- |
+| LangGraph | Graph state, node checkpoints, interrupts/human pauses and Postgres checkpointer. | Owner consent, Task data scope, encrypted canonical transcript, source versions, generation unknown-outcome and application transaction. Nodes with side effects can rerun on resume, so idempotency remains essential. | Defer wholesale adoption until actual branching/parallel/cross-restart workflow makes current loop costly. A separate no-key prototype can challenge this. |
+| LangChain `create_agent` | Common agent loop, tools and middleware. | Same product semantics, plus its own message/state abstraction. | Lower priority than a direct LangGraph or typed-adapter spike. |
+| OpenAI Agents SDK | Tool definitions, loop, guards, session/run-state and tracing. | Cross-provider exact route, privacy, canonical Neon history, hard write confirmation. Its default tracing/data handling needs explicit evaluation for Mimi's ZDR. | Do not insert as a second runtime by default. SDK and hosted Agents API are distinct options; neither solves the app's domain transaction. |
+| PydanticAI | Typed tool/output validation and test models with a close fit to existing Pydantic. | Ledger, authority and preview/confirm. | Best targeted schema/parser spike candidate, possibly slim package; not a proof that its full runner should replace Mimi. |
+
+Primary sources checked 2026-09-26: [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence), [interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts), [LangChain agents](https://docs.langchain.com/oss/python/langchain/agents), [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/), [its tracing](https://openai.github.io/openai-agents-python/tracing/), [PydanticAI tools](https://pydantic.dev/docs/ai/tools-toolsets/tools/), [persistence](https://pydantic.dev/docs/ai/core-concepts/persistence/). Official OpenAI [agent-loop guidance](https://developers.openai.com/api/docs/guides/agents/running-agents) also distinguishes max-turn failures from expected approval pauses. Anthropic [agent-engineering guidance](https://www.anthropic.com/engineering/building-effective-agents) emphasizes simple composable loops but acknowledges latency/cost/iteration trade-offs; neither source gives a universal correct `4/6/30m` budget.
+
+## Reuse map
+
+- **Keep domain-owned:** Task authority, privacy filters, source coverage/freshness, preview digest/CAS, confirmation/idempotency, canonical transcript and user feedback. Frameworks cannot infer these contracts.
+- **Selective reuse:** Pydantic (already present) for schemas and typed results; evaluate SDK transport and OTel-style metadata spans only where they reduce custom code without leaking content or creating a second truth. Standard API trace fields should be optional and content-free by default.
+- **Defer:** generic workflow engine, hosted tracing/SaaS or model-router proxy while single-user/one-process constraints hold and no measured need outweighs deployment/dependency/privacy costs.
+- **Revisit trigger:** P1C-B or future multi-domain work produces a measured increase in branching, restart replay failures, framework-equivalent glue code, or parallel read volume that current runtime cannot handle safely and economically.
+
+Agent identified two important measurement gaps: `cost_cap_minor=0` is stored in lease but not shown as an enforced hard cost limit in inspected path; and context preflight compares serialized bytes to a configured token window, a conservative guard but not exact token counting. These require separate tests/measurement before claiming cost or context-limit guarantees. Current lease values are baseline parameters, not research-backed optima; calibrate by task class **and** model/tool tendencies, exception states and a recovery buffer. A cap hit during legitimate progress is a product signal, not model failure.
+
+Counterargument: LangGraph may cut future pause/resume glue substantially. The way to decide is a parity prototype: greeting/no tool, multi-page read, aggregate, draft, frozen preview, one confirmed synthetic write, cancel/crash/unknown outcome, plus `store`/ZDR/wire semantics, dependency delta, Python 3.14 lock, Docker cold start and RSS on the same 512MB envelope. No framework currently has such local parity evidence. Final recommendation belongs to T1 and Owner.
