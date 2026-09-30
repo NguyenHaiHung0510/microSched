@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
+from uuid import uuid4
 
 Domain = Literal["task", "note"]
 MAX_SELECTION = 16
@@ -54,6 +55,7 @@ NOTE_ADAPTER = Adapter("note", "[indexed] ")
 
 @dataclass(frozen=True)
 class Preview:
+    authority_ref: str
     owner: str
     generation: int
     policy: str
@@ -63,6 +65,7 @@ class Preview:
 
     def content(self) -> dict[str, object]:
         return {
+            "authority_ref": self.authority_ref,
             "owner": self.owner,
             "generation": self.generation,
             "policy": self.policy,
@@ -93,6 +96,7 @@ def freeze_preview(
     owner: str,
     generation: int,
     policy: str,
+    authority_ref: str | None = None,
 ) -> Preview:
     """Server materialization freezes source versions and exact operations."""
     if not owner or not policy or type(generation) is not int or generation < 1:
@@ -109,7 +113,13 @@ def freeze_preview(
     ):
         raise ProbeBlocked("invalid_source_version")
     preview = Preview(
-        owner, generation, policy, adapter.domain, records, adapter.materialize(records)
+        authority_ref or str(uuid4()),
+        owner,
+        generation,
+        policy,
+        adapter.domain,
+        records,
+        adapter.materialize(records),
     )
     encode_frame(preview.content())
     return preview

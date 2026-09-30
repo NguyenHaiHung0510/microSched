@@ -94,3 +94,15 @@ def test_duplicate_and_oversized_selection_rejected():
 def test_frame_budget_counts_utf8_bytes():
     with pytest.raises(ProbeBlocked, match="frame_budget_exceeded"):
         encode_frame({"synthetic": "ữ" * 24000})
+
+
+def test_old_confirmation_cannot_authorize_a_distinct_preview_instance(preview):
+    another = freeze_preview(
+        TASK_ADAPTER,
+        preview.sources,
+        owner=preview.owner,
+        generation=preview.generation,
+        policy=preview.policy,
+    )
+    with pytest.raises(ProbeBlocked, match="confirmation_mismatch"):
+        authorize(another, Confirmation(preview.owner, preview.generation, preview.digest))
