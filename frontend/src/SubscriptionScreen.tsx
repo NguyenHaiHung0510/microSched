@@ -290,7 +290,7 @@ function RenewDialog({
       // default must stay on the server's veto max(expires_on, today) so the
       // client clock can never race the server into a stale expiry (F1).
       ...(expiryEdited ? { new_expires_on: newExpiresOn } : {}),
-      note_md: note.trim() || undefined,
+      ...(note.trim() ? { note_md: note.trim() } : {}),
     })
   }
 
