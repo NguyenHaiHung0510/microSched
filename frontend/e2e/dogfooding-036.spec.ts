@@ -532,9 +532,11 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
 
     // Now test edit tracker with legacy reminder_text preservation and read-back
     let patchPayload: any = null
+    const patchPayloads: any[] = []
     await page.route('**/api/tracker/trackers/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301', async (route) => {
       if (route.request().method() === 'PATCH') {
         patchPayload = route.request().postDataJSON()
+        patchPayloads.push(patchPayload)
         const existing = serverTrackers.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301')
         const updated = {
           ...existing,
@@ -598,13 +600,16 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await editBtn.click()
     await expect(editDialog).toBeVisible()
     await editDialog.getByTestId('tracker-reminder-enabled').click()
+    const patchRequestsBeforeDisable = patchPayloads.length
     await page.getByRole('button', { name: 'Lưu thay đổi' }).click()
     await expect(editDialog).toBeHidden()
 
-    expect(patchPayload).toBeDefined()
-    expect(patchPayload.reminder_text).toBeNull()
-    const serverItemDisabled = serverTrackers.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301')
-    expect(serverItemDisabled?.reminder_text).toBeNull()
+    await expect.poll(() => patchPayloads.length, { timeout: 5000 }).toBe(patchRequestsBeforeDisable + 1)
+    const disablePatchPayload = patchPayloads[patchRequestsBeforeDisable]
+    expect(disablePatchPayload).toBeDefined()
+    expect(disablePatchPayload.reminder_text).toBeNull()
+    await expect.poll(() => serverTrackers.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301'))
+      .toMatchObject({ reminder_text: null, reminder_time: null, reminder_mode: null })
   })
 
   test('Subtask create flow: draft add, inline edit, delete, and atomic single POST failure/retry', async ({ page }) => {
