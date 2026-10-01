@@ -74,8 +74,7 @@ function backoff(attempt: number) {
 }
 
 function privateIsUnlocked(client: QueryClient) {
-  const session = client.getQueryData<{ private_until?: string | null }>(['session'])
-  return Boolean(session?.private_until && Date.parse(session.private_until) > Date.now())
+  return hasLivePrivateSession(client)
 }
 
 async function runFlush(client: QueryClient) {

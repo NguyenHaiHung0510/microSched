@@ -338,8 +338,8 @@ function App() {
   }, [offline, queryClient, session.data])
 
   const loggedOut = authRejected || (session.isError && session.error instanceof UnauthenticatedError)
-  const publicAuth: PublicAuthState = session.isPending ? 'checking'
-    : loggedOut ? 'guest'
+  const publicAuth: PublicAuthState = loggedOut ? 'guest'
+    : session.isPending ? 'checking'
       : session.isError ? 'unknown'
         : session.data ? 'signed-in' : 'checking'
   // Public content does not mount protected screens. Explicit /home also stays
@@ -396,7 +396,7 @@ function App() {
             {offline || session.data.offline_bootstrap || session.isError ? <p className="mb-3 text-sm text-muted-foreground" role="status">
               {offline || session.isError ? 'Đang ngoại tuyến' : 'Đang xác thực lại'} · dữ liệu lúc {session.data.offline_snapshot_at ? new Date(session.data.offline_snapshot_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : 'lần kết nối trước'}
             </p> : null}
-            <SignedIn key={`${offline}:${session.data.private_until ?? 'locked'}`} session={session.data} offline={offline} />
+            <SignedIn key={String(offline)} session={session.data} offline={offline} />
           </> : null}
         </div>
         <Toaster />
