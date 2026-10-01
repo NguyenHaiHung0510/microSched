@@ -49,7 +49,9 @@ function isUuidV7(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
-async function expectAutomaticRetry(page: import('@playwright/test').Page, path: string, bodies: string[]) {
+async function expectAutomaticRetry(page: import('@playwright/test').Page, path: string, getBodies: () => string[]) {
+  await expect.poll(() => getBodies().length, { timeout: 10_000 }).toBeGreaterThan(0)
+  const bodies = getBodies()
   await expect.poll(async () => (await readOutboxRows(page)).find((row) =>
     row.path === path && row.state === 'outcome_unknown' && row.attempts >= 1) ?? null,
   { timeout: 10_000 }).not.toBeNull()
@@ -67,6 +69,27 @@ async function expectAutomaticRetry(page: import('@playwright/test').Page, path:
   await expect.poll(() => bodies.length, { timeout: 15_000 }).toBe(2)
   expect(bodies[1]).toBe(bodies[0])
   await expect.poll(async () => (await readOutboxRows(page)).some((row) => row.path === path), { timeout: 15_000 }).toBe(false)
+}
+
+async function waitForHeldOutboxRow(
+  page: import('@playwright/test').Page,
+  path: string,
+  operationKind: string,
+  expectedPayload: string,
+) {
+  await expect.poll(async () => (await readOutboxRows(page)).find((row) =>
+    row.path === path && row.operation_kind === operationKind && row.state === 'outcome_unknown') ?? null,
+  { timeout: 10_000 }).not.toBeNull()
+  const row = (await readOutboxRows(page)).find((entry) =>
+    entry.path === path && entry.operation_kind === operationKind && entry.state === 'outcome_unknown')
+  expect(row).toBeDefined()
+  expect(row.payload_json).toBe(expectedPayload)
+  const observedDigest = await page.evaluate(async (payload) => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload))
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  }, expectedPayload)
+  expect(row.payload_sha256).toBe(observedDigest)
+  return row
 }
 
 test.describe('Task 036 Dogfooding UI/UX verification', () => {
@@ -868,7 +891,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
    await expect(editDialog).toBeVisible()
    await expect(editDialog.getByTestId('task-checklist-section')).toBeVisible()
 
-   // 1. Concurrency: child mutation pending => parent submit and parent controls disabled
+   // 1. A dispatched child write is durable while its server response is held.
    deferChildPost = true
     childPostPromise = new Promise<void>((r) => {
       resolveChildPost = r
@@ -878,11 +901,28 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
    await addInput.fill('Mục kiểm tra pending child')
    await addBtn.click()
 
-   // Assert: while child POST is pending, parent submit and inputs are disabled
-   const parentSubmitBtn = editDialog.locator('button[type="submit"]')
-   await expect(parentSubmitBtn).toBeDisabled()
-   await expect(editDialog.getByLabel('Tiêu đề')).toBeDisabled()
-   await expect(editDialog.getByLabel('Nội dung')).toBeDisabled()
+    // The parent-save duplicate guard remains, while the outbox row owns the in-flight child command.
+    const parentSubmitBtn = editDialog.locator('button[type="submit"]')
+    await expect(parentSubmitBtn).toBeDisabled()
+    await expect.poll(() => childPostBodies.get('Mục kiểm tra pending child')?.length ?? 0).toBe(1)
+    const pendingChildBodies = childPostBodies.get('Mục kiểm tra pending child') ?? []
+    const pendingChildPayload = JSON.parse(pendingChildBodies[0])
+    const pendingChildRow = await waitForHeldOutboxRow(
+      page,
+      '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items',
+      'task_item.create',
+      pendingChildBodies[0],
+    )
+    expect(pendingChildRow).toMatchObject({
+      entity_id: pendingChildPayload.id,
+      parent_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112',
+      dependency_operation_id: null,
+      state: 'outcome_unknown',
+      attempts: 1,
+    })
+    expect(isUuidV7(pendingChildPayload.id)).toBe(true)
+    await expect(addInput).toHaveValue('')
+    await expect(addBtn).toBeDisabled()
 
    // Release child POST
     deferChildPost = false
@@ -893,8 +933,9 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
      failAdd = true
     await addInput.fill('Mục mới thử nghiệm fail')
     await addBtn.click()
-    const addedPostBodies = childPostBodies.get('Mục mới thử nghiệm fail') ?? []
-    await expectAutomaticRetry(page, '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items', addedPostBodies)
+    const getAddedPostBodies = () => childPostBodies.get('Mục mới thử nghiệm fail') ?? []
+    await expectAutomaticRetry(page, '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items', getAddedPostBodies)
+    const addedPostBodies = getAddedPostBodies()
     expect(isUuidV7(JSON.parse(addedPostBodies[0]).id)).toBe(true)
     await expect(editDialog.getByText('Mục mới thử nghiệm fail')).toBeVisible()
     expect(taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')?.items)
@@ -908,28 +949,31 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await editDialog.getByTestId('task-item-edit-save').click()
     const editedItemId = await firstItem.getAttribute('data-task-item-id')
     expect(editedItemId).toBeTruthy()
-    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${editedItemId}`, childPatchBodies.get(`${editedItemId}:content`) ?? [])
+    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${editedItemId}`, () => childPatchBodies.get(`${editedItemId}:content`) ?? [])
     await expect(editDialog.getByText('Sửa nội dung có lỗi 500')).toBeVisible()
 
-    // 4. Child tick remains checked and reaches the authoritative fixture after automatic retry.
+    // 4. Toggling the initially checked item remains unchecked and reaches the fixture after automatic retry.
     const checkbox = firstItem.getByTestId('task-item-checkbox')
     await checkbox.click()
     const checkedItemId = await firstItem.getAttribute('data-task-item-id')
     expect(checkedItemId).toBeTruthy()
-    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${checkedItemId}`, childPatchBodies.get(`${checkedItemId}:is_completed`) ?? [])
-    await expect(checkbox).toBeChecked()
+    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${checkedItemId}`, () => childPatchBodies.get(`${checkedItemId}:is_completed`) ?? [])
+    expect(JSON.parse(childPatchBodies.get(`${checkedItemId}:is_completed`)![0])).toEqual({ is_completed: false })
+    await expect(checkbox).not.toBeChecked()
     expect(taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')?.items
-      .find((entry) => entry.id === checkedItemId)?.is_completed).toBe(true)
+      .find((entry) => entry.id === checkedItemId)?.is_completed).toBe(false)
 
     // 5. Child delete remains optimistic during a transient error and is acknowledged on retry.
     const itemToDelete = editDialog.getByTestId('task-item').nth(1)
     const deletedItemId = await itemToDelete.getAttribute('data-task-item-id')
     await itemToDelete.getByTestId('task-item-delete').click()
     expect(deletedItemId).toBeTruthy()
-    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${deletedItemId}`, childDeleteBodies.get(deletedItemId!) ?? [])
-    await expect(itemToDelete).toHaveCount(0)
+    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${deletedItemId}`, () => childDeleteBodies.get(deletedItemId!) ?? [])
+    await expect(editDialog.locator(`[data-testid="task-item"][data-task-item-id="${deletedItemId}"]`)).toHaveCount(0)
+    expect(taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')?.items)
+      .not.toContainEqual(expect.objectContaining({ id: deletedItemId }))
 
-   // 6. Concurrency: parent PATCH pending => all child controls disabled
+   // 6. Parent save is a separate durable command while its server response is held.
    deferParentPatch = true
     parentPatchPromise = new Promise<void>((r) => {
       resolveParentPatch = r
@@ -939,23 +983,31 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
    await titleInput.fill('Tiêu đề task cha đã sửa')
    await parentSubmitBtn.click()
 
-   // Assert: while parent PATCH is pending, child controls are disabled
-   await expect(addInput).toBeDisabled()
-   await expect(addBtn).toBeDisabled()
-   await expect(firstItem.getByTestId('task-item-edit')).toBeDisabled()
-   await expect(firstItem.getByTestId('task-item-delete')).toBeDisabled()
-   await expect(firstItem.getByTestId('task-item-checkbox')).toBeDisabled()
+   await expect.poll(() => parentPatchBodies.length).toBe(1)
+   const parentPayload = JSON.parse(parentPatchBodies[0])
+   const parentRow = await waitForHeldOutboxRow(
+     page,
+     '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112',
+     'task.update',
+     parentPatchBodies[0],
+   )
+   expect(parentRow).toMatchObject({
+     entity_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112',
+     dependency_operation_id: null,
+     state: 'outcome_unknown',
+     attempts: 1,
+   })
+   expect(parentPayload.title).toBe('Tiêu đề task cha đã sửa')
+   expect(parentPayload).not.toHaveProperty('items')
+   expect(parentRow.operation_id).not.toBe(pendingChildRow.operation_id)
 
     // Release the parent PATCH's first 500; the parent save retries independently of child commands.
     deferParentPatch = false
    if (resolveParentPatch) resolveParentPatch()
 
-    await expectAutomaticRetry(page, '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112', parentPatchBodies)
+    await expectAutomaticRetry(page, '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112', () => parentPatchBodies)
     expect(JSON.parse(parentPatchBodies[0]).title).toBe('Tiêu đề task cha đã sửa')
     // 7. The separately acknowledged child remains authoritative after parent-save recovery.
-     await expect(editDialog).toBeVisible()
-    await expect(titleInput).toHaveValue('Tiêu đề task cha đã sửa')
-    await expect(editDialog.getByText('Mục mới thử nghiệm fail')).toBeVisible()
     const finalParent = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')
     expect(finalParent?.title).toBe('Tiêu đề task cha đã sửa')
     expect(finalParent?.items.some((entry) => entry.content === 'Mục mới thử nghiệm fail')).toBe(true)
