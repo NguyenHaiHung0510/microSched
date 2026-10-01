@@ -30,4 +30,4 @@ Paid QA: T1 alone may read exact MIMI_DEMO_1 from root backend/.env in process. 
 
 ## Status
 
-IMPLEMENTING; full-app runtime/browser/provider acceptance NOT_RUN. Dogfood release is gated on implementation plus QA and reconciled review, not a completion date.
+FINAL_QA_PENDING. Full local implementation, 80 workflow/PG tests, 602 non-PG backend tests, 172 frontend tests, build/lint/hooks, bounded live Graph receipt and actual app/Postgres restart have evidence. Initial browser matrix is 4 PASS / 1 FAIL / 1 NOT_RUN; final error/recovery delta is in progress. See [result and remaining gates](073-mimi-b16-local-pilot-result.md). Physical iPhone, CI and production remain NOT_RUN. Dogfood release is gated on reconciled QA, not a completion date.
