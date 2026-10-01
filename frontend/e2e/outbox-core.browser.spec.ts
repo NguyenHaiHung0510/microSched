@@ -118,3 +118,52 @@ test('known loss of connectivity before dispatch restores attempts and pending p
   expect(result).toEqual({ state: 'pending', attempts: 0, retained: true, predispatchEvents: 1 })
   console.log(JSON.stringify({ lane: 'known-not-attempted-core-boundary', result, requests }))
 })
+
+
+test('restores cancelled command trees atomically with fresh ordered dependencies and immutable payloads', async ({ page }) => {
+  await page.goto('/denied.html')
+  const result = await page.evaluate(async () => {
+    const moduleUrl = '/src/lib/outbox-db.ts'
+    const db = await import(moduleUrl)
+    const command = (id: string, parent: string | null = null) => ({
+      operation_kind: parent ? 'note_item.create' : 'note.create', resource: parent ? 'note_item' : 'note',
+      method: 'POST', path: parent ? `/api/notes/${parent}/items` : '/api/notes',
+      body: { id, ...(parent ? { content: 'private child', position: 0 } : { title: 'private parent', is_private: true }) },
+      entity_id: id, parent_id: parent, requires_private: true, idempotency_mode: 'client_uuid',
+      dependency_operation_id: null, group_id: null, affected_query_keys: [['notes']],
+      state: 'pending', attempts: 0, next_attempt_at: null, created_at: Date.now(), last_error_code: null,
+    })
+    const parent = await db.enqueueOutbox(command('parent'))
+    await db.enqueueOutbox(command('child', 'parent'))
+    await db.enqueueOutbox({ ...command('child', 'parent'), operation_kind: 'note_item.update',
+      method: 'PATCH', path: '/api/notes/parent/items/child', body: { is_completed: true }, idempotency_mode: 'absolute' })
+    const cancellation = await db.enqueueOutbox({ ...command('parent'), operation_kind: 'note.delete',
+      method: 'DELETE', path: '/api/notes/parent', body: null, idempotency_mode: 'postcondition' })
+    const cancelled = cancellation.cancelled_rows
+    const countAfterCancellation = (await db.listOutbox()).length
+    let corruptionRejected = false
+    try { await db.restoreCancelledOutbox(cancelled.map((row: { body: unknown }, index: number) => index ? row : { ...row, body: { id: 'parent', title: 'tampered' } })) }
+    catch { corruptionRejected = true }
+    const countAfterCorruption = (await db.listOutbox()).length
+    const restored = await db.restoreCancelledOutbox(cancelled)
+    let duplicateRejected = false
+    try { await db.restoreCancelledOutbox(cancelled) } catch { duplicateRejected = true }
+    const countAfterDuplicate = (await db.listOutbox()).length
+    const immutable = restored.every((row: { payload_sha256: string; payload_json: string; requires_private: boolean }, index: number) =>
+      row.payload_sha256 === cancelled[index].payload_sha256 && row.payload_json === cancelled[index].payload_json && row.requires_private)
+    return { parentOldId: parent.operation_id, cancelledCount: cancelled.length, countAfterCancellation,
+      corruptionRejected, countAfterCorruption, duplicateRejected, countAfterDuplicate, immutable,
+      newIds: restored.map((row: { operation_id: number }) => row.operation_id),
+      dependencies: restored.map((row: { dependency_operation_id: number | null }) => row.dependency_operation_id) }
+  })
+  expect(result.cancelledCount).toBe(3)
+  expect(result.countAfterCancellation).toBe(0)
+  expect(result.corruptionRejected).toBe(true)
+  expect(result.countAfterCorruption).toBe(0)
+  expect(result.duplicateRejected).toBe(true)
+  expect(result.countAfterDuplicate).toBe(3)
+  expect(result.immutable).toBe(true)
+  expect(result.newIds[0]).toBeGreaterThan(result.parentOldId)
+  expect(result.dependencies).toEqual([null, result.newIds[0], result.newIds[1]])
+  console.log(JSON.stringify({ lane: 'real-indexeddb-cancelled-undo', result }))
+})

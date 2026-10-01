@@ -26,7 +26,10 @@ export type OutboxRow = {
   created_at: number
   last_error_code: string | null
   timeout_ms?: number
+  optimistic_entity?: Json
 }
+
+export type EnqueueResult = OutboxRow & { cancelled_rows?: OutboxRow[] }
 
 type OutboxDb = Dexie & { outbox: EntityTable<OutboxRow, 'operation_id'> }
 let database: OutboxDb | null = null
@@ -85,11 +88,12 @@ export async function payloadReceipt(body: Json | null) {
 
 export async function enqueueOutbox(
   row: Omit<OutboxRow, 'operation_id' | 'payload_json' | 'payload_sha256' | 'payload_byte_length'>,
-): Promise<OutboxRow | null> {
+): Promise<EnqueueResult | null> {
   const db = await outboxDatabase()
   if (!db) return null
   const receipt = await payloadReceipt(row.body)
   const stored = { ...row, ...receipt }
+  let cancelled_rows: OutboxRow[] | undefined
   const operation_id = await db.transaction('rw', db.outbox, async () => {
     const rows = await db.outbox.orderBy('operation_id').toArray()
     const ownCreate = rows.find((item) => item.entity_id === row.entity_id && item.idempotency_mode === 'client_uuid')
@@ -103,6 +107,7 @@ export async function enqueueOutbox(
       const tree = rows.filter((item) => ids.has(item.operation_id!))
       if (tree.every((item) => item.state === 'pending' && item.attempts === 0)) {
         await db.outbox.bulkDelete(tree.map((item) => item.operation_id!))
+        cancelled_rows = tree
         return undefined
       }
     }
@@ -119,7 +124,33 @@ export async function enqueueOutbox(
     return db.outbox.add(stored)
   })
   emitChanged()
-  return { ...stored, operation_id }
+  return { ...stored, operation_id, ...(cancelled_rows ? { cancelled_rows } : {}) }
+}
+
+/** Restore only an atomically cancelled, never-dispatched command tree. */
+export async function restoreCancelledOutbox(rows: OutboxRow[]): Promise<OutboxRow[]> {
+  const db = await outboxDatabase()
+  if (!db) throw new Error('Cannot restore cancelled writes without durable storage')
+  if (!rows.length || rows.some((row) => row.state !== 'pending' || row.attempts !== 0 || !row.operation_id)) throw new Error('Only never-dispatched commands can be restored')
+  const receipts = await Promise.all(rows.map((row) => payloadReceipt(row.body)))
+  if (rows.some((row, index) => row.payload_sha256 !== receipts[index].payload_sha256 || row.payload_json !== receipts[index].payload_json)) throw new Error('Cancelled payload changed')
+  const restored = await db.transaction('rw', db.outbox, async () => {
+    const existing = await db.outbox.toArray()
+    if (existing.some((row) => rows.some((cancelled) => row.entity_id === cancelled.entity_id))) throw new Error('Entity already has queued changes')
+    const ids = new Map<number, number>(), result: OutboxRow[] = []
+    for (const row of rows) {
+      const dependency = row.dependency_operation_id === null ? null : ids.get(row.dependency_operation_id)
+      if (dependency === undefined) throw new Error('Cancelled dependency tree is incomplete')
+      const item = { ...row, operation_id: undefined, dependency_operation_id: dependency, created_at: Date.now(), next_attempt_at: null, last_error_code: null }
+      const id = await db.outbox.add(item)
+      if (id === undefined) throw new Error('Durable operation ID was not assigned')
+      ids.set(row.operation_id!, id)
+      result.push({ ...item, operation_id: id })
+    }
+    return result
+  })
+  emitChanged()
+  return restored
 }
 
 function descendantIds(rows: OutboxRow[], rootId: number) {

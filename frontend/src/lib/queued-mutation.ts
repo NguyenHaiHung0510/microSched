@@ -1,8 +1,9 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { ApiError, apiRequest } from '@/api'
 import { adapterFor, type CommandInput, type OperationKind } from '@/lib/outbox-adapters'
-import { enqueueOutbox, payloadReceipt, type Json } from '@/lib/outbox-db'
+import { enqueueOutbox, payloadReceipt, type Json, type OutboxRow } from '@/lib/outbox-db'
 import { persistConfirmedSnapshot } from '@/lib/public-cache'
+export type QueuedDeleteReceipt = { cancelledRows: OutboxRow[] }
 export async function queuedRequest<T>(
   client: QueryClient, operationKind: OperationKind, input: CommandInput,
   init?: { timeoutMs?: number },
@@ -27,5 +28,6 @@ export async function queuedRequest<T>(
   }
   await adapter.optimisticApply(client, row)
   window.dispatchEvent(new Event('microsched:outbox-flush-requested'))
+  if (row.cancelled_rows) return { cancelledRows: row.cancelled_rows } as T
   return adapter.optimisticResponse(row) as T
 }
