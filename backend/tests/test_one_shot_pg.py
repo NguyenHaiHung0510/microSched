@@ -369,6 +369,42 @@ def test_client_uuid_legacy_row_without_fingerprint_fails_closed(pg_dsn):
     asyncio.run(scenario(pg_dsn, exercise))
 
 
+def test_client_uuid_same_effect_changed_cas_is_conflict(pg_dsn):
+    """A retry key cannot change its original optimistic concurrency identity."""
+
+    async def exercise(db, task, auth, now, maker):
+        client_id = _uuid7()
+        original_updated_at = task.updated_at
+        payload = ReminderWrite(
+            id=client_id,
+            mode="absolute",
+            due_at=now + timedelta(hours=2),
+            expected_source_updated_at=original_updated_at,
+        )
+        created = await save_reminder(db, auth, "task", task.id, payload)
+        await db.commit()
+        assert created.id == client_id
+
+        with pytest.raises(HTTPException) as error:
+            await save_reminder(
+                db,
+                auth,
+                "task",
+                task.id,
+                ReminderWrite(
+                    id=client_id,
+                    mode="absolute",
+                    due_at=payload.due_at,
+                    expected_id=_uuid7(),
+                    expected_revision=1,
+                    expected_source_updated_at=original_updated_at,
+                ),
+            )
+        assert error.value.status_code == 409
+
+    asyncio.run(scenario(pg_dsn, exercise))
+
+
 def test_cancel_replay_requires_exact_revision_plus_one_cancelled(pg_dsn):
     async def exercise(db, task, auth, now, maker):
         row = await save_reminder(
