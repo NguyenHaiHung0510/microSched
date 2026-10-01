@@ -5,11 +5,11 @@
  * module returns (the 017 offline-outbox door, same as the tracker seam).
  */
 
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 
 import { restoreCancelledDomainTree } from '@/lib/outbox-adapters'
 import type { Json } from '@/lib/outbox-db'
-import { queuedRequest, type QueuedDeleteReceipt } from '@/lib/queued-mutation'
+import { queuedRequest, useQueuedMutation, type QueuedDeleteReceipt } from '@/lib/queued-mutation'
 import { VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { formatVnd, type Tracker } from '@/tracker-ui'
 
@@ -176,11 +176,11 @@ export function renewSummary(
 /** Seam: every subscription/settings write goes through these mutations. */
 export function useSubscriptionWrites() {
   const queryClient = useQueryClient()
-  const createSubscription = useMutation({
+  const createSubscription = useQueuedMutation({
     mutationFn: ({ payload, requiresPrivate }: { payload: SubscriptionWritePayload & { id: string }; requiresPrivate: boolean }) =>
       queuedRequest<Subscription>(queryClient, 'subscription.create', { path: '/api/subscriptions', body: payload, entityId: payload.id, parentId: payload.tracker_id, requiresPrivate }),
   })
-  const updateSubscription = useMutation({
+  const updateSubscription = useQueuedMutation({
     mutationFn: ({
       subscriptionId,
       requiresPrivate,
@@ -191,20 +191,20 @@ export function useSubscriptionWrites() {
       payload: Partial<SubscriptionWritePayload>
     }) => queuedRequest<Subscription>(queryClient, 'subscription.update', { path: `/api/subscriptions/${subscriptionId}`, body: payload, entityId: subscriptionId, requiresPrivate }),
   })
-  const cancelSubscription = useMutation({
+  const cancelSubscription = useQueuedMutation({
     mutationFn: ({ subscriptionId, requiresPrivate }: { subscriptionId: string; requiresPrivate: boolean }) => queuedRequest<Subscription>(queryClient, 'subscription.cancel', { path: `/api/subscriptions/${subscriptionId}/cancel`, entityId: subscriptionId, requiresPrivate }),
   })
-  const uncancelSubscription = useMutation({
+  const uncancelSubscription = useQueuedMutation({
     mutationFn: ({ subscriptionId, requiresPrivate }: { subscriptionId: string; requiresPrivate: boolean }) => queuedRequest<Subscription>(queryClient, 'subscription.uncancel', { path: `/api/subscriptions/${subscriptionId}/uncancel`, entityId: subscriptionId, requiresPrivate }),
   })
-  const renew = useMutation({
+  const renew = useQueuedMutation({
     mutationFn: ({ subscriptionId, payload, requiresPrivate }: { subscriptionId: string; payload: RenewPayload; requiresPrivate: boolean }) =>
       queuedRequest<RenewResult | null>(queryClient, 'subscription.renew', { path: `/api/subscriptions/${subscriptionId}/renew`, body: payload, entityId: subscriptionId, parentId: subscriptionId, requiresPrivate }),
   })
-  const deleteSubscription = useMutation({
+  const deleteSubscription = useQueuedMutation({
     mutationFn: ({ subscription, requiresPrivate }: { subscription: Subscription; requiresPrivate: boolean }) => queuedRequest<QueuedDeleteReceipt | null>(queryClient, 'subscription.delete', { path: `/api/subscriptions/${subscription.id}`, entityId: subscription.id, requiresPrivate, optimisticEntity: JSON.parse(JSON.stringify(subscription)) as Json }),
   })
-  const restoreSubscription = useMutation({
+  const restoreSubscription = useQueuedMutation({
     mutationFn: async ({ subscription, requiresPrivate, receipt }: { subscription: Subscription; requiresPrivate: boolean; receipt: QueuedDeleteReceipt | null }): Promise<unknown> => {
       if (receipt?.cancelledRows.length) return restoreCancelledDomainTree(queryClient, receipt.cancelledRows)
       return queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'subscription.restore', {
@@ -213,7 +213,7 @@ export function useSubscriptionWrites() {
       })
     },
   })
-  const setSetting = useMutation({
+  const setSetting = useQueuedMutation({
     mutationFn: ({ key, value }: { key: 'show_list_price' | 'subscription_expiry_lead_days'; value: number | boolean }) =>
       queuedRequest<SettingsItem>(queryClient, key === 'show_list_price' ? 'setting.show_list_price.update' : 'setting.subscription_expiry_lead_days.update', { path: `/api/settings/${key}`, body: { value }, entityId: key }),
   })

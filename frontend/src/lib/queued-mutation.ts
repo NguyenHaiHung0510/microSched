@@ -1,8 +1,16 @@
-import type { QueryClient } from '@tanstack/react-query'
+import { useMutation, type DefaultError, type QueryClient, type UseMutationOptions } from '@tanstack/react-query'
+
 import { ApiError, apiRequest } from '@/api'
 import { adapterFor, type CommandInput, type OperationKind } from '@/lib/outbox-adapters'
 import { enqueueOutbox, payloadReceipt, type Json, type OutboxRow } from '@/lib/outbox-db'
 import { persistConfirmedSnapshot } from '@/lib/public-cache'
+export const QUEUED_MUTATION_OPTIONS = { networkMode: 'always' } as const
+export function useQueuedMutation<TData = unknown, TError = DefaultError, TVariables = void, TContext = unknown>(
+  options: UseMutationOptions<TData, TError, TVariables, TContext>,
+) {
+  return useMutation({ ...options, ...QUEUED_MUTATION_OPTIONS })
+}
+
 export type QueuedDeleteReceipt = { cancelledRows: OutboxRow[] }
 export async function queuedRequest<T>(
   client: QueryClient, operationKind: OperationKind, input: CommandInput,

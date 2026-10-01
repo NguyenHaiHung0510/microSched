@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
   ChevronDown,
@@ -21,7 +21,7 @@ import {
 import { toast } from 'sonner'
 
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
-import { queuedRequest } from '@/lib/queued-mutation'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
 import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { OutboxEntityStatus } from '@/OutboxStatus'
@@ -269,7 +269,7 @@ export function TasksScreen() {
     })
   }, [queryClient, timeline.data, timeline.isSuccess])
 
-  const create = useMutation({
+  const create = useQueuedMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       queuedRequest<Task>(queryClient, 'task.create', {
         path: '/api/tasks',
@@ -719,7 +719,7 @@ const TaskCard = memo(function TaskCard({
   const [expanded, setExpanded] = useState(false)
   const [newItem, setNewItem] = useState('')
 
-  const reschedule = useMutation({
+  const reschedule = useQueuedMutation({
     mutationFn: (variables: { next: TaskSchedule; previous: TaskSchedule }) =>
       queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${task.id}`, body: variables.next, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: (_data, variables) => {
@@ -738,7 +738,7 @@ const TaskCard = memo(function TaskCard({
       )
     },
   })
-  const update = useMutation({
+  const update = useQueuedMutation({
     mutationFn: (
       payload: Partial<TaskPayload> & { status?: TaskStatus; pinned?: boolean },
     ) =>
@@ -747,7 +747,7 @@ const TaskCard = memo(function TaskCard({
       setEditing(false)
     },
   })
-  const remove = useMutation({
+  const remove = useQueuedMutation({
     mutationFn: () => queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'task.delete', {
       path: `/api/tasks/${task.id}`, entityId: task.id, requiresPrivate: task.is_private,
       optimisticEntity: JSON.parse(JSON.stringify(task)) as Json,
@@ -768,18 +768,18 @@ const TaskCard = memo(function TaskCard({
       )
     },
   })
-  const addItem = useMutation({
+  const addItem = useQueuedMutation({
     mutationFn: (item: { id: string; content: string; position: number }) =>
       queuedRequest<TaskItem>(queryClient, 'task_item.create', { path: `/api/tasks/${task.id}/items`, body: item, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setNewItem('')
     },
   })
-  const changeItem = useMutation({
+  const changeItem = useQueuedMutation({
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
       queuedRequest<TaskItem>(queryClient, 'task_item.update', { path: `/api/tasks/${task.id}/items/${item.id}`, body: { is_completed: isCompleted }, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
   })
-  const removeItem = useMutation({
+  const removeItem = useQueuedMutation({
     mutationFn: (item: TaskItem) => queuedRequest<void>(queryClient, 'task_item.delete', { path: `/api/tasks/${task.id}/items/${item.id}`, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
   })
 
@@ -1357,7 +1357,7 @@ export function LegacyTasksScreen() {
     })
   }, [queryClient, tasks.isSuccess, tasks.data])
 
-  const create = useMutation({
+  const create = useQueuedMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       queuedRequest<Task>(queryClient, 'task.create', {
         path: '/api/tasks',

@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, GripVertical, MapPin, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
-import { queuedRequest } from '@/lib/queued-mutation'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
 import { uuidv7 } from '@/lib/uuidv7'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import {
@@ -277,7 +277,7 @@ export function CalendarScrollView() {
     ...taskReadControl,
   })
 
-  const createQuickTask = useMutation({
+  const createQuickTask = useQueuedMutation({
     mutationFn: (variables: { id: string; title: string; due_on: string }) =>
       queuedRequest<CalendarTask>(queryClient, 'task.create', {
         path: '/api/tasks',
@@ -302,7 +302,7 @@ export function CalendarScrollView() {
     },
   })
 
-  const toggleTaskStatus = useMutation({
+  const toggleTaskStatus = useQueuedMutation({
     mutationFn: (variables: { taskId: string; status: 'open' | 'completed'; requiresPrivate: boolean }) =>
       queuedRequest<CalendarTask>(queryClient, 'task.update', {
         path: `/api/tasks/${variables.taskId}`,
@@ -312,7 +312,7 @@ export function CalendarScrollView() {
       }),
   })
 
-  const rescheduleTask = useMutation({
+  const rescheduleTask = useQueuedMutation({
     mutationFn: (variables: {
       taskId: string
       due_on: string
@@ -367,7 +367,7 @@ export function CalendarScrollView() {
     createQuickTask.mutate({ id: uuidv7(), title: trimmed, due_on: today })
   }
 
-  const createAgendaTask = useMutation({
+  const createAgendaTask = useQueuedMutation({
     mutationFn: (variables: { id: string; title: string; due_on: string }) =>
       queuedRequest<CalendarTask>(queryClient, 'task.create', {
         path: '/api/tasks',

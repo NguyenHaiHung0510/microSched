@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/api'
-import { queuedRequest } from '@/lib/queued-mutation'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
 import type { Json } from '@/lib/outbox-db'
 import type { OperationKind } from '@/lib/outbox-adapters'
 import { TaskForm } from '@/TaskForm'
@@ -24,7 +24,7 @@ export function ReminderSourceDialog({ kind, sourceId, onClose }: { kind: Remind
     queryFn: ({ signal }) => apiRequest<Task | Tracker | CalendarEvent>(path, { signal }), ...NO_POLLING_QUERY_OPTIONS })
   const groups = useQuery({ queryKey: [...reminderKey, 'groups'], enabled: kind === 'tracker',
     queryFn: ({ signal }) => apiRequest<{ items: TrackerGroup[] }>('/api/tracker/groups', { signal }), ...NO_POLLING_QUERY_OPTIONS })
-  const save = useMutation({ mutationFn: async (body: object) => {
+  const save = useQueuedMutation({ mutationFn: async (body: object) => {
     if (!source.data) throw new Error('Chưa tải được đối tượng để lưu.')
     const requiresPrivate = kind === 'event' ? false :
       (source.data as Task | Tracker).is_private !== false

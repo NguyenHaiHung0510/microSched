@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell } from 'lucide-react'
 import { apiRequest } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { ReminderDevices } from '@/ReminderDevices'
-import { queuedRequest } from '@/lib/queued-mutation'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { uuidv7 } from '@/lib/uuidv7'
 import { activeReminder, reminderKey, reminderPreview, reminderTime, reminderStatus, vnInput,
@@ -70,7 +70,7 @@ function ReminderFields({ source, kind, sourceId, current, onClose, outboxPendin
   const preview = reminderPreview(source, mode, absolute, amount, unit, direction, clock)
   const relativeAvailable = kind !== 'tracker' && Boolean(source.anchor_at || source.anchor_day)
   const refresh = () => { void client.invalidateQueries({ queryKey: reminderKey }); onClose() }
-  const save = useMutation({ mutationFn: () => queuedRequest<Reminder | null>(client, 'reminder.save', {
+  const save = useQueuedMutation({ mutationFn: () => queuedRequest<Reminder | null>(client, 'reminder.save', {
     path: `/api/reminders/${kind}/${sourceId}`,
     entityId: saveId.current,
     parentId: sourceId,
@@ -89,7 +89,7 @@ function ReminderFields({ source, kind, sourceId, current, onClose, outboxPendin
   },
   onError: () => { void client.invalidateQueries({ queryKey: [...reminderKey, 'active', kind, sourceId] });
     void client.invalidateQueries({ queryKey: [...reminderKey, 'source', kind, sourceId] }) } })
-  const cancel = useMutation({ mutationFn: () => queuedRequest<void | null>(client, 'reminder.cancel', {
+  const cancel = useQueuedMutation({ mutationFn: () => queuedRequest<void | null>(client, 'reminder.cancel', {
     path: `/api/reminders/${current!.id}?revision=${current!.revision}`,
     entityId: current!.id,
     parentId: sourceId,

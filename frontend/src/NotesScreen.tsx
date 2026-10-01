@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowDown,
   ArrowUp,
@@ -21,7 +21,7 @@ import {
 import { toast } from 'sonner'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
-import { queuedRequest } from '@/lib/queued-mutation'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
 import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { OutboxEntityStatus } from '@/OutboxStatus'
@@ -91,7 +91,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const detailsReturnRef = useRef<HTMLButtonElement | null>(null)
   const label = noteLabel(note)
 
-  const update = useMutation({
+  const update = useQueuedMutation({
     mutationFn: (payload: Partial<NoteWritePayload>) =>
       queuedRequest<Note>(queryClient, 'note.update', {
         path: `/api/notes/${note.id}`, body: payload, entityId: note.id,
@@ -101,7 +101,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
       setEditing(false)
     },
   })
-  const remove = useMutation({
+  const remove = useQueuedMutation({
     mutationFn: () => queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'note.delete', {
       path: `/api/notes/${note.id}`, entityId: note.id, requiresPrivate: note.is_private,
       optimisticEntity: JSON.parse(JSON.stringify(note)) as Json,
@@ -122,7 +122,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
       )
     },
   })
-  const addItem = useMutation({
+  const addItem = useQueuedMutation({
     mutationFn: (item: { id: string; content: string; position: number }) =>
       queuedRequest<NoteItem>(queryClient, 'note_item.create', {
         path: `/api/notes/${note.id}/items`, body: item, entityId: item.id,
@@ -132,7 +132,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
       setNewItem('')
     },
   })
-  const changeItem = useMutation({
+  const changeItem = useQueuedMutation({
     mutationFn: ({ item, changes }: { item: NoteItem; changes: Partial<NoteItem> }) =>
       queuedRequest<NoteItem>(queryClient, 'note_item.update', {
         path: `/api/notes/${note.id}/items/${item.id}`, body: changes,
@@ -143,7 +143,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
       setEditingItemContent('')
     },
   })
-  const reorderItems = useMutation({
+  const reorderItems = useQueuedMutation({
     mutationFn: ({ item, other }: { item: NoteItem; other: NoteItem }) =>
       queuedRequest<NoteItem>(queryClient, 'note_item.reorder', {
         path: `/api/notes/${note.id}/items/positions`,
@@ -151,7 +151,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         parentId: note.id, requiresPrivate: note.is_private,
       }),
   })
-  const removeItem = useMutation({
+  const removeItem = useQueuedMutation({
     mutationFn: (item: NoteItem) => queuedRequest<void>(queryClient, 'note_item.delete', {
       path: `/api/notes/${note.id}/items/${item.id}`, entityId: item.id,
       parentId: note.id, requiresPrivate: note.is_private,
@@ -829,7 +829,7 @@ export function NotesScreen() {
     [notes.data, sortMode],
   )
 
-  const create = useMutation({
+  const create = useQueuedMutation({
     mutationFn: ({ payload }: { payload: NotePayload; source: CreateSource }) =>
       queuedRequest<Note>(queryClient, 'note.create', {
         path: '/api/notes', body: { ...payload, id: payload.id ?? uuidv7(), items: [] },

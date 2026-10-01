@@ -1,9 +1,9 @@
 import { type FormEvent, type SetStateAction, useState } from 'react'
 import { ReminderButton } from '@/ReminderEditor'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
 
-import { queuedRequest } from '@/lib/queued-mutation'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
 import { uuidv7 } from '@/lib/uuidv7'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -99,7 +99,7 @@ function PersistedChecklistSection({
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
 
-  const addItemMutation = useMutation({
+  const addItemMutation = useQueuedMutation({
     mutationFn: (item: TaskItem) => queuedRequest<TaskItem>(queryClient, 'task_item.create', {
       path: `/api/tasks/${taskId}/items`, body: item, entityId: item.id,
       parentId: taskId, requiresPrivate: initialPrivate,
@@ -112,7 +112,7 @@ function PersistedChecklistSection({
     },
   })
 
-  const updateContentMutation = useMutation({
+  const updateContentMutation = useQueuedMutation({
     mutationFn: ({ itemId, content }: { itemId: string; content: string }) =>
       queuedRequest<TaskItem>(queryClient, 'task_item.update', {
         path: `/api/tasks/${taskId}/items/${itemId}`, body: { content },
@@ -129,7 +129,7 @@ function PersistedChecklistSection({
     },
   })
 
-  const toggleCompletedMutation = useMutation({
+  const toggleCompletedMutation = useQueuedMutation({
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
       queuedRequest<TaskItem>(queryClient, 'task_item.update', {
         path: `/api/tasks/${taskId}/items/${item.id}`, body: { is_completed: isCompleted },
@@ -144,7 +144,7 @@ function PersistedChecklistSection({
     },
   })
 
-  const removeItemMutation = useMutation({
+  const removeItemMutation = useQueuedMutation({
     mutationFn: (item: TaskItem) =>
       queuedRequest<void>(queryClient, 'task_item.delete', {
         path: `/api/tasks/${taskId}/items/${item.id}`, entityId: item.id,

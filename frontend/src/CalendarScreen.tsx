@@ -1,9 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, ChevronLeft, ChevronRight, Edit3, Plus, Trash2 } from 'lucide-react'
 
 import { apiRequest } from '@/api'
-import { queuedRequest } from '@/lib/queued-mutation'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
 import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { uuidv7 } from '@/lib/uuidv7'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
@@ -243,7 +243,7 @@ export function CalendarScreen() {
     [sources.data?.items],
   )
 
-  const importFile = useMutation({
+  const importFile = useQueuedMutation({
     mutationFn: async ({ sourceId, file, startedAt }: { sourceId: string; file: File; startedAt: number }) => {
       if (importRequestRef.current?.startedAt !== startedAt) throw new Error('Yêu cầu nhập lịch đã được thay thế.')
       const problem = validateFile(file)
@@ -286,7 +286,7 @@ export function CalendarScreen() {
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
 
-  const createSource = useMutation({
+  const createSource = useQueuedMutation({
     mutationFn: (value: { id: string; name: string; kind: 'ics' | 'manual'; color: string }) =>
       queuedRequest<CalendarSource>(queryClient, 'calendar_source.create', { path: '/api/calendar/sources', body: value, entityId: value.id }),
     onSuccess: (source) => {
@@ -304,7 +304,7 @@ export function CalendarScreen() {
     },
   })
 
-  const updateSource = useMutation({
+  const updateSource = useQueuedMutation({
     mutationFn: ({
       sourceId,
       isVisible,
@@ -328,7 +328,7 @@ export function CalendarScreen() {
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
 
-  const deleteSource = useMutation({
+  const deleteSource = useQueuedMutation({
     mutationFn: (sourceId: string) => queuedRequest<void>(queryClient, 'calendar_source.delete', { path: `/api/calendar/sources/${sourceId}`, entityId: sourceId }),
     onSuccess: () => {
       setConfirm(null)
@@ -336,7 +336,7 @@ export function CalendarScreen() {
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
 
-  const createEvent = useMutation({
+  const createEvent = useQueuedMutation({
     mutationFn: (value: Record<string, unknown> & { id: string }) =>
       queuedRequest<CalendarEvent>(queryClient, 'calendar_event.create', { path: '/api/calendar/events', body: value as unknown as Json, entityId: value.id, parentId: typeof value.source_id === 'string' ? value.source_id : null }),
     onSuccess: () => {
@@ -345,7 +345,7 @@ export function CalendarScreen() {
     onError: (error) => setEventError(importErrorMessage(error)),
   })
 
-  const updateEvent = useMutation({
+  const updateEvent = useQueuedMutation({
     mutationFn: ({ eventId, value }: { eventId: string; value: Record<string, unknown> }) =>
       queuedRequest<CalendarEvent>(queryClient, 'calendar_event.update', { path: `/api/calendar/events/${eventId}`, body: value as unknown as Json, entityId: eventId }),
     onSuccess: () => {
@@ -355,7 +355,7 @@ export function CalendarScreen() {
     onError: (error) => setEventError(importErrorMessage(error)),
   })
 
-  const deleteEvent = useMutation({
+  const deleteEvent = useQueuedMutation({
     mutationFn: (eventId: string) => queuedRequest<void>(queryClient, 'calendar_event.delete', { path: `/api/calendar/events/${eventId}`, entityId: eventId }),
     onSuccess: () => {
       setConfirm(null)
