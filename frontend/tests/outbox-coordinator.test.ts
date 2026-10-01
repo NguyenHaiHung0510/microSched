@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startOutboxCoordinator } from '@/lib/outbox-coordinator'
+import { flushOutbox } from '@/lib/outbox-flush'
 
 vi.mock('@/lib/outbox-flush', () => ({ flushOutbox: vi.fn(async () => true) }))
 vi.mock('@/lib/outbox-db', () => ({ listOutbox: vi.fn(async () => []) }))
@@ -29,4 +30,24 @@ describe('empty-queue coordinator reads', () => {
       )
     } finally { stop() }
   })
+})
+
+it('coalesces overlapping reconnect and focus into one refresh after the active plan', async () => {
+  const target = new EventTarget()
+  const documentTarget = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+  vi.stubGlobal('window', target)
+  vi.stubGlobal('document', documentTarget)
+  vi.stubGlobal('navigator', { onLine: true })
+  let release!: (value: boolean) => void
+  vi.mocked(flushOutbox).mockImplementationOnce(() => new Promise<boolean>((resolve) => { release = resolve }))
+  const invalidateQueries = vi.fn(async () => undefined)
+  const stop = startOutboxCoordinator({ invalidateQueries } as unknown as QueryClient)
+  try {
+    target.dispatchEvent(new Event('online'))
+    target.dispatchEvent(new Event('focus'))
+    expect(invalidateQueries).not.toHaveBeenCalled()
+    release(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(invalidateQueries.mock.calls).toHaveLength(5)
+  } finally { release(true); stop() }
 })

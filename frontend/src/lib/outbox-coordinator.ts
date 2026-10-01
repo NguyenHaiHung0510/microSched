@@ -11,8 +11,10 @@ export function startOutboxCoordinator(client: QueryClient) {
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
   let planning = false
+  let pendingRefresh = false
   const request = async (refreshWhenEmpty = false) => {
-    if (planning) return
+    if (stopped) return
+    if (planning) { pendingRefresh ||= refreshWhenEmpty; return }
     planning = true
     try {
     clearTimeout(timer)
@@ -26,7 +28,10 @@ export function startOutboxCoordinator(client: QueryClient) {
       const next = Math.min(...candidates.map((row) => row.next_attempt_at ?? Date.now()))
       timer = setTimeout(() => void request(), Math.min(2_147_483_647, Math.max(1000, next - Date.now())))
     }
-    } catch { window.dispatchEvent(new Event('microsched:offline-unavailable')) } finally { planning = false }
+    } catch { window.dispatchEvent(new Event('microsched:offline-unavailable')) } finally {
+      planning = false
+      if (pendingRefresh && !stopped) { pendingRefresh = false; void request(true) }
+    }
   }
   const wake = (event: Event) => void request(['online', 'focus', 'visibilitychange'].includes(event.type))
   const events = ['online', 'focus', 'microsched:outbox-flush-requested', 'microsched:outbox-session-changed']
