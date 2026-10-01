@@ -84,6 +84,7 @@ async function runFlush(client: QueryClient) {
   for (const row of rows) {
     if (!navigator.onLine) break
     if (['failed', 'suppressed'].includes(row.state)) continue
+    try { adapterFor(row.operation_kind) } catch { row.state = 'failed'; await updateOutbox(row.operation_id!, { state: 'failed', last_error_code: 'UNKNOWN_OPERATION' }); continue }
     const parent = row.dependency_operation_id ? active.get(row.dependency_operation_id) : null
     if (parent) {
       if (['failed', 'suppressed'].includes(parent.state)) {

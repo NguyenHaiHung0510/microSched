@@ -5,8 +5,7 @@ import './index.css'
 import App from './App.tsx'
 import { APP_QUERY_DEFAULTS } from './query-polling.ts'
 import { initializePublicPersistence, loadSessionBootstrap, publicSnapshotTimestamp } from './lib/public-cache'
-import { adapterFor } from './lib/outbox-adapters'
-import { listOutbox } from './lib/outbox-db'
+import { replayPendingOverlays } from './lib/outbox-adapters'
 import { startOutboxCoordinator } from './lib/outbox-coordinator'
 
 const queryClient = new QueryClient({
@@ -25,9 +24,14 @@ async function startApp() {
     private_until: null, private_locked_until: null, pin_is_set: false, pin_is_bootstrap: false,
     mimi_available: false, offline_bootstrap: true, offline_snapshot_at: await publicSnapshotTimestamp(),
   }, { updatedAt: 0 })
-  for (const row of await listOutbox()) {
-    if (!row.requires_private) await adapterFor(row.operation_kind).optimisticApply(queryClient, row)
-  }
+  try { await replayPendingOverlays(queryClient) } catch { window.dispatchEvent(new Event('microsched:outbox-reconcile-unavailable')) }
+  try {
+    const channel = new BroadcastChannel('microsched-outbox-events')
+    channel.onmessage = () => {
+      window.dispatchEvent(new Event('microsched:outbox-changed'))
+      void replayPendingOverlays(queryClient).then(() => window.dispatchEvent(new Event('microsched:outbox-flush-requested'))).catch(() => window.dispatchEvent(new Event('microsched:outbox-reconcile-unavailable')))
+    }
+  } catch { /* Browsers without BroadcastChannel retain IndexedDB and local observation. */ }
   startOutboxCoordinator(queryClient)
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

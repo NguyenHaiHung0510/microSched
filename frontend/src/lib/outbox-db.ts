@@ -38,6 +38,7 @@ const cancelledReceipts = new WeakMap<OutboxRow[], OutboxRow[]>()
 
 function emitChanged() {
   window.dispatchEvent(new Event('microsched:outbox-changed'))
+  try { const channel = new BroadcastChannel('microsched-outbox-events'); channel.postMessage('changed'); channel.close() } catch { /* Existing Dexie observation remains available. */ }
 }
 
 export async function outboxDatabase(): Promise<OutboxDb | null> {
