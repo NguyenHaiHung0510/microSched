@@ -56,11 +56,24 @@ test('real IndexedDB persists claims, atomic dependencies and unsent coalescing'
     const rows = await db.listOutbox()
     const immutable = rows[0]?.payload_sha256 === digest &&
       (await db.payloadReceipt(rows[0].body)).payload_sha256 === digest
+    let unknownDiscardRejected = false
+    try { await db.discardOutboxTree(operationId) } catch { unknownDiscardRejected = true }
+    const retained = await db.listOutbox()
+    // Core fixture only: simulate a known business rejection, not a server ACK.
+    await db.updateOutbox(operationId, { state: 'failed', last_error_code: 'HTTP_422' })
+    const child = await db.enqueueOutbox({ ...retained[0], operation_id: undefined,
+      operation_kind: 'task_item.create', resource: 'task_item', method: 'POST',
+      path: '/api/tasks/existing/items', body: { id: 'discard-child', content: 'synthetic' },
+      entity_id: 'discard-child', parent_id: 'existing', state: 'suppressed', attempts: 0,
+      dependency_operation_id: operationId, last_error_code: 'PARENT_FAILED' })
     const discarded = await db.discardOutboxTree(operationId)
     return { state: rows[0]?.state, attempts: rows[0]?.attempts, immutable,
+      unknownDiscardRejected, retained: retained.length,
+      retainedDigest: retained[0]?.payload_sha256 === digest,
+      descendantLinked: child.dependency_operation_id === operationId,
       discarded: discarded.length, remaining: (await db.listOutbox()).length }
   }, { operationId: result.claimedOperation, digest: result.confirmedDigest })
-  expect(reopened).toEqual({ state: 'outcome_unknown', attempts: 1, immutable: true, discarded: 1, remaining: 0 })
+  expect(reopened).toEqual({ state: 'outcome_unknown', attempts: 1, immutable: true, unknownDiscardRejected: true, retained: 1, retainedDigest: true, descendantLinked: true, discarded: 2, remaining: 0 })
   console.log(JSON.stringify({ lane: 'real-indexeddb-core-only', result, reopened }))
 })
 
