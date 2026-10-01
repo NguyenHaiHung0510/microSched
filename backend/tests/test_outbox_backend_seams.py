@@ -170,6 +170,27 @@ def test_client_id_replays_atomic_note_reorder_and_calendar_creates(pg_dsn: str)
                     },
                 )
                 assert duplicate_positions.status_code == 422
+                after_duplicate_positions = {
+                    item["id"]: item["position"]
+                    for item in (await client.get(f"/api/notes/{note_id}/items")).json()
+                }
+                assert after_duplicate_positions == before_bad_reorder
+
+                duplicate_ids = await client.patch(
+                    reorder_path,
+                    json={
+                        "items": [
+                            {"id": str(item_ids[0]), "position": 1},
+                            {"id": str(item_ids[0]), "position": 2},
+                        ]
+                    },
+                )
+                assert duplicate_ids.status_code == 422
+                after_duplicate_ids = {
+                    item["id"]: item["position"]
+                    for item in (await client.get(f"/api/notes/{note_id}/items")).json()
+                }
+                assert after_duplicate_ids == before_bad_reorder
 
                 other_note = await client.post("/api/notes", json={"title": "outbox070 other"})
                 assert other_note.status_code == 201
