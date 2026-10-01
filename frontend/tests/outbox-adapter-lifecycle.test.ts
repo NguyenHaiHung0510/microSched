@@ -111,6 +111,22 @@ describe('typed outbox adapter lifecycles', () => {
     queryClient.clear()
   })
 
+  it('permanently forgets old-account baselines on a full purge', async () => {
+    const queryClient = client()
+    const baseline = { items: [{ id: ids.task, title: 'Account A', is_private: false }] }
+    queryClient.setQueryData(['tasks', 'timeline', 'all', '2026-10-01', '2026-10-08'], baseline)
+    const row = makeRow('task.update', `/api/tasks/${ids.task}`, { title: 'Pending from A' }, ids.task)
+    const adapter = adapterFor('task.update')
+    await adapter.optimisticApply(queryClient, row)
+    clearOutboxBaselines(queryClient, true)
+    queryClient.clear()
+    queryClient.setQueryData(['tasks', 'timeline', 'all', '2026-10-01', '2026-10-08'], { items: [] })
+    await adapter.discardOrRollback(queryClient, row)
+    expect(queryClient.getQueryData(['tasks', 'timeline', 'all', '2026-10-01', '2026-10-08']))
+      .toEqual({ items: [] })
+    queryClient.clear()
+  })
+
   it('classifies public-to-private updates as private and hides cached content without a live session', async () => {
     const queryClient = client()
     queryClient.setQueryData(['tasks', 'all'], { items: [

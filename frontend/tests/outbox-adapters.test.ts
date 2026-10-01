@@ -66,4 +66,33 @@ describe('typed domain command encoding', () => {
       group_id: 'group-2',
     })
   })
+
+  it('accepts existing RFC UUIDv4 entity and parent IDs while keeping create IDs UUIDv7-only', () => {
+    const existingId = '550e8400-e29b-41d4-a716-446655440000'
+    expect(adapterFor('task.update').encodeCommand({
+      operationKind: 'task.update',
+      path: `/api/tasks/${existingId}`,
+      entityId: existingId,
+      body: { title: 'Existing task' },
+    })).toMatchObject({ entity_id: existingId, path: `/api/tasks/${existingId}` })
+
+    expect(adapterFor('task_item.create').encodeCommand({
+      operationKind: 'task_item.create',
+      path: `/api/tasks/${existingId}/items`,
+      parentId: existingId,
+      body: { id: '0199abc0-0000-7000-8000-000000000009', content: 'child' },
+    })).toMatchObject({ parent_id: existingId, entity_id: '0199abc0-0000-7000-8000-000000000009' })
+
+    expect(() => adapterFor('task.update').encodeCommand({
+      operationKind: 'task.update',
+      path: '/api/tasks/not-a-uuid',
+      entityId: 'not-a-uuid',
+      body: { title: 'Malformed' },
+    })).toThrow(/Invalid entity UUID/)
+    expect(() => adapterFor('task.create').encodeCommand({
+      operationKind: 'task.create',
+      path: '/api/tasks',
+      body: { id: '550e8400-e29b-41d4-a716-446655440000', title: 'Old ID on create' },
+    })).toThrow(/UUIDv7/)
+  })
 })

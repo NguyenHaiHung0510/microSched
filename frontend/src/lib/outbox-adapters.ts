@@ -526,7 +526,6 @@ export async function replayPendingOverlays(client: QueryClient): Promise<number
   const rows = await listOutbox()
   let applied = 0
   for (const row of rows) {
-    if (row.state === 'failed' || row.state === 'suppressed') continue
     let adapter: OutboxAdapter
     try {
       adapter = adapterFor(row.operation_kind)
@@ -660,6 +659,11 @@ function validUuidV7(value: unknown): value is string {
     /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
+function validExistingUuid(value: unknown): value is string {
+  return typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
 function routeEntityId(kind: OperationKind, path: string): string | null {
   const patterns: Partial<Record<OperationKind, RegExp>> = {
     'task.update': /^\/api\/tasks\/([^/]+)$/,
@@ -736,7 +740,7 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
         (!validUuidV7(bodyId) || id !== bodyId)) {
         throw new Error(`A stable body.id UUIDv7 is required for ${operationKind}`)
       }
-      if (id !== null && spec.resource !== 'setting' && !validUuidV7(id)) {
+      if (id !== null && spec.resource !== 'setting' && !validExistingUuid(id)) {
         throw new Error(`Invalid entity UUID for ${operationKind}`)
       }
       const pathEntityId = routeEntityId(operationKind, path)
@@ -760,7 +764,7 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
         operationKind.startsWith('tracker.')) && input.requiresPrivate === undefined) {
         throw new Error(`Privacy gate state is required for ${operationKind}`)
       }
-      if (parentId !== null && !validUuidV7(parentId)) throw new Error(`Invalid parent UUID for ${operationKind}`)
+      if (parentId !== null && !validExistingUuid(parentId)) throw new Error(`Invalid parent UUID for ${operationKind}`)
       return {
         operation_kind: operationKind,
         resource: spec.resource,
