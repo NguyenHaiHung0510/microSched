@@ -1,6 +1,6 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query'
 
-import { listOutbox, type Json, type OutboxRow } from '@/lib/outbox-db'
+import { listOutbox, restoreCancelledOutbox, type Json, type OutboxRow } from '@/lib/outbox-db'
 import { sanitizePersistedClient } from '@/lib/public-cache'
 import type { PersistedClient } from '@tanstack/query-persist-client-core'
 
@@ -84,6 +84,9 @@ const noDto: AdapterSpec['optimisticDto'] = (input) => {
 export function requiresPrivateRow(row: Pick<OutboxRow, 'requires_private' | 'body'>): boolean {
   return row.requires_private || objectBody(row.body).is_private === true
 }
+const isRestoreOperation = (kind: OperationKind) =>
+  kind === 'task.restore' || kind === 'note.restore' || kind === 'tracker.restore' ||
+  kind === 'entry.restore' || kind === 'subscription.restore'
 const taskKeys = () => [['tasks'], ['calendar', 'tasks']] as QueryKey[]
 const noteKeys = () => [['notes']] as QueryKey[]
 const calendarSourceKeys = () => [['calendar', 'sources']] as QueryKey[]
@@ -440,14 +443,14 @@ function applyTypedOverlay(client: QueryClient, row: OutboxRow) {
   const keys = spec.keys({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
   const body = objectBody(row.body)
   const optimisticEntity = (row as OutboxRow & { optimistic_entity?: Json }).optimistic_entity
-  const restoredModel = (kind === 'task.restore' || kind === 'note.restore') &&
+  const restoredModel = isRestoreOperation(kind) &&
     optimisticEntity && record(optimisticEntity)
     ? { ...(optimisticEntity as Entity), __outbox_state: 'pending' }
     : null
   const model = restoredModel ?? spec.optimisticDto({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
   const deleting = spec.method === 'DELETE'
   const action = deleting ? 'delete' :
-    kind.endsWith('.create') || kind === 'task.restore' || kind === 'note.restore' ? 'upsert' : 'update'
+    kind.endsWith('.create') || isRestoreOperation(kind) ? 'upsert' : 'update'
 
   // Keep reminder lists server-confirmed while a revision-checked command waits.
   // The public-cache sanitizer deliberately does not persist one-shot reminders.
@@ -832,14 +835,16 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
     async reconcileSuccess(client, row, response) {
       if (spec.method === 'DELETE' || kindIsSideEffect(operationKind) || response == null) return
       const keys = spec.keys({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
-      if ((operationKind === 'task.restore' || operationKind === 'note.restore') &&
-        record(response)?.status === 'restored') {
+      if (isRestoreOperation(operationKind) && record(response)?.status === 'restored') {
         if (requiresPrivateRow(row) && !hasLivePrivateSession(client)) {
           purgePrivateRowFromCache(client, keys, row)
           return
         }
         const restored = record((row as OutboxRow & { optimistic_entity?: Json }).optimistic_entity)
-        if (restored && !requiresPrivateRow(row)) {
+        if (!restored) return
+        const confirmed = { ...restored }
+        delete confirmed.__outbox_state
+        if (!requiresPrivateRow(row)) {
           captureBaseline(client, keys, row)
           const byKey = confirmedBaselines.get(client)
           for (const key of keys) {
@@ -847,37 +852,35 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
             const snapshot = byKey?.get(id)
             if (!snapshot) continue
             byKey?.set(id, snapshot.map(([queryKey, value]) => {
-              const entity = { ...restored }
-              delete entity.__outbox_state
               if (operationKind === 'task.restore' &&
                 ((queryKey[0] === 'calendar' && queryKey[1] === 'tasks') ||
                   (queryKey[0] === 'tasks' && queryKey[1] === 'timeline'))) {
                 const envelope = record(value)
                 return [queryKey, envelope && Array.isArray(envelope.items)
-                  ? { ...envelope, items: updateCalendarRangeList(envelope.items as Entity[], row, entity, 'upsert', queryKey, false) }
+                  ? { ...envelope, items: updateCalendarRangeList(envelope.items as Entity[], row, confirmed, 'upsert', queryKey, false) }
                   : value]
               }
-              if (Array.isArray(value)) return [queryKey, updateEntityList(value as Entity[], row, entity, 'upsert')]
+              if (Array.isArray(value)) return [queryKey, updateEntityList(value as Entity[], row, confirmed, 'upsert')]
               const envelope = record(value)
               return [queryKey, envelope && Array.isArray(envelope.items)
-                ? { ...envelope, items: updateEntityList(envelope.items as Entity[], row, entity, 'upsert') }
+                ? { ...envelope, items: updateEntityList(envelope.items as Entity[], row, confirmed, 'upsert') }
                 : value]
             }))
           }
         }
         for (const key of keys) {
           client.setQueriesData({ queryKey: key }, (value) => {
-            const clearMarker = (item: unknown) => {
-              const entity = record(item)
-              if (!entity || entity.id !== row.entity_id) return item
-              const next = { ...entity }
-              delete next.__outbox_state
-              return next
+            if (operationKind === 'task.restore' &&
+              ((key[0] === 'calendar' && key[1] === 'tasks') || (key[0] === 'tasks' && key[1] === 'timeline'))) {
+              const envelope = record(value)
+              return envelope && Array.isArray(envelope.items)
+                ? { ...envelope, items: updateCalendarRangeList(envelope.items as Entity[], row, confirmed, 'upsert', key, false) }
+                : value
             }
-            if (Array.isArray(value)) return value.map(clearMarker)
+            if (Array.isArray(value)) return updateEntityList(value as Entity[], row, confirmed, 'upsert')
             const envelope = record(value)
             return envelope && Array.isArray(envelope.items)
-              ? { ...envelope, items: envelope.items.map(clearMarker) }
+              ? { ...envelope, items: updateEntityList(envelope.items as Entity[], row, confirmed, 'upsert') }
               : value
           })
         }
@@ -957,4 +960,15 @@ export function adapterFor(kind: string): OutboxAdapter {
   const adapter = outboxAdapters[kind as OperationKind]
   if (!adapter) throw new Error(`Unknown outbox operation: ${kind}`)
   return adapter
+}
+
+/** Requeue the original, atomically cancelled command tree and project every row. */
+export async function restoreCancelledDomainTree(
+  client: QueryClient,
+  rows: OutboxRow[],
+): Promise<OutboxRow[]> {
+  const restored = await restoreCancelledOutbox(rows)
+  for (const row of restored) await adapterFor(row.operation_kind).optimisticApply(client, row)
+  window.dispatchEvent(new Event('microsched:outbox-flush-requested'))
+  return restored
 }

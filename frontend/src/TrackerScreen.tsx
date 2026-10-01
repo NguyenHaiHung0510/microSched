@@ -49,6 +49,7 @@ import {
 } from '@/subscription-ui'
 import { errorMessage } from '@/tracker-undo'
 import { ensurePushSubscription } from '@/push-subscription'
+import type { QueuedDeleteReceipt } from '@/lib/queued-mutation'
 import { standardRefetchInterval } from '@/query-polling'
 import {
   backdateOptions,
@@ -274,7 +275,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
               duration: 10_000,
               action: {
                 label: 'Hoàn tác',
-                onClick: () => undoDeleteEntry(entry.id, tracker.is_private),
+                onClick: () => undoDeleteEntry(entry, tracker.is_private),
               },
             },
           )
@@ -366,11 +367,11 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       toast.error('Không thể xác định quyền riêng tư của tracker.')
       return
     }
-    writes.deleteEntry.mutate({ entryId: entry.id, requiresPrivate: parent.is_private }, {
-      onSuccess: () => {
+    writes.deleteEntry.mutate({ entry, requiresPrivate: parent.is_private }, {
+      onSuccess: (receipt) => {
         toast(<span>Đã xoá bản ghi</span>, {
           duration: 10_000,
-          action: { label: 'Hoàn tác', onClick: () => undoRestoreEntry(entry.id, parent.is_private) },
+          action: { label: 'Hoàn tác', onClick: () => undoRestoreEntry(entry, parent.is_private, receipt) },
         })
       },
       onError: (error) => toast.error(errorMessage(error)),
@@ -379,34 +380,34 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   // M4: an undo/restore failure must be visible and retryable — the toast action
   // disappearing silently would make the user believe the delete was undone.
-  function undoDeleteEntry(entryId: string, requiresPrivate: boolean) {
-    writes.deleteEntry.mutate({ entryId, requiresPrivate }, {
+  function undoDeleteEntry(entry: Entry, requiresPrivate: boolean) {
+    writes.deleteEntry.mutate({ entry, requiresPrivate }, {
       onError: (error) => {
         toast.error('Không hoàn tác được bản ghi', {
           description: errorMessage(error),
-          action: { label: 'Thử lại', onClick: () => undoDeleteEntry(entryId, requiresPrivate) },
+          action: { label: 'Thử lại', onClick: () => undoDeleteEntry(entry, requiresPrivate) },
         })
       },
     })
   }
 
-  function undoRestoreEntry(entryId: string, requiresPrivate: boolean) {
-    writes.restoreEntry.mutate({ entryId, requiresPrivate }, {
+  function undoRestoreEntry(entry: Entry, requiresPrivate: boolean, receipt: QueuedDeleteReceipt | null) {
+    writes.restoreEntry.mutate({ entry, requiresPrivate, receipt }, {
       onError: (error) => {
         toast.error('Không khôi phục được bản ghi', {
           description: errorMessage(error),
-          action: { label: 'Thử lại', onClick: () => undoRestoreEntry(entryId, requiresPrivate) },
+          action: { label: 'Thử lại', onClick: () => undoRestoreEntry(entry, requiresPrivate, receipt) },
         })
       },
     })
   }
 
-  function undoRestoreTracker(trackerId: string, requiresPrivate: boolean) {
-    writes.restoreTracker.mutate({ trackerId, requiresPrivate }, {
+  function undoRestoreTracker(tracker: Tracker, requiresPrivate: boolean, receipt: QueuedDeleteReceipt | null) {
+    writes.restoreTracker.mutate({ tracker, requiresPrivate, receipt }, {
       onError: (error) => {
         toast.error('Không khôi phục được tracker', {
           description: errorMessage(error),
-          action: { label: 'Thử lại', onClick: () => undoRestoreTracker(trackerId, requiresPrivate) },
+          action: { label: 'Thử lại', onClick: () => undoRestoreTracker(tracker, requiresPrivate, receipt) },
         })
       },
     })
@@ -1230,14 +1231,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
               className="min-h-11"
               onClick={() => {
                 if (!archiveFor) return
-                writes.archiveTracker.mutate({ trackerId: archiveFor.id, requiresPrivate: archiveFor.is_private }, {
-                  onSuccess: () => {
+                writes.archiveTracker.mutate({ tracker: archiveFor, requiresPrivate: archiveFor.is_private }, {
+                  onSuccess: (receipt) => {
                     setArchiveFor(null)
                     toast(<span>Đã lưu trữ “{archiveFor.name}”</span>, {
                       duration: 10_000,
                       action: {
                         label: 'Hoàn tác',
-                        onClick: () => undoRestoreTracker(archiveFor.id, archiveFor.is_private),
+                        onClick: () => undoRestoreTracker(archiveFor, archiveFor.is_private, receipt),
                       },
                     })
                   },

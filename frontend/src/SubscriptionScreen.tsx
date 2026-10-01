@@ -675,14 +675,14 @@ export function SubscriptionScreen() {
       toast.error('Không thể xác định quyền riêng tư của tracker.')
       return
     }
-    writes.deleteSubscription.mutate({ subscriptionId: subscription.id, requiresPrivate }, {
-      onSuccess: () => {
+    writes.deleteSubscription.mutate({ subscription, requiresPrivate }, {
+      onSuccess: (receipt) => {
         toast(<span>Đã xoá “{subscription.name}”</span>, {
           duration: 10_000,
           action: {
             label: 'Hoàn tác',
             onClick: () =>
-              writes.restoreSubscription.mutate({ subscriptionId: subscription.id, requiresPrivate }, {
+              writes.restoreSubscription.mutate({ subscription, requiresPrivate, receipt }, {
                 // F10: a failed restore must surface, not silently vanish.
                 onError: (error) => toast.error(errorMessage(error)),
               }),

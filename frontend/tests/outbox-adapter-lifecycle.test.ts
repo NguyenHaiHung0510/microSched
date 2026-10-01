@@ -5,12 +5,19 @@ import {
   adapterFor,
   clearOutboxBaselines,
   hasVerifiedPrivateSession,
+  restoreCancelledDomainTree,
   type OperationKind,
 } from '@/lib/outbox-adapters'
 import type { Json, OutboxRow } from '@/lib/outbox-db'
 
-const { listOutbox } = vi.hoisted(() => ({ listOutbox: vi.fn(async () => []) }))
-vi.mock('@/lib/outbox-db', () => ({ listOutbox }))
+const { listOutbox, restoreCancelledOutbox } = vi.hoisted(() => ({
+  listOutbox: vi.fn(async () => []),
+  restoreCancelledOutbox: vi.fn(async (rows: OutboxRow[]) => {
+    void rows
+    return [] as OutboxRow[]
+  }),
+}))
+vi.mock('@/lib/outbox-db', () => ({ listOutbox, restoreCancelledOutbox }))
 
 const ids = {
   task: '0199abc0-0000-7000-8000-000000000011',
@@ -284,6 +291,99 @@ describe('typed outbox adapter lifecycles', () => {
     await adapterFor('task.update').discardOrRollback(queryClient, laterUpdate)
     expect(queryClient.getQueryData<{ items: Array<Record<string, unknown>> }>(['tasks', 'all'])?.items[0])
       .toEqual(task)
+    queryClient.clear()
+  })
+
+  it('upserts full tracker, entry, and subscription projections on minimal restore acknowledgements', async () => {
+    const queryClient = client()
+    const cases: Array<{ kind: OperationKind; path: string; key: string[]; entity: Record<string, unknown> }> = [
+      {
+        kind: 'tracker.restore', path: `/api/tracker/trackers/${ids.other}/restore`, key: ['tracker', 'trackers'],
+        entity: { id: ids.other, name: 'Tracker restored', is_private: false, kind: 'general', direction: 'out', input_mode: 'event', group_id: null, unit: null, color: null, reminder_time: null, reminder_text: null, reminder_mode: null, reminder_interval_days: null, reminder_action: null, last_entry_at: null, entry_count_30d: 2, created_at: 'created', updated_at: 'updated' },
+      },
+      {
+        kind: 'entry.restore', path: `/api/tracker/entries/${ids.item}/restore`, key: ['tracker', 'entries'],
+        entity: { id: ids.item, tracker_id: ids.other, occurred_at: '2026-10-01T00:00:00Z', quantity: 2, amount: null, list_amount: null, note_md: 'full entry', created_at: 'created', updated_at: 'updated' },
+      },
+      {
+        kind: 'subscription.restore', path: `/api/subscriptions/${ids.note}/restore`, key: ['subscription', 'subscriptions'],
+        entity: { id: ids.note, tracker_id: ids.other, name: 'Subscription restored', amount: 42, list_amount: 50, period_count: 1, period_unit: 'month', started_on: '2026-09-01', expires_on: '2026-10-01', auto_renew: false, canceled_at: null, note_md: 'full subscription', deleted_at: null, created_at: 'created', updated_at: 'updated', status: 'expired', days_left: 0, monthly_amount: 42, corrupted: false },
+      },
+    ]
+    for (const item of cases) {
+      queryClient.setQueryData(item.key, { items: [] })
+      const row = makeRow(item.kind, item.path, null, String(item.entity.id))
+      Object.assign(row, { optimistic_entity: item.entity })
+      const adapter = adapterFor(item.kind)
+      await adapter.optimisticApply(queryClient, row)
+      expect(queryClient.getQueryData<{ items: Array<Record<string, unknown>> }>(item.key)?.items[0])
+        .toMatchObject({ ...item.entity, __outbox_state: 'pending' })
+      await adapter.reconcileSuccess(queryClient, row, { id: item.entity.id, status: 'restored' })
+      expect(queryClient.getQueryData<{ items: Array<Record<string, unknown>> }>(item.key)?.items)
+        .toEqual([item.entity])
+
+      const editKind = item.kind === 'tracker.restore' ? 'tracker.update'
+        : item.kind === 'entry.restore' ? 'entry.update' : 'subscription.update'
+      const editPath = item.kind === 'tracker.restore' ? `/api/tracker/trackers/${item.entity.id}`
+        : item.kind === 'entry.restore' ? `/api/tracker/entries/${item.entity.id}` : `/api/subscriptions/${item.entity.id}`
+      const edit = makeRow(editKind, editPath, { name: 'temporary pending change' }, String(item.entity.id))
+      await adapterFor(editKind).optimisticApply(queryClient, edit)
+      await adapterFor(editKind).discardOrRollback(queryClient, edit)
+      expect(queryClient.getQueryData<{ items: Array<Record<string, unknown>> }>(item.key)?.items)
+        .toEqual([item.entity])
+    }
+    queryClient.clear()
+  })
+
+  it('keeps a private tracker restore visible only in the live cache and out of rollback after lock', async () => {
+    vi.stubGlobal('navigator', { onLine: true })
+    const queryClient = client()
+    const tracker = {
+      id: ids.other, name: 'PRIVATE_TRACKER_RESTORE_CANARY', is_private: true,
+      kind: 'general', direction: 'out', input_mode: 'event', group_id: null, unit: null,
+      color: null, reminder_time: null, reminder_text: null, reminder_mode: null,
+      reminder_interval_days: null, reminder_action: null, last_entry_at: null,
+      entry_count_30d: 0, created_at: null, updated_at: null,
+    }
+    queryClient.setQueryData(['tracker', 'trackers'], { items: [] })
+    queryClient.setQueryData(['session'], {
+      private_until: new Date(Date.now() + 60_000).toISOString(), offline_bootstrap: false,
+    })
+    const row = makeRow('tracker.restore', `/api/tracker/trackers/${ids.other}/restore`, null, ids.other)
+    row.requires_private = true
+    Object.assign(row, { optimistic_entity: tracker })
+    const adapter = adapterFor('tracker.restore')
+    await adapter.optimisticApply(queryClient, row)
+    await adapter.reconcileSuccess(queryClient, row, { id: ids.other, status: 'restored' })
+    expect(queryClient.getQueryData<{ items: Array<Record<string, unknown>> }>(['tracker', 'trackers'])?.items)
+      .toEqual([tracker])
+
+    queryClient.removeQueries({ queryKey: ['session'] })
+    await adapter.discardOrRollback(queryClient, row)
+    expect(JSON.stringify(queryClient.getQueryCache().getAll().map((query) => query.state.data)))
+      .not.toContain('PRIVATE_TRACKER_RESTORE_CANARY')
+    queryClient.clear()
+    vi.unstubAllGlobals()
+  })
+
+  it('restores the exact unsent cancellation receipt and overlays every original create row', async () => {
+    const queryClient = client()
+    queryClient.setQueryData(['tracker', 'trackers'], { items: [] })
+    const receiptRows = [makeRow('tracker.create', '/api/tracker/trackers', {
+      id: ids.other, name: 'Never sent', kind: 'general', direction: 'out', input_mode: 'event',
+      group_id: null, unit: null, is_private: false,
+    }, ids.other)]
+    const returnedRows = receiptRows.map((row) => ({ ...row, operation_id: 22 }))
+    restoreCancelledOutbox.mockResolvedValueOnce(returnedRows)
+    const dispatchEvent = vi.fn()
+    vi.stubGlobal('window', { dispatchEvent })
+    await expect(restoreCancelledDomainTree(queryClient, receiptRows)).resolves.toEqual(returnedRows)
+    expect(restoreCancelledOutbox).toHaveBeenCalledWith(receiptRows)
+    expect(restoreCancelledOutbox.mock.calls.at(-1)?.[0]).toBe(receiptRows)
+    expect(queryClient.getQueryData<{ items: Array<Record<string, unknown>> }>(['tracker', 'trackers'])?.items)
+      .toMatchObject([{ id: ids.other, name: 'Never sent', __outbox_state: 'pending' }])
+    expect(dispatchEvent).toHaveBeenCalledOnce()
+    vi.unstubAllGlobals()
     queryClient.clear()
   })
 

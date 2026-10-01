@@ -8,7 +8,9 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
-import { queuedRequest } from '@/lib/queued-mutation'
+import { restoreCancelledDomainTree } from '@/lib/outbox-adapters'
+import type { Json } from '@/lib/outbox-db'
+import { queuedRequest, type QueuedDeleteReceipt } from '@/lib/queued-mutation'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
 import { uuidv7 } from '@/lib/uuidv7'
 
@@ -628,10 +630,16 @@ export function useTrackerWrites() {
     }) => queuedRequest<Tracker>(queryClient, 'tracker.update', { path: `/api/tracker/trackers/${trackerId}`, body: payload, entityId: trackerId, requiresPrivate }),
   })
   const archiveTracker = useMutation({
-    mutationFn: ({ trackerId, requiresPrivate }: { trackerId: string; requiresPrivate: boolean }) => queuedRequest<void>(queryClient, 'tracker.archive', { path: `/api/tracker/trackers/${trackerId}`, entityId: trackerId, requiresPrivate }),
+    mutationFn: ({ tracker, requiresPrivate }: { tracker: Tracker; requiresPrivate: boolean }) => queuedRequest<QueuedDeleteReceipt | null>(queryClient, 'tracker.archive', { path: `/api/tracker/trackers/${tracker.id}`, entityId: tracker.id, requiresPrivate, optimisticEntity: JSON.parse(JSON.stringify(tracker)) as Json }),
   })
   const restoreTracker = useMutation({
-    mutationFn: ({ trackerId, requiresPrivate }: { trackerId: string; requiresPrivate: boolean }) => queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'tracker.restore', { path: `/api/tracker/trackers/${trackerId}/restore`, entityId: trackerId, requiresPrivate }),
+    mutationFn: async ({ tracker, requiresPrivate, receipt }: { tracker: Tracker; requiresPrivate: boolean; receipt: QueuedDeleteReceipt | null }): Promise<unknown> => {
+      if (receipt?.cancelledRows.length) return restoreCancelledDomainTree(queryClient, receipt.cancelledRows)
+      return queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'tracker.restore', {
+        path: `/api/tracker/trackers/${tracker.id}/restore`, entityId: tracker.id, requiresPrivate,
+        optimisticEntity: JSON.parse(JSON.stringify(tracker)) as Json,
+      })
+    },
   })
   const createEntry = useMutation({
     mutationFn: ({ payload, requiresPrivate }: { payload: EntryCreatePayload; requiresPrivate: boolean }) =>
@@ -649,10 +657,16 @@ export function useTrackerWrites() {
     }) => queuedRequest<Entry>(queryClient, 'entry.update', { path: `/api/tracker/entries/${entryId}`, body: payload, entityId: entryId, requiresPrivate }),
   })
   const deleteEntry = useMutation({
-    mutationFn: ({ entryId, requiresPrivate }: { entryId: string; requiresPrivate: boolean }) => queuedRequest<void>(queryClient, 'entry.delete', { path: `/api/tracker/entries/${entryId}`, entityId: entryId, requiresPrivate }),
+    mutationFn: ({ entry, requiresPrivate }: { entry: Entry; requiresPrivate: boolean }) => queuedRequest<QueuedDeleteReceipt | null>(queryClient, 'entry.delete', { path: `/api/tracker/entries/${entry.id}`, entityId: entry.id, requiresPrivate, optimisticEntity: JSON.parse(JSON.stringify(entry)) as Json }),
   })
   const restoreEntry = useMutation({
-    mutationFn: ({ entryId, requiresPrivate }: { entryId: string; requiresPrivate: boolean }) => queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'entry.restore', { path: `/api/tracker/entries/${entryId}/restore`, entityId: entryId, requiresPrivate }),
+    mutationFn: async ({ entry, requiresPrivate, receipt }: { entry: Entry; requiresPrivate: boolean; receipt: QueuedDeleteReceipt | null }): Promise<unknown> => {
+      if (receipt?.cancelledRows.length) return restoreCancelledDomainTree(queryClient, receipt.cancelledRows)
+      return queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'entry.restore', {
+        path: `/api/tracker/entries/${entry.id}/restore`, entityId: entry.id, requiresPrivate,
+        optimisticEntity: JSON.parse(JSON.stringify(entry)) as Json,
+      })
+    },
   })
   return {
     createGroup,

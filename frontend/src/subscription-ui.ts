@@ -7,7 +7,9 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
-import { queuedRequest } from '@/lib/queued-mutation'
+import { restoreCancelledDomainTree } from '@/lib/outbox-adapters'
+import type { Json } from '@/lib/outbox-db'
+import { queuedRequest, type QueuedDeleteReceipt } from '@/lib/queued-mutation'
 import { VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { formatVnd, type Tracker } from '@/tracker-ui'
 
@@ -200,10 +202,16 @@ export function useSubscriptionWrites() {
       queuedRequest<RenewResult | null>(queryClient, 'subscription.renew', { path: `/api/subscriptions/${subscriptionId}/renew`, body: payload, entityId: subscriptionId, parentId: subscriptionId, requiresPrivate }),
   })
   const deleteSubscription = useMutation({
-    mutationFn: ({ subscriptionId, requiresPrivate }: { subscriptionId: string; requiresPrivate: boolean }) => queuedRequest<void>(queryClient, 'subscription.delete', { path: `/api/subscriptions/${subscriptionId}`, entityId: subscriptionId, requiresPrivate }),
+    mutationFn: ({ subscription, requiresPrivate }: { subscription: Subscription; requiresPrivate: boolean }) => queuedRequest<QueuedDeleteReceipt | null>(queryClient, 'subscription.delete', { path: `/api/subscriptions/${subscription.id}`, entityId: subscription.id, requiresPrivate, optimisticEntity: JSON.parse(JSON.stringify(subscription)) as Json }),
   })
   const restoreSubscription = useMutation({
-    mutationFn: ({ subscriptionId, requiresPrivate }: { subscriptionId: string; requiresPrivate: boolean }) => queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'subscription.restore', { path: `/api/subscriptions/${subscriptionId}/restore`, entityId: subscriptionId, requiresPrivate }),
+    mutationFn: async ({ subscription, requiresPrivate, receipt }: { subscription: Subscription; requiresPrivate: boolean; receipt: QueuedDeleteReceipt | null }): Promise<unknown> => {
+      if (receipt?.cancelledRows.length) return restoreCancelledDomainTree(queryClient, receipt.cancelledRows)
+      return queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'subscription.restore', {
+        path: `/api/subscriptions/${subscription.id}/restore`, entityId: subscription.id, requiresPrivate,
+        optimisticEntity: JSON.parse(JSON.stringify(subscription)) as Json,
+      })
+    },
   })
   const setSetting = useMutation({
     mutationFn: ({ key, value }: { key: 'show_list_price' | 'subscription_expiry_lead_days'; value: number | boolean }) =>
