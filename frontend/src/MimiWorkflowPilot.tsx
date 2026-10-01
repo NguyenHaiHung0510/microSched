@@ -183,7 +183,7 @@ export function MimiWorkflowPilot() {
         <p>Chế độ provider: {run.provider_mode === 'deterministic' ? 'Tổng hợp xác định' : run.provider_mode}</p>
         <p>Số lần gọi provider: {run.provider_calls}</p>
         {run.stop_reason ? <p role="status">{run.stop_reason}</p> : null}
-        {run.source_visibility_reason ? <p role="status">Nguồn Task đã thay đổi hoặc bị ẩn; nội dung nguồn không được hiển thị. Trạng thái call chưa rõ vẫn cần đối soát.</p> : null}
+        {run.source_visibility_reason ? <p role="status">Nguồn Task đã thay đổi hoặc bị ẩn; nội dung nguồn không được hiển thị.{['provider_outcome_unknown', 'owner_cancelled_provider_unknown'].includes(run.stop_reason ?? '') ? ' Kết quả lần gọi provider trước vẫn chưa rõ và cần đối soát.' : ''}</p> : null}
         {run.preview?.groups.length ? <div><h4 className="font-semibold">Nhóm Task</h4>{run.preview.groups.map((group, index) => <p key={index}>Nhóm {index + 1}: {group.map((id) => tasks.data?.items.find((task) => task.id === id)?.title ?? id).join(', ')}</p>)}</div> : null}
         {run.draft ? <div><h4 className="font-semibold">Bản nháp</h4><p className="whitespace-pre-wrap break-words">{run.draft}</p></div> : null}
         {phase === 'direction' ? <div className="space-y-2"><p>Thao tác máy chủ hỗ trợ: thêm <strong>[planned] </strong> trước mỗi title đang chọn, giữ nguyên nội dung còn lại. Bản nháp không thể đổi thao tác này.</p><Button type="button" className="min-h-11" disabled={busy} onClick={() => void advance({ direction: 'apply_prefix' })}>Duyệt hướng thêm [planned]</Button></div> : null}
