@@ -90,7 +90,7 @@ const isRestoreOperation = (kind: OperationKind) =>
 const taskKeys = () => [['tasks'], ['calendar', 'tasks']] as QueryKey[]
 const noteKeys = () => [['notes']] as QueryKey[]
 const calendarSourceKeys = () => [['calendar', 'sources']] as QueryKey[]
-const calendarEventKeys = () => [['calendar', 'events']] as QueryKey[]
+const calendarEventKeys = () => [['calendar', 'events'], ['calendar', 'sources']] as QueryKey[]
 const annotationKeys = () => [['calendar', 'annotations']] as QueryKey[]
 const trackerGroupKeys = () => [['tracker', 'groups']] as QueryKey[]
 const trackerKeys = () => [['tracker', 'trackers']] as QueryKey[]
@@ -498,6 +498,7 @@ function applyTypedOverlay(client: QueryClient, row: OutboxRow) {
     if (kind.startsWith('calendar_source.')) {
       mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, action))
     } else if (kind.startsWith('calendar_event.') || kind.startsWith('day_annotation.')) {
+      if (key[1] === 'sources') continue
       mutateCalendarRangeQueries(client, key, row, model, action)
     } else if (kind.startsWith('tracker_group.')) {
       mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, action))
