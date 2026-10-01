@@ -72,16 +72,19 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
 
   if (state.unavailable) return <p className="text-sm text-muted-foreground" role="status">Lưu ngoại tuyến chưa khả dụng trên thiết bị này.</p>
   if (state.readError) return <p className="text-sm text-bad" role="status">Chưa đọc được trạng thái hàng đợi.</p>
-  if (!state.rows.length) return null
+  if (!state.rows.length && !state.webLocksUnavailable) return null
 
   const queued = state.rows.filter((row) => row.state !== 'failed' && row.state !== 'suppressed').length
   const failed = state.rows.length - queued
   return (
     <>
-      <Button data-testid="outbox-indicator" variant="outline" size="lg" className="min-h-11" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+      {state.webLocksUnavailable ? <p data-testid="outbox-lock-warning" className="text-sm text-muted-foreground" role="status">
+        Trình duyệt này chưa hỗ trợ khoá gửi an toàn giữa các thẻ hoặc đang ở ngữ cảnh không bảo mật. Thay đổi vẫn được lưu trên thiết bị; gửi sẽ tiếp tục khi dùng ngữ cảnh hỗ trợ.
+      </p> : null}
+      {state.rows.length > 0 ? <Button data-testid="outbox-indicator" variant="outline" size="lg" className="min-h-11" aria-haspopup="dialog" onClick={() => setOpen(true)}>
         {queued > 0 ? queued + ' đang chờ gửi' : failed + ' cần xử lý'}{failed > 0 ? ' · ' + failed + ' lỗi' : ''}
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      </Button> : null}
+      {state.rows.length > 0 ? <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent data-testid="outbox-panel" className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Hàng đợi ngoại tuyến</DialogTitle>
@@ -108,7 +111,7 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
             })}
           </div>
         </DialogContent>
-      </Dialog>
+      </Dialog> : null}
     </>
   )
 }

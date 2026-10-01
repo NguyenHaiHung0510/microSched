@@ -127,6 +127,36 @@ describe('typed outbox adapter lifecycles', () => {
     queryClient.clear()
   })
 
+  it('does not retain or restore a private acknowledgement received after lock', async () => {
+    vi.stubGlobal('navigator', { onLine: true })
+    const queryClient = client()
+    queryClient.setQueryData(['tasks', 'timeline', 'all', '2026-10-01', '2026-10-08'], {
+      items: [{ id: ids.task, title: 'Public baseline', is_private: false, items: [] }],
+    })
+    queryClient.setQueryData(['session'], {
+      private_until: new Date(Date.now() + 60_000).toISOString(), offline_bootstrap: false,
+    })
+    const row = makeRow('task.update', `/api/tasks/${ids.task}`, {
+      title: 'PRIVATE_ACK_CANARY', is_private: true,
+    }, ids.task)
+    row.requires_private = true
+    const adapter = adapterFor('task.update')
+    await adapter.optimisticApply(queryClient, row)
+    queryClient.removeQueries({ queryKey: ['session'] })
+
+    await adapter.reconcileSuccess(queryClient, row, {
+      id: ids.task, title: 'PRIVATE_ACK_CANARY', is_private: true, items: [],
+    })
+    expect(JSON.stringify(queryClient.getQueryCache().getAll().map((query) => query.state.data)))
+      .not.toContain('PRIVATE_ACK_CANARY')
+    clearOutboxBaselines(queryClient, true)
+    await adapter.discardOrRollback(queryClient, row)
+    expect(JSON.stringify(queryClient.getQueryCache().getAll().map((query) => query.state.data)))
+      .not.toContain('PRIVATE_ACK_CANARY')
+    queryClient.clear()
+    vi.unstubAllGlobals()
+  })
+
   it('classifies public-to-private updates as private and hides cached content without a live session', async () => {
     const queryClient = client()
     queryClient.setQueryData(['tasks', 'all'], { items: [

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { domainReadOptions, isAffectedQueryKey } from '@/lib/use-domain-outbox'
+import { domainReadOptions, isAffectedQueryKey, isWebLocksCapabilityMissing } from '@/lib/use-domain-outbox'
 
 describe('outbox-aware domain reads', () => {
   it('matches affected prefixes in both global and domain query families', () => {
@@ -24,5 +24,11 @@ describe('outbox-aware domain reads', () => {
       refetchOnWindowFocus: true,
       refetchInterval: 30_000,
     })
+  })
+
+  it('shows the coordination fallback warning before the one-shot capability event can be observed', () => {
+    expect(isWebLocksCapabilityMissing(false, true)).toBe(true)
+    expect(isWebLocksCapabilityMissing(true, false)).toBe(true)
+    expect(isWebLocksCapabilityMissing(true, true)).toBe(false)
   })
 })

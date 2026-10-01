@@ -3,7 +3,7 @@ import { liveQuery } from 'dexie'
 import type { QueryKey } from '@tanstack/react-query'
 
 import { adapterFor, requiresPrivateRow } from '@/lib/outbox-adapters'
-import { listOutbox, type OutboxRow } from '@/lib/outbox-db'
+import { listOutbox, outboxDatabase, type OutboxRow } from '@/lib/outbox-db'
 
 export function isAffectedQueryKey(affected: unknown, queryKey: QueryKey): boolean {
   if (!Array.isArray(affected) || !Array.isArray(queryKey)) return false
@@ -22,11 +22,16 @@ function isUnknownOrMalformed(row: OutboxRow): boolean {
   }
 }
 
+export function isWebLocksCapabilityMissing(locksAvailable: boolean, secureContext: boolean) {
+  return !locksAvailable || !secureContext
+}
+
 export type DomainOutboxState = {
   rows: OutboxRow[]
   pendingCount: number
   failedCount: number
   unavailable: boolean
+  webLocksUnavailable: boolean
   readError: boolean
 }
 
@@ -38,6 +43,12 @@ export function useDomainOutbox(
 ): DomainOutboxState {
   const [rows, setRows] = useState<OutboxRow[]>([])
   const [unavailable, setUnavailable] = useState(false)
+  const [webLocksUnavailable, setWebLocksUnavailable] = useState(() =>
+    isWebLocksCapabilityMissing(
+      typeof navigator !== 'undefined' && 'locks' in navigator,
+      typeof window !== 'undefined' && window.isSecureContext === true,
+    ),
+  )
   const [readError, setReadError] = useState(false)
 
   const refresh = useCallback(() => {
@@ -50,6 +61,15 @@ export function useDomainOutbox(
   }, [])
 
   useEffect(() => {
+    // Force the first durable read now so an initial IndexedDB open failure is
+    // reflected even when its one-shot event fired before this component mounted.
+    void outboxDatabase().then((db) => {
+      if (!db) setUnavailable(true)
+    })
+    void listOutbox().then((next) => {
+      setRows(next)
+      setReadError(false)
+    }).catch(() => setReadError(true))
     const subscription = liveQuery(() => listOutbox()).subscribe({
       next: (next) => {
         setRows(next)
@@ -59,12 +79,15 @@ export function useDomainOutbox(
     })
     const onChanged = () => { void refresh() }
     const onUnavailable = () => setUnavailable(true)
+    const onWebLocksUnavailable = () => setWebLocksUnavailable(true)
     window.addEventListener('microsched:outbox-changed', onChanged)
     window.addEventListener('microsched:offline-unavailable', onUnavailable)
+    window.addEventListener('microsched:web-locks-unavailable', onWebLocksUnavailable)
     return () => {
       subscription.unsubscribe()
       window.removeEventListener('microsched:outbox-changed', onChanged)
       window.removeEventListener('microsched:offline-unavailable', onUnavailable)
+      window.removeEventListener('microsched:web-locks-unavailable', onWebLocksUnavailable)
     }
   }, [refresh])
 
@@ -78,6 +101,7 @@ export function useDomainOutbox(
     pendingCount: relevant.filter((row) => ['pending', 'outcome_unknown', 'auth_hold', 'private_hold'].includes(row.state)).length,
     failedCount: relevant.filter((row) => ['failed', 'suppressed'].includes(row.state)).length,
     unavailable,
+    webLocksUnavailable,
     readError,
   }
 }

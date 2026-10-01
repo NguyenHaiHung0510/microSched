@@ -797,6 +797,27 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
     async reconcileSuccess(client, row, response) {
       if (spec.method === 'DELETE' || kindIsSideEffect(operationKind) || response == null) return
       const keys = spec.keys({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
+      if (requiresPrivateRow(row)) {
+        // Never put a private server acknowledgement into the rollback WeakMap.
+        // Reconcile directly into live query state only while the verified gate
+        // still holds; otherwise erase the entity and leave the public baseline.
+        if (!hasLivePrivateSession(client)) {
+          purgePrivateRowFromCache(client, keys, row)
+          return
+        }
+        for (const query of client.getQueryCache().findAll({ queryKey: keys[0] })) {
+          const queryKey = query.queryKey
+          client.setQueryData(queryKey, (value) => {
+            if (Array.isArray(value)) return reconcileValue(operationKind, row, value, response, queryKey)
+            const envelope = record(value)
+            if (envelope && Array.isArray(envelope.items)) {
+              return reconcileValue(operationKind, row, value, response, queryKey)
+            }
+            return value
+          })
+        }
+        return
+      }
       captureBaseline(client, keys, row)
       const byKey = confirmedBaselines.get(client)
       for (const key of keys) {
