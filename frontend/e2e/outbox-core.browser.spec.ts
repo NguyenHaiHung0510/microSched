@@ -243,3 +243,24 @@ test('publishes the real public side-effect acknowledgement once and never publi
   expect(result.events).toEqual([{ operation: 'calendar.import', response: report }])
   expect(result.remaining).toEqual([{ state: 'private_hold', attempts: 0 }])
 })
+
+
+test('undo uses the authenticated snapshot across asynchronous caller metadata mutation', async ({ page }) => {
+  await page.goto('/denied.html')
+  const result = await page.evaluate(async () => {
+    const moduleUrl = '/src/lib/outbox-db.ts'
+    const db = await import(moduleUrl)
+    const row = { operation_kind: 'note.create', resource: 'note', method: 'POST', path: '/api/notes',
+      body: { id: 'snapshot-parent', title: 'private', is_private: true }, entity_id: 'snapshot-parent', parent_id: null,
+      requires_private: true, idempotency_mode: 'client_uuid', dependency_operation_id: null, group_id: null,
+      affected_query_keys: [['notes']], state: 'pending', attempts: 0, next_attempt_at: null, created_at: Date.now(), last_error_code: null }
+    await db.enqueueOutbox(row)
+    const cancelled = await db.enqueueOutbox({ ...row, operation_kind: 'note.delete', method: 'DELETE', path: '/api/notes/snapshot-parent', body: null, idempotency_mode: 'postcondition' })
+    const restoring = db.restoreCancelledOutbox(cancelled.cancelled_rows)
+    cancelled.cancelled_rows[0].requires_private = false
+    cancelled.cancelled_rows[0].path = '/api/public-route'
+    const restored = await restoring
+    return { private: restored[0].requires_private, path: restored[0].path }
+  })
+  expect(result).toEqual({ private: true, path: '/api/notes' })
+})

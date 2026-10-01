@@ -133,6 +133,8 @@ export async function enqueueOutbox(
 export async function restoreCancelledOutbox(rows: OutboxRow[]): Promise<OutboxRow[]> {
   const original = cancelledReceipts.get(rows)
   if (!original || JSON.stringify(rows) !== JSON.stringify(original)) throw new Error('Cancelled receipt changed or expired')
+  const receipt = rows
+  rows = structuredClone(original)
   const db = await outboxDatabase()
   if (!db) throw new Error('Cannot restore cancelled writes without durable storage')
   if (!rows.length || rows.some((row) => row.state !== 'pending' || row.attempts !== 0 || !row.operation_id)) throw new Error('Only never-dispatched commands can be restored')
@@ -159,7 +161,7 @@ export async function restoreCancelledOutbox(rows: OutboxRow[]): Promise<OutboxR
     }
     return result
   })
-  cancelledReceipts.delete(rows)
+  cancelledReceipts.delete(receipt)
   emitChanged()
   return restored
 }
