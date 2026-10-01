@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, test, type TaskApiState } from './fixtures/tasks'
+import { expect, fixtureTaskIds, test, type TaskApiState } from './fixtures/tasks'
 
 function todayInVietnam(): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -15,7 +15,7 @@ function todayInVietnam(): string {
 
 async function assertVietnamSchedule(page: Page, taskApi: TaskApiState) {
   const day = todayInVietnam()
-  const timed = taskApi.tasks.find((entry) => entry.id === 'task-011')!
+  const timed = taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['task-011'])!
   Object.assign(timed, {
     due_precision: 'datetime' as const,
     due_on: null,
@@ -30,7 +30,7 @@ async function assertVietnamSchedule(page: Page, taskApi: TaskApiState) {
 
   await page.goto('/')
   await page.getByRole('tab', { name: 'Task' }).click()
-  const timedCard = page.locator('[data-task-id="task-011"]')
+  const timedCard = page.locator(`[data-task-id="${fixtureTaskIds['task-011']}"]`)
   const civilCard = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113"]')
   await expect(timedCard).toBeVisible()
   await expect(civilCard).toBeVisible()

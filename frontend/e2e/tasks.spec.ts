@@ -1,6 +1,6 @@
 import { type Page } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
-import { expect, fixtureTasks, test } from './fixtures/tasks'
+import { expect, fixtureTaskIds, fixtureTasks, test } from './fixtures/tasks'
 
 const MEASUREMENT_MS = 60_000
 
@@ -167,7 +167,7 @@ test('opening from card whitespace returns focus to its title', async ({ page })
 
 test('drag-selecting task text does not open the dialog', async ({ page }) => {
   await openTasksScreen(page)
-  const selectableText = page.locator('[data-task-id="task-005"] span.tabular-nums')
+  const selectableText = page.locator(`[data-task-id="${fixtureTaskIds['task-005']}"] span.tabular-nums`)
   const box = await selectableText.boundingBox()
   expect(box).not.toBeNull()
   if (!box) return
@@ -188,8 +188,8 @@ test('overdue banner focuses the earlier overdue group without changing filter',
 test('pinned completed tasks do not leak into open or overdue views', async ({ page }) => {
   await openTasksScreen(page)
   await expect(page.getByTestId('filter-open')).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('[data-task-id="task-002"]')).toHaveCount(0)
-  await expect(page.locator('[data-task-id="task-002"]')).toHaveCount(0)
+  await expect(page.locator(`[data-task-id="${fixtureTaskIds['task-002']}"]`)).toHaveCount(0)
+  await expect(page.locator(`[data-task-id="${fixtureTaskIds['task-002']}"]`)).toHaveCount(0)
 })
 
 test('completing an overdue task updates its timeline group', async ({ page }) => {
@@ -294,7 +294,7 @@ test('mobile layout has no horizontal overflow and banner has a 44px target', as
 test('last card tooltip is portalled and fully inside the desktop viewport', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Radix tooltip is a desktop shortcut')
   await openTasksScreen(page)
-  const lastTitle = page.locator('[data-task-id="task-032"]').getByTestId('task-title')
+  const lastTitle = page.locator(`[data-task-id="${fixtureTaskIds['task-032']}"]`).getByTestId('task-title')
   await lastTitle.hover()
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toBeVisible()
@@ -316,7 +316,7 @@ test('last card tooltip is portalled and fully inside the desktop viewport', asy
 test('task-012 tooltip shows three static numbered items and the remaining count', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Radix tooltip is a desktop shortcut')
   await openTasksScreen(page)
-  const title = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112]').getByTestId('task-title')
+  const title = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112"]').getByTestId('task-title')
   await title.hover()
 
   const tooltip = page.getByRole('tooltip')

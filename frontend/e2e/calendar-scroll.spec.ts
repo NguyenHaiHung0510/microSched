@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures/tasks'
+import { expect, fixtureTaskIds, test } from './fixtures/tasks'
 
 /**
  * 010b §7.7–7.10: grid behavior, mini-nav, measurements, touch-only paths.
@@ -146,7 +146,7 @@ function calendarRoutes(
 
 test.beforeEach(async ({ page, taskApi }) => {
   // A task due today gives the grid a task chip on today's cell (spec §5.4).
-  const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
+  const dueToday = taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['task-011'])
   if (dueToday) {
     dueToday.due_precision = 'datetime'
     dueToday.due_on = null
@@ -300,7 +300,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByTestId('calendar-day-move-task').tap()
     await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
 
-    const target = page.locator('[data-testid="calendar-move-task"][data-task-id="undated-001"]')
+    const target = page.locator(`[data-testid="calendar-move-task"][data-task-id="${fixtureTaskIds['undated-001']}"]`)
     for (let attempt = 0; attempt < 8 && !(await target.isVisible()); attempt += 1) {
       const more = page.getByTestId('calendar-move-load-more')
       await expect(more).toBeVisible()
@@ -308,7 +308,7 @@ test.describe('mobile (390x844, touch)', () => {
     }
     await expect(target).toBeVisible()
     await target.click()
-    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === 'undated-001')).toMatchObject({
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['undated-001'])).toMatchObject({
       due_precision: 'date',
       due_on: vnDay(0),
       due_at: null,
@@ -316,7 +316,7 @@ test.describe('mobile (390x844, touch)', () => {
   })
 
   test('private lock remounts calendar and closes a detail dialog', async ({ page, taskApi }) => {
-    const privateTask = taskApi.tasks.find((entry) => entry.id === 'task-009')!
+    const privateTask = taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['task-009'])!
     privateTask.due_precision = 'datetime'
     privateTask.due_on = null
     privateTask.due_at = iso(vnDay(0), 10)
@@ -569,7 +569,7 @@ test('an ICS event opened from the day dialog shows the will-lose-edits warning'
 })
 
 test('desktop font sizes are at least 12px', async ({ page, taskApi }) => {
-  const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
+  const dueToday = taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['task-011'])
   if (dueToday) {
     dueToday.due_precision = 'datetime'
     dueToday.due_on = null

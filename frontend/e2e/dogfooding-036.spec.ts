@@ -541,7 +541,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({
-            id: 'task-created-1',
+            id: postBody.id ?? crypto.randomUUID(),
             title: postBody.title,
             body_md: postBody.body_md,
             status: 'open',
@@ -552,7 +552,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
             is_private: false,
             pinned: false,
             items: (postBody.items || []).map((content: string, i: number) => ({
-              id: `item-${i}`,
+              id: crypto.randomUUID(),
               content,
               is_completed: false,
               position: i,
@@ -678,7 +678,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           status: 201,
           contentType: 'application/json',
           body: JSON.stringify({
-            id: 'item-added-new',
+            id: data.id ?? crypto.randomUUID(),
             content: data.content,
             is_completed: false,
             position: 99,
@@ -877,21 +877,26 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
 
     const existing13 = taskApi.tasks.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113')
     if (existing13) {
-      existing13.items = [{ id: 'item-cal-init-1', content: 'Checklist sẵn có', is_completed: false, position: 0 }]
+      existing13.items = [{ id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e31', content: 'Checklist sẵn có', is_completed: false, position: 0 }]
     }
 
    let taskItems: Array<{ id: string; content: string; is_completed: boolean; position: number }> = [
-     { id: 'item-cal-init-1', content: 'Checklist sẵn có', is_completed: false, position: 0 },
+     { id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e31', content: 'Checklist sẵn có', is_completed: false, position: 0 },
    ]
 
    await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113/items', async (route) => {
      if (route.request().method() === 'POST') {
        const data = route.request().postDataJSON()
        const newItem = {
-         id: `item-cal-${Date.now()}`,
+         id: data.id ?? crypto.randomUUID(),
          content: data.content,
          is_completed: false,
-         position: taskItems.length,
+         position: data.position ?? taskItems.length,
+       }
+       const existingItem = taskItems.find((item) => item.id === newItem.id)
+       if (existingItem) {
+         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(existingItem) })
+         return
        }
        taskItems = [...taskItems, newItem]
         if (existing13) existing13.items = [...taskItems]
