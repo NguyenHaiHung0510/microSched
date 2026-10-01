@@ -32,7 +32,7 @@ export type OutboxRawByteReceipt = Pick<OutboxReceipt,
 
 export async function record(event: string, data: Record<string, unknown> = {}) {
   await mkdir(RECEIPT_DIR, { recursive: true })
-  await appendFile(path.join(RECEIPT_DIR, 'events.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), run_id: RUN_ID, event, ...data })}\n`, 'utf8')
+  await appendFile(path.join(RECEIPT_DIR, 'events.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), run_id: RUN_ID, source_head: process.env.QA017_BUILD_SHA, event, ...data })}\n`, 'utf8')
 }
 
 export function attachApiCounter(context: BrowserContext) {
@@ -269,6 +269,8 @@ export async function observeOutboxInFinally(page: Page, caseId: string, apiCoun
     const observation = {
       at: new Date().toISOString(),
       case_id: caseId,
+      run_id: RUN_ID,
+      source_head: process.env.QA017_BUILD_SHA,
       phase: 'finally-before-cleanup',
       row_count: rows.length,
       rows,

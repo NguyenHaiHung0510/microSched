@@ -1037,9 +1037,204 @@ test('P4 revoked synthetic session 401 retains private payload bytes then same U
     const finalRows = await readOutboxRawByteReceipts(page).catch(() => [])
     await record('P4-final-outbox-state', { trackerId, rows: finalRows.map(({ operation_id, operation_kind, entity_id, state, attempts, payload_sha256, payload_byte_length }) =>
       ({ operation_id, operation_kind, entity_id, state, attempts, payload_sha256, payload_byte_length })) })
+    let cleanupStatus: number | null = null
     if (trackerId && !finalRows.some((row) => row.entity_id === trackerId) && (await apiCollectionHasId(page, '/api/tracker/trackers', trackerId).catch(() => ({ status: 0, present: false }))).present) {
-      await page.evaluate(async (id) => (await fetch(`/api/tracker/trackers/${id}`, { method: 'DELETE', credentials: 'include' })).status, trackerId).catch(() => 0)
+      cleanupStatus = await page.evaluate(async (id) => (await fetch(`/api/tracker/trackers/${id}`, { method: 'DELETE', credentials: 'include' })).status, trackerId).catch(() => 0)
     }
+    await record('P4-exact-synthetic-cleanup', { trackerId: trackerId || null, cleanupStatus,
+      attempted: cleanupStatus !== null, success: cleanupStatus === 204 })
+    api.close()
+    if (cleanupStatus !== null) expect(cleanupStatus).toBe(204)
+  }
+})
+
+async function readQueuedTrackerReminderSnapshot(page: import('@playwright/test').Page, entityId: string) {
+  return page.evaluate(async (id) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('microsched-outbox')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      const rows = await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
+        const request = db.transaction('outbox', 'readonly').objectStore('outbox').getAll()
+        request.onsuccess = () => resolve(request.result as Array<Record<string, unknown>>)
+        request.onerror = () => reject(request.error)
+      })
+      const row = rows.find((candidate) => candidate.operation_kind === 'tracker.create' && candidate.entity_id === id)
+      if (!row) return null
+      const body = JSON.parse(String(row.payload_json ?? '{}')) as Record<string, unknown>
+      return {
+        operation_id: Number(row.operation_id),
+        operation_kind: String(row.operation_kind),
+        entity_id: String(row.entity_id),
+        state: String(row.state),
+        attempts: Number(row.attempts),
+        reminder_time: body.reminder_time ?? null,
+        reminder_mode: body.reminder_mode ?? null,
+        reminder_interval_days: body.reminder_interval_days ?? null,
+        reminder_action: body.reminder_action ?? null,
+        is_private: body.is_private ?? null,
+        payload_sha256: String(row.payload_sha256),
+        payload_byte_length: Number(row.payload_byte_length),
+      }
+    } finally {
+      db.close()
+    }
+  }, entityId)
+}
+
+test('R1 offline public tracker reminder defers device registration then replays the same UUID', async ({ page }) => {
+  page.setDefaultTimeout(15_000)
+  const api = attachApiCounter(page.context())
+  const trackerName = `${RUN_ID}_R1_REMINDER_TRACKER`
+  let trackerId = ''
+  let serverAcknowledged = false
+  let queueDrained = false
+  try {
+    await signInSynthetic(page, 15_000)
+    await openTrackerTab(page)
+    const sw = await waitForServiceWorker(page)
+    const instrumentation = await page.evaluate(async () => {
+      const probe = { permissionCalls: 0, pushSubscribeCalls: 0, permissionInstrumented: false, pushSubscribeInstrumented: false }
+      Object.defineProperty(window, '__qa072ReminderProbe', { configurable: false, value: probe })
+      if (!('Notification' in window) || typeof Notification.requestPermission !== 'function') {
+        throw new Error('Notification.requestPermission is unavailable; cannot prove zero calls')
+      }
+      Object.defineProperty(Notification, 'requestPermission', {
+        configurable: true,
+        value: () => {
+          probe.permissionCalls += 1
+          return Promise.reject(new Error('QA observer blocked an unexpected permission prompt'))
+        },
+      })
+      probe.permissionInstrumented = true
+      const registration = await navigator.serviceWorker.ready
+      const pushPrototype = Object.getPrototypeOf(registration.pushManager)
+      if (typeof registration.pushManager.subscribe !== 'function' || !pushPrototype) {
+        throw new Error('PushManager.subscribe is unavailable; cannot prove zero calls')
+      }
+      Object.defineProperty(pushPrototype, 'subscribe', {
+        configurable: true,
+        value: () => {
+          probe.pushSubscribeCalls += 1
+          return Promise.reject(new Error('QA observer blocked an unexpected PushSubscription'))
+        },
+      })
+      probe.pushSubscribeInstrumented = true
+      return { ...probe, pushManagerAvailable: true }
+    })
+    expect(instrumentation.permissionInstrumented).toBe(true)
+    expect(instrumentation.pushSubscribeInstrumented).toBe(true)
+    expect(await readOutboxRawByteReceipts(page)).toHaveLength(0)
+
+    await page.context().setOffline(true)
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false)
+    await reselectTrackerAfterOffline(page)
+
+    await page.getByTestId('tracker-create').click()
+    const form = page.getByTestId('tracker-form')
+    await form.getByTestId('tracker-name-input').fill(trackerName)
+    await form.getByTestId('tracker-reminder-enabled').click()
+    await form.getByTestId('tracker-reminder-time').fill('09:15')
+    await form.getByTestId('tracker-reminder-interval').fill('3')
+    await form.getByRole('button', { name: 'Tạo tracker' }).click()
+
+    const card = page.getByTestId('tracker-card').filter({ hasText: trackerName })
+    await expect(card).toBeVisible()
+    trackerId = (await card.getAttribute('data-tracker-id')) ?? ''
+    expect(trackerId).toMatch(/^[0-9a-f-]{36}$/i)
+    await expect.poll(async () =>
+      (await readOutboxRawByteReceipts(page)).filter((row) => row.operation_kind === 'tracker.create'),
+    ).toHaveLength(1)
+    const queuedRows = await readOutboxRawByteReceipts(page)
+    expect(queuedRows).toHaveLength(1)
+    expect(queuedRows[0]).toMatchObject({
+      operation_kind: 'tracker.create', entity_id: trackerId, state: 'pending', attempts: 0,
+      requires_private: false, payload_sha256: queuedRows[0].stored_payload_sha256,
+      payload_byte_length: queuedRows[0].stored_payload_byte_length,
+    })
+    const queuedReminder = await readQueuedTrackerReminderSnapshot(page, trackerId)
+    expect(queuedReminder).toMatchObject({
+      operation_kind: 'tracker.create', entity_id: trackerId, state: 'pending', attempts: 0,
+      reminder_time: '09:15', reminder_mode: 'fixed', reminder_interval_days: 3,
+      reminder_action: 'confirm_event', is_private: false,
+    })
+    await expect(page.getByText(
+      'Đăng ký thông báo của thiết bị cần kết nối mạng. Thay đổi đang chờ đồng bộ; chỉ thiết bị đã đăng ký mới nhận được thông báo.',
+      { exact: true },
+    )).toBeVisible()
+    const probeOffline = await page.evaluate(() => (window as Window & {
+      __qa072ReminderProbe: { permissionCalls: number; pushSubscribeCalls: number }
+    }).__qa072ReminderProbe)
+    expect(probeOffline).toMatchObject({ permissionCalls: 0, pushSubscribeCalls: 0 })
+    expect([...api.counts.entries()].filter(([key]) => key.startsWith('POST /api/tracker/trackers'))).toEqual([])
+    expect([...api.counts.entries()].filter(([key]) => key.split(' ')[1]?.startsWith('/api/push/'))).toEqual([])
+    await record('R1-offline-reminder-queued', {
+      trackerId, operationId: queuedReminder?.operation_id, queueState: queuedReminder?.state,
+      reminder: { time: queuedReminder?.reminder_time, mode: queuedReminder?.reminder_mode,
+        intervalDays: queuedReminder?.reminder_interval_days, action: queuedReminder?.reminder_action },
+      payloadSha256: queuedReminder?.payload_sha256, payloadByteLength: queuedReminder?.payload_byte_length,
+      registrationProbe: probeOffline, pushApiRequestCount: 0,
+    })
+    await capture(page, `${RUN_ID}-R1-offline-reminder-queued`)
+
+    const createAckPromise = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/tracker/trackers',
+      { timeout: 15_000 },
+    )
+    await page.context().setOffline(false)
+    const createAck = await createAckPromise
+    expect(createAck.status()).toBe(201)
+    const createBody = await createAck.json() as { id?: string }
+    expect(createBody.id).toBe(trackerId)
+    expect(createAck.request().postDataJSON()).toMatchObject({ id: trackerId, reminder_time: '09:15' })
+    serverAcknowledged = true
+    await waitForQueueEmpty(page, [trackerId], 15_000)
+    queueDrained = true
+    const persisted = await page.evaluate(async (id) => {
+      const response = await fetch(`/api/tracker/trackers/${id}`, { credentials: 'include' })
+      return { status: response.status, body: response.ok ? await response.json() as Record<string, unknown> : null }
+    }, trackerId)
+    expect(persisted.status).toBe(200)
+    expect(persisted.body).toMatchObject({
+      id: trackerId, reminder_time: '09:15:00', reminder_mode: 'fixed',
+      reminder_interval_days: 3, reminder_action: 'confirm_event', is_private: false,
+    })
+    const probeOnline = await page.evaluate(() => (window as Window & {
+      __qa072ReminderProbe: { permissionCalls: number; pushSubscribeCalls: number }
+    }).__qa072ReminderProbe)
+    expect(probeOnline).toMatchObject({ permissionCalls: 0, pushSubscribeCalls: 0 })
+    expect([...api.counts.entries()].filter(([key]) => key.split(' ')[1]?.startsWith('/api/push/'))).toEqual([])
+    expect(api.statuses.get('POST /api/tracker/trackers 201')).toBe(1)
+    await record('R1-reminder-replay-ack-persisted', {
+      trackerId, responseStatus: createAck.status(), responseId: createBody.id,
+      persisted: { status: persisted.status, reminder_time: persisted.body?.reminder_time,
+        reminder_mode: persisted.body?.reminder_mode,
+        reminder_interval_days: persisted.body?.reminder_interval_days,
+        reminder_action: persisted.body?.reminder_action },
+      queueCount: (await readOutboxRawByteReceipts(page)).length,
+      registrationProbe: probeOnline, pushApiRequestCount: 0,
+    })
+    await capture(page, `${RUN_ID}-R1-reminder-replayed`)
+  } finally {
+    const finalRows = await readOutboxRawByteReceipts(page).catch(() => [])
+    await record('R1-final-outbox-observation', {
+      rowCount: finalRows.length,
+      rows: finalRows.map(({ operation_id, operation_kind, entity_id, state, attempts, payload_sha256, payload_byte_length }) =>
+        ({ operation_id, operation_kind, entity_id, state, attempts, payload_sha256, payload_byte_length })),
+      serverAcknowledged, queueDrained,
+    })
+    let cleanupStatus: number | null = null
+    if (trackerId && serverAcknowledged && queueDrained) {
+      cleanupStatus = await page.evaluate(async (id) =>
+        (await fetch(`/api/tracker/trackers/${id}`, { method: 'DELETE', credentials: 'include' })).status,
+      trackerId).catch(() => 0)
+    }
+    await record('R1-exact-synthetic-cleanup', {
+      trackerId: trackerId || null, cleanupStatus,
+      skippedUntilServerAckAndQueueDrain: !trackerId || !serverAcknowledged || !queueDrained,
+    })
     api.close()
   }
 })
