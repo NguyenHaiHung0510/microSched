@@ -124,4 +124,19 @@ describe('typed domain command encoding', () => {
       requiresPrivate: true,
     })).toMatchObject({ method: 'DELETE', path: cancelPath, entity_id: reminderId, parent_id: sourceId, requires_private: true })
   })
+
+  it('encodes full restore projections separately from the null restore request body', () => {
+    const taskId = '550e8400-e29b-41d4-a716-446655440050'
+    const projection = {
+      id: taskId, title: 'Restored', status: 'open', is_private: false,
+      items: [{ id: '550e8400-e29b-41d4-a716-446655440051', content: 'Child' }],
+    }
+    const command = adapterFor('task.restore').encodeCommand({
+      operationKind: 'task.restore', path: `/api/tasks/${taskId}/restore`,
+      entityId: taskId, body: null, optimisticEntity: projection,
+    })
+    expect(command.body).toBeNull()
+    expect(command.optimistic_entity).toEqual(projection)
+    expect(command.entity_id).toBe(taskId)
+  })
 })
