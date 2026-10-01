@@ -137,3 +137,80 @@ def test_0016_fingerprint_is_immutable_and_blocks_lossy_downgrade(pg_dsn: str) -
     finally:
         command.upgrade(_config(), "head")
         asyncio.run(_cleanup(task_id, reminder_id))
+
+
+def test_0016_downgrade_rechecks_fingerprint_committed_by_concurrent_writer(pg_dsn: str) -> None:
+    """A writer already holding its row lock commits before rollback decides."""
+    task_id, reminder_id = uuid7(), uuid7()
+    fingerprint = "c" * 64
+
+    async def exercise() -> None:
+        connection = await asyncpg.connect(pg_dsn)
+        transaction = None
+        downgrade = None
+        try:
+            await connection.execute(
+                "INSERT INTO microsched.task (id, title, status, due_precision, due_at) "
+                "VALUES ($1, 'synthetic concurrent migration fixture', 'open', 'datetime', "
+                "now() + interval '2 days')",
+                task_id,
+            )
+            transaction = connection.transaction()
+            await transaction.start()
+            await connection.execute(
+                "INSERT INTO microsched.one_shot_reminder "
+                "(id, task_id, mode, due_at, request_fingerprint_sha256) "
+                "VALUES ($1, $2, 'absolute', now() + interval '1 day', $3)",
+                reminder_id,
+                task_id,
+                fingerprint,
+            )
+            writer_pid = await connection.fetchval("SELECT pg_backend_pid()")
+            downgrade = asyncio.create_task(asyncio.to_thread(command.downgrade, _config(), "0015"))
+            # The INSERT keeps its table lock until commit. In the unsafe migration,
+            # SELECT has already seen zero fingerprints before its DDL blocks here.
+            # In the fixed migration, the initial table lock blocks before SELECT.
+            deadline = asyncio.get_running_loop().time() + 5
+            while not await connection.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks "
+                "WHERE relation='microsched.one_shot_reminder'::regclass "
+                "AND pid <> $1 AND NOT granted)",
+                writer_pid,
+            ):
+                if downgrade.done():
+                    await downgrade
+                    pytest.fail("downgrade did not wait for the concurrent writer")
+                if asyncio.get_running_loop().time() >= deadline:
+                    pytest.fail("downgrade never reached its conflicting table lock")
+                await asyncio.sleep(0.01)
+            await transaction.commit()
+            transaction = None
+            with pytest.raises(RuntimeError, match="refusing to drop persisted"):
+                await asyncio.wait_for(asyncio.shield(downgrade), timeout=10)
+            assert (
+                await connection.fetchval("SELECT version_num FROM microsched.alembic_version")
+                == "0016"
+            )
+            assert (
+                await connection.fetchval(
+                    "SELECT request_fingerprint_sha256 FROM microsched.one_shot_reminder "
+                    "WHERE id=$1",
+                    reminder_id,
+                )
+                == fingerprint
+            )
+        finally:
+            if transaction is not None:
+                await transaction.rollback()
+            if downgrade is not None and not downgrade.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(downgrade), timeout=10)
+                except RuntimeError:
+                    pass
+            await connection.close()
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        command.upgrade(_config(), "head")
+        asyncio.run(_cleanup(task_id, reminder_id))

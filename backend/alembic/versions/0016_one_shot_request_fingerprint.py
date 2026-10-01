@@ -58,6 +58,9 @@ FOR EACH ROW EXECUTE FUNCTION microsched.reject_one_shot_fingerprint_change()
 
 def downgrade() -> None:
     bind = op.get_bind()
+    # Exclude concurrent writers before deciding whether rollback can erase the column.
+    # PostgreSQL retains this lock through the surrounding Alembic transaction/DDL.
+    bind.execute(text("LOCK TABLE microsched.one_shot_reminder IN ACCESS EXCLUSIVE MODE"))
     has_fingerprints = bind.execute(
         text(
             "SELECT EXISTS(SELECT 1 FROM microsched.one_shot_reminder "
