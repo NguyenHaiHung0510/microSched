@@ -862,7 +862,7 @@ export function MimiScreen({
           <p className="mb-2 text-xs text-muted-foreground" data-testid="mimi-route-summary">
             {capabilities.data?.live_provider_enabled
               ? `${capabilities.data.requested_model ?? 'Route chưa chọn'} · effort ${capabilities.data.requested_effort ?? 'không rõ'} · context ${capabilities.data.context_limit.toLocaleString('vi-VN')}`
-              : 'Route local · chưa gọi model ngoài'}
+              : 'Hội thoại local · phần nhắn tin chưa gọi model ngoài'}
           </p>
         ) : null}
         <div className="relative flex flex-col rounded-2xl border border-input bg-card shadow-xs focus-within:ring-2 focus-within:ring-ring focus-within:border-primary transition-all p-2.5">

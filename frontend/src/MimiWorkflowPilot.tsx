@@ -136,6 +136,7 @@ export function MimiWorkflowPilot() {
       <CardDescription>Chọn tối đa 16 Task công khai. Mỗi bước ghi dữ liệu đều cần bạn xác nhận.</CardDescription>
     </CardHeader>
     <CardContent className="space-y-4 text-sm">
+      {busy ? <p role="status" aria-live="polite">Đang chờ máy chủ xử lý… Ứng dụng không tự gửi lại thao tác.</p> : null}
       {tasks.isPending ? <p role="status">Đang tải Task…</p> : null}
       {tasks.isError ? <div role="alert" className="space-y-2 text-bad"><p>Không tải được Task.</p><Button type="button" variant="outline" className="min-h-11" onClick={() => void tasks.refetch()}>Tải lại Task</Button></div> : null}
       {tasks.data ? <>
