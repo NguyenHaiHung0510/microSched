@@ -103,6 +103,7 @@ export type MimiProviderCall = {
 
 export type MimiCapabilities = {
   context_v1_enabled: boolean
+  workflow_pilot_enabled: boolean
   live_provider_enabled: boolean
   requested_model: string | null
   requested_effort: string | null

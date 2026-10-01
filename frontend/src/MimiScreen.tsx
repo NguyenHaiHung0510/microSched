@@ -3,6 +3,7 @@ import { Check, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
+import { MimiWorkflowPilot } from '@/MimiWorkflowPilot'
 import { ApiError, TimeoutError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -679,6 +680,7 @@ export function MimiScreen({
             <p className="whitespace-pre-wrap break-words text-sm">{streamedText}</p>
           </article>
         ) : null}
+        {variant === 'workspace' && capabilities.data?.workflow_pilot_enabled === true ? <MimiWorkflowPilot /> : null}
       </div>
 
       {current.draft?.direction_state === 'pending' ? (
