@@ -35,6 +35,7 @@ import { MimiDock, MimiDockButton } from '@/MimiDock'
 import { isHomepage, type PublicAuthState } from '@/public-navigation'
 import { purgePrivateSurface, saveSessionBootstrap } from '@/lib/public-cache'
 import { OutboxStatus } from '@/OutboxStatus'
+import { replayPendingOverlays } from '@/lib/outbox-adapters'
 
 type SessionResponse = PrivateSessionState & {
   email: string
@@ -302,7 +303,11 @@ function App() {
       return
     }
     if (session.data && !session.data.offline_bootstrap && !session.isError) {
-      window.dispatchEvent(new Event('microsched:outbox-session-changed'))
+      let cancelled = false
+      void replayPendingOverlays(queryClient).then(() => {
+        if (!cancelled) window.dispatchEvent(new Event('microsched:outbox-session-changed'))
+      }).catch(() => window.dispatchEvent(new Event('microsched:outbox-reconcile-unavailable')))
+      return () => { cancelled = true }
     }
   }, [queryClient, session.data, session.dataUpdatedAt, session.error, session.isError])
   useEffect(() => {

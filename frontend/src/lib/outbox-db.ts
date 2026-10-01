@@ -7,7 +7,7 @@ export type OutboxRow = {
   operation_id?: number
   operation_kind: string
   resource: string
-  method: 'POST' | 'PATCH' | 'DELETE'
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   path: string
   body: Json | null
   payload_json: string

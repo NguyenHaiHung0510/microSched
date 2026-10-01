@@ -7,6 +7,7 @@ import {
 } from '@tanstack/query-persist-client-core'
 import { dehydrate, type QueryClient } from '@tanstack/react-query'
 import { listOutbox, type OutboxRow } from '@/lib/outbox-db'
+import { clearOutboxBaselines } from '@/lib/outbox-adapters'
 
 const DB_NAME = 'microsched-public-cache'
 const STORE = 'snapshots'
@@ -226,6 +227,7 @@ export async function loadSessionBootstrap(): Promise<SessionBootstrap | null> {
 }
 
 export async function purgePrivateSurface(client: QueryClient, full = false) {
+  clearOutboxBaselines(client, full)
   if (full) {
     persistenceEpoch += 1
     client.clear()

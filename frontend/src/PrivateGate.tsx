@@ -155,7 +155,6 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
     onSuccess: (result) => {
       setPrivateOverride(result.private_until)
       queryClient.setQueryData(['session'], (old: PrivateSessionState | undefined) => old ? { ...old, private_until: result.private_until } : old)
-      window.dispatchEvent(new Event('microsched:outbox-session-changed'))
       setLockedOverride(null)
       setPin('')
       setErrorText(null)
