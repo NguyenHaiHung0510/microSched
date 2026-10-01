@@ -96,8 +96,10 @@ export async function enqueueOutbox(
   const receipt = await payloadReceipt(row.body)
   const stored = { ...row, ...receipt }
   let cancelled_rows: OutboxRow[] | undefined
+  let emptyBeforeWrite = false
   const operation_id = await db.transaction('rw', db.outbox, async () => {
     const rows = await db.outbox.orderBy('operation_id').toArray()
+    emptyBeforeWrite = rows.length === 0
     const ownCreate = rows.find((item) => item.entity_id === row.entity_id && item.idempotency_mode === 'client_uuid')
     const parent = ownCreate ?? rows.find((item) => item.entity_id === row.parent_id && item.idempotency_mode === 'client_uuid')
     stored.dependency_operation_id ??= parent?.operation_id ?? null
@@ -125,7 +127,14 @@ export async function enqueueOutbox(
       await db.outbox.delete(previous.operation_id!)
     }
     return db.outbox.add(stored)
+  }).catch((error: unknown) => {
+    if (!(error instanceof Error) || error.name !== 'QuotaExceededError') throw error
+    // The rejected transaction has rolled back; no durable command was accepted.
+    window.dispatchEvent(new Event('microsched:offline-unavailable'))
+    if (!emptyBeforeWrite) throw new Error('Thiết bị không đủ dung lượng. Thay đổi đang chờ vẫn được giữ; chưa lưu thay đổi mới.')
+    return null
   })
+  if (operation_id === null) return null
   emitChanged()
   return { ...stored, operation_id, ...(cancelled_rows ? { cancelled_rows } : {}) }
 }
