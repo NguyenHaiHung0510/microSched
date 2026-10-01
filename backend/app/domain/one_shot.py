@@ -1,5 +1,8 @@
 """Source-owned, one-shot reminder scheduling and read/write contracts."""
 
+import hashlib
+import hmac
+import json
 from datetime import UTC, datetime, time, timedelta
 from typing import Literal
 from uuid import UUID
@@ -145,13 +148,40 @@ def as_read(row: OneShotReminder, kind: str, source) -> ReminderRead:
     )
 
 
-def _same_write_configuration(row: OneShotReminder, payload: ReminderWrite) -> bool:
-    return (
-        row.mode == payload.mode
-        and row.offset_minutes == payload.offset_minutes
-        and row.anchor_time == payload.anchor_time
-        and (payload.mode != "absolute" or row.due_at == payload.due_at.astimezone(UTC))
-    )
+def _request_fingerprint(kind: str, source_id: UUID, payload: ReminderWrite) -> str:
+    """Hash the immutable effect and CAS identity of a client-keyed write."""
+    canonical = {
+        "version": 1,
+        "id": str(payload.id),
+        "source": {"kind": kind, "id": str(source_id)},
+        "effect": {
+            "mode": payload.mode,
+            "due_at": (
+                payload.due_at.astimezone(UTC).isoformat(timespec="microseconds")
+                if payload.due_at is not None
+                else None
+            ),
+            "offset_minutes": payload.offset_minutes,
+            "anchor_time": (
+                payload.anchor_time.isoformat(timespec="seconds")
+                if payload.anchor_time is not None
+                else None
+            ),
+        },
+        "expected": {
+            "id": str(payload.expected_id) if payload.expected_id is not None else None,
+            "revision": payload.expected_revision,
+            "source_updated_at": (
+                payload.expected_source_updated_at.astimezone(UTC).isoformat(
+                    timespec="microseconds"
+                )
+                if payload.expected_source_updated_at is not None
+                else None
+            ),
+        },
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 async def list_reminders(
@@ -218,6 +248,9 @@ async def save_reminder(
     source = await get_source(db, kind, source_id, auth, lock=True)
     if source is None:
         raise HTTPException(404, "Không tìm thấy đối tượng.")
+    request_fingerprint = (
+        _request_fingerprint(kind, source_id, payload) if payload.id is not None else None
+    )
 
     # Parent visibility is checked first, so an idempotency key cannot reveal
     # whether a reminder belongs to a concealed source. Matching retries return
@@ -225,9 +258,9 @@ async def save_reminder(
     if payload.id is not None:
         existing = await db.get(OneShotReminder, payload.id, populate_existing=True)
         if existing is not None:
-            _, column = SOURCES[kind]
-            same_source = getattr(existing, column) == source_id
-            if not same_source or not _same_write_configuration(existing, payload):
+            if existing.request_fingerprint_sha256 is None or not hmac.compare_digest(
+                existing.request_fingerprint_sha256, request_fingerprint
+            ):
                 raise HTTPException(409, "ID lời nhắc đã được dùng cho một yêu cầu khác.")
             return as_read(existing, kind, source)
 
@@ -273,6 +306,7 @@ async def save_reminder(
                 due_at=due,
                 offset_minutes=payload.offset_minutes,
                 anchor_time=payload.anchor_time,
+                request_fingerprint_sha256=request_fingerprint,
             )
             db.add(row)
             await db.flush()
@@ -283,9 +317,8 @@ async def save_reminder(
         existing = await db.get(OneShotReminder, payload.id, populate_existing=True)
         if existing is None:
             raise
-        _, column = SOURCES[kind]
-        if getattr(existing, column) != source_id or not _same_write_configuration(
-            existing, payload
+        if existing.request_fingerprint_sha256 is None or not hmac.compare_digest(
+            existing.request_fingerprint_sha256, request_fingerprint
         ):
             raise HTTPException(409, "ID lời nhắc đã được dùng cho một yêu cầu khác.")
         return as_read(existing, kind, source)

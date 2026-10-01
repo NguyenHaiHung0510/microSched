@@ -13,7 +13,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database_urls import async_postgres_url
 from app.domain.models import AuthSession, OneShotReminder, PushSubscription, Task
-from app.domain.one_shot import ReminderWrite, cancel_reminder, list_reminders, save_reminder
+from app.domain.one_shot import (
+    ReminderWrite,
+    _request_fingerprint,
+    cancel_reminder,
+    list_reminders,
+    save_reminder,
+)
 from app.domain.one_shot_delivery import OneShotDispatcher
 from app.domain.push import PushResult
 
@@ -148,6 +154,10 @@ def test_client_uuid_replay_survives_source_cancel_and_rejects_mismatches(pg_dsn
             created = await save_reminder(db, auth, "task", task_id, payload)
             await db.commit()
             assert created.id == client_id
+            stored = await db.get(OneShotReminder, client_id, populate_existing=True)
+            assert stored.request_fingerprint_sha256 == _request_fingerprint(
+                "task", task_id, payload
+            )
 
             replay = await save_reminder(
                 db, auth, "task", task_id, payload, now=now + timedelta(hours=2)
@@ -165,6 +175,41 @@ def test_client_uuid_replay_survives_source_cancel_and_rejects_mismatches(pg_dsn
                         id=client_id,
                         mode="absolute",
                         due_at=now + timedelta(days=1),
+                    ),
+                )
+            assert error.value.status_code == 409
+            await db.rollback()
+
+            with pytest.raises(HTTPException) as error:
+                await save_reminder(
+                    db,
+                    auth,
+                    "task",
+                    task_id,
+                    ReminderWrite(
+                        id=client_id,
+                        mode="absolute",
+                        due_at=payload.due_at,
+                        expected_id=_uuid7(),
+                        expected_revision=1,
+                        expected_source_updated_at=original_source_updated_at,
+                    ),
+                )
+            assert error.value.status_code == 409
+            await db.rollback()
+
+            with pytest.raises(HTTPException) as error:
+                await save_reminder(
+                    db,
+                    auth,
+                    "task",
+                    task_id,
+                    ReminderWrite(
+                        id=client_id,
+                        mode="absolute",
+                        due_at=payload.due_at,
+                        expected_source_updated_at=original_source_updated_at
+                        + timedelta(seconds=1),
                     ),
                 )
             assert error.value.status_code == 409
@@ -289,6 +334,37 @@ def test_client_uuid_replay_survives_source_cancel_and_rejects_mismatches(pg_dsn
         finally:
             await db.execute(delete(Task).where(Task.id == other_task_id))
             await db.commit()
+
+    asyncio.run(scenario(pg_dsn, exercise))
+
+
+def test_client_uuid_legacy_row_without_fingerprint_fails_closed(pg_dsn):
+    async def exercise(db, task, auth, now, maker):
+        client_id = _uuid7()
+        await db.execute(
+            text(
+                "INSERT INTO microsched.one_shot_reminder "
+                "(id, task_id, mode, due_at) VALUES (:id, :task_id, 'absolute', :due_at)"
+            ),
+            {"id": client_id, "task_id": task.id, "due_at": now + timedelta(hours=1)},
+        )
+        await db.commit()
+        with pytest.raises(HTTPException) as error:
+            await save_reminder(
+                db,
+                auth,
+                "task",
+                task.id,
+                ReminderWrite(
+                    id=client_id,
+                    mode="absolute",
+                    due_at=now + timedelta(hours=1),
+                ),
+            )
+        assert error.value.status_code == 409
+        await db.rollback()
+        legacy = await db.get(OneShotReminder, client_id, populate_existing=True)
+        assert legacy.status == "pending" and legacy.request_fingerprint_sha256 is None
 
     asyncio.run(scenario(pg_dsn, exercise))
 
