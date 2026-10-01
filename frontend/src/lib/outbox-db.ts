@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
+import { ApiError } from '@/api'
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export type OutboxState = 'pending' | 'auth_hold' | 'private_hold' | 'outcome_unknown' | 'failed' | 'suppressed'
@@ -131,7 +132,7 @@ export async function enqueueOutbox(
     if (!(error instanceof Error) || error.name !== 'QuotaExceededError') throw error
     // The rejected transaction has rolled back; no durable command was accepted.
     window.dispatchEvent(new Event('microsched:offline-unavailable'))
-    if (!emptyBeforeWrite) throw new Error('Thiết bị không đủ dung lượng. Thay đổi đang chờ vẫn được giữ; chưa lưu thay đổi mới.')
+    if (!emptyBeforeWrite) throw new ApiError(507, 'Thiết bị không đủ dung lượng. Thay đổi đang chờ vẫn được giữ; chưa lưu thay đổi mới.')
     return null
   })
   if (operation_id === null) return null

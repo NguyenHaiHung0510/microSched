@@ -70,14 +70,16 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
     }
   }
 
-  if (state.unavailable) return <p className="text-sm text-muted-foreground" role="status">Lưu ngoại tuyến chưa khả dụng trên thiết bị này.</p>
-  if (state.readError) return <p className="text-sm text-bad" role="status">Chưa đọc được trạng thái hàng đợi.</p>
-  if (!state.rows.length && !state.webLocksUnavailable) return null
+  if (!state.rows.length && !state.webLocksUnavailable && !state.unavailable && !state.readError) return null
 
   const queued = state.rows.filter((row) => row.state !== 'failed' && row.state !== 'suppressed').length
   const failed = state.rows.length - queued
   return (
     <>
+      {state.unavailable ? <p className="text-sm text-muted-foreground" role="status">
+        Lưu ngoại tuyến chưa khả dụng trên thiết bị này.{state.rows.length ? ' Các thay đổi đang chờ vẫn được giữ; bạn có thể xem hàng đợi bên dưới.' : ''}
+      </p> : null}
+      {state.readError ? <p className="text-sm text-bad" role="status">Chưa đọc được trạng thái hàng đợi.</p> : null}
       {state.webLocksUnavailable ? <p data-testid="outbox-lock-warning" className="text-sm text-muted-foreground" role="status">
         Trình duyệt này chưa hỗ trợ khoá gửi an toàn giữa các thẻ hoặc đang ở ngữ cảnh không bảo mật. Thay đổi vẫn được lưu trên thiết bị; gửi sẽ tiếp tục khi dùng ngữ cảnh hỗ trợ.
       </p> : null}
@@ -127,7 +129,7 @@ export function OutboxEntityStatus({
   const rows = state.rows.filter((row) =>
     (row.state === 'failed' || row.state === 'suppressed') &&
     (row.entity_id === entityId || row.parent_id === entityId))
-  if (state.readError || state.unavailable || rows.length === 0) return null
+  if (state.readError || rows.length === 0) return null
   const row = rows[rows.length - 1]
   const privateHidden = requiresPrivateRow(row) && !privateUnlocked
   const reason = stateReason(row.state, row.last_error_code, privateHidden)
