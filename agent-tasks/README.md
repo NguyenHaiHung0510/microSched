@@ -15,6 +15,8 @@ Neon autosuspend recovery: [048 — idle recovery](048-neon-idle-recovery.md).
 Minimal public static delivery: [049 — cache and build compression](049-static-delivery.md).
 Mimi local synthetic foundation: [055 — P0 sandbox and contracts](055-mimi-p0-sandbox.md).
 Mimi runner/feedback experiment: [066 — LangGraph local prototype](066-mimi-langgraph-prototype.md), [067 — feedback and offline replay](067-mimi-feedback-replay.md); [2026-09-30 result](2026-09-30-mimi-research/prototype-result.md). Local scripted QA completed; framework adoption is not ready and remains Owner-reserved.
+
+Mimi B16 full local pilot: [073 — contract](073-mimi-b16-local-pilot.md), [result and dogfood](073-mimi-b16-local-pilot-result.md). COMPLETE_LOCAL_DOGFOOD_READY on 2026-10-01: six browser scenarios with final PASS evidence, actual app/Postgres restart and bounded live sample; retained preview is deterministic. CI, physical iPhone and production NOT_RUN; default model/framework adoption remains Owner-reserved.
 Mimi P1R dogfood correction: [058 — streamed side-chat and management Control Center](058-mimi-dogfood-recovery.md).
 Mimi no-key runner experiment: [066 — LangGraph prototype](066-mimi-langgraph-prototype.md), [067 — feedback/replay](067-mimi-feedback-replay.md), [30/09 research decisions](2026-09-30-mimi-research/decisions.md). Owner-approved local prototype; live/adoption/deploy are separate.
 Đọc header/acceptance của task được giao và re-query GitHub/runtime; không suy current queue từ snapshot dưới.
