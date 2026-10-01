@@ -27,11 +27,14 @@ export function urlBase64ToUint8Array(value: string): Uint8Array<ArrayBuffer> {
 }
 
 /**
- * Register the current device before saving any enabled tracker reminder.
+ * Register the current device online before saving an enabled tracker reminder.
  * This ordering avoids the silent "has a time but no push device" state when
  * an existing reminder is edited from a newly used device.
  */
 export async function ensurePushSubscription(): Promise<void> {
+  if (navigator.onLine === false) {
+    throw new Error('Cần kết nối mạng để đăng ký thông báo trên thiết bị này.')
+  }
   // Deliberate outbox bypass: browser permission and PushSubscription creation
   // are device side effects and require an online registration request.
   if (!('Notification' in window) || !('serviceWorker' in navigator)) {
@@ -73,4 +76,17 @@ export async function ensurePushSubscription(): Promise<void> {
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+export const PUSH_OFFLINE_NOTICE =
+  'Đăng ký thông báo của thiết bị cần kết nối mạng. Thay đổi đang chờ đồng bộ; chỉ thiết bị đã đăng ký mới nhận được thông báo.'
+
+/** Device registration remains separate from an offline domain command. */
+export async function preparePushRegistration(
+  required: boolean,
+): Promise<'not_needed' | 'registered' | 'offline_deferred'> {
+  if (!required) return 'not_needed'
+  if (navigator.onLine === false) return 'offline_deferred'
+  await ensurePushSubscription()
+  return 'registered'
 }

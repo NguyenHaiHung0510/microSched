@@ -48,7 +48,7 @@ import {
   type Subscription,
 } from '@/subscription-ui'
 import { errorMessage } from '@/tracker-undo'
-import { ensurePushSubscription } from '@/push-subscription'
+import { preparePushRegistration, PUSH_OFFLINE_NOTICE } from '@/push-subscription'
 import type { QueuedDeleteReceipt } from '@/lib/queued-mutation'
 import { standardRefetchInterval } from '@/query-polling'
 import {
@@ -310,17 +310,20 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   function submitTracker(payload: TrackerWritePayload) {
     const { ensure_push: ensurePush, ...trackerPayload } = payload
     if (editingTracker) {
-      const saveTracker = () =>
+      const saveTracker = (registrationDeferred = false) =>
         writes.updateTracker.mutate(
           { trackerId: editingTracker.id, payload: trackerPayload, requiresPrivate: editingTracker.is_private },
           {
-            onSuccess: () => setEditingTracker(null),
+            onSuccess: () => {
+              setEditingTracker(null)
+              if (registrationDeferred) toast.info(PUSH_OFFLINE_NOTICE)
+            },
             onError: (error) => toast.error(errorMessage(error)),
           },
         )
       if (ensurePush && reminderConfigurationChanged(editingTracker, trackerPayload)) {
-        void ensurePushSubscription()
-          .then(saveTracker)
+        void preparePushRegistration(true)
+          .then((registration) => saveTracker(registration === 'offline_deferred'))
           .catch((error: unknown) =>
             toast.error(error instanceof Error ? error.message : errorMessage(error)),
           )
@@ -329,14 +332,17 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       }
       return
     }
-    const saveTracker = () =>
+    const saveTracker = (registrationDeferred = false) =>
       writes.createTracker.mutate({ ...trackerPayload, id: uuidv7() }, {
-        onSuccess: () => setCreateOpen(false),
+        onSuccess: () => {
+          setCreateOpen(false)
+          if (registrationDeferred) toast.info(PUSH_OFFLINE_NOTICE)
+        },
         onError: (error) => toast.error(errorMessage(error)),
       })
     if (ensurePush) {
-      void ensurePushSubscription()
-        .then(saveTracker)
+      void preparePushRegistration(true)
+        .then((registration) => saveTracker(registration === 'offline_deferred'))
         .catch((error: unknown) =>
           toast.error(error instanceof Error ? error.message : errorMessage(error)),
         )

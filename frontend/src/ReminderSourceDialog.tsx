@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { apiRequest } from '@/api'
 import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
 import type { Json } from '@/lib/outbox-db'
@@ -13,7 +14,7 @@ import type { CalendarEvent } from '@/calendar-ui'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { reminderKey, type ReminderSource } from '@/reminder-ui'
-import { ensurePushSubscription } from '@/push-subscription'
+import { preparePushRegistration, PUSH_OFFLINE_NOTICE } from '@/push-subscription'
 
 export function ReminderSourceDialog({ kind, sourceId, onClose }: { kind: ReminderSource; sourceId: string; onClose: () => void }) {
   const client = useQueryClient()
@@ -29,18 +30,21 @@ export function ReminderSourceDialog({ kind, sourceId, onClose }: { kind: Remind
     const requiresPrivate = kind === 'event' ? false :
       (source.data as Task | Tracker).is_private !== false
     const { ensure_push: ensurePush, ...payload } = body as { ensure_push?: boolean }
+    let registrationDeferred = false
     if (kind === 'tracker' && ensurePush && source.data &&
       reminderConfigurationChanged(source.data as Tracker, payload as Partial<Tracker>)) {
-      // Device permission/auth registration must stay online and bypass the domain outbox.
-      await ensurePushSubscription()
+      // Queue the domain write offline without registering this device or requesting permission.
+      registrationDeferred = (await preparePushRegistration(true)) === 'offline_deferred'
     }
     const operationKind: OperationKind = kind === 'task' ? 'task.update' : kind === 'tracker' ? 'tracker.update' : 'calendar_event.update'
-    return queuedRequest(client, operationKind, {
+    const result = await queuedRequest(client, operationKind, {
       path: kind === 'event' ? `/api/calendar/events/${sourceId}` : path,
       body: payload as unknown as Json,
       entityId: sourceId,
       requiresPrivate,
     })
+    if (registrationDeferred) toast.info(PUSH_OFFLINE_NOTICE)
+    return result
     }, onSuccess: () => {
       onClose()
     } })
