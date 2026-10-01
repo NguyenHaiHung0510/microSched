@@ -23,7 +23,7 @@ import { toast } from 'sonner'
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
-import { OutboxStatus } from '@/OutboxStatus'
+import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -242,12 +242,18 @@ export function TasksScreen() {
     }
     queueMicrotask(() => setMigratingPins(true))
     void Promise.allSettled(
-      pinnedIds.map((taskId) =>
-        apiRequest<Task>(`/api/tasks/${taskId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ pinned: true }),
-        }),
-      ),
+      pinnedIds.map((taskId) => {
+        const task = timeline.data.items.find((item) => item.id === taskId)
+        if (!task || typeof task.is_private !== 'boolean') {
+          return Promise.reject(new Error('Cannot classify privacy for a legacy pinned task'))
+        }
+        return queuedRequest<Task>(queryClient, 'task.update', {
+          path: `/api/tasks/${taskId}`,
+          body: { pinned: true },
+          entityId: taskId,
+          requiresPrivate: task.is_private,
+        })
+      }),
     ).then((results) => {
       const retryIds = results.flatMap((result, index) =>
         result.status === 'rejected' ? [pinnedIds[index]] : [],
@@ -259,16 +265,17 @@ export function TasksScreen() {
       } catch {
         // A blocked storage area must not make the task screen unusable.
       }
-      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
       setMigratingPins(false)
     })
-  }, [queryClient, timeline.isSuccess])
+  }, [queryClient, timeline.data, timeline.isSuccess])
 
   const create = useMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
-      apiRequest<Task>('/api/tasks', {
-        method: 'POST',
-        body: JSON.stringify({ ...payload, items: payload.items ?? [] }),
+      queuedRequest<Task>(queryClient, 'task.create', {
+        path: '/api/tasks',
+        body: { ...payload, items: payload.items ?? [] },
+        entityId: payload.id,
+        requiresPrivate: payload.is_private,
       }),
     onSuccess: (_task, variables) => {
       if (variables.source === 'quick') {
@@ -277,8 +284,6 @@ export function TasksScreen() {
       } else {
         setCreateOpen(false)
       }
-      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
-      void queryClient.invalidateQueries({ queryKey: ['calendar'] })
     },
   })
 
@@ -729,7 +734,6 @@ const TaskCard = memo(function TaskCard({
     mutationFn: (variables: { next: TaskSchedule; previous: TaskSchedule }) =>
       queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${task.id}`, body: variables.next, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: (_data, variables) => {
-      refresh()
       toast(
         <span className="block min-w-0 max-w-full break-words">
           Đã dời “{task.title}”
@@ -752,14 +756,12 @@ const TaskCard = memo(function TaskCard({
       queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${task.id}`, body: payload, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setEditing(false)
-      refresh()
     },
   })
   const remove = useMutation({
     mutationFn: () => queuedRequest<void>(queryClient, 'task.delete', { path: `/api/tasks/${task.id}`, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setDetailsOpen(false)
-      refresh()
       toast(
         <span className="block min-w-0 max-w-full break-words">
           Đã xoá &quot;{task.title}&quot;
@@ -779,17 +781,14 @@ const TaskCard = memo(function TaskCard({
       queuedRequest<TaskItem>(queryClient, 'task_item.create', { path: `/api/tasks/${task.id}/items`, body: item, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setNewItem('')
-      refresh()
     },
   })
   const changeItem = useMutation({
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
       queuedRequest<TaskItem>(queryClient, 'task_item.update', { path: `/api/tasks/${task.id}/items/${item.id}`, body: { is_completed: isCompleted }, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
-    onSuccess: refresh,
   })
   const removeItem = useMutation({
     mutationFn: (item: TaskItem) => queuedRequest<void>(queryClient, 'task_item.delete', { path: `/api/tasks/${task.id}/items/${item.id}`, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
-    onSuccess: refresh,
   })
 
   const completedItems = task.items.filter((item) => item.is_completed).length
@@ -946,8 +945,9 @@ const TaskCard = memo(function TaskCard({
                       </div>
                     ) : null}
                   </TooltipContent>
-                ) : null}
+              ) : null}
               </Tooltip>
+              <OutboxEntityStatus entityId={task.id} privateUnlocked={task.is_private} />
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
               {task.is_private ? (
                 <PrivateMarker />
@@ -1279,7 +1279,7 @@ export function LegacyTasksScreen() {
     queryKey: taskQueryKey('all'),
     queryFn: () =>
       apiRequest<{ items: Task[] }>('/api/tasks?status=all&limit=100'),
-    refetchInterval: taskRefetchInterval,
+    ...useDomainReadControl(['tasks'], taskRefetchInterval),
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
@@ -1310,9 +1310,18 @@ export function LegacyTasksScreen() {
 
     queueMicrotask(() => setMigratingPins(true))
     void Promise.allSettled(
-      pinnedIds.map((taskId) =>
-      queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${taskId}`, body: { pinned: true }, entityId: taskId }),
-      ),
+      pinnedIds.map((taskId) => {
+        const task = tasks.data.items.find((item) => item.id === taskId)
+        if (!task || typeof task.is_private !== 'boolean') {
+          return Promise.reject(new Error('Cannot classify privacy for a legacy pinned task'))
+        }
+        return queuedRequest<Task>(queryClient, 'task.update', {
+          path: `/api/tasks/${taskId}`,
+          body: { pinned: true },
+          entityId: taskId,
+          requiresPrivate: task.is_private,
+        })
+      }),
     ).then((results) => {
       const retryIds = results.flatMap((result, index) => {
         if (result.status === 'fulfilled') return []
@@ -1352,14 +1361,18 @@ export function LegacyTasksScreen() {
         }
       }
 
-      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
       setMigratingPins(false)
     })
   }, [queryClient, tasks.isSuccess])
 
   const create = useMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
-      queuedRequest<Task>(queryClient, 'task.create', { path: '/api/tasks', body: { ...payload, items: payload.items ?? [] }, entityId: payload.id }),
+      queuedRequest<Task>(queryClient, 'task.create', {
+        path: '/api/tasks',
+        body: { ...payload, items: payload.items ?? [] },
+        entityId: payload.id,
+        requiresPrivate: payload.is_private,
+      }),
     // Cùng luật với `refresh()` của TaskCard, và đây mới là chỗ bug được BÁO:
     // nút "Đang thêm…" đọc `create.isPending`, mà React Query giữ `isPending` cho
     // tới khi `onSuccess` resolve. Await ở đây là bắt người dùng nhìn nút đứng im
@@ -1372,7 +1385,6 @@ export function LegacyTasksScreen() {
         setCreateOpen(false)
       }
 
-      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
     },
   })
 

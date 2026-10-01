@@ -122,7 +122,6 @@ export function DayDetailDialog({
     onSuccess: () => {
       setAnnotationForm(null)
       setAnnotationError(null)
-      refreshCalendar()
     },
     onError: (error) => setAnnotationError(importErrorMessage(error)),
   })
@@ -133,14 +132,12 @@ export function DayDetailDialog({
     onSuccess: () => {
       setAnnotationForm(null)
       setAnnotationError(null)
-      refreshCalendar()
     },
     onError: (error) => setAnnotationError(importErrorMessage(error)),
   })
 
   const deleteAnnotation = useMutation({
     mutationFn: (id: string) => queuedRequest<void>(queryClient, 'day_annotation.delete', { path: `/api/calendar/annotations/${id}`, entityId: id }),
-    onSuccess: refreshCalendar,
     onError: (error) => setAnnotationError(importErrorMessage(error)),
   })
 
@@ -150,7 +147,6 @@ export function DayDetailDialog({
     onSuccess: () => {
       setEventForm(null)
       setEventError(null)
-      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
@@ -161,7 +157,6 @@ export function DayDetailDialog({
     onSuccess: () => {
       setEventForm(null)
       setEventError(null)
-      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
@@ -171,22 +166,17 @@ export function DayDetailDialog({
       queuedRequest<CalendarTask>(queryClient, 'task.update', { path: `/api/tasks/${taskId}`, body: payload, entityId: taskId, requiresPrivate: tasks.find((task) => task.id === taskId)?.is_private }),
     onSuccess: () => {
       setTaskEdit(null)
-      refreshAll()
     },
   })
 
   const toggleTaskStatus = useMutation({
     mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
       queuedRequest<CalendarTask>(queryClient, 'task.update', { path: `/api/tasks/${variables.taskId}`, body: { status: variables.status }, entityId: variables.taskId, requiresPrivate: tasks.find((task) => task.id === variables.taskId)?.is_private }),
-    onSuccess: () => {
-      refreshAll()
-    },
   })
 
   const deleteTask = useMutation({
     mutationFn: (taskId: string) => queuedRequest<void>(queryClient, 'task.delete', { path: `/api/tasks/${taskId}`, entityId: taskId, requiresPrivate: tasks.find((task) => task.id === taskId)?.is_private }),
     onSuccess: (_data, taskId) => {
-      refreshAll()
       const task = tasks.find((t) => t.id === taskId)
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -208,7 +198,6 @@ export function DayDetailDialog({
     onSuccess: () => {
       setDeleteEventConfirm(null)
       setEventForm(null)
-      refreshCalendar()
       toast.success('Đã xoá buổi')
     },
     onError: (error) => setEventError(importErrorMessage(error)),
@@ -223,7 +212,6 @@ export function DayDetailDialog({
     }) =>
       queuedRequest<CalendarTask>(queryClient, 'task.update', { path: `/api/tasks/${variables.taskId}`, body: variables.schedule, entityId: variables.taskId, requiresPrivate: tasks.find((task) => task.id === variables.taskId)?.is_private }),
     onSuccess: (_data, variables) => {
-      refreshAll()
       if (!variables.showToast) return
       toast(
         <span className="block min-w-0 max-w-full break-words">

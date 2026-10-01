@@ -32,6 +32,8 @@ export function urlBase64ToUint8Array(value: string): Uint8Array<ArrayBuffer> {
  * an existing reminder is edited from a newly used device.
  */
 export async function ensurePushSubscription(): Promise<void> {
+  // Deliberate outbox bypass: browser permission and PushSubscription creation
+  // are device side effects and require an online registration request.
   if (!('Notification' in window) || !('serviceWorker' in navigator)) {
     throw new Error('Trình duyệt này không hỗ trợ thông báo đẩy.')
   }

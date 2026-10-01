@@ -157,6 +157,7 @@ export function CalendarScreen() {
   const [sourceError, setSourceError] = useState<string | null>(null)
   const [sourceConflict, setSourceConflict] = useState<ReturnType<typeof importConflict>>(null)
   const [importReport, setImportReport] = useState<ImportReport | null>(null)
+  const [importPending, setImportPending] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmState>(null)
   const [editingSource, setEditingSource] = useState<CalendarSource | null>(null)
   const [eventDialogOpen, setEventDialogOpen] = useState(false)
@@ -184,24 +185,27 @@ export function CalendarScreen() {
     [sources.data?.items],
   )
 
-  /* 010b §2 mục 9: một buổi/dấu ngày có thể đổi sang tháng khác, nên mọi
-     mutation phải invalidate CẢ họ ["calendar"], không chỉ tháng đang mở. */
-  const refreshCalendar = () =>
-    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
-
   const importFile = useMutation({
     mutationFn: async ({ sourceId, file }: { sourceId: string; file: File }) => {
       const problem = validateFile(file)
       if (problem) throw new Error(problem)
-      return queuedRequest<ImportReport>(queryClient, 'calendar.import', {
+      return queuedRequest<ImportReport | null>(queryClient, 'calendar.import', {
         path: `/api/calendar/sources/${sourceId}/import`,
         body: { filename: file.name, content: await file.text() }, entityId: sourceId, parentId: sourceId,
       }, { timeoutMs: 60_000 })
     },
+    onMutate: () => {
+      setImportReport(null)
+      setImportPending(false)
+    },
     onSuccess: (report) => {
-      setImportReport(report)
       setSourceError(null)
-      refreshCalendar()
+      if (!report || typeof report.inserted !== 'number' || !Array.isArray(report.skipped)) {
+        setImportPending(true)
+        return
+      }
+      setImportReport(report)
+      setImportPending(false)
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -213,7 +217,6 @@ export function CalendarScreen() {
       setSourceDialogOpen(false)
       setSourceError(null)
       setSourceConflict(null)
-      refreshCalendar()
       if (sourceKind === 'ics' && pickedFile) {
         importFile.mutate({ sourceId: source.id, file: pickedFile })
       }
@@ -245,7 +248,6 @@ export function CalendarScreen() {
     },
     onSuccess: () => {
       setEditingSource(null)
-      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -254,7 +256,6 @@ export function CalendarScreen() {
     mutationFn: (sourceId: string) => queuedRequest<void>(queryClient, 'calendar_source.delete', { path: `/api/calendar/sources/${sourceId}`, entityId: sourceId }),
     onSuccess: () => {
       setConfirm(null)
-      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -264,7 +265,6 @@ export function CalendarScreen() {
       queuedRequest<CalendarEvent>(queryClient, 'calendar_event.create', { path: '/api/calendar/events', body: value as unknown as Json, entityId: value.id, parentId: typeof value.source_id === 'string' ? value.source_id : null }),
     onSuccess: () => {
       setEventDialogOpen(false)
-      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
@@ -275,7 +275,6 @@ export function CalendarScreen() {
     onSuccess: () => {
       setEventDialogOpen(false)
       setEditingEvent(undefined)
-      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
@@ -284,7 +283,6 @@ export function CalendarScreen() {
     mutationFn: (eventId: string) => queuedRequest<void>(queryClient, 'calendar_event.delete', { path: `/api/calendar/events/${eventId}`, entityId: eventId }),
     onSuccess: () => {
       setConfirm(null)
-      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -393,6 +391,12 @@ export function CalendarScreen() {
         <p className="text-sm text-bad" role="alert">
           {sourceError ?? importErrorMessage(mutationError)}
         </p>
+          ) : null}
+
+          {importPending ? (
+            <p data-testid="calendar-import-pending" role="status" className="text-sm text-muted-foreground">
+              Tệp đã lưu trong hàng đợi. Báo cáo số buổi chỉ xuất hiện sau khi máy chủ hoàn tất import.
+            </p>
           ) : null}
 
           {importReport ? (

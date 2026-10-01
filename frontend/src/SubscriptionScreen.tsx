@@ -605,7 +605,7 @@ export function SubscriptionScreen() {
     void queryClient.invalidateQueries({ queryKey: subscriptionInvalidationKey })
     void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
   }
-  const writes = useSubscriptionWrites(refresh)
+  const writes = useSubscriptionWrites()
 
   const subscriptionsQuery = useQuery({
     queryKey: subscriptionQueryKey('subscriptions'),
@@ -897,9 +897,10 @@ export function SubscriptionScreen() {
             writes.renew.mutate(
               { subscriptionId: renewing.id, payload, requiresPrivate },
               {
-                onSuccess: () => {
+                onSuccess: (result) => {
                   setRenewing(null)
-                  toast('Đã ghi gia hạn')
+                  if (result) toast('Đã ghi gia hạn')
+                  else toast('Yêu cầu gia hạn đã lưu, đang chờ máy chủ xác nhận.')
                 },
                 onError: (error) => toast.error(errorMessage(error)),
               },

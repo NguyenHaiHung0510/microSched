@@ -172,12 +172,11 @@ export function renewSummary(
 }
 
 /** Seam: every subscription/settings write goes through these mutations. */
-export function useSubscriptionWrites(refresh: () => void) {
+export function useSubscriptionWrites() {
   const queryClient = useQueryClient()
   const createSubscription = useMutation({
     mutationFn: ({ payload, requiresPrivate }: { payload: SubscriptionWritePayload & { id: string }; requiresPrivate: boolean }) =>
       queuedRequest<Subscription>(queryClient, 'subscription.create', { path: '/api/subscriptions', body: payload, entityId: payload.id, parentId: payload.tracker_id, requiresPrivate }),
-    onSuccess: refresh,
   })
   const updateSubscription = useMutation({
     mutationFn: ({
@@ -189,33 +188,26 @@ export function useSubscriptionWrites(refresh: () => void) {
       requiresPrivate: boolean
       payload: Partial<SubscriptionWritePayload>
     }) => queuedRequest<Subscription>(queryClient, 'subscription.update', { path: `/api/subscriptions/${subscriptionId}`, body: payload, entityId: subscriptionId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const cancelSubscription = useMutation({
     mutationFn: ({ subscriptionId, requiresPrivate }: { subscriptionId: string; requiresPrivate: boolean }) => queuedRequest<Subscription>(queryClient, 'subscription.cancel', { path: `/api/subscriptions/${subscriptionId}/cancel`, entityId: subscriptionId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const uncancelSubscription = useMutation({
     mutationFn: ({ subscriptionId, requiresPrivate }: { subscriptionId: string; requiresPrivate: boolean }) => queuedRequest<Subscription>(queryClient, 'subscription.uncancel', { path: `/api/subscriptions/${subscriptionId}/uncancel`, entityId: subscriptionId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const renew = useMutation({
     mutationFn: ({ subscriptionId, payload, requiresPrivate }: { subscriptionId: string; payload: RenewPayload; requiresPrivate: boolean }) =>
-      queuedRequest<RenewResult>(queryClient, 'subscription.renew', { path: `/api/subscriptions/${subscriptionId}/renew`, body: payload, entityId: subscriptionId, parentId: subscriptionId, requiresPrivate }),
-    onSuccess: refresh,
+      queuedRequest<RenewResult | null>(queryClient, 'subscription.renew', { path: `/api/subscriptions/${subscriptionId}/renew`, body: payload, entityId: subscriptionId, parentId: subscriptionId, requiresPrivate }),
   })
   const deleteSubscription = useMutation({
     mutationFn: ({ subscriptionId, requiresPrivate }: { subscriptionId: string; requiresPrivate: boolean }) => queuedRequest<void>(queryClient, 'subscription.delete', { path: `/api/subscriptions/${subscriptionId}`, entityId: subscriptionId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const restoreSubscription = useMutation({
     mutationFn: ({ subscriptionId, requiresPrivate }: { subscriptionId: string; requiresPrivate: boolean }) => queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'subscription.restore', { path: `/api/subscriptions/${subscriptionId}/restore`, entityId: subscriptionId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const setSetting = useMutation({
     mutationFn: ({ key, value }: { key: 'show_list_price' | 'subscription_expiry_lead_days'; value: number | boolean }) =>
       queuedRequest<SettingsItem>(queryClient, key === 'show_list_price' ? 'setting.show_list_price.update' : 'setting.subscription_expiry_lead_days.update', { path: `/api/settings/${key}`, body: { value }, entityId: key }),
-    onSuccess: refresh,
   })
   return {
     createSubscription,

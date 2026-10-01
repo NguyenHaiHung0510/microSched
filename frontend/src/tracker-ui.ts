@@ -565,12 +565,11 @@ export function capturePayload(
 }
 
 /** Seam: every tracker write goes through these mutations (017 wraps this one door). */
-export function useTrackerWrites(refresh: () => void) {
+export function useTrackerWrites() {
   const queryClient = useQueryClient()
   const createGroup = useMutation({
     mutationFn: (payload: { id: string; name: string; kind: TrackerKind }) =>
       queuedRequest<TrackerGroup>(queryClient, 'tracker_group.create', { path: '/api/tracker/groups', body: payload, entityId: payload.id }),
-    onSuccess: refresh,
   })
   const updateGroup = useMutation({
     mutationFn: ({
@@ -580,11 +579,9 @@ export function useTrackerWrites(refresh: () => void) {
       groupId: string
       payload: Partial<Pick<TrackerGroup, 'name' | 'color' | 'position'>>
     }) => queuedRequest<TrackerGroup>(queryClient, 'tracker_group.update', { path: `/api/tracker/groups/${groupId}`, body: payload, entityId: groupId }),
-    onSuccess: refresh,
   })
   const deleteGroup = useMutation({
     mutationFn: (groupId: string) => queuedRequest<void>(queryClient, 'tracker_group.delete', { path: `/api/tracker/groups/${groupId}`, entityId: groupId }),
-    onSuccess: refresh,
   })
   const createTracker = useMutation({
     mutationFn: (payload: {
@@ -602,7 +599,6 @@ export function useTrackerWrites(refresh: () => void) {
       reminder_action?: ReminderAction | null
       is_private: boolean
     }) => queuedRequest<Tracker>(queryClient, 'tracker.create', { path: '/api/tracker/trackers', body: payload, entityId: payload.id, parentId: payload.group_id ?? null, requiresPrivate: payload.is_private }),
-    onSuccess: refresh,
   })
   const updateTracker = useMutation({
     mutationFn: ({
@@ -630,20 +626,16 @@ export function useTrackerWrites(refresh: () => void) {
         >
       >
     }) => queuedRequest<Tracker>(queryClient, 'tracker.update', { path: `/api/tracker/trackers/${trackerId}`, body: payload, entityId: trackerId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const archiveTracker = useMutation({
     mutationFn: ({ trackerId, requiresPrivate }: { trackerId: string; requiresPrivate: boolean }) => queuedRequest<void>(queryClient, 'tracker.archive', { path: `/api/tracker/trackers/${trackerId}`, entityId: trackerId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const restoreTracker = useMutation({
     mutationFn: ({ trackerId, requiresPrivate }: { trackerId: string; requiresPrivate: boolean }) => queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'tracker.restore', { path: `/api/tracker/trackers/${trackerId}/restore`, entityId: trackerId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const createEntry = useMutation({
     mutationFn: ({ payload, requiresPrivate }: { payload: EntryCreatePayload; requiresPrivate: boolean }) =>
       queuedRequest<Entry>(queryClient, 'entry.create', { path: '/api/tracker/entries', body: payload, entityId: payload.id, parentId: payload.tracker_id, requiresPrivate }),
-    onSuccess: refresh,
   })
   const updateEntry = useMutation({
     mutationFn: ({
@@ -655,15 +647,12 @@ export function useTrackerWrites(refresh: () => void) {
       requiresPrivate: boolean
       payload: Partial<Pick<Entry, 'occurred_at' | 'quantity' | 'amount' | 'list_amount' | 'note_md'>>
     }) => queuedRequest<Entry>(queryClient, 'entry.update', { path: `/api/tracker/entries/${entryId}`, body: payload, entityId: entryId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const deleteEntry = useMutation({
     mutationFn: ({ entryId, requiresPrivate }: { entryId: string; requiresPrivate: boolean }) => queuedRequest<void>(queryClient, 'entry.delete', { path: `/api/tracker/entries/${entryId}`, entityId: entryId, requiresPrivate }),
-    onSuccess: refresh,
   })
   const restoreEntry = useMutation({
     mutationFn: ({ entryId, requiresPrivate }: { entryId: string; requiresPrivate: boolean }) => queuedRequest<{ id: string; status: 'restored' }>(queryClient, 'entry.restore', { path: `/api/tracker/entries/${entryId}/restore`, entityId: entryId, requiresPrivate }),
-    onSuccess: refresh,
   })
   return {
     createGroup,

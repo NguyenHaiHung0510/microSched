@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { adapterFor } from '@/lib/outbox-adapters'
+import { adapterFor, requiresPrivateRow } from '@/lib/outbox-adapters'
 import { discardOutboxTree } from '@/lib/outbox-db'
 import { useDomainOutbox } from '@/lib/use-domain-outbox'
 
@@ -90,7 +90,7 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
           {actionError ? <p className="text-sm text-bad" role="alert">{actionError}</p> : null}
           <div className="space-y-3">
             {state.rows.map((row) => {
-              const privateHidden = row.requires_private && !privateUnlocked
+              const privateHidden = requiresPrivateRow(row) && !privateUnlocked
               const label = operationLabel(row.operation_kind, privateHidden)
               const reason = stateReason(row.state, row.last_error_code, privateHidden)
               return (
@@ -124,7 +124,7 @@ export function OutboxEntityStatus({
   const rows = state.rows.filter((row) => row.entity_id === entityId || row.parent_id === entityId)
   if (state.readError || state.unavailable || rows.length === 0) return null
   const row = rows[rows.length - 1]
-  const privateHidden = row.requires_private && !privateUnlocked
+  const privateHidden = requiresPrivateRow(row) && !privateUnlocked
   const reason = stateReason(row.state, row.last_error_code, privateHidden)
   const failed = row.state === 'failed' || row.state === 'suppressed'
   return (

@@ -19,7 +19,7 @@ import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
-import { OutboxStatus } from '@/OutboxStatus'
+import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
 import { navigate } from '@/lib/route'
 import { uuidv7 } from '@/lib/uuidv7'
@@ -110,7 +110,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const trackerReadControl = useDomainReadControl(['tracker'], standardRefetchInterval, privateUnlocked)
   const subscriptionReadControl = useDomainReadControl(['subscription'], standardRefetchInterval, privateUnlocked)
   const refresh = () => void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
-  const writes = useTrackerWrites(refresh)
+  const writes = useTrackerWrites()
   const currentMonth = currentVietnamMonth()
   const [month, setMonth] = useState(currentMonth)
   const [reportMonths, setReportMonths] = useState<1 | 3 | 6 | 12>(1)
@@ -737,6 +737,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                               <p className="max-w-full break-words text-sm font-semibold">
                                 {tracker.name}
                               </p>
+                              <OutboxEntityStatus entityId={tracker.id} privateUnlocked={privateUnlocked} />
                               {tracker.is_private ? <PrivateMarker /> : null}
                               <p className="text-xs text-muted-foreground">
                                 {tracker.input_mode === 'event'
@@ -836,6 +837,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                           <p className="max-w-full break-words text-sm font-semibold">
                             {tracker.name}
                           </p>
+                          <OutboxEntityStatus entityId={tracker.id} privateUnlocked={privateUnlocked} />
                           {tracker.is_private ? <PrivateMarker /> : null}
                           <p className="text-xs text-muted-foreground">
                             {tracker.input_mode === 'event'

@@ -1,6 +1,8 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query'
 
 import { listOutbox, type Json, type OutboxRow } from '@/lib/outbox-db'
+import { sanitizePersistedClient } from '@/lib/public-cache'
+import type { PersistedClient } from '@tanstack/query-persist-client-core'
 
 export type CommandInput = {
   path: string
@@ -75,6 +77,9 @@ const dto = (input: CommandInput, defaults: Record<string, Json> = {}): Entity |
 const noDto: AdapterSpec['optimisticDto'] = (input) => {
   void input
   return null
+}
+export function requiresPrivateRow(row: Pick<OutboxRow, 'requires_private' | 'body'>): boolean {
+  return row.requires_private || objectBody(row.body).is_private === true
 }
 const taskKeys = () => [['tasks'], ['calendar', 'tasks']] as QueryKey[]
 const noteKeys = () => [['notes']] as QueryKey[]
@@ -151,7 +156,65 @@ const record = (value: unknown): Record<string, unknown> | null =>
     ? value as Record<string, unknown>
     : null
 
-function captureBaseline(client: QueryClient, keys: QueryKey[]) {
+function queryKeyStartsWith(queryKey: QueryKey, prefix: QueryKey) {
+  return prefix.length <= queryKey.length && prefix.every((part, index) => keyId([part]) === keyId([queryKey[index]]))
+}
+
+function omitPrivateTargets(snapshot: CacheSnapshot, row?: OutboxRow): CacheSnapshot {
+  if (!row || !requiresPrivateRow(row)) return snapshot
+  const ids = new Set<string>()
+  if (row.entity_id) ids.add(row.entity_id)
+  if (row.parent_id && ['task_item', 'note_item', 'entry', 'subscription'].includes(row.resource)) ids.add(row.parent_id)
+  return snapshot.map(([key, value]) => {
+    const filter = (items: unknown[]) => items.filter((item) => {
+      const entity = record(item)
+      return !entity || typeof entity.id !== 'string' || !ids.has(entity.id)
+    })
+    if (Array.isArray(value)) return [key, filter(value)]
+    const envelope = record(value)
+    if (envelope && Array.isArray(envelope.items)) return [key, { ...envelope, items: filter(envelope.items) }]
+    return [key, value]
+  })
+}
+
+/** Use the same typed public allowlist as persistence; baseline code owns no second privacy policy. */
+function sanitizedPublicSnapshot(client: QueryClient, overrides: CacheSnapshot = [], row?: OutboxRow): CacheSnapshot {
+  const values = new Map<string, [QueryKey, unknown]>()
+  for (const query of client.getQueryCache().getAll()) {
+    values.set(keyId(query.queryKey), [query.queryKey, query.state.data])
+  }
+  for (const [queryKey, value] of omitPrivateTargets(overrides, row)) values.set(keyId(queryKey), [queryKey, value])
+  const persisted = {
+    timestamp: Date.now(),
+    buster: 'outbox-public-baseline',
+    clientState: {
+      mutations: [],
+      queries: [...values.values()].map(([queryKey, data]) => ({
+        queryKey,
+        state: { status: 'success', data, error: null, fetchFailureReason: null, fetchMeta: null },
+      })),
+    },
+  } as unknown as PersistedClient
+  const sanitized = sanitizePersistedClient(persisted)
+  return sanitized.clientState.queries.map((query) => [query.queryKey as QueryKey, query.state.data])
+}
+
+/** Called by the T1-owned public-cache purge before lock/logout/TTL eviction. */
+export function clearOutboxBaselines(client: QueryClient, full = false) {
+  const byKey = confirmedBaselines.get(client)
+  if (full) {
+    confirmedBaselines.delete(client)
+    return
+  }
+  if (!byKey) return
+  const originals = [...byKey.values()].flat()
+  const sanitized = sanitizedPublicSnapshot(client, originals)
+  for (const key of byKey.keys()) {
+    byKey.set(key, sanitized.filter(([queryKey]) => queryKeyStartsWith(queryKey, JSON.parse(key) as QueryKey)))
+  }
+}
+
+function captureBaseline(client: QueryClient, keys: QueryKey[], row?: OutboxRow) {
   let byKey = confirmedBaselines.get(client)
   if (!byKey) {
     byKey = new Map()
@@ -159,7 +222,10 @@ function captureBaseline(client: QueryClient, keys: QueryKey[]) {
   }
   for (const key of keys) {
     const id = keyId(key)
-    if (!byKey.has(id)) byKey.set(id, client.getQueriesData({ queryKey: key }))
+    if (!byKey.has(id)) {
+      const snapshot = sanitizedPublicSnapshot(client, [], row).filter(([queryKey]) => queryKeyStartsWith(queryKey, key))
+      byKey.set(id, snapshot)
+    }
   }
 }
 
@@ -187,25 +253,70 @@ function mutateNoteList(client: QueryClient, change: (items: Entity[]) => Entity
   )
 }
 
+function mutateCalendarRangeQueries(client: QueryClient, keyPrefix: QueryKey, row: OutboxRow, model: Entity | null, action: 'upsert' | 'update' | 'delete') {
+  for (const query of client.getQueryCache().findAll({ queryKey: keyPrefix })) {
+    const queryKey = query.queryKey
+    client.setQueryData(queryKey, (old) => {
+      const envelope = record(old)
+      if (!envelope || !Array.isArray(envelope.items)) return old
+      return { ...envelope, items: updateCalendarRangeList(envelope.items as Entity[], row, model, action, queryKey) }
+    })
+  }
+}
+
 function updateEntityList(
   items: Entity[],
   row: OutboxRow,
   model: Entity | null,
-  action: 'upsert' | 'delete',
+  action: 'upsert' | 'update' | 'delete',
 ): Entity[] {
   if (!row.entity_id) return items
   const index = items.findIndex((item) => item.id === row.entity_id)
   if (action === 'delete') return index < 0 ? items : items.filter((item) => item.id !== row.entity_id)
   if (!model) return items
+  if (action === 'update' && index < 0) return items
   if (index < 0) return [...items, model]
-  return items.map((item) => item.id === row.entity_id ? { ...item, ...model } : item)
+  return items.map((item) => {
+    if (item.id !== row.entity_id) return item
+    const merged = { ...item, ...model }
+    // Pending state is derived from live outbox metadata, never retained as a
+    // server-confirmed domain field after reconciliation.
+    delete merged.__outbox_state
+    return merged
+  })
+}
+
+function purgePrivateRowFromCache(client: QueryClient, keys: QueryKey[], row: OutboxRow) {
+  const hiddenIds = new Set<string>()
+  if (row.entity_id) hiddenIds.add(row.entity_id)
+  if (row.parent_id && ['task_item', 'note_item', 'entry', 'subscription'].includes(row.resource)) {
+    hiddenIds.add(row.parent_id)
+  }
+  if (hiddenIds.size === 0) return
+  for (const key of keys) {
+    client.setQueriesData({ queryKey: key }, (old) => {
+      if (Array.isArray(old)) return old.filter((item) => {
+        const entity = record(item)
+        return !entity || typeof entity.id !== 'string' || !hiddenIds.has(entity.id)
+      })
+      const envelope = record(old)
+      if (!envelope || !Array.isArray(envelope.items)) return old
+      return {
+        ...envelope,
+        items: envelope.items.filter((item) => {
+          const entity = record(item)
+          return !entity || typeof entity.id !== 'string' || !hiddenIds.has(entity.id)
+        }),
+      }
+    })
+  }
 }
 
 function updateChildList(
   parent: Entity,
   row: OutboxRow,
   model: Entity | null,
-  action: 'upsert' | 'delete',
+  action: 'upsert' | 'update' | 'delete',
 ): Entity {
   const children = Array.isArray(parent.items) ? parent.items as Entity[] : []
   const next = updateEntityList(children, row, model, action)
@@ -221,27 +332,96 @@ function mutateParents(client: QueryClient, key: QueryKey, row: OutboxRow, chang
   else mutateEnvelope(client, key, apply)
 }
 
-function listKeyFits(operationKind: OperationKind, queryKey: QueryKey, row: OutboxRow): boolean {
-  if (operationKind === 'calendar_event.create' || operationKind === 'calendar_event.update') {
-    const startsAt = objectBody(row.body).starts_at
-    if (typeof startsAt !== 'string') return false
-    const day = startsAt.slice(0, 10)
-    if (typeof queryKey[2] === 'number') {
-      return queryKey[2] === Number(day.slice(0, 4)) && queryKey[3] === Number(day.slice(5, 7))
+function addIsoDays(day: string, amount: number): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null
+  const date = new Date(`${day}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return null
+  date.setUTCDate(date.getUTCDate() + amount)
+  return date.toISOString().slice(0, 10)
+}
+
+function calendarRangeIncludes(queryKey: QueryKey, from: string, to: string): boolean {
+  if (queryKey[0] === 'calendar' && queryKey[1] === 'events') {
+    if (typeof queryKey[2] === 'number' && typeof queryKey[3] === 'number') {
+      const start = from.slice(0, 7)
+      const end = to.slice(0, 7)
+      const first = `${queryKey[2]}-${String(queryKey[3]).padStart(2, '0')}`
+      const nextMonth = queryKey[3] === 12
+        ? `${queryKey[2] + 1}-01`
+        : `${queryKey[2]}-${String(queryKey[3] + 1).padStart(2, '0')}`
+      return start < nextMonth && end >= first
     }
-    // CalendarScreen stores one requested range start; exact-day matching avoids
-    // painting a new event into an unrelated range whose bounds are not in its key.
-    return queryKey[2] === day
+    if (typeof queryKey[2] === 'string') {
+      const rangeEnd = addIsoDays(queryKey[2], 30)
+      return rangeEnd !== null && from < rangeEnd && to >= queryKey[2]
+    }
   }
-  if (operationKind === 'day_annotation.create' || operationKind === 'day_annotation.update') {
-    const body = objectBody(row.body)
-    const from = body.starts_on
-    const to = body.ends_on
-    return typeof from === 'string' && typeof to === 'string' &&
-      typeof queryKey[2] === 'string' && typeof queryKey[3] === 'string' &&
-      from <= queryKey[3] && to >= queryKey[2]
+  if (queryKey[0] === 'calendar' && queryKey[1] === 'annotations' &&
+    typeof queryKey[2] === 'string' && typeof queryKey[3] === 'string') {
+    return from <= queryKey[3] && to >= queryKey[2]
+  }
+  if (queryKey[0] === 'calendar' && queryKey[1] === 'tasks' &&
+    typeof queryKey[3] === 'string' && typeof queryKey[4] === 'string') {
+    return from <= queryKey[4] && to >= queryKey[3]
+  }
+  if (queryKey[0] === 'tasks' && queryKey[1] === 'timeline' &&
+    typeof queryKey[3] === 'string' && typeof queryKey[4] === 'string') {
+    const endExclusive = addIsoDays(queryKey[4], 1)
+    return endExclusive !== null && from < endExclusive && to >= queryKey[3]
   }
   return true
+}
+
+function updateCalendarRangeList(
+  items: Entity[],
+  row: OutboxRow,
+  model: Entity | null,
+  action: 'upsert' | 'update' | 'delete',
+  queryKey: QueryKey,
+  pendingMarker = true,
+): Entity[] {
+  if (!row.entity_id) return items
+  const current = items.find((item) => item.id === row.entity_id)
+  if (action === 'delete') return current ? items.filter((item) => item.id !== row.entity_id) : items
+  if (!model || (action === 'update' && !current)) return items
+  const merged = current ? { ...current, ...model } : model
+  let from: string | undefined
+  let to: string | undefined
+  if (row.operation_kind.startsWith('calendar_event.')) {
+    const startsAt = merged.starts_at
+    if (typeof startsAt !== 'string') return items
+    from = startsAt.slice(0, 10)
+    to = from
+  } else if (row.operation_kind.startsWith('day_annotation.')) {
+    if (typeof merged.starts_on !== 'string' || typeof merged.ends_on !== 'string') return items
+    from = merged.starts_on
+    to = merged.ends_on
+  } else {
+    const due = typeof merged.due_on === 'string'
+      ? merged.due_on
+      : typeof merged.due_at === 'string'
+        ? merged.due_at.slice(0, 10)
+        : null
+    if (!due) return items.filter((item) => item.id !== row.entity_id)
+    if (queryKey[2] === 'open' && merged.status === 'completed') {
+      return items.filter((item) => item.id !== row.entity_id)
+    }
+    if (queryKey[0] === 'tasks' && queryKey[1] === 'timeline' &&
+      queryKey[2] === 'completed' && merged.status !== 'completed') {
+      return items.filter((item) => item.id !== row.entity_id)
+    }
+    from = due
+    to = due
+  }
+  if (!from || !to || !calendarRangeIncludes(queryKey, from, to)) {
+    return current ? items.filter((item) => item.id !== row.entity_id) : items
+  }
+  const next = { ...merged }
+  if (pendingMarker) next.__outbox_state = 'pending'
+  else delete next.__outbox_state
+  return current
+    ? items.map((item) => item.id === row.entity_id ? next : item)
+    : action === 'upsert' ? [...items, next] : items
 }
 
 function applyTypedOverlay(client: QueryClient, row: OutboxRow) {
@@ -252,9 +432,10 @@ function applyTypedOverlay(client: QueryClient, row: OutboxRow) {
   const body = objectBody(row.body)
   const model = spec.optimisticDto({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
   const deleting = spec.method === 'DELETE'
+  const action = deleting ? 'delete' : kind.endsWith('.create') ? 'upsert' : 'update'
 
   if (kind.startsWith('task_item.')) {
-    for (const key of keys) mutateParents(client, key, row, (parent) => updateChildList(parent, row, model, deleting ? 'delete' : 'upsert'))
+    for (const key of keys) mutateParents(client, key, row, (parent) => updateChildList(parent, row, model, action))
     return
   }
   if (kind.startsWith('note_item.')) {
@@ -272,38 +453,103 @@ function applyTypedOverlay(client: QueryClient, row: OutboxRow) {
       }))
     } else {
       mutateNoteList(client, (parents) => parents.map((parent) =>
-        parent.id === row.parent_id ? updateChildList(parent, row, model, deleting ? 'delete' : 'upsert') : parent,
+        parent.id === row.parent_id ? updateChildList(parent, row, model, action) : parent,
       ))
     }
     return
   }
   if (kind.startsWith('task.')) {
-    for (const key of keys) mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, deleting ? 'delete' : 'upsert'))
+    for (const key of keys) {
+      if ((key[0] === 'calendar' && key[1] === 'tasks') || (key[0] === 'tasks' && key[1] === 'timeline')) {
+        mutateCalendarRangeQueries(client, key, row, model, action)
+      } else {
+        mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, action))
+      }
+    }
     return
   }
   if (kind.startsWith('note.')) {
-    mutateNoteList(client, (items) => updateEntityList(items, row, model, deleting ? 'delete' : 'upsert'))
+    mutateNoteList(client, (items) => updateEntityList(items, row, model, action))
     return
   }
   for (const key of keys) {
-    if (!listKeyFits(kind, key, row)) continue
     if (kind.startsWith('calendar_source.')) {
-      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, deleting ? 'delete' : 'upsert'))
+      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, action))
     } else if (kind.startsWith('calendar_event.') || kind.startsWith('day_annotation.')) {
-      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, deleting ? 'delete' : 'upsert'))
+      mutateCalendarRangeQueries(client, key, row, model, action)
     } else if (kind.startsWith('tracker_group.')) {
-      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, deleting ? 'delete' : 'upsert'))
+      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, action))
     } else if (kind.startsWith('tracker.') || kind.startsWith('entry.')) {
       // Dashboard totals and tracker projections are server-derived. Only their
       // source collections are overlaid; derived values wait for server success.
-      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, deleting ? 'delete' : 'upsert'))
+      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, action))
     } else if (kind.startsWith('subscription.')) {
       if (kind === 'subscription.renew') continue
-      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, deleting ? 'delete' : 'upsert'))
+      mutateEnvelope(client, key, (items) => updateEntityList(items, row, model, action))
     } else if (kind.startsWith('setting.')) {
       mutateEnvelope(client, key, (items) => items.map((item) => item.key === model?.key ? { ...item, ...model } : item))
     }
   }
+}
+
+export function hasVerifiedPrivateSession(
+  session: unknown,
+  updatedAt: number,
+  online: boolean,
+  now = Date.now(),
+): boolean {
+  const value = record(session)
+  const privateUntil = typeof value?.private_until === 'string'
+    ? Date.parse(value.private_until)
+    : Number.NaN
+  return online && updatedAt > 0 && updatedAt <= now &&
+    value?.offline_bootstrap !== true && Number.isFinite(privateUntil) && privateUntil > now
+}
+
+export function hasLivePrivateSession(client: QueryClient, now = Date.now()): boolean {
+  const queryState = client.getQueryState(['session'])
+  const session = client.getQueryData(['session'])
+  const queryMeta = client.getQueryCache().find({ queryKey: ['session'], exact: true })?.meta
+  const offlineBootstrap = record(queryMeta)?.offline_bootstrap === true
+  return !offlineBootstrap && queryState?.status === 'success' &&
+    !queryState.isInvalidated && queryState.fetchFailureCount === 0 &&
+    hasVerifiedPrivateSession(
+      session,
+      queryState.dataUpdatedAt,
+      typeof navigator !== 'undefined' && navigator.onLine === true,
+      now,
+    )
+}
+
+/** Reapply every stored public command and private commands only after a live unlock. */
+export async function replayPendingOverlays(client: QueryClient): Promise<number> {
+  const rows = await listOutbox()
+  let applied = 0
+  for (const row of rows) {
+    if (row.state === 'failed' || row.state === 'suppressed') continue
+    let adapter: OutboxAdapter
+    try {
+      adapter = adapterFor(row.operation_kind)
+    } catch {
+      continue
+    }
+    const keys = adapter.affectedQueryKeys({
+      path: row.path,
+      body: row.body,
+      entityId: row.entity_id,
+      parentId: row.parent_id,
+    })
+    if (keys.length === 0) continue
+    captureBaseline(client, keys, row)
+    await Promise.all(keys.map((key) => client.cancelQueries({ queryKey: key })))
+    if (requiresPrivateRow(row) && !hasLivePrivateSession(client)) {
+      purgePrivateRowFromCache(client, keys, row)
+      continue
+    }
+    applyTypedOverlay(client, row)
+    applied += 1
+  }
+  return applied
 }
 
 function serverResult(kind: OperationKind, response: unknown): Entity | null {
@@ -317,26 +563,63 @@ function serverResult(kind: OperationKind, response: unknown): Entity | null {
   return model as Entity
 }
 
-function reconcileValue(kind: OperationKind, row: OutboxRow, value: unknown, response: unknown): unknown {
+function reconcileValue(kind: OperationKind, row: OutboxRow, value: unknown, response: unknown, queryKey: QueryKey): unknown {
   if (kind === 'note_item.reorder' && Array.isArray(response)) {
     const items = response as Entity[]
     return Array.isArray(value)
       ? (value as Entity[]).map((note) => note.id === row.parent_id ? { ...note, items } : note)
       : value
   }
+  if (kind.startsWith('setting.')) {
+    const serverSetting = record(response)
+    if (!serverSetting) return value
+    const key = kind === 'setting.show_list_price.update'
+      ? 'show_list_price'
+      : 'subscription_expiry_lead_days'
+    const item = { ...serverSetting, key }
+    const updateSettings = (items: Entity[]) => {
+      const index = items.findIndex((setting) => setting.key === key)
+      if (index < 0) return [...items, item]
+      return items.map((setting) => setting.key === key ? item : setting)
+    }
+    if (Array.isArray(value)) return updateSettings(value as Entity[])
+    const envelope = record(value)
+    return envelope && Array.isArray(envelope.items)
+      ? { ...envelope, items: updateSettings(envelope.items as Entity[]) }
+      : value
+  }
   const model = serverResult(kind, response)
   if (!model || !row.entity_id) return value
+  if (kind.startsWith('task_item.')) {
+    const action = kind === 'task_item.create' ? 'upsert' : 'update'
+    const reconcileParent = (parent: Entity) => parent.id === row.parent_id
+      ? { ...parent, items: updateEntityList(Array.isArray(parent.items) ? parent.items as Entity[] : [], row, model, action) }
+      : parent
+    if (Array.isArray(value)) return (value as Entity[]).map(reconcileParent)
+    const envelope = record(value)
+    return envelope && Array.isArray(envelope.items)
+      ? { ...envelope, items: (envelope.items as Entity[]).map(reconcileParent) }
+      : value
+  }
   if (kind.startsWith('note_item.')) {
     return Array.isArray(value)
       ? (value as Entity[]).map((note) => note.id === row.parent_id
-        ? { ...note, items: updateEntityList(Array.isArray(note.items) ? note.items as Entity[] : [], row, model, 'upsert') }
+        ? { ...note, items: updateEntityList(Array.isArray(note.items) ? note.items as Entity[] : [], row, model, kind === 'note_item.create' ? 'upsert' : 'update') }
         : note)
       : value
   }
-  if (Array.isArray(value)) return updateEntityList(value as Entity[], row, model, 'upsert')
+  const action = kind.endsWith('.create') ? 'upsert' : 'update'
+  if (kind.startsWith('calendar_event.') || kind.startsWith('day_annotation.') ||
+    (kind.startsWith('task.') && (queryKey[0] === 'calendar' || queryKey[1] === 'timeline'))) {
+    const items = Array.isArray(value) ? value as Entity[] : record(value)?.items as Entity[] | undefined
+    if (!items) return value
+    const nextItems = updateCalendarRangeList(items, row, model, action, queryKey, false)
+    return Array.isArray(value) ? nextItems : { ...record(value), items: nextItems }
+  }
+  if (Array.isArray(value)) return updateEntityList(value as Entity[], row, model, action)
   const envelope = record(value)
   if (envelope && Array.isArray(envelope.items)) {
-    return { ...envelope, items: updateEntityList(envelope.items as Entity[], row, model, 'upsert') }
+    return { ...envelope, items: updateEntityList(envelope.items as Entity[], row, model, action) }
   }
   return value
 }
@@ -348,7 +631,7 @@ async function rebuildFromConfirmedBaseline(client: QueryClient, keys: QueryKey[
   // Private rows are deliberately never replayed here. The adapter contract
   // carries no live gate token, so a rebuild after TTL/lock must fail closed.
   for (const row of remaining) {
-    if (row.requires_private) continue
+    if (requiresPrivateRow(row)) continue
     const kind = row.operation_kind as OperationKind
     if (!(kind in definitions)) continue
     const rowSpec: AdapterSpec = definitions[kind]
@@ -486,7 +769,9 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
         body,
         entity_id: id,
         parent_id: parentId,
-        requires_private: input.requiresPrivate ?? objectBody(body).is_private === true,
+        // A body that makes an entity private can never downgrade the command's
+        // gate classification supplied from its existing entity metadata.
+        requires_private: input.requiresPrivate === true || objectBody(body).is_private === true,
         idempotency_mode: spec.idempotencyMode,
         dependency_operation_id: input.dependencyOperationId ?? null,
         group_id: input.groupId ?? null,
@@ -495,14 +780,20 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
     },
     async optimisticApply(client, row) {
       const keys = spec.keys({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
-      captureBaseline(client, keys)
+      captureBaseline(client, keys, row)
       await Promise.all(keys.map((key) => client.cancelQueries({ queryKey: key })))
+      // Lock/TTL purge may run while cancelQueries is awaiting. Re-read the live
+      // session after that await; cached/bootstrap permission is insufficient.
+      if (requiresPrivateRow(row) && !hasLivePrivateSession(client)) {
+        purgePrivateRowFromCache(client, keys, row)
+        return
+      }
       applyTypedOverlay(client, row)
     },
     async reconcileSuccess(client, row, response) {
       if (spec.method === 'DELETE' || kindIsSideEffect(operationKind) || response == null) return
       const keys = spec.keys({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
-      captureBaseline(client, keys)
+      captureBaseline(client, keys, row)
       const byKey = confirmedBaselines.get(client)
       for (const key of keys) {
         const id = keyId(key)
@@ -510,7 +801,7 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
         if (!snapshot) continue
         byKey?.set(id, snapshot.map(([queryKey, value]) => [
           queryKey,
-          reconcileValue(operationKind, row, value, response),
+          reconcileValue(operationKind, row, value, response, queryKey),
         ]))
       }
       await rebuildFromConfirmedBaseline(client, keys)

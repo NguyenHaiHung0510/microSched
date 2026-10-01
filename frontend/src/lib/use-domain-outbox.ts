@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { liveQuery } from 'dexie'
 import type { QueryKey } from '@tanstack/react-query'
 
-import { adapterFor } from '@/lib/outbox-adapters'
+import { adapterFor, requiresPrivateRow } from '@/lib/outbox-adapters'
 import { listOutbox, type OutboxRow } from '@/lib/outbox-db'
 
-function keyContains(affected: unknown, queryKey: QueryKey): boolean {
+export function isAffectedQueryKey(affected: unknown, queryKey: QueryKey): boolean {
   if (!Array.isArray(affected) || !Array.isArray(queryKey)) return false
   if (queryKey.length === 0) return true
   return affected.length <= queryKey.length &&
@@ -68,10 +68,10 @@ export function useDomainOutbox(
     }
   }, [refresh])
 
-  const visibleRows = rows.filter((row) => privateUnlocked || !row.requires_private || includePrivateMetadata)
+  const visibleRows = rows.filter((row) => privateUnlocked || !requiresPrivateRow(row) || includePrivateMetadata)
   const relevant = visibleRows.filter((row) =>
     isUnknownOrMalformed(row) ||
-    row.affected_query_keys.some((affected) => keyContains(affected, queryKey)),
+    row.affected_query_keys.some((affected) => isAffectedQueryKey(affected, queryKey)),
   )
   return {
     rows: relevant,
@@ -88,14 +88,20 @@ export function useDomainOutbox(
  * not use this helper because they need to remain refreshable.
  */
 type NormalInterval = number | false | ((query: { state: { status: string } }) => number | false)
-export function useDomainReadControl(queryKey: QueryKey, normalInterval: NormalInterval, privateUnlocked = false) {
-  const state = useDomainOutbox(queryKey, privateUnlocked)
-  const blocked = state.pendingCount > 0 || state.failedCount > 0 || state.readError
+export function domainReadOptions(blocked: boolean, normalInterval: NormalInterval) {
   return {
     refetchOnMount: !blocked,
     refetchOnReconnect: false as const,
     refetchOnWindowFocus: !blocked,
     refetchInterval: blocked ? false : normalInterval,
+  }
+}
+
+export function useDomainReadControl(queryKey: QueryKey, normalInterval: NormalInterval, privateUnlocked = false) {
+  const state = useDomainOutbox(queryKey, privateUnlocked)
+  const blocked = state.pendingCount > 0 || state.failedCount > 0 || state.readError
+  return {
+    ...domainReadOptions(blocked, normalInterval),
     outbox: state,
   }
 }

@@ -23,7 +23,7 @@ import { toast } from 'sonner'
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
-import { OutboxStatus } from '@/OutboxStatus'
+import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -100,7 +100,6 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
       }),
     onSuccess: () => {
       setEditing(false)
-      refresh()
     },
   })
   const remove = useMutation({
@@ -109,7 +108,6 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     }),
     onSuccess: () => {
       setDetailsOpen(false)
-      refresh()
       toast(
         <span className="block min-w-0 max-w-full break-words">
           Đã xoá &quot;{label}&quot;
@@ -132,7 +130,6 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
       }),
     onSuccess: () => {
       setNewItem('')
-      refresh()
     },
   })
   const changeItem = useMutation({
@@ -144,7 +141,6 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     onSuccess: () => {
       setEditingItemId(null)
       setEditingItemContent('')
-      refresh()
     },
   })
   const reorderItems = useMutation({
@@ -154,14 +150,12 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         body: { items: [{ id: item.id, position: other.position }, { id: other.id, position: item.position }] },
         parentId: note.id, requiresPrivate: note.is_private,
       }),
-    onSuccess: refresh,
   })
   const removeItem = useMutation({
     mutationFn: (item: NoteItem) => queuedRequest<void>(queryClient, 'note_item.delete', {
       path: `/api/notes/${note.id}/items/${item.id}`, entityId: item.id,
       parentId: note.id, requiresPrivate: note.is_private,
     }),
-    onSuccess: refresh,
   })
 
   const completedItems = note.items.filter((item) => item.is_completed).length
@@ -248,6 +242,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               >
                 {label}
               </Button>
+              <OutboxEntityStatus entityId={note.id} privateUnlocked={note.is_private} />
               {note.is_private ? (
                 <PrivateMarker testId="note-private-badge-card" />
               ) : null}
@@ -847,7 +842,6 @@ export function NotesScreen() {
       } else {
         setCreateOpen(false)
       }
-      void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
     },
   })
 
