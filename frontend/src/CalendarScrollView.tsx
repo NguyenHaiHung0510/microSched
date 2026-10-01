@@ -4,6 +4,9 @@ import { ChevronLeft, ChevronRight, GripVertical, MapPin, Plus } from 'lucide-re
 import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
+import { queuedRequest } from '@/lib/queued-mutation'
+import { uuidv7 } from '@/lib/uuidv7'
+import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import {
   formatVietnamTime,
   VIETNAM_TIME_ZONE,
@@ -35,7 +38,6 @@ import {
   type YearMonth,
 } from '@/calendar-scroll'
 import {
-  CALENDAR_FAMILY_KEY,
   annotationsQuerySpec,
   calendarTasksQuerySpec,
   monthEventsQuerySpec,
@@ -62,6 +64,8 @@ import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 
 type Envelope<T> = { items: T[] }
 type SessionLite = { private_until: string | null }
+const isQueuedTask = (task: CalendarTask) =>
+  (task as CalendarTask & { __outbox_state?: string }).__outbox_state === 'pending'
 
 const HEADER_HEIGHT = 56
 const EDGE_EXTEND_PX = 80
@@ -123,20 +127,22 @@ function formatTaskDue(dueAt: string): string {
   }
 }
 
-async function getSources(): Promise<Envelope<CalendarSource>> {
-  return apiRequest<Envelope<CalendarSource>>('/api/calendar/sources')
+async function getSources(signal?: AbortSignal): Promise<Envelope<CalendarSource>> {
+  return apiRequest<Envelope<CalendarSource>>('/api/calendar/sources', { signal })
 }
 
-async function getMonthEvents(year: number, month: number): Promise<Envelope<CalendarEvent>> {
+async function getMonthEvents(year: number, month: number, signal?: AbortSignal): Promise<Envelope<CalendarEvent>> {
   const range = monthFetchRange(year, month)
   return apiRequest<Envelope<CalendarEvent>>(
     `/api/calendar/events?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`,
+    { signal },
   )
 }
 
-async function getAnnotations(from: string, to: string): Promise<Envelope<DayAnnotation>> {
+async function getAnnotations(from: string, to: string, signal?: AbortSignal): Promise<Envelope<DayAnnotation>> {
   return apiRequest<Envelope<DayAnnotation>>(
     `/api/calendar/annotations?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    { signal },
   )
 }
 
@@ -148,6 +154,7 @@ async function fetchSession(): Promise<SessionLite> {
 async function fetchTaskPages(
   status: 'all' | 'open',
   range?: { from: string; to: string },
+  signal?: AbortSignal,
 ): Promise<CalendarTask[]> {
   const items: CalendarTask[] = []
   let cursor: string | null = null
@@ -161,6 +168,7 @@ async function fetchTaskPages(
     if (cursor) params.set('cursor', cursor)
     const page = await apiRequest<Envelope<CalendarTask> & { next_cursor?: string | null }>(
       `/api/tasks?${params.toString()}`,
+      { signal },
     )
     items.push(...page.items)
     cursor = page.next_cursor ?? null
@@ -192,6 +200,8 @@ function useIsDesktop(): boolean {
 
 export function CalendarScrollView() {
   const queryClient = useQueryClient()
+  const calendarReadControl = useDomainReadControl(['calendar'], false, false, true)
+  const taskReadControl = useDomainReadControl(['calendar', 'tasks'], false, false, true)
   const today = todayInVietnam()
   const todayMonthKey = today.slice(0, 7)
   const isDesktop = useIsDesktop()
@@ -232,11 +242,12 @@ export function CalendarScrollView() {
   )
 
   const sessionQuery = useQuery({ ...sessionQuerySpec, queryFn: fetchSession })
-  const sourcesQuery = useQuery({ ...sourcesQuerySpec, queryFn: getSources })
+  const sourcesQuery = useQuery({ ...sourcesQuerySpec, queryFn: ({ signal }) => getSources(signal), ...calendarReadControl })
   const monthEventQueries = useQueries({
     queries: months.map(({ year, month }) => ({
       ...monthEventsQuerySpec(year, month),
-      queryFn: () => getMonthEvents(year, month),
+      queryFn: ({ signal }: { signal: AbortSignal }) => getMonthEvents(year, month, signal),
+      ...calendarReadControl,
     })),
   })
   const annotationRange = useMemo(() => {
@@ -257,25 +268,22 @@ export function CalendarScrollView() {
   }, [months])
   const annotationsQuery = useQuery({
     ...annotationsQuerySpec(annotationRange.from, annotationRange.to),
-    queryFn: () => getAnnotations(annotationRange.from, annotationRange.to),
+    queryFn: ({ signal }) => getAnnotations(annotationRange.from, annotationRange.to, signal),
+    ...calendarReadControl,
   })
   const allTasksQuery = useQuery({
     ...calendarTasksQuerySpec('all', taskRange),
-    queryFn: () => fetchTaskPages('all', taskRange),
+    queryFn: ({ signal }) => fetchTaskPages('all', taskRange, signal),
+    ...taskReadControl,
   })
 
-  const refreshCalendar = () =>
-    void queryClient.invalidateQueries({ queryKey: CALENDAR_FAMILY_KEY })
-  const refreshAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ['tasks'] })
-    refreshCalendar()
-  }
-
   const createQuickTask = useMutation({
-    mutationFn: (variables: { title: string; due_on: string }) =>
-      apiRequest<CalendarTask>('/api/tasks', {
-        method: 'POST',
-        body: JSON.stringify({
+    mutationFn: (variables: { id: string; title: string; due_on: string }) =>
+      queuedRequest<CalendarTask>(queryClient, 'task.create', {
+        path: '/api/tasks',
+        entityId: variables.id,
+        body: {
+          id: variables.id,
           title: variables.title,
           status: 'open',
           priority: null,
@@ -283,12 +291,11 @@ export function CalendarScrollView() {
           due_on: variables.due_on,
           due_at: null,
           is_private: false,
-        }),
+        },
       }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (task, variables) => {
       setQuickTitle('')
-      refreshAll()
-      toast.success(`Đã thêm task vào ${formatShortVietnamDate(variables.due_on)}`)
+      toast.success(`${isQueuedTask(task) ? 'Đã xếp task vào hàng đợi cho' : 'Đã thêm task vào'} ${formatShortVietnamDate(variables.due_on)}`)
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Không thể tạo task.')
@@ -296,14 +303,13 @@ export function CalendarScrollView() {
   })
 
   const toggleTaskStatus = useMutation({
-    mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: variables.status }),
+    mutationFn: (variables: { taskId: string; status: 'open' | 'completed'; requiresPrivate: boolean }) =>
+      queuedRequest<CalendarTask>(queryClient, 'task.update', {
+        path: `/api/tasks/${variables.taskId}`,
+        entityId: variables.taskId,
+        requiresPrivate: variables.requiresPrivate,
+        body: { status: variables.status },
       }),
-    onSuccess: () => {
-      refreshAll()
-    },
   })
 
   const rescheduleTask = useMutation({
@@ -311,18 +317,20 @@ export function CalendarScrollView() {
       taskId: string
       due_on: string
       previousDueOn?: string
+      requiresPrivate: boolean
     }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
+      queuedRequest<CalendarTask>(queryClient, 'task.update', {
+        path: `/api/tasks/${variables.taskId}`,
+        entityId: variables.taskId,
+        requiresPrivate: variables.requiresPrivate,
+        body: {
           due_precision: 'date',
           due_on: variables.due_on,
           due_at: null,
-        }),
+        },
       }),
-    onSuccess: (_data, variables) => {
-      refreshAll()
-      toast(`Đã dời task sang ${formatShortVietnamDate(variables.due_on)}`, {
+    onSuccess: (task, variables) => {
+      toast(`${isQueuedTask(task) ? 'Đã xếp lịch dời task vào hàng đợi cho' : 'Đã dời task sang'} ${formatShortVietnamDate(variables.due_on)}`, {
         action: variables.previousDueOn
           ? {
               label: 'Hoàn tác',
@@ -330,6 +338,7 @@ export function CalendarScrollView() {
                 rescheduleTask.mutate({
                   taskId: variables.taskId,
                   due_on: variables.previousDueOn!,
+                  requiresPrivate: variables.requiresPrivate,
                 }),
             }
           : undefined,
@@ -339,12 +348,14 @@ export function CalendarScrollView() {
 
   function handleDropTask(day: string, payload: DropTaskPayload) {
     if (payload.kind === 'quick-new-task') {
-      createQuickTask.mutate({ title: payload.title, due_on: day })
+      createQuickTask.mutate({ id: uuidv7(), title: payload.title, due_on: day })
     } else if (payload.kind === 'reschedule-task') {
+      const task = allTasksQuery.data?.find((item) => item.id === payload.taskId)
       rescheduleTask.mutate({
         taskId: payload.taskId,
         due_on: day,
         previousDueOn: payload.fromDay,
+        requiresPrivate: task?.is_private !== false,
       })
     }
   }
@@ -353,14 +364,16 @@ export function CalendarScrollView() {
     e.preventDefault()
     const trimmed = quickTitle.trim()
     if (!trimmed) return
-    createQuickTask.mutate({ title: trimmed, due_on: today })
+    createQuickTask.mutate({ id: uuidv7(), title: trimmed, due_on: today })
   }
 
   const createAgendaTask = useMutation({
-    mutationFn: (variables: { title: string; due_on: string }) =>
-      apiRequest<CalendarTask>('/api/tasks', {
-        method: 'POST',
-        body: JSON.stringify({
+    mutationFn: (variables: { id: string; title: string; due_on: string }) =>
+      queuedRequest<CalendarTask>(queryClient, 'task.create', {
+        path: '/api/tasks',
+        entityId: variables.id,
+        body: {
+          id: variables.id,
           title: variables.title,
           status: 'open',
           priority: null,
@@ -368,12 +381,11 @@ export function CalendarScrollView() {
           due_on: variables.due_on,
           due_at: null,
           is_private: false,
-        }),
+        },
       }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (task, variables) => {
       setAgendaQuickTitle('')
-      refreshAll()
-      toast.success(`Đã thêm task vào ${formatShortVietnamDate(variables.due_on)}`)
+      toast.success(`${isQueuedTask(task) ? 'Đã xếp task vào hàng đợi cho' : 'Đã thêm task vào'} ${formatShortVietnamDate(variables.due_on)}`)
       agendaInputRef.current?.focus()
     },
     onError: (error) => {
@@ -386,7 +398,7 @@ export function CalendarScrollView() {
     e.preventDefault()
     const trimmed = agendaQuickTitle.trim()
     if (!trimmed || createAgendaTask.isPending) return
-    createAgendaTask.mutate({ title: trimmed, due_on: agendaDay })
+    createAgendaTask.mutate({ id: uuidv7(), title: trimmed, due_on: agendaDay })
   }
 
   function handleModeChange(mode: 'grid' | 'agenda') {
@@ -1158,6 +1170,7 @@ export function CalendarScrollView() {
                           toggleTaskStatus.mutate({
                             taskId: task.id,
                             status: checked === true ? 'completed' : 'open',
+                            requiresPrivate: task.is_private === true,
                           })
                         }
                         className="size-6 shrink-0 rounded-sm"
@@ -1238,7 +1251,11 @@ export function CalendarScrollView() {
                       sourceColorOf={(sourceId) => sourceById.get(sourceId)?.color ?? null}
                         onSelect={setSelectedDay}
                         onToggleTask={(taskId, status) =>
-                          toggleTaskStatus.mutate({ taskId, status })
+                          toggleTaskStatus.mutate({
+                            taskId,
+                            status,
+                            requiresPrivate: allTasksQuery.data?.find((task) => task.id === taskId)?.is_private !== false,
+                          })
                         }
                         onDropTask={handleDropTask}
                       />

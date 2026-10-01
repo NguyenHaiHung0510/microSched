@@ -1,10 +1,10 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, ChevronLeft, ChevronRight, Edit3, Plus, Trash2 } from 'lucide-react'
 
 import { apiRequest } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
-import type { Json } from '@/lib/outbox-db'
+import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { uuidv7 } from '@/lib/uuidv7'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { OutboxStatus } from '@/OutboxStatus'
@@ -41,21 +41,58 @@ import { SourceForm } from '@/SourceForm'
 
 type SourceEnvelope = { items: CalendarSource[] }
 type EventEnvelope = { items: CalendarEvent[] }
+type ImportRequestReceipt = {
+  sourceId: string
+  startedAt: number
+  acknowledged: boolean
+  acknowledgedResponse?: unknown
+}
 type ConfirmState =
   | { kind: 'source'; source: CalendarSource }
   | { kind: 'event'; event: CalendarEvent }
   | null
 
-const VIEW_KEY = 'microsched:calendar-view'
-
-async function getSources(): Promise<SourceEnvelope> {
-  return apiRequest<SourceEnvelope>('/api/calendar/sources')
+// eslint-disable-next-line react-refresh/only-export-components -- pure report validator is unit-tested separately.
+export function validateImportReport(value: unknown): ImportReport | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const report = value as Record<string, unknown>
+  const counters = [report.parsed, report.inserted, report.removed, report.duplicates]
+  if (!counters.every((count) => Number.isSafeInteger(count) && (count as number) >= 0)) return null
+  if (!Array.isArray(report.skipped) || !report.skipped.every((reason) => typeof reason === 'string')) return null
+  const parsed = report.parsed as number
+  const inserted = report.inserted as number
+  const duplicates = report.duplicates as number
+  const removed = report.removed as number
+  if (parsed !== inserted + duplicates + report.skipped.length) return null
+  return {
+    parsed,
+    inserted,
+    removed,
+    duplicates,
+    skipped: report.skipped as string[],
+  }
 }
 
-async function getEvents(startDay: string): Promise<EventEnvelope> {
+// eslint-disable-next-line react-refresh/only-export-components -- pure correlation predicate is unit-tested separately.
+export function matchesImportAcknowledgement(
+  request: Pick<ImportRequestReceipt, 'sourceId' | 'startedAt'>,
+  row: Pick<OutboxRow, 'operation_kind' | 'entity_id' | 'created_at'>,
+): boolean {
+  return row.operation_kind === 'calendar.import' && row.entity_id === request.sourceId &&
+    row.created_at >= request.startedAt
+}
+
+const VIEW_KEY = 'microsched:calendar-view'
+
+async function getSources(signal?: AbortSignal): Promise<SourceEnvelope> {
+  return apiRequest<SourceEnvelope>('/api/calendar/sources', { signal })
+}
+
+async function getEvents(startDay: string, signal?: AbortSignal): Promise<EventEnvelope> {
   const query = rangeQuery(startDay)
   return apiRequest<EventEnvelope>(
     `/api/calendar/events?from=${encodeURIComponent(query.from)}&to=${encodeURIComponent(query.to)}`,
+    { signal },
   )
 }
 
@@ -158,21 +195,43 @@ export function CalendarScreen() {
   const [sourceConflict, setSourceConflict] = useState<ReturnType<typeof importConflict>>(null)
   const [importReport, setImportReport] = useState<ImportReport | null>(null)
   const [importPending, setImportPending] = useState(false)
+  const importRequestRef = useRef<ImportRequestReceipt | null>(null)
   const [confirm, setConfirm] = useState<ConfirmState>(null)
   const [editingSource, setEditingSource] = useState<CalendarSource | null>(null)
   const [eventDialogOpen, setEventDialogOpen] = useState(false)
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | undefined>()
   const [eventError, setEventError] = useState<string | null>(null)
 
+  useEffect(() => {
+    const onAcknowledged = (event: Event) => {
+      const detail = (event as CustomEvent<{ row: OutboxRow; response: unknown }>).detail
+      const request = importRequestRef.current
+      if (!detail?.row || !request || !matchesImportAcknowledgement(request, detail.row)) return
+      request.acknowledged = true
+      request.acknowledgedResponse = detail.response
+      const report = validateImportReport(detail.response)
+      setImportPending(false)
+      if (report) {
+        setSourceError(null)
+        setImportReport(report)
+      } else {
+        setImportReport(null)
+        setSourceError('Máy chủ đã hoàn tất nhập lịch nhưng báo cáo trả về không hợp lệ.')
+      }
+    }
+    window.addEventListener('microsched:outbox-acknowledged', onAcknowledged)
+    return () => window.removeEventListener('microsched:outbox-acknowledged', onAcknowledged)
+  }, [])
+
   const sources = useQuery({
     queryKey: ['calendar', 'sources'],
-    queryFn: getSources,
+    queryFn: ({ signal }) => getSources(signal),
     ...CALENDAR_QUERY_OPTIONS,
     ...readControl,
   })
   const events = useQuery({
     queryKey: ['calendar', 'events', rangeStart],
-    queryFn: () => getEvents(rangeStart),
+    queryFn: ({ signal }) => getEvents(rangeStart, signal),
     ...CALENDAR_QUERY_OPTIONS,
     ...readControl,
   })
@@ -186,7 +245,8 @@ export function CalendarScreen() {
   )
 
   const importFile = useMutation({
-    mutationFn: async ({ sourceId, file }: { sourceId: string; file: File }) => {
+    mutationFn: async ({ sourceId, file, startedAt }: { sourceId: string; file: File; startedAt: number }) => {
+      if (importRequestRef.current?.startedAt !== startedAt) throw new Error('Yêu cầu nhập lịch đã được thay thế.')
       const problem = validateFile(file)
       if (problem) throw new Error(problem)
       return queuedRequest<ImportReport | null>(queryClient, 'calendar.import', {
@@ -194,18 +254,35 @@ export function CalendarScreen() {
         body: { filename: file.name, content: await file.text() }, entityId: sourceId, parentId: sourceId,
       }, { timeoutMs: 60_000 })
     },
-    onMutate: () => {
+    onMutate: ({ sourceId, startedAt }) => {
+      // Bind the expected source before mutationFn/file.text()/queue can yield.
+      importRequestRef.current = { sourceId, startedAt, acknowledged: false }
       setImportReport(null)
       setImportPending(false)
     },
-    onSuccess: (report) => {
+    onSuccess: (report, { sourceId, startedAt }) => {
+      if (importRequestRef.current?.sourceId !== sourceId || importRequestRef.current.startedAt !== startedAt) return
       setSourceError(null)
-      if (!report || typeof report.inserted !== 'number' || !Array.isArray(report.skipped)) {
+      const actualReport = validateImportReport(report) ??
+        validateImportReport(importRequestRef.current?.acknowledgedResponse)
+      if (actualReport) {
+        setImportReport(actualReport)
+        setImportPending(false)
+        return
+      }
+      if (importRequestRef.current?.acknowledged) {
+        setImportReport(null)
+        setImportPending(false)
+        setSourceError('Máy chủ đã hoàn tất nhập lịch nhưng báo cáo trả về không hợp lệ.')
+        return
+      }
+      if (report === null) {
         setImportPending(true)
         return
       }
-      setImportReport(report)
+      setImportReport(null)
       setImportPending(false)
+      setSourceError('Máy chủ trả về báo cáo nhập lịch không hợp lệ.')
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -218,7 +295,7 @@ export function CalendarScreen() {
       setSourceError(null)
       setSourceConflict(null)
       if (sourceKind === 'ics' && pickedFile) {
-        importFile.mutate({ sourceId: source.id, file: pickedFile })
+        importFile.mutate({ sourceId: source.id, file: pickedFile, startedAt: Date.now() })
       }
     },
     onError: (error) => {
@@ -481,7 +558,7 @@ export function CalendarScreen() {
                     label="Nhập lại"
                     accept=".ics,text/calendar"
                     disabled={importFile.isPending}
-                    onPick={(file) => importFile.mutate({ sourceId: source.id, file })}
+                    onPick={(file) => importFile.mutate({ sourceId: source.id, file, startedAt: Date.now() })}
                   />
                 ) : null}
                 <Button
@@ -597,7 +674,7 @@ export function CalendarScreen() {
                     disabled={importFile.isPending}
                     onClick={() => {
                       setSourceDialogOpen(false)
-                      importFile.mutate({ sourceId: sourceConflict.existingSourceId, file: pickedFile })
+                      importFile.mutate({ sourceId: sourceConflict.existingSourceId, file: pickedFile, startedAt: Date.now() })
                     }}
                   >
                     Nhập đè
