@@ -8,9 +8,10 @@ authentication behavior.
 
 import asyncio
 import base64
+import calendar
 import os
 import time
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
 
 import asyncpg
@@ -453,15 +454,26 @@ def test_subscription_renew_same_entry_id_replays_after_response_loss(pg_dsn: st
                 payload = {"entry_id": str(entry_id), "amount": "12500"}
                 with pytest.raises(_CommittedResponseDropped):
                     await _post_then_drop(client, path, payload)
+                first_committed_expiry = await _stored_expiry(pg_dsn, subscription_id)
+                next_month = 1 if month_end.month == 12 else month_end.month + 1
+                next_year = month_end.year + (month_end.month == 12)
+                expected_next_expiry = date(
+                    next_year,
+                    next_month,
+                    min(month_end.day, calendar.monthrange(next_year, next_month)[1]),
+                ).isoformat()
+                assert first_committed_expiry == expected_next_expiry
+
                 replay = await client.post(path, json=payload)
                 assert replay.status_code == 200, replay.text
                 assert replay.json()["created"] is False
                 assert replay.json()["entry_id"] == str(entry_id)
+                assert replay.json()["subscription"]["expires_on"] == first_committed_expiry
                 assert await _row_count(pg_dsn, "entry", entry_id) == 1
                 assert await _row_count(pg_dsn, "entry", subscription_id, "subscription_id") == 1
                 assert await _row_count(pg_dsn, "subscription", subscription_id) == 1
-                stored_expiry = await _stored_expiry(pg_dsn, subscription_id)
-                assert stored_expiry == replay.json()["subscription"]["expires_on"]
+                expiry_after_replay = await _stored_expiry(pg_dsn, subscription_id)
+                assert expiry_after_replay == first_committed_expiry
         finally:
             conn = await asyncpg.connect(pg_dsn)
             try:
