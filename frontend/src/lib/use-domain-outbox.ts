@@ -26,6 +26,19 @@ export function isWebLocksCapabilityMissing(locksAvailable: boolean, secureConte
   return !locksAvailable || !secureContext
 }
 
+export function subscribeOutboxBroadcast(onChanged: () => void): () => void {
+  if (typeof BroadcastChannel === 'undefined') return () => undefined
+  try {
+    const channel = new BroadcastChannel('microsched-outbox-events')
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      if (event.data === 'changed') onChanged()
+    }
+    return () => channel.close()
+  } catch {
+    return () => undefined
+  }
+}
+
 export type DomainOutboxState = {
   rows: OutboxRow[]
   pendingCount: number
@@ -80,11 +93,13 @@ export function useDomainOutbox(
     const onChanged = () => { void refresh() }
     const onUnavailable = () => setUnavailable(true)
     const onWebLocksUnavailable = () => setWebLocksUnavailable(true)
+    const closeChannel = subscribeOutboxBroadcast(refresh)
     window.addEventListener('microsched:outbox-changed', onChanged)
     window.addEventListener('microsched:offline-unavailable', onUnavailable)
     window.addEventListener('microsched:web-locks-unavailable', onWebLocksUnavailable)
     return () => {
       subscription.unsubscribe()
+      closeChannel()
       window.removeEventListener('microsched:outbox-changed', onChanged)
       window.removeEventListener('microsched:offline-unavailable', onUnavailable)
       window.removeEventListener('microsched:web-locks-unavailable', onWebLocksUnavailable)

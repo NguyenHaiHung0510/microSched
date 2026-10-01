@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { domainReadOptions, isAffectedQueryKey, isWebLocksCapabilityMissing } from '@/lib/use-domain-outbox'
+import { domainReadOptions, isAffectedQueryKey, isWebLocksCapabilityMissing, subscribeOutboxBroadcast } from '@/lib/use-domain-outbox'
 
 describe('outbox-aware domain reads', () => {
   it('matches affected prefixes in both global and domain query families', () => {
@@ -30,5 +30,25 @@ describe('outbox-aware domain reads', () => {
     expect(isWebLocksCapabilityMissing(false, true)).toBe(true)
     expect(isWebLocksCapabilityMissing(true, false)).toBe(true)
     expect(isWebLocksCapabilityMissing(true, true)).toBe(false)
+  })
+
+  it('refreshes from payload-free cross-tab changed notices and closes its channel', () => {
+    let listener: ((event: MessageEvent<unknown>) => void) | null = null
+    const close = vi.fn()
+    const constructor = vi.fn(function (this: { onmessage: typeof listener; close: typeof close }, name: string) {
+      expect(name).toBe('microsched-outbox-events')
+      Object.defineProperty(this, 'onmessage', { get: () => listener, set: (next) => { listener = next } })
+      this.close = close
+    })
+    vi.stubGlobal('BroadcastChannel', constructor)
+    const changed = vi.fn()
+    const unsubscribe = subscribeOutboxBroadcast(changed)
+    listener?.({ data: { row: 'private payload' } } as MessageEvent<unknown>)
+    expect(changed).not.toHaveBeenCalled()
+    listener?.({ data: 'changed' } as MessageEvent<unknown>)
+    expect(changed).toHaveBeenCalledOnce()
+    unsubscribe()
+    expect(close).toHaveBeenCalledOnce()
+    vi.unstubAllGlobals()
   })
 })

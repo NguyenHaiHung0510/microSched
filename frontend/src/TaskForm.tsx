@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, type SetStateAction, useState } from 'react'
 import { ReminderButton } from '@/ReminderEditor'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
@@ -89,7 +89,12 @@ function PersistedChecklistSection({
   onPendingChange: (pending: boolean) => void
 }) {
   const queryClient = useQueryClient()
-  const [items, setItems] = useState<TaskItem[]>(initialItems)
+  const [itemSnapshot, setItemSnapshot] = useState({ source: initialItems, items: initialItems })
+  const items = itemSnapshot.source === initialItems ? itemSnapshot.items : initialItems
+  const setItems = (action: SetStateAction<TaskItem[]>) => setItemSnapshot((current) => {
+    const base = current.source === initialItems ? current.items : initialItems
+    return { source: initialItems, items: typeof action === 'function' ? action(base) : action }
+  })
   const [newContent, setNewContent] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
