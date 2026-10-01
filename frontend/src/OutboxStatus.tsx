@@ -90,7 +90,7 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
       </Button> : null}
       {!state.readError && state.rows.length > 0 ? <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent data-testid="outbox-panel" className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
-          <DialogHeader>
+          <DialogHeader className="pr-12">
             <DialogTitle>Hàng đợi ngoại tuyến</DialogTitle>
             <DialogDescription>Các thay đổi được lưu trên thiết bị. Mục đang chờ sẽ tự tiếp tục khi có mạng hoặc quyền cần thiết.</DialogDescription>
           </DialogHeader>
