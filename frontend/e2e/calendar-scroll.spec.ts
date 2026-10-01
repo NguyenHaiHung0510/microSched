@@ -255,7 +255,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByRole('button', { name: /Việc trễ hạn thứ nhất/ }).tap()
 
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved).toMatchObject({
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === moved.id)).toMatchObject({
       due_precision: 'datetime',
       due_on: null,
       due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
@@ -523,7 +523,7 @@ test.describe('desktop (1280x800)', () => {
     }).format(new Date(moved.due_at!))
     await card.getByTestId('task-reschedule-today').click()
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved).toMatchObject({
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === moved.id)).toMatchObject({
       due_precision: 'datetime',
       due_on: null,
       due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
