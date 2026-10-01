@@ -27,6 +27,48 @@ function privateTrackerSentinel(): FixtureTracker {
   }
 }
 
+async function readOutboxRows(page: import('@playwright/test').Page) {
+  return page.evaluate(() => new Promise<any[]>((resolve, reject) => {
+    const request = indexedDB.open('microsched-outbox')
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains('outbox')) {
+        db.close()
+        resolve([])
+        return
+      }
+      const rows = db.transaction('outbox', 'readonly').objectStore('outbox').getAll()
+      rows.onsuccess = () => { const result = rows.result; db.close(); resolve(result) }
+      rows.onerror = () => { const error = rows.error; db.close(); reject(error) }
+    }
+  }))
+}
+
+function isUuidV7(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+async function expectAutomaticRetry(page: import('@playwright/test').Page, path: string, bodies: string[]) {
+  await expect.poll(async () => (await readOutboxRows(page)).find((row) =>
+    row.path === path && row.state === 'outcome_unknown' && row.attempts >= 1) ?? null,
+  { timeout: 10_000 }).not.toBeNull()
+  const held = (await readOutboxRows(page)).find((row) =>
+    row.path === path && row.state === 'outcome_unknown' && row.attempts >= 1)
+  expect(held).toBeDefined()
+  const expectedPayload = bodies[0] || 'null'
+  expect(held.payload_json).toBe(expectedPayload)
+  const observedDigest = await page.evaluate(async (payload) => {
+    const bytes = new TextEncoder().encode(payload)
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  }, expectedPayload)
+  expect(held.payload_sha256).toBe(observedDigest)
+  await expect.poll(() => bodies.length, { timeout: 15_000 }).toBe(2)
+  expect(bodies[1]).toBe(bodies[0])
+  await expect.poll(async () => (await readOutboxRows(page)).some((row) => row.path === path), { timeout: 15_000 }).toBe(false)
+}
+
 test.describe('Task 036 Dogfooding UI/UX verification', () => {
   test.beforeEach(async ({ page, trackerApi, taskApi }) => {
     // Mock push notification API on window
@@ -73,7 +115,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     // Seed trackers with configured reminders so reminder card is rendered
     trackerApi.trackers.push(
       {
-        id: 'tracker-reminder-1',
+        id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301',
         name: 'Uống thuốc huyết áp liều cao buổi sáng 08:00',
         kind: 'health',
         direction: 'out',
@@ -401,8 +443,13 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await expect(page.getByTestId('tracker-reminder-text')).toHaveCount(0)
     await expect(page.getByText('Nội dung hiện trên màn hình khoá')).toHaveCount(0)
 
-    let serverTrackers = [...trackerApi.trackers]
+    const serverTrackers = trackerApi.trackers
     let createPayload: any = null
+    const createRequests: string[] = []
+    let pushSubscribeRequests = 0
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/push/subscribe') pushSubscribeRequests += 1
+    })
     await page.route('**/api/tracker/trackers', async (route) => {
       if (route.request().method() === 'GET') {
         await route.fulfill({
@@ -414,8 +461,9 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
       }
       if (route.request().method() === 'POST') {
         createPayload = route.request().postDataJSON()
+        createRequests.push(route.request().postData() ?? '')
         const createdItem = {
-          id: 'tracker-created-new',
+          id: createPayload.id ?? crypto.randomUUID(),
           name: createPayload.name,
           kind: createPayload.kind,
           direction: createPayload.direction,
@@ -434,6 +482,11 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }
+        const existing = serverTrackers.find((t) => t.id === createdItem.id)
+        if (existing) {
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(existing) })
+          return
+        }
         serverTrackers.push(createdItem)
         await route.fulfill({
           status: 201,
@@ -448,22 +501,26 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await createDialog.locator('button[type="submit"]').click()
     await expect(createDialog).toBeHidden()
     // Assert create sends reminder_text: null
+    await expect.poll(() => createPayload).toBeTruthy()
     expect(createPayload).toBeDefined()
+    expect(isUuidV7(createPayload.id)).toBe(true)
+    expect(createRequests).toHaveLength(1)
     expect(createPayload.reminder_text).toBeNull()
 
     // Now test edit tracker with legacy reminder_text preservation and read-back
     let patchPayload: any = null
-    await page.route('**/api/tracker/trackers/tracker-reminder-1', async (route) => {
+    await page.route('**/api/tracker/trackers/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301', async (route) => {
       if (route.request().method() === 'PATCH') {
         patchPayload = route.request().postDataJSON()
-        const existing = serverTrackers.find((t) => t.id === 'tracker-reminder-1')
+        const existing = serverTrackers.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301')
         const updated = {
           ...existing,
           ...patchPayload,
           reminder_text: 'reminder_text' in patchPayload ? patchPayload.reminder_text : existing?.reminder_text,
           updated_at: new Date().toISOString(),
         }
-        serverTrackers = serverTrackers.map((t) => (t.id === 'tracker-reminder-1' ? updated : t))
+        const index = serverTrackers.findIndex((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301')
+        if (index >= 0) serverTrackers[index] = updated
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -474,9 +531,9 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
       await route.fallback()
     })
 
-   // Open edit dialog for tracker-reminder-1 via its edit button in management section
+   // Open edit dialog for the existing seeded tracker via its stable fixture ID
    await page.getByRole('button', { name: 'Mở rộng tất cả' }).click()
-   const editBtn = page.locator('[data-testid="tracker-edit"][data-tracker-id="tracker-reminder-1"]')
+   const editBtn = page.locator('[data-testid="tracker-edit"][data-tracker-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301"]')
    await editBtn.click()
    const editDialog = page.getByTestId('tracker-dialog')
     await expect(editDialog).toBeVisible()
@@ -494,8 +551,10 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await editDialog.getByLabel('Tên').fill('Uống thuốc huyết áp liều cao (đã sửa)')
 
     // Submit edit
+    const pushRequestsBeforeRename = pushSubscribeRequests
     await page.getByRole('button', { name: 'Lưu thay đổi' }).click()
     await expect(editDialog).toBeHidden()
+    await expect.poll(() => patchPayload).toBeTruthy()
 
     // Assert: reminder_text was NOT sent in PATCH payload (omitted) so backend exclude_unset preserves it
     expect(patchPayload).toBeDefined()
@@ -503,8 +562,11 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     expect('reminder_text' in patchPayload).toBe(false)
 
     // Assert: server state retained legacy reminder_text
-    const serverItem = serverTrackers.find((t) => t.id === 'tracker-reminder-1')
+    await expect.poll(() => serverTrackers.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301')?.name)
+      .toBe('Uống thuốc huyết áp liều cao (đã sửa)')
+    const serverItem = serverTrackers.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301')
     expect(serverItem?.reminder_text).toBe('Legacy reminder text')
+    expect(pushSubscribeRequests).toBe(pushRequestsBeforeRename)
 
     // Read-back verification: UI preview displays legacy reminder text after mutation
     await expect(page.getByTestId('tracker-reminder-preview').first()).toContainText('Legacy reminder text')
@@ -518,16 +580,19 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
 
     expect(patchPayload).toBeDefined()
     expect(patchPayload.reminder_text).toBeNull()
-    const serverItemDisabled = serverTrackers.find((t) => t.id === 'tracker-reminder-1')
+    const serverItemDisabled = serverTrackers.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5301')
     expect(serverItemDisabled?.reminder_text).toBeNull()
   })
 
   test('Subtask create flow: draft add, inline edit, delete, and atomic single POST failure/retry', async ({ page }) => {
     let postBody: any = null
+    const postBodies: string[] = []
+    let createdTask: any = null
     let shouldFailFirstPost = true
     await page.route('**/api/tasks', async (route) => {
       if (route.request().method() === 'POST') {
         postBody = route.request().postDataJSON()
+        postBodies.push(route.request().postData() ?? '')
         if (shouldFailFirstPost) {
           shouldFailFirstPost = false
           await route.fulfill({
@@ -537,27 +602,26 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           })
           return
         }
+        const itemRows = (postBody.items || []).map((content: string, i: number) => ({
+          id: crypto.randomUUID(), content, is_completed: false, position: i,
+        }))
+        createdTask = {
+          id: postBody.id ?? crypto.randomUUID(),
+          title: postBody.title,
+          body_md: postBody.body_md ?? null,
+          status: 'open',
+          priority: postBody.priority ?? null,
+          due_precision: postBody.due_precision ?? 'none',
+          due_on: postBody.due_on ?? null,
+          due_at: postBody.due_at ?? null,
+          is_private: false,
+          pinned: false,
+          items: itemRows,
+        }
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({
-            id: postBody.id ?? crypto.randomUUID(),
-            title: postBody.title,
-            body_md: postBody.body_md,
-            status: 'open',
-            priority: postBody.priority,
-            due_precision: postBody.due_precision,
-            due_on: postBody.due_on,
-            due_at: postBody.due_at,
-            is_private: false,
-            pinned: false,
-            items: (postBody.items || []).map((content: string, i: number) => ({
-              id: crypto.randomUUID(),
-              content,
-              is_completed: false,
-              position: i,
-            })),
-          }),
+          body: JSON.stringify(createdTask),
         })
         return
       }
@@ -625,25 +689,25 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await items.nth(2).getByTestId('task-item-delete').click()
     await expect(createDialog.getByText('Mục 3 cần xoá')).toHaveCount(0)
 
-    // Submit task create (first try will fail with 500)
-    await createDialog.getByRole('button', { name: 'Tạo task' }).click()
-    // Assert: dialog stays visible and drafts are preserved
-    await expect(createDialog).toBeVisible()
-    const createError = createDialog.getByTestId('task-create-error')
-    await expect(createError).toBeVisible()
-    await expect(createError).toContainText('Lỗi tạo task thử nghiệm')
-    await expect(page.getByTestId('quick-add-error')).toHaveCount(0)
-    await expect(createDialog.getByText('Mục 1')).toBeVisible()
-    await expect(createDialog.getByText('Mục 2 đã sửa')).toBeVisible()
-
-    // Submit again (second try succeeds)
+    // Enqueue the atomic create. A transient 500 keeps the command durable and retries it automatically.
     await createDialog.getByRole('button', { name: 'Tạo task' }).click()
     await expect(createDialog).toBeHidden()
+    await expect(page.getByTestId('outbox-indicator').first()).toBeVisible()
 
-    // Verify atomic POST payload carried items
-    expect(postBody).toBeDefined()
+    await expect.poll(() => postBodies.length).toBe(2)
+    await expect.poll(() => readOutboxRows(page)).toHaveLength(0)
+    expect(JSON.parse(postBodies[1])).toEqual(JSON.parse(postBodies[0]))
+    expect(isUuidV7(postBody.id)).toBe(true)
     expect(postBody.title).toBe('Task có subtasks mới')
     expect(postBody.items).toEqual(['Mục 1', 'Mục 2 đã sửa'])
+    expect(createdTask).toMatchObject({
+      id: postBody.id,
+      title: postBody.title,
+      items: [
+        { content: 'Mục 1', is_completed: false, position: 0 },
+        { content: 'Mục 2 đã sửa', is_completed: false, position: 1 },
+      ],
+    })
   })
 
  test('Subtask persisted edit flow: in-dialog add/edit/tick/delete failure and concurrency', async ({ page, taskApi }) => {
@@ -651,6 +715,10 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
    let failEdit = true
    let failTick = true
    let failDelete = true
+    const childPostBodies = new Map<string, string[]>()
+    const childPatchBodies = new Map<string, string[]>()
+    const childDeleteBodies = new Map<string, string[]>()
+    const parentPatchBodies: string[] = []
    let deferChildPost = false
    let resolveChildPost: (() => void) | null = null
     let childPostPromise: Promise<void> | null = null
@@ -661,6 +729,10 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
 
    await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items', async (route) => {
      if (route.request().method() === 'POST') {
+        const data = route.request().postDataJSON()
+        const postBodies = childPostBodies.get(data.content) ?? []
+        postBodies.push(route.request().postData() ?? '')
+        childPostBodies.set(data.content, postBodies)
         if (deferChildPost && childPostPromise) {
           await childPostPromise
         }
@@ -673,7 +745,6 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           })
           return
         }
-        const data = route.request().postDataJSON()
         const parentTask = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')
         const existingItem = parentTask?.items.find((entry) => entry.id === data.id)
         if (existingItem) {
@@ -695,10 +766,15 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
 
    await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/**', async (route) => {
      const method = route.request().method()
-     const url = route.request().url()
-     const itemId = url.split('/').pop() || 'item-0'
-     if (method === 'PATCH') {
-       const data = route.request().postDataJSON()
+      const url = route.request().url()
+      const itemId = url.split('/').pop() || 'item-0'
+      if (method === 'PATCH') {
+        const data = route.request().postDataJSON()
+        const operation = data.content !== undefined ? 'content' : 'is_completed'
+        const requestKey = `${itemId}:${operation}`
+        const requestBodies = childPatchBodies.get(requestKey) ?? []
+        requestBodies.push(route.request().postData() ?? '')
+        childPatchBodies.set(requestKey, requestBodies)
        if (data.content && failEdit) {
          failEdit = false
          await route.fulfill({
@@ -717,19 +793,26 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
          })
          return
        }
-       await route.fulfill({
-         status: 200,
-         contentType: 'application/json',
-         body: JSON.stringify({
-           id: itemId,
-           content: data.content ?? 'Nội dung checklist',
-           is_completed: data.is_completed ?? false,
-           position: 0,
-         }),
+        const parentTask = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')
+        const storedItem = parentTask?.items.find((entry) => entry.id === itemId)
+        if (storedItem) Object.assign(storedItem, data)
+        const updated = storedItem ?? {
+          id: itemId,
+          content: data.content ?? 'Nội dung checklist',
+          is_completed: data.is_completed ?? false,
+          position: 0,
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(updated),
        })
        return
      }
-     if (method === 'DELETE') {
+      if (method === 'DELETE') {
+        const requestBodies = childDeleteBodies.get(itemId) ?? []
+        requestBodies.push(route.request().postData() ?? '')
+        childDeleteBodies.set(itemId, requestBodies)
        if (failDelete) {
          failDelete = false
          await route.fulfill({
@@ -739,14 +822,18 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
          })
          return
        }
-       await route.fulfill({ status: 204 })
+        const parentTask = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')
+        if (parentTask) parentTask.items = parentTask.items.filter((entry) => entry.id !== itemId)
+        await route.fulfill({ status: 204 })
        return
      }
      await route.fallback()
    })
 
    await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112', async (route) => {
-     if (route.request().method() === 'PATCH') {
+      if (route.request().method() === 'PATCH') {
+         const data = route.request().postDataJSON()
+         parentPatchBodies.push(route.request().postData() ?? '')
         if (deferParentPatch && parentPatchPromise) {
           await parentPatchPromise
         }
@@ -759,23 +846,12 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           })
           return
         }
-        const data = route.request().postDataJSON()
+        const parentTask = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')
+        if (parentTask) Object.assign(parentTask, data)
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({
-            id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112',
-            title: data.title ?? 'Checklist nhiều mục',
-            body_md: data.body_md ?? null,
-            priority: data.priority ?? null,
-            due_precision: data.due_precision ?? 'none',
-            due_on: null,
-            due_at: null,
-            is_private: false,
-            pinned: false,
-            status: 'open',
-            items: [],
-          }),
+          body: JSON.stringify(parentTask),
         })
         return
       }
@@ -813,41 +889,45 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
    if (resolveChildPost) resolveChildPost()
    await expect(editDialog.getByText('Mục kiểm tra pending child')).toBeVisible()
 
-   // 2. Child POST fail: draft and input preserved, retry succeeds
-    failAdd = true
+    // 2. A transient child-create failure remains queued and replays the exact command.
+     failAdd = true
     await addInput.fill('Mục mới thử nghiệm fail')
     await addBtn.click()
-    // First attempt fails -> error message visible, draft still in input
-    await expect(editDialog.getByRole('alert')).toBeVisible()
-    await expect(addInput).toHaveValue('Mục mới thử nghiệm fail')
-    // Retry succeeds
-    await addBtn.click()
+    const addedPostBodies = childPostBodies.get('Mục mới thử nghiệm fail') ?? []
+    await expectAutomaticRetry(page, '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items', addedPostBodies)
+    expect(isUuidV7(JSON.parse(addedPostBodies[0]).id)).toBe(true)
     await expect(editDialog.getByText('Mục mới thử nghiệm fail')).toBeVisible()
+    expect(taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')?.items)
+      .toContainEqual(expect.objectContaining({ content: 'Mục mới thử nghiệm fail', is_completed: false, position: 99 }))
 
-    // 3. Child PATCH content fail: inline edit input stays open with draft content, retry succeeds
+    // 3. Child PATCH content fail: optimistic content remains and the exact command retries.
     const firstItem = editDialog.getByTestId('task-item').first()
     await firstItem.getByTestId('task-item-edit').click()
     const editInput = editDialog.getByTestId('task-item-edit-input')
     await editInput.fill('Sửa nội dung có lỗi 500')
     await editDialog.getByTestId('task-item-edit-save').click()
-    // First edit attempt fails -> error message visible, edit input stays open
-    await expect(editDialog.getByRole('alert')).toBeVisible()
-    await expect(editInput).toBeVisible()
-    await expect(editInput).toHaveValue('Sửa nội dung có lỗi 500')
-    // Retry edit succeeds
-    await editDialog.getByTestId('task-item-edit-save').click()
+    const editedItemId = await firstItem.getAttribute('data-task-item-id')
+    expect(editedItemId).toBeTruthy()
+    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${editedItemId}`, childPatchBodies.get(`${editedItemId}:content`) ?? [])
     await expect(editDialog.getByText('Sửa nội dung có lỗi 500')).toBeVisible()
 
-    // 4. Child tick fail: error rendered
+    // 4. Child tick remains checked and reaches the authoritative fixture after automatic retry.
     const checkbox = firstItem.getByTestId('task-item-checkbox')
     await checkbox.click()
-    await expect(editDialog.getByRole('alert')).toBeVisible()
+    const checkedItemId = await firstItem.getAttribute('data-task-item-id')
+    expect(checkedItemId).toBeTruthy()
+    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${checkedItemId}`, childPatchBodies.get(`${checkedItemId}:is_completed`) ?? [])
+    await expect(checkbox).toBeChecked()
+    expect(taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')?.items
+      .find((entry) => entry.id === checkedItemId)?.is_completed).toBe(true)
 
-    // 5. Child delete fail: item is not removed on 500 error
+    // 5. Child delete remains optimistic during a transient error and is acknowledged on retry.
     const itemToDelete = editDialog.getByTestId('task-item').nth(1)
+    const deletedItemId = await itemToDelete.getAttribute('data-task-item-id')
     await itemToDelete.getByTestId('task-item-delete').click()
-    await expect(editDialog.getByRole('alert')).toBeVisible()
-    await expect(itemToDelete).toBeVisible()
+    expect(deletedItemId).toBeTruthy()
+    await expectAutomaticRetry(page, `/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/${deletedItemId}`, childDeleteBodies.get(deletedItemId!) ?? [])
+    await expect(itemToDelete).toHaveCount(0)
 
    // 6. Concurrency: parent PATCH pending => all child controls disabled
    deferParentPatch = true
@@ -866,14 +946,19 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
    await expect(firstItem.getByTestId('task-item-delete')).toBeDisabled()
    await expect(firstItem.getByTestId('task-item-checkbox')).toBeDisabled()
 
-   // Release parent PATCH with 500 error (child success + parent PATCH fail)
+    // Release the parent PATCH's first 500; the parent save retries independently of child commands.
     deferParentPatch = false
    if (resolveParentPatch) resolveParentPatch()
 
-   // 7. Child success then parent PATCH fail: child persists, parent draft preserved, error visible
-    await expect(editDialog).toBeVisible()
+    await expectAutomaticRetry(page, '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112', parentPatchBodies)
+    expect(JSON.parse(parentPatchBodies[0]).title).toBe('Tiêu đề task cha đã sửa')
+    // 7. The separately acknowledged child remains authoritative after parent-save recovery.
+     await expect(editDialog).toBeVisible()
     await expect(titleInput).toHaveValue('Tiêu đề task cha đã sửa')
     await expect(editDialog.getByText('Mục mới thử nghiệm fail')).toBeVisible()
+    const finalParent = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')
+    expect(finalParent?.title).toBe('Tiêu đề task cha đã sửa')
+    expect(finalParent?.items.some((entry) => entry.content === 'Mục mới thử nghiệm fail')).toBe(true)
   })
 
   test('Calendar DayDetailDialog subtask flow: open task from DayDetail, add/edit/tick/delete and state persistence', async ({ page, taskApi }) => {
@@ -884,14 +969,21 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
       existing13.items = [{ id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e31', content: 'Checklist sẵn có', is_completed: false, position: 0 }]
     }
 
-   let taskItems: Array<{ id: string; content: string; is_completed: boolean; position: number }> = [
-     { id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e31', content: 'Checklist sẵn có', is_completed: false, position: 0 },
-   ]
+   const taskItems = existing13?.items ?? []
+   const itemBodies = new Map<string, string[]>()
+   const operationFor = (method: string, body: any) => method === 'POST' ? 'create'
+     : method === 'DELETE' ? 'delete'
+       : body.content !== undefined ? 'content'
+         : 'is_completed'
 
    await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113/items', async (route) => {
-     if (route.request().method() === 'POST') {
-       const data = route.request().postDataJSON()
-       const newItem = {
+      if (route.request().method() === 'POST') {
+        const data = route.request().postDataJSON()
+        const key = `${data.content}:create`
+        const bodies = itemBodies.get(key) ?? []
+        bodies.push(route.request().postData() ?? '')
+        itemBodies.set(key, bodies)
+        const newItem = {
          id: data.id ?? crypto.randomUUID(),
          content: data.content,
          is_completed: false,
@@ -902,8 +994,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(existingItem) })
          return
        }
-       taskItems = [...taskItems, newItem]
-        if (existing13) existing13.items = [...taskItems]
+        taskItems.push(newItem)
        await route.fulfill({
          status: 201,
          contentType: 'application/json',
@@ -915,32 +1006,29 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
    })
 
    await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113/items/**', async (route) => {
-     const method = route.request().method()
-     const itemId = route.request().url().split('/').pop() || ''
-     if (method === 'PATCH') {
-       const data = route.request().postDataJSON()
-       taskItems = taskItems.map((item) => {
-         if (item.id === itemId) {
-           return {
-             ...item,
-             ...(data.content !== undefined ? { content: data.content } : {}),
-             ...(data.is_completed !== undefined ? { is_completed: data.is_completed } : {}),
-           }
-         }
-         return item
-       })
-        if (existing13) existing13.items = [...taskItems]
-       const updated = taskItems.find((i) => i.id === itemId)
+      const method = route.request().method()
+      const itemId = route.request().url().split('/').pop() || ''
+      const data = method === 'PATCH' ? route.request().postDataJSON() : null
+      const operationKey = `${itemId}:${operationFor(method, data)}`
+      if (method === 'PATCH' || method === 'DELETE') {
+        const bodies = itemBodies.get(operationKey) ?? []
+        bodies.push(route.request().postData() ?? '')
+        itemBodies.set(operationKey, bodies)
+      }
+      if (method === 'PATCH') {
+        const stored = taskItems.find((item) => item.id === itemId)
+        if (stored) Object.assign(stored, data)
+        const updated = taskItems.find((i) => i.id === itemId)
        await route.fulfill({
          status: 200,
          contentType: 'application/json',
          body: JSON.stringify(updated),
        })
        return
-     }
-     if (method === 'DELETE') {
-       taskItems = taskItems.filter((i) => i.id !== itemId)
-        if (existing13) existing13.items = [...taskItems]
+      }
+      if (method === 'DELETE') {
+        const index = taskItems.findIndex((item) => item.id === itemId)
+        if (index >= 0) taskItems.splice(index, 1)
        await route.fulfill({ status: 204 })
        return
      }
@@ -974,8 +1062,11 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     const addInput = taskEditDialog.getByTestId('task-item-add-input')
     await addInput.fill('Subtask từ lịch')
     await taskEditDialog.getByTestId('task-item-add-submit').click()
+    await expect.poll(() => (itemBodies.get('Subtask từ lịch:create') ?? []).length).toBe(1)
+    await expect.poll(() => taskItems.some((i) => i.content === 'Subtask từ lịch')).toBe(true)
+    expect(taskItems.find((item) => item.content === 'Subtask từ lịch'))
+      .toMatchObject({ is_completed: false, position: 1 })
     await expect(taskEditDialog.getByText('Subtask từ lịch')).toBeVisible()
-    expect(taskItems.some((i) => i.content === 'Subtask từ lịch')).toBe(true)
 
     // Inline edit subtask in calendar
     const subtaskItem = taskEditDialog.getByTestId('task-item').last()
@@ -983,19 +1074,24 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     const editInput = taskEditDialog.getByTestId('task-item-edit-input')
     await editInput.fill('Subtask từ lịch đã sửa')
     await taskEditDialog.getByTestId('task-item-edit-save').click()
+    const subtaskId = await subtaskItem.getAttribute('data-task-item-id')
+    expect(subtaskId).toBeTruthy()
+    await expect.poll(() => (itemBodies.get(`${subtaskId}:content`) ?? []).length).toBe(1)
+    await expect.poll(() => taskItems.some((i) => i.content === 'Subtask từ lịch đã sửa')).toBe(true)
     await expect(taskEditDialog.getByText('Subtask từ lịch đã sửa')).toBeVisible()
-    expect(taskItems.some((i) => i.content === 'Subtask từ lịch đã sửa')).toBe(true)
 
     // Tick subtask in calendar
     const subtaskCheckbox = subtaskItem.getByTestId('task-item-checkbox')
     await subtaskCheckbox.click()
+    await expect.poll(() => (itemBodies.get(`${subtaskId}:is_completed`) ?? []).length).toBe(1)
+    await expect.poll(() => taskItems.find((i) => i.id === subtaskId)?.is_completed).toBe(true)
     await expect(subtaskCheckbox).toBeChecked()
-    expect(taskItems.find((i) => i.content === 'Subtask từ lịch đã sửa')?.is_completed).toBe(true)
 
     // Delete subtask in calendar (delete the newly added subtask)
     await subtaskItem.getByTestId('task-item-delete').click()
+    await expect.poll(() => (itemBodies.get(`${subtaskId}:delete`) ?? []).length).toBe(1)
+    await expect.poll(() => taskItems.some((i) => i.id === subtaskId)).toBe(false)
     await expect(taskEditDialog.getByText('Subtask từ lịch đã sửa')).toHaveCount(0)
-    expect(taskItems.some((i) => i.content === 'Subtask từ lịch đã sửa')).toBe(false)
 
     // Close task edit dialog
     await page.keyboard.press('Escape')
@@ -1013,7 +1109,8 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await expect(taskEditDialog.getByTestId('task-checklist-section')).toBeVisible()
     await expect(taskEditDialog.getByText('Checklist sẵn có')).toBeVisible()
     await expect(taskEditDialog.getByText('Subtask từ lịch đã sửa')).toHaveCount(0)
-    expect(taskItems.length).toBe(1)
+    expect(taskItems).toHaveLength(1)
+    expect(existing13?.items).toEqual(taskItems)
   })
 
   test('Privacy gate same-tab lock purges private data from Notes and Tracker DOM without flashing stale private data', async ({ page, trackerApi }) => {
