@@ -33,19 +33,19 @@ describe('outbox-aware domain reads', () => {
   })
 
   it('refreshes from payload-free cross-tab changed notices and closes its channel', () => {
-    let listener: ((event: MessageEvent<unknown>) => void) | null = null
+    const listener: { current: ((event: MessageEvent<unknown>) => void) | null } = { current: null }
     const close = vi.fn()
-    const constructor = vi.fn(function (this: { onmessage: typeof listener; close: typeof close }, name: string) {
+    const constructor = vi.fn(function (this: { onmessage: typeof listener.current; close: typeof close }, name: string) {
       expect(name).toBe('microsched-outbox-events')
-      Object.defineProperty(this, 'onmessage', { get: () => listener, set: (next) => { listener = next } })
+      Object.defineProperty(this, 'onmessage', { get: () => listener.current, set: (next) => { listener.current = next } })
       this.close = close
     })
     vi.stubGlobal('BroadcastChannel', constructor)
     const changed = vi.fn()
     const unsubscribe = subscribeOutboxBroadcast(changed)
-    listener?.({ data: { row: 'private payload' } } as MessageEvent<unknown>)
+    listener.current?.({ data: { row: 'private payload' } } as MessageEvent<unknown>)
     expect(changed).not.toHaveBeenCalled()
-    listener?.({ data: 'changed' } as MessageEvent<unknown>)
+    listener.current?.({ data: 'changed' } as MessageEvent<unknown>)
     expect(changed).toHaveBeenCalledOnce()
     unsubscribe()
     expect(close).toHaveBeenCalledOnce()
