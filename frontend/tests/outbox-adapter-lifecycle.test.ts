@@ -260,6 +260,33 @@ describe('typed outbox adapter lifecycles', () => {
     queryClient.clear()
   })
 
+  it('restores the captured full task DTO and keeps it as baseline after the minimal restore acknowledgement', async () => {
+    const queryClient = client()
+    queryClient.setQueryData(['tasks', 'all'], { items: [] })
+    const task = {
+      id: ids.task, title: 'Restored task', body_md: 'Body', status: 'open', priority: 'p2',
+      due_precision: 'date', due_on: '2026-10-05', due_at: null, is_private: false,
+      pinned: true, items: [{ id: ids.item, content: 'Keep child', is_completed: false, position: 0 }],
+      created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-20T00:00:00Z',
+    }
+    const row = makeRow('task.restore', `/api/tasks/${ids.task}/restore`, null, ids.task)
+    Object.assign(row, { optimistic_entity: task })
+    const restore = adapterFor('task.restore')
+    await restore.optimisticApply(queryClient, row)
+    expect(queryClient.getQueryData<{ items: unknown[] }>(['tasks', 'all'])?.items)
+      .toMatchObject([{ id: ids.task, title: task.title, items: task.items, __outbox_state: 'pending' }])
+    await restore.reconcileSuccess(queryClient, row, { id: ids.task, status: 'restored' })
+    expect(queryClient.getQueryData<{ items: Array<Record<string, unknown>> }>(['tasks', 'all'])?.items[0])
+      .toEqual(task)
+
+    const laterUpdate = makeRow('task.update', `/api/tasks/${ids.task}`, { title: 'Temporary pending edit' }, ids.task)
+    await adapterFor('task.update').optimisticApply(queryClient, laterUpdate)
+    await adapterFor('task.update').discardOrRollback(queryClient, laterUpdate)
+    expect(queryClient.getQueryData<{ items: Array<Record<string, unknown>> }>(['tasks', 'all'])?.items[0])
+      .toEqual(task)
+    queryClient.clear()
+  })
+
   it('reconciles an acknowledged task item inside its parent instead of at the task-list root', async () => {
     const queryClient = client()
     const baseline = { items: [{ id: ids.task, title: 'Parent', is_private: false, items: [] }] }

@@ -3,10 +3,16 @@ import { toast } from 'sonner'
 import { ApiError, TimeoutError, UnauthenticatedError } from '@/api'
 import { adapterFor } from '@/lib/outbox-adapters'
 import { queuedRequest } from '@/lib/queued-mutation'
-import { restoreCancelledOutbox, type OutboxRow } from '@/lib/outbox-db'
+import { restoreCancelledOutbox, type Json, type OutboxRow } from '@/lib/outbox-db'
 import type { QueryClient } from '@tanstack/react-query'
 
 type DeleteReceipt = { cancelledRows: OutboxRow[] }
+
+function snapshotJson(value: Record<string, unknown>): Json {
+  const serialized = JSON.stringify(value)
+  if (serialized === undefined) throw new TypeError('Note snapshot is not JSON serializable')
+  return JSON.parse(serialized) as Json
+}
 
 export function errorMessage(error: unknown): string {
   if (error instanceof UnauthenticatedError) return 'Phiên đã hết hạn. Tải lại để đăng nhập.'
@@ -27,7 +33,7 @@ export async function restoreNote(client: QueryClient, note: Record<string, unkn
       path: `/api/notes/${String(note.id)}/restore`,
       entityId: String(note.id),
       requiresPrivate: note.is_private === true,
-      optimisticEntity: note as never,
+      optimisticEntity: snapshotJson(note),
     })
   } catch (error) {
     toast.error(errorMessage(error))

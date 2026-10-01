@@ -22,7 +22,7 @@ import { toast } from 'sonner'
 
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
-import type { OutboxRow } from '@/lib/outbox-db'
+import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
@@ -62,7 +62,6 @@ import {
   isTaskScheduleOverdue,
   rescheduleTaskSchedule,
   scheduleDay,
-  taskInvalidationKey,
   taskQueryKey,
   toggledStatus,
 } from '@/task-ui'
@@ -721,16 +720,6 @@ const TaskCard = memo(function TaskCard({
   const [expanded, setExpanded] = useState(false)
   const [newItem, setNewItem] = useState('')
 
-  /* `void`, không `await`: React Query giữ mutation ở `isPending` cho tới khi
-     `onSuccess` resolve, mà `invalidateQueries` thì đợi luôn cả lượt tải lại.
-     Await ở đây nghĩa là nút vẫn ghi "Đang thêm…" DÙ việc đã lưu xong — và nếu
-     lượt tải lại treo thì nút treo theo vĩnh viễn. Ghi xong là ghi xong. */
-  /* 010b §2 mục 9: dời hạn làm đổi chip task trên lịch, nên refresh cả họ
-     ["calendar"] bên cạnh ["tasks"] (lịch không mounted thì không tốn mạng). */
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
-    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
-  }
   const reschedule = useMutation({
     mutationFn: (variables: { next: TaskSchedule; previous: TaskSchedule }) =>
       queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${task.id}`, body: variables.next, entityId: task.id, requiresPrivate: task.is_private }),
@@ -762,7 +751,7 @@ const TaskCard = memo(function TaskCard({
   const remove = useMutation({
     mutationFn: () => queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'task.delete', {
       path: `/api/tasks/${task.id}`, entityId: task.id, requiresPrivate: task.is_private,
-      optimisticEntity: task as never,
+      optimisticEntity: JSON.parse(JSON.stringify(task)) as Json,
     }),
     onSuccess: (receipt) => {
       setDetailsOpen(false)
@@ -1367,7 +1356,7 @@ export function LegacyTasksScreen() {
 
       setMigratingPins(false)
     })
-  }, [queryClient, tasks.isSuccess])
+  }, [queryClient, tasks.isSuccess, tasks.data])
 
   const create = useMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>

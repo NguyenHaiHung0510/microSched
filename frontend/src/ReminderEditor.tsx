@@ -106,7 +106,10 @@ function ReminderFields({ source, kind, sourceId, current, onClose, outboxPendin
   return <div className="space-y-4">
     <p className="break-words font-semibold">{source.title}</p>
     {queued ? <div data-testid="reminder-outbox-pending" className="space-y-2 text-sm text-muted-foreground" role="status">
-      <p>{queueIsDrained ? 'Đang chờ danh sách lời nhắc được xác nhận lại từ máy chủ.' : 'Đã lưu thay đổi; đang chờ máy chủ xác nhận.'}</p>
+      <p>{outboxReadError ? 'Chưa xác minh được trạng thái gửi lời nhắc.'
+        : outboxFailedCount > 0 ? 'Có thay đổi lời nhắc cần xem trong trạng thái hàng đợi.'
+          : queueIsDrained ? 'Đang chờ danh sách lời nhắc được xác nhận lại từ máy chủ.'
+            : 'Đã lưu thay đổi; đang chờ máy chủ xác nhận.'}</p>
       {needsServerRefresh ? <Button size="lg" variant="outline" onClick={() => void client.invalidateQueries({ queryKey: [...reminderKey, 'active', kind, sourceId] })}>Kiểm tra lại với máy chủ</Button> : null}
     </div> : null}
     {current && <p role="status" className="text-sm text-muted-foreground">{reminderStatus[current.status]}</p>}

@@ -22,7 +22,7 @@ import { toast } from 'sonner'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
-import type { OutboxRow } from '@/lib/outbox-db'
+import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
 import { Badge } from '@/components/ui/badge'
@@ -66,7 +66,6 @@ import {
   type NotePayload,
   type NoteSortMode,
   type NoteWritePayload,
-  noteInvalidationKey,
   noteQueryKey,
 } from '@/note-ui'
 import { errorMessage, restoreNote } from '@/note-undo'
@@ -92,7 +91,6 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const detailsReturnRef = useRef<HTMLButtonElement | null>(null)
   const label = noteLabel(note)
 
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
   const update = useMutation({
     mutationFn: (payload: Partial<NoteWritePayload>) =>
       queuedRequest<Note>(queryClient, 'note.update', {
@@ -106,7 +104,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const remove = useMutation({
     mutationFn: () => queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'note.delete', {
       path: `/api/notes/${note.id}`, entityId: note.id, requiresPrivate: note.is_private,
-      optimisticEntity: note as never,
+      optimisticEntity: JSON.parse(JSON.stringify(note)) as Json,
     }),
     onSuccess: (receipt) => {
       setDetailsOpen(false)

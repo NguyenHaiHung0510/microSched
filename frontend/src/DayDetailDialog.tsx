@@ -4,7 +4,7 @@ import { Edit3, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { queuedRequest } from '@/lib/queued-mutation'
-import type { OutboxRow } from '@/lib/outbox-db'
+import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { uuidv7 } from '@/lib/uuidv7'
 import {
   formatVietnamTime,
@@ -41,7 +41,6 @@ import {
   type TaskSchedule,
   type TaskWritePayload,
 } from '@/task-ui'
-import { CALENDAR_FAMILY_KEY } from '@/calendar-queries'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 
@@ -102,12 +101,6 @@ export function DayDetailDialog({
   const [eventError, setEventError] = useState<string | null>(null)
   const [deleteEventConfirm, setDeleteEventConfirm] = useState<CalendarEvent | null>(null)
 
-  const refreshCalendar = () =>
-    void queryClient.invalidateQueries({ queryKey: CALENDAR_FAMILY_KEY })
-  const refreshAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ['tasks'] })
-    refreshCalendar()
-  }
 
   const manualSources = useMemo(
     () =>
@@ -180,7 +173,7 @@ export function DayDetailDialog({
       const task = tasks.find((t) => t.id === taskId)
       return queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'task.delete', {
         path: `/api/tasks/${taskId}`, entityId: taskId, requiresPrivate: task?.is_private,
-        optimisticEntity: task as never,
+        optimisticEntity: task ? JSON.parse(JSON.stringify(task)) as Json : undefined,
       })
     },
     onSuccess: (receipt, taskId) => {
