@@ -1,7 +1,7 @@
 import { expect, test as base } from './fixtures/tasks'
 import type { Note } from '../src/note-ui'
 
-const noteId = 'note-checklist-045'
+const noteId = '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4301'
 const longText = 'Kiểm tra tiếng Việt và nội dung nhiều dòng. '.repeat(6) + 'ChuỗiKhôngKhoảngTrắng'.repeat(12)
 const test = base.extend<{ notes: { note: Note; patches: object[]; fail: boolean; hold: Promise<void> | null } }>({
   notes: [async ({ page }, use) => {

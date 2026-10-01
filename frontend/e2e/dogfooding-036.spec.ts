@@ -659,7 +659,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     let parentPatchPromise: Promise<void> | null = null
    let failParentPatch = false
 
-   await page.route('**/api/tasks/task-012/items', async (route) => {
+   await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items', async (route) => {
      if (route.request().method() === 'POST') {
         if (deferChildPost && childPostPromise) {
           await childPostPromise
@@ -689,7 +689,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
       await route.fallback()
     })
 
-   await page.route('**/api/tasks/task-012/items/**', async (route) => {
+   await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112/items/**', async (route) => {
      const method = route.request().method()
      const url = route.request().url()
      const itemId = url.split('/').pop() || 'item-0'
@@ -741,7 +741,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
      await route.fallback()
    })
 
-   await page.route('**/api/tasks/task-012', async (route) => {
+   await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112', async (route) => {
      if (route.request().method() === 'PATCH') {
         if (deferParentPatch && parentPatchPromise) {
           await parentPatchPromise
@@ -760,7 +760,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({
-            id: 'task-012',
+            id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112',
             title: data.title ?? 'Checklist nhiều mục',
             body_md: data.body_md ?? null,
             priority: data.priority ?? null,
@@ -779,8 +779,8 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     })
 
    await page.goto('/')
-   // Open edit dialog for task-012 (which has checklist items in fixture)
-   const taskCard = page.locator('[data-task-id="task-012"]')
+   // Open edit dialog for 2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112 (which has checklist items in fixture)
+   const taskCard = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112"]')
    await expect(taskCard).toBeVisible()
    await taskCard.getByTestId('task-edit').click()
 
@@ -875,7 +875,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
   test('Calendar DayDetailDialog subtask flow: open task from DayDetail, add/edit/tick/delete and state persistence', async ({ page, taskApi }) => {
    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
 
-    const existing13 = taskApi.tasks.find((t) => t.id === 'task-013')
+    const existing13 = taskApi.tasks.find((t) => t.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113')
     if (existing13) {
       existing13.items = [{ id: 'item-cal-init-1', content: 'Checklist sẵn có', is_completed: false, position: 0 }]
     }
@@ -884,7 +884,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
      { id: 'item-cal-init-1', content: 'Checklist sẵn có', is_completed: false, position: 0 },
    ]
 
-   await page.route('**/api/tasks/task-013/items', async (route) => {
+   await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113/items', async (route) => {
      if (route.request().method() === 'POST') {
        const data = route.request().postDataJSON()
        const newItem = {
@@ -905,7 +905,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
      await route.fallback()
    })
 
-   await page.route('**/api/tasks/task-013/items/**', async (route) => {
+   await page.route('**/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113/items/**', async (route) => {
      const method = route.request().method()
      const itemId = route.request().url().split('/').pop() || ''
      if (method === 'PATCH') {
@@ -950,7 +950,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     const dayDialog = page.getByTestId('calendar-day-dialog')
     await expect(dayDialog).toBeVisible()
 
-    // Check if task-013 is in the day dialog tasks section
+    // Check if 2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113 is in the day dialog tasks section
     const dayTask = dayDialog.locator('[data-testid="calendar-day-task"]').first()
     await expect(dayTask).toBeVisible()
     // Click task title to open edit dialog via stable data-testid
@@ -1533,7 +1533,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await page.screenshot({ path: tasksPath })
 
     // 2. Task edit dialog on long task with checklist items
-    const taskCard = page.locator('[data-task-id="task-012"]')
+    const taskCard = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112"]')
     await expect(taskCard).toBeVisible()
     await taskCard.getByTestId('task-edit').click()
     const taskDialog = page.getByTestId('task-detail-dialog')

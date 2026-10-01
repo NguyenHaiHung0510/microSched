@@ -102,7 +102,7 @@ function iso(day: string, hour: number): string {
 
 const calendarSources = [
   {
-    id: 'source-manual',
+    id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
     name: 'Nguồn thủ công',
     kind: 'manual',
     color: 'rose',
@@ -326,7 +326,7 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
             items: [
               {
                 id: 'ev-retry-success',
-                source_id: 'source-manual',
+                source_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
                 title: 'Buổi đã tải sau khi thử lại',
                 starts_at: iso(vnDay(0), 10),
                 ends_at: iso(vnDay(0), 11),
@@ -455,7 +455,7 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
     await setupCalendarRoutes(page, [
       {
         id: 'ev-long-wrap',
-        source_id: 'source-manual',
+        source_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
         title: longTitle,
         starts_at: iso(todayStr, 9),
         ends_at: iso(todayStr, 11),

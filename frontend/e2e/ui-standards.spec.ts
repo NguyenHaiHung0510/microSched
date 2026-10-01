@@ -131,10 +131,10 @@ test('011b: registers this device before saving an existing tracker reminder', a
   await page.getByRole('button', { name: 'Lưu thay đổi' }).click()
 
   await expect.poll(() => subscribeStarted).toBe(true)
-  expect(trackerApi.count('PATCH', '/api/tracker/trackers/tracker-001')).toBe(0)
+  expect(trackerApi.count('PATCH', '/api/tracker/trackers/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4201')).toBe(0)
   releaseSubscribe?.()
   await expect
-    .poll(() => trackerApi.count('PATCH', '/api/tracker/trackers/tracker-001'))
+    .poll(() => trackerApi.count('PATCH', '/api/tracker/trackers/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4201'))
     .toBe(1)
 })
 

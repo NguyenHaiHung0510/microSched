@@ -94,10 +94,10 @@ function task(
 
 /** Required QA data: hostile text, 30+ records, mixed status, and 3 scattered overdue records. */
 export const fixtureTasks: FixtureTask[] = [
-  task('task-001', 'Chuẩn bị kế hoạch tuần', { priority: 'p1', pinned: true }),
+  task('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4101', 'Chuẩn bị kế hoạch tuần', { priority: 'p1', pinned: true }),
   task('task-002', 'Đã xong nhưng vẫn ghim', { status: 'completed', pinned: true }),
   task('task-003', 'Việc bình thường có emoji 🚲', { body_md: 'Ghi chú ngắn.' }),
-  task('task-004', 'Việc trễ hạn thứ nhất', { due_at: past(4) }),
+  task('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4104', 'Việc trễ hạn thứ nhất', { due_at: past(4) }),
   task('task-005', adversarialNoBreak, {
     body_md: 'Ghi chú của một task có tiêu đề không có điểm ngắt.',
     items: [item('item-005', adversarialNoBreak)],
@@ -108,7 +108,7 @@ export const fixtureTasks: FixtureTask[] = [
   task('task-009', 'Task riêng tư', { is_private: true }),
   task('task-010', 'Đã hoàn thành không ghim', { status: 'completed' }),
   task('task-011', 'Việc kế tiếp', { due_at: future(2) }),
-  task('task-012', 'Checklist nhiều mục', {
+  task('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112', 'Checklist nhiều mục', {
     items: [
       item('item-012-1', 'Mục đầu tiên', true),
       item('item-012-2', 'Mục thứ hai'),
@@ -116,7 +116,7 @@ export const fixtureTasks: FixtureTask[] = [
       item('item-012-4', 'Mục thứ tư'),
     ],
   }),
-  task('task-013', 'Học một điều mới', {
+  task('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113', 'Học một điều mới', {
     priority: 'p3',
     due_on: taskDateKey(new Date().toISOString()),
     items: [item('item-013-1', 'Mục lịch ban đầu')],

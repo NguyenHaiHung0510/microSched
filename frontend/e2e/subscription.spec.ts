@@ -78,7 +78,7 @@ function formatDmy(iso: string): string {
 function subscription(overrides: Partial<FixtureSubscription>): FixtureSubscription {
   return {
     id: 'sub-001',
-    tracker_id: 'tracker-002',
+    tracker_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4202',
     name: 'Sub AI',
     amount: 260000,
     list_amount: 300000,
@@ -227,7 +227,7 @@ export const test = trackerTest.extend<{ subscriptionApi: SubscriptionApiState }
           const created = subscription({
             id: payload.id ?? `sub-${Date.now()}`,
             name: payload.name ?? '',
-            tracker_id: payload.tracker_id ?? 'tracker-002',
+            tracker_id: payload.tracker_id ?? '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4202',
             amount: payload.amount ?? null,
             period_unit: payload.period_unit ?? 'month',
             started_on: payload.started_on ?? '',

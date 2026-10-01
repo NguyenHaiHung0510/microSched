@@ -148,15 +148,15 @@ test('clicking card whitespace opens the detail dialog', async ({ page }) => {
 
 test('interactive pin control does not bubble into the detail dialog', async ({ page, taskApi }) => {
   await openTasksScreen(page)
-  const card = page.locator('[data-task-id="task-001"]')
+  const card = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4101"]')
   await card.getByTestId('task-pin').click()
   await expect(page.getByTestId('task-detail-dialog')).toBeHidden()
-  await expect.poll(() => taskApi.count('PATCH', '/api/tasks/task-001')).toBe(1)
+  await expect.poll(() => taskApi.count('PATCH', '/api/tasks/2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4101')).toBe(1)
 })
 
 test('opening from card whitespace returns focus to its title', async ({ page }) => {
   await openTasksScreen(page)
-  const card = page.locator('[data-task-id="task-001"]')
+  const card = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4101"]')
   const title = card.getByTestId('task-title')
   await card.click({ position: { x: 8, y: 8 } })
   await expect(page.getByTestId('task-detail-dialog')).toBeVisible()
@@ -316,7 +316,7 @@ test('last card tooltip is portalled and fully inside the desktop viewport', asy
 test('task-012 tooltip shows three static numbered items and the remaining count', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Radix tooltip is a desktop shortcut')
   await openTasksScreen(page)
-  const title = page.locator('[data-task-id="task-012"]').getByTestId('task-title')
+  const title = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112]').getByTestId('task-title')
   await title.hover()
 
   const tooltip = page.getByRole('tooltip')
