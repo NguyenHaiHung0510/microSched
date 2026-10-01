@@ -55,8 +55,8 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
       contentType: 'application/json',
       body: JSON.stringify({
         email: 'synthetic@example.test',
-        signed_in_at: '2026-09-15T00:00:00Z',
-        expires_at: '2026-09-16T00:00:00Z',
+        signed_in_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 30 * 86400_000).toISOString(),
         private_until: null,
         private_locked_until: null,
         pin_is_set: true,
@@ -224,8 +224,8 @@ test('Mimi side-chat stays available from the Task surface without page overflow
       contentType: 'application/json',
       body: JSON.stringify({
         email: 'synthetic@example.test',
-        signed_in_at: '2026-09-17T00:00:00Z',
-        expires_at: '2026-09-18T00:00:00Z',
+        signed_in_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 30 * 86400_000).toISOString(),
         private_until: null,
         private_locked_until: null,
         pin_is_set: true,

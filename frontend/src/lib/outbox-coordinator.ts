@@ -11,7 +11,7 @@ export function startOutboxCoordinator(client: QueryClient) {
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
   let planning = false
-  const request = async () => {
+  const request = async (refreshWhenEmpty = false) => {
     if (planning) return
     planning = true
     try {
@@ -19,7 +19,7 @@ export function startOutboxCoordinator(client: QueryClient) {
     if (stopped || !navigator.onLine || document.visibilityState === 'hidden') return
     if (!await requestOutboxFlush(client)) return
     const rows = await listOutbox()
-    if (!rows.length) await Promise.all(['tasks', 'notes', 'calendar', 'tracker', 'subscription'].map((family) => client.invalidateQueries({ queryKey: [family] })))
+    if (refreshWhenEmpty && !rows.length) await Promise.all(['tasks', 'notes', 'calendar', 'tracker', 'subscription'].map((family) => client.invalidateQueries({ queryKey: [family] })))
     const candidates = rows.filter((row) => ['pending', 'outcome_unknown'].includes(row.state) &&
       !rows.some((parent) => parent.operation_id === row.dependency_operation_id))
     if (!stopped && candidates.length) {
@@ -28,11 +28,11 @@ export function startOutboxCoordinator(client: QueryClient) {
     }
     } catch { window.dispatchEvent(new Event('microsched:offline-unavailable')) } finally { planning = false }
   }
-  const wake = () => void request()
+  const wake = (event: Event) => void request(['online', 'focus', 'visibilitychange'].includes(event.type))
   const events = ['online', 'focus', 'microsched:outbox-flush-requested', 'microsched:outbox-session-changed']
   for (const event of events) window.addEventListener(event, wake)
   document.addEventListener('visibilitychange', wake)
-  wake()
+  void request()
   return () => {
     stopped = true
     clearTimeout(timer)
