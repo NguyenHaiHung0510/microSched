@@ -13,11 +13,13 @@ import asyncio
 import hashlib
 import json
 import os
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 from app.agent.context import Blocked, TerminalOutcome, ToolRequests
+from app.agent.graph_support import RestoredFrame
 from app.agent.loop import (
     ContextUpdate,
     ExecuteRead,
@@ -69,6 +71,14 @@ def checkpoint_thread_id(run_id: UUID, generation: int) -> str:
     return f"mimi:{run_id}:g{generation}"
 
 
+def _authorized_local_database(parsed_url: Any) -> bool:
+    return (
+        parsed_url.host in {"localhost", "127.0.0.1", "::1"}
+        and parsed_url.port == 55478
+        and parsed_url.database == "microsched_mimi078"
+    )
+
+
 def validate_checkpoint_values(values: Any, expected: GraphState) -> None:
     """Validate version, immutable authority hashes and control-only channels."""
     internal_channels = {
@@ -107,8 +117,10 @@ def validate_checkpoint_values(values: Any, expected: GraphState) -> None:
         or values.get("phase") not in {"model", "read", "terminal"}
     ):
         raise RuntimeError("mimi_langgraph_checkpoint_control_invalid")
-    if values["turn"] > 0 or values["tool_calls"] > 0 or values["step"] > 0:
-        raise RuntimeError("mimi_langgraph_checkpoint_resume_requires_reconcile")
+
+
+RestoreFrame = Callable[[GraphState], Awaitable[RestoredFrame]]
+TerminalCheckpointSafe = Callable[[UUID, int, LoopResult], Awaitable[bool]]
 
 
 async def run_langgraph(
@@ -126,8 +138,16 @@ async def run_langgraph(
     on_stage: StageSink | None = None,
     on_context_update: ContextUpdate | None = None,
     checkpointer_for_test: Any | None = None,
+    restore_frame: RestoreFrame | None = None,
+    terminal_checkpoint_safe: TerminalCheckpointSafe | None = None,
 ) -> LoopResult:
-    """Run actual graph progression with durable Postgres control checkpoints."""
+    """Run graph progression with content restored only from Mimi's durable ledger.
+
+    Existing checkpoints require ``restore_frame`` to verify and reconstruct the
+    encrypted events, provider terminal records, and read results for this run. It
+    must raise ProviderDispatchError(outcome="unknown") if dispatch cannot be proven.
+    A graph cursor alone never establishes replay safety.
+    """
 
     # Optional prototype packages must not affect imports or the default app.
     try:
@@ -147,6 +167,10 @@ async def run_langgraph(
         "outcome": None,
         "stop_code": None,
         "terminal_reason": None,
+        "pending_completion": None,
+        "read_results": {},
+        "read_result_fingerprints": {},
+        "replay_cached_call_ids": set(),
     }
 
     def finish_blocked(
@@ -185,12 +209,15 @@ async def run_langgraph(
                 frame["last_completion"],
             )
             return {"phase": "terminal", "turn": turn - 1, "step": state["step"] + 1}
-        try:
-            async with asyncio.timeout(remaining):
-                completion = await invoke_model(frame["messages"], turn)
-        except TimeoutError as error:
-            # The service's call journal owns reconciliation; do not retry here.
-            raise ProviderDispatchError("unknown", None) from error
+        completion = frame["pending_completion"]
+        frame["pending_completion"] = None
+        if completion is None:
+            try:
+                async with asyncio.timeout(remaining):
+                    completion = await invoke_model(frame["messages"], turn)
+            except TimeoutError as error:
+                # The service's call journal owns reconciliation; do not retry here.
+                raise ProviderDispatchError("unknown", None) from error
         frame["last_completion"] = completion
         frame["completion"] = completion
         frame["outcome"] = completion.outcome
@@ -219,25 +246,39 @@ async def run_langgraph(
             if request.name not in READ_TOOLS:
                 raise RouteContractError("model_requested_non_read_tool_in_loop")
             fingerprint = _fingerprint(request.name, request.arguments)
-            if fingerprint in frame["seen_calls"]:
+            cached = request.call_id in frame["replay_cached_call_ids"]
+            if cached and frame["read_result_fingerprints"].get(request.call_id) != fingerprint:
+                raise RouteContractError("langgraph_cached_read_identity_mismatch")
+            if fingerprint in frame["seen_calls"] and not cached:
                 finish_blocked(
                     "Công cụ đọc lặp lại cùng truy vấn mà không có tiến triển.",
                     "no_progress",
                     completion,
                 )
                 return {"phase": "terminal", "tool_calls": total_calls, "step": state["step"] + 1}
-            frame["seen_calls"].add(fingerprint)
+            if not cached:
+                frame["seen_calls"].add(fingerprint)
             remaining = (limits.deadline - datetime.now(UTC)).total_seconds()
-            try:
-                async with asyncio.timeout(max(0, remaining)):
-                    result = await execute_read(request.name, request.arguments)
-            except TimeoutError:
-                finish_blocked(
-                    "Mimi đã chạm thời hạn lượt chạy; bạn có thể tiếp tục sau.",
-                    "deadline_exceeded",
-                    completion,
-                )
-                return {"phase": "terminal", "tool_calls": total_calls, "step": state["step"] + 1}
+            if cached:
+                result = frame["read_results"][request.call_id]
+                frame["replay_cached_call_ids"].remove(request.call_id)
+            else:
+                try:
+                    async with asyncio.timeout(max(0, remaining)):
+                        result = await execute_read(request.name, request.arguments)
+                except TimeoutError:
+                    finish_blocked(
+                        "Mimi đã chạm thời hạn lượt chạy; bạn có thể tiếp tục sau.",
+                        "deadline_exceeded",
+                        completion,
+                    )
+                    return {
+                        "phase": "terminal",
+                        "tool_calls": total_calls,
+                        "step": state["step"] + 1,
+                    }
+                frame["read_results"][request.call_id] = result
+                frame["read_result_fingerprints"][request.call_id] = fingerprint
             total_calls += 1
             frame["messages"].append(
                 {
@@ -341,37 +382,115 @@ async def run_langgraph(
         "configurable": {"thread_id": thread_id},
         "recursion_limit": limits.max_turns * 2 + 4,
     }
+
+    async def resume_or_start(checkpointer: Any) -> tuple[dict[str, Any], bool]:
+        existing = await checkpointer.aget_tuple(config)
+        runner = graph.compile(checkpointer=checkpointer)
+        if existing is None:
+            return await runner.ainvoke(initial, config=config), False
+        try:
+            saved_state = existing.checkpoint.get("channel_values")
+            validate_checkpoint_values(saved_state, initial)
+        except RuntimeError as error:
+            raise RouteContractError(f"mimi_langgraph_checkpoint_invalid:{error}") from error
+        if restore_frame is None:
+            raise RouteContractError("mimi_langgraph_checkpoint_resume_requires_reconcile")
+        restored = await restore_frame(saved_state)
+        if not isinstance(restored, RestoredFrame):
+            raise RouteContractError("mimi_langgraph_restore_frame_invalid")
+        if (
+            not isinstance(restored.messages, (tuple, list))
+            or any(not isinstance(message, dict) for message in restored.messages)
+            or not isinstance(restored.seen_calls, (set, frozenset, tuple, list))
+            or any(not isinstance(call, str) for call in restored.seen_calls)
+            or not isinstance(restored.read_results, dict)
+            or not isinstance(restored.read_result_fingerprints, dict)
+            or set(restored.read_results) != set(restored.read_result_fingerprints)
+            or any(
+                not isinstance(call_id, str)
+                or not isinstance(fingerprint, str)
+                or len(fingerprint) != 64
+                for call_id, fingerprint in restored.read_result_fingerprints.items()
+            )
+        ):
+            raise RouteContractError("mimi_langgraph_restore_frame_invalid")
+        frame["messages"] = list(restored.messages)
+        frame["seen_calls"] = set(restored.seen_calls)
+        frame["last_completion"] = restored.last_completion
+        frame["pending_completion"] = restored.pending_completion
+        frame["read_results"] = dict(restored.read_results)
+        frame["read_result_fingerprints"] = dict(restored.read_result_fingerprints)
+        phase = saved_state["phase"]
+        if phase == "read":
+            frame["replay_cached_call_ids"] = set(restored.read_results)
+            frame["pending_completion"] = None
+            completion = restored.last_completion or restored.pending_completion
+            if completion is None or not isinstance(completion.outcome, ToolRequests):
+                raise RouteContractError("mimi_langgraph_restore_read_frame_incomplete")
+            frame["completion"] = completion
+            frame["outcome"] = completion.outcome
+        elif phase == "terminal":
+            if restored.terminal_result is None:
+                raise RouteContractError("mimi_langgraph_restore_terminal_frame_incomplete")
+            if (
+                restored.terminal_result.turns != saved_state["turn"]
+                or restored.terminal_result.tool_calls != saved_state["tool_calls"]
+            ):
+                raise RouteContractError("mimi_langgraph_restore_terminal_control_mismatch")
+            frame["completion"] = restored.terminal_result.completion
+            frame["outcome"] = restored.terminal_result.outcome
+            frame["stop_code"] = restored.terminal_result.stop_code
+        elif phase == "model" and restored.pending_completion is not None:
+            frame["last_completion"] = restored.pending_completion
+        elif phase == "model" and not restored.dispatch_not_started:
+            # Without a terminal result or explicit app-journal proof that no
+            # dispatch began, invoking the provider could duplicate an unknown call.
+            raise ProviderDispatchError("unknown", None)
+        final_state = (
+            saved_state
+            if phase == "terminal"
+            else await runner.ainvoke(None, config=config)
+        )
+        if phase == "terminal":
+            frame["terminal_result"] = restored.terminal_result
+        return final_state, True
+
+    async def remove_own_terminal_thread(checkpointer: Any, result: LoopResult) -> None:
+        if terminal_checkpoint_safe is not None and await terminal_checkpoint_safe(
+            run_id, generation, result
+        ):
+            # The app's encrypted terminal ledger is canonical; release only this
+            # run/generation's graph cursor after that ledger confirms durability.
+            await checkpointer.adelete_thread(thread_id)
+
     if checkpointer_for_test is not None:
         # Parity tests may use an in-memory saver, but the application seam has
         # no such argument and always takes the durable PostgreSQL path below.
-        runner = graph.compile(checkpointer=checkpointer_for_test)
-        existing = await checkpointer_for_test.aget_tuple(config)
-        if existing is not None:
-            try:
-                validate_checkpoint_values(existing.checkpoint.get("channel_values"), initial)
-            except RuntimeError as error:
-                raise RouteContractError(f"mimi_langgraph_checkpoint_invalid:{error}") from error
-            raise RouteContractError("mimi_langgraph_checkpoint_resume_requires_reconcile")
-        final_state = await runner.ainvoke(initial, config=config)
+        final_state, resumed = await resume_or_start(checkpointer_for_test)
+        if resumed and frame.get("terminal_result") is not None:
+            result = frame["terminal_result"]
+            await remove_own_terminal_thread(checkpointer_for_test, result)
+            return result
+        result = _loop_result(frame, final_state)
+        await remove_own_terminal_thread(checkpointer_for_test, result)
+        return result
     else:
         parsed_url = make_url(database_url)
-        if parsed_url.host not in {"localhost", "127.0.0.1", "::1"} or not (
-            parsed_url.database or ""
-        ).startswith("microsched_p1ca"):
-            raise RouteContractError("mimi_langgraph_requires_local_p1ca_database")
+        if not _authorized_local_database(parsed_url):
+            raise RouteContractError("mimi_langgraph_requires_local_mimi078_database")
         psycopg_url = parsed_url.set(drivername="postgresql").render_as_string(hide_password=False)
         async with AsyncPostgresSaver.from_conn_string(psycopg_url) as checkpointer:
-            runner = graph.compile(checkpointer=checkpointer)
-            existing = await checkpointer.aget_tuple(config)
-            if existing is not None:
-                try:
-                    validate_checkpoint_values(existing.checkpoint.get("channel_values"), initial)
-                except RuntimeError as error:
-                    raise RouteContractError(
-                        f"mimi_langgraph_checkpoint_invalid:{error}"
-                    ) from error
-                raise RouteContractError("mimi_langgraph_checkpoint_resume_requires_reconcile")
-            final_state = await runner.ainvoke(initial, config=config)
+            final_state, resumed = await resume_or_start(checkpointer)
+            if resumed and frame.get("terminal_result") is not None:
+                result = frame["terminal_result"]
+                await remove_own_terminal_thread(checkpointer, result)
+                return result
+            result = _loop_result(frame, final_state)
+            await remove_own_terminal_thread(checkpointer, result)
+            return result
+
+
+def _loop_result(frame: dict[str, Any], final_state: dict[str, Any]) -> LoopResult:
     outcome: TerminalOutcome = frame["outcome"]
     return LoopResult(
         outcome=outcome,

@@ -34,8 +34,8 @@ def app_database_url(monkeypatch):
     url = make_url(value)
     if (
         url.host not in {"127.0.0.1", "localhost", "::1"}
-        or url.port != 55466
-        or url.database != "microsched_p1ca_066"
+        or url.port != 55478
+        or url.database != "microsched_mimi078"
         or url.username != "microsched_app"
     ):
         pytest.fail("refusing LangGraph persistence proof outside the authorized local QA database")

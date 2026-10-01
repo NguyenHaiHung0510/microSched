@@ -1,6 +1,8 @@
 """Synthetic parity/fault contracts for the real LangGraph progression."""
 
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -19,7 +21,9 @@ from app.agent.context import (
     ToolRequest,
     ToolRequests,
 )
+from app.agent.graph_support import RestoredFrame
 from app.agent.langgraph_runner import (
+    _authorized_local_database,
     checkpoint_thread_id,
     run_langgraph,
     validate_checkpoint_values,
@@ -63,6 +67,8 @@ async def _run_graph(
     on_context_update=None,
     saver=None,
     run_id=None,
+    restore_frame=None,
+    terminal_checkpoint_safe=None,
 ):
     calls = []
 
@@ -88,6 +94,8 @@ async def _run_graph(
         database_url="",
         on_context_update=on_context_update,
         checkpointer_for_test=saver,
+        restore_frame=restore_frame,
+        terminal_checkpoint_safe=terminal_checkpoint_safe,
     )
     snapshots = list(saver.list({"configurable": {"thread_id": checkpoint_thread_id(run_id, 1)}}))
     return result, calls, snapshots
@@ -381,6 +389,343 @@ def test_existing_checkpoint_blocks_dispatch_before_resume() -> None:
         assert dispatches == 1
 
     _run(scenario())
+
+
+def test_restart_after_read_reuses_journaled_result_without_second_read() -> None:
+    class SimulatedProcessLoss(Exception):
+        pass
+
+    async def scenario():
+        saver = InMemorySaver()
+        run_id = uuid4()
+        request = ToolRequests(
+            requests=(
+                ToolRequest(call_id="cached-call", name="task.query.v1", arguments={"page": 1}),
+            )
+        )
+        completion = _completion(request)
+        initial_messages = [{"role": "user", "content": "synthetic question"}]
+        provider_calls = 0
+        read_calls = 0
+        cached = {"count": 7, "coverage": "complete"}
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {"name": "task.query.v1", "arguments": {"page": 1}},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+        async def first_invoke(messages, turn):
+            nonlocal provider_calls
+            provider_calls += 1
+            return completion
+
+        async def first_read(name, arguments):
+            nonlocal read_calls
+            read_calls += 1
+            return cached
+
+        async def interrupt_after_read(*args):
+            raise SimulatedProcessLoss()
+
+        with pytest.raises(SimulatedProcessLoss):
+            await run_langgraph(
+                initial_messages,
+                limits=_limits(),
+                invoke_model=first_invoke,
+                execute_read=first_read,
+                run_id=run_id,
+                generation=1,
+                policy_sha256="a" * 64,
+                tool_registry_sha256="b" * 64,
+                output_schema_sha256="c" * 64,
+                database_url="",
+                on_context_update=interrupt_after_read,
+                checkpointer_for_test=saver,
+            )
+        assert read_calls == 1
+        config = {"configurable": {"thread_id": checkpoint_thread_id(run_id, 1)}}
+        saved = await saver.aget_tuple(config)
+        assert saved.checkpoint["channel_values"]["phase"] == "read"
+
+        async def restore(saved_state):
+            assert saved_state["phase"] == "read"
+            return RestoredFrame(
+                messages=tuple(initial_messages),
+                last_completion=completion,
+                seen_calls=frozenset({fingerprint}),
+                read_results={"cached-call": cached},
+                read_result_fingerprints={"cached-call": fingerprint},
+            )
+
+        async def restarted_invoke(messages, turn):
+            nonlocal provider_calls
+            provider_calls += 1
+            assert turn == 2
+            assert "count" in messages[-1]["content"]
+            return _completion(AssistantText(text="Đã tìm thấy 7 việc."))
+
+        async def must_not_read(name, arguments):
+            pytest.fail("restart must reuse the durable cached tool result")
+
+        result = await run_langgraph(
+            initial_messages,
+            limits=_limits(),
+            invoke_model=restarted_invoke,
+            execute_read=must_not_read,
+            run_id=run_id,
+            generation=1,
+            policy_sha256="a" * 64,
+            tool_registry_sha256="b" * 64,
+            output_schema_sha256="c" * 64,
+            database_url="",
+            checkpointer_for_test=saver,
+            restore_frame=restore,
+        )
+        assert result.outcome == AssistantText(text="Đã tìm thấy 7 việc.")
+        assert result.tool_calls == 1
+        assert read_calls == 1
+        assert provider_calls == 2
+
+    _run(scenario())
+
+
+def test_restart_after_provider_terminal_uses_journal_without_redispatch() -> None:
+    class SimulatedProcessLoss(Exception):
+        pass
+
+    async def scenario():
+        saver = InMemorySaver()
+        run_id = uuid4()
+        terminal = _completion(AssistantText(text="terminal from app journal"))
+        journal = {}
+        dispatches = 0
+
+        async def interrupted_provider(messages, turn):
+            nonlocal dispatches
+            dispatches += 1
+            journal["provider_terminal"] = terminal
+            raise SimulatedProcessLoss()
+
+        with pytest.raises(SimulatedProcessLoss):
+            await run_langgraph(
+                [{"role": "user", "content": "synthetic"}],
+                limits=_limits(),
+                invoke_model=interrupted_provider,
+                execute_read=_read_value,
+                run_id=run_id,
+                generation=4,
+                policy_sha256="a" * 64,
+                tool_registry_sha256="b" * 64,
+                output_schema_sha256="c" * 64,
+                database_url="",
+                checkpointer_for_test=saver,
+            )
+        saved = await saver.aget_tuple(
+            {"configurable": {"thread_id": checkpoint_thread_id(run_id, 4)}}
+        )
+        assert saved.checkpoint["channel_values"]["phase"] == "model"
+
+        async def restore(saved_state):
+            assert saved_state["turn"] == 0
+            return RestoredFrame(
+                messages=({"role": "user", "content": "synthetic"},),
+                pending_completion=journal["provider_terminal"],
+            )
+
+        async def restore_unknown(saved_state):
+            return RestoredFrame(messages=({"role": "user", "content": "synthetic"},))
+
+        with pytest.raises(ProviderDispatchError) as raised:
+            await run_langgraph(
+                [{"role": "user", "content": "synthetic"}],
+                limits=_limits(),
+                invoke_model=lambda messages, turn: pytest.fail("unknown dispatch cannot retry"),
+                execute_read=_read_value,
+                run_id=run_id,
+                generation=4,
+                policy_sha256="a" * 64,
+                tool_registry_sha256="b" * 64,
+                output_schema_sha256="c" * 64,
+                database_url="",
+                checkpointer_for_test=saver,
+                restore_frame=restore_unknown,
+            )
+        assert raised.value.outcome == "unknown"
+        assert dispatches == 1
+
+        async def must_not_dispatch(messages, turn):
+            nonlocal dispatches
+            dispatches += 1
+            pytest.fail("provider terminal in the app journal must be replayed")
+
+        result = await run_langgraph(
+            [{"role": "user", "content": "synthetic"}],
+            limits=_limits(),
+            invoke_model=must_not_dispatch,
+            execute_read=_read_value,
+            run_id=run_id,
+            generation=4,
+            policy_sha256="a" * 64,
+            tool_registry_sha256="b" * 64,
+            output_schema_sha256="c" * 64,
+            database_url="",
+            checkpointer_for_test=saver,
+            restore_frame=restore,
+        )
+        assert result.outcome == terminal.outcome
+        assert dispatches == 1
+
+    _run(scenario())
+
+
+def test_restart_requires_frozen_policy_and_schema_identity() -> None:
+    async def scenario():
+        saver = InMemorySaver()
+        run_id = uuid4()
+        calls = 0
+
+        async def invoke(messages, turn):
+            nonlocal calls
+            calls += 1
+            return _completion(AssistantText(text="durable result"))
+
+        args = dict(
+            limits=_limits(),
+            invoke_model=invoke,
+            execute_read=_read_value,
+            run_id=run_id,
+            generation=1,
+            policy_sha256="a" * 64,
+            tool_registry_sha256="b" * 64,
+            output_schema_sha256="c" * 64,
+            database_url="",
+            checkpointer_for_test=saver,
+        )
+        await run_langgraph([], **args)
+        restore_calls = 0
+
+        async def restore(saved_state):
+            nonlocal restore_calls
+            restore_calls += 1
+            return RestoredFrame(messages=())
+
+        for identity in ("policy_sha256", "tool_registry_sha256", "output_schema_sha256"):
+            changed = dict(args)
+            changed[identity] = "d" * 64
+            with pytest.raises(RouteContractError, match="checkpoint_identity_mismatch"):
+                await run_langgraph([], **(changed | {"restore_frame": restore}))
+        assert calls == 1
+        assert restore_calls == 0
+
+    _run(scenario())
+
+
+def test_terminal_cleanup_deletes_only_own_graph_thread_after_durable_result() -> None:
+    async def scenario():
+        saver = InMemorySaver()
+        retained_run = uuid4()
+        terminal_run = uuid4()
+
+        async def invoke(messages, turn):
+            return _completion(AssistantText(text="synthetic terminal"))
+
+        common = dict(
+            limits=_limits(),
+            invoke_model=invoke,
+            execute_read=_read_value,
+            generation=2,
+            policy_sha256="a" * 64,
+            tool_registry_sha256="b" * 64,
+            output_schema_sha256="c" * 64,
+            database_url="",
+            checkpointer_for_test=saver,
+        )
+        await run_langgraph([], run_id=retained_run, **common)
+        durable_results = []
+
+        async def durable_terminal(run_id, generation, result):
+            durable_results.append((run_id, generation, result))
+            return True
+
+        await run_langgraph(
+            [],
+            run_id=terminal_run,
+            terminal_checkpoint_safe=durable_terminal,
+            **common,
+        )
+        assert durable_results[0][0:2] == (terminal_run, 2)
+        assert await saver.aget_tuple(
+            {"configurable": {"thread_id": checkpoint_thread_id(terminal_run, 2)}}
+        ) is None
+        assert await saver.aget_tuple(
+            {"configurable": {"thread_id": checkpoint_thread_id(retained_run, 2)}}
+        ) is not None
+
+    _run(scenario())
+
+
+def test_restored_terminal_returns_app_result_and_releases_only_own_thread() -> None:
+    async def scenario():
+        saver = InMemorySaver()
+        run_id = uuid4()
+
+        async def invoke(messages, turn):
+            return _completion(AssistantText(text="terminal answer"))
+
+        async def must_not_dispatch(messages, turn):
+            pytest.fail("terminal app result must be returned without model dispatch")
+
+        args = dict(
+            limits=_limits(),
+            execute_read=_read_value,
+            run_id=run_id,
+            generation=5,
+            policy_sha256="a" * 64,
+            tool_registry_sha256="b" * 64,
+            output_schema_sha256="c" * 64,
+            database_url="",
+            checkpointer_for_test=saver,
+        )
+        first = await run_langgraph([], invoke_model=invoke, **args)
+        terminal_thread = checkpoint_thread_id(run_id, 5)
+        saved = await saver.aget_tuple({"configurable": {"thread_id": terminal_thread}})
+        assert saved.checkpoint["channel_values"]["phase"] == "terminal"
+
+        async def restore(saved_state):
+            assert saved_state["phase"] == "terminal"
+            return RestoredFrame(messages=(), terminal_result=first)
+
+        async def durable_terminal(restored_run_id, generation, result):
+            assert (restored_run_id, generation, result) == (run_id, 5, first)
+            return True
+
+        restarted = await run_langgraph(
+            [],
+            invoke_model=must_not_dispatch,
+            restore_frame=restore,
+            terminal_checkpoint_safe=durable_terminal,
+            **args,
+        )
+        assert restarted == first
+        assert await saver.aget_tuple({"configurable": {"thread_id": terminal_thread}}) is None
+
+    _run(scenario())
+
+
+def test_langgraph_database_allowlist_is_exact_local_mimi078() -> None:
+    from sqlalchemy.engine import make_url
+
+    assert _authorized_local_database(make_url("postgresql://u:p@localhost:55478/microsched_mimi078"))
+    for url in (
+        "postgresql://u:p@localhost:55478/microsched_p1ca_066",
+        "postgresql://u:p@localhost:55479/microsched_mimi078",
+        "postgresql://u:p@example.invalid:55478/microsched_mimi078",
+        "postgresql://u:p@localhost:55478/microsched_mimi078_other",
+    ):
+        assert not _authorized_local_database(make_url(url))
 
 
 def test_local_qa_selector_loop_factory_is_scoped_and_operational():
