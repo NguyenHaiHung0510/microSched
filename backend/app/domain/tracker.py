@@ -766,17 +766,13 @@ class TrackerStore:
                 )
             ).scalar_one_or_none()
             if inserted_id is None:
-                group = await db.scalar(
-                    select(TrackerGroup).where(TrackerGroup.id == payload.id)
-                )
+                group = await db.scalar(select(TrackerGroup).where(TrackerGroup.id == payload.id))
                 if group is None:
                     raise RuntimeError("conflicting tracker group disappeared")
                 result = self._group_read(group)
                 result.created = False
                 return result
-            group = await db.scalar(
-                select(TrackerGroup).where(TrackerGroup.id == inserted_id)
-            )
+            group = await db.scalar(select(TrackerGroup).where(TrackerGroup.id == inserted_id))
             if group is None:
                 raise RuntimeError("created tracker group disappeared")
         result = self._group_read(group)

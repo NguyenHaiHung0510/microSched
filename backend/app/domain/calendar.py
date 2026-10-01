@@ -370,9 +370,7 @@ class CalendarStore:
                 result = await self._source_read(db, existing)
                 result.created = False
                 return result
-            source = await db.scalar(
-                select(CalendarSource).where(CalendarSource.id == inserted_id)
-            )
+            source = await db.scalar(select(CalendarSource).where(CalendarSource.id == inserted_id))
             if source is None:
                 raise RuntimeError("created calendar source disappeared")
         result = await self._source_read(db, source)

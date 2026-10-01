@@ -392,9 +392,7 @@ def test_tracker_create_replays_same_uuidv7_before_name_conflict(pg_dsn: str) ->
         finally:
             conn = await asyncpg.connect(pg_dsn)
             try:
-                await conn.execute(
-                    "DELETE FROM microsched.tracker WHERE id = ANY($1)", tracker_ids
-                )
+                await conn.execute("DELETE FROM microsched.tracker WHERE id = ANY($1)", tracker_ids)
             finally:
                 await conn.close()
                 await engine.dispose()
