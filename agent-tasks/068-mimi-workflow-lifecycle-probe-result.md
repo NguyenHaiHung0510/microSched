@@ -1,6 +1,6 @@
 # 068 — Mimi workflow lifecycle probe: báo cáo T1
 
-Ngày: 2026-10-01, Asia/Saigon. Trạng thái: **QA_COMPLETE — chờ terminal delta review**.
+Ngày: 2026-10-01, Asia/Saigon. Trạng thái: **COMPLETE — T1 accepted local probe**. Acceptance bao gồm workflow/authority/recovery và báo cáo trong phạm vi synthetic; các lớp UI/production/long-duration bên dưới chưa được nghiệm thu.
 Baseline đo cohort: `ed7c1a1592b2f385f1ddf7a9431544fbc90c15d1`.
 Source sau sửa retention: `4733105512b55c4c76880d664dbda26dce23c13e`.
 Phạm vi, quyền và giới hạn: [task contract](068-mimi-workflow-lifecycle-probe.md).
@@ -31,7 +31,7 @@ Giới hạn mỗi engine: 8 active và 16 terminal retained; `reconcile`/`repre
 | Intended-violation proofs | Owner, local DB guard, preview nonce/group binding, persisted confirmation, CAS, active quota, validation/error privacy và record-storage budget có RED → restored GREEN receipts. |
 | Process matrix frozen 98249f5 | 10 scenario families PASS, hai partial do harness assertions. Có actual OS kill tại hai pause, dispatch/terminal/materialization; v1→v2/policy/expiry/freshness cases. Các PASS này không tự động trở thành toàn bộ final-head acceptance. |
 | Baseline matrix/cohort | Hoàn tất 40 run/engine, cân bằng 20 task + 20 note, 2 dispatch/1 receipt mỗi run; actual OS-kill trước/sau commit PASS trên cả hai engine. T1 kiểm lại 80 raw receipts, digest, versions và DB thật. |
-| Independent review | Gemini/high: PASS_SOURCE trên baseline; Luna/high: một P2 terminal cap. T1 tái hiện và sửa ranh giới commit liên quan; focused Gemini/high delta review đã lên đúng 05:00, chưa có verdict tại lúc biên tập. |
+| Independent review | Gemini/high: PASS_SOURCE trên baseline; Luna/high: một P2 terminal cap. T1 tái hiện và sửa ranh giới commit liên quan; focused Gemini/high delta review hoàn tất PASS_DELTA trên source4733105, không có finding còn mở trong scope. |
 | Upgrade | Schema v1→v2 giữ confirmation; đổi policy/contract chặn authority. LangGraph 1.2.11→1.2.12 cũng PASS qua direction/task và confirmation/note, giữ digest/receipt, không redispatch; các dependency khác giữ nguyên. |
 | UI/dogfood | CLI-only cho 068. Browser QA của 066 không chứng minh browser UX của 068; physical device và Owner taste NOT_RUN. |
 | Years / maintenance | Không có soak nhiều tháng/năm, blinded diagnosis exercise hay historical maintenance cost. Không suy ra maintenance-free từ 80 runs. |
@@ -59,7 +59,24 @@ Control scheduler span 20 dòng, graph 76 dòng cộng reference validation 13 d
 
 Luna mô tả `create` lúc có 16 terminal như thêm terminal thứ 17; phần trigger đó không chính xác vì create thêm `query`/active. Tuy nhiên, T1 dựng đúng ranh giới liên quan: 16 terminal + một workflow được xác nhận, crash ngay sau execute commit trước CLI cleanup. Hai engine đều RED với 17 terminal rows.
 
-Source 4733105 đưa finite pruning vào transaction đổi phase terminal, cùng domain mutation/receipt; execute lấy advisory lock trước run row theo cùng thứ tự admission/cleanup. Frame đang hoàn tất luôn được giữ, kể cả timestamp tie; pending confirmation/reconcile không bị prune. Explicit expiry batch prune trước khi transaction commit. Hai test kiểm rollback giữ đủ 16 fixtures/no receipt và after-commit giữ 16 terminal/1 receipt/pending digest, không cần gọi cleanup ngoài. Full focused 45 PASS; source delta review phải chốt trước acceptance cuối.
+Source 4733105 đưa finite pruning vào transaction đổi phase terminal, cùng domain mutation/receipt; execute lấy advisory lock trước run row theo cùng thứ tự admission/cleanup. Frame đang hoàn tất luôn được giữ, kể cả timestamp tie; pending confirmation/reconcile không bị prune. Explicit expiry batch prune trước khi transaction commit. Hai test kiểm rollback giữ đủ 16 fixtures/no receipt và after-commit giữ 16 terminal/1 receipt/pending digest, không cần gọi cleanup ngoài. Full focused 45 PASS; Gemini/high delta PASS. T1 chấp nhận closure dựa trên source, RED/GREEN và final diff; cách review diễn đạt “loại trừ hoàn toàn deadlock” vượt bằng chứng static, nên không promote thành cam kết concurrency/production.
+
+## Chạy thử CLI trên môi trường synthetic hiện có
+
+Chạy trong `backend` của worktree 068, với Python environment đã cài nhóm optional `prototype`. Nhập URL cho disposable local database `microsched_p1ca_068` trên loopback port 55466, app role `microsched_app`, theo cấu hình synthetic đã chuẩn bị. Không dùng URL production hoặc provider key. CLI dùng cipher tổng hợp, không nạp key provider hoặc `.env`.
+
+```powershell
+$env:MIMI_WORKFLOW_PROBE_APP_URL=Read-Host 'Local synthetic probe database URL'
+$probeRun068=[guid]::NewGuid().ToString()
+python -m scripts.mimi_workflow_probe create --run-id $probeRun068 --engine graph --domain task
+python -m scripts.mimi_workflow_probe run --run-id $probeRun068
+$probePreview068=python -m scripts.mimi_workflow_probe run --run-id $probeRun068 --direction apply_prefix | ConvertFrom-Json
+$probePreview068.preview
+python -m scripts.mimi_workflow_probe run --run-id $probeRun068 --confirm $probePreview068.preview_digest
+python -m scripts.mimi_workflow_probe status --run-id $probeRun068
+```
+
+Đổi `graph` thành `control`, `task` thành `note` để thử cùng interface. Mỗi lệnh là process mới; hai điểm pause có thể chờ trước khi tiếp tục. Chỉ confirm sau khi xem preview. Không chạy lại cohort hoàn tất: private `final-qa/reproduce.ps1` có terminal guard và receipts của 80 runs đã giữ. Ví dụ này tái tạo một CLI journey, không mở UI hoặc bật runner mặc định.
 
 ## Chạy provider thật trong ngân sách được duyệt
 

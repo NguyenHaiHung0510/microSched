@@ -1,6 +1,6 @@
 # 068 — Mimi workflow lifecycle probe
 
-Status: QA_COMPLETE_REVIEW_DELTA_PENDING; 45 focused tests PASS after atomic terminal-pruning fix. Baseline ed7c1a1: actual OS-kill matrix and 40 completed/engine cohort PASS, independently read back by T1. Source4733105 closes the post-commit retention gap with RED/GREEN rollback/receipt/pending proof; final source delta review pending. Browser UX/CI/full suite/adoption NOT_RUN. See 068-mimi-workflow-lifecycle-probe-result.md.
+Status: COMPLETE_LOCAL_PROBE_ACCEPTED — T1 2026-10-01. 45 focused tests PASS after atomic terminal-pruning fix. Baseline ed7c1a1: actual OS-kill matrix and 40 completed/engine cohort PASS, independently read back by T1. Source4733105 closes the post-commit retention gap with RED/GREEN rollback/receipt/pending proof; Gemini/high delta PASS closes the reconciled finding. Browser UX/CI/full suite/adoption NOT_RUN. See 068-mimi-workflow-lifecycle-probe-result.md.
 Authority: Owner approved second probe with “duyệt, tiếp tục” on 2026-09-30; subsequently authorized this same chat to continue overnight via scheduled wake-ups until completion. T1 owns integration and acceptance; architecture adoption remains an Owner decision.
 Baseline: 066 closeout 378e77fa97eb707119b1676a7dfe138b438a3793; isolated branch feat/068-mimi-workflow-lifecycle-probe.
 
