@@ -28,7 +28,7 @@ const labels = {
   paused: 'Tạm dừng cập nhật',
 }
 
-export function LiveStatus({ tab }: { tab: 'tasks' | 'notes' | 'tracker' }) {
+export function LiveStatus({ tab, offline = false }: { tab: 'tasks' | 'notes' | 'tracker'; offline?: boolean }) {
   const cache = useQueryClient().getQueryCache()
   const subscribe = useCallback((notify: () => void) => cache.subscribe(notify), [cache])
   const snapshot = useCallback(() => JSON.stringify(cache.getAll()
@@ -54,7 +54,7 @@ export function LiveStatus({ tab }: { tab: 'tasks' | 'notes' | 'tracker' }) {
       ? window.setTimeout(() => setNow(Date.now()), deadline - Date.now() + 1) : undefined
     return () => { window.clearTimeout(timer); window.clearTimeout(expiry) }
   }, [serialized, visible])
-  const state = freshnessState(JSON.parse(serialized) as FreshQuery[], now, online, visible)
+  const state = freshnessState(JSON.parse(serialized) as FreshQuery[], now, online && !offline, visible)
   return (
     <span data-testid="app-live-status" data-state={state} role="status"
       className={cn('inline-flex max-w-full items-center gap-1.5 text-xs font-semibold', state === 'live' ? 'text-ok' : state === 'error' ? 'text-bad' : 'text-muted-foreground')}>

@@ -142,7 +142,7 @@ function SignedIn({ session, offline }: { session: SessionResponse; offline: boo
           </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
           {currentTab !== 'calendar' && currentTab !== 'mimi' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
-            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} /></div>
+            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} offline={offline || Boolean(session.offline_bootstrap)} /></div>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
