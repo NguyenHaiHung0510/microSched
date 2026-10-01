@@ -17,6 +17,7 @@ export type MimiRun = {
   provider_outcome: 'succeeded' | 'failed' | 'unknown' | null
   deadline: string
   error_code: string | null
+  resumable?: boolean
   created_at: string
   completed_at: string | null
 }
@@ -113,6 +114,36 @@ export type MimiCapabilities = {
   output_reserve: number
   policy_id: string | null
   policy_sha256: string | null
+  model_profiles?: MimiModelProfile[]
+  conversation_planning_mode?: 'prose' | string
+  runner?: 'langgraph' | 'current' | string
+}
+
+export type MimiModelProfile = {
+  id: string
+  label: string
+  model: string
+  provider: string
+  quantization: string
+  supported_efforts: string[]
+  context_limit: number
+  output_reserve: number
+  available: boolean
+  unavailable_reason: string | null
+}
+
+export type MimiRouteConfig = {
+  profile_id: string
+  effort: string
+  input_tokens: number
+}
+
+export type MimiConversationConfiguration = {
+  config: MimiRouteConfig
+  version: number
+  applies_to: 'next_run'
+  active_run_id: string | null
+  profiles: MimiModelProfile[]
 }
 
 export type MimiConversation = {
@@ -157,6 +188,27 @@ const MIMI_WRITE_HEADERS = { 'X-Mimi-CSRF': '1' }
 
 export function fetchMimiCapabilities(): Promise<MimiCapabilities> {
   return apiRequest('/api/mimi/capabilities')
+}
+
+export function fetchMimiConfiguration(conversationId: string): Promise<MimiConversationConfiguration> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/configuration`)
+}
+
+export function saveMimiConfiguration(
+  conversationId: string,
+  config: MimiRouteConfig,
+  expectedVersion: number,
+): Promise<MimiConversationConfiguration> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/configuration`, {
+    method: 'PUT',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({
+      expected_version: expectedVersion,
+      profile_id: config.profile_id,
+      effort: config.effort,
+      input_tokens: config.input_tokens,
+    }),
+  })
 }
 
 export function decideMimiDraftDirection(
@@ -333,6 +385,20 @@ export async function observeMimiRun(
 
 export function cancelMimiRun(runId: string): Promise<{ run_id: string; state: string }> {
   return apiRequest(`/api/mimi/runs/${runId}/cancel`, {
+    method: 'POST',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({}),
+  })
+}
+
+export type MimiPauseAcknowledgment = {
+  run_id: string
+  state: string
+  pause_requested: true
+}
+
+export function pauseMimiRun(runId: string): Promise<MimiPauseAcknowledgment> {
+  return apiRequest(`/api/mimi/runs/${runId}/pause`, {
     method: 'POST',
     headers: MIMI_WRITE_HEADERS,
     body: JSON.stringify({}),

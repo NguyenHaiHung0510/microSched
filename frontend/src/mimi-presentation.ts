@@ -11,6 +11,8 @@ const runLabels: Record<string, string> = {
   halted: 'Đã dừng',
   cancelled: 'Đã huỷ',
   retryable: 'Có thể thử lại',
+  owner_paused: 'Đã tạm dừng theo yêu cầu',
+  paused: 'Đã tạm dừng',
   outcome_unknown: 'Đang đối soát kết quả',
   deadline_exceeded: 'Hết thời gian run',
   budget_exceeded: 'Chạm giới hạn context',
@@ -85,11 +87,24 @@ export function mimiTerminalRunStage(state: string, providerOutcome: string | nu
     cancelled: 'Đã huỷ run',
     halted: 'Run đã dừng',
     retryable: 'Run có thể tiếp tục',
+    owner_paused: 'Run đã tạm dừng theo yêu cầu',
+    paused: 'Run đã tạm dừng',
     outcome_unknown: 'Kết quả chưa xác định · cần đối soát',
     deadline_exceeded: 'Run đã hết thời gian',
     budget_exceeded: 'Run đã chạm giới hạn',
   }
   return terminalLabels[state] ?? mimiRunLabel(state)
+}
+
+const LEGACY_RESUMABLE_RUN_STATES = ['retryable', 'deadline_exceeded', 'outcome_unknown']
+
+export function mimiRunIsResumable(run: {
+  state: string
+  provider_outcome: string | null
+  resumable?: boolean
+}): boolean {
+  if (typeof run.resumable === 'boolean') return run.resumable
+  return LEGACY_RESUMABLE_RUN_STATES.includes(run.state) && run.provider_outcome !== 'unknown'
 }
 
 export function resolveCancelAcknowledgment(
