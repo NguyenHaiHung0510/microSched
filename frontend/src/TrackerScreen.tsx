@@ -736,7 +736,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                               <p className="max-w-full break-words text-sm font-semibold">
                                 {tracker.name}
                               </p>
-                              <OutboxEntityStatus entityId={tracker.id} privateUnlocked={privateUnlocked} />
+                              <OutboxEntityStatus entityId={tracker.id} />
                               {tracker.is_private ? <PrivateMarker /> : null}
                               <p className="text-xs text-muted-foreground">
                                 {tracker.input_mode === 'event'
@@ -836,7 +836,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                           <p className="max-w-full break-words text-sm font-semibold">
                             {tracker.name}
                           </p>
-                          <OutboxEntityStatus entityId={tracker.id} privateUnlocked={privateUnlocked} />
+                          <OutboxEntityStatus entityId={tracker.id} />
                           {tracker.is_private ? <PrivateMarker /> : null}
                           <p className="text-xs text-muted-foreground">
                             {tracker.input_mode === 'event'

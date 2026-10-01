@@ -8,8 +8,8 @@ import { listOutbox, outboxDatabase, type OutboxRow } from '@/lib/outbox-db'
 export function isAffectedQueryKey(affected: unknown, queryKey: QueryKey): boolean {
   if (!Array.isArray(affected) || !Array.isArray(queryKey)) return false
   if (queryKey.length === 0) return true
-  return affected.length <= queryKey.length &&
-    affected.every((part, index) => JSON.stringify(part) === JSON.stringify(queryKey[index]))
+  const sharedLength = Math.min(affected.length, queryKey.length)
+  return affected.slice(0, sharedLength).every((part, index) => JSON.stringify(part) === JSON.stringify(queryKey[index]))
 }
 
 function isUnknownOrMalformed(row: OutboxRow): boolean {

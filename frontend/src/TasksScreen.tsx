@@ -939,7 +939,7 @@ const TaskCard = memo(function TaskCard({
                   </TooltipContent>
               ) : null}
               </Tooltip>
-              <OutboxEntityStatus entityId={task.id} privateUnlocked={task.is_private} />
+              <OutboxEntityStatus entityId={task.id} />
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
               {task.is_private ? (
                 <PrivateMarker />

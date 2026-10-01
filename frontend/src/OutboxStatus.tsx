@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import type { QueryKey } from '@tanstack/react-query'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+
+import { ApiError } from '@/api'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { adapterFor, requiresPrivateRow } from '@/lib/outbox-adapters'
-import { discardOutboxTree } from '@/lib/outbox-db'
+import { adapterFor, hasLivePrivateSession, requiresPrivateRow } from '@/lib/outbox-adapters'
+import { canDiscardOutboxRow, discardOutboxTree } from '@/lib/outbox-db'
 import { useDomainOutbox } from '@/lib/use-domain-outbox'
 
 function operationLabel(kind: string, privateHidden: boolean) {
@@ -63,8 +65,8 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
           // Unknown operations fail closed; do not guess which cache to change.
         }
       }
-    } catch {
-      setActionError('Không thể xoá thay đổi khỏi hàng đợi trên thiết bị này.')
+    } catch (error) {
+      setActionError(error instanceof ApiError ? error.message : 'Không thể xoá thay đổi khỏi hàng đợi trên thiết bị này.')
     } finally {
       setDiscarding(null)
     }
@@ -83,10 +85,10 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
       {state.webLocksUnavailable ? <p data-testid="outbox-lock-warning" className="text-sm text-muted-foreground" role="status">
         Trình duyệt này chưa hỗ trợ khoá gửi an toàn giữa các thẻ hoặc đang ở ngữ cảnh không bảo mật. Thay đổi vẫn được lưu trên thiết bị; gửi sẽ tiếp tục khi dùng ngữ cảnh hỗ trợ.
       </p> : null}
-      {state.rows.length > 0 ? <Button data-testid="outbox-indicator" variant="outline" size="lg" className="min-h-11" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+      {!state.readError && state.rows.length > 0 ? <Button data-testid="outbox-indicator" variant="outline" size="lg" className="min-h-11" aria-haspopup="dialog" onClick={() => setOpen(true)}>
         {queued > 0 ? queued + ' đang chờ gửi' : failed + ' cần xử lý'}{failed > 0 ? ' · ' + failed + ' lỗi' : ''}
       </Button> : null}
-      {state.rows.length > 0 ? <Dialog open={open} onOpenChange={setOpen}>
+      {!state.readError && state.rows.length > 0 ? <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent data-testid="outbox-panel" className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Hàng đợi ngoại tuyến</DialogTitle>
@@ -105,8 +107,8 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
                     <Badge variant={row.state === 'failed' || row.state === 'suppressed' ? 'destructive' : 'secondary'}>{reason.split(/[.;]/, 1)[0]}</Badge>
                   </div>
                   <p className="text-sm text-muted-foreground">{reason}</p>
-                  <Button data-testid="outbox-item-discard" variant="ghost" size="lg" className="min-h-11 text-bad hover:text-bad" disabled={discarding === row.operation_id} onClick={() => void discardTree(row.operation_id!)}>
-                    {discarding === row.operation_id ? 'Đang xoá…' : 'Xoá bỏ thay đổi'}
+                  <Button data-testid="outbox-item-discard" variant="ghost" size="lg" className="min-h-11 text-bad hover:text-bad" disabled={discarding === row.operation_id || !canDiscardOutboxRow(row)} onClick={() => void discardTree(row.operation_id!)}>
+                    {discarding === row.operation_id ? 'Đang xoá…' : canDiscardOutboxRow(row) ? 'Xoá bỏ thay đổi' : 'Chờ xác minh hoặc gửi tiếp'}
                   </Button>
                 </article>
               )
@@ -120,11 +122,12 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
 
 export function OutboxEntityStatus({
   entityId,
-  privateUnlocked = false,
 }: {
   entityId: string
-  privateUnlocked?: boolean
 }) {
+  const client = useQueryClient()
+  useQuery({ queryKey: ['session'], enabled: false })
+  const privateUnlocked = hasLivePrivateSession(client)
   const state = useDomainOutbox([], privateUnlocked, true)
   const rows = state.rows.filter((row) =>
     (row.state === 'failed' || row.state === 'suppressed') &&
@@ -133,15 +136,14 @@ export function OutboxEntityStatus({
   const row = rows[rows.length - 1]
   const privateHidden = requiresPrivateRow(row) && !privateUnlocked
   const reason = stateReason(row.state, row.last_error_code, privateHidden)
-  const failed = row.state === 'failed' || row.state === 'suppressed'
   return (
     <Badge
       data-testid="outbox-entity-state"
-      variant={failed ? 'destructive' : 'secondary'}
+      variant='destructive'
       role="status"
       aria-live="polite"
     >
-      {failed ? 'Chưa gửi được' : row.state === 'auth_hold' ? 'Cần đăng nhập' : row.state === 'private_hold' ? 'Cần mở khoá riêng tư' : 'Đang chờ gửi'}
+      Chưa gửi được
       <span className="sr-only">{reason}</span>
     </Badge>
   )

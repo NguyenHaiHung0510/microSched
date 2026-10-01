@@ -218,10 +218,27 @@ export async function removeOutbox(ids: number[]) {
   emitChanged()
 }
 
+/** A failed response is known; sent/held commands must first reconcile. */
+export function canDiscardOutboxRow(row: OutboxRow): boolean {
+  const uncertain = ['UNKNOWN', 'UNKNOWN_OPERATION', 'INVALID_COMMAND'].includes(row.last_error_code ?? '')
+  return (row.state === 'failed' && (row.attempts === 0 || !uncertain)) || (row.state === 'suppressed' && row.attempts === 0)
+}
+
 export async function discardOutboxTree(rootId: number): Promise<OutboxRow[]> {
-  const rows = await listOutbox()
-  const ids = descendantIds(rows, rootId)
-  const discarded = rows.filter((row) => ids.has(row.operation_id!))
-  await removeOutbox([...ids])
+  const db = await outboxDatabase()
+  if (!db) throw new ApiError(503, 'Chưa đọc được hàng đợi; các thay đổi vẫn được giữ.')
+  const discarded = await db.transaction('rw', db.outbox, async () => {
+    const rows = await db.outbox.orderBy('operation_id').toArray()
+    const root = rows.find((row) => row.operation_id === rootId)
+    if (!root || !canDiscardOutboxRow(root)) throw new ApiError(409, 'Cần xác minh kết quả gửi trước khi xoá thay đổi này.')
+    const ids = descendantIds(rows, rootId)
+    const tree = rows.filter((row) => ids.has(row.operation_id!))
+    if (tree.some((row) => row.state === 'outcome_unknown' || (row.attempts > 0 && !canDiscardOutboxRow(row)))) {
+      throw new ApiError(409, 'Thay đổi liên quan đã được gửi; cần xác minh kết quả trước khi xoá.')
+    }
+    await db.outbox.bulkDelete([...ids])
+    return tree
+  })
+  emitChanged()
   return discarded
 }

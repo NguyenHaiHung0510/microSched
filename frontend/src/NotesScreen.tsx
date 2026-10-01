@@ -242,7 +242,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               >
                 {label}
               </Button>
-              <OutboxEntityStatus entityId={note.id} privateUnlocked={note.is_private} />
+              <OutboxEntityStatus entityId={note.id} />
               {note.is_private ? (
                 <PrivateMarker testId="note-private-badge-card" />
               ) : null}

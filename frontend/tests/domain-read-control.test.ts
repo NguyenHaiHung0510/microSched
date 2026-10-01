@@ -6,7 +6,7 @@ describe('outbox-aware domain reads', () => {
   it('matches affected prefixes in both global and domain query families', () => {
     expect(isAffectedQueryKey(['tasks'], ['tasks'])).toBe(true)
     expect(isAffectedQueryKey(['tasks'], ['tasks', 'timeline', '2026-10-01'])).toBe(true)
-    expect(isAffectedQueryKey(['calendar', 'tasks'], ['calendar'])).toBe(false)
+    expect(isAffectedQueryKey(['calendar', 'tasks'], ['calendar'])).toBe(true)
     expect(isAffectedQueryKey(['calendar', 'tasks'], [])).toBe(true)
     expect(isAffectedQueryKey('unknown', ['tasks'])).toBe(false)
   })
