@@ -165,7 +165,7 @@ export function MimiWorkflowPilot() {
         {run.stop_reason ? <p role="status">{run.stop_reason}</p> : null}
         {run.preview?.groups.length ? <div><h4 className="font-semibold">Nhóm Task</h4>{run.preview.groups.map((group, index) => <p key={index}>Nhóm {index + 1}: {group.map((id) => tasks.data?.items.find((task) => task.id === id)?.title ?? id).join(', ')}</p>)}</div> : null}
         {run.draft ? <div><h4 className="font-semibold">Bản nháp</h4><p className="whitespace-pre-wrap break-words">{run.draft}</p></div> : null}
-        {phase === 'direction' ? <Button type="button" className="min-h-11" disabled={busy} onClick={() => void advance({ direction: 'apply_prefix' })}>Dùng tiền tố đã định</Button> : null}
+        {phase === 'direction' ? <div className="space-y-2"><p>Thao tác máy chủ hỗ trợ: thêm <strong>[planned] </strong> trước mỗi title đang chọn, giữ nguyên nội dung còn lại. Bản nháp không thể đổi thao tác này.</p><Button type="button" className="min-h-11" disabled={busy} onClick={() => void advance({ direction: 'apply_prefix' })}>Duyệt hướng thêm [planned]</Button></div> : null}
         {run.preview ? <div className="space-y-2">
           <h4 className="font-semibold">Đối chiếu trước và sau</h4>
           {run.preview.operations.map((operation) => {
@@ -179,7 +179,7 @@ export function MimiWorkflowPilot() {
         {run.receipt ? <div role="status" className="rounded-lg bg-muted p-3"><h4 className="font-semibold">Biên nhận hoàn tất</h4><p>Đã đổi {run.receipt.changed} Task</p><p className="break-all text-xs">Digest: {run.receipt.digest}</p></div> : null}
         {['query', 'group', 'draft', 'materialize', 'execute'].includes(phase) ? <div className="space-y-2"><p role="status">Run đang dừng tại bước xử lý. Chọn tiếp tục để máy chủ resume từ checkpoint.</p><Button type="button" className="min-h-11" disabled={busy} onClick={() => void advance({ resume: true })}>Tiếp tục run</Button></div> : null}
         {['reconcile', 'repreview', 'expired'].includes(phase) ? <p role="status">Chưa gửi thêm thao tác. Đọc lý do từ máy chủ và chỉ tiếp tục sau khi trạng thái đã rõ.</p> : null}
-        {['direction', 'confirmation', 'repreview', 'reconcile'].includes(phase) ? <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={() => void advance({ cancel: true })}>Huỷ quy trình</Button> : null}
+        {!['succeeded', 'expired', 'cancelled'].includes(phase) ? <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={() => void advance({ cancel: true })}>Huỷ quy trình</Button> : null}
       </section> : null}
     </CardContent>
   </Card>

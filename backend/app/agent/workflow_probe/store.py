@@ -185,6 +185,7 @@ class PgFrameStore:
                             aad=record_aad(run_id, record.record_id, record.version),
                         ),
                     )
+                await self.initialize_domain_on(connection, run_id, owner, engine, records)
         finally:
             await connection.close()
         return StoredFrame(run_id, owner, generation, engine, "query", 0, expires_at, content)
@@ -430,6 +431,9 @@ class PgFrameStore:
 
     async def apply_domain_on(self, connection, frame: StoredFrame, preview: Preview) -> None:
         """Optional domain integration, inside the same authorized receipt transaction."""
+
+    async def initialize_domain_on(self, connection, run_id, owner, engine, records) -> None:
+        """Optional source binding, atomic with initial frame admission."""
 
     async def cleanup(self, *, now: datetime) -> dict[str, int]:
         """Finite expiry/pruning, including exact graph threads in the same PG transaction."""

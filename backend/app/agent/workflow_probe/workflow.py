@@ -360,11 +360,19 @@ class Workflow:
                     fault=self.fault,
                 )
             except ProbeBlocked as error:
-                if str(error) not in {"source_requires_repreview", "policy_requires_repreview"}:
+                if str(error) not in {
+                    "source_requires_repreview",
+                    "policy_requires_repreview",
+                    "run_expired",
+                }:
                     raise
                 body.confirmation = None
                 body.stop_reason = str(error)
-                result = await self.store.save(frame, phase="repreview", content=self.wire(body))
+                result = await self.store.save(
+                    frame,
+                    phase="expired" if str(error) == "run_expired" else "repreview",
+                    content=self.wire(body),
+                )
             return result.phase
         else:
             raise ProbeBlocked("unsupported_stage")
