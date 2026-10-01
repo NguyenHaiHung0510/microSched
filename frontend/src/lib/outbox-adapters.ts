@@ -7,6 +7,7 @@ import type { PersistedClient } from '@tanstack/query-persist-client-core'
 export type CommandInput = {
   path: string
   body?: Json | null
+  optimisticEntity?: Json
   entityId?: string | null
   parentId?: string | null
   requiresPrivate?: boolean
@@ -25,6 +26,7 @@ export type EncodedCommand = {
   method: DomainHttpMethod
   path: string
   body: Json | null
+  optimistic_entity?: Json
   entity_id: string | null
   parent_id: string | null
   requires_private: boolean
@@ -437,7 +439,12 @@ function applyTypedOverlay(client: QueryClient, row: OutboxRow) {
   const spec: AdapterSpec = definitions[kind]
   const keys = spec.keys({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
   const body = objectBody(row.body)
-  const model = spec.optimisticDto({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
+  const optimisticEntity = (row as OutboxRow & { optimistic_entity?: Json }).optimistic_entity
+  const restoredModel = (kind === 'task.restore' || kind === 'note.restore') &&
+    optimisticEntity && record(optimisticEntity)
+    ? { ...(optimisticEntity as Entity), __outbox_state: 'pending' }
+    : null
+  const model = restoredModel ?? spec.optimisticDto({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
   const deleting = spec.method === 'DELETE'
   const action = deleting ? 'delete' : kind.endsWith('.create') ? 'upsert' : 'update'
 
@@ -796,6 +803,7 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
         method: spec.method,
         path,
         body,
+        ...(input.optimisticEntity === undefined ? {} : { optimistic_entity: input.optimisticEntity }),
         entity_id: id,
         parent_id: parentId,
         // A body that makes an entity private can never downgrade the command's
@@ -822,6 +830,30 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
     async reconcileSuccess(client, row, response) {
       if (spec.method === 'DELETE' || kindIsSideEffect(operationKind) || response == null) return
       const keys = spec.keys({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
+      if ((operationKind === 'task.restore' || operationKind === 'note.restore') &&
+        record(response)?.status === 'restored') {
+        if (requiresPrivateRow(row) && !hasLivePrivateSession(client)) {
+          purgePrivateRowFromCache(client, keys, row)
+          return
+        }
+        for (const key of keys) {
+          client.setQueriesData({ queryKey: key }, (value) => {
+            const clearMarker = (item: unknown) => {
+              const entity = record(item)
+              if (!entity || entity.id !== row.entity_id) return item
+              const next = { ...entity }
+              delete next.__outbox_state
+              return next
+            }
+            if (Array.isArray(value)) return value.map(clearMarker)
+            const envelope = record(value)
+            return envelope && Array.isArray(envelope.items)
+              ? { ...envelope, items: envelope.items.map(clearMarker) }
+              : value
+          })
+        }
+        return
+      }
       if (operationKind === 'reminder.save') {
         if (requiresPrivateRow(row) && !hasLivePrivateSession(client)) {
           purgePrivateRowFromCache(client, keys, row)

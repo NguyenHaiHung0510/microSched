@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
+import type { OutboxRow } from '@/lib/outbox-db'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
@@ -759,8 +760,11 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const remove = useMutation({
-    mutationFn: () => queuedRequest<void>(queryClient, 'task.delete', { path: `/api/tasks/${task.id}`, entityId: task.id, requiresPrivate: task.is_private }),
-    onSuccess: () => {
+    mutationFn: () => queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'task.delete', {
+      path: `/api/tasks/${task.id}`, entityId: task.id, requiresPrivate: task.is_private,
+      optimisticEntity: task as never,
+    }),
+    onSuccess: (receipt) => {
       setDetailsOpen(false)
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -770,7 +774,7 @@ const TaskCard = memo(function TaskCard({
           duration: 10000,
           action: {
             label: 'Hoàn tác',
-            onClick: () => void restoreTask(task.id, refresh),
+            onClick: () => void restoreTask(queryClient, task, receipt),
           },
         },
       )

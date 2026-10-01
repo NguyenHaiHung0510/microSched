@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
+import type { OutboxRow } from '@/lib/outbox-db'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
 import { Badge } from '@/components/ui/badge'
@@ -103,10 +104,11 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     },
   })
   const remove = useMutation({
-    mutationFn: () => queuedRequest<void>(queryClient, 'note.delete', {
+    mutationFn: () => queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'note.delete', {
       path: `/api/notes/${note.id}`, entityId: note.id, requiresPrivate: note.is_private,
+      optimisticEntity: note as never,
     }),
-    onSuccess: () => {
+    onSuccess: (receipt) => {
       setDetailsOpen(false)
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -116,7 +118,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           duration: 10000,
           action: {
             label: 'Hoàn tác',
-            onClick: () => void restoreNote(note.id, refresh),
+            onClick: () => void restoreNote(queryClient, note, receipt),
           },
         },
       )

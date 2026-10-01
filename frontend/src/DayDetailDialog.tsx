@@ -4,6 +4,7 @@ import { Edit3, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { queuedRequest } from '@/lib/queued-mutation'
+import type { OutboxRow } from '@/lib/outbox-db'
 import { uuidv7 } from '@/lib/uuidv7'
 import {
   formatVietnamTime,
@@ -175,8 +176,14 @@ export function DayDetailDialog({
   })
 
   const deleteTask = useMutation({
-    mutationFn: (taskId: string) => queuedRequest<void>(queryClient, 'task.delete', { path: `/api/tasks/${taskId}`, entityId: taskId, requiresPrivate: tasks.find((task) => task.id === taskId)?.is_private }),
-    onSuccess: (_data, taskId) => {
+    mutationFn: (taskId: string) => {
+      const task = tasks.find((t) => t.id === taskId)
+      return queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'task.delete', {
+        path: `/api/tasks/${taskId}`, entityId: taskId, requiresPrivate: task?.is_private,
+        optimisticEntity: task as never,
+      })
+    },
+    onSuccess: (receipt, taskId) => {
       const task = tasks.find((t) => t.id === taskId)
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -186,7 +193,7 @@ export function DayDetailDialog({
           duration: 8000,
           action: {
             label: 'Hoàn tác',
-            onClick: () => void restoreTask(taskId, refreshAll),
+            onClick: () => { if (task) void restoreTask(queryClient, task, receipt) },
           },
         },
       )
