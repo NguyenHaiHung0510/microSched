@@ -53,7 +53,9 @@ export function reminderConfigurationChanged(
     'reminder_interval_days',
     'reminder_action',
   ]
-  return fields.some((field) => (current[field] ?? null) !== (next[field] ?? null))
+  return fields.some((field) =>
+    Object.prototype.hasOwnProperty.call(next, field) &&
+    (current[field] ?? null) !== (next[field] ?? null))
 }
 
 export function buildTrackerWritePayload({

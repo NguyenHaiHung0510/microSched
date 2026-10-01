@@ -33,11 +33,13 @@ describe('tracker reminder registration gate', () => {
     const current = tracker({ reminder_time: '08:00', reminder_text: 'Nhắc', reminder_mode: 'fixed', reminder_interval_days: 1, reminder_action: 'open_tracker' })
     expect(reminderConfigurationChanged(current, {
       reminder_time: current.reminder_time,
-      reminder_text: current.reminder_text,
+      // PATCH omits legacy reminder_text, so it remains unchanged.
       reminder_mode: current.reminder_mode,
       reminder_interval_days: current.reminder_interval_days,
       reminder_action: current.reminder_action,
     })).toBe(false)
+    expect(reminderConfigurationChanged(current, {})).toBe(false)
+    expect(reminderConfigurationChanged(current, { reminder_text: null })).toBe(true)
   })
 
   it('detects an actual reminder enable or configuration change', () => {
