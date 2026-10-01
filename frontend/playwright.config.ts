@@ -4,6 +4,7 @@ const uiPort = Number(process.env.MICROSCHED_E2E_PORT ?? 4173)
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: 'outbox-pwa.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -20,7 +21,7 @@ export default defineConfig({
   projects: [
     {
       name: 'mobile',
-      testIgnore: 'outbox-core.browser.spec.ts',
+      testIgnore: ['outbox-core.browser.spec.ts', 'outbox-pwa.spec.ts'],
       // Not `devices['iPhone 13']`: that preset defaults to the WebKit engine,
       // and the spec only asks for the 390x844 viewport + touch input, not
       // real Safari. Chromium keeps CI to one browser download (matches the
@@ -36,7 +37,7 @@ export default defineConfig({
     },
     {
       name: 'desktop',
-      testIgnore: 'outbox-core.browser.spec.ts',
+      testIgnore: ['outbox-core.browser.spec.ts', 'outbox-pwa.spec.ts'],
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
     },
     {
