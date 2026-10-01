@@ -1,6 +1,6 @@
 # 073 — B16 full local Mimi pilot
 
-Owner grant: direct approval 2026-10-01 of T1's full local LangGraph B16 pilot; latest annotation requires implementation, QA and reconciled review before Owner dogfood. One writer per checkout. T1 backend/integration in 073; Luna/high frontend in 074. No merge, deploy, production, Neon, default migration or architecture adoption. Existing morning horizon 08:00 Asia/Saigon remains; checkpoint unfinished work then. Preserve 066 preview and lanes 069–072.
+Owner grant: direct approval 2026-10-01 of T1's full local LangGraph B16 pilot; latest annotation requires implementation, QA and reconciled review before Owner dogfood. Direct reply to deadline clarification explicitly permits continuing after 08:00 within this scope and cumulative USD1 cap; this supersedes the overnight horizon for this pilot only. One writer per checkout. T1 backend/integration in 073; Luna/high frontend in 074. No merge, deploy, production, Neon, default migration or architecture adoption. Preserve 066 preview and lanes 069–072.
 
 ## Outcome and scope
 
@@ -16,7 +16,7 @@ All routes below use existing authenticated session and state-changing Mimi same
 - GET `/runs` → `{items: Status[]}` (owned, at most 24 recent runs).
 - POST `/runs` body `{run_id: UUID, task_ids: UUID[], engine: "graph" | "control"}` → Status. Generate run_id once per user action, retain it on timeout; recovery uses GET, never new automatic dispatch.
 - GET `/runs/{run_id}` → Status (owner-bound).
-- POST `/runs/{run_id}/advance` body `{generation: number, direction?: "apply_prefix", preview_digest?: string, cancel?: boolean}` → Status. Exactly one action; confirmation digest only, owner is server-derived. No client-authored operation/title.
+- POST `/runs/{run_id}/advance` body `{generation: number, direction?: "apply_prefix", preview_digest?: string, cancel?: boolean, resume?: boolean}` → Status. Exactly one action; confirmation digest only, owner is server-derived. Resume is explicit for query/group/draft/materialize/execute after interruption; never automatic provider redispatch. No client-authored operation/title.
 
 Status = `{run_id, generation, engine, phase, draft, preview_digest: string|null, preview: {sources: [{id,version,title}], operations: [{id,title}], groups: string[][]}|null, receipt: {digest,changed}|null, stop_reason: string|null, provider_calls, events: string[]}`. Additional server preview authority fields may be ignored by UI. Phases query/group/draft/direction/materialize/confirmation/execute/succeeded/expired/cancelled/reconcile/repreview. Only direction enables direction button; only confirmation enables exact confirm; terminal and reconcile/repreview explain next step without silent retry. Cancel permitted for paused pre-execute runs. GET must not advance workflow. Capabilities adds `workflow_pilot_enabled: boolean`; mount only when true in workspace Mimi, no change to default dock/chat.
 

@@ -382,6 +382,7 @@ class PgFrameStore:
                     now=now,
                     expires_at=current.expires_at,
                 )
+                await self.apply_domain_on(connection, current, preview)
                 key = unwrap_dek(row["wrapped_dek"])
                 versions = {r["id"]: r["version"] for r in rows}
                 for record_id, title in operations:
@@ -426,6 +427,9 @@ class PgFrameStore:
             return result
         finally:
             await connection.close()
+
+    async def apply_domain_on(self, connection, frame: StoredFrame, preview: Preview) -> None:
+        """Optional domain integration, inside the same authorized receipt transaction."""
 
     async def cleanup(self, *, now: datetime) -> dict[str, int]:
         """Finite expiry/pruning, including exact graph threads in the same PG transaction."""

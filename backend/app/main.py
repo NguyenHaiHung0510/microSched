@@ -22,6 +22,7 @@ from app.web.routers.calendar import router as calendar_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
 from app.web.routers.mimi import router as mimi_router
+from app.web.routers.mimi_workflow_pilot import router as mimi_workflow_pilot_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
 from app.web.routers.push import router as push_router
@@ -259,6 +260,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(push_router)
     protected_api.include_router(reminders_router)
     protected_api.include_router(mimi_router)
+    protected_api.include_router(mimi_workflow_pilot_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:

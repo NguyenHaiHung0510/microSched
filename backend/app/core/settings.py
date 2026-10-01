@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     mimi_context_v1_enabled: bool = False
     # Experimental execution engine. The default remains the shipped loop.
     mimi_runner: Literal["current", "langgraph"] = "current"
+    mimi_workflow_pilot_enabled: bool = False
     mimi_public_origin: str | None = None
     mimi_preview_ttl_minutes: int = 15
     mimi_run_deadline_seconds: int = 1_800
