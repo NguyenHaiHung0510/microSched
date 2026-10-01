@@ -145,6 +145,13 @@ test('restores cancelled command trees atomically with fresh ordered dependencie
     try { await db.restoreCancelledOutbox(cancelled.map((row: { body: unknown }, index: number) => index ? row : { ...row, body: { id: 'parent', title: 'tampered' } })) }
     catch { corruptionRejected = true }
     const countAfterCorruption = (await db.listOutbox()).length
+    const metadata = cancelled[1].requires_private
+    cancelled[1].requires_private = false
+    let metadataRejected = false
+    try { await db.restoreCancelledOutbox(cancelled) } catch { metadataRejected = true }
+    cancelled[1].requires_private = metadata
+    let partialRejected = false
+    try { await db.restoreCancelledOutbox(cancelled.slice(0, 1)) } catch { partialRejected = true }
     const restored = await db.restoreCancelledOutbox(cancelled)
     let duplicateRejected = false
     try { await db.restoreCancelledOutbox(cancelled) } catch { duplicateRejected = true }
@@ -152,12 +159,14 @@ test('restores cancelled command trees atomically with fresh ordered dependencie
     const immutable = restored.every((row: { payload_sha256: string; payload_json: string; requires_private: boolean }, index: number) =>
       row.payload_sha256 === cancelled[index].payload_sha256 && row.payload_json === cancelled[index].payload_json && row.requires_private)
     return { parentOldId: parent.operation_id, cancelledCount: cancelled.length, countAfterCancellation,
-      corruptionRejected, countAfterCorruption, duplicateRejected, countAfterDuplicate, immutable,
+      corruptionRejected, countAfterCorruption, metadataRejected, partialRejected, duplicateRejected, countAfterDuplicate, immutable,
       newIds: restored.map((row: { operation_id: number }) => row.operation_id),
       dependencies: restored.map((row: { dependency_operation_id: number | null }) => row.dependency_operation_id) }
   })
   expect(result.cancelledCount).toBe(3)
   expect(result.countAfterCancellation).toBe(0)
+  expect(result.metadataRejected).toBe(true)
+  expect(result.partialRejected).toBe(true)
   expect(result.corruptionRejected).toBe(true)
   expect(result.countAfterCorruption).toBe(0)
   expect(result.duplicateRejected).toBe(true)
@@ -166,4 +175,46 @@ test('restores cancelled command trees atomically with fresh ordered dependencie
   expect(result.newIds[0]).toBeGreaterThan(result.parentOldId)
   expect(result.dependencies).toEqual([null, result.newIds[0], result.newIds[1]])
   console.log(JSON.stringify({ lane: 'real-indexeddb-cancelled-undo', result }))
+})
+
+
+test('cross-tab undo attaches a new orphan child to its restored private parent before dispatch', async ({ context, page }) => {
+  await page.goto('/denied.html')
+  await page.evaluate(async () => {
+    const fixtureUrl = '/e2e/outbox-core-fixture.ts'
+    const fixture = await import(fixtureUrl)
+    const parent = await fixture.enqueueOutbox({ operation_kind: 'note.create', resource: 'note', method: 'POST',
+      path: '/api/notes', body: { id: 'parent', title: 'private', is_private: true }, entity_id: 'parent', parent_id: null,
+      requires_private: true, idempotency_mode: 'client_uuid', dependency_operation_id: null, group_id: null,
+      affected_query_keys: [['notes']], state: 'pending', attempts: 0, next_attempt_at: null, created_at: Date.now(), last_error_code: null })
+    const receipt = await fixture.enqueueOutbox({ ...parent, operation_id: undefined, operation_kind: 'note.delete', method: 'DELETE',
+      path: '/api/notes/parent', body: null, idempotency_mode: 'postcondition' })
+    ;(window as unknown as { undoRows: unknown }).undoRows = receipt.cancelled_rows
+  })
+  const other = await context.newPage()
+  await other.goto('/denied.html')
+  await other.evaluate(async () => {
+    const moduleUrl = '/src/lib/outbox-db.ts'
+    const db = await import(moduleUrl)
+    await db.enqueueOutbox({ operation_kind: 'note_item.create', resource: 'note_item', method: 'POST',
+      path: '/api/notes/parent/items', body: { id: 'new-child', content: 'stale tab' }, entity_id: 'new-child', parent_id: 'parent',
+      requires_private: false, idempotency_mode: 'client_uuid', dependency_operation_id: null, group_id: null,
+      affected_query_keys: [['notes']], state: 'pending', attempts: 0, next_attempt_at: null, created_at: Date.now(), last_error_code: null })
+  })
+  let requests = 0
+  await page.route('**/api/**', route => { requests += 1; return route.abort() })
+  const result = await page.evaluate(async () => {
+    const fixtureUrl = '/e2e/outbox-core-fixture.ts'
+    const moduleUrl = '/src/lib/outbox-db.ts'
+    const fixture = await import(fixtureUrl), db = await import(moduleUrl)
+    const restored = await db.restoreCancelledOutbox((window as unknown as { undoRows: unknown }).undoRows)
+    const client = new fixture.QueryClient()
+    await fixture.flushOutbox(client)
+    const rows = await db.listOutbox(), child = rows.find((row: { entity_id: string }) => row.entity_id === 'new-child')
+    return { dependency: child.dependency_operation_id, parentId: restored[0].operation_id,
+      private: child.requires_private, attempts: child.attempts, parentState: rows.find((row: { entity_id: string }) => row.entity_id === 'parent').state }
+  })
+  expect(requests).toBe(0)
+  expect(result).toEqual({ dependency: result.parentId, parentId: result.parentId, private: true, attempts: 0, parentState: 'private_hold' })
+  await other.close()
 })

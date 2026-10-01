@@ -34,6 +34,7 @@ export type EnqueueResult = OutboxRow & { cancelled_rows?: OutboxRow[] }
 type OutboxDb = Dexie & { outbox: EntityTable<OutboxRow, 'operation_id'> }
 let database: OutboxDb | null = null
 let unavailable = false
+const cancelledReceipts = new WeakMap<OutboxRow[], OutboxRow[]>()
 
 function emitChanged() {
   window.dispatchEvent(new Event('microsched:outbox-changed'))
@@ -108,6 +109,7 @@ export async function enqueueOutbox(
       if (tree.every((item) => item.state === 'pending' && item.attempts === 0)) {
         await db.outbox.bulkDelete(tree.map((item) => item.operation_id!))
         cancelled_rows = tree
+        cancelledReceipts.set(tree, structuredClone(tree))
         return undefined
       }
     }
@@ -129,6 +131,8 @@ export async function enqueueOutbox(
 
 /** Restore only an atomically cancelled, never-dispatched command tree. */
 export async function restoreCancelledOutbox(rows: OutboxRow[]): Promise<OutboxRow[]> {
+  const original = cancelledReceipts.get(rows)
+  if (!original || JSON.stringify(rows) !== JSON.stringify(original)) throw new Error('Cancelled receipt changed or expired')
   const db = await outboxDatabase()
   if (!db) throw new Error('Cannot restore cancelled writes without durable storage')
   if (!rows.length || rows.some((row) => row.state !== 'pending' || row.attempts !== 0 || !row.operation_id)) throw new Error('Only never-dispatched commands can be restored')
@@ -137,6 +141,8 @@ export async function restoreCancelledOutbox(rows: OutboxRow[]): Promise<OutboxR
   const restored = await db.transaction('rw', db.outbox, async () => {
     const existing = await db.outbox.toArray()
     if (existing.some((row) => rows.some((cancelled) => row.entity_id === cancelled.entity_id))) throw new Error('Entity already has queued changes')
+    const orphaned = existing.filter((row) => row.dependency_operation_id === null && rows.some((parent) => parent.idempotency_mode === 'client_uuid' && parent.entity_id === row.parent_id))
+    if (orphaned.some((row) => row.state !== 'pending' || row.attempts !== 0)) throw new Error('A dependent write needs reconciliation before undo')
     const ids = new Map<number, number>(), result: OutboxRow[] = []
     for (const row of rows) {
       const dependency = row.dependency_operation_id === null ? null : ids.get(row.dependency_operation_id)
@@ -147,8 +153,13 @@ export async function restoreCancelledOutbox(rows: OutboxRow[]): Promise<OutboxR
       ids.set(row.operation_id!, id)
       result.push({ ...item, operation_id: id })
     }
+    for (const orphan of orphaned) {
+      const parent = result.find((row) => row.idempotency_mode === 'client_uuid' && row.entity_id === orphan.parent_id)!
+      await db.outbox.update(orphan.operation_id!, { dependency_operation_id: parent.operation_id, requires_private: orphan.requires_private || parent.requires_private })
+    }
     return result
   })
+  cancelledReceipts.delete(rows)
   emitChanged()
   return restored
 }
