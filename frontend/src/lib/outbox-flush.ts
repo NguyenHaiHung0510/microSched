@@ -90,11 +90,16 @@ async function runFlush(client: QueryClient) {
       if (['failed', 'suppressed'].includes(parent.state)) {
         row.state = 'suppressed'
         await updateOutbox(row.operation_id!, { state: 'suppressed', last_error_code: 'PARENT_FAILED' })
+      } else if (parent.state === 'private_hold' || parent.state === 'auth_hold') {
+        row.state = parent.state
+        row.next_attempt_at = parent.state === 'auth_hold' ? Date.now() : null
+        await updateOutbox(row.operation_id!, { state: row.state, next_attempt_at: row.next_attempt_at })
       }
       continue
     }
     const unlocked = privateIsUnlocked(client)
     if (row.requires_private && !unlocked) {
+      row.state = 'private_hold'
       await updateOutbox(row.operation_id!, { state: 'private_hold' })
       continue
     }

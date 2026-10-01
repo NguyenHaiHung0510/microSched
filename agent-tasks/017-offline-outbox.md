@@ -8,6 +8,14 @@
 > **KHÔNG có migration. Backend có vá idempotency cho các POST create còn thiếu (§5).**
 > **Chạy SAU `011c`** — tức sau khi cả bốn họ thực thể (`task`/`note`/`calendar`/`tracker`) đã tồn tại.
 
+## Ngoại lệ thực thi Owner duyệt 2026-10-01
+
+Các quyết định sau thay đúng ràng buộc cũ tương ứng; các acceptance/privacy gates khác giữ nguyên:
+
+- Core generic outbox được phép tối đa **600 dòng không trống** để lưu/khôi phục command cho undo/coalescing an toàn; không đổi sang sync engine hoặc mirror entity store.
+- Được bổ sung migration **0016** với request fingerprint nullable để phân biệt replay cùng UUID nhưng khác request/CAS. Chỉ kiểm và áp dụng trên DB synthetic/CI; migration Neon và merge/deploy production chờ Owner duyệt riêng.
+- Xác nhận từ link push (`POST /api/reminder-dispatch/{dispatch_id}/confirm`) giữ **online-only** vì eligibility/private authorization cần trạng thái server hiện tại. Các write task/note/calendar/tracker/subscription/settings được phủ và save/cancel reminder vẫn qua outbox. Những acceptance replay/offline riêng cho push-link confirmation không áp dụng; không suy rộng ngoại lệ sang private writes khác.
+
 ## 0. Bối cảnh — vì sao lô này tồn tại, và vì sao nó là HAI nửa
 
 Kiến trúc chốt **offline-first** từ 2026-07-20 (`frontend-brief.md` §3: Dexie + outbox tự viết,

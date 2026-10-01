@@ -313,3 +313,65 @@ test('private annotation delete waits for live unlock and retains its original c
   expect(requests).toBe(1)
   expect(remaining).toBe(0)
 })
+
+test('held parent propagates exact private/auth state to its child and independent public work still flushes', async ({ browser }) => {
+  for (const hold of ['private_hold', 'auth_hold'] as const) {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    const requests: string[] = []
+    let released = false
+    await page.route('**/api/**', async route => {
+      const req = route.request(), path = new URL(req.url()).pathname
+      requests.push(path)
+      await route.fulfill({ status: path === '/api/tasks/held-parent' && !released ? 401 : 200,
+        contentType: 'application/json', body: JSON.stringify(path === '/api/tasks/held-parent' && !released
+          ? { detail: 'Not authenticated' } : { id: path.split('/').pop(), title: 'public', is_private: false }) })
+    })
+    await page.goto('/denied.html')
+    const result = await page.evaluate(async (hold) => {
+      const fixture = await import('/e2e/outbox-core-fixture.ts')
+      const client = new fixture.QueryClient()
+      Reflect.set(window, '__qaHoldClient', client)
+      const command = (id: string, priv: boolean) => ({
+        operation_kind: 'task.update', resource: 'task', method: 'PATCH', path: '/api/tasks/' + id,
+        body: { title: id }, entity_id: id, parent_id: null, requires_private: priv,
+        idempotency_mode: 'absolute', dependency_operation_id: null, group_id: null,
+        affected_query_keys: [['tasks']], state: 'pending', attempts: 0, next_attempt_at: null,
+        created_at: Date.now(), last_error_code: null,
+      })
+      const parent = await fixture.enqueueOutbox(command('held-parent', hold === 'private_hold'))
+      const child = await fixture.enqueueOutbox({ ...command('held-child', hold === 'private_hold'),
+        parent_id: 'held-parent', dependency_operation_id: parent.operation_id })
+      await fixture.enqueueOutbox(command('independent', false))
+      const before = await fixture.listOutbox()
+      await fixture.flushOutbox(client)
+      const after = await fixture.listOutbox()
+      return { parentId: parent.operation_id, childId: child.operation_id,
+        before: before.map(row => ({ id: row.operation_id, hash: row.payload_sha256, bytes: row.payload_byte_length })),
+        after: after.map(row => ({ id: row.operation_id, state: row.state, hash: row.payload_sha256, bytes: row.payload_byte_length, attempts: row.attempts })) }
+    }, hold)
+    console.log(JSON.stringify({ scenario: 'exact-parent-hold-cascade', hold, requests, result }))
+    expect(requests).not.toContain('/api/tasks/held-child')
+    expect(requests.filter(path => path === '/api/tasks/independent')).toHaveLength(1)
+    expect(result.after).toHaveLength(2)
+    expect(result.after.map(row => row.state)).toEqual([hold, hold])
+    for (const row of result.after) {
+      expect(row.hash).toBe(result.before.find(before => before.id === row.id)?.hash)
+      expect(row.bytes).toBe(result.before.find(before => before.id === row.id)?.bytes)
+      expect(row.attempts).toBe(0)
+    }
+    const replayStart = requests.length
+    released = true
+    const resumed = await page.evaluate(async () => {
+      const fixture = await import('/e2e/outbox-core-fixture.ts')
+      const client = Reflect.get(window, '__qaHoldClient')
+      client.setQueryData(['session'], { private_until: new Date(Date.now() + 60_000).toISOString() }, { updatedAt: Date.now() + 1 })
+      await fixture.flushOutbox(client)
+      return (await fixture.listOutbox()).map(row => row.operation_id)
+    })
+    expect(requests.slice(replayStart)).toEqual(['/api/tasks/held-parent', '/api/tasks/held-child'])
+    expect(resumed).toEqual([])
+    console.log(JSON.stringify({ scenario: 'exact-parent-hold-release', hold, replayOrder: requests.slice(replayStart), finalQueue: resumed.length }))
+    await context.close()
+  }
+})
