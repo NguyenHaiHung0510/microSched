@@ -51,19 +51,38 @@ test('agenda starts at its picker and restores the previous grid position', asyn
   await expect.poll(() => container.evaluate((node, previousTop) => Math.abs(node.scrollTop - previousTop), gridTop)).toBeLessThan(2)
 })
 
-test('agenda task toggle prevents duplicate requests and explains failure before retry', async ({ page }) => {
+async function readOutboxRow(page: import('@playwright/test').Page, operationKind: string, entityId: string) {
+  return page.evaluate(({ operationKind, entityId }) => new Promise<Record<string, unknown> | null>((resolve, reject) => {
+    const opening = indexedDB.open('microsched-outbox')
+    opening.onerror = () => reject(opening.error)
+    opening.onsuccess = () => {
+      const db = opening.result
+      const request = db.transaction('outbox').objectStore('outbox').getAll()
+      request.onerror = () => { db.close(); reject(request.error) }
+      request.onsuccess = () => {
+        const row = (request.result as Array<Record<string, unknown>>).find((item) =>
+          item.operation_kind === operationKind && item.entity_id === entityId)
+        db.close()
+        resolve(row ?? null)
+      }
+    }
+  }), { operationKind, entityId })
+}
+
+test('agenda task toggle preserves one UUID command across transient failure and reconciles on ACK', async ({ page }) => {
   await setupCalendarRoutes(page)
-  const task = { id: 'agenda-status', title: 'Synthetic status task', status: 'open', due_precision: 'date', due_on: vnDay(0), due_at: null, is_private: false, items: [] }
-  let fail = true
+  const task = { id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4101', title: 'Synthetic status task', status: 'open', due_precision: 'date', due_on: vnDay(0), due_at: null, is_private: false, items: [] }
   let requests = 0
-  let release: (() => void) | undefined
+  const bodies: Record<string, unknown>[] = []
+  let releaseSecond: (() => void) | undefined
   await page.route('**/api/tasks**', async (route) => {
     if (route.request().method() === 'PATCH') {
       requests++
-      if (fail) {
-        await new Promise<void>((resolve) => { release = resolve })
+      bodies.push(route.request().postDataJSON() as Record<string, unknown>)
+      if (requests === 1) {
         await route.fulfill({ status: 500, json: { detail: 'Synthetic status failure' } })
       } else {
+        await new Promise<void>((resolve) => { releaseSecond = resolve })
         task.status = 'completed'
         await route.fulfill({ json: task })
       }
@@ -77,17 +96,30 @@ test('agenda task toggle prevents duplicate requests and explains failure before
   const toggle = page.getByTestId('calendar-agenda-task-toggle')
   await toggle.click()
   await expect.poll(() => requests).toBe(1)
-  try {
-    await expect(toggle).toBeDisabled()
-    await expect(page.getByTestId('calendar-agenda-task-pending')).toBeVisible()
-  } finally { release?.() }
-  await expect(page.getByTestId('calendar-agenda-task-status-error')).toBeVisible()
-  await expect(toggle).not.toBeChecked()
-  fail = false
-  await toggle.click()
+  expect(requests).toBe(1)
+  let retained: Record<string, unknown> | null = null
+  await expect.poll(async () => {
+    retained = await readOutboxRow(page, 'task.update', task.id)
+    return retained?.state
+  }).toBe('outcome_unknown')
+  expect(retained).toMatchObject({ attempts: 1, body: { status: 'completed' }, payload_sha256: expect.any(String) })
+  const originalDigest = retained?.payload_sha256
+
+  await expect.poll(() => requests, { timeout: 8_000 }).toBe(2)
+  expect(requests).toBe(2)
+  expect(bodies).toEqual([{ status: 'completed' }, { status: 'completed' }])
+  let replayed: Record<string, unknown> | null = null
+  await expect.poll(async () => {
+    replayed = await readOutboxRow(page, 'task.update', task.id)
+    return replayed?.attempts
+  }).toBe(2)
+  expect(replayed?.payload_sha256).toBe(originalDigest)
+  releaseSecond?.()
+  await expect.poll(async () => readOutboxRow(page, 'task.update', task.id)).toBeNull()
+  expect(task.status).toBe('completed')
   await expect(toggle).toBeChecked()
   await expect(page.getByTestId('calendar-agenda-task-status-error')).toHaveCount(0)
-  expect(requests).toBe(2)
+  expect(originalDigest).toMatch(/^[0-9a-f]{64}$/)
 })
 
 function vnDay(offsetDays: number): string {
@@ -376,17 +408,20 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
     await expect(page.getByTestId('calendar-agenda-event-title')).toHaveText('Buổi đã tải sau khi thử lại')
   })
 
-  test('agenda quick add retains draft on failure, clears on success and maintains input focus', async ({ page }) => {
-    let failCreate = true
-    let capturedBody: Record<string, unknown> | null = null
+  test('agenda quick add retains the queued UUID and payload through 5xx, then clears with focus after ACK', async ({ page }) => {
+    const capturedBodies: Record<string, unknown>[] = []
+    let postCount = 0
+    let releaseSecond: (() => void) | undefined
 
     await setupCalendarRoutes(page)
 
     await page.route('**/api/tasks', async (route) => {
       const request = route.request()
       if (request.method() === 'POST') {
-        capturedBody = JSON.parse(request.postData() ?? '{}')
-        if (failCreate) {
+        const body = request.postDataJSON() as Record<string, unknown>
+        capturedBodies.push(body)
+        postCount++
+        if (postCount === 1) {
           await route.fulfill({
             status: 500,
             contentType: 'application/json',
@@ -394,27 +429,29 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
           })
           return
         }
+        await new Promise<void>((resolve) => { releaseSecond = resolve })
+        const created = {
+          id: body.id,
+          title: body.title,
+          status: 'open',
+          priority: null,
+          due_precision: 'date',
+          due_on: body.due_on,
+          due_at: null,
+          is_private: false,
+          pinned: false,
+          items: [],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
         await route.fulfill({
           status: 201,
           contentType: 'application/json',
-          body: JSON.stringify({
-            id: 'task-created-001',
-            title: capturedBody?.title ?? '',
-            status: 'open',
-            priority: null,
-            due_precision: 'date',
-            due_on: capturedBody?.due_on ?? null,
-            due_at: null,
-            is_private: false,
-            pinned: false,
-            items: [],
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }),
+          body: JSON.stringify(created),
         })
         return
       }
-      await route.continue()
+      await route.fallback()
     })
 
     await page.goto('/')
@@ -428,24 +465,36 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
     const draftText = 'Nộp báo cáo kiến trúc hệ thống'
     await quickInput.fill(draftText)
     await quickSubmit.click()
-
-    // On failure: draft text is retained in the input!
-    await expect(quickInput).toHaveValue(draftText)
-    await expect(quickInput).toBeFocused()
-
-    // Allow success on next attempt
-    failCreate = false
-    await quickSubmit.click()
-
-    // On success: input is cleared and focused for repeated entry
+    await expect.poll(() => postCount).toBe(1)
     await expect(quickInput).toHaveValue('')
     await expect(quickInput).toBeFocused()
-
-    // Verify submission captured correct due_on
-    expect(capturedBody).toMatchObject({
-      title: draftText,
-      due_on: vnDay(0),
+    const commandId = String(capturedBodies[0]?.id)
+    expect(commandId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+    let retained: Record<string, unknown> | null = null
+    await expect.poll(async () => {
+      retained = await readOutboxRow(page, 'task.create', commandId)
+      return retained?.state
+    }).toBe('outcome_unknown')
+    expect(retained).toMatchObject({
+      attempts: 1,
+      body: { id: commandId, title: draftText, due_on: vnDay(0) },
+      payload_sha256: expect.any(String),
     })
+    const digest = retained?.payload_sha256
+
+    await expect.poll(() => postCount, { timeout: 8_000 }).toBe(2)
+    expect(capturedBodies[1]).toEqual(capturedBodies[0])
+    let replayed: Record<string, unknown> | null = null
+    await expect.poll(async () => {
+      replayed = await readOutboxRow(page, 'task.create', commandId)
+      return replayed?.attempts
+    }).toBe(2)
+    expect(replayed?.payload_sha256).toBe(digest)
+    releaseSecond?.()
+    await expect.poll(async () => readOutboxRow(page, 'task.create', commandId)).toBeNull()
+    await expect(quickInput).toHaveValue('')
+    await expect(quickInput).toBeFocused()
+    expect(digest).toMatch(/^[0-9a-f]{64}$/)
   })
 
   test('agenda card displays Vietnamese schedule time formatting for task due_at and wrap min-w-0', async ({ page }) => {

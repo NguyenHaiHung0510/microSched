@@ -2,6 +2,8 @@ import { expect } from '@playwright/test'
 
 import { test as trackerTest } from './fixtures/tracker'
 
+const LAPSED_SUBSCRIPTION_ID = '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4302'
+
 /**
  * Mock for the subscription slice (`/api/subscriptions/**`) and the public
  * settings API (`/api/settings/**`). Registered AFTER the tracker fixture so
@@ -195,7 +197,8 @@ export const test = trackerTest.extend<{ subscriptionApi: SubscriptionApiState }
             auto_renew: false,
           }),
           subscription({
-            id: 'sub-lapsed',
+            id: LAPSED_SUBSCRIPTION_ID,
+            tracker_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4202',
             name: 'Sub hết hạn từ lâu',
             amount: 120000,
             started_on: daysAgoIso(150),
@@ -400,7 +403,7 @@ test('lapsed subscription renews from today, not its stale expiry (F1)', async (
   page,
   subscriptionApi,
 }) => {
-  const lapsed = subscriptionApi.subscriptions.find((item) => item.id === 'sub-lapsed')
+  const lapsed = subscriptionApi.subscriptions.find((item) => item.id === LAPSED_SUBSCRIPTION_ID)
   expect(lapsed).toBeDefined()
   const anchor =
     lapsed!.expires_on > todayVnIso() ? lapsed!.expires_on : todayVnIso()
@@ -414,7 +417,7 @@ test('lapsed subscription renews from today, not its stale expiry (F1)', async (
   await page.goto('/subscription')
   await expect(page.getByTestId('subscription-screen')).toBeVisible()
   await page
-    .locator('[data-testid="subscription-renew"][data-subscription-id="sub-lapsed"]')
+    .locator(`[data-testid="subscription-renew"][data-subscription-id="${LAPSED_SUBSCRIPTION_ID}"]`)
     .click()
   const form = page.getByTestId('subscription-renew-form')
   await expect(form).toBeVisible()
@@ -424,6 +427,8 @@ test('lapsed subscription renews from today, not its stale expiry (F1)', async (
     formatDmy(expected),
   )
   await form.getByRole('button', { name: 'Ghi gia hạn' }).click()
+  await expect.poll(() => subscriptionApi.renews).toBe(1)
+  expect(subscriptionApi.renewPayloads).toHaveLength(1)
   await expect(page.getByTestId('subscription-renew-dialog')).toHaveCount(0)
 
   // The untouched default date is NOT sent: the server keeps the veto
@@ -431,7 +436,7 @@ test('lapsed subscription renews from today, not its stale expiry (F1)', async (
   const sent = subscriptionApi.renewPayloads.at(-1)
   expect(sent).toBeDefined()
   expect(sent!['new_expires_on']).toBeUndefined()
-  const updated = subscriptionApi.subscriptions.find((item) => item.id === 'sub-lapsed')
+  const updated = subscriptionApi.subscriptions.find((item) => item.id === LAPSED_SUBSCRIPTION_ID)
   expect(updated!.expires_on).toBe(expected)
 })
 
@@ -464,10 +469,10 @@ test('back from an in-app subscription entry does not loop (F6)', async ({ page 
 })
 
 test('highlight really scrolls the card into the viewport (F9)', async ({ page }) => {
-  await page.goto('/subscription?highlight=sub-lapsed')
+  await page.goto(`/subscription?highlight=${LAPSED_SUBSCRIPTION_ID}`)
   await expect(page.getByTestId('subscription-screen')).toBeVisible()
   const card = page.locator(
-    '[data-testid="subscription-card"][data-subscription-id="sub-lapsed"]',
+    `[data-testid="subscription-card"][data-subscription-id="${LAPSED_SUBSCRIPTION_ID}"]`,
   )
   await expect(card).toHaveAttribute('data-highlighted', 'true')
   // scrollIntoView must have moved the page: the card's bounding rect sits
