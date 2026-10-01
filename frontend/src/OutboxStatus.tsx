@@ -6,7 +6,7 @@ import { ApiError } from '@/api'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { adapterFor, hasLivePrivateSession, requiresPrivateRow } from '@/lib/outbox-adapters'
 import { canDiscardOutboxRow, discardOutboxTree } from '@/lib/outbox-db'
 import { useDomainOutbox } from '@/lib/use-domain-outbox'
@@ -85,10 +85,12 @@ export function OutboxStatus({ queryKey = [], privateUnlocked = false }: { query
       {state.webLocksUnavailable ? <p data-testid="outbox-lock-warning" className="text-sm text-muted-foreground" role="status">
         Trình duyệt này chưa hỗ trợ khoá gửi an toàn giữa các thẻ hoặc đang ở ngữ cảnh không bảo mật. Thay đổi vẫn được lưu trên thiết bị; gửi sẽ tiếp tục khi dùng ngữ cảnh hỗ trợ.
       </p> : null}
-      {!state.readError && state.rows.length > 0 ? <Button data-testid="outbox-indicator" variant="outline" size="lg" className="min-h-11" aria-haspopup="dialog" onClick={() => setOpen(true)}>
-        {queued > 0 ? queued + ' đang chờ gửi' : failed + ' cần xử lý'}{failed > 0 ? ' · ' + failed + ' lỗi' : ''}
-      </Button> : null}
       {!state.readError && state.rows.length > 0 ? <Dialog open={open} onOpenChange={setOpen}>
+        <DialogTrigger asChild>
+          <Button data-testid="outbox-indicator" variant="outline" size="lg" className="min-h-11">
+            {queued > 0 ? queued + ' đang chờ gửi' : failed + ' cần xử lý'}{failed > 0 ? ' · ' + failed + ' lỗi' : ''}
+          </Button>
+        </DialogTrigger>
         <DialogContent data-testid="outbox-panel" className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader className="pr-12">
             <DialogTitle>Hàng đợi ngoại tuyến</DialogTitle>
