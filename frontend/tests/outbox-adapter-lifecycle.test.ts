@@ -312,10 +312,10 @@ describe('typed outbox adapter lifecycles', () => {
     queryClient.setQueryData(['reminders', 'active', 'task', sourceId], { items: [] })
     queryClient.setQueryData(['reminders', 'history'], { items: [] })
     const body = {
-      mode: 'absolute', due_at: '2026-10-02T03:00:00Z', expected_id: null,
+      id: '0199abc0-0000-7000-8000-000000000022', mode: 'absolute', due_at: '2026-10-02T03:00:00Z', expected_id: null,
       expected_revision: null, expected_source_updated_at: '2026-10-01T01:00:00Z',
     }
-    const row = makeRow('reminder.save', `/api/reminders/task/${sourceId}`, body, null, sourceId)
+    const row = makeRow('reminder.save', `/api/reminders/task/${sourceId}`, body, body.id, sourceId)
     const result = {
       id: ids.item, source_kind: 'task', source_id: sourceId, status: 'pending',
       due_at: body.due_at, revision: 1, is_private: false,
@@ -337,9 +337,9 @@ describe('typed outbox adapter lifecycles', () => {
       private_until: new Date(Date.now() + 60_000).toISOString(), offline_bootstrap: false,
     })
     const row = makeRow('reminder.save', `/api/reminders/task/${sourceId}`, {
-      mode: 'absolute', expected_id: null, expected_revision: null,
+      id: '0199abc0-0000-7000-8000-000000000023', mode: 'absolute', expected_id: null, expected_revision: null,
       expected_source_updated_at: '2026-10-01T01:00:00Z',
-    }, null, sourceId)
+    }, '0199abc0-0000-7000-8000-000000000023', sourceId)
     row.requires_private = true
     const adapter = adapterFor('reminder.save')
     await adapter.optimisticApply(queryClient, row)

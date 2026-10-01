@@ -100,6 +100,7 @@ describe('typed domain command encoding', () => {
     const sourceId = '550e8400-e29b-41d4-a716-446655440000'
     const reminderId = '550e8400-e29b-41d4-a716-446655440001'
     const body = {
+      id: '0199abc0-0000-7000-8000-000000000021',
       mode: 'absolute',
       due_at: '2026-10-02T03:00:00Z',
       expected_id: reminderId,
@@ -110,10 +111,10 @@ describe('typed domain command encoding', () => {
       operationKind: 'reminder.save',
       path: `/api/reminders/task/${sourceId}`,
       body,
-      entityId: reminderId,
+      entityId: body.id,
       parentId: sourceId,
       requiresPrivate: true,
-    })).toMatchObject({ method: 'PUT', body, entity_id: reminderId, parent_id: sourceId, requires_private: true })
+    })).toMatchObject({ method: 'PUT', body, entity_id: body.id, parent_id: sourceId, requires_private: true, idempotency_mode: 'client_uuid' })
     const cancelPath = `/api/reminders/${reminderId}?revision=7`
     expect(adapterFor('reminder.cancel').encodeCommand({
       operationKind: 'reminder.cancel',

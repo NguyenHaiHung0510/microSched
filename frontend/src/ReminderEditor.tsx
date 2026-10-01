@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell } from 'lucide-react'
 import { apiRequest } from '@/api'
@@ -10,6 +10,7 @@ import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { ReminderDevices } from '@/ReminderDevices'
 import { queuedRequest } from '@/lib/queued-mutation'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
+import { uuidv7 } from '@/lib/uuidv7'
 import { activeReminder, reminderKey, reminderPreview, reminderTime, reminderStatus, vnInput,
   type Reminder, type ReminderSource, type ReminderSourceInfo } from '@/reminder-ui'
 
@@ -43,17 +44,22 @@ export function ReminderEditor({ kind, sourceId, onClose }: {
         : source.isError || reminders.isError ? <div role="alert"><p>Chưa tải được lời nhắc hoặc đối tượng không còn hiển thị.</p>
           <Button size="lg" variant="outline" onClick={() => { void source.refetch(); void reminders.refetch() }}>Thử lại</Button></div>
         : source.data && <ReminderFields key={`${current?.id ?? 'new'}-${current?.revision ?? 0}`}
-          source={source.data} kind={kind} sourceId={sourceId} current={current} onClose={onClose} />}
+          source={source.data} kind={kind} sourceId={sourceId} current={current} onClose={onClose}
+          outboxPendingCount={readControl.outbox.pendingCount} outboxFailedCount={readControl.outbox.failedCount}
+          outboxReadError={readControl.outbox.readError} activeUpdatedAt={reminders.dataUpdatedAt} />}
     </DialogContent>
   </Dialog>
 }
 
-function ReminderFields({ source, kind, sourceId, current, onClose }: {
+function ReminderFields({ source, kind, sourceId, current, onClose, outboxPendingCount,
+  outboxFailedCount, outboxReadError, activeUpdatedAt }: {
   source: ReminderSourceInfo; kind: ReminderSource; sourceId: string; current?: Reminder; onClose: () => void
+  outboxPendingCount: number; outboxFailedCount: number; outboxReadError: boolean; activeUpdatedAt: number
 }) {
   const client = useQueryClient()
   const [openedAt] = useState(Date.now)
-  const [queued, setQueued] = useState(false)
+  const [queuedBaselineUpdatedAt, setQueuedBaselineUpdatedAt] = useState<number | null>(null)
+  const saveId = useRef<string | null>(null)
   const [enabled, setEnabled] = useState(Boolean(current))
   const [mode, setMode] = useState(current?.mode ?? 'absolute')
   const [absolute, setAbsolute] = useState(current ? vnInput(current.due_at) : '')
@@ -66,10 +72,10 @@ function ReminderFields({ source, kind, sourceId, current, onClose }: {
   const refresh = () => { void client.invalidateQueries({ queryKey: reminderKey }); onClose() }
   const save = useMutation({ mutationFn: () => queuedRequest<Reminder | null>(client, 'reminder.save', {
     path: `/api/reminders/${kind}/${sourceId}`,
-    entityId: current?.id ?? null,
+    entityId: saveId.current,
     parentId: sourceId,
     requiresPrivate: source.is_private,
-    body: { mode,
+    body: { id: saveId.current ?? uuidv7(), mode,
       ...(mode === 'absolute' ? { due_at: preview } : {
         offset_minutes: Number(amount) * Number(unit) * Number(direction),
         anchor_time: source.date_only ? clock : null }),
@@ -77,7 +83,8 @@ function ReminderFields({ source, kind, sourceId, current, onClose }: {
       expected_source_updated_at: source.updated_at ?? null,
     },
   }), onSuccess: (result) => {
-    if (result === null) { setQueued(true); return }
+    if (result === null) { setQueuedBaselineUpdatedAt(activeUpdatedAt); return }
+    saveId.current = null
     refresh()
   },
   onError: () => { void client.invalidateQueries({ queryKey: [...reminderKey, 'active', kind, sourceId] });
@@ -88,13 +95,20 @@ function ReminderFields({ source, kind, sourceId, current, onClose }: {
     parentId: sourceId,
     requiresPrivate: source.is_private,
   }), onSuccess: (result) => {
-    if (result === null) { setQueued(true); return }
+    if (result === null) { setQueuedBaselineUpdatedAt(activeUpdatedAt); return }
     refresh()
   } })
+  const queued = queuedBaselineUpdatedAt !== null &&
+    (outboxPendingCount > 0 || outboxFailedCount > 0 || outboxReadError || activeUpdatedAt <= queuedBaselineUpdatedAt)
+  const queueIsDrained = outboxPendingCount === 0 && outboxFailedCount === 0 && !outboxReadError
+  const needsServerRefresh = queuedBaselineUpdatedAt !== null && queueIsDrained && activeUpdatedAt <= queuedBaselineUpdatedAt
   const busy = save.isPending || cancel.isPending
   return <div className="space-y-4">
     <p className="break-words font-semibold">{source.title}</p>
-    {queued ? <p data-testid="reminder-outbox-pending" className="text-sm text-muted-foreground" role="status">Đã lưu thay đổi; đang chờ máy chủ xác nhận.</p> : null}
+    {queued ? <div data-testid="reminder-outbox-pending" className="space-y-2 text-sm text-muted-foreground" role="status">
+      <p>{queueIsDrained ? 'Đang chờ danh sách lời nhắc được xác nhận lại từ máy chủ.' : 'Đã lưu thay đổi; đang chờ máy chủ xác nhận.'}</p>
+      {needsServerRefresh ? <Button size="lg" variant="outline" onClick={() => void client.invalidateQueries({ queryKey: [...reminderKey, 'active', kind, sourceId] })}>Kiểm tra lại với máy chủ</Button> : null}
+    </div> : null}
     {current && <p role="status" className="text-sm text-muted-foreground">{reminderStatus[current.status]}</p>}
     {!source.open ? <p role="alert">Đối tượng đã hoàn thành hoặc bị xoá.</p> : <>
       <Button size="lg" variant={enabled ? 'selected' : 'outline'} aria-pressed={enabled}
@@ -133,7 +147,7 @@ function ReminderFields({ source, kind, sourceId, current, onClose }: {
     {(save.error || cancel.error) && <p role="alert" className="text-sm text-bad">{(save.error || cancel.error)?.message}</p>}
     <div className="flex flex-wrap gap-2">
       {enabled ? <Button size="lg" data-testid="reminder-save" disabled={busy || queued || !source.open || !preview || Date.parse(preview) <= openedAt || current?.status === 'sending'}
-        onClick={() => save.mutate()}>{save.isPending ? 'Đang lưu…' : current ? 'Lưu lời nhắc' : 'Đặt nhắc mới'}</Button>
+        onClick={() => { saveId.current = uuidv7(); save.mutate() }}>{save.isPending ? 'Đang lưu…' : current ? 'Lưu lời nhắc' : 'Đặt nhắc mới'}</Button>
         : current && <Button size="lg" variant="destructive" disabled={busy} onClick={() => cancel.mutate()}>Tắt lời nhắc</Button>}
       <Button size="lg" variant="outline" onClick={onClose}>Đóng</Button>
     </div>

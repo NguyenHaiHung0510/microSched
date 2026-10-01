@@ -148,7 +148,7 @@ const definitions = {
   // This is the existing scheduled tracker-reminder action, not Mimi's
   // confirmation surface. Its entry_id is created at the screen before enqueue.
   'reminder.confirm': { method:'POST', resource:'reminder', idempotencyMode:'side_effect', route:(i:CommandInput)=>i.path, keys:trackerKeys, optimisticDto:noDto },
-  'reminder.save': { method:'PUT', resource:'reminder', idempotencyMode:'absolute', route:(i:CommandInput)=>i.path, keys:reminderKeys, optimisticDto:noDto },
+  'reminder.save': { method:'PUT', resource:'reminder', idempotencyMode:'client_uuid', route:(i:CommandInput)=>i.path, keys:reminderKeys, optimisticDto:noDto },
   'reminder.cancel': { method:'DELETE', resource:'reminder', idempotencyMode:'postcondition', route:(i:CommandInput)=>i.path, keys:reminderKeys, optimisticDto:noDto },
 } as const satisfies Record<string, AdapterSpec>
 
