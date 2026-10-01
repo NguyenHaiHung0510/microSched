@@ -1,20 +1,33 @@
 """Real PostgreSQL source triggers, visibility, concurrency and provider recovery."""
 
 import asyncio
+import os
+import time
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database_urls import async_postgres_url
 from app.domain.models import AuthSession, OneShotReminder, PushSubscription, Task
-from app.domain.one_shot import ReminderWrite, list_reminders, save_reminder
+from app.domain.one_shot import ReminderWrite, cancel_reminder, list_reminders, save_reminder
 from app.domain.one_shot_delivery import OneShotDispatcher
 from app.domain.push import PushResult
 
 pytestmark = pytest.mark.pg
+
+
+def _uuid7() -> UUID:
+    timestamp = int(time.time() * 1000)
+    random_bits = int.from_bytes(os.urandom(10), "big") & ((1 << 74) - 1)
+    value = (timestamp << 80) | (0x7 << 76)
+    value |= ((random_bits >> 62) & 0xFFF) << 64
+    value |= 0b10 << 62
+    value |= random_bits & ((1 << 62) - 1)
+    return UUID(int=value)
 
 
 async def scenario(dsn, exercise):
@@ -110,6 +123,223 @@ def test_absolute_unchanged_and_duplicate_or_stale_write_rejected(pg_dsn):
     asyncio.run(scenario(pg_dsn, exercise))
 
 
+def test_client_uuid_replay_survives_source_cancel_and_rejects_mismatches(pg_dsn):
+    async def exercise(db, task, auth, now, maker):
+        task_id = task.id
+        original_source_updated_at = task.updated_at
+        client_id = _uuid7()
+        other_task = Task(
+            title="Other synthetic reminder source",
+            status="open",
+            due_precision="datetime",
+            due_at=now + timedelta(days=3),
+        )
+        db.add(other_task)
+        await db.commit()
+        await db.refresh(other_task)
+        other_task_id = other_task.id
+        payload = ReminderWrite(
+            id=client_id,
+            mode="absolute",
+            due_at=now + timedelta(hours=1),
+            expected_source_updated_at=original_source_updated_at,
+        )
+        try:
+            created = await save_reminder(db, auth, "task", task_id, payload)
+            await db.commit()
+            assert created.id == client_id
+
+            replay = await save_reminder(
+                db, auth, "task", task_id, payload, now=now + timedelta(hours=2)
+            )
+            assert replay == created
+            await db.commit()
+
+            with pytest.raises(HTTPException) as error:
+                await save_reminder(
+                    db,
+                    auth,
+                    "task",
+                    task_id,
+                    ReminderWrite(
+                        id=client_id,
+                        mode="absolute",
+                        due_at=now + timedelta(days=1),
+                    ),
+                )
+            assert error.value.status_code == 409
+            await db.rollback()
+
+            with pytest.raises(HTTPException) as error:
+                await save_reminder(
+                    db,
+                    auth,
+                    "task",
+                    other_task_id,
+                    ReminderWrite(
+                        id=client_id,
+                        mode="absolute",
+                        due_at=now + timedelta(hours=1),
+                    ),
+                )
+            assert error.value.status_code == 409
+            await db.rollback()
+
+            with pytest.raises(HTTPException) as error:
+                await save_reminder(
+                    db,
+                    auth,
+                    "task",
+                    task_id,
+                    ReminderWrite(
+                        id=_uuid7(),
+                        mode="absolute",
+                        due_at=now + timedelta(hours=1),
+                        expected_id=client_id,
+                        expected_revision=2,
+                        expected_source_updated_at=original_source_updated_at,
+                    ),
+                )
+            assert error.value.status_code == 409
+            await db.rollback()
+
+            with pytest.raises(HTTPException) as error:
+                await save_reminder(
+                    db,
+                    auth,
+                    "task",
+                    task_id,
+                    ReminderWrite(
+                        id=_uuid7(),
+                        mode="absolute",
+                        due_at=now + timedelta(hours=1),
+                        expected_source_updated_at=original_source_updated_at
+                        - timedelta(seconds=1),
+                    ),
+                )
+            assert error.value.status_code == 409
+            await db.rollback()
+
+            with pytest.raises(HTTPException) as error:
+                await save_reminder(
+                    db,
+                    auth,
+                    "task",
+                    task_id,
+                    ReminderWrite(
+                        id=_uuid7(),
+                        mode="absolute",
+                        due_at=now + timedelta(hours=1),
+                        expected_id=client_id,
+                        expected_revision=1,
+                        expected_source_updated_at=original_source_updated_at,
+                    ),
+                    now=now + timedelta(hours=2),
+                )
+            assert error.value.status_code == 422
+            await db.rollback()
+
+            row = await db.get(OneShotReminder, client_id, populate_existing=True)
+            row.status = "sending"
+            await db.commit()
+            with pytest.raises(HTTPException) as error:
+                await save_reminder(
+                    db,
+                    auth,
+                    "task",
+                    task_id,
+                    ReminderWrite(
+                        id=_uuid7(),
+                        mode="absolute",
+                        due_at=now + timedelta(hours=3),
+                        expected_id=client_id,
+                        expected_revision=1,
+                        expected_source_updated_at=original_source_updated_at,
+                    ),
+                )
+            assert error.value.status_code == 409
+            await db.rollback()
+
+            row = await db.get(OneShotReminder, client_id, populate_existing=True)
+            row.status = "pending"
+            await db.commit()
+            await db.execute(
+                text("UPDATE microsched.task SET status='completed' WHERE id=:id"),
+                {"id": task_id},
+            )
+            await db.commit()
+            cancelled = await db.get(OneShotReminder, client_id, populate_existing=True)
+            assert cancelled.status == "cancelled" and cancelled.revision == 2
+
+            replay_after_cancel = await save_reminder(
+                db, auth, "task", task_id, payload, now=now + timedelta(hours=2)
+            )
+            assert replay_after_cancel.id == client_id
+            assert replay_after_cancel.status == "cancelled"
+            assert replay_after_cancel.revision == 2
+            await db.commit()
+            assert (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(OneShotReminder)
+                    .where(OneShotReminder.task_id == task_id)
+                )
+                == 1
+            )
+        finally:
+            await db.execute(delete(Task).where(Task.id == other_task_id))
+            await db.commit()
+
+    asyncio.run(scenario(pg_dsn, exercise))
+
+
+def test_cancel_replay_requires_exact_revision_plus_one_cancelled(pg_dsn):
+    async def exercise(db, task, auth, now, maker):
+        row = await save_reminder(
+            db,
+            auth,
+            "task",
+            task.id,
+            ReminderWrite(id=_uuid7(), mode="absolute", due_at=now + timedelta(hours=1)),
+        )
+        await db.commit()
+        await cancel_reminder(db, auth, row.id, revision=1)
+        await db.commit()
+
+        await cancel_reminder(db, auth, row.id, revision=1)
+        await db.commit()
+        stored = await db.get(OneShotReminder, row.id, populate_existing=True)
+        assert stored.status == "cancelled" and stored.revision == 2
+
+        with pytest.raises(HTTPException) as error:
+            await cancel_reminder(db, auth, row.id, revision=2)
+        assert error.value.status_code == 409
+
+    asyncio.run(scenario(pg_dsn, exercise))
+
+
+def test_fresh_cancel_still_accepts_sending_status(pg_dsn):
+    async def exercise(db, task, auth, now, maker):
+        reminder = await save_reminder(
+            db,
+            auth,
+            "task",
+            task.id,
+            ReminderWrite(id=_uuid7(), mode="absolute", due_at=now + timedelta(hours=1)),
+        )
+        await db.commit()
+        stored = await db.get(OneShotReminder, reminder.id, populate_existing=True)
+        stored.status = "sending"
+        await db.commit()
+
+        await cancel_reminder(db, auth, reminder.id, revision=1)
+        await db.commit()
+        stored = await db.get(OneShotReminder, reminder.id, populate_existing=True)
+        assert stored.status == "cancelled" and stored.revision == 2
+
+    asyncio.run(scenario(pg_dsn, exercise))
+
+
 def test_locked_list_cannot_load_or_decrypt_private_parent(pg_dsn, monkeypatch):
     def forbidden_decrypt(_value):
         raise AssertionError("private parent reached decrypt while locked")
@@ -143,6 +373,7 @@ def test_locked_list_cannot_load_or_decrypt_private_parent(pg_dsn, monkeypatch):
                 "task",
                 task.id,
                 ReminderWrite(
+                    id=row.id,
                     mode="absolute",
                     due_at=now + timedelta(hours=2),
                     expected_id=row.id,

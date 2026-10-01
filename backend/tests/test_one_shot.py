@@ -1,6 +1,7 @@
 """Contract-level pure tests for one-shot scheduling (no real data or providers)."""
 
 from datetime import UTC, date, datetime, time, timedelta
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -54,6 +55,11 @@ def test_missing_anchor_and_tracker_relative_are_rejected():
         {"mode": "relative", "offset_minutes": 525601},
         {"mode": "relative", "offset_minutes": 0, "anchor_time": "09:00:01"},
         {"mode": "absolute", "due_at": NOW, "offset_minutes": 0},
+        {
+            "id": UUID("00000000-0000-4000-8000-000000000000"),
+            "mode": "absolute",
+            "due_at": NOW,
+        },
     ],
 )
 def test_invalid_inputs_fail_validation(payload):

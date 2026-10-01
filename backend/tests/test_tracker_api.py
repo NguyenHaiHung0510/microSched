@@ -776,7 +776,14 @@ def test_quantity_nonpositive_rejected(pg_dsn: str):
     asyncio.run(scenario())
 
 
-def test_f4_excludes_entries_after_now(pg_dsn: str):
+@pytest.mark.parametrize(
+    ("frozen_now", "has_past"),
+    [
+        (datetime(2026, 10, 12, 12, tzinfo=VN_TZ), True),
+        (datetime(2026, 10, 1, 0, tzinfo=VN_TZ), False),
+    ],
+)
+def test_f4_excludes_entries_after_now(pg_dsn: str, monkeypatch, frozen_now, has_past):
     """F4 chỉ lấy entry trước period_end, không lấy entry tương lai trong tháng (C5)."""
 
     async def scenario():
@@ -787,15 +794,20 @@ def test_f4_excludes_entries_after_now(pg_dsn: str):
         try:
             tracker = await _create_tracker(client, name="Tiền", kind="finance", input_mode="money")
             tracker_id = UUID(tracker["id"])
-            now = datetime.now(UTC)
-            past = await _create_entry(
-                client,
-                tracker_id,
-                amount=1000,
-                occurred_at=(now - timedelta(hours=1)).isoformat(),
-            )
-            assert past.status_code == 201
-            entry_ids.append(UUID(past.json()["id"]))
+            now = frozen_now
+            if has_past:
+                month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                past_at = now - timedelta(hours=1)
+                if past_at < month_start:
+                    past_at = month_start + (now - month_start) / 2
+                past = await _create_entry(
+                    client,
+                    tracker_id,
+                    amount=1000,
+                    occurred_at=past_at.isoformat(),
+                )
+                assert past.status_code == 201
+                entry_ids.append(UUID(past.json()["id"]))
             future = await _create_entry(
                 client,
                 tracker_id,
@@ -805,9 +817,17 @@ def test_f4_excludes_entries_after_now(pg_dsn: str):
             assert future.status_code == 201
             entry_ids.append(UUID(future.json()["id"]))
 
+            class FrozenDateTime(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return frozen_now if tz is not None else frozen_now.replace(tzinfo=None)
+
+            monkeypatch.setattr("app.web.routers.tracker.datetime", FrozenDateTime)
+            monkeypatch.setattr("app.domain.dashboard.datetime", FrozenDateTime)
             dash = (await client.get("/api/tracker/dashboard")).json()
-            assert dash["f1_total"] == 1000
-            assert [line["amount"] for line in dash["f4_top"]] == [1000]
+            expected = 1000 if has_past else 0
+            assert dash["f1_total"] == expected
+            assert [line["amount"] for line in dash["f4_top"]] == ([1000] if has_past else [])
         finally:
             await client.aclose()
             await _cleanup(pg_dsn, "entry", entry_ids)
