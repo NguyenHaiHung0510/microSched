@@ -121,11 +121,18 @@ export function domainReadOptions(blocked: boolean, normalInterval: NormalInterv
   }
 }
 
-export function useDomainReadControl(queryKey: QueryKey, normalInterval: NormalInterval, privateUnlocked = false) {
-  const state = useDomainOutbox(queryKey, privateUnlocked)
+export function useDomainReadControl(
+  queryKey: QueryKey,
+  normalInterval: NormalInterval,
+  privateUnlocked = false,
+  includePrivateForReadControl = false,
+) {
+  const state = useDomainOutbox(queryKey, privateUnlocked, includePrivateForReadControl)
   const blocked = state.pendingCount > 0 || state.failedCount > 0 || state.readError
   return {
     ...domainReadOptions(blocked, normalInterval),
-    outbox: state,
+    outbox: includePrivateForReadControl && !privateUnlocked
+      ? { ...state, rows: state.rows.filter((row) => !requiresPrivateRow(row)) }
+      : state,
   }
 }

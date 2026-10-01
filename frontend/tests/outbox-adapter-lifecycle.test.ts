@@ -306,6 +306,55 @@ describe('typed outbox adapter lifecycles', () => {
     queryClient.clear()
   })
 
+  it('reconciles a confirmed reminder save only into its active list', async () => {
+    const queryClient = client()
+    const sourceId = '0199abc0-0000-7000-8000-000000000019'
+    queryClient.setQueryData(['reminders', 'active', 'task', sourceId], { items: [] })
+    queryClient.setQueryData(['reminders', 'history'], { items: [] })
+    const body = {
+      mode: 'absolute', due_at: '2026-10-02T03:00:00Z', expected_id: null,
+      expected_revision: null, expected_source_updated_at: '2026-10-01T01:00:00Z',
+    }
+    const row = makeRow('reminder.save', `/api/reminders/task/${sourceId}`, body, null, sourceId)
+    const result = {
+      id: ids.item, source_kind: 'task', source_id: sourceId, status: 'pending',
+      due_at: body.due_at, revision: 1, is_private: false,
+    }
+    await adapterFor('reminder.save').reconcileSuccess(queryClient, row, result)
+    expect(queryClient.getQueryData<{ items: unknown[] }>(['reminders', 'active', 'task', sourceId])?.items)
+      .toEqual([result])
+    expect(queryClient.getQueryData(['reminders', 'history'])).toEqual({ items: [] })
+    queryClient.clear()
+  })
+
+  it('purges a private reminder acknowledgement that arrives after the unlock boundary', async () => {
+    vi.stubGlobal('navigator', { onLine: true })
+    const queryClient = client()
+    const sourceId = '0199abc0-0000-7000-8000-000000000020'
+    const key = ['reminders', 'active', 'task', sourceId] as const
+    queryClient.setQueryData(key, { items: [] })
+    queryClient.setQueryData(['session'], {
+      private_until: new Date(Date.now() + 60_000).toISOString(), offline_bootstrap: false,
+    })
+    const row = makeRow('reminder.save', `/api/reminders/task/${sourceId}`, {
+      mode: 'absolute', expected_id: null, expected_revision: null,
+      expected_source_updated_at: '2026-10-01T01:00:00Z',
+    }, null, sourceId)
+    row.requires_private = true
+    const adapter = adapterFor('reminder.save')
+    await adapter.optimisticApply(queryClient, row)
+    queryClient.removeQueries({ queryKey: ['session'] })
+    await adapter.reconcileSuccess(queryClient, row, {
+      id: ids.item, source_id: sourceId, source_kind: 'task', source_title: 'PRIVATE_REMINDER_CANARY',
+      is_private: true, status: 'pending', revision: 1,
+    })
+    expect(JSON.stringify(queryClient.getQueryData(key))).not.toContain('PRIVATE_REMINDER_CANARY')
+    await adapter.discardOrRollback(queryClient, row)
+    expect(JSON.stringify(queryClient.getQueryData(key))).not.toContain('PRIVATE_REMINDER_CANARY')
+    queryClient.clear()
+    vi.unstubAllGlobals()
+  })
+
   it('overlays calendar events into actual 30-day range and numeric month query keys only', async () => {
     const queryClient = client()
     queryClient.setQueryData(['calendar', 'events', '2026-10-01'], { items: [] })

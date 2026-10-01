@@ -95,4 +95,32 @@ describe('typed domain command encoding', () => {
       body: { id: '550e8400-e29b-41d4-a716-446655440000', title: 'Old ID on create' },
     })).toThrow(/UUIDv7/)
   })
+
+  it('preserves reminder PUT freshness tokens and exact revisioned DELETE route', () => {
+    const sourceId = '550e8400-e29b-41d4-a716-446655440000'
+    const reminderId = '550e8400-e29b-41d4-a716-446655440001'
+    const body = {
+      mode: 'absolute',
+      due_at: '2026-10-02T03:00:00Z',
+      expected_id: reminderId,
+      expected_revision: 7,
+      expected_source_updated_at: '2026-10-01T01:00:00Z',
+    }
+    expect(adapterFor('reminder.save').encodeCommand({
+      operationKind: 'reminder.save',
+      path: `/api/reminders/task/${sourceId}`,
+      body,
+      entityId: reminderId,
+      parentId: sourceId,
+      requiresPrivate: true,
+    })).toMatchObject({ method: 'PUT', body, entity_id: reminderId, parent_id: sourceId, requires_private: true })
+    const cancelPath = `/api/reminders/${reminderId}?revision=7`
+    expect(adapterFor('reminder.cancel').encodeCommand({
+      operationKind: 'reminder.cancel',
+      path: cancelPath,
+      entityId: reminderId,
+      parentId: sourceId,
+      requiresPrivate: true,
+    })).toMatchObject({ method: 'DELETE', path: cancelPath, entity_id: reminderId, parent_id: sourceId, requires_private: true })
+  })
 })

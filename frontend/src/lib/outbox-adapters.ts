@@ -13,6 +13,7 @@ export type CommandInput = {
   dependencyOperationId?: number | null
   groupId?: string | null
 }
+type DomainHttpMethod = OutboxRow['method'] | 'PUT'
 
 /**
  * Domain-owned command metadata. The queue core adds runtime fields (timestamps,
@@ -21,7 +22,7 @@ export type CommandInput = {
 export type EncodedCommand = {
   operation_kind: OperationKind
   resource: string
-  method: OutboxRow['method']
+  method: DomainHttpMethod
   path: string
   body: Json | null
   entity_id: string | null
@@ -38,7 +39,7 @@ export type DomainCommandInput = CommandInput & {
 }
 
 export type OutboxAdapter = {
-  method: OutboxRow['method']
+  method: DomainHttpMethod
   resource: string
   idempotencyMode: OutboxRow['idempotency_mode']
   affectedQueryKeys(input: CommandInput): QueryKey[]
@@ -54,7 +55,7 @@ type Resource = 'task' | 'task_item' | 'note' | 'note_item' | 'calendar_source' 
   'calendar_event' | 'day_annotation' | 'tracker_group' | 'tracker' | 'entry' |
   'subscription' | 'setting' | 'reminder'
 type AdapterSpec = {
-  method: OutboxRow['method']
+  method: DomainHttpMethod
   resource: Resource
   idempotencyMode: OutboxRow['idempotency_mode']
   keys: (input: CommandInput) => QueryKey[]
@@ -91,6 +92,7 @@ const trackerKeys = () => [['tracker', 'trackers']] as QueryKey[]
 const entryKeys = () => [['tracker', 'entries']] as QueryKey[]
 const subscriptionKeys = () => [['subscription', 'subscriptions']] as QueryKey[]
 const settingsKeys = () => [['subscription', 'settings']] as QueryKey[]
+const reminderKeys = () => [['reminders']] as QueryKey[]
 
 /**
  * Each operation declares its route family, DTO defaults and query surface.
@@ -146,6 +148,8 @@ const definitions = {
   // This is the existing scheduled tracker-reminder action, not Mimi's
   // confirmation surface. Its entry_id is created at the screen before enqueue.
   'reminder.confirm': { method:'POST', resource:'reminder', idempotencyMode:'side_effect', route:(i:CommandInput)=>i.path, keys:trackerKeys, optimisticDto:noDto },
+  'reminder.save': { method:'PUT', resource:'reminder', idempotencyMode:'absolute', route:(i:CommandInput)=>i.path, keys:reminderKeys, optimisticDto:noDto },
+  'reminder.cancel': { method:'DELETE', resource:'reminder', idempotencyMode:'postcondition', route:(i:CommandInput)=>i.path, keys:reminderKeys, optimisticDto:noDto },
 } as const satisfies Record<string, AdapterSpec>
 
 type CacheSnapshot = Array<[QueryKey, unknown]>
@@ -289,15 +293,17 @@ function updateEntityList(
 function purgePrivateRowFromCache(client: QueryClient, keys: QueryKey[], row: OutboxRow) {
   const hiddenIds = new Set<string>()
   if (row.entity_id) hiddenIds.add(row.entity_id)
+  const hiddenReminderSource = row.resource === 'reminder' ? row.parent_id : null
   if (row.parent_id && ['task_item', 'note_item', 'entry', 'subscription'].includes(row.resource)) {
     hiddenIds.add(row.parent_id)
   }
-  if (hiddenIds.size === 0) return
+  if (hiddenIds.size === 0 && !hiddenReminderSource) return
   for (const key of keys) {
     client.setQueriesData({ queryKey: key }, (old) => {
       if (Array.isArray(old)) return old.filter((item) => {
         const entity = record(item)
-        return !entity || typeof entity.id !== 'string' || !hiddenIds.has(entity.id)
+        return !entity || (typeof entity.id !== 'string' || !hiddenIds.has(entity.id)) &&
+          !(hiddenReminderSource && entity.source_id === hiddenReminderSource)
       })
       const envelope = record(old)
       if (!envelope || !Array.isArray(envelope.items)) return old
@@ -305,7 +311,8 @@ function purgePrivateRowFromCache(client: QueryClient, keys: QueryKey[], row: Ou
         ...envelope,
         items: envelope.items.filter((item) => {
           const entity = record(item)
-          return !entity || typeof entity.id !== 'string' || !hiddenIds.has(entity.id)
+          return !entity || (typeof entity.id !== 'string' || !hiddenIds.has(entity.id)) &&
+            !(hiddenReminderSource && entity.source_id === hiddenReminderSource)
         }),
       }
     })
@@ -433,6 +440,10 @@ function applyTypedOverlay(client: QueryClient, row: OutboxRow) {
   const model = spec.optimisticDto({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
   const deleting = spec.method === 'DELETE'
   const action = deleting ? 'delete' : kind.endsWith('.create') ? 'upsert' : 'update'
+
+  // Keep reminder lists server-confirmed while a revision-checked command waits.
+  // The public-cache sanitizer deliberately does not persist one-shot reminders.
+  if (kind === 'reminder.save' || kind === 'reminder.cancel') return
 
   if (kind.startsWith('task_item.')) {
     for (const key of keys) mutateParents(client, key, row, (parent) => updateChildList(parent, row, model, action))
@@ -588,6 +599,16 @@ function reconcileValue(kind: OperationKind, row: OutboxRow, value: unknown, res
       : value
   }
   const model = serverResult(kind, response)
+  if (kind === 'reminder.save' && model) {
+    const envelope = record(value)
+    if (!envelope || !Array.isArray(envelope.items) || queryKey[1] !== 'active') return value
+    const items = envelope.items as Entity[]
+    const nextItems = items.filter((item) =>
+      item.source_id !== model.source_id || item.source_kind !== model.source_kind,
+    )
+    if (['pending', 'sending', 'needs_reschedule'].includes(String(model.status))) nextItems.push(model)
+    return { ...envelope, items: nextItems }
+  }
   if (!model || !row.entity_id) return value
   if (kind.startsWith('task_item.')) {
     const action = kind === 'task_item.create' ? 'upsert' : 'update'
@@ -652,6 +673,7 @@ const routePatterns: Record<OperationKind, RegExp> = {
   'entry.create': /^\/api\/tracker\/entries$/, 'entry.update': /^\/api\/tracker\/entries\/[^/?]+$/, 'entry.delete': /^\/api\/tracker\/entries\/[^/?]+$/, 'entry.restore': /^\/api\/tracker\/entries\/[^/?]+\/restore$/,
   'subscription.create': /^\/api\/subscriptions$/, 'subscription.update': /^\/api\/subscriptions\/[^/?]+$/, 'subscription.cancel': /^\/api\/subscriptions\/[^/?]+\/cancel$/, 'subscription.uncancel': /^\/api\/subscriptions\/[^/?]+\/uncancel$/, 'subscription.renew': /^\/api\/subscriptions\/[^/?]+\/renew$/, 'subscription.delete': /^\/api\/subscriptions\/[^/?]+$/, 'subscription.restore': /^\/api\/subscriptions\/[^/?]+\/restore$/,
   'setting.show_list_price.update': /^\/api\/settings\/show_list_price$/, 'setting.subscription_expiry_lead_days.update': /^\/api\/settings\/subscription_expiry_lead_days$/, 'reminder.confirm': /^\/api\/reminder-dispatch\/[^/?]+\/confirm$/,
+  'reminder.save': /^\/api\/reminders\/(task|event|tracker)\/[^/?]+$/, 'reminder.cancel': /^\/api\/reminders\/[^/?]+\?revision=[1-9][0-9]*$/,
 }
 
 function validUuidV7(value: unknown): value is string {
@@ -697,6 +719,7 @@ function routeEntityId(kind: OperationKind, path: string): string | null {
     'subscription.renew': /^\/api\/subscriptions\/([^/]+)\/renew$/,
     'subscription.delete': /^\/api\/subscriptions\/([^/]+)$/,
     'subscription.restore': /^\/api\/subscriptions\/([^/]+)\/restore$/,
+    'reminder.cancel': /^\/api\/reminders\/([^/?]+)\?revision=[1-9][0-9]*$/,
   }
   return path.match(patterns[kind] ?? /(?!)$/)?.[1] ?? null
 }
@@ -711,6 +734,7 @@ function routeParentId(kind: OperationKind, path: string): string | null {
     'note_item.delete': /^\/api\/notes\/([^/]+)\/items\/[^/]+$/,
     'note_item.reorder': /^\/api\/notes\/([^/]+)\/items\/positions$/,
     'calendar.import': /^\/api\/calendar\/sources\/([^/]+)\/import$/,
+    'reminder.save': /^\/api\/reminders\/(?:task|event|tracker)\/([^/?]+)$/,
   }
   return path.match(patterns[kind] ?? /(?!)$/)?.[1] ?? null
 }
@@ -761,7 +785,8 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
         throw new Error(`Parent ID does not match body for ${operationKind}`)
       }
       if ((operationKind.startsWith('entry.') || operationKind.startsWith('subscription.') ||
-        operationKind.startsWith('tracker.')) && input.requiresPrivate === undefined) {
+        operationKind.startsWith('tracker.') || operationKind === 'reminder.save' ||
+        operationKind === 'reminder.cancel') && input.requiresPrivate === undefined) {
         throw new Error(`Privacy gate state is required for ${operationKind}`)
       }
       if (parentId !== null && !validExistingUuid(parentId)) throw new Error(`Invalid parent UUID for ${operationKind}`)
@@ -797,6 +822,19 @@ function adapterForSpec<K extends OperationKind>(operationKind: K): OutboxAdapte
     async reconcileSuccess(client, row, response) {
       if (spec.method === 'DELETE' || kindIsSideEffect(operationKind) || response == null) return
       const keys = spec.keys({ path: row.path, body: row.body, entityId: row.entity_id, parentId: row.parent_id })
+      if (operationKind === 'reminder.save') {
+        if (requiresPrivateRow(row) && !hasLivePrivateSession(client)) {
+          purgePrivateRowFromCache(client, keys, row)
+          return
+        }
+        for (const query of client.getQueryCache().findAll({ queryKey: keys[0] })) {
+          const queryKey = query.queryKey
+          client.setQueryData(queryKey, (value) =>
+            reconcileValue(operationKind, row, value, response, queryKey),
+          )
+        }
+        return
+      }
       if (requiresPrivateRow(row)) {
         // Never put a private server acknowledgement into the rollback WeakMap.
         // Reconcile directly into live query state only while the verified gate
