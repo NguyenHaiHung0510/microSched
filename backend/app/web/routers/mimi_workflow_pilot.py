@@ -102,9 +102,14 @@ async def create_run(request: Request, payload: CreateRun, session: Session):
     async def invoke():
         current = store(request)
         async with current.invocation(payload.run_id):
-            return await pilot.create(
+            await pilot.create(
                 current, payload.run_id, str(_owner_id(session)), payload.engine, payload.task_ids
             )
+        return await pilot.status_view(
+            pilot.PilotWorkflow(
+                current, payload.run_id, str(_owner_id(session)), policy=pilot.POLICY
+            )
+        )
 
     return await guarded(invoke())
 
@@ -129,7 +134,7 @@ async def advance_run(request: Request, run_id: UUID, payload: AdvanceRun, sessi
         )
         await current.load(run_id, owner=workflow.owner)
         async with current.invocation(run_id):
-            return await pilot.advance(
+            await pilot.advance(
                 workflow,
                 generation=payload.generation,
                 direction=payload.direction,
@@ -137,5 +142,6 @@ async def advance_run(request: Request, run_id: UUID, payload: AdvanceRun, sessi
                 cancel=payload.cancel,
                 resume=payload.resume,
             )
+        return await pilot.status_view(workflow)
 
     return await guarded(invoke())

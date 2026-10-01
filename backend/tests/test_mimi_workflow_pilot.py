@@ -23,6 +23,7 @@ from app.agent.workflow_probe.store import checkpoint_thread
 from app.agent.workflow_probe.workflow import Workflow
 from app.core import crypto
 from app.web.routers.mimi_workflow_pilot import AdvanceRun, CreateRun
+from tests.conftest_pilot_helpers import remove_fixture_identities
 
 
 def test_default_off_remote_and_other_database_fail_closed():
@@ -175,6 +176,7 @@ def test_actual_tasks_freshness_atomicity_and_receipt_replay(monkeypatch, engine
                     f"DELETE FROM public.{table} WHERE thread_id=$1", checkpoint_thread(run_id, 1)
                 )
             await connection.execute("DELETE FROM mimi_probe_068.run WHERE id=$1", run_id)
+            await remove_fixture_identities([run_id])
             await connection.execute("DELETE FROM microsched.task WHERE id=$1", task_id)
             await connection.close()
 
@@ -240,6 +242,7 @@ def test_provider_terminal_replay_fences_and_run_lock(monkeypatch, engine, mode)
                     f"DELETE FROM public.{table} WHERE thread_id=$1", checkpoint_thread(run_id, 1)
                 )
             await connection.execute("DELETE FROM mimi_probe_068.run WHERE id=$1", run_id)
+            await remove_fixture_identities([run_id])
             await connection.execute("DELETE FROM microsched.task WHERE id=$1", task_id)
             await connection.close()
 

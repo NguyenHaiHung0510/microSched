@@ -11,10 +11,22 @@ from uuid import UUID
 import asyncpg
 from sqlalchemy.engine import make_url
 
-from app.agent.workflow_probe.contracts import Preview, ProbeBlocked, Record
+from app.agent.workflow_probe.contracts import (
+    TASK_ADAPTER,
+    Preview,
+    ProbeBlocked,
+    Record,
+    freeze_preview,
+)
 from app.agent.workflow_probe.engines import run_control, run_graph
 from app.agent.workflow_probe.store import PgFrameStore, StoredFrame
-from app.agent.workflow_probe.workflow import STOPPED, ConfirmationContent, Content, Workflow
+from app.agent.workflow_probe.workflow import (
+    STOPPED,
+    ConfirmationContent,
+    Content,
+    PreviewContent,
+    Workflow,
+)
 
 PILOT_DATABASE = "microsched_p1ca_068_pilot073"
 POLICY = "local-public-task-prefix-073-v1"
@@ -246,19 +258,42 @@ async def status_view(workflow: Workflow):
         "provider_calls": len(body.provider_calls),
         "events": body.events,
     }
+    connection = await asyncpg.connect(workflow.store._dsn)
+    key = int.from_bytes(hashlib.sha256(frame.run_id.bytes).digest()[:8], signed=True)
+    try:
+        active = await connection.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND granted "
+            "AND classid::bigint=$1 AND objid::bigint=$2 AND objsubid=1)",
+            (key >> 32) & 0xFFFFFFFF,
+            key & 0xFFFFFFFF,
+        )
+    finally:
+        await connection.close()
     try:
         async with workflow.store.public_context(frame, completed=frame.phase == "succeeded"):
             pass
     except ProbeBlocked:
         status.update(
-            draft="", preview=None, preview_digest=None, stop_reason="source_requires_repreview"
+            draft="",
+            preview=None,
+            preview_digest=None,
+            source_visibility_reason="source_requires_repreview",
         )
-        if phase not in {"succeeded", "expired", "cancelled"}:
+        if phase == "reconcile" or reason == "owner_cancelled_provider_unknown":
+            status["stop_reason"] = reason
+        elif phase not in {"succeeded", "expired", "cancelled"}:
             status["phase"] = "repreview"
+            status["stop_reason"] = "source_requires_repreview"
     return {
         **status,
         "engine": frame.engine,
         "provider_mode": "live" if "pilot_provider_live" in body.events else "deterministic",
+        "invocation_active": active,
+        "can_resume": not active
+        and status["phase"] in {"query", "group", "draft", "materialize", "execute"},
+        "can_cancel": not active
+        and status["phase"]
+        in {"query", "group", "draft", "direction", "materialize", "confirmation", "repreview"},
     }
 
 
@@ -313,7 +348,24 @@ class PilotWorkflow(Workflow):
             if frame.phase == expected:
                 try:
                     async with self.store.public_context(frame):
-                        return await super()._step(expected)
+                        preview = freeze_preview(
+                            TASK_ADAPTER,
+                            tuple(Record(s.id, s.version, s.title) for s in body.snapshot),
+                            owner=frame.owner,
+                            generation=frame.generation,
+                            policy=body.policy,
+                            authority_ref=body.authority_ref,
+                            groups=tuple(tuple(group) for group in body.groups),
+                        )
+                        body.preview = PreviewContent.model_validate(preview.content())
+                        body.events.append("materialize")
+                        await self.store.save(frame, phase="confirmation", content=self.wire(body))
+                    # No lifecycle/global-lock transition while holding a source SHARE lock.
+                    if self.now() >= frame.expires_at:
+                        fresh, content = await self.load()
+                        return fresh.phase
+                    await self.hook("after_materialize")
+                    return "confirmation"
                 except ProbeBlocked as error:
                     if str(error) != "source_requires_repreview":
                         raise
@@ -357,7 +409,15 @@ async def advance(
     if frame.generation != generation:
         raise ProbeBlocked("input_generation_mismatch")
     if cancel:
-        if frame.phase in {"succeeded", "expired", "cancelled"}:
+        if frame.phase not in {
+            "query",
+            "group",
+            "draft",
+            "direction",
+            "materialize",
+            "confirmation",
+            "repreview",
+        }:
             raise ProbeBlocked("input_phase_mismatch")
         body.stop_reason = (
             "owner_cancelled_provider_unknown"

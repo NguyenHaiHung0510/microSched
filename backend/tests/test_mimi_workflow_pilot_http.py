@@ -16,6 +16,7 @@ from app.core.settings import get_settings
 from app.domain.models import AuthSession
 from app.main import create_app
 from app.web.deps import require_session
+from tests.conftest_pilot_helpers import remove_fixture_identities
 
 CSRF = {"Origin": "http://test", "Sec-Fetch-Site": "same-origin", "X-Mimi-CSRF": "1"}
 
@@ -122,6 +123,7 @@ def test_real_http_auth_csrf_disabled_owner_and_exact_confirm(monkeypatch):
                     f"DELETE FROM public.{table} WHERE thread_id=$1", checkpoint_thread(run_id, 1)
                 )
             await connection.execute("DELETE FROM mimi_probe_068.run WHERE id=$1", run_id)
+            await remove_fixture_identities([run_id])
             await connection.execute("DELETE FROM microsched.task WHERE id=$1", task_id)
             await connection.close()
             get_settings.cache_clear()

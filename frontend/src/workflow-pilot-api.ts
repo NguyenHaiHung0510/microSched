@@ -21,6 +21,10 @@ export type WorkflowPilotStatus = {
   stop_reason: string | null
   provider_calls: number
   events: string[]
+  invocation_active?: boolean
+  can_resume?: boolean
+  can_cancel?: boolean
+  source_visibility_reason?: string
 }
 const json = (value: unknown) => JSON.stringify(value)
 

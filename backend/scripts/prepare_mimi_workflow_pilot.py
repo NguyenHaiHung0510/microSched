@@ -8,7 +8,7 @@ import asyncpg
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from sqlalchemy.engine import make_url
 
-from app.agent.workflow_pilot import PILOT_DATABASE, SOURCE_DDL
+from app.agent.workflow_pilot import PILOT_DATABASE, SOURCE_DDL, selection_hash
 from scripts.prepare_mimi_workflow_probe import prepare
 
 
@@ -23,6 +23,26 @@ async def main():
     connection = await asyncpg.connect(admin)
     try:
         await connection.execute(SOURCE_DDL)
+        async with connection.transaction():
+            await connection.execute("SELECT pg_advisory_xact_lock(68068)")
+            rows = await connection.fetch(
+                "SELECT r.id,r.owner_ref,r.engine,array_agg(s.task_id ORDER BY s.task_id) AS ids "
+                "FROM mimi_probe_068.run r JOIN mimi_probe_068.task_source s ON s.run_id=r.id "
+                "WHERE NOT EXISTS(SELECT 1 FROM mimi_probe_068.task_request q WHERE q.id=r.id) "
+                "GROUP BY r.id,r.owner_ref,r.engine"
+            )
+            prior = await connection.fetchval("SELECT count(*) FROM mimi_probe_068.task_request")
+            if prior + len(rows) > 128:
+                raise RuntimeError("pilot_identity_backfill_quota_exceeded")
+            for row in rows:
+                await connection.execute(
+                    "INSERT INTO mimi_probe_068.task_request VALUES($1,$2,$3,$4)",
+                    row["id"],
+                    row["owner_ref"],
+                    row["engine"],
+                    selection_hash(row["ids"]),
+                )
+            print(f"Retained legacy pilot request identities: {len(rows)}")
     finally:
         await connection.close()
     async with AsyncPostgresSaver.from_conn_string(admin) as saver:

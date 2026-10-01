@@ -21,7 +21,7 @@ const labels: Record<string, string> = {
   execute: 'Đang ghi Task', succeeded: 'Đã hoàn tất', expired: 'Preview đã hết hạn',
   cancelled: 'Đã huỷ', reconcile: 'Cần đối soát', repreview: 'Cần tạo preview mới',
 }
-const terminal = new Set(['succeeded', 'expired', 'cancelled', 'reconcile', 'repreview'])
+const terminal = new Set(['succeeded', 'expired', 'cancelled', 'repreview'])
 const pendingStorageKey = 'mimi-workflow-pilot-pending-run'
 type PendingRequest = { runId: string; taskIds: string[]; engine: 'graph' | 'control' }
 
@@ -54,6 +54,7 @@ export function MimiWorkflowPilot() {
   const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(readPendingRequest)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [definitiveRejection, setDefinitiveRejection] = useState(false)
   const pendingRunId = pendingRequest?.runId ?? null
   const visibleSelection = pendingRequest?.taskIds ?? selected
   const visibleEngine = pendingRequest?.engine ?? engine
@@ -64,11 +65,13 @@ export function MimiWorkflowPilot() {
     setError(null)
     setBusy(true)
     try {
-      const id = run?.run_id ?? pendingRunId
+      const id = pendingRunId ?? run?.run_id
       if (id) {
         setRun(await getWorkflowPilotRun(id))
-        setPendingRequest(null)
-        window.sessionStorage.removeItem(pendingStorageKey)
+        if (id === pendingRunId) {
+          setPendingRequest(null)
+          window.sessionStorage.removeItem(pendingStorageKey)
+        }
       }
       await client.invalidateQueries({ queryKey: ['mimi', 'workflow-pilot', 'runs'] })
     } catch (cause) { setError(explain(cause)) }
@@ -79,13 +82,20 @@ export function MimiWorkflowPilot() {
     setPendingRequest(request)
     window.sessionStorage.setItem(pendingStorageKey, JSON.stringify(request))
     setError(null)
+    setDefinitiveRejection(false)
     setBusy(true)
     try {
       setRun(await createWorkflowPilotRun(request.runId, request.taskIds, request.engine))
       setPendingRequest(null)
       window.sessionStorage.removeItem(pendingStorageKey)
       await client.invalidateQueries({ queryKey: ['mimi', 'workflow-pilot', 'runs'] })
-    } catch (cause) { setError(explain(cause)) }
+    } catch (cause) {
+      setError(explain(cause))
+      setDefinitiveRejection(cause instanceof ApiError && cause.status === 409 && [
+        'public_source_required', 'source_requires_repreview', 'active_quota_exceeded',
+        'pilot_identity_quota_exceeded',
+      ].includes(cause.message))
+    }
     finally { setBusy(false) }
   }
   const advance = async (action: Parameters<typeof advanceWorkflowPilotRun>[1]) => {
@@ -103,8 +113,10 @@ export function MimiWorkflowPilot() {
     setBusy(true)
     try {
       setRun(await getWorkflowPilotRun(id))
-      setPendingRequest(null)
-      window.sessionStorage.removeItem(pendingStorageKey)
+      if (id === pendingRunId) {
+        setPendingRequest(null)
+        window.sessionStorage.removeItem(pendingStorageKey)
+      }
     } catch (cause) { setError(explain(cause)) }
     finally { setBusy(false) }
   }
@@ -147,6 +159,14 @@ export function MimiWorkflowPilot() {
             {pendingRunId ? 'Gửi lại cùng run ID' : 'Bắt đầu quy trình'}
           </Button>
           <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={() => void refresh()}>Tải lại trạng thái</Button>
+          {pendingRequest && definitiveRejection ? <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={() => {
+            setPendingRequest(null)
+            window.sessionStorage.removeItem(pendingStorageKey)
+            setSelected([])
+            setDefinitiveRejection(false)
+            setError(null)
+            void tasks.refetch()
+          }}>Bỏ lựa chọn đã bị từ chối và tải lại Task</Button> : null}
         </div>
       </> : null}
 
@@ -163,6 +183,7 @@ export function MimiWorkflowPilot() {
         <p>Chế độ provider: {run.provider_mode === 'deterministic' ? 'Tổng hợp xác định' : run.provider_mode}</p>
         <p>Số lần gọi provider: {run.provider_calls}</p>
         {run.stop_reason ? <p role="status">{run.stop_reason}</p> : null}
+        {run.source_visibility_reason ? <p role="status">Nguồn Task đã thay đổi hoặc bị ẩn; nội dung nguồn không được hiển thị. Trạng thái call chưa rõ vẫn cần đối soát.</p> : null}
         {run.preview?.groups.length ? <div><h4 className="font-semibold">Nhóm Task</h4>{run.preview.groups.map((group, index) => <p key={index}>Nhóm {index + 1}: {group.map((id) => tasks.data?.items.find((task) => task.id === id)?.title ?? id).join(', ')}</p>)}</div> : null}
         {run.draft ? <div><h4 className="font-semibold">Bản nháp</h4><p className="whitespace-pre-wrap break-words">{run.draft}</p></div> : null}
         {phase === 'direction' ? <div className="space-y-2"><p>Thao tác máy chủ hỗ trợ: thêm <strong>[planned] </strong> trước mỗi title đang chọn, giữ nguyên nội dung còn lại. Bản nháp không thể đổi thao tác này.</p><Button type="button" className="min-h-11" disabled={busy} onClick={() => void advance({ direction: 'apply_prefix' })}>Duyệt hướng thêm [planned]</Button></div> : null}
@@ -177,9 +198,9 @@ export function MimiWorkflowPilot() {
         {phase === 'confirmation' && run.preview_digest && previewComplete
           ? <Button type="button" className="min-h-11" disabled={busy} onClick={() => void advance({ preview_digest: run.preview_digest! })}>Xác nhận đúng preview này</Button> : null}
         {run.receipt ? <div role="status" className="rounded-lg bg-muted p-3"><h4 className="font-semibold">Biên nhận hoàn tất</h4><p>Đã đổi {run.receipt.changed} Task</p><p className="break-all text-xs">Digest: {run.receipt.digest}</p></div> : null}
-        {['query', 'group', 'draft', 'materialize', 'execute'].includes(phase) ? <div className="space-y-2"><p role="status">Run đang dừng tại bước xử lý. Chọn tiếp tục để máy chủ resume từ checkpoint.</p><Button type="button" className="min-h-11" disabled={busy} onClick={() => void advance({ resume: true })}>Tiếp tục run</Button></div> : null}
+        {['query', 'group', 'draft', 'materialize', 'execute'].includes(phase) ? <div className="space-y-2"><p role="status">Run đang ở bước xử lý. Tải lại trạng thái để xem tiến độ; chỉ tiếp tục khi máy chủ cho phép resume.</p>{run.can_resume ? <Button type="button" className="min-h-11" disabled={busy} onClick={() => void advance({ resume: true })}>Tiếp tục run</Button> : null}</div> : null}
         {['reconcile', 'repreview', 'expired'].includes(phase) ? <p role="status">Chưa gửi thêm thao tác. Đọc lý do từ máy chủ và chỉ tiếp tục sau khi trạng thái đã rõ.</p> : null}
-        {!['succeeded', 'expired', 'cancelled'].includes(phase) ? <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={() => void advance({ cancel: true })}>Huỷ quy trình</Button> : null}
+        {run.can_cancel ? <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={() => void advance({ cancel: true })}>Huỷ quy trình</Button> : null}
       </section> : null}
     </CardContent>
   </Card>

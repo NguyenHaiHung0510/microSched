@@ -19,7 +19,9 @@ from app.agent.workflow_pilot import (
 from app.agent.workflow_probe.contracts import ProbeBlocked
 from app.agent.workflow_probe.engines import run_control, run_graph
 from app.agent.workflow_probe.store import checkpoint_thread
+from app.agent.workflow_probe.workflow import Call
 from app.core import crypto
+from tests.conftest_pilot_helpers import remove_fixture_identities
 
 
 def test_direct_store_rejects_old_qa_namespace_before_connect():
@@ -50,6 +52,7 @@ async def cleanup(connection, ids, tasks):
             )
     await connection.execute("DELETE FROM mimi_probe_068.run WHERE id=ANY($1::uuid[])", ids)
     await connection.execute("DELETE FROM microsched.task WHERE id=ANY($1::uuid[])", tasks)
+    await remove_fixture_identities(ids)
 
 
 @pytest.mark.pg
@@ -106,6 +109,130 @@ def test_reclassified_source_blocks_egress_preview_and_read(store, engine, point
             assert len(calls) == before
         finally:
             await cleanup(connection, [identity], [task])
+            await connection.close()
+
+    run(scenario())
+
+
+@pytest.mark.pg
+def test_unknown_source_hidden_without_losing_reconciliation_and_active_state(store):
+    async def scenario():
+        connection = await asyncpg.connect(store._dsn)
+        task, identity, owner = uuid4(), uuid4(), "synthetic-review-" + str(uuid4())
+        try:
+            await connection.execute(
+                "INSERT INTO microsched.task(id,title) VALUES($1,'QA_073 unknown')", task
+            )
+            workflow = await store.create_task_run(identity, owner, "control", [task])
+            async with store.invocation(identity):
+                state = await status_view(workflow)
+                assert state["invocation_active"]
+                assert not state["can_resume"] and not state["can_cancel"]
+            assert (await status_view(workflow))["can_resume"]
+            frame, body = await workflow.load()
+            body.provider_calls = [Call(step="group", status="dispatched")]
+            body.draft = "Synthetic content must be hidden"
+            body.stop_reason = "provider_outcome_unknown"
+            await store.save(frame, phase="reconcile", content=workflow.wire(body))
+            await connection.execute(
+                "UPDATE microsched.task SET deleted_at=clock_timestamp() WHERE id=$1", task
+            )
+            before = await store.load(identity, owner=owner)
+            state = await status_view(workflow)
+            assert state["phase"] == "reconcile"
+            assert state["stop_reason"] == "provider_outcome_unknown"
+            assert state["source_visibility_reason"] == "source_requires_repreview"
+            assert state["draft"] == "" and state["preview"] is None
+            assert not state["can_resume"] and not state["can_cancel"]
+            assert (await store.load(identity, owner=owner)).revision == before.revision
+            with pytest.raises(ProbeBlocked, match="input_phase_mismatch"):
+                await advance(workflow, generation=1, cancel=True)
+        finally:
+            await cleanup(connection, [identity], [task])
+            await connection.close()
+
+    run(scenario())
+
+
+@pytest.mark.pg
+def test_legacy_identity_backfill_survives_run_retirement(store, monkeypatch):
+    from scripts.prepare_mimi_workflow_pilot import main
+
+    async def scenario():
+        admin = await asyncpg.connect(os.environ["MIMI_PILOT_SETUP_URL"])
+        task, identity, owner = uuid4(), uuid4(), "synthetic-review-" + str(uuid4())
+        try:
+            await admin.execute(
+                "INSERT INTO microsched.task(id,title) VALUES($1,'QA_073 legacy')", task
+            )
+            await store.create_task_run(identity, owner, "graph", [task])
+            await admin.execute("DELETE FROM mimi_probe_068.task_request WHERE id=$1", identity)
+            await main()
+            assert await store.existing_request(identity, owner, "graph", [task])
+            await admin.execute("DELETE FROM mimi_probe_068.run WHERE id=$1", identity)
+            with pytest.raises(ProbeBlocked, match="run_retired"):
+                await create(store, identity, owner, "graph", [task])
+        finally:
+            await cleanup(admin, [identity], [task])
+            await admin.close()
+
+    run(scenario())
+
+
+@pytest.mark.pg
+def test_materialize_expiry_releases_source_lock_before_terminal_transition(store):
+    from contextlib import asynccontextmanager
+
+    async def scenario():
+        connection = await asyncpg.connect(store._dsn)
+        task, first, second, owner = uuid4(), uuid4(), uuid4(), "synthetic-review-" + str(uuid4())
+        other = TaskFrameStore(os.environ["MIMI_PILOT_APP_URL"])
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_context = other.public_context
+
+        @asynccontextmanager
+        async def held_context(frame, *, completed=False):
+            async with original_context(frame, completed=completed):
+                if frame.phase == "materialize":
+                    entered.set()
+                    await release.wait()
+                yield
+
+        other.public_context = held_context
+        try:
+            await connection.execute(
+                "INSERT INTO microsched.task(id,title) VALUES($1,'QA_073 shared source')", task
+            )
+            await create(store, first, owner, "control", [task])
+            a = PilotWorkflow(store, first, owner, policy=POLICY)
+            preview = await advance(a, generation=1, direction="apply_prefix")
+            await create(other, second, owner, "control", [task])
+            b = PilotWorkflow(other, second, owner, policy=POLICY)
+            materialize = asyncio.create_task(advance(b, generation=1, direction="apply_prefix"))
+            await asyncio.wait_for(entered.wait(), 8)
+            execute = asyncio.create_task(
+                advance(a, generation=1, digest=preview["preview_digest"])
+            )
+            b.now = lambda: datetime.now(UTC) + timedelta(days=2)
+            await asyncio.sleep(0.35)
+            assert not execute.done(), "executor must wait for the held public source lock"
+            release.set()
+            result_a, result_b = await asyncio.wait_for(asyncio.gather(execute, materialize), 5)
+            assert result_a["phase"] == "succeeded" and result_b["phase"] == "expired"
+            assert (
+                await connection.fetchval(
+                    "SELECT count(*) FROM mimi_probe_068.receipt WHERE run_id=ANY($1::uuid[])",
+                    [first, second],
+                )
+                == 1
+            )
+            assert (
+                await connection.fetchval("SELECT title FROM microsched.task WHERE id=$1", task)
+                == "[planned] QA_073 shared source"
+            )
+        finally:
+            release.set()
+            await cleanup(connection, [first, second], [task])
             await connection.close()
 
     run(scenario())
@@ -225,6 +352,10 @@ def test_multi_task_rollback_and_cancel_processing(store, engine):
                 == 0
             )
             workflow.fault = None
+            with pytest.raises(ProbeBlocked, match="input_phase_mismatch"):
+                await advance(workflow, generation=1, cancel=True)
+            frame, body = await workflow.load()
+            await store.save(frame, phase="materialize", content=workflow.wire(body))
             assert (await advance(workflow, generation=1, cancel=True))["phase"] == "cancelled"
         finally:
             await cleanup(connection, [identity], tasks)
