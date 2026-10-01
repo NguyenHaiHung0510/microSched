@@ -4,6 +4,7 @@ import { Edit3, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { queuedRequest } from '@/lib/queued-mutation'
+import { annotationDeleteInput } from '@/annotation-write'
 import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { uuidv7 } from '@/lib/uuidv7'
 import {
@@ -121,8 +122,8 @@ export function DayDetailDialog({
   })
 
   const updateAnnotation = useMutation({
-    mutationFn: ({ id, value }: { id: string; value: AnnotationFormValue }) =>
-      queuedRequest<DayAnnotation>(queryClient, 'day_annotation.update', { path: `/api/calendar/annotations/${id}`, body: value, entityId: id, requiresPrivate: value.is_private }),
+    mutationFn: ({ id, value, requiresPrivate }: { id: string; value: AnnotationFormValue; requiresPrivate: boolean }) =>
+      queuedRequest<DayAnnotation>(queryClient, 'day_annotation.update', { path: `/api/calendar/annotations/${id}`, body: value, entityId: id, requiresPrivate: requiresPrivate || value.is_private }),
     onSuccess: () => {
       setAnnotationForm(null)
       setAnnotationError(null)
@@ -131,7 +132,7 @@ export function DayDetailDialog({
   })
 
   const deleteAnnotation = useMutation({
-    mutationFn: (id: string) => queuedRequest<void>(queryClient, 'day_annotation.delete', { path: `/api/calendar/annotations/${id}`, entityId: id }),
+    mutationFn: (annotation: DayAnnotation) => queuedRequest<void>(queryClient, 'day_annotation.delete', annotationDeleteInput(annotation)),
     onError: (error) => setAnnotationError(importErrorMessage(error)),
   })
 
@@ -327,6 +328,7 @@ export function DayDetailDialog({
                     updateAnnotation.mutate({
                       id: annotationForm.annotation.id,
                       value,
+                      requiresPrivate: annotationForm.annotation.is_private,
                     })
                   } else {
                     createAnnotation.mutate({ ...value, id: uuidv7() })
@@ -404,7 +406,7 @@ export function DayDetailDialog({
                           className="text-bad hover:text-bad"
                           aria-label={`Xoá dấu ${annotation.label}`}
                           disabled={deleteAnnotation.isPending}
-                          onClick={() => deleteAnnotation.mutate(annotation.id)}
+                          onClick={() => deleteAnnotation.mutate(annotation)}
                         >
                           <Trash2 />
                         </Button>

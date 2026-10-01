@@ -264,3 +264,39 @@ test('undo uses the authenticated snapshot across asynchronous caller metadata m
   })
   expect(result).toEqual({ private: true, path: '/api/notes' })
 })
+
+test('private annotation delete waits for live unlock and retains its original command', async ({ page }) => {
+  let requests = 0
+  const id = '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f5501'
+  await page.route(`**/api/calendar/annotations/${id}`, route => {
+    requests += 1
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/denied.html')
+  const held = await page.evaluate(async (id) => {
+    const fixtureUrl = '/e2e/outbox-core-fixture.ts'
+    const fixture = await import(fixtureUrl)
+    const client = new fixture.QueryClient()
+    const encoded = fixture.outboxAdapters['day_annotation.delete'].encodeCommand({
+      ...fixture.annotationDeleteInput({ id, is_private: true }), operationKind: 'day_annotation.delete',
+    })
+    const original = await fixture.enqueueOutbox({ ...encoded, state: 'pending', attempts: 0,
+      next_attempt_at: null, created_at: Date.now(), last_error_code: null })
+    await fixture.flushOutbox(client)
+    const rows = await fixture.listOutbox()
+    return { originalId: original.operation_id, digest: original.payload_sha256,
+      rows: rows.map((row: { operation_id: number; state: string; attempts: number; requires_private: boolean; payload_sha256: string }) =>
+        ({ id: row.operation_id, state: row.state, attempts: row.attempts, private: row.requires_private, digest: row.payload_sha256 })) }
+  }, id)
+  expect(requests).toBe(0)
+  expect(held.rows).toEqual([{ id: held.originalId, state: 'private_hold', attempts: 0, private: true, digest: held.digest }])
+  const remaining = await page.evaluate(async () => {
+    const fixtureUrl = '/e2e/outbox-core-fixture.ts'
+    const fixture = await import(fixtureUrl), client = new fixture.QueryClient()
+    client.setQueryData(['session'], { private_until: new Date(Date.now() + 60_000).toISOString() })
+    await fixture.flushOutbox(client)
+    return (await fixture.listOutbox()).length
+  })
+  expect(requests).toBe(1)
+  expect(remaining).toBe(0)
+})
