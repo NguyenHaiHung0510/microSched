@@ -267,6 +267,7 @@ function App() {
         void purgePrivateSurface(queryClient)
       }
       setOffline(!navigator.onLine)
+      if (navigator.onLine) void queryClient.invalidateQueries({ queryKey: ['session'] })
     }
     const rejectSession = () => { setAuthRejected(true); void purgePrivateSurface(queryClient, true).then(() => queryClient.invalidateQueries({ queryKey: ['session'] })) }
     const rejectPrivate = () => {
