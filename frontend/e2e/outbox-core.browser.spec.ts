@@ -218,3 +218,28 @@ test('cross-tab undo attaches a new orphan child to its restored private parent 
   expect(result).toEqual({ dependency: result.parentId, parentId: result.parentId, private: true, attempts: 0, parentState: 'private_hold' })
   await other.close()
 })
+
+
+test('publishes the real public side-effect acknowledgement once and never publishes a held private result', async ({ page }) => {
+  const report = { inserted: 2, skipped: [], duplicates: 1, removed: 3 }
+  await page.route('**/api/calendar/sources/source/import', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(report) }))
+  await page.goto('/denied.html')
+  const result = await page.evaluate(async () => {
+    const fixtureUrl = '/e2e/outbox-core-fixture.ts'
+    const fixture = await import(fixtureUrl), client = new fixture.QueryClient()
+    const events: unknown[] = []
+    window.addEventListener('microsched:outbox-acknowledged', ((event: CustomEvent) => events.push({ operation: event.detail.row.operation_kind, response: event.detail.response })) as EventListener)
+    const row = { operation_kind: 'calendar.import', resource: 'calendar', method: 'POST', path: '/api/calendar/sources/source/import',
+      body: { content: 'BEGIN:VCALENDAR' }, entity_id: 'source', parent_id: 'source', requires_private: false,
+      idempotency_mode: 'side_effect', dependency_operation_id: null, group_id: null, affected_query_keys: [['calendar']],
+      state: 'pending', attempts: 0, next_attempt_at: null, created_at: Date.now(), last_error_code: null }
+    await fixture.enqueueOutbox(row)
+    await fixture.flushOutbox(client)
+    await fixture.enqueueOutbox({ ...row, requires_private: true })
+    await fixture.flushOutbox(client)
+    const rows = await fixture.listOutbox()
+    return { events, remaining: rows.map((entry: { state: string; attempts: number }) => ({ state: entry.state, attempts: entry.attempts })) }
+  })
+  expect(result.events).toEqual([{ operation: 'calendar.import', response: report }])
+  expect(result.remaining).toEqual([{ state: 'private_hold', attempts: 0 }])
+})

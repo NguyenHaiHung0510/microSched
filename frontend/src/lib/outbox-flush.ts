@@ -1,6 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { ApiError, apiRequest, TimeoutError, UnauthenticatedError } from '@/api'
-import { adapterFor } from '@/lib/outbox-adapters'
+import { adapterFor, hasLivePrivateSession } from '@/lib/outbox-adapters'
 import {
   listOutbox,
   claimOutbox,
@@ -133,6 +133,7 @@ async function runFlush(client: QueryClient) {
       active.delete(claimed.operation_id!)
       try { await adapterFor(claimed.operation_kind).reconcileSuccess(client, claimed, response) }
       catch { window.dispatchEvent(new Event('microsched:outbox-reconcile-unavailable')) }
+      if (!claimed.requires_private || hasLivePrivateSession(client)) window.dispatchEvent(new CustomEvent('microsched:outbox-acknowledged', { detail: { row: claimed, response } }))
       for (const key of claimed.affected_query_keys) touched.set(JSON.stringify(key), key)
     }
   }
