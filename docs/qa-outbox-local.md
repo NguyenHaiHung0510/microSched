@@ -12,7 +12,7 @@ $env:QA017_BACKEND_URL = 'http://127.0.0.1:8003'
 $env:QA017_BACKEND_SHA = '<verified backend commit>'
 $env:QA017_PORT = '4174' # reserve an unused local port; the runner never reuses a server
 $env:QA017_HEADLESS = '1' # omit for private cases with the human operator present
-npm run e2e:outbox-pwa -- --grep '^(J[1-4]|N[1-4]|P1 |P3 )'
+npm run e2e:outbox-pwa -- --grep 'J[1-4] |N[1-4] |P1 |P3 '
 ```
 
 The package command builds once, snapshots `dist` under `output/outbox-pwa/artifacts/builds/<HEAD>/dist`, records every file hash, and starts an isolated preview. It refuses dirty product/build inputs or a different build at an existing immutable destination. Supply a new `QA017_RECEIPT_DIR` if an existing snapshot differs; preserve the old evidence. The preview refuses non-loopback backend URLs, missing synthetic acknowledgment, a mismatched backend commit, or a database that is not ready.
