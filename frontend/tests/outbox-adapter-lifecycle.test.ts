@@ -157,6 +157,41 @@ describe('typed outbox adapter lifecycles', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([
+    ['task.create', '/api/tasks', ids.task, 'tasks', false],
+    ['task.create', '/api/tasks', ids.task, 'tasks', true],
+    ['note.create', '/api/notes', ids.note, 'notes', false],
+    ['note.create', '/api/notes', ids.note, 'notes', true],
+  ] as const)('keeps a late private create acknowledgement out of cache and rollback: %s %s %s %s fullPurge=%s', async (kind, path, id, domain, fullPurge) => {
+    vi.stubGlobal('navigator', { onLine: true })
+    const queryClient = client()
+    const key = [domain, 'all']
+    const empty = domain === 'notes' ? [] : { items: [] }
+    queryClient.setQueryData(key, empty)
+    queryClient.setQueryData(['session'], {
+      private_until: new Date(Date.now() + 60_000).toISOString(), offline_bootstrap: false,
+    })
+    const body = { id, title: 'PRIVATE_CREATE_ACK_CANARY', is_private: true }
+    const row = makeRow(kind, path, body, id)
+    row.requires_private = true
+    const adapter = adapterFor(kind)
+    try {
+      await adapter.optimisticApply(queryClient, row)
+      expect(JSON.stringify(queryClient.getQueryData(key))).toContain('PRIVATE_CREATE_ACK_CANARY')
+      queryClient.removeQueries({ queryKey: ['session'] })
+      queryClient.setQueryData(key, empty)
+      clearOutboxBaselines(queryClient, fullPurge)
+      await adapter.reconcileSuccess(queryClient, row, { ...body, items: [] })
+      const cachedText = () => JSON.stringify(queryClient.getQueryCache().getAll().map((query) => query.state.data))
+      expect(cachedText()).not.toContain('PRIVATE_CREATE_ACK_CANARY')
+      await adapter.discardOrRollback(queryClient, row)
+      expect(cachedText()).not.toContain('PRIVATE_CREATE_ACK_CANARY')
+    } finally {
+      queryClient.clear()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('classifies public-to-private updates as private and hides cached content without a live session', async () => {
     const queryClient = client()
     queryClient.setQueryData(['tasks', 'all'], { items: [
