@@ -263,7 +263,7 @@ test('full create form defaults to today and requires an explicit time for datet
   await expect(dialog.getByRole('button', { name: 'Tạo task' })).toBeEnabled()
   await dialog.getByRole('button', { name: 'Tạo task' }).click()
   await expect(dialog).toBeHidden()
-  expect(taskApi.tasks.find((entry) => entry.title === 'Có giờ rõ ràng')).toMatchObject({
+  await expect.poll(() => taskApi.tasks.find((entry) => entry.title === 'Có giờ rõ ràng')).toMatchObject({
     due_precision: 'datetime',
     due_on: null,
     due_at: `${todayInVietnam()}T09:30:00+07:00`,

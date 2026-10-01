@@ -646,7 +646,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     expect(postBody.items).toEqual(['Mục 1', 'Mục 2 đã sửa'])
   })
 
- test('Subtask persisted edit flow: in-dialog add/edit/tick/delete failure and concurrency', async ({ page }) => {
+ test('Subtask persisted edit flow: in-dialog add/edit/tick/delete failure and concurrency', async ({ page, taskApi }) => {
     let failAdd = false
    let failEdit = true
    let failTick = true
@@ -674,16 +674,20 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           return
         }
         const data = route.request().postDataJSON()
-        await route.fulfill({
-          status: 201,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            id: data.id ?? crypto.randomUUID(),
-            content: data.content,
-            is_completed: false,
-            position: 99,
-          }),
-        })
+        const parentTask = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112')
+        const existingItem = parentTask?.items.find((entry) => entry.id === data.id)
+        if (existingItem) {
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(existingItem) })
+          return
+        }
+        const createdItem = {
+          id: data.id ?? crypto.randomUUID(),
+          content: data.content,
+          is_completed: false,
+          position: 99,
+        }
+        parentTask?.items.push(createdItem)
+        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(createdItem) })
         return
       }
       await route.fallback()
