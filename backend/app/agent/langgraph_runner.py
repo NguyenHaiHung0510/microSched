@@ -447,9 +447,7 @@ async def run_langgraph(
             # dispatch began, invoking the provider could duplicate an unknown call.
             raise ProviderDispatchError("unknown", None)
         final_state = (
-            saved_state
-            if phase == "terminal"
-            else await runner.ainvoke(None, config=config)
+            saved_state if phase == "terminal" else await runner.ainvoke(None, config=config)
         )
         if phase == "terminal":
             frame["terminal_result"] = restored.terminal_result

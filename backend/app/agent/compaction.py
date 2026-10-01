@@ -12,6 +12,52 @@ MAX_CHECKPOINT_CHARS = 8_000
 MAX_EXCERPT_CHARS = 180
 
 
+def make_semantic_checkpoint(
+    *,
+    sources: list[CheckpointSource],
+    prior: dict[str, Any] | None,
+    policy_sha256: str,
+    pending_preview: dict[str, Any] | None,
+    pending_draft: dict[str, Any] | None,
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate attribution/shape; semantic faithfulness remains a QA obligation."""
+    if set(candidate) != {"summary", "decisions", "unresolved"}:
+        raise ValueError("checkpoint_semantic_candidate_shape_invalid")
+    if (
+        not isinstance(candidate["summary"], str)
+        or not candidate["summary"].strip()
+        or len(candidate["summary"]) > 6000
+    ):
+        raise ValueError("checkpoint_semantic_summary_invalid")
+    for key in ("decisions", "unresolved"):
+        values = candidate[key]
+        if (
+            not isinstance(values, list)
+            or len(values) > 40
+            or any(not isinstance(item, str) or not item or len(item) > 1000 for item in values)
+        ):
+            raise ValueError("checkpoint_semantic_lists_invalid")
+    checkpoint = make_checkpoint(
+        sources=sources,
+        prior=prior,
+        policy_sha256=policy_sha256,
+        pending_preview=pending_preview,
+        pending_draft=pending_draft,
+    )
+    checkpoint.update(candidate)
+    checkpoint["summary_kind"] = "semantic_model"
+    checkpoint["omitted_earlier_chars"] = 0
+    # Durable prior decisions stay explicitly visible until subsequent source
+    # evidence says superseded. Summary cannot silently delete them.
+    for key in ("decisions", "unresolved"):
+        checkpoint[key] = list(
+            dict.fromkeys([*(prior.get(key, []) if prior else []), *candidate[key]])
+        )
+    validate_checkpoint(checkpoint, expected_sources=sources, prior=prior)
+    return checkpoint
+
+
 @dataclass(frozen=True)
 class CheckpointSource:
     id: UUID
@@ -117,15 +163,19 @@ def validate_checkpoint(
         raise ValueError("checkpoint_source_hash_invalid")
     if checkpoint["prior_checkpoint_sha256"] != (_digest(prior) if prior else None):
         raise ValueError("checkpoint_prior_invalid")
-    if checkpoint["summary_kind"] != "extractive_excerpt":
+    if checkpoint["summary_kind"] not in {"extractive_excerpt", "semantic_model"}:
         raise ValueError("checkpoint_summary_kind_invalid")
     if not isinstance(checkpoint["summary"], str) or not checkpoint["summary"]:
         raise ValueError("checkpoint_summary_empty")
     expected_summary, omitted_chars = _expected_summary(expected_sources, prior)
-    if checkpoint["summary"] != expected_summary:
+    if (
+        checkpoint["summary_kind"] == "extractive_excerpt"
+        and checkpoint["summary"] != expected_summary
+    ):
         raise ValueError("checkpoint_summary_invalid")
     if (
-        checkpoint["omitted_earlier_chars"]
+        checkpoint["summary_kind"] == "extractive_excerpt"
+        and checkpoint["omitted_earlier_chars"]
         != (prior.get("omitted_earlier_chars", 0) if prior else 0) + omitted_chars
     ):
         raise ValueError("checkpoint_omitted_count_invalid")

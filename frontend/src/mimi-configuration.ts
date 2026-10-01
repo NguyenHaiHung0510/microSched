@@ -4,7 +4,7 @@ const INPUT_PRESETS = [32_000, 100_000, 200_000]
 
 export function availableInputPresets(profile: MimiModelProfile | undefined) {
   if (!profile) return []
-  const maximum = profile.context_limit - profile.output_reserve
+  const maximum = profile.context_limit
   return INPUT_PRESETS.filter((tokens) => tokens <= maximum)
 }
 

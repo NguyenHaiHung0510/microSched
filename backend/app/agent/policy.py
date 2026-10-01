@@ -6,9 +6,9 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
-POLICY_ID = "mimi-standard-v1"
-POLICY_SHA256 = "95ed2ff2c88e5780ff0edc09551503883167e55ef696e8a705e1ef6b16050411"
-_POLICY_PATH = Path(__file__).with_name("policy") / "mimi-standard-v1.md"
+POLICY_ID = "mimi-standard-v2"
+POLICY_SHA256 = "60b25fe507b79f823a9db3c01ebe94a5e2aa848218164bade326bf153a73f5e1"
+_POLICY_PATH = Path(__file__).with_name("policy") / "mimi-standard-v2.md"
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,7 @@ class MimiPolicy:
 
 
 def load_standard_policy() -> MimiPolicy:
-    """Fail closed on encoding or source drift from the Owner-approved text."""
+    """Fail closed on encoding or source drift from the versioned local candidate text."""
 
     raw = _POLICY_PATH.read_bytes()
     text = raw.decode("utf-8", errors="strict").replace("\r\n", "\n")

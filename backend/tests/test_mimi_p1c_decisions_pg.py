@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -114,7 +115,29 @@ def test_first_time_draft_reject_binds_immutable_revision_without_task_write(pg_
                         expected_generation=1,
                     ),
                 )
-                draft = result["draft"]
+                # New plans are prose and never create a direction gate.
+                assert result["draft"] is None
+                assert result["messages"][-1]["role"] == "assistant"
+                assert result["messages"][-1]["content"]
+                # Preserve legacy receipt binding separately: historical events
+                # remain valid without reintroducing that gate for new plans.
+                last_message = result["messages"][-1]
+                await mimi_service._append_event(
+                    db,
+                    UUID(str(result["runs"][-1]["id"])),
+                    "draft.ready",
+                    {
+                        "draft_id": str(uuid4()),
+                        "revision": 1,
+                        "content_sha256": hashlib.sha256(
+                            last_message["content"].encode()
+                        ).hexdigest(),
+                        "message_sequence": last_message["sequence"],
+                        "state": "pending",
+                    },
+                )
+                legacy = await mimi_service.conversation_view(db, auth, conversation_id)
+                draft = legacy["draft"]
                 assert draft["direction_state"] == "pending"
                 assert result["change_sets"] == []
                 await db.commit()
@@ -284,11 +307,28 @@ def test_mismatched_confirmation_and_stale_source_fail_before_task_write(pg_dsn,
         conversation_id = None
         title_prefix = f"p1c-decision-source-{uuid4().hex}"
         source_id = None
+        monkeypatch.setattr(mimi_service, "get_sessionmaker", lambda: maker)
 
         async def fake_completion(
             messages, *, settings, session_id, force_task_tool, agent_contract
         ):
             assert agent_contract and not force_task_tool
+            if not any("KẾT QUẢ CÔNG CỤ ĐỌC" in str(m.get("content", "")) for m in messages):
+                return _completion(
+                    ToolRequests(
+                        requests=(
+                            ToolRequest(
+                                call_id="inspect-source",
+                                name="task.inspect_batch.v1",
+                                arguments={
+                                    "ids": [str(source_id)],
+                                    "projection": ["id", "title", "status"],
+                                },
+                            ),
+                        )
+                    ),
+                    "source-read",
+                )
             return _completion(_preview(f"{title_prefix}-created"), "source-preview")
 
         monkeypatch.setattr(mimi_service, "openrouter_complete", fake_completion)

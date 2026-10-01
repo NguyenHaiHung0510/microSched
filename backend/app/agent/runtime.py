@@ -21,6 +21,10 @@ from app.core.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
+class OwnerPauseRequested(Exception):
+    """Pause after a durable boundary, without cancelling a paid dispatch."""
+
+
 def run_guard_key(run_id: UUID) -> int:
     """Namespace a signed PostgreSQL advisory key to one durable Mimi run."""
 

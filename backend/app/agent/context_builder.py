@@ -61,14 +61,18 @@ def assemble_context(
 
     policy = load_standard_policy()
     source = SourceManifest(
-        source_id="task.recent.standard.v1",
+        source_id="task.recent.standard.v1" if task_context else "task.reads.demand.v1",
         source_type="microsched.task.standard",
-        query={"order": "updated_desc", "limit": 10, "private": False},
+        query=(
+            {"order": "updated_desc", "limit": 10, "private": False}
+            if task_context
+            else {"mode": "on_demand", "private": False}
+        ),
         projection=("id", "title", "status", "priority", "due_precision", "due_on", "due_at"),
         version=_source_hash([item.get("source_version") for item in task_context]),
         content_sha256=_source_hash(task_context),
         count=len(task_context),
-        coverage="partial",  # Recent prefetch never claims to cover every Task.
+        coverage="partial" if task_context else "unavailable",
         omitted_fields=("body_md", "items"),
         data_as_of=datetime.now(UTC),
     )
@@ -170,13 +174,23 @@ def assemble_context(
         domain_evidence=(evidence, preview_evidence, draft_evidence),
         current_user_turn=current_user_turn,
         output_contract={
-            "terminal_kinds": (
-                "tool_requests",
-                "assistant_text",
-                "clarification",
-                "draft",
-                "preview_candidate",
-                "blocked",
+            "text_wire": (
+                "Reply naturally in text; use native function tool_calls for reads/previews. "
+                "Never claim a tool was called until its result is available."
+                if settings.mimi_text_response_format == "natural"
+                else (
+                    "Text terminals use object {kind, text}; "
+                    "reads/previews use typed function tools."
+                )
+            ),
+            "text_terminal_kinds": ("assistant_text", "clarification", "draft", "blocked"),
+            "read_and_preview": (
+                "Use native function tool_calls only, never serialize them as text."
+            ),
+            "text_example": (
+                "Câu trả lời bằng tiếng Việt"
+                if settings.mimi_text_response_format == "natural"
+                else {"kind": "assistant_text", "text": "Câu trả lời bằng tiếng Việt"}
             ),
             "output_schema_sha256": OUTPUT_SCHEMA_SHA256,
         },

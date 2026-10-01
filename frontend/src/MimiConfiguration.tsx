@@ -28,7 +28,7 @@ function ModelProfileDetails({ profiles }: { profiles: MimiModelProfile[] }) {
           <li key={profile.id} className="rounded-lg bg-muted/50 p-3 text-sm">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
               <p className="font-semibold">{profile.label} · {profile.model}</p>
-              <p className="text-xs font-semibold">{profile.available ? 'Khả dụng' : 'Chưa khả dụng'}</p>
+              <p className="text-xs font-semibold">{profile.available ? 'Được phép chọn' : 'Chưa khả dụng'}</p>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               {profile.provider} · {profile.quantization || 'Quantization không được cung cấp'} · Effort: {profile.supported_efforts.length ? profile.supported_efforts.join(', ') : 'Theo model'}
@@ -195,7 +195,7 @@ export function MimiConfiguration({
             </div>
 
             <div className="min-w-0 space-y-1.5">
-              <label htmlFor={`mimi-context-${conversationId}`} className="text-sm font-semibold">Ngân sách đầu vào</label>
+              <label htmlFor={`mimi-context-${conversationId}`} className="text-sm font-semibold">Ngân sách ngữ cảnh</label>
               <Select
                 value={String(selection.input_tokens)}
                 disabled={save.isPending || !selectedProfile?.available || presets.length === 0}
@@ -212,7 +212,7 @@ export function MimiConfiguration({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Tổng context của lượt: {(selection.input_tokens + (selectedProfile?.output_reserve ?? 0)).toLocaleString('vi-VN')} token, gồm ngân sách đầu vào và output reserve {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token; giới hạn model là {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token. Lưu cấu hình chỉ áp dụng từ lượt chạy tiếp theo
+            Tổng context của lượt: {selection.input_tokens.toLocaleString('vi-VN')} token, đã dành {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token cho câu trả lời; giới hạn model là {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token. Lưu cấu hình chỉ áp dụng từ lượt chạy tiếp theo
             {activeRunId || runtimeActive ? '; lượt đang chạy giữ nguyên lựa chọn đã chốt.' : '.'}
           </p>
           {!hasCurrentPreset ? <p role="alert" className="text-sm text-bad">Mức ngữ cảnh hiện tại không còn hợp lệ cho model này. Chọn mức được hỗ trợ để lưu.</p> : null}

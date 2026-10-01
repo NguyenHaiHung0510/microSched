@@ -15,6 +15,7 @@ dependencies = [
     # its httpx client at package-import time, so the app will not boot without it.
     "httpx>=0.28.0",
     "itsdangerous>=2.2.0",
+    "openai==3.22.1",
     "pgvector>=0.5.0",
     "pydantic-settings",
     "pywebpush>=2.4.0",

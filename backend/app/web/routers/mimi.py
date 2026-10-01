@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.policy import POLICY_ID, POLICY_SHA256
+from app.agent.route_config import ConfigurationChange, profiles_for_ui
 from app.agent.runtime import hold_run_guard_if_enabled
 from app.agent.service import (
     ConfirmationDecision,
@@ -24,6 +25,7 @@ from app.agent.service import (
     FeedbackCreate,
     MessageCreate,
     confirm_change_set,
+    conversation_configuration,
     conversation_view,
     create_conversation,
     current_conversation,
@@ -34,6 +36,7 @@ from app.agent.service import (
     prepare_run_resume,
     reconcile_unknown_run,
     rename_conversation,
+    request_run_pause,
     run_events_after,
     save_feedback,
     send_message,
@@ -81,7 +84,12 @@ async def mimi_capabilities(_session: CurrentSession) -> dict:
             settings.mimi_route_reasoning_effort if settings.mimi_live_provider_enabled else None
         ),
         "route_mode": settings.mimi_route_mode if settings.mimi_live_provider_enabled else None,
-        "model_selection_enabled": False,
+        "model_selection_enabled": (
+            settings.app_env == "local" and settings.mimi_live_provider_enabled
+        ),
+        "model_profiles": profiles_for_ui(settings),
+        "conversation_planning_mode": "prose",
+        "runner": settings.mimi_runner,
         "context_limit": settings.mimi_route_context_tokens,
         "output_reserve": settings.mimi_route_max_output_tokens,
         "policy_id": POLICY_ID if settings.mimi_context_v1_enabled else None,
@@ -188,6 +196,30 @@ async def patch_conversation(
     session: CurrentSession,
 ) -> dict:
     return await rename_conversation(db, session, conversation_id, payload)
+
+
+@router.get(
+    "/conversations/{conversation_id}/configuration", dependencies=[Depends(require_mimi_available)]
+)
+async def read_conversation_configuration(
+    conversation_id: UUID,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await conversation_configuration(db, session, conversation_id)
+
+
+@router.put(
+    "/conversations/{conversation_id}/configuration",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def change_conversation_configuration(
+    conversation_id: UUID,
+    payload: ConfigurationChange,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await conversation_configuration(db, session, conversation_id, payload)
 
 
 @router.post(
@@ -381,6 +413,14 @@ async def cancel_run(
 )
 async def reconcile_run(run_id: UUID, db: Database, session: CurrentSession) -> dict:
     return await reconcile_unknown_run(db, session, run_id)
+
+
+@router.post(
+    "/runs/{run_id}/pause",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def pause_run(run_id: UUID, db: Database, session: CurrentSession) -> dict:
+    return await request_run_pause(db, session, run_id)
 
 
 @router.post(

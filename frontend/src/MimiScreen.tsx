@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
 import { MimiConfiguration } from '@/MimiConfiguration'
+import { MimiMessageText } from '@/MimiMessageText'
 import { ApiError, TimeoutError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -94,7 +95,7 @@ function ChangeSetPreview({
         </div>
         <CardTitle>Tạo Task “{task.title}”</CardTitle>
         <CardDescription>
-          Mimi cần xác nhận vì thao tác này sẽ ghi dữ liệu thật vào microSched.
+          Kiểm tra toàn bộ nội dung dưới đây. Chỉ khi bạn xác nhận, công việc mới được thêm vào danh sách.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -116,6 +117,11 @@ function ChangeSetPreview({
             <dd>Conversation hiện tại · không dùng dữ liệu PRIVATE</dd>
           </div>
         </dl>
+        <div className="space-y-2 rounded-lg bg-card p-3">
+          <p className="text-sm"><span className="font-semibold">Ưu tiên: </span>{task.priority === 'p1' ? 'Cao' : task.priority === 'p2' ? 'Vừa' : task.priority === 'p3' ? 'Thấp' : 'Chưa chọn'}</p>
+          <div><p className="text-sm font-semibold">Ghi chú</p>{task.body_md ? <MimiMessageText text={task.body_md} /> : <p className="text-sm text-muted-foreground">Không có ghi chú</p>}</div>
+          {task.items.length ? <div><p className="text-sm font-semibold">Các việc nhỏ</p><ul className="mt-1 list-disc space-y-1 pl-5 text-sm">{task.items.map((item, index) => <li key={index}>{item}</li>)}</ul></div> : null}
+        </div>
         <details className="rounded-lg border px-3 py-2 text-xs">
           <summary className="cursor-pointer font-semibold">Chi tiết kỹ thuật</summary>
           <dl className="mt-2 space-y-1">
@@ -667,7 +673,7 @@ export function MimiScreen({
           <p className="font-semibold">{latestRunCanResume ? 'Run có thể tiếp tục theo trạng thái server.' : 'Run đã dừng tại checkpoint provider.'}</p>
           {latestRunCanResume ? (
             <div className="mt-1 space-y-2">
-              <p className="text-xs">Tiếp tục sẽ tạo lease/run mới và yêu cầu xác nhận preview mới. Kết quả model đã nhận được sẽ được dùng lại, tránh gọi lại.</p>
+              <p className="text-xs">Tiếp tục sẽ tạo lượt chạy mới. Nếu server đã nhận kết quả model hợp lệ, Mimi sẽ dùng lại; nếu chưa, lượt mới có thể gọi model. Thay đổi dữ liệu vẫn cần xác nhận preview mới.</p>
               <Button size="lg" variant="outline" disabled={resume.isPending} onClick={() => resume.mutate({ runId: latestRun.id, startedAt: Date.now() })}>
                 {resume.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <RotateCcw />}
                 Tiếp tục
@@ -706,12 +712,14 @@ export function MimiScreen({
               ? 'ml-auto w-fit max-w-[min(88%,65ch)] rounded-xl bg-primary px-4 py-3 text-primary-foreground'
               : 'mr-auto w-fit max-w-[min(88%,65ch)] rounded-xl bg-card px-4 py-3 ring-1 ring-foreground/10'}
           >
-            <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
+            {message.role === 'user'
+              ? <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
+              : <MimiMessageText text={message.content} />}
           </article>
         ))}
         {streamedText ? (
           <article aria-live="polite" className="mr-auto w-fit max-w-[min(88%,65ch)] rounded-xl bg-card px-4 py-3 ring-1 ring-primary/20">
-            <p className="whitespace-pre-wrap break-words text-sm">{streamedText}</p>
+            <MimiMessageText text={streamedText} />
           </article>
         ) : null}
       </div>

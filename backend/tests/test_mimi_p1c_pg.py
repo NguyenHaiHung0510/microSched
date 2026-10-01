@@ -2,9 +2,10 @@
 
 import asyncio
 import base64
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent import service as mimi_service
 from app.agent.context import AssistantText, Draft, PreviewCandidate, ToolRequest, ToolRequests
-from app.agent.models import MimiConversation, MimiProviderCall
+from app.agent.models import MimiConversation, MimiProviderCall, MimiRun
 from app.agent.openrouter import AgentCompletion
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL
 from app.core import crypto
@@ -56,6 +57,94 @@ def _auth() -> AuthSession:
         last_seen_at=now,
         expires_at=now + timedelta(days=1),
     )
+
+
+def test_owner_pause_preserves_durable_terminal_and_resume_does_not_redispatch(pg_dsn, monkeypatch):
+    """Model result completes once; successor consumes it with a fresh lease."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        auth = _auth()
+        conversation_id = None
+        paid_calls = 0
+
+        async def completion(messages, **kwargs):
+            nonlocal paid_calls
+            paid_calls += 1
+            async with maker() as control:
+                run = (
+                    await control.execute(
+                        select(MimiRun).where(
+                            MimiRun.conversation_id == conversation_id,
+                            MimiRun.state == "running",
+                        )
+                    )
+                ).scalar_one()
+                await mimi_service.request_run_pause(control, auth, run.id)
+                await control.commit()
+            return AgentCompletion(
+                outcome=AssistantText(text="Đã đọc yêu cầu, vẫn giữ mục tiêu học."),
+                response_id="synthetic-pause-once",
+                usage={},
+                provider="Synthetic",
+                model="synthetic/model",
+            )
+
+        monkeypatch.setattr(mimi_service, "openrouter_complete", completion)
+        try:
+            async with maker() as db:
+                created = await mimi_service.create_conversation(
+                    db, auth, mimi_service.ConversationCreate(client_id="p1c-pause-successor")
+                )
+                conversation_id = created["id"]
+                await db.commit()
+            async with maker() as db:
+                paused = await mimi_service.send_message(
+                    db,
+                    auth,
+                    conversation_id,
+                    mimi_service.MessageCreate(
+                        client_id="pause-turn", content="Lập kế hoạch học", expected_generation=1
+                    ),
+                )
+                assert paused["runs"][-1]["state"] == "halted"
+                assert paused["runs"][-1]["error_code"] == "owner_paused"
+                assert paused["runs"][-1]["resumable"]
+                assert not any(m["role"] == "assistant" for m in paused["messages"])
+                parent_id = paused["runs"][-1]["id"]
+                await db.commit()
+            async with maker() as db:
+                cid, successor, payload = await mimi_service.prepare_run_resume(db, auth, parent_id)
+                await db.commit()
+            async with maker() as db:
+                resumed = await mimi_service.send_message(
+                    db,
+                    auth,
+                    cid,
+                    payload,
+                    reserved_run_id=successor,
+                    record_user_message=False,
+                    parent_run_id=parent_id,
+                )
+                await db.commit()
+                assert resumed["runs"][-1]["state"] == "completed"
+                assert resumed["messages"][-1]["content"] == "Đã đọc yêu cầu, vẫn giữ mục tiêu học."
+                assert paid_calls == 1
+                assert resumed["change_sets"] == []
+                row = await db.get(MimiRun, successor)
+                assert row.execution_lease["run_id"] == str(successor)
+                assert successor != parent_id
+        finally:
+            if conversation_id:
+                async with maker() as db:
+                    row = await db.get(MimiConversation, conversation_id)
+                    if row:
+                        await db.delete(row)
+                        await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
 
 
 def test_readonly_answer_then_preview_has_no_write_before_confirmation(pg_dsn, monkeypatch):
@@ -201,7 +290,28 @@ def test_draft_direction_is_not_write_confirmation(pg_dsn, monkeypatch):
                         expected_generation=1,
                     ),
                 )
-                draft = result["draft"]
+                # New plans are prose and never create a direction gate.
+                assert result["draft"] is None
+                assert "Phương án" in result["messages"][-1]["content"]
+                # Preserve legacy receipt binding separately: historical events
+                # remain valid without reintroducing that gate for new plans.
+                last_message = result["messages"][-1]
+                await mimi_service._append_event(
+                    db,
+                    UUID(str(result["runs"][-1]["id"])),
+                    "draft.ready",
+                    {
+                        "draft_id": str(uuid4()),
+                        "revision": 1,
+                        "content_sha256": hashlib.sha256(
+                            last_message["content"].encode()
+                        ).hexdigest(),
+                        "message_sequence": last_message["sequence"],
+                        "state": "pending",
+                    },
+                )
+                legacy = await mimi_service.conversation_view(db, auth, conversation_id)
+                draft = legacy["draft"]
                 assert draft["direction_state"] == "pending"
                 assert result["change_sets"] == []
                 assert (

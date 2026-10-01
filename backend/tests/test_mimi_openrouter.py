@@ -63,6 +63,25 @@ def test_request_pins_provider_quantization_parameters_zdr_and_price() -> None:
     }
 
 
+def test_unknown_exact_quantization_keeps_provider_pin_without_claiming_precision() -> None:
+    request = build_request(
+        [{"role": "user", "content": "hello"}],
+        _settings(mimi_route_quantization="unknown"),
+    )
+    assert request["provider"]["only"] == ["provider-a"]
+    assert request["provider"]["order"] == ["provider-a"]
+    assert request["provider"]["allow_fallbacks"] is False
+    assert "quantizations" not in request["provider"]
+
+
+def test_default_reasoning_effort_omits_effort_but_keeps_reasoning_excluded() -> None:
+    request = build_request(
+        [{"role": "user", "content": "hello"}],
+        _settings(mimi_route_reasoning_effort="default"),
+    )
+    assert request["reasoning"] == {"exclude": True}
+
+
 def test_adaptive_request_has_bounded_pool_without_manual_order() -> None:
     settings = _settings(
         mimi_route_mode="adaptive",
@@ -426,3 +445,21 @@ def test_terminal_payload_cannot_cross_standard_private_boundary() -> None:
                 ]
             }
         )
+
+
+def test_native_chat_keeps_tool_and_privacy_contract_without_forcing_text_json():
+    settings = _settings(mimi_text_response_format="natural")
+    request = build_request(
+        [{"role": "user", "content": "Đếm công việc"}], settings, agent_contract=True
+    )
+    assert "response_format" not in request
+    assert request["tools"]
+    assert request["tool_choice"] == "auto"
+    assert request["provider"]["require_parameters"] is True
+    assert request["provider"]["data_collection"] == "deny"
+    assert request["store"] is False
+
+
+def test_native_chat_option_cannot_be_enabled_in_production():
+    with pytest.raises(ValueError, match="local-candidate-only"):
+        Settings(mimi_text_response_format="natural")

@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { createMimiConversation, fetchCurrentMimiConversation, fetchMimiConversation, fetchMimiConversations, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
+import { createMimiConversation, fetchMimiCapabilities, fetchCurrentMimiConversation, fetchMimiConversation, fetchMimiConversations, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
 import { fetchMimiPreview, selectMimiPreviewScenario, type MimiPreviewRange, type MimiPreviewState, type MimiReasoningLevel } from '@/mimi-preview'
 import { MimiAvatar } from '@/components/brand'
 import { MimiContextRail } from '@/MimiContextRail'
@@ -293,7 +293,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
             <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-0.5">
               {sortedItems.pinned.length > 0 ? (
                 <div className="space-y-1">
-                  <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                  <p className="px-1 text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
                     <Pin className="size-3" />Đã ghim
                   </p>
                   {sortedItems.pinned.map((item) => renderConversationRow(item, true))}
@@ -302,7 +302,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
               {sortedItems.unpinned.length > 0 ? (
                 <div className="space-y-1">
                   {sortedItems.pinned.length > 0 ? (
-                    <p className="px-1 pt-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <p className="px-1 pt-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
                       Gần đây
                     </p>
                   ) : null}
@@ -338,7 +338,9 @@ export function MimiControlCenter({ onOpenDomain }: { onOpenDomain: (domain: Wor
   const [reasoningLevel, setReasoningLevel] = useState<MimiReasoningLevel>('balanced')
   const [leaseMinutes, setLeaseMinutes] = useState('30')
   const conversation = useQuery({ queryKey: ['mimi', 'current'], queryFn: fetchCurrentMimiConversation, ...NO_POLLING_QUERY_OPTIONS })
-  const preview = useQuery({ queryKey: ['mimi', 'preview', range], queryFn: () => fetchMimiPreview(range), retry: false, staleTime: 0 })
+  const capabilities = useQuery({ queryKey: ['mimi', 'capabilities'], queryFn: fetchMimiCapabilities, ...NO_POLLING_QUERY_OPTIONS })
+  const realConversation = capabilities.data?.live_provider_enabled === true
+  const preview = useQuery({ queryKey: ['mimi', 'preview', range], queryFn: () => fetchMimiPreview(range), enabled: capabilities.isSuccess && !realConversation, retry: false, staleTime: 0 })
   const selectScenario = useMutation({ mutationFn: selectMimiPreviewScenario, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['mimi', 'preview'] }); void queryClient.invalidateQueries({ queryKey: ['mimi', 'current'] }) } })
   const current = conversation.data
   const synthetic = preview.data
@@ -346,6 +348,10 @@ export function MimiControlCenter({ onOpenDomain }: { onOpenDomain: (domain: Wor
   const pendingApprovals = synthetic?.attention.pending_approvals ?? current?.change_sets.filter((item) => item.state === 'pending').length ?? 0
   const unresolvedFeedback = synthetic?.attention.unresolved_feedback ?? current?.feedback.filter((item) => item.unresolved).length ?? 0
   const scenarioDescription = useMemo(() => synthetic?.scenarios.find((item) => item.id === synthetic.scenario)?.description, [synthetic])
+
+  if (capabilities.isPending) return <p role="status" className="py-6 text-sm text-muted-foreground">Đang kết nối Mimi…</p>
+  if (capabilities.isError) return <p role="alert" className="py-6 text-sm text-bad">Chưa kết nối được Mimi. Tải lại để thử lại.</p>
+  if (realConversation) return <section aria-label="Trò chuyện với Mimi"><ConversationWorkspace onOpenDomain={onOpenDomain} /></section>
 
   return <section className="space-y-5" aria-labelledby="mimi-control-title">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="space-y-1"><div className="flex items-center gap-2"><MimiAvatar size="sm" state="idle" /><h2 id="mimi-control-title" className="text-2xl font-extrabold text-primary">Mimi Control Center</h2></div><p className="max-w-2xl text-sm text-muted-foreground">Quản lý trạng thái, mức dùng, hoạt động, hội thoại và cấu hình đang thực sự có hiệu lực.</p></div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">P1R · local preview</Badge>{synthetic ? <Badge variant="secondary">Synthetic data</Badge> : null}</div></div>

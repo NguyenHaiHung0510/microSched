@@ -13,12 +13,12 @@ from pydantic import ValidationError
 
 from app.agent.context import (
     AGENT_RESPONSE_FORMAT,
-    TERMINAL_ADAPTER,
     AssistantText,
     PreviewCandidate,
     TerminalOutcome,
     ToolRequest,
     ToolRequests,
+    parse_terminal_wire,
 )
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, TOOLS
 from app.core.settings import Settings, get_settings
@@ -38,11 +38,13 @@ class ProviderDispatchError(RuntimeError):
         status: int | None,
         *,
         response_id: str | None = None,
+        diagnostic: dict[str, Any] | None = None,
     ):
         super().__init__(f"provider dispatch ended as {outcome}")
         self.outcome = outcome
         self.status = status
         self.response_id = response_id
+        self.diagnostic = diagnostic or {}
 
 
 @dataclass(frozen=True)
@@ -137,13 +139,17 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
     if settings.mimi_route_mode == "exact":
         if settings.mimi_route_provider is None or settings.mimi_route_quantization is None:
             raise RouteContractError("exact Mimi route is not configured")
-        return {
+        policy = {
             **shared,
             "order": [settings.mimi_route_provider],
             "only": [settings.mimi_route_provider],
-            "quantizations": [settings.mimi_route_quantization],
             "allow_fallbacks": False,
         }
+        # `unknown` records that exact provider/model metadata did not attest a
+        # quantization. Keep the provider pin but do not claim a precision.
+        if settings.mimi_route_quantization != "unknown":
+            policy["quantizations"] = [settings.mimi_route_quantization]
+        return policy
     providers = list(settings.mimi_allowed_provider_list)
     quantizations = list(settings.mimi_allowed_quantization_list)
     if not providers or not quantizations:
@@ -206,13 +212,20 @@ def build_request(
         "stream": stream,
         "store": False,
         "max_tokens": route.mimi_route_max_output_tokens,
-        "reasoning": {"effort": route.mimi_route_reasoning_effort, "exclude": True},
+        "reasoning": {
+            **(
+                {"effort": route.mimi_route_reasoning_effort}
+                if route.mimi_route_reasoning_effort != "default"
+                else {}
+            ),
+            "exclude": True,
+        },
         "usage": {"include": True},
         "provider": _provider_policy(route),
     }
     if stream:
         request["stream_options"] = {"include_usage": True}
-    if agent_contract:
+    if agent_contract and route.mimi_text_response_format == "structured":
         request["response_format"] = AGENT_RESPONSE_FORMAT
     if session_id:
         request["session_id"] = session_id
@@ -272,7 +285,7 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
                 outcome = AssistantText(text=content)
             else:
                 if isinstance(decoded_content, dict) and "kind" in decoded_content:
-                    outcome = TERMINAL_ADAPTER.validate_python(decoded_content)
+                    outcome = parse_terminal_wire(decoded_content)
                 else:
                     outcome = AssistantText(text=content)
         else:
@@ -419,6 +432,17 @@ async def complete(
 ) -> ProviderCompletion | AgentCompletion:
     """Dispatch once. Retry authority belongs to persisted run state."""
     route = settings or get_settings()
+    if route.mimi_transport == "openai_sdk":
+        from app.agent.openai_sdk import complete as complete_with_openai_sdk
+
+        return await complete_with_openai_sdk(
+            messages,
+            settings=route,
+            client=client,
+            session_id=session_id,
+            force_task_tool=force_task_tool,
+            agent_contract=agent_contract,
+        )
     api_key, _ = _route_identity(route)
     request = build_request(
         messages,
@@ -470,6 +494,18 @@ async def complete_stream(
 ) -> ProviderCompletion | AgentCompletion:
     """Normalize OpenRouter SSE without exposing raw chunks or partial tool JSON."""
     route = settings or get_settings()
+    if route.mimi_transport == "openai_sdk":
+        from app.agent.openai_sdk import complete_stream as stream_with_openai_sdk
+
+        return await stream_with_openai_sdk(
+            messages,
+            settings=route,
+            client=client,
+            session_id=session_id,
+            on_event=on_event,
+            force_task_tool=force_task_tool,
+            agent_contract=agent_contract,
+        )
     api_key, _ = _route_identity(route)
     request = build_request(
         messages,
@@ -656,7 +692,11 @@ async def get_generation(
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any]:
-    """Read OpenRouter's canonical generation metadata for reconciliation."""
+    """Read canonical generation metadata through HTTPX for reconciliation.
+
+    This read-only endpoint stays on HTTPX for both chat transports; the OpenAI
+    SDK does not expose a typed generation endpoint with this contract.
+    """
     route = settings or get_settings()
     api_key, _ = _route_identity(route)
     owns_client = client is None

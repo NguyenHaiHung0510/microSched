@@ -180,17 +180,39 @@ TerminalOutcome = Annotated[
     Field(discriminator="kind"),
 ]
 TERMINAL_ADAPTER = TypeAdapter(TerminalOutcome)
+WIRE_TEXT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["kind", "text"],
+    "properties": {
+        "kind": {"type": "string", "enum": ["assistant_text", "clarification", "draft", "blocked"]},
+        "text": {"type": "string"},
+    },
+}
+
+
+def parse_terminal_wire(value: dict[str, Any]) -> TerminalOutcome:
+    """Portable text wire shape; typed function calls own read/preview outcomes."""
+    if set(value) == {"kind", "text"}:
+        field = {"clarification": "question", "blocked": "reason"}.get(value["kind"], "text")
+        value = {"kind": value["kind"], field: value["text"]}
+    return TERMINAL_ADAPTER.validate_python(value)
+
+
 OUTPUT_SCHEMA_SHA256 = hashlib.sha256(
     json.dumps(
-        TERMINAL_ADAPTER.json_schema(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        {"terminal_union": TERMINAL_ADAPTER.json_schema(), "wire_text": WIRE_TEXT_SCHEMA},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
 ).hexdigest()
 
 AGENT_RESPONSE_FORMAT = {
     "type": "json_schema",
     "json_schema": {
-        "name": "mimi_terminal_v1",
+        "name": "mimi_text_terminal_v2",
         "strict": True,
-        "schema": TERMINAL_ADAPTER.json_schema(),
+        "schema": WIRE_TEXT_SCHEMA,
     },
 }

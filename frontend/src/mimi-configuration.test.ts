@@ -19,10 +19,10 @@ function profile(overrides: Partial<MimiModelProfile> = {}): MimiModelProfile {
   }
 }
 
-test('input presets stay within the model context after reserving output tokens', () => {
+test('context presets include the output reserve and stay within the model context', () => {
   expect(availableInputPresets(profile())).toEqual([32_000, 100_000, 200_000])
   expect(availableInputPresets(profile({ context_limit: 132_000 }))).toEqual([32_000, 100_000])
-  expect(availableInputPresets(profile({ context_limit: 63_999 }))).toEqual([])
+  expect(availableInputPresets(profile({ context_limit: 31_999 }))).toEqual([])
 })
 
 test('profiles without advertised effort levels use the provider default', () => {

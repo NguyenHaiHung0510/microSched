@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     mimi_preview_ttl_minutes: int = 15
     mimi_run_deadline_seconds: int = 1_800
     mimi_standard_api_key: str | None = None
+    # Keep the production transport unchanged unless an Owner explicitly opts
+    # into the local SDK candidate after adapter parity has been verified.
+    mimi_transport: Literal["httpx", "openai_sdk"] = "httpx"
+    mimi_text_response_format: Literal["structured", "natural"] = "structured"
     mimi_route_mode: Literal["exact", "adaptive"] = "exact"
     mimi_route_model: str | None = None
     mimi_route_provider: str | None = None
@@ -102,7 +106,9 @@ class Settings(BaseSettings):
     mimi_route_allowed_providers: str = ""
     mimi_route_allowed_quantizations: str = ""
     mimi_route_forced_tool_choice: Literal["none", "required", "function"] = "none"
-    mimi_route_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] = "low"
+    mimi_route_reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high"] = (
+        "low"
+    )
     mimi_route_context_tokens: int = 131_072
     mimi_route_max_output_tokens: int = 4_096
     mimi_route_max_input_price: float | None = None
@@ -220,6 +226,10 @@ class Settings(BaseSettings):
             )
         if self.is_production and self.mimi_runner == "langgraph":
             raise ValueError("MIMI_RUNNER=langgraph is local-prototype-only")
+        if self.is_production and self.mimi_text_response_format == "natural":
+            raise ValueError("MIMI_TEXT_RESPONSE_FORMAT=natural is local-candidate-only")
+        if self.is_production and self.mimi_transport == "openai_sdk":
+            raise ValueError("MIMI_TRANSPORT=openai_sdk is local-candidate-only")
         if self.mimi_runner == "langgraph" and not (
             self.mimi_context_v1_enabled and self.mimi_live_provider_enabled
         ):

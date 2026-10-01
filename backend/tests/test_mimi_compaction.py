@@ -5,7 +5,12 @@ from uuid import uuid4
 
 import pytest
 
-from app.agent.compaction import CheckpointSource, make_checkpoint, validate_checkpoint
+from app.agent.compaction import (
+    CheckpointSource,
+    make_checkpoint,
+    make_semantic_checkpoint,
+    validate_checkpoint,
+)
 
 
 def _source(sequence: int, content: str) -> CheckpointSource:
@@ -39,6 +44,54 @@ def test_checkpoint_binds_source_hashes_frontier_and_pending_state() -> None:
     assert checkpoint["summary_kind"] == "extractive_excerpt"
     assert checkpoint["pending_preview"] == {"id": "preview-1"}
     validate_checkpoint(checkpoint, expected_sources=sources, prior=None)
+
+
+def test_semantic_candidate_preserves_late_constraint_prior_and_exact_pending_authority():
+    content = (
+        "Nội dung giải thích dài " * 20 + "Chỉ làm tối đa 1 USD, chưa được xác nhận thì không ghi."
+    )
+    sources = [_source(5, content)]
+    prior = {
+        "frontier": 4,
+        "summary": "Mục tiêu tuần trước",
+        "decisions": ["Không đổi ngày thi"],
+        "unresolved": ["Chưa chốt giờ học"],
+    }
+    checkpoint = make_semantic_checkpoint(
+        sources=sources,
+        prior=prior,
+        policy_sha256="a" * 64,
+        pending_preview={"id": "exact-server-preview", "digest": "f" * 64},
+        pending_draft=None,
+        candidate={
+            "summary": "Giữ ngày thi, tối đa1USD và chỉ ghi sau xác nhận (nguồn#5).",
+            "decisions": ["Nguồn#5: cap1USD"],
+            "unresolved": [],
+        },
+    )
+    assert "cap1USD" in checkpoint["decisions"][1]
+    assert checkpoint["decisions"][0] == "Không đổi ngày thi"
+    assert checkpoint["unresolved"] == ["Chưa chốt giờ học"]
+    assert checkpoint["pending_preview"]["id"] == "exact-server-preview"
+    assert checkpoint["summary_kind"] == "semantic_model"
+    with pytest.raises(ValueError, match="checkpoint_sources_invalid"):
+        validate_checkpoint(
+            {**checkpoint, "source_refs": []}, expected_sources=sources, prior=prior
+        )
+    with pytest.raises(ValueError, match="checkpoint_semantic_candidate_shape_invalid"):
+        make_semantic_checkpoint(
+            sources=sources,
+            prior=prior,
+            policy_sha256="a" * 64,
+            pending_preview=None,
+            pending_draft=None,
+            candidate={
+                "summary": "Pretend it was confirmed",
+                "decisions": [],
+                "unresolved": [],
+                "confirmed": True,
+            },
+        )
 
 
 def test_checkpoint_rejects_frontier_overlap_and_source_hash_mismatch() -> None:

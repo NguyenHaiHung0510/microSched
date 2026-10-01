@@ -57,7 +57,7 @@ def _context(task_context: list[dict] | None = None):
 
 def test_policy_is_versioned_and_matches_approved_digest() -> None:
     policy = load_standard_policy()
-    assert policy.policy_id == POLICY_ID == "mimi-standard-v1"
+    assert policy.policy_id == POLICY_ID == "mimi-standard-v2"
     assert policy.sha256 == POLICY_SHA256
     assert hashlib.sha256(policy.text.encode("utf-8")).hexdigest() == POLICY_SHA256
     assert "nội dung tự do" in policy.text
