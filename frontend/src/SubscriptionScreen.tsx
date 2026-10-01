@@ -29,7 +29,6 @@ import { hasAppHistory, navigate, queryParams, useLocation } from '@/lib/route'
 import { uuidv7 } from '@/lib/uuidv7'
 import { standardRefetchInterval } from '@/query-polling'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
-import { OutboxStatus } from '@/OutboxStatus'
 import {
   addPeriod,
   daysLeftLabel,
@@ -705,8 +704,6 @@ export function SubscriptionScreen() {
 
   return (
     <div data-testid="subscription-screen" className="space-y-6">
-      <OutboxStatus queryKey={['subscription']} />
-      <OutboxStatus queryKey={['tracker']} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Button

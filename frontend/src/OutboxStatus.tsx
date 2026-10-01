@@ -124,7 +124,9 @@ export function OutboxEntityStatus({
   privateUnlocked?: boolean
 }) {
   const state = useDomainOutbox([], privateUnlocked, true)
-  const rows = state.rows.filter((row) => row.entity_id === entityId || row.parent_id === entityId)
+  const rows = state.rows.filter((row) =>
+    (row.state === 'failed' || row.state === 'suppressed') &&
+    (row.entity_id === entityId || row.parent_id === entityId))
   if (state.readError || state.unavailable || rows.length === 0) return null
   const row = rows[rows.length - 1]
   const privateHidden = requiresPrivateRow(row) && !privateUnlocked

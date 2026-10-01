@@ -7,7 +7,6 @@ import { queuedRequest } from '@/lib/queued-mutation'
 import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { uuidv7 } from '@/lib/uuidv7'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
-import { OutboxStatus } from '@/OutboxStatus'
 import { EventForm } from '@/EventForm'
 import {
   addVietnamDays,
@@ -430,7 +429,6 @@ export function CalendarScreen() {
 
   return (
     <div className="space-y-5">
-      <OutboxStatus queryKey={['calendar']} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-extrabold tracking-tight">Lịch</h2>

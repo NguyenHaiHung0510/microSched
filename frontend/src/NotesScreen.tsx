@@ -24,7 +24,7 @@ import { apiRequest, UnauthenticatedError } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
 import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
-import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
+import { OutboxEntityStatus } from '@/OutboxStatus'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -862,7 +862,6 @@ export function NotesScreen() {
 
   return (
     <div className="space-y-4">
-      <OutboxStatus queryKey={['notes']} />
       <section aria-labelledby="quick-add-note-heading">
         <h2 className="sr-only" id="quick-add-note-heading">
           Thêm ghi chú

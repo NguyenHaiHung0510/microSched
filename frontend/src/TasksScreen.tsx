@@ -24,7 +24,7 @@ import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
 import { queuedRequest } from '@/lib/queued-mutation'
 import type { Json, OutboxRow } from '@/lib/outbox-db'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
-import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
+import { OutboxEntityStatus } from '@/OutboxStatus'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -533,7 +533,6 @@ export function TasksScreen() {
 
   return (
     <div className="space-y-4">
-      <OutboxStatus queryKey={['tasks']} />
       {groups.overdue.length > 0 && filter !== 'completed' ? (
         <Button
           data-testid="overdue-banner"

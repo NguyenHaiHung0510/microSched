@@ -3,6 +3,22 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { cn } from '@/lib/utils'
 import { freshnessState, FRESH_WINDOW_MS, type FreshQuery } from '@/freshness'
 
+// Read browser connectivity too: a page opened offline can mount before
+// TanStack has received any online/offline event for its process-wide manager.
+function subscribeConnectivity(notify: () => void) {
+  const unsubscribe = onlineManager.subscribe(notify)
+  window.addEventListener('online', notify)
+  window.addEventListener('offline', notify)
+  return () => {
+    unsubscribe()
+    window.removeEventListener('online', notify)
+    window.removeEventListener('offline', notify)
+  }
+}
+function connectivitySnapshot() {
+  return navigator.onLine && onlineManager.isOnline()
+}
+
 const labels = {
   loading: 'Đang tải dữ liệu…',
   live: 'live and fresh',
@@ -21,7 +37,7 @@ export function LiveStatus({ tab }: { tab: 'tasks' | 'notes' | 'tracker' }) {
     ))
     .map((query) => ({ status: query.state.status, updatedAt: query.state.dataUpdatedAt, paused: query.state.fetchStatus === 'paused' }))), [cache, tab])
   const serialized = useSyncExternalStore(subscribe, snapshot)
-  const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline())
+  const online = useSyncExternalStore(subscribeConnectivity, connectivitySnapshot)
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {

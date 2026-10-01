@@ -19,7 +19,7 @@ import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
 import { useDomainReadControl } from '@/lib/use-domain-outbox'
-import { OutboxEntityStatus, OutboxStatus } from '@/OutboxStatus'
+import { OutboxEntityStatus } from '@/OutboxStatus'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
 import { navigate } from '@/lib/route'
 import { uuidv7 } from '@/lib/uuidv7'
@@ -451,8 +451,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   return (
     <div className="space-y-6">
-      <OutboxStatus queryKey={['tracker']} privateUnlocked={privateUnlocked} />
-      <OutboxStatus queryKey={['subscription']} privateUnlocked={privateUnlocked} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-extrabold text-primary">Theo dõi</h2>
