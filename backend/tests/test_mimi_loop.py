@@ -1,6 +1,7 @@
 """No-network tests for Mimi terminal parsing and bounded read orchestration."""
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -62,6 +63,16 @@ def test_read_loop_executes_one_read_then_returns_terminal_answer() -> None:
 
         async def invoke(messages, turn):
             model_calls.append((turn, len(messages)))
+            if turn == 2:
+                assert messages[-2]["role"] == "assistant"
+                assert messages[-2]["content"] is None
+                call = messages[-2]["tool_calls"][0]
+                assert call["id"] == "read-1" and call["type"] == "function"
+                assert call["function"]["name"] == "task.query.v1"
+                assert json.loads(call["function"]["arguments"]) == {"page": 1}
+                assert messages[-1]["role"] == "tool"
+                assert messages[-1]["tool_call_id"] == "read-1"
+                assert json.loads(messages[-1]["content"]) == {"count": 3, "coverage": "complete"}
             return responses.pop(0)
 
         async def execute(name, arguments):

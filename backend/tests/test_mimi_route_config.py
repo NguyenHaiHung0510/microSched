@@ -28,6 +28,7 @@ def test_controls_preserve_inflight_snapshot_and_reject_route_escape():
     )
     assert first.mimi_route_model == "openai/gpt-6-luna"
     assert first.mimi_route_reasoning_effort == "high"
+    assert first.mimi_route_forced_tool_choice == "function"
     assert second.mimi_route_model == "xiaomi/mimo-v2.6-pro"
     assert base.mimi_route_reasoning_effort == "low"
     with pytest.raises(HTTPException, match="mimi_route_selection_not_supported"):

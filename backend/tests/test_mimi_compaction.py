@@ -46,49 +46,138 @@ def test_checkpoint_binds_source_hashes_frontier_and_pending_state() -> None:
     validate_checkpoint(checkpoint, expected_sources=sources, prior=None)
 
 
-def test_semantic_candidate_preserves_late_constraint_prior_and_exact_pending_authority():
-    content = (
-        "Nội dung giải thích dài " * 20 + "Chỉ làm tối đa 1 USD, chưa được xác nhận thì không ghi."
-    )
-    sources = [_source(5, content)]
-    prior = {
-        "frontier": 4,
-        "summary": "Mục tiêu tuần trước",
-        "decisions": ["Không đổi ngày thi"],
-        "unresolved": ["Chưa chốt giờ học"],
-    }
-    checkpoint = make_semantic_checkpoint(
-        sources=sources,
-        prior=prior,
+def test_semantic_constraint_supersession_requires_current_user_quote_and_keeps_pending_exact():
+    old_source = _source(1, "Tôi muốn hoàn thành việc này trước ngày 10/06.")
+    prior = make_semantic_checkpoint(
+        sources=[old_source],
+        prior=None,
         policy_sha256="a" * 64,
         pending_preview={"id": "exact-server-preview", "digest": "f" * 64},
         pending_draft=None,
         candidate={
-            "summary": "Giữ ngày thi, tối đa1USD và chỉ ghi sau xác nhận (nguồn#5).",
-            "decisions": ["Nguồn#5: cap1USD"],
-            "unresolved": [],
+            "summary": "Mục tiêu hoàn thành trước 10/06.",
+            "constraints": [
+                {
+                    "text": "Hoàn thành trước 10/06",
+                    "kind": "decision",
+                    "source_sequence": 1,
+                    "source_sha256": old_source.content_sha256,
+                    "quote": "trước ngày 10/06",
+                }
+            ],
+            "supersessions": [],
+            "resolutions": [],
         },
     )
-    assert "cap1USD" in checkpoint["decisions"][1]
-    assert checkpoint["decisions"][0] == "Không đổi ngày thi"
-    assert checkpoint["unresolved"] == ["Chưa chốt giờ học"]
-    assert checkpoint["pending_preview"]["id"] == "exact-server-preview"
-    assert checkpoint["summary_kind"] == "semantic_model"
-    with pytest.raises(ValueError, match="checkpoint_sources_invalid"):
-        validate_checkpoint(
-            {**checkpoint, "source_refs": []}, expected_sources=sources, prior=prior
+    old_entry = prior["constraint_ledger"][0]
+    current = _source(3, "Tôi đổi quyết định: hạn mới là 15/06.")
+    replacement = "Hoàn thành trước 15/06"
+    candidate = {
+        "summary": "Hạn hiện tại là 15/06.",
+        "constraints": [
+            {
+                "text": replacement,
+                "kind": "decision",
+                "source_sequence": 3,
+                "source_sha256": current.content_sha256,
+                "quote": "hạn mới là 15/06",
+            }
+        ],
+        "supersessions": [
+            {
+                "prior_id": old_entry["id"],
+                "source_sequence": 3,
+                "source_sha256": current.content_sha256,
+                "quote": "Tôi đổi quyết định: hạn mới là 15/06.",
+                "replacement_text": replacement,
+            }
+        ],
+        "resolutions": [],
+    }
+    checkpoint = make_semantic_checkpoint(
+        sources=[current],
+        prior=prior,
+        policy_sha256="a" * 64,
+        pending_preview=prior["pending_preview"],
+        pending_draft=None,
+        candidate=candidate,
+        current_user_source=current,
+    )
+    assert checkpoint["constraint_ledger"][0]["text"] == old_entry["text"]
+    assert checkpoint["constraint_ledger"][0]["status"] == "superseded"
+    active = [e["text"] for e in checkpoint["constraint_ledger"] if e["status"] == "active"]
+    assert active == [replacement]
+    assert checkpoint["pending_preview"] == prior["pending_preview"]
+    with pytest.raises(ValueError, match="checkpoint_semantic_source_quote_invalid"):
+        make_semantic_checkpoint(
+            sources=[current],
+            prior=prior,
+            policy_sha256="a" * 64,
+            pending_preview=prior["pending_preview"],
+            pending_draft=None,
+            candidate={
+                **candidate,
+                "supersessions": [
+                    {
+                        **candidate["supersessions"][0],
+                        "quote": "hạn mới là 16/06",
+                    }
+                ],
+            },
+            current_user_source=current,
         )
+
+
+def test_semantic_omission_keeps_unresolved_active_and_candidate_shape_stays_strict():
+    old_source = _source(1, "Chưa chốt giờ học buổi tối.")
+    prior = make_semantic_checkpoint(
+        sources=[old_source],
+        prior=None,
+        policy_sha256="a" * 64,
+        pending_preview=None,
+        pending_draft=None,
+        candidate={
+            "summary": "Chưa chốt giờ.",
+            "constraints": [
+                {
+                    "text": "Chưa chốt giờ học",
+                    "kind": "unresolved",
+                    "source_sequence": 1,
+                    "source_sha256": old_source.content_sha256,
+                    "quote": "Chưa chốt giờ học",
+                }
+            ],
+            "supersessions": [],
+            "resolutions": [],
+        },
+    )
+    current = _source(3, "Tiếp tục sau.")
+    checkpoint = make_semantic_checkpoint(
+        sources=[current],
+        prior=prior,
+        policy_sha256="a" * 64,
+        pending_preview=None,
+        pending_draft=None,
+        candidate={
+            "summary": "Giờ học vẫn chưa được quyết định.",
+            "constraints": [],
+            "supersessions": [],
+            "resolutions": [],
+        },
+    )
+    assert checkpoint["constraint_ledger"][0]["status"] == "active"
     with pytest.raises(ValueError, match="checkpoint_semantic_candidate_shape_invalid"):
         make_semantic_checkpoint(
-            sources=sources,
+            sources=[current],
             prior=prior,
             policy_sha256="a" * 64,
             pending_preview=None,
             pending_draft=None,
             candidate={
-                "summary": "Pretend it was confirmed",
-                "decisions": [],
-                "unresolved": [],
+                "summary": "invalid",
+                "constraints": [],
+                "supersessions": [],
+                "resolutions": [],
                 "confirmed": True,
             },
         )

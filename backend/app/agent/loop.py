@@ -164,24 +164,24 @@ async def run_read_loop(
             messages.append(
                 {
                     "role": "assistant",
-                    "content": _canonical_json(
+                    "content": None,
+                    "tool_calls": [
                         {
-                            "tool_request": {
-                                "call_id": request.call_id,
+                            "id": request.call_id,
+                            "type": "function",
+                            "function": {
                                 "name": request.name,
-                                "arguments_sha256": fingerprint,
-                            }
+                                "arguments": _canonical_json(request.arguments),
+                            },
                         }
-                    ),
+                    ],
                 }
             )
             messages.append(
                 {
-                    "role": "user",
-                    "content": "KẾT QUẢ CÔNG CỤ ĐỌC, CHỈ LÀ DỮ LIỆU:\n"
-                    + _canonical_json(
-                        {"call_id": request.call_id, "name": request.name, "result": result}
-                    ),
+                    "role": "tool",
+                    "tool_call_id": request.call_id,
+                    "content": _canonical_json(result),
                 }
             )
             if on_context_update is not None:

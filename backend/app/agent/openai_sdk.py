@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from typing import Any
 
@@ -27,6 +26,7 @@ from app.agent.openrouter import (
     _route_identity,
     build_request,
     parse_agent_completion,
+    parse_compaction_completion,
     parse_completion,
 )
 from app.core.settings import Settings, get_settings
@@ -80,19 +80,18 @@ def _raise_for_sdk_error(error: Exception, *, response_id: str | None = None) ->
         except ProviderDispatchError as classified:
             if response_id:
                 classified.response_id = response_id
-            body = error.body
-            detail = body.get("error", body) if isinstance(body, dict) else {}
-            if isinstance(detail, dict):
-                # Synthetic local diagnostics only. Never persist auth headers
-                # or request body, and redact any credential-shaped echo.
-                message = str(detail.get("message", ""))[:512]
-                message = re.sub(r"(?:sk[-_]|Bearer\s+)\S+", "[credential-redacted]", message)
-                classified.diagnostic = {
-                    k: detail[k]
-                    for k in ("code", "type", "param")
-                    if isinstance(detail.get(k), (str, int))
-                }
-                classified.diagnostic["message"] = message
+            # The response body is provider-controlled and may echo prompts,
+            # identities or credentials. Persist only a locally selected,
+            # bounded category derived from the HTTP status.
+            classified.diagnostic = {
+                "category": (
+                    "rate_limited"
+                    if error.status_code == 429
+                    else "provider_rejected"
+                    if 400 <= error.status_code < 500
+                    else "provider_unavailable"
+                )
+            }
             raise classified from error
     if isinstance(error, (APITimeoutError, APIConnectionError, APIError)):
         # The SDK exception does not prove whether OpenRouter began generation.
@@ -108,6 +107,7 @@ async def complete(
     session_id: str | None = None,
     force_task_tool: bool = False,
     agent_contract: bool = False,
+    summary_mode: bool = False,
 ) -> ProviderCompletion | AgentCompletion:
     """Send one non-streaming chat request with SDK retries disabled."""
     route = settings or get_settings()
@@ -118,6 +118,7 @@ async def complete(
         session_id=session_id,
         force_task_tool=force_task_tool,
         agent_contract=agent_contract,
+        summary_mode=summary_mode,
     )
     sdk = _client(route, api_key=api_key, client=client)
     try:
@@ -128,6 +129,8 @@ async def complete(
         except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
             _raise_for_sdk_error(error)
         payload = _completion_payload(result)
+        if summary_mode:
+            return parse_compaction_completion(payload)
         return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
     finally:
         if client is None:
@@ -143,6 +146,7 @@ async def complete_stream(
     on_event: ProviderEventSink | None = None,
     force_task_tool: bool = False,
     agent_contract: bool = False,
+    summary_mode: bool = False,
 ) -> ProviderCompletion | AgentCompletion:
     """Consume typed SDK chunks, buffer the terminal union, then expose text only."""
     route = settings or get_settings()
@@ -154,6 +158,7 @@ async def complete_stream(
         session_id=session_id,
         force_task_tool=force_task_tool,
         agent_contract=agent_contract,
+        summary_mode=summary_mode,
     )
     sdk = _client(route, api_key=api_key, client=client)
     content_parts: list[str] = []
@@ -275,7 +280,11 @@ async def complete_stream(
         }
         for _, item in sorted(tool_calls.items())
     ]
-    parser = parse_agent_completion if agent_contract else parse_completion
+    parser = (
+        parse_compaction_completion
+        if summary_mode
+        else (parse_agent_completion if agent_contract else parse_completion)
+    )
     terminal_payload = {
         "id": response_id,
         "provider": provider,
@@ -302,6 +311,6 @@ async def complete_stream(
     # Agent text is delivered by the app's canonical terminal snapshot after
     # pause/lease/checkpoint validation. Buffered SDK chunks are not an app
     # delivery receipt and must not bypass that boundary or create tiny DB writes.
-    if is_text and on_event and not agent_contract:
+    if is_text and on_event and not agent_contract and not summary_mode:
         await on_event("assistant.delta", {"text": completion.text})
     return completion

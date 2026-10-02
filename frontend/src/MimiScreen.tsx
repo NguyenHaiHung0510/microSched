@@ -333,6 +333,9 @@ export function MimiScreen({
       key: string
     }) => decideMimiChangeSet(changeSet, choice, key),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey }),
+    // Expiry/conflict may durably change the server artifact before returning
+    // 409; refresh it so an obsolete pending card does not trap the user.
+    onError: () => void queryClient.invalidateQueries({ queryKey }),
   })
 
   const feedback = useMutation({

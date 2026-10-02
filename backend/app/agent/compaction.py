@@ -10,6 +10,48 @@ from uuid import UUID
 
 MAX_CHECKPOINT_CHARS = 8_000
 MAX_EXCERPT_CHARS = 180
+MAX_CONSTRAINTS = 80
+
+
+def _constraint_id(
+    text: str, sequence: int | None, source_hash: str | None, kind: str | None = None
+) -> str:
+    return _digest({"text": text, "sequence": sequence, "sha256": source_hash, "kind": kind})
+
+
+def active_constraint_context(checkpoint: dict[str, Any] | None) -> str | None:
+    """Render only validated active semantic records with their source citations."""
+    if not checkpoint or checkpoint.get("summary_kind") != "semantic_model":
+        return checkpoint["summary"] if checkpoint else None
+    if "constraint_ledger" not in checkpoint:
+        # Read legacy semantic v1 checkpoints without discarding their active
+        # strings; new v2 compaction migrates these to immutable legacy entries.
+        legacy = [
+            {"kind": kind, "text": text, "source": {"legacy_frontier": checkpoint["frontier"]}}
+            for kind, key in (("decision", "decisions"), ("unresolved", "unresolved"))
+            for text in checkpoint.get(key, [])
+        ]
+        return (
+            checkpoint["summary"]
+            + "\nLEGACY_ACTIVE_CONSTRAINTS="
+            + json.dumps(legacy, ensure_ascii=False, separators=(",", ":"))
+        )
+    ledger = checkpoint["constraint_ledger"]
+    active = [entry for entry in ledger if entry["status"] == "active"]
+    citations = [
+        {
+            "id": item["id"],
+            "text": item["text"],
+            "kind": item["kind"],
+            "source": item["source"],
+        }
+        for item in active
+    ]
+    return (
+        checkpoint["summary"]
+        + "\nACTIVE_CONSTRAINT_LEDGER="
+        + json.dumps(citations, ensure_ascii=False, separators=(",", ":"))
+    )
 
 
 def make_semantic_checkpoint(
@@ -20,9 +62,10 @@ def make_semantic_checkpoint(
     pending_preview: dict[str, Any] | None,
     pending_draft: dict[str, Any] | None,
     candidate: dict[str, Any],
+    current_user_source: CheckpointSource | None = None,
 ) -> dict[str, Any]:
     """Validate attribution/shape; semantic faithfulness remains a QA obligation."""
-    if set(candidate) != {"summary", "decisions", "unresolved"}:
+    if set(candidate) != {"summary", "constraints", "supersessions", "resolutions"}:
         raise ValueError("checkpoint_semantic_candidate_shape_invalid")
     if (
         not isinstance(candidate["summary"], str)
@@ -30,13 +73,8 @@ def make_semantic_checkpoint(
         or len(candidate["summary"]) > 6000
     ):
         raise ValueError("checkpoint_semantic_summary_invalid")
-    for key in ("decisions", "unresolved"):
-        values = candidate[key]
-        if (
-            not isinstance(values, list)
-            or len(values) > 40
-            or any(not isinstance(item, str) or not item or len(item) > 1000 for item in values)
-        ):
+    for key in ("constraints", "supersessions", "resolutions"):
+        if not isinstance(candidate[key], list) or len(candidate[key]) > 40:
             raise ValueError("checkpoint_semantic_lists_invalid")
     checkpoint = make_checkpoint(
         sources=sources,
@@ -45,15 +83,167 @@ def make_semantic_checkpoint(
         pending_preview=pending_preview,
         pending_draft=pending_draft,
     )
-    checkpoint.update(candidate)
+    ledger = [dict(item) for item in (prior.get("constraint_ledger", []) if prior else [])]
+    # Migrate historical v1 strings as active immutable records. They remain
+    # visible until a current user source explicitly supersedes/resolves them.
+    if prior and "constraint_ledger" not in prior:
+        for kind in ("decision", "unresolved"):
+            for text in prior.get("decisions" if kind == "decision" else "unresolved", []):
+                ledger.append(
+                    {
+                        "id": _constraint_id(text, None, None, kind),
+                        "text": text,
+                        "kind": kind,
+                        "status": "active",
+                        "source": {"legacy_checkpoint_sha256": _digest(prior)},
+                        "resolution": None,
+                    }
+                )
+    source_by_sequence = {
+        source.sequence: source
+        for source in [*sources, *([current_user_source] if current_user_source else [])]
+    }
+
+    def cited_user_source(item: dict[str, Any]) -> tuple[CheckpointSource, str]:
+        if not {"source_sequence", "source_sha256", "quote"} <= set(item):
+            raise ValueError("checkpoint_semantic_source_shape_invalid")
+        sequence, source_hash, quote = (
+            item.get("source_sequence"),
+            item.get("source_sha256"),
+            item.get("quote"),
+        )
+        if (
+            not isinstance(sequence, int)
+            or isinstance(sequence, bool)
+            or not isinstance(source_hash, str)
+        ):
+            raise ValueError("checkpoint_semantic_source_quote_invalid")
+        source = source_by_sequence.get(sequence)
+        if (
+            source is None
+            or source.role != "user"
+            or source.content_sha256 != source_hash
+            or not isinstance(quote, str)
+            or not quote
+            or quote not in source.content
+        ):
+            raise ValueError("checkpoint_semantic_source_quote_invalid")
+        if hashlib.sha256(source.content.encode("utf-8")).hexdigest() != source.content_sha256:
+            raise ValueError("checkpoint_semantic_source_hash_invalid")
+        return source, quote
+
+    new_entries = []
+    for item in candidate["constraints"]:
+        if not isinstance(item, dict) or set(item) != {
+            "text",
+            "kind",
+            "source_sequence",
+            "source_sha256",
+            "quote",
+        }:
+            raise ValueError("checkpoint_semantic_constraint_invalid")
+        text, kind = item["text"], item["kind"]
+        source, quote = cited_user_source(item)
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text) > 1000
+            or kind not in {"decision", "unresolved"}
+        ):
+            raise ValueError("checkpoint_semantic_constraint_invalid")
+        new_entries.append(
+            {
+                "id": _constraint_id(text, source.sequence, source.content_sha256, kind),
+                "text": text,
+                "kind": kind,
+                "status": "active",
+                "source": {
+                    "sequence": source.sequence,
+                    "sha256": source.content_sha256,
+                    "quote": quote,
+                },
+                "resolution": None,
+            }
+        )
+
+    ledger_by_id = {entry["id"]: entry for entry in ledger}
+    for item in candidate["supersessions"]:
+        if not isinstance(item, dict) or set(item) != {
+            "prior_id",
+            "source_sequence",
+            "source_sha256",
+            "quote",
+            "replacement_text",
+        }:
+            raise ValueError("checkpoint_semantic_supersession_invalid")
+        old = ledger_by_id.get(item["prior_id"])
+        source, quote = cited_user_source(item)
+        replacement = item["replacement_text"]
+        replacement_entry = next(
+            (entry for entry in new_entries if entry["text"] == replacement), None
+        )
+        if (
+            old is None
+            or old["status"] != "active"
+            or old["kind"] != "decision"
+            or not isinstance(replacement, str)
+            or source.sequence <= (prior["frontier"] if prior else 0)
+            or replacement_entry is None
+            or replacement_entry["source"]["sequence"] != source.sequence
+            or replacement_entry["source"]["sha256"] != source.content_sha256
+        ):
+            raise ValueError("checkpoint_semantic_supersession_invalid")
+        old["status"] = "superseded"
+        old["resolution"] = {
+            "kind": "superseded",
+            "by": replacement_entry["id"],
+            "source": {
+                "sequence": source.sequence,
+                "sha256": source.content_sha256,
+                "quote": quote,
+            },
+        }
+    for item in candidate["resolutions"]:
+        if not isinstance(item, dict) or set(item) != {
+            "prior_id",
+            "source_sequence",
+            "source_sha256",
+            "quote",
+        }:
+            raise ValueError("checkpoint_semantic_resolution_invalid")
+        old = ledger_by_id.get(item["prior_id"])
+        source, quote = cited_user_source(item)
+        if (
+            old is None
+            or old["status"] != "active"
+            or old["kind"] != "unresolved"
+            or source.sequence <= (prior["frontier"] if prior else 0)
+        ):
+            raise ValueError("checkpoint_semantic_resolution_invalid")
+        old["status"] = "resolved"
+        old["resolution"] = {
+            "kind": "resolved",
+            "source": {
+                "sequence": source.sequence,
+                "sha256": source.content_sha256,
+                "quote": quote,
+            },
+        }
+    existing_ids = {entry["id"] for entry in ledger}
+    ledger.extend(entry for entry in new_entries if entry["id"] not in existing_ids)
+    if len(ledger) > MAX_CONSTRAINTS:
+        raise ValueError("checkpoint_semantic_ledger_limit")
+    checkpoint.update(
+        {
+            "summary": candidate["summary"],
+            "decisions": [],
+            "unresolved": [],
+            "constraint_ledger": ledger,
+        }
+    )
     checkpoint["summary_kind"] = "semantic_model"
     checkpoint["omitted_earlier_chars"] = 0
-    # Durable prior decisions stay explicitly visible until subsequent source
-    # evidence says superseded. Summary cannot silently delete them.
-    for key in ("decisions", "unresolved"):
-        checkpoint[key] = list(
-            dict.fromkeys([*(prior.get(key, []) if prior else []), *candidate[key]])
-        )
+    checkpoint["schema_version"] = "mimi.checkpoint.v2"
     validate_checkpoint(checkpoint, expected_sources=sources, prior=prior)
     return checkpoint
 
@@ -146,7 +336,11 @@ def validate_checkpoint(
         "pending_preview",
         "pending_draft",
     }
-    if set(checkpoint) != required or checkpoint["schema_version"] != "mimi.checkpoint.v1":
+    semantic = checkpoint.get("summary_kind") == "semantic_model"
+    if semantic:
+        required.add("constraint_ledger")
+    expected_version = "mimi.checkpoint.v2" if semantic else "mimi.checkpoint.v1"
+    if set(checkpoint) != required or checkpoint["schema_version"] != expected_version:
         raise ValueError("checkpoint_schema_invalid")
     if not expected_sources or checkpoint["frontier"] != expected_sources[-1].sequence:
         raise ValueError("checkpoint_frontier_invalid")
@@ -185,8 +379,33 @@ def validate_checkpoint(
         checkpoint["unresolved"], list
     ):
         raise ValueError("checkpoint_decision_shape_invalid")
-    if prior is not None and (
-        checkpoint["decisions"][: len(prior["decisions"])] != prior["decisions"]
-        or checkpoint["unresolved"][: len(prior["unresolved"])] != prior["unresolved"]
+    if semantic:
+        ledger = checkpoint["constraint_ledger"]
+        if not isinstance(ledger, list) or len(ledger) > MAX_CONSTRAINTS:
+            raise ValueError("checkpoint_semantic_ledger_limit")
+        if (
+            prior
+            and "constraint_ledger" in prior
+            and ledger[: len(prior["constraint_ledger"])] != prior["constraint_ledger"]
+        ):
+            # An explicitly resolved record may change state, so compare its
+            # immutable identity/source fields and permit only that transition.
+            old_map = {item["id"]: item for item in ledger}
+            for previous in prior["constraint_ledger"]:
+                current = old_map.get(previous["id"])
+                if current is None or any(
+                    current.get(key) != previous.get(key)
+                    for key in ("id", "text", "kind", "source")
+                ):
+                    raise ValueError("checkpoint_semantic_history_invalid")
+                if previous["status"] != "active" and current != previous:
+                    raise ValueError("checkpoint_semantic_history_invalid")
+    if (
+        not semantic
+        and prior is not None
+        and (
+            checkpoint["decisions"][: len(prior["decisions"])] != prior["decisions"]
+            or checkpoint["unresolved"][: len(prior["unresolved"])] != prior["unresolved"]
+        )
     ):
         raise ValueError("checkpoint_prior_decisions_missing")

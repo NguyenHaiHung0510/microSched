@@ -14,6 +14,7 @@ from app.agent.openrouter import (
     complete_stream,
     get_generation,
     parse_completion,
+    serialized_input_bytes,
 )
 from app.core.settings import Settings
 
@@ -150,6 +151,45 @@ def test_preflight_refuses_overflow_instead_of_truncating() -> None:
     )
     with pytest.raises(RouteContractError, match="context_overflow_preflight"):
         build_request([{"role": "user", "content": "x" * 13_000}], settings)
+
+
+def test_selected_32k_request_checks_policy_tools_current_pending_checkpoint_suffix_and_reserve():
+    settings = _settings(mimi_route_context_tokens=32_000, mimi_route_max_output_tokens=8_192)
+    oversized = [
+        {"role": "system", "content": "FIXED_POLICY_AND_CAPABILITIES " + "p" * 13_000},
+        {"role": "user", "content": "OLD_HISTORY " + "h" * 12_000},
+        {"role": "assistant", "content": "OLD_REPLY " + "r" * 8_000},
+    ]
+    with pytest.raises(RouteContractError, match="context_overflow_preflight"):
+        build_request(oversized, settings, agent_contract=True)
+
+    compacted = [
+        {"role": "system", "content": "FIXED_POLICY_AND_CAPABILITIES " + "p" * 6_000},
+        {"role": "system", "content": "checkpoint + active constraint citations " + "c" * 2_000},
+        {"role": "assistant", "content": "retained transcript suffix " + "s" * 1_500},
+        {"role": "system", "content": "exact server pending preview object " + "d" * 1_000},
+        {"role": "user", "content": "current user input " + "u" * 1_000},
+    ]
+    request = build_request(compacted, settings, agent_contract=True)
+    serialized = serialized_input_bytes(compacted, agent_contract=True)
+    assert serialized + request["max_tokens"] <= 32_000
+    assert request["tools"] and request["response_format"]
+
+
+def test_summary_mode_has_strict_summary_schema_and_no_function_tools_or_choice():
+    settings = _settings(mimi_route_context_tokens=32_000, mimi_route_max_output_tokens=2_048)
+    messages = [
+        {"role": "system", "content": "compact safely"},
+        {"role": "user", "content": "synthetic source"},
+    ]
+    request = build_request(messages, settings, summary_mode=True)
+    assert "tools" not in request
+    assert "tool_choice" not in request
+    assert request["response_format"]["json_schema"]["strict"] is True
+    assert request["max_tokens"] == 2_048
+    assert (
+        serialized_input_bytes(messages, agent_contract=False, summary_mode=True) + 2_048 <= 32_000
+    )
 
 
 def test_terminal_tool_args_are_independently_validated() -> None:

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent import service as mimi_service
 from app.agent.context import Draft, PreviewCandidate, ToolRequest, ToolRequests
-from app.agent.models import MimiConversation, MimiRun
+from app.agent.models import MimiChangeSet, MimiConversation, MimiRun
 from app.agent.openrouter import AgentCompletion
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL
 from app.core import crypto
@@ -313,7 +313,7 @@ def test_mismatched_confirmation_and_stale_source_fail_before_task_write(pg_dsn,
             messages, *, settings, session_id, force_task_tool, agent_contract
         ):
             assert agent_contract and not force_task_tool
-            if not any("KẾT QUẢ CÔNG CỤ ĐỌC" in str(m.get("content", "")) for m in messages):
+            if not any(m.get("role") == "tool" for m in messages):
                 return _completion(
                     ToolRequests(
                         requests=(
@@ -488,9 +488,7 @@ def test_iterative_query_source_outside_prefetch_is_bound_and_stale_confirmation
                     ),
                     "iterative-source-read",
                 )
-            assert any(
-                "KẾT QUẢ CÔNG CỤ ĐỌC" in str(message.get("content", "")) for message in messages
-            )
+            assert any(message.get("role") == "tool" for message in messages)
             return _completion(_preview(created_title), "iterative-source-preview")
 
         monkeypatch.setattr(mimi_service, "openrouter_complete", fake_completion)
@@ -575,6 +573,69 @@ def test_iterative_query_source_outside_prefetch_is_bound_and_stale_confirmation
                         await db.delete(conversation)
                 if owned_ids:
                     await db.execute(delete(Task).where(Task.id.in_(owned_ids)))
+                await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_expired_preview_does_not_trap_a_new_request_or_write_task(pg_dsn, monkeypatch):
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        auth, cid = _auth(), None
+        calls = 0
+        title_prefix = f"expired-refresh-{uuid4().hex}"
+
+        async def fake_completion(messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            assert not kwargs["force_task_tool"]
+            return _completion(_preview(f"{title_prefix}-{calls}"), f"expired-{calls}")
+
+        monkeypatch.setattr(mimi_service, "openrouter_complete", fake_completion)
+        try:
+            async with maker() as db:
+                cid = await _create_conversation(db, auth, f"expired-{uuid4().hex}")
+                await db.commit()
+            async with maker() as db:
+                first = await mimi_service.send_message(
+                    db,
+                    auth,
+                    cid,
+                    mimi_service.MessageCreate(client_id="first", content="Draft a synthetic Task"),
+                )
+                old = first["change_sets"][0]
+                row = await db.get(MimiChangeSet, old["id"])
+                row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                await db.commit()
+            async with maker() as db:
+                second = await mimi_service.send_message(
+                    db,
+                    auth,
+                    cid,
+                    mimi_service.MessageCreate(client_id="next", content="Create a fresh preview"),
+                )
+                assert calls == 2
+                old_now = next(r for r in second["change_sets"] if r["id"] == old["id"])
+                assert old_now["state"] == "expired"
+                fresh = next(r for r in second["change_sets"] if r["id"] != old["id"])
+                assert fresh["state"] == "pending"
+                assert fresh["operation"]["args"]["title"] == f"{title_prefix}-2"
+                assert (
+                    await db.execute(
+                        select(func.count())
+                        .select_from(Task)
+                        .where(Task.title.like(f"{title_prefix}%"))
+                    )
+                ).scalar_one() == 0
+                await db.commit()
+        finally:
+            async with maker() as db:
+                if cid:
+                    row = await db.get(MimiConversation, cid)
+                    if row:
+                        await db.delete(row)
                 await db.commit()
             await engine.dispose()
 
