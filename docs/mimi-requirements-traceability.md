@@ -1,6 +1,6 @@
 # Mimi requirements-to-acceptance map
 
-Status: OWNER_APPROVED_NIGHT / IMPLEMENTATION_CANDIDATE / FINAL_LIVE_QA_PENDING. 2026-10-02. Owner final grant expires noon02/10; no production delivery authorized. Source: cur_docs/PTHTTM/btl/04-spec-hop-nhat-mimi.md, Owner context decisions D1–D9, current Owner interrogation/reset overrides. This map locates evidence; it does not replace product decisions or invent authority.
+Status: OWNER_APPROVED_NIGHT / IMPLEMENTATION_CANDIDATE / FINAL_LIVE_QA_PENDING. 2026-10-02. Owner direct02/10 extension expires16:00Asia/Saigon; no production delivery authorized. Source: cur_docs/PTHTTM/btl/04-spec-hop-nhat-mimi.md, Owner context decisions D1–D9, current Owner interrogation/reset overrides. This map locates evidence; it does not replace product decisions or invent authority.
 
 Columns below will be expanded with exact source section, implementation files/lines, runtime/config hashes, case IDs, receipts and truthful state. One requirement can require multiple cases; one journey can cover multiple requirements. Existing pilot evidence is not general Mimi acceptance.
 
@@ -45,3 +45,22 @@ These pointers describe the final local candidate at QA freeze, not acceptance o
 | MEM/SKILL/JOB | Existing approved lifecycle remains; no new implicit memory/skills/jobs | Deferred/MISSING as stated in baseline. This night does not claim all7tiers implemented |
 
 Private raw receipts and Owner grant remain local. Curated project map/spec locate actual proof; CI/device/production and Owner final usefulness/taste acceptance are separate and NOT_RUN here.
+
+
+## Dated evidence update — 02/10 09:10
+
+| Outcome | Source/runtime | Actual evidence | State / remaining proof |
+|---|---|---|---|
+| READ-B authorized pagination | native loop/graph wire; integration078c08f9a58 | Chrome phase2 synthesized53/48open/5completed; independent fixture oracle matches | LOCAL_LIVE_PASS for that fixture; arbitrary strict-prefix semantics not supported by contains filter |
+| Task-create revision/rejection/confirmation | service frozen operation/source/digest/receipt; phase2 assetStqfP4lS | one meaningful Task after revised preview→reject→re-request→confirm; DB exact title/body/date/P2/3items+one receipt | LOCAL_LIVE evidence pending complete screenshot/taste and source-conflict gate; no edit/delete/bulk domain claim |
+| Completed run/receipt restart | app journal and owned local API6440, readinessc08f9a58 | DB before/after one Task/receipt and61eligible; zero active runs at restart | LOCAL_SYNTHETIC completed-state proof; active live pause/recovery still pending |
+| Compaction request/validation/orphan classification | versioned summary prompt; source8fca0e5 integratedc08f9a58 | independent finding closure; source-bound duplicate/supersession + helperintent/dispatched RED→GREEN21focusedPASS | OFFLINE/LOCAL_SYNTHETIC_PASS; actual model semantic continuity remains pending |
+| UX and evidence capture | current full app desktop/mobile | actual T1 images show clipping; several saved JPEG thumbnails mislabeled PNG | FAIL/pending measurable repair and full-quality recapture; Owner taste acceptance absent |
+| Budget | named-key T1-only adapter and cumulative ledger | finite guard RED→GREEN;09:03 conservative0.14714049465, unknown holds retained; key delta residual0.0003543540 | bounded accounting evidence; no exact reconciliation or exhaustion browserPASS claim |
+
+These are additive dated checkpoints, not approval changes. The families still awaiting evidence remain required. Full seven-tier vision, physical device, CI and production are not accepted by these receipts.
+
+
+## Reconciled current gaps — 02/10 11:20
+
+READ-01 metadata aggregate/pagination live cases matchedoracle; full Taskbody/checklist read is MISSING. WRITE-02 source-conflict live remainsBLOCKED atUIsourceedit, notPASS frombackendtests. CTX-02 sourcevalidation40focusedPASS/reviewclosed, semanticmodelretakePENDING. RUN-01 actualpausehaltresume reusedknownresult noadditionalpaidgeneration; stop/reconnect stillPENDING. QA-01 ChromeAX/screenshots actualtransportavailable; DOMviewportinspectionnotavailablethissession, so viewportacceptanceNOT_VERIFIED. BUDGET oldreasonUIFAIL/sourcefixedretakePENDING. Otherdomain/private/attachments/memory/skills/jobsremainexplicitlydisabled/deferred. OverallLOCAL_LIVE_PASSnotachieved.
