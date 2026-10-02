@@ -530,6 +530,12 @@ class SubscriptionStore:
                 read.created = False
                 return read
         if await self._subscription_name_taken(db, auth, payload.name):
+            if payload.id is not None:
+                existing = await self._subscription(db, auth, payload.id)
+                if existing is not None:
+                    read = self._subscription_read(existing, _today_vn())
+                    read.created = False
+                    return read
             raise SubscriptionNameTaken
 
         values = {
@@ -559,6 +565,11 @@ class SubscriptionStore:
                 )
             ).scalar_one_or_none()
             if inserted_id is None:
+                existing = await self._subscription(db, auth, payload.id)
+                if existing is not None:
+                    read = self._subscription_read(existing, _today_vn())
+                    read.created = False
+                    return read
                 physical = await db.execute(
                     select(Subscription.id).where(Subscription.id == payload.id)
                 )

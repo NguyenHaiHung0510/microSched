@@ -18,8 +18,11 @@ import {
 import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
+import { useDomainReadControl } from '@/lib/use-domain-outbox'
+import { OutboxEntityStatus } from '@/OutboxStatus'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
 import { navigate } from '@/lib/route'
+import { uuidv7 } from '@/lib/uuidv7'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -45,7 +48,8 @@ import {
   type Subscription,
 } from '@/subscription-ui'
 import { errorMessage } from '@/tracker-undo'
-import { ensurePushSubscription } from '@/push-subscription'
+import { preparePushRegistration, PUSH_OFFLINE_NOTICE } from '@/push-subscription'
+import type { QueuedDeleteReceipt } from '@/lib/queued-mutation'
 import { standardRefetchInterval } from '@/query-polling'
 import {
   backdateOptions,
@@ -60,6 +64,7 @@ import {
   groupTrackersByGroup,
   sortTrackersForGrid,
   trackerKindLabel,
+  reminderConfigurationChanged,
   trackerInvalidationKey,
   trackerQueryKey,
   isSelectableReportMonth,
@@ -103,8 +108,10 @@ function formatEntryLine(entry: Entry): string {
 
 export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean }) {
   const queryClient = useQueryClient()
+  const trackerReadControl = useDomainReadControl(['tracker'], standardRefetchInterval, privateUnlocked)
+  const subscriptionReadControl = useDomainReadControl(['subscription'], standardRefetchInterval, privateUnlocked)
   const refresh = () => void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
-  const writes = useTrackerWrites(refresh)
+  const writes = useTrackerWrites()
   const currentMonth = currentVietnamMonth()
   const [month, setMonth] = useState(currentMonth)
   const [reportMonths, setReportMonths] = useState<1 | 3 | 6 | 12>(1)
@@ -117,32 +124,32 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const groupsQuery = useQuery({
     queryKey: trackerQueryKey('groups'),
     queryFn: () => apiRequest<{ items: TrackerGroup[] }>('/api/tracker/groups'),
-    refetchInterval: standardRefetchInterval,
+    ...trackerReadControl,
   })
   const trackersQuery = useQuery({
     queryKey: trackerQueryKey('trackers'),
     queryFn: () => apiRequest<{ items: Tracker[] }>('/api/tracker/trackers'),
-    refetchInterval: standardRefetchInterval,
+    ...trackerReadControl,
   })
   const dashboardQuery = useQuery({
     queryKey: [...trackerQueryKey('dashboard'), month, reportMonths],
     queryFn: () => apiRequest<DashboardResponse>(`/api/tracker/dashboard?month=${month}&months=${reportMonths}`),
-    refetchInterval: standardRefetchInterval,
+    ...trackerReadControl,
   })
   const entriesQuery = useQuery({
     queryKey: trackerQueryKey('entries'),
     queryFn: () => apiRequest<{ items: Entry[] }>('/api/tracker/entries?limit=20'),
-    refetchInterval: standardRefetchInterval,
+    ...trackerReadControl,
   })
   const subscriptionsQuery = useQuery({
     queryKey: subscriptionQueryKey('subscriptions'),
     queryFn: () => apiRequest<{ items: Subscription[] }>('/api/subscriptions'),
-    refetchInterval: standardRefetchInterval,
+    ...subscriptionReadControl,
   })
   const settingsQuery = useQuery({
     queryKey: subscriptionQueryKey('settings'),
     queryFn: () => apiRequest<{ items: SettingsItem[] }>('/api/settings'),
-    refetchInterval: standardRefetchInterval,
+    ...subscriptionReadControl,
   })
 
   const trackers = trackersQuery.data?.items ?? EMPTY_TRACKERS
@@ -252,7 +259,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       return next
     })
     writes.createEntry.mutate(
-      capturePayload(tracker, input ?? '', occurredAt),
+      { payload: capturePayload(tracker, input ?? '', occurredAt), requiresPrivate: tracker.is_private },
       {
         onSuccess: (entry) => {
           setCapturingIds((previous) => {
@@ -268,7 +275,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
               duration: 10_000,
               action: {
                 label: 'Hoàn tác',
-                onClick: () => undoDeleteEntry(entry.id),
+                onClick: () => undoDeleteEntry(entry, tracker.is_private),
               },
             },
           )
@@ -303,17 +310,20 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   function submitTracker(payload: TrackerWritePayload) {
     const { ensure_push: ensurePush, ...trackerPayload } = payload
     if (editingTracker) {
-      const saveTracker = () =>
+      const saveTracker = (registrationDeferred = false) =>
         writes.updateTracker.mutate(
-          { trackerId: editingTracker.id, payload: trackerPayload },
+          { trackerId: editingTracker.id, payload: trackerPayload, requiresPrivate: editingTracker.is_private },
           {
-            onSuccess: () => setEditingTracker(null),
+            onSuccess: () => {
+              setEditingTracker(null)
+              if (registrationDeferred) toast.info(PUSH_OFFLINE_NOTICE)
+            },
             onError: (error) => toast.error(errorMessage(error)),
           },
         )
-      if (ensurePush) {
-        void ensurePushSubscription()
-          .then(saveTracker)
+      if (ensurePush && reminderConfigurationChanged(editingTracker, trackerPayload)) {
+        void preparePushRegistration(true)
+          .then((registration) => saveTracker(registration === 'offline_deferred'))
           .catch((error: unknown) =>
             toast.error(error instanceof Error ? error.message : errorMessage(error)),
           )
@@ -322,14 +332,17 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       }
       return
     }
-    const saveTracker = () =>
-      writes.createTracker.mutate(trackerPayload, {
-        onSuccess: () => setCreateOpen(false),
+    const saveTracker = (registrationDeferred = false) =>
+      writes.createTracker.mutate({ ...trackerPayload, id: uuidv7() }, {
+        onSuccess: () => {
+          setCreateOpen(false)
+          if (registrationDeferred) toast.info(PUSH_OFFLINE_NOTICE)
+        },
         onError: (error) => toast.error(errorMessage(error)),
       })
     if (ensurePush) {
-      void ensurePushSubscription()
-        .then(saveTracker)
+      void preparePushRegistration(true)
+        .then((registration) => saveTracker(registration === 'offline_deferred'))
         .catch((error: unknown) =>
           toast.error(error instanceof Error ? error.message : errorMessage(error)),
         )
@@ -339,8 +352,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   }
 
   function submitEntry(entryId: string, payload: EntryEditPayload) {
+    const entry = editingEntry
+    const parent = entry ? trackers.find((tracker) => tracker.id === entry.tracker_id) : undefined
+    if (!parent) {
+      toast.error('Không thể xác định quyền riêng tư của tracker.')
+      return
+    }
     writes.updateEntry.mutate(
-      { entryId, payload },
+      { entryId, payload, requiresPrivate: parent.is_private },
       {
         onSuccess: () => setEditingEntry(null),
         onError: (error) => toast.error(errorMessage(error)),
@@ -349,11 +368,16 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   }
 
   function removeEntry(entry: Entry) {
-    writes.deleteEntry.mutate(entry.id, {
-      onSuccess: () => {
+    const parent = trackers.find((tracker) => tracker.id === entry.tracker_id)
+    if (!parent) {
+      toast.error('Không thể xác định quyền riêng tư của tracker.')
+      return
+    }
+    writes.deleteEntry.mutate({ entry, requiresPrivate: parent.is_private }, {
+      onSuccess: (receipt) => {
         toast(<span>Đã xoá bản ghi</span>, {
           duration: 10_000,
-          action: { label: 'Hoàn tác', onClick: () => undoRestoreEntry(entry.id) },
+          action: { label: 'Hoàn tác', onClick: () => undoRestoreEntry(entry, parent.is_private, receipt) },
         })
       },
       onError: (error) => toast.error(errorMessage(error)),
@@ -362,34 +386,34 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
   // M4: an undo/restore failure must be visible and retryable — the toast action
   // disappearing silently would make the user believe the delete was undone.
-  function undoDeleteEntry(entryId: string) {
-    writes.deleteEntry.mutate(entryId, {
+  function undoDeleteEntry(entry: Entry, requiresPrivate: boolean) {
+    writes.deleteEntry.mutate({ entry, requiresPrivate }, {
       onError: (error) => {
         toast.error('Không hoàn tác được bản ghi', {
           description: errorMessage(error),
-          action: { label: 'Thử lại', onClick: () => undoDeleteEntry(entryId) },
+          action: { label: 'Thử lại', onClick: () => undoDeleteEntry(entry, requiresPrivate) },
         })
       },
     })
   }
 
-  function undoRestoreEntry(entryId: string) {
-    writes.restoreEntry.mutate(entryId, {
+  function undoRestoreEntry(entry: Entry, requiresPrivate: boolean, receipt: QueuedDeleteReceipt | null) {
+    writes.restoreEntry.mutate({ entry, requiresPrivate, receipt }, {
       onError: (error) => {
         toast.error('Không khôi phục được bản ghi', {
           description: errorMessage(error),
-          action: { label: 'Thử lại', onClick: () => undoRestoreEntry(entryId) },
+          action: { label: 'Thử lại', onClick: () => undoRestoreEntry(entry, requiresPrivate, receipt) },
         })
       },
     })
   }
 
-  function undoRestoreTracker(trackerId: string) {
-    writes.restoreTracker.mutate(trackerId, {
+  function undoRestoreTracker(tracker: Tracker, requiresPrivate: boolean, receipt: QueuedDeleteReceipt | null) {
+    writes.restoreTracker.mutate({ tracker, requiresPrivate, receipt }, {
       onError: (error) => {
         toast.error('Không khôi phục được tracker', {
           description: errorMessage(error),
-          action: { label: 'Thử lại', onClick: () => undoRestoreTracker(trackerId) },
+          action: { label: 'Thử lại', onClick: () => undoRestoreTracker(tracker, requiresPrivate, receipt) },
         })
       },
     })
@@ -718,6 +742,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                               <p className="max-w-full break-words text-sm font-semibold">
                                 {tracker.name}
                               </p>
+                              <OutboxEntityStatus entityId={tracker.id} />
                               {tracker.is_private ? <PrivateMarker /> : null}
                               <p className="text-xs text-muted-foreground">
                                 {tracker.input_mode === 'event'
@@ -738,7 +763,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                                   disabled={!tracker.is_private && !privateUnlocked}
                                   onCheckedChange={(checked) =>
                                     writes.updateTracker.mutate(
-                                      { trackerId: tracker.id, payload: { is_private: checked === true } },
+                                      { trackerId: tracker.id, payload: { is_private: checked === true }, requiresPrivate: tracker.is_private },
                                       { onError: (error) => toast.error(errorMessage(error)) },
                                     )
                                   }
@@ -817,6 +842,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                           <p className="max-w-full break-words text-sm font-semibold">
                             {tracker.name}
                           </p>
+                          <OutboxEntityStatus entityId={tracker.id} />
                           {tracker.is_private ? <PrivateMarker /> : null}
                           <p className="text-xs text-muted-foreground">
                             {tracker.input_mode === 'event'
@@ -837,7 +863,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                               disabled={!tracker.is_private && !privateUnlocked}
                               onCheckedChange={(checked) =>
                                 writes.updateTracker.mutate(
-                                  { trackerId: tracker.id, payload: { is_private: checked === true } },
+                                  { trackerId: tracker.id, payload: { is_private: checked === true }, requiresPrivate: tracker.is_private },
                                   { onError: (error) => toast.error(errorMessage(error)) },
                                )
                              }
@@ -1070,7 +1096,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           <GroupForm
             pending={pendingGroup}
             onSubmit={(payload) =>
-              writes.createGroup.mutate(payload, {
+              writes.createGroup.mutate({ ...payload, id: uuidv7() }, {
                 onSuccess: () => setGroupOpen(false),
                 onError: (error) => toast.error(errorMessage(error)),
               })
@@ -1209,14 +1235,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
               className="min-h-11"
               onClick={() => {
                 if (!archiveFor) return
-                writes.archiveTracker.mutate(archiveFor.id, {
-                  onSuccess: () => {
+                writes.archiveTracker.mutate({ tracker: archiveFor, requiresPrivate: archiveFor.is_private }, {
+                  onSuccess: (receipt) => {
                     setArchiveFor(null)
                     toast(<span>Đã lưu trữ “{archiveFor.name}”</span>, {
                       duration: 10_000,
                       action: {
                         label: 'Hoàn tác',
-                        onClick: () => undoRestoreTracker(archiveFor.id),
+                        onClick: () => undoRestoreTracker(archiveFor, archiveFor.is_private, receipt),
                       },
                     })
                   },

@@ -11,7 +11,9 @@ from app.domain.notes import (
     NoteCreate,
     NoteIdConflict,
     NoteItemCreate,
+    NoteItemIdConflict,
     NoteItemRead,
+    NoteItemsReorder,
     NoteItemUpdate,
     NoteRead,
     NoteStore,
@@ -34,7 +36,7 @@ def _not_found() -> HTTPException:
 def _private_locked() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Private mode is locked",
+        detail={"code": "PRIVATE_UNLOCK_REQUIRED", "message": "Private mode is locked"},
     )
 
 
@@ -125,12 +127,36 @@ async def create_note_item(
     payload: NoteItemCreate,
     db: Database,
     session: CurrentSession,
-) -> NoteItemRead:
-    """Append a checklist item through its visible, locked parent."""
-    item = await store.add_item(db, session, note_id, payload)
+    response: Response,
+) -> NoteItemRead | Response:
+    """Append an item, returning 200 only for a readable ID replay."""
+    try:
+        item = await store.add_item(db, session, note_id, payload)
+    except NoteItemIdConflict:
+        return Response(status_code=status.HTTP_409_CONFLICT)
     if item is None:
         raise _not_found()
+    response.status_code = status.HTTP_201_CREATED if item.created else status.HTTP_200_OK
     return item
+
+
+@router.patch("/notes/{note_id}/items/positions", response_model=list[NoteItemRead])
+async def reorder_note_items(
+    note_id: UUID,
+    payload: NoteItemsReorder,
+    db: Database,
+    session: CurrentSession,
+) -> list[NoteItemRead]:
+    """Set absolute positions for owned note items in one transaction."""
+    try:
+        items = await store.reorder_items(db, session, note_id, payload)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+        ) from error
+    if items is None:
+        raise _not_found()
+    return items
 
 
 @router.patch("/notes/{note_id}/items/{item_id}", response_model=NoteItemRead)

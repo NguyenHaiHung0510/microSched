@@ -54,7 +54,7 @@ function iso(day: string, hour: number): string {
 
 const calendarSources = [
   {
-    id: 'source-manual',
+    id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
     name: 'Nguồn thủ công',
     kind: 'manual',
     color: 'rose',
@@ -175,7 +175,7 @@ test.describe('Area 2: Calendar month readability on desktop and mobile', () => 
     const mockEvents = [
       {
         id: 'ev-distinguish-1',
-        source_id: 'source-manual',
+        source_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
         title: 'Họp hội đồng công nghệ thông tin kỳ 1',
         starts_at: iso(todayStr, 9),
         ends_at: iso(todayStr, 10),
@@ -225,7 +225,7 @@ test.describe('Area 2: Calendar month readability on desktop and mobile', () => 
     const mockEvents = [
       {
         id: 'ev-long-title',
-        source_id: 'source-manual',
+        source_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
         title: longEventTitle,
         starts_at: iso(todayStr, 14),
         ends_at: iso(todayStr, 16),

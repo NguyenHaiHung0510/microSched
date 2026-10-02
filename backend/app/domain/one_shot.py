@@ -1,5 +1,8 @@
 """Source-owned, one-shot reminder scheduling and read/write contracts."""
 
+import hashlib
+import hmac
+import json
 from datetime import UTC, datetime, time, timedelta
 from typing import Literal
 from uuid import UUID
@@ -8,6 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
@@ -28,6 +32,8 @@ SOURCES = {
 
 
 class ReminderWrite(BaseModel):
+    # Stable client-owned idempotency key; the existing reminder PK stores it.
+    id: UUID | None = None
     mode: Literal["absolute", "relative"]
     due_at: AwareDatetime | None = None
     offset_minutes: int | None = Field(default=None, ge=-525600, le=525600, strict=True)
@@ -38,6 +44,8 @@ class ReminderWrite(BaseModel):
 
     @model_validator(mode="after")
     def valid_configuration(self):
+        if self.id is not None and self.id.version != 7:
+            raise ValueError("ID lời nhắc phải là UUIDv7.")
         if self.mode == "absolute":
             if self.due_at is None or self.offset_minutes is not None or self.anchor_time:
                 raise ValueError("Chọn ngày giờ nhắc cụ thể.")
@@ -140,6 +148,42 @@ def as_read(row: OneShotReminder, kind: str, source) -> ReminderRead:
     )
 
 
+def _request_fingerprint(kind: str, source_id: UUID, payload: ReminderWrite) -> str:
+    """Hash the immutable effect and CAS identity of a client-keyed write."""
+    canonical = {
+        "version": 1,
+        "id": str(payload.id),
+        "source": {"kind": kind, "id": str(source_id)},
+        "effect": {
+            "mode": payload.mode,
+            "due_at": (
+                payload.due_at.astimezone(UTC).isoformat(timespec="microseconds")
+                if payload.due_at is not None
+                else None
+            ),
+            "offset_minutes": payload.offset_minutes,
+            "anchor_time": (
+                payload.anchor_time.isoformat(timespec="seconds")
+                if payload.anchor_time is not None
+                else None
+            ),
+        },
+        "expected": {
+            "id": str(payload.expected_id) if payload.expected_id is not None else None,
+            "revision": payload.expected_revision,
+            "source_updated_at": (
+                payload.expected_source_updated_at.astimezone(UTC).isoformat(
+                    timespec="microseconds"
+                )
+                if payload.expected_source_updated_at is not None
+                else None
+            ),
+        },
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 async def list_reminders(
     db: AsyncSession,
     auth: AuthSession,
@@ -195,9 +239,31 @@ async def save_reminder(
     *,
     now: datetime | None = None,
 ):
+    """Save or replay a source reminder using its client UUID as the key.
+
+    A readable matching UUID returns the current persisted ``ReminderRead`` (including
+    current status and revision) without mutation; the contract preserves the
+    accounted reminder ID, not a byte-identical historical response snapshot.
+    """
     source = await get_source(db, kind, source_id, auth, lock=True)
     if source is None:
         raise HTTPException(404, "Không tìm thấy đối tượng.")
+    request_fingerprint = (
+        _request_fingerprint(kind, source_id, payload) if payload.id is not None else None
+    )
+
+    # Parent visibility is checked first, so an idempotency key cannot reveal
+    # whether a reminder belongs to a concealed source. Matching retries return
+    # the current persisted representation and never reapply a write.
+    if payload.id is not None:
+        existing = await db.get(OneShotReminder, payload.id, populate_existing=True)
+        if existing is not None:
+            if existing.request_fingerprint_sha256 is None or not hmac.compare_digest(
+                existing.request_fingerprint_sha256, request_fingerprint
+            ):
+                raise HTTPException(409, "ID lời nhắc đã được dùng cho một yêu cầu khác.")
+            return as_read(existing, kind, source)
+
     if not source_open(source):
         raise HTTPException(409, "Đối tượng đã hoàn thành hoặc bị xoá.")
     if payload.expected_source_updated_at is not None and (
@@ -222,21 +288,40 @@ async def save_reminder(
             raise HTTPException(409, "Lời nhắc đã thay đổi. Tải lại trước khi lưu.")
         if active.status == "sending":
             raise HTTPException(409, "Lời nhắc đang gửi. Kiểm tra trạng thái trước khi đặt lại.")
-        active.status = "cancelled"
-        active.revision += 1
-        await db.flush()
     elif payload.expected_id is not None:
         raise HTTPException(409, "Lời nhắc đã kết thúc. Tải lại rồi chọn Đặt nhắc mới.")
-    row = OneShotReminder(
-        **{column: source_id},
-        mode=payload.mode,
-        due_at=due,
-        offset_minutes=payload.offset_minutes,
-        anchor_time=payload.anchor_time,
-    )
-    db.add(row)
-    await db.flush()
-    await db.refresh(row)
+
+    try:
+        # Keep replacing an active reminder and inserting its successor atomic
+        # even if another source concurrently claims the same client UUID.
+        async with db.begin_nested():
+            if active is not None:
+                active.status = "cancelled"
+                active.revision += 1
+                await db.flush()
+            row = OneShotReminder(
+                **({"id": payload.id} if payload.id is not None else {}),
+                **{column: source_id},
+                mode=payload.mode,
+                due_at=due,
+                offset_minutes=payload.offset_minutes,
+                anchor_time=payload.anchor_time,
+                request_fingerprint_sha256=request_fingerprint,
+            )
+            db.add(row)
+            await db.flush()
+            await db.refresh(row)
+    except IntegrityError:
+        if payload.id is None:
+            raise
+        existing = await db.get(OneShotReminder, payload.id, populate_existing=True)
+        if existing is None:
+            raise
+        if existing.request_fingerprint_sha256 is None or not hmac.compare_digest(
+            existing.request_fingerprint_sha256, request_fingerprint
+        ):
+            raise HTTPException(409, "ID lời nhắc đã được dùng cho một yêu cầu khác.")
+        return as_read(existing, kind, source)
     db.info[CRON_TIMER_RELOAD_INFO_KEY] = "one_shot_saved"
     return as_read(row, kind, source)
 
@@ -257,6 +342,8 @@ async def cancel_reminder(db: AsyncSession, auth: AuthSession, reminder_id: UUID
             .execution_options(populate_existing=True)
         )
     ).scalar_one()
+    if row.status == "cancelled" and row.revision == revision + 1:
+        return
     if row.revision != revision or row.status not in ACTIVE:
         raise HTTPException(409, "Lời nhắc đã thay đổi. Tải lại trạng thái mới.")
     row.status = "cancelled"

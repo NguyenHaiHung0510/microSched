@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { apiRequest } from '@/api'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
+import { annotationDeleteInput } from '@/annotation-write'
+import type { Json, OutboxRow } from '@/lib/outbox-db'
+import { uuidv7 } from '@/lib/uuidv7'
 import {
   formatVietnamTime,
   importErrorMessage,
@@ -39,7 +42,6 @@ import {
   type TaskSchedule,
   type TaskWritePayload,
 } from '@/task-ui'
-import { CALENDAR_FAMILY_KEY } from '@/calendar-queries'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
 
@@ -100,12 +102,6 @@ export function DayDetailDialog({
   const [eventError, setEventError] = useState<string | null>(null)
   const [deleteEventConfirm, setDeleteEventConfirm] = useState<CalendarEvent | null>(null)
 
-  const refreshCalendar = () =>
-    void queryClient.invalidateQueries({ queryKey: CALENDAR_FAMILY_KEY })
-  const refreshAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ['tasks'] })
-    refreshCalendar()
-  }
 
   const manualSources = useMemo(
     () =>
@@ -115,97 +111,73 @@ export function DayDetailDialog({
     [sourceById],
   )
 
-  const createAnnotation = useMutation({
-    mutationFn: (value: AnnotationFormValue) =>
-      apiRequest<DayAnnotation>('/api/calendar/annotations', {
-        method: 'POST',
-        body: JSON.stringify(value),
-      }),
+  const createAnnotation = useQueuedMutation({
+    mutationFn: (value: AnnotationFormValue & { id: string }) =>
+      queuedRequest<DayAnnotation>(queryClient, 'day_annotation.create', { path: '/api/calendar/annotations', body: value, entityId: value.id, requiresPrivate: value.is_private }),
     onSuccess: () => {
       setAnnotationForm(null)
       setAnnotationError(null)
-      refreshCalendar()
     },
     onError: (error) => setAnnotationError(importErrorMessage(error)),
   })
 
-  const updateAnnotation = useMutation({
-    mutationFn: ({ id, value }: { id: string; value: AnnotationFormValue }) =>
-      apiRequest<DayAnnotation>(`/api/calendar/annotations/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(value),
-      }),
+  const updateAnnotation = useQueuedMutation({
+    mutationFn: ({ id, value, requiresPrivate }: { id: string; value: AnnotationFormValue; requiresPrivate: boolean }) =>
+      queuedRequest<DayAnnotation>(queryClient, 'day_annotation.update', { path: `/api/calendar/annotations/${id}`, body: value, entityId: id, requiresPrivate: requiresPrivate || value.is_private }),
     onSuccess: () => {
       setAnnotationForm(null)
       setAnnotationError(null)
-      refreshCalendar()
     },
     onError: (error) => setAnnotationError(importErrorMessage(error)),
   })
 
-  const deleteAnnotation = useMutation({
-    mutationFn: (id: string) =>
-      apiRequest<void>(`/api/calendar/annotations/${id}`, { method: 'DELETE' }),
-    onSuccess: refreshCalendar,
+  const deleteAnnotation = useQueuedMutation({
+    mutationFn: (annotation: DayAnnotation) => queuedRequest<void>(queryClient, 'day_annotation.delete', annotationDeleteInput(annotation)),
     onError: (error) => setAnnotationError(importErrorMessage(error)),
   })
 
-  const createEvent = useMutation({
-    mutationFn: (value: EventFormValue) =>
-      apiRequest<CalendarEvent>('/api/calendar/events', {
-        method: 'POST',
-        body: JSON.stringify(value),
-      }),
+  const createEvent = useQueuedMutation({
+    mutationFn: (value: EventFormValue & { id: string }) =>
+      queuedRequest<CalendarEvent>(queryClient, 'calendar_event.create', { path: '/api/calendar/events', body: value, entityId: value.id, parentId: value.source_id ?? null }),
     onSuccess: () => {
       setEventForm(null)
       setEventError(null)
-      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
 
-  const updateEvent = useMutation({
+  const updateEvent = useQueuedMutation({
     mutationFn: ({ eventId, value }: { eventId: string; value: EventFormValue }) =>
-      apiRequest<CalendarEvent>(`/api/calendar/events/${eventId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(value),
-      }),
+      queuedRequest<CalendarEvent>(queryClient, 'calendar_event.update', { path: `/api/calendar/events/${eventId}`, body: value, entityId: eventId }),
     onSuccess: () => {
       setEventForm(null)
       setEventError(null)
-      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
 
-  const editTask = useMutation({
+  const editTask = useQueuedMutation({
     mutationFn: ({ taskId, payload }: { taskId: string; payload: TaskWritePayload }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      }),
+      queuedRequest<CalendarTask>(queryClient, 'task.update', { path: `/api/tasks/${taskId}`, body: payload, entityId: taskId, requiresPrivate: tasks.find((task) => task.id === taskId)?.is_private }),
     onSuccess: () => {
       setTaskEdit(null)
-      refreshAll()
     },
   })
 
-  const toggleTaskStatus = useMutation({
+  const toggleTaskStatus = useQueuedMutation({
     mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: variables.status }),
-      }),
-    onSuccess: () => {
-      refreshAll()
-    },
+      queuedRequest<CalendarTask>(queryClient, 'task.update', { path: `/api/tasks/${variables.taskId}`, body: { status: variables.status }, entityId: variables.taskId, requiresPrivate: tasks.find((task) => task.id === variables.taskId)?.is_private }),
   })
 
-  const deleteTask = useMutation({
-    mutationFn: (taskId: string) =>
-      apiRequest<void>('/api/tasks/' + taskId, { method: 'DELETE' }),
-    onSuccess: (_data, taskId) => {
-      refreshAll()
+  const deleteTask = useQueuedMutation({
+    mutationFn: (taskId: string) => {
+      const task = tasks.find((t) => t.id === taskId)
+      return queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'task.delete', {
+        path: `/api/tasks/${taskId}`, entityId: taskId, requiresPrivate: task?.is_private,
+        optimisticEntity: task ? JSON.parse(JSON.stringify(task)) as Json : undefined,
+      })
+    },
+    onSuccess: (receipt, taskId) => {
       const task = tasks.find((t) => t.id === taskId)
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -215,38 +187,32 @@ export function DayDetailDialog({
           duration: 8000,
           action: {
             label: 'Hoàn tác',
-            onClick: () => void restoreTask(taskId, refreshAll),
+            onClick: () => { if (task) void restoreTask(queryClient, task, receipt) },
           },
         },
       )
     },
   })
 
-  const deleteEvent = useMutation({
-    mutationFn: (eventId: string) =>
-      apiRequest<void>('/api/calendar/events/' + eventId, { method: 'DELETE' }),
+  const deleteEvent = useQueuedMutation({
+    mutationFn: (eventId: string) => queuedRequest<void>(queryClient, 'calendar_event.delete', { path: `/api/calendar/events/${eventId}`, entityId: eventId }),
     onSuccess: () => {
       setDeleteEventConfirm(null)
       setEventForm(null)
-      refreshCalendar()
       toast.success('Đã xoá buổi')
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
 
-  const rescheduleTask = useMutation({
+  const rescheduleTask = useQueuedMutation({
     mutationFn: (variables: {
       taskId: string
       schedule: TaskSchedule
       previousSchedule: TaskSchedule
       showToast: boolean
     }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(variables.schedule),
-      }),
+      queuedRequest<CalendarTask>(queryClient, 'task.update', { path: `/api/tasks/${variables.taskId}`, body: variables.schedule, entityId: variables.taskId, requiresPrivate: tasks.find((task) => task.id === variables.taskId)?.is_private }),
     onSuccess: (_data, variables) => {
-      refreshAll()
       if (!variables.showToast) return
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -362,9 +328,10 @@ export function DayDetailDialog({
                     updateAnnotation.mutate({
                       id: annotationForm.annotation.id,
                       value,
+                      requiresPrivate: annotationForm.annotation.is_private,
                     })
                   } else {
-                    createAnnotation.mutate(value)
+                    createAnnotation.mutate({ ...value, id: uuidv7() })
                   }
                 }}
                 onCancel={() => setAnnotationForm(null)}
@@ -439,7 +406,7 @@ export function DayDetailDialog({
                           className="text-bad hover:text-bad"
                           aria-label={`Xoá dấu ${annotation.label}`}
                           disabled={deleteAnnotation.isPending}
-                          onClick={() => deleteAnnotation.mutate(annotation.id)}
+                          onClick={() => deleteAnnotation.mutate(annotation)}
                         >
                           <Trash2 />
                         </Button>
@@ -703,7 +670,7 @@ export function DayDetailDialog({
             if (eventForm.mode === 'edit') {
               updateEvent.mutate({ eventId: eventForm.event.id, value })
             } else {
-              createEvent.mutate(value)
+              createEvent.mutate({ ...value, id: uuidv7() })
             }
           }}
         />

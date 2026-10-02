@@ -114,6 +114,9 @@ export type MimiConversationPage = {
 
 const MIMI_WRITE_HEADERS = { 'X-Mimi-CSRF': '1' }
 
+// Deliberate outbox bypass: Mimi chat, run, feedback, and change-set decisions
+// carry conversational/freshness context and must never become delayed domain actions.
+
 export function fetchCurrentMimiConversation(): Promise<MimiConversation | null> {
   return apiRequest('/api/mimi/conversations/current')
 }

@@ -121,7 +121,7 @@ test('going offline after a successful load shows cached data plus a freshness h
           items: [
             {
               id: 'event-cached',
-              source_id: 'source-manual',
+              source_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
               title: 'Buổi đã tải',
               starts_at: `${today}T09:00:00+07:00`,
               ends_at: `${today}T10:00:00+07:00`,

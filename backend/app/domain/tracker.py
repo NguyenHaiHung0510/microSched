@@ -751,9 +751,30 @@ class TrackerStore:
                 result = self._group_read(group)
                 result.created = False
                 return result
-        group = TrackerGroup(**payload.model_dump())
-        db.add(group)
-        await db.flush()
+        values = payload.model_dump(exclude={"id"})
+        if payload.id is None:
+            group = TrackerGroup(**values)
+            db.add(group)
+            await db.flush()
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(TrackerGroup)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[TrackerGroup.id])
+                    .returning(TrackerGroup.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                group = await db.scalar(select(TrackerGroup).where(TrackerGroup.id == payload.id))
+                if group is None:
+                    raise RuntimeError("conflicting tracker group disappeared")
+                result = self._group_read(group)
+                result.created = False
+                return result
+            group = await db.scalar(select(TrackerGroup).where(TrackerGroup.id == inserted_id))
+            if group is None:
+                raise RuntimeError("created tracker group disappeared")
         result = self._group_read(group)
         result.created = True
         return result
@@ -808,6 +829,16 @@ class TrackerStore:
         self, db: AsyncSession, auth: AuthSession, payload: TrackerCreate
     ) -> TrackerRead:
         """Create a tracker (unconditionally encrypted name), or idempotent on ID."""
+        if payload.id is not None:
+            existing = await self._tracker(db, auth, payload.id)
+            if existing is not None:
+                result = await self._read_tracker(db, auth, existing)
+                result.created = False
+                return result
+            physical = await db.execute(select(Tracker.id).where(Tracker.id == payload.id))
+            if physical.scalar_one_or_none() is not None:
+                raise TrackerIdConflict
+
         if payload.is_private and not can_see_private(auth):
             raise PrivateWriteLocked
         if payload.group_id is not None:
@@ -823,7 +854,7 @@ class TrackerStore:
             raise TrackerInvalid("unit chỉ được dùng cho tracker kiểu 'quantity'.")
         if payload.input_mode == "quantity" and not payload.unit:
             raise TrackerInvalid("Tracker kiểu 'quantity' phải có đơn vị (unit).")
-        if await self._tracker_name_taken(db, auth, payload.name):
+        if await self._tracker_name_taken(db, auth, payload.name, exclude_id=payload.id):
             raise TrackerNameTaken
         values = {
             "name": _sealed(payload.name),

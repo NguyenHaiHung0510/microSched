@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
   ChevronDown,
@@ -21,6 +21,10 @@ import {
 import { toast } from 'sonner'
 
 import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
+import type { Json, OutboxRow } from '@/lib/outbox-db'
+import { useDomainReadControl } from '@/lib/use-domain-outbox'
+import { OutboxEntityStatus } from '@/OutboxStatus'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -58,7 +62,6 @@ import {
   isTaskScheduleOverdue,
   rescheduleTaskSchedule,
   scheduleDay,
-  taskInvalidationKey,
   taskQueryKey,
   toggledStatus,
 } from '@/task-ui'
@@ -120,6 +123,7 @@ function sortTimelineTasks(
 
 export function TasksScreen() {
   const queryClient = useQueryClient()
+  const readControl = useDomainReadControl(['tasks'], taskRefetchInterval)
   const quickInputRef = useRef<HTMLInputElement>(null)
   const overdueRef = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState<ListView>('open')
@@ -187,7 +191,7 @@ export function TasksScreen() {
       apiRequest<TaskTimelineResponse>(
         `/api/tasks/timeline?status=${filter}&from=${encodeURIComponent(`${defaultStart}T00:00:00+07:00`)}&to=${encodeURIComponent(`${addVietnamDays(defaultEnd, 1)}T00:00:00+07:00`)}&limit=50`,
       ),
-    refetchInterval: taskRefetchInterval,
+    ...readControl,
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
@@ -238,12 +242,18 @@ export function TasksScreen() {
     }
     queueMicrotask(() => setMigratingPins(true))
     void Promise.allSettled(
-      pinnedIds.map((taskId) =>
-        apiRequest<Task>(`/api/tasks/${taskId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ pinned: true }),
-        }),
-      ),
+      pinnedIds.map((taskId) => {
+        const task = timeline.data.items.find((item) => item.id === taskId)
+        if (!task || typeof task.is_private !== 'boolean') {
+          return Promise.reject(new Error('Cannot classify privacy for a legacy pinned task'))
+        }
+        return queuedRequest<Task>(queryClient, 'task.update', {
+          path: `/api/tasks/${taskId}`,
+          body: { pinned: true },
+          entityId: taskId,
+          requiresPrivate: task.is_private,
+        })
+      }),
     ).then((results) => {
       const retryIds = results.flatMap((result, index) =>
         result.status === 'rejected' ? [pinnedIds[index]] : [],
@@ -255,16 +265,17 @@ export function TasksScreen() {
       } catch {
         // A blocked storage area must not make the task screen unusable.
       }
-      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
       setMigratingPins(false)
     })
-  }, [queryClient, timeline.isSuccess])
+  }, [queryClient, timeline.data, timeline.isSuccess])
 
-  const create = useMutation({
+  const create = useQueuedMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
-      apiRequest<Task>('/api/tasks', {
-        method: 'POST',
-        body: JSON.stringify({ ...payload, items: payload.items ?? [] }),
+      queuedRequest<Task>(queryClient, 'task.create', {
+        path: '/api/tasks',
+        body: { ...payload, items: payload.items ?? [] },
+        entityId: payload.id,
+        requiresPrivate: payload.is_private,
       }),
     onSuccess: (_task, variables) => {
       if (variables.source === 'quick') {
@@ -273,8 +284,6 @@ export function TasksScreen() {
       } else {
         setCreateOpen(false)
       }
-      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
-      void queryClient.invalidateQueries({ queryKey: ['calendar'] })
     },
   })
 
@@ -710,24 +719,10 @@ const TaskCard = memo(function TaskCard({
   const [expanded, setExpanded] = useState(false)
   const [newItem, setNewItem] = useState('')
 
-  /* `void`, không `await`: React Query giữ mutation ở `isPending` cho tới khi
-     `onSuccess` resolve, mà `invalidateQueries` thì đợi luôn cả lượt tải lại.
-     Await ở đây nghĩa là nút vẫn ghi "Đang thêm…" DÙ việc đã lưu xong — và nếu
-     lượt tải lại treo thì nút treo theo vĩnh viễn. Ghi xong là ghi xong. */
-  /* 010b §2 mục 9: dời hạn làm đổi chip task trên lịch, nên refresh cả họ
-     ["calendar"] bên cạnh ["tasks"] (lịch không mounted thì không tốn mạng). */
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
-    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
-  }
-  const reschedule = useMutation({
+  const reschedule = useQueuedMutation({
     mutationFn: (variables: { next: TaskSchedule; previous: TaskSchedule }) =>
-      apiRequest<Task>(`/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(variables.next),
-      }),
+      queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${task.id}`, body: variables.next, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: (_data, variables) => {
-      refresh()
       toast(
         <span className="block min-w-0 max-w-full break-words">
           Đã dời “{task.title}”
@@ -743,24 +738,22 @@ const TaskCard = memo(function TaskCard({
       )
     },
   })
-  const update = useMutation({
+  const update = useQueuedMutation({
     mutationFn: (
       payload: Partial<TaskPayload> & { status?: TaskStatus; pinned?: boolean },
     ) =>
-      apiRequest<Task>(`/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      }),
+      queuedRequest<Task>(queryClient, 'task.update', { path: `/api/tasks/${task.id}`, body: payload, entityId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setEditing(false)
-      refresh()
     },
   })
-  const remove = useMutation({
-    mutationFn: () => apiRequest<void>(`/api/tasks/${task.id}`, { method: 'DELETE' }),
-    onSuccess: () => {
+  const remove = useQueuedMutation({
+    mutationFn: () => queuedRequest<{ cancelledRows: OutboxRow[] } | null>(queryClient, 'task.delete', {
+      path: `/api/tasks/${task.id}`, entityId: task.id, requiresPrivate: task.is_private,
+      optimisticEntity: JSON.parse(JSON.stringify(task)) as Json,
+    }),
+    onSuccess: (receipt) => {
       setDetailsOpen(false)
-      refresh()
       toast(
         <span className="block min-w-0 max-w-full break-words">
           Đã xoá &quot;{task.title}&quot;
@@ -769,35 +762,25 @@ const TaskCard = memo(function TaskCard({
           duration: 10000,
           action: {
             label: 'Hoàn tác',
-            onClick: () => void restoreTask(task.id, refresh),
+            onClick: () => void restoreTask(queryClient, task, receipt),
           },
         },
       )
     },
   })
-  const addItem = useMutation({
-    mutationFn: (content: string) =>
-      apiRequest<TaskItem>(`/api/tasks/${task.id}/items`, {
-        method: 'POST',
-        body: JSON.stringify({ content, position: task.items.length }),
-      }),
+  const addItem = useQueuedMutation({
+    mutationFn: (item: { id: string; content: string; position: number }) =>
+      queuedRequest<TaskItem>(queryClient, 'task_item.create', { path: `/api/tasks/${task.id}/items`, body: item, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
     onSuccess: () => {
       setNewItem('')
-      refresh()
     },
   })
-  const changeItem = useMutation({
+  const changeItem = useQueuedMutation({
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
-      apiRequest<TaskItem>(`/api/tasks/${task.id}/items/${item.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ is_completed: isCompleted }),
-      }),
-    onSuccess: refresh,
+      queuedRequest<TaskItem>(queryClient, 'task_item.update', { path: `/api/tasks/${task.id}/items/${item.id}`, body: { is_completed: isCompleted }, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
   })
-  const removeItem = useMutation({
-    mutationFn: (item: TaskItem) =>
-      apiRequest<void>(`/api/tasks/${task.id}/items/${item.id}`, { method: 'DELETE' }),
-    onSuccess: refresh,
+  const removeItem = useQueuedMutation({
+    mutationFn: (item: TaskItem) => queuedRequest<void>(queryClient, 'task_item.delete', { path: `/api/tasks/${task.id}/items/${item.id}`, entityId: item.id, parentId: task.id, requiresPrivate: task.is_private }),
   })
 
   const completedItems = task.items.filter((item) => item.is_completed).length
@@ -954,8 +937,9 @@ const TaskCard = memo(function TaskCard({
                       </div>
                     ) : null}
                   </TooltipContent>
-                ) : null}
+              ) : null}
               </Tooltip>
+              <OutboxEntityStatus entityId={task.id} />
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
               {task.is_private ? (
                 <PrivateMarker />
@@ -1224,7 +1208,7 @@ const TaskCard = memo(function TaskCard({
                   onSubmit={(event) => {
                     event.preventDefault()
                     const content = newItem.trim()
-                    if (content) addItem.mutate(content)
+                    if (content) addItem.mutate({ id: uuidv7(), content, position: Math.max(-1, ...task.items.map((entry) => entry.position)) + 1 })
                   }}
                 >
                   <Input
@@ -1287,7 +1271,7 @@ export function LegacyTasksScreen() {
     queryKey: taskQueryKey('all'),
     queryFn: () =>
       apiRequest<{ items: Task[] }>('/api/tasks?status=all&limit=100'),
-    refetchInterval: taskRefetchInterval,
+    ...useDomainReadControl(['tasks'], taskRefetchInterval),
     retry: (failureCount, error) =>
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
@@ -1318,12 +1302,18 @@ export function LegacyTasksScreen() {
 
     queueMicrotask(() => setMigratingPins(true))
     void Promise.allSettled(
-      pinnedIds.map((taskId) =>
-        apiRequest<Task>(`/api/tasks/${taskId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ pinned: true }),
-        }),
-      ),
+      pinnedIds.map((taskId) => {
+        const task = tasks.data.items.find((item) => item.id === taskId)
+        if (!task || typeof task.is_private !== 'boolean') {
+          return Promise.reject(new Error('Cannot classify privacy for a legacy pinned task'))
+        }
+        return queuedRequest<Task>(queryClient, 'task.update', {
+          path: `/api/tasks/${taskId}`,
+          body: { pinned: true },
+          entityId: taskId,
+          requiresPrivate: task.is_private,
+        })
+      }),
     ).then((results) => {
       const retryIds = results.flatMap((result, index) => {
         if (result.status === 'fulfilled') return []
@@ -1363,16 +1353,17 @@ export function LegacyTasksScreen() {
         }
       }
 
-      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
       setMigratingPins(false)
     })
-  }, [queryClient, tasks.isSuccess])
+  }, [queryClient, tasks.isSuccess, tasks.data])
 
-  const create = useMutation({
+  const create = useQueuedMutation({
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
-      apiRequest<Task>('/api/tasks', {
-        method: 'POST',
-        body: JSON.stringify({ ...payload, items: payload.items ?? [] }),
+      queuedRequest<Task>(queryClient, 'task.create', {
+        path: '/api/tasks',
+        body: { ...payload, items: payload.items ?? [] },
+        entityId: payload.id,
+        requiresPrivate: payload.is_private,
       }),
     // Cùng luật với `refresh()` của TaskCard, và đây mới là chỗ bug được BÁO:
     // nút "Đang thêm…" đọc `create.isPending`, mà React Query giữ `isPending` cho
@@ -1386,7 +1377,6 @@ export function LegacyTasksScreen() {
         setCreateOpen(false)
       }
 
-      void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
     },
   })
 

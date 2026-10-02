@@ -6,12 +6,12 @@ import { test, expect } from './fixtures/tracker'
 
 test('long capture names wrap inside their own target, separate from backdate controls', async ({ page, trackerApi }, info) => {
   const template = trackerApi.trackers[0]
-  trackerApi.groups = [{ id: 'capture-group-046', name: 'Nhóm ghi nhanh với tên tiếng Việt rất dài ' + 'Ế'.repeat(70), kind: 'health', color: null, position: 0, tracker_count: 3 }]
+  trackerApi.groups = [{ id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4600', name: 'Nhóm ghi nhanh với tên tiếng Việt rất dài ' + 'Ế'.repeat(70), kind: 'health', color: null, position: 0, tracker_count: 3 }]
   trackerApi.trackers = [
     'Theo dõi việc ghi chép sau buổi học và đọc lại những điều quan trọng',
     'X'.repeat(70),
     'Ghi nhanh',
-  ].map((name, index) => ({ ...template, id: `capture-046-${index}`, name, group_id: 'capture-group-046', is_private: index === 1, input_mode: 'event', reminder_time: null }))
+  ].map((name, index) => ({ ...template, id: ['2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4601', '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4602', '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4603'][index], name, group_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4600', is_private: index === 1, input_mode: 'event', reminder_time: null }))
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
   const cards = page.getByTestId('tracker-card')

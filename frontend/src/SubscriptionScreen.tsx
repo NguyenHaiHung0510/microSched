@@ -28,6 +28,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { hasAppHistory, navigate, queryParams, useLocation } from '@/lib/route'
 import { uuidv7 } from '@/lib/uuidv7'
 import { standardRefetchInterval } from '@/query-polling'
+import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import {
   addPeriod,
   daysLeftLabel,
@@ -289,7 +290,7 @@ function RenewDialog({
       // default must stay on the server's veto max(expires_on, today) so the
       // client clock can never race the server into a stale expiry (F1).
       ...(expiryEdited ? { new_expires_on: newExpiresOn } : {}),
-      note_md: note.trim() || undefined,
+      ...(note.trim() ? { note_md: note.trim() } : {}),
     })
   }
 
@@ -597,31 +598,37 @@ function SettingsBlock({
 export function SubscriptionScreen() {
   const location = useLocation()
   const queryClient = useQueryClient()
+  const subscriptionReadControl = useDomainReadControl(['subscription'], standardRefetchInterval)
+  const trackerReadControl = useDomainReadControl(['tracker'], standardRefetchInterval)
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: subscriptionInvalidationKey })
     void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
   }
-  const writes = useSubscriptionWrites(refresh)
+  const writes = useSubscriptionWrites()
 
   const subscriptionsQuery = useQuery({
     queryKey: subscriptionQueryKey('subscriptions'),
     queryFn: () => apiRequest<{ items: Subscription[] }>('/api/subscriptions'),
-    refetchInterval: standardRefetchInterval,
+    ...subscriptionReadControl,
   })
   const settingsQuery = useQuery({
     queryKey: subscriptionQueryKey('settings'),
     queryFn: () => apiRequest<{ items: SettingsItem[] }>('/api/settings'),
-    refetchInterval: standardRefetchInterval,
+    ...subscriptionReadControl,
   })
   const trackersQuery = useQuery({
     queryKey: trackerQueryKey('trackers'),
     queryFn: () => apiRequest<{ items: Tracker[] }>('/api/tracker/trackers'),
-    refetchInterval: standardRefetchInterval,
+    ...trackerReadControl,
   })
 
   const subscriptions = useMemo(() => subscriptionsQuery.data?.items ?? [], [subscriptionsQuery.data])
   const trackers = useMemo(() => trackersQuery.data?.items ?? [], [trackersQuery.data])
   const settings = useMemo(() => settingsQuery.data?.items ?? [], [settingsQuery.data])
+  function privacyForTracker(trackerId: string): boolean | null {
+    const tracker = trackers.find((item) => item.id === trackerId)
+    return tracker ? tracker.is_private : null
+  }
 
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<Subscription | null>(null)
@@ -662,14 +669,19 @@ export function SubscriptionScreen() {
   const queryError = subscriptionsQuery.error ?? settingsQuery.error
 
   function remove(subscription: Subscription) {
-    writes.deleteSubscription.mutate(subscription.id, {
-      onSuccess: () => {
+    const requiresPrivate = privacyForTracker(subscription.tracker_id)
+    if (requiresPrivate === null) {
+      toast.error('Không thể xác định quyền riêng tư của tracker.')
+      return
+    }
+    writes.deleteSubscription.mutate({ subscription, requiresPrivate }, {
+      onSuccess: (receipt) => {
         toast(<span>Đã xoá “{subscription.name}”</span>, {
           duration: 10_000,
           action: {
             label: 'Hoàn tác',
             onClick: () =>
-              writes.restoreSubscription.mutate(subscription.id, {
+              writes.restoreSubscription.mutate({ subscription, requiresPrivate, receipt }, {
                 // F10: a failed restore must surface, not silently vanish.
                 onError: (error) => toast.error(errorMessage(error)),
               }),
@@ -766,16 +778,26 @@ export function SubscriptionScreen() {
               pending={pending}
               onEdit={() => setEditing(subscription)}
               onRenew={() => setRenewing(subscription)}
-              onCancel={() =>
-                writes.cancelSubscription.mutate(subscription.id, {
+              onCancel={() => {
+                const requiresPrivate = privacyForTracker(subscription.tracker_id)
+                if (requiresPrivate === null) {
+                  toast.error('Không thể xác định quyền riêng tư của tracker.')
+                  return
+                }
+                writes.cancelSubscription.mutate({ subscriptionId: subscription.id, requiresPrivate }, {
                   onError: (error) => toast.error(errorMessage(error)),
                 })
-              }
-              onUncancel={() =>
-                writes.uncancelSubscription.mutate(subscription.id, {
+              }}
+              onUncancel={() => {
+                const requiresPrivate = privacyForTracker(subscription.tracker_id)
+                if (requiresPrivate === null) {
+                  toast.error('Không thể xác định quyền riêng tư của tracker.')
+                  return
+                }
+                writes.uncancelSubscription.mutate({ subscriptionId: subscription.id, requiresPrivate }, {
                   onError: (error) => toast.error(errorMessage(error)),
                 })
-              }
+              }}
               onDelete={() => remove(subscription)}
             />
           ))}
@@ -808,12 +830,17 @@ export function SubscriptionScreen() {
           <SubscriptionForm
             trackers={subscriptionTrackers(trackers)}
             pending={writes.createSubscription.isPending}
-            onSubmit={(payload) =>
-              writes.createSubscription.mutate(payload, {
+            onSubmit={(payload) => {
+              const requiresPrivate = privacyForTracker(payload.tracker_id)
+              if (requiresPrivate === null) {
+                toast.error('Không thể xác định quyền riêng tư của tracker.')
+                return
+              }
+              writes.createSubscription.mutate({ payload: { ...payload, id: uuidv7() }, requiresPrivate }, {
                 onSuccess: () => setCreateOpen(false),
                 onError: (error) => toast.error(errorMessage(error)),
               })
-            }
+            }}
             onCancel={() => setCreateOpen(false)}
           />
         </DialogContent>
@@ -831,15 +858,21 @@ export function SubscriptionScreen() {
               initial={editing}
               trackers={subscriptionTrackers(trackers)}
               pending={writes.updateSubscription.isPending}
-              onSubmit={(payload) =>
+              onSubmit={(payload) => {
+                const oldPrivacy = privacyForTracker(editing.tracker_id)
+                const nextPrivacy = privacyForTracker(payload.tracker_id)
+                if (oldPrivacy === null || nextPrivacy === null) {
+                  toast.error('Không thể xác định quyền riêng tư của tracker.')
+                  return
+                }
                 writes.updateSubscription.mutate(
-                  { subscriptionId: editing.id, payload },
+                  { subscriptionId: editing.id, payload, requiresPrivate: oldPrivacy || nextPrivacy },
                   {
                     onSuccess: () => setEditing(null),
                     onError: (error) => toast.error(errorMessage(error)),
                   },
                 )
-              }
+              }}
               onCancel={() => setEditing(null)}
             />
           ) : null}
@@ -852,18 +885,24 @@ export function SubscriptionScreen() {
           subscription={renewing}
           pending={writes.renew.isPending}
           onClose={() => setRenewing(null)}
-          onSubmit={(payload) =>
+          onSubmit={(payload) => {
+            const requiresPrivate = privacyForTracker(renewing.tracker_id)
+            if (requiresPrivate === null) {
+              toast.error('Không thể xác định quyền riêng tư của tracker.')
+              return
+            }
             writes.renew.mutate(
-              { subscriptionId: renewing.id, payload },
+              { subscriptionId: renewing.id, payload, requiresPrivate },
               {
-                onSuccess: () => {
+                onSuccess: (result) => {
                   setRenewing(null)
-                  toast('Đã ghi gia hạn')
+                  if (result) toast('Đã ghi gia hạn')
+                  else toast('Yêu cầu gia hạn đã lưu, đang chờ máy chủ xác nhận.')
                 },
                 onError: (error) => toast.error(errorMessage(error)),
               },
             )
-          }
+          }}
         />
       ) : null}
     </div>

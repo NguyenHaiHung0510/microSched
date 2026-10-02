@@ -717,6 +717,10 @@ class OneShotReminder(UUIDTimestampModel, table=True):
         ),
         CheckConstraint("revision >= 1", name="revision"),
         CheckConstraint("attempt_count BETWEEN 0 AND 4", name="attempt_count"),
+        CheckConstraint(
+            "request_fingerprint_sha256 IS NULL OR request_fingerprint_sha256 ~ '^[0-9a-f]{64}$'",
+            name="request_fingerprint_sha256",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -748,6 +752,7 @@ class OneShotReminder(UUIDTimestampModel, table=True):
     revision: int = Field(
         default=1, sa_column=Column(Integer, nullable=False, server_default=text("1"))
     )
+    request_fingerprint_sha256: str | None = Field(default=None, sa_column=Column(Text))
     attempt_count: int = Field(
         default=0, sa_column=Column(Integer, nullable=False, server_default=text("0"))
     )

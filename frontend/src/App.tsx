@@ -1,5 +1,5 @@
 import { ReminderConfirmScreen } from '@/ReminderConfirmScreen'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   Bot,
@@ -10,7 +10,7 @@ import {
   NotebookPen,
   RefreshCw,
 } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -33,16 +33,25 @@ import { ReminderCenter } from '@/ReminderCenter'
 import { MimiControlCenter } from '@/MimiControlCenter'
 import { MimiDock, MimiDockButton } from '@/MimiDock'
 import { isHomepage, type PublicAuthState } from '@/public-navigation'
+import { purgePrivateSurface, saveSessionBootstrap } from '@/lib/public-cache'
+import { OutboxStatus } from '@/OutboxStatus'
+import { replayPendingOverlays } from '@/lib/outbox-adapters'
 
 type SessionResponse = PrivateSessionState & {
   email: string
   signed_in_at: string | null
   expires_at: string
   mimi_available: boolean
+  offline_bootstrap?: boolean
+  offline_snapshot_at?: number | null
 }
 
 async function fetchSession(): Promise<SessionResponse> {
-  return apiRequest<SessionResponse>('/api/me')
+  const session = await apiRequest<SessionResponse>('/api/me')
+  await saveSessionBootstrap({ ...session, last_verified: true }).catch(() => {
+    window.dispatchEvent(new Event('microsched:offline-unavailable'))
+  })
+  return session
 }
 
 async function postLogout(): Promise<void> {
@@ -59,7 +68,8 @@ function todayLabel(): string {
   }).format(new Date())
 }
 
-function SignedIn({ session }: { session: SessionResponse }) {
+function SignedIn({ session, offline }: { session: SessionResponse; offline: boolean }) {
+  const queryClient = useQueryClient()
   // 011c §5.1: exactly one deep-linked screen besides the tab block; every tab
   // keeps the URL "/" and activeScreen stays a useState (tabs do NOT own URLs).
   const location = useLocation()
@@ -99,7 +109,10 @@ function SignedIn({ session }: { session: SessionResponse }) {
     // (the OAuth redirect), so logging out being one too keeps the two halves
     // symmetric - and it makes the server the single source of truth instead of
     // resting on how the query cache reacts to being invalidated or removed.
-    onSuccess: () => window.location.assign('/'),
+    onSuccess: async () => {
+      await purgePrivateSurface(queryClient, true)
+      window.location.assign('/')
+    },
   })
 
   return (
@@ -129,7 +142,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           </h1>
           <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
           {currentTab !== 'calendar' && currentTab !== 'mimi' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
-            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} /></div>
+            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} offline={offline || Boolean(session.offline_bootstrap)} /></div>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -137,7 +150,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <MimiDockButton open={mimiDockOpen} onToggle={() => setMimiDockOpen((open) => !open)} />
           ) : null}
           <ReminderCenter key={`reminders-${privateScopeVersion}`} />
-            <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
+            {!offline && !session.offline_bootstrap ? <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} /> : null}
           <Button
             variant="secondary"
             size="icon-lg"
@@ -152,6 +165,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </header>
 
       <div className="px-5 pt-3 pb-6 sm:px-6">
+        <OutboxStatus queryKey={[]} privateUnlocked={Boolean(session.private_until)} />
         <Button asChild variant="link" size="lg" className="mb-2 px-0 text-xs">
           <a href="/home" data-testid="app-homepage-link"><BookOpen aria-hidden="true" />Giới thiệu microSched</a>
         </Button>
@@ -242,9 +256,40 @@ function SignedIn({ session }: { session: SessionResponse }) {
 
 function App() {
   const location = useLocation()
+  const queryClient = useQueryClient()
+  const [offline, setOffline] = useState(!navigator.onLine)
+  const [sessionExpired, setSessionExpired] = useState(false)
+  const [authRejected, setAuthRejected] = useState(false)
+  useEffect(() => {
+    const update = () => {
+      if (!navigator.onLine) {
+        queryClient.setQueryData<SessionResponse>(['session'], (old) => old ? { ...old, private_until: null, private_locked_until: null, offline_bootstrap: true } : old)
+        void purgePrivateSurface(queryClient)
+      }
+      setOffline(!navigator.onLine)
+      if (navigator.onLine) void queryClient.invalidateQueries({ queryKey: ['session'] })
+    }
+    const rejectSession = () => { setAuthRejected(true); void purgePrivateSurface(queryClient, true).then(() => queryClient.invalidateQueries({ queryKey: ['session'] })) }
+    const rejectPrivate = () => {
+      queryClient.setQueryData<SessionResponse>(['session'], (old) => old ? { ...old, private_until: null } : old)
+      void purgePrivateSurface(queryClient)
+    }
+    window.addEventListener('microsched:unauthenticated', rejectSession)
+    window.addEventListener('microsched:private-locked', rejectPrivate)
+    window.addEventListener('online', update)
+    window.addEventListener('offline', update)
+    return () => {
+      window.removeEventListener('online', update)
+      window.removeEventListener('offline', update)
+      window.removeEventListener('microsched:unauthenticated', rejectSession)
+      window.removeEventListener('microsched:private-locked', rejectPrivate)
+    }
+  }, [queryClient])
   const session = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
+    enabled: !authRejected,
+    networkMode: 'always',
     // The session has a long TTL. Window focus checks it when returning to the
     // tab; keeping no-poll explicit prevents future defaults from changing it.
     ...NO_POLLING_QUERY_OPTIONS,
@@ -253,9 +298,49 @@ function App() {
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
 
-  const loggedOut = session.isError && session.error instanceof UnauthenticatedError
-  const publicAuth: PublicAuthState = session.isPending ? 'checking'
-    : loggedOut ? 'guest'
+  useEffect(() => {
+    if (session.error instanceof UnauthenticatedError) {
+      void purgePrivateSurface(queryClient, true)
+      return
+    }
+    if (session.data && !session.data.offline_bootstrap && !session.isError) {
+      let cancelled = false
+      void replayPendingOverlays(queryClient).then(() => {
+        if (!cancelled) window.dispatchEvent(new Event('microsched:outbox-session-changed'))
+      }).catch(() => window.dispatchEvent(new Event('microsched:outbox-reconcile-unavailable')))
+      return () => { cancelled = true }
+    }
+  }, [queryClient, session.data, session.dataUpdatedAt, session.error, session.isError])
+  useEffect(() => {
+    if (!session.data) return
+    if (offline && session.data.private_until) {
+      queryClient.setQueryData<SessionResponse>(['session'], { ...session.data, private_until: null,
+        private_locked_until: null, offline_bootstrap: true }, { updatedAt: 0 })
+      void purgePrivateSurface(queryClient)
+    }
+    const deadline = Date.parse(session.data.expires_at)
+    const delay = deadline - Date.now()
+    const markExpired = () => setSessionExpired(true)
+    if (!Number.isFinite(delay) || delay <= 0) {
+      const timer = window.setTimeout(markExpired, 0)
+      return () => window.clearTimeout(timer)
+    }
+    const clearExpired = window.setTimeout(() => setSessionExpired(false), 0)
+    let timer = 0
+    const schedule = () => {
+      const remaining = deadline - Date.now()
+      timer = window.setTimeout(() => {
+        if (deadline <= Date.now()) markExpired()
+        else schedule()
+      }, Math.min(2_147_483_647, Math.max(0, remaining)))
+    }
+    schedule()
+    return () => { window.clearTimeout(clearExpired); window.clearTimeout(timer) }
+  }, [offline, queryClient, session.data])
+
+  const loggedOut = authRejected || (session.isError && session.error instanceof UnauthenticatedError)
+  const publicAuth: PublicAuthState = loggedOut ? 'guest'
+    : session.isPending ? 'checking'
       : session.isError ? 'unknown'
         : session.data ? 'signed-in' : 'checking'
   // Public content does not mount protected screens. Explicit /home also stays
@@ -288,7 +373,7 @@ function App() {
           ) : null}
 
 
-          {session.isError && !loggedOut ? (
+          {session.isError && !loggedOut && !session.data ? (
             <Card
               className="mx-auto max-w-lg gap-4 rounded-lg bg-card p-6 shadow-2 ring-0"
               role="alert"
@@ -307,7 +392,13 @@ function App() {
           ) : null}
 
           {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
-          {session.data && !loggedOut ? <SignedIn session={session.data} /> : null}
+          {sessionExpired ? <Card className="mx-auto max-w-lg p-6" role="alert">Cần kết nối để xác thực lại.</Card> : null}
+          {session.data && !loggedOut && !sessionExpired ? <>
+            {offline || session.data.offline_bootstrap || session.isError ? <p className="mb-3 text-sm text-muted-foreground" role="status">
+              {offline || session.isError ? 'Đang ngoại tuyến' : 'Đang xác thực lại'} · dữ liệu lúc {session.data.offline_snapshot_at ? new Date(session.data.offline_snapshot_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : 'lần kết nối trước'}
+            </p> : null}
+            <SignedIn key={String(offline)} session={session.data} offline={offline} />
+          </> : null}
         </div>
         <Toaster />
       </main>

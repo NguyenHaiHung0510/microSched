@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures/tasks'
+import { expect, fixtureTaskIds, test } from './fixtures/tasks'
 
 /**
  * 010b §7.7–7.10: grid behavior, mini-nav, measurements, touch-only paths.
@@ -42,7 +42,7 @@ function iso(day: string, hour: number): string {
 
 const sources = [
   {
-    id: 'source-manual',
+    id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
     name: 'Nguồn thủ công',
     kind: 'manual',
     color: 'rose',
@@ -52,7 +52,7 @@ const sources = [
     updated_at: null,
   },
   {
-    id: 'source-ics',
+    id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4402',
     name: 'Lịch công việc',
     kind: 'ics',
     color: 'sky',
@@ -146,7 +146,7 @@ function calendarRoutes(
 
 test.beforeEach(async ({ page, taskApi }) => {
   // A task due today gives the grid a task chip on today's cell (spec §5.4).
-  const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
+  const dueToday = taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['task-011'])
   if (dueToday) {
     dueToday.due_precision = 'datetime'
     dueToday.due_on = null
@@ -160,7 +160,7 @@ test.describe('mobile (390x844, touch)', () => {
   test('opens at today week with the page itself not scrolled', async ({ page }) => {
     const state = {
       events: [
-        event('event-today', 'source-manual', iso(vnDay(0), 9), iso(vnDay(0), 10)),
+        event('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4503', '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401', iso(vnDay(0), 9), iso(vnDay(0), 10), { title: 'event-today' }),
       ],
       annotations: [],
     }
@@ -233,7 +233,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
 
-    const moved = taskApi.tasks.find((entry) => entry.id === 'task-004')!
+    const moved = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4104')!
     const originalSchedule = {
       due_precision: moved.due_precision,
       due_on: moved.due_on,
@@ -255,7 +255,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByRole('button', { name: /Việc trễ hạn thứ nhất/ }).tap()
 
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved).toMatchObject({
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === moved.id)).toMatchObject({
       due_precision: 'datetime',
       due_on: null,
       due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
@@ -300,7 +300,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByTestId('calendar-day-move-task').tap()
     await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
 
-    const target = page.locator('[data-testid="calendar-move-task"][data-task-id="undated-001"]')
+    const target = page.locator(`[data-testid="calendar-move-task"][data-task-id="${fixtureTaskIds['undated-001']}"]`)
     for (let attempt = 0; attempt < 8 && !(await target.isVisible()); attempt += 1) {
       const more = page.getByTestId('calendar-move-load-more')
       await expect(more).toBeVisible()
@@ -308,7 +308,7 @@ test.describe('mobile (390x844, touch)', () => {
     }
     await expect(target).toBeVisible()
     await target.click()
-    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === 'undated-001')).toMatchObject({
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['undated-001'])).toMatchObject({
       due_precision: 'date',
       due_on: vnDay(0),
       due_at: null,
@@ -316,7 +316,7 @@ test.describe('mobile (390x844, touch)', () => {
   })
 
   test('private lock remounts calendar and closes a detail dialog', async ({ page, taskApi }) => {
-    const privateTask = taskApi.tasks.find((entry) => entry.id === 'task-009')!
+    const privateTask = taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['task-009'])!
     privateTask.due_precision = 'datetime'
     privateTask.due_on = null
     privateTask.due_at = iso(vnDay(0), 10)
@@ -356,11 +356,11 @@ test.describe('mobile (390x844, touch)', () => {
   test('event/task/annotation text is at least 12px', async ({ page }) => {
     const state = {
       events: [
-        event('event-today', 'source-manual', iso(vnDay(0), 9), iso(vnDay(0), 10)),
+        event('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4503', '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401', iso(vnDay(0), 9), iso(vnDay(0), 10), { title: 'event-today' }),
       ],
       annotations: [
         {
-          id: 'ann-today',
+          id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4601',
           starts_on: vnDay(0),
           ends_on: vnDay(0),
           label: 'Về quê',
@@ -508,13 +508,13 @@ test.describe('desktop (1280x800)', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Task' }).click()
 
-    const card = page.locator('[data-testid="task-card"][data-task-id="task-004"]')
+    const card = page.locator('[data-testid="task-card"][data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4104"]')
     await expect(card).toBeVisible()
     await expect(card.getByTestId('task-reschedule-today')).toBeVisible()
     await expect(card.getByTestId('task-reschedule-tomorrow')).toBeVisible()
     await expect(card.getByTestId('task-reschedule-day-after')).toBeVisible()
 
-    const moved = taskApi.tasks.find((entry) => entry.id === 'task-004')!
+    const moved = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4104')!
     const oldClock = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Asia/Ho_Chi_Minh',
       hour: '2-digit',
@@ -523,7 +523,7 @@ test.describe('desktop (1280x800)', () => {
     }).format(new Date(moved.due_at!))
     await card.getByTestId('task-reschedule-today').click()
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved).toMatchObject({
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === moved.id)).toMatchObject({
       due_precision: 'datetime',
       due_on: null,
       due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
@@ -551,7 +551,7 @@ test('an ICS event opened from the day dialog shows the will-lose-edits warning'
 }) => {
   const state = {
     events: [
-      event('event-ics', 'source-ics', iso(vnDay(3), 7), iso(vnDay(3), 8)),
+      event('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4502', '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4402', iso(vnDay(3), 7), iso(vnDay(3), 8)),
     ],
     annotations: [],
   }
@@ -569,7 +569,7 @@ test('an ICS event opened from the day dialog shows the will-lose-edits warning'
 })
 
 test('desktop font sizes are at least 12px', async ({ page, taskApi }) => {
-  const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
+  const dueToday = taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['task-011'])
   if (dueToday) {
     dueToday.due_precision = 'datetime'
     dueToday.due_on = null
@@ -577,11 +577,11 @@ test('desktop font sizes are at least 12px', async ({ page, taskApi }) => {
   }
   const state = {
     events: [
-      event('event-today', 'source-manual', iso(vnDay(0), 9), iso(vnDay(0), 10)),
+      event('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4503', '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401', iso(vnDay(0), 9), iso(vnDay(0), 10), { title: 'event-today' }),
     ],
     annotations: [
       {
-        id: 'ann-today',
+        id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4601',
         starts_on: vnDay(0),
         ends_on: vnDay(0),
         label: 'Về quê',

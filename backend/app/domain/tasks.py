@@ -12,7 +12,19 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
-from sqlalchemy import Date, and_, case, cast, delete, false, func, literal, or_, select, text
+from sqlalchemy import (
+    Date,
+    and_,
+    case,
+    cast,
+    delete,
+    false,
+    func,
+    literal,
+    or_,
+    select,
+    text,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,8 +99,15 @@ def _canonicalize_schedule(payload: BaseModel, *, default_none: bool) -> None:
 class TaskItemCreate(BaseModel):
     """Fields accepted when appending a checklist item."""
 
+    id: UUID | None = None
     content: str = Field(min_length=1)
     position: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def require_uuidv7(self) -> "TaskItemCreate":
+        if self.id is not None and self.id.version != 7:
+            raise ValueError("id must be a UUIDv7")
+        return self
 
     @field_validator("content")
     @classmethod
@@ -131,6 +150,7 @@ class TaskItemRead(BaseModel):
     position: int
     created_at: datetime | None
     updated_at: datetime | None
+    created: bool | None = Field(default=None, exclude=True)
 
 
 class TaskCreate(BaseModel):
@@ -490,6 +510,10 @@ def _cursor_for(
 
 class TaskIdConflict(Exception):
     """A client-selected ID belongs to a row hidden by a reading gate."""
+
+
+class TaskItemIdConflict(Exception):
+    """A client-selected item ID belongs to a different task or hidden row."""
 
 
 class PrivateWriteLocked(Exception):
@@ -1154,18 +1178,65 @@ class TaskStore:
         task_id: UUID,
         payload: TaskItemCreate,
     ) -> TaskItemRead | None:
-        """Append an item after locking and resolving its visible parent."""
+        """Insert a child once, preserving requested order and replay state."""
         parent = await self._parent(db, auth, task_id, for_update=True)
         if parent is None:
             return None
-        item = TaskItem(
-            task_id=parent.id,
-            content=_sealed(payload.content) if parent.is_private else payload.content,
-            position=payload.position,
+        siblings = list(
+            (
+                await db.execute(
+                    select(TaskItem)
+                    .where(TaskItem.task_id == parent.id)
+                    .order_by(TaskItem.position, TaskItem.created_at, TaskItem.id)
+                    .with_for_update()
+                )
+            ).scalars()
         )
-        db.add(item)
-        await db.flush()
-        return self._item_read(item)
+        ties = sum(item.position == payload.position for item in siblings)
+        position = payload.position + ties
+        values = {
+            "task_id": parent.id,
+            "content": _sealed(payload.content) if parent.is_private else payload.content,
+            "position": position,
+        }
+        if payload.id is None:
+            for sibling in siblings:
+                if sibling.position > payload.position:
+                    sibling.position += ties + 1
+            item = TaskItem(**values)
+            db.add(item)
+            await db.flush()
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(TaskItem)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[TaskItem.id])
+                    .returning(TaskItem.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                existing = await db.scalar(
+                    select(TaskItem).where(
+                        TaskItem.id == payload.id,
+                        TaskItem.task_id == parent.id,
+                    )
+                )
+                if existing is None:
+                    raise TaskItemIdConflict
+                result = self._item_read(existing)
+                result.created = False
+                return result
+            for sibling in siblings:
+                if sibling.position > payload.position:
+                    sibling.position += ties + 1
+            await db.flush()
+            item = await db.scalar(select(TaskItem).where(TaskItem.id == inserted_id))
+            if item is None:
+                raise RuntimeError("created task item disappeared")
+        result = self._item_read(item)
+        result.created = True
+        return result
 
     async def update_item(
         self,

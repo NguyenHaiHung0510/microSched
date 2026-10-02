@@ -64,6 +64,7 @@ async def listing(
 async def save(
     kind: SourceKind, source_id: UUID, payload: ReminderWrite, db: Database, session: Session
 ):
+    """Return HTTP 200 with the current row for both new saves and UUID replays."""
     return await save_reminder(db, session, kind, source_id, payload)
 
 

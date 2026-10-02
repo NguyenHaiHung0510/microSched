@@ -48,6 +48,55 @@ const vietnamDayFormatter = new Intl.DateTimeFormat('en-CA', {
 
 const scheduleDayCache = new WeakMap<FixtureTask, { shape: string; day: string | null }>()
 
+export const fixtureTaskIds: Record<string, string> = {
+  'task-001': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4101',
+  'task-002': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4102',
+  'task-003': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4103',
+  'task-004': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4104',
+  'task-005': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4105',
+  'task-006': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4106',
+  'task-007': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4107',
+  'task-008': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4108',
+  'task-009': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4109',
+  'task-010': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4110',
+  'task-011': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4111',
+  'task-012': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112',
+  'task-013': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113',
+  'task-014': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4114',
+  'task-015': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4115',
+  'task-016': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4116',
+  'task-017': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4117',
+  'task-018': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4118',
+  'task-019': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4119',
+  'task-020': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4120',
+  'task-021': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4121',
+  'task-022': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4122',
+  'task-023': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4123',
+  'task-024': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4124',
+  'task-025': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4125',
+  'task-026': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4126',
+  'task-027': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4127',
+  'task-028': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4128',
+  'task-029': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4129',
+  'task-030': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4130',
+  'task-031': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4131',
+  'task-032': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4132',
+  'undated-001': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4d01',
+}
+const fixtureTaskItemIds: Record<string, string> = {
+  'item-005': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e05',
+  'item-012-1': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e11',
+  'item-012-2': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e12',
+  'item-012-3': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e13',
+  'item-012-4': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e14',
+  'item-013-1': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e21',
+  'item-032': '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4e32',
+}
+
+function isClientUuid(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
 const adversarialNoBreak = 'A'.repeat(70)
 const adversarialVietnamese =
   'Đọc kỹ những việc cần làm, giữ nguyên dấu tiếng Việt dày đặc để kiểm tra xuống dòng và chiều cao thẻ; '
@@ -55,7 +104,7 @@ const adversarialVietnamese =
     .slice(0, 150)
 
 function item(id: string, content: string, isCompleted = false) {
-  return { id, content, is_completed: isCompleted, position: 0 }
+  return { id: fixtureTaskItemIds[id] ?? id, content, is_completed: isCompleted, position: 0 }
 }
 
 function task(
@@ -65,7 +114,7 @@ function task(
 ): FixtureTask {
   const timestamp = new Date().toISOString()
   const result: FixtureTask = {
-    id,
+    id: fixtureTaskIds[id] ?? id,
     title,
     body_md: null,
     status: 'open',
@@ -94,10 +143,10 @@ function task(
 
 /** Required QA data: hostile text, 30+ records, mixed status, and 3 scattered overdue records. */
 export const fixtureTasks: FixtureTask[] = [
-  task('task-001', 'Chuẩn bị kế hoạch tuần', { priority: 'p1', pinned: true }),
+  task('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4101', 'Chuẩn bị kế hoạch tuần', { priority: 'p1', pinned: true }),
   task('task-002', 'Đã xong nhưng vẫn ghim', { status: 'completed', pinned: true }),
   task('task-003', 'Việc bình thường có emoji 🚲', { body_md: 'Ghi chú ngắn.' }),
-  task('task-004', 'Việc trễ hạn thứ nhất', { due_at: past(4) }),
+  task('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4104', 'Việc trễ hạn thứ nhất', { due_at: past(4) }),
   task('task-005', adversarialNoBreak, {
     body_md: 'Ghi chú của một task có tiêu đề không có điểm ngắt.',
     items: [item('item-005', adversarialNoBreak)],
@@ -108,7 +157,7 @@ export const fixtureTasks: FixtureTask[] = [
   task('task-009', 'Task riêng tư', { is_private: true }),
   task('task-010', 'Đã hoàn thành không ghim', { status: 'completed' }),
   task('task-011', 'Việc kế tiếp', { due_at: future(2) }),
-  task('task-012', 'Checklist nhiều mục', {
+  task('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4112', 'Checklist nhiều mục', {
     items: [
       item('item-012-1', 'Mục đầu tiên', true),
       item('item-012-2', 'Mục thứ hai'),
@@ -116,7 +165,7 @@ export const fixtureTasks: FixtureTask[] = [
       item('item-012-4', 'Mục thứ tư'),
     ],
   }),
-  task('task-013', 'Học một điều mới', {
+  task('2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113', 'Học một điều mới', {
     priority: 'p3',
     due_on: taskDateKey(new Date().toISOString()),
     items: [item('item-013-1', 'Mục lịch ban đầu')],
@@ -531,9 +580,20 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
 
       if (path === '/api/tasks' && method === 'POST') {
         const payload = JSON.parse(request.postData() ?? '{}') as Partial<FixtureTask>
+        if (payload.id != null && !isClientUuid(payload.id)) {
+          await route.fulfill(jsonResponse({ detail: 'id must be a UUIDv7' }, 422))
+          return
+        }
+        if (isClientUuid(payload.id)) {
+          const existing = state.tasks.find((entry) => entry.id === payload.id)
+          if (existing) {
+            await route.fulfill(jsonResponse(existing, 200))
+            return
+          }
+        }
         const schedule = canonicalSchedule(payload)
         const created = task(
-          String(payload.id ?? `task-created-${Date.now()}`),
+          isClientUuid(payload.id) ? payload.id : crypto.randomUUID(),
           String(payload.title ?? ''),
           {
             body_md: payload.body_md ?? null,
@@ -583,10 +643,29 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
 
         if (method === 'POST' && !itemId) {
           const payload = JSON.parse(request.postData() ?? '{}') as {
+            id?: string
             content?: string
             position?: number
           }
-          const created = item(`item-created-${Date.now()}`, String(payload.content ?? ''))
+          if (payload.id != null && !isClientUuid(payload.id)) {
+            await route.fulfill(jsonResponse({ detail: 'id must be a UUIDv7' }, 422))
+            return
+          }
+          if (isClientUuid(payload.id)) {
+            const existing = owner.items.find((entry) => entry.id === payload.id)
+            if (existing) {
+              await route.fulfill(jsonResponse(existing, 200))
+              return
+            }
+            if (state.tasks.some((task) => task.items.some((entry) => entry.id === payload.id))) {
+              await route.fulfill({ status: 409 })
+              return
+            }
+          }
+          const created = {
+            ...item(payload.id ?? crypto.randomUUID(), String(payload.content ?? '')),
+            position: payload.position ?? 0,
+          }
           owner.items.push(created)
           await route.fulfill(jsonResponse(created, 201))
           return

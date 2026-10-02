@@ -1,9 +1,9 @@
 import { expect, test } from './fixtures/tasks'
 
 test('manual source and event can be created, viewed, and deleted with confirmation', async ({ page }) => {
-  const sources = [
+  const sourceTemplate = [
     {
-      id: 'source-manual',
+      id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4401',
       name: 'Nguồn thủ công',
       kind: 'manual',
       color: 'rose',
@@ -13,6 +13,7 @@ test('manual source and event can be created, viewed, and deleted with confirmat
       updated_at: null,
     },
   ]
+  const sources: typeof sourceTemplate = []
   const events: Array<Record<string, unknown>> = []
   await page.route('**/api/calendar/**', async (route) => {
     const request = route.request()
@@ -22,7 +23,11 @@ test('manual source and event can be created, viewed, and deleted with confirmat
       return
     }
     if (url.pathname === '/api/calendar/sources' && request.method() === 'POST') {
-      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(sources[0]) })
+      const payload = request.postDataJSON()
+      const source = { ...sourceTemplate[0], ...payload, id: payload.id }
+      const existing = sources.find((item) => item.id === payload.id)
+      if (!existing) sources.push(source)
+      await route.fulfill({ status: existing ? 200 : 201, contentType: 'application/json', body: JSON.stringify(existing ?? source) })
       return
     }
     if (url.pathname === '/api/calendar/events' && request.method() === 'GET') {
@@ -35,7 +40,7 @@ test('manual source and event can be created, viewed, and deleted with confirmat
     }
     if (url.pathname === '/api/calendar/events' && request.method() === 'POST') {
       const payload = JSON.parse(request.postData() ?? '{}') as Record<string, unknown>
-      const created = { id: 'event-manual', ...payload, created_at: null, updated_at: null }
+      const created = { id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4501', ...payload, created_at: null, updated_at: null }
       events.push(created)
       sources[0].event_count = events.length
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(created) })
@@ -65,6 +70,7 @@ test('manual source and event can be created, viewed, and deleted with confirmat
   await page.getByRole('button', { name: 'Tạo buổi' }).click()
   await expect(page.getByTestId('calendar-event-card')).toContainText('Buổi thử nghiệm')
 
+  await expect.poll(() => sources[0]?.event_count).toBe(1)
   await page.getByRole('button', { name: 'Xoá nguồn Nguồn thủ công' }).click()
   await expect(page.getByText(/1 buổi của nó/)).toBeVisible()
   await page.getByRole('button', { name: 'Huỷ', exact: true }).last().click()
@@ -83,7 +89,7 @@ test('ICS import shows the inserted count and source deletion count', async ({ p
     if (url.pathname === '/api/calendar/sources' && request.method() === 'POST') {
       const payload = JSON.parse(request.postData() ?? '{}') as Record<string, unknown>
       const source = {
-        id: 'source-ics',
+        id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4402',
         ...payload,
         is_visible: true,
         event_count: 1,
@@ -95,7 +101,7 @@ test('ICS import shows the inserted count and source deletion count', async ({ p
       return
     }
     if (url.pathname.endsWith('/import') && request.method() === 'POST') {
-      events.push({ id: 'event-ics', source_id: 'source-ics', title: 'Buổi ICS', starts_at: '2026-08-15T07:00:00+07:00', ends_at: '2026-08-15T08:00:00+07:00', all_day: false, location: null, description_md: null, created_at: null, updated_at: null })
+      events.push({ id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4502', source_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4402', title: 'Buổi ICS', starts_at: '2026-08-15T07:00:00+07:00', ends_at: '2026-08-15T08:00:00+07:00', all_day: false, location: null, description_md: null, created_at: null, updated_at: null })
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ parsed: 1, inserted: 1, removed: 0, duplicates: 0, skipped: [] }) })
       return
     }

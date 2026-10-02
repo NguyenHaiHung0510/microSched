@@ -1,9 +1,10 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, type SetStateAction, useState } from 'react'
 import { ReminderButton } from '@/ReminderEditor'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
 
-import { apiRequest } from '@/api'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
+import { uuidv7 } from '@/lib/uuidv7'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -20,7 +21,6 @@ import {
   type TaskFormState,
   type TaskWritePayload,
   type TaskPriority,
-  taskInvalidationKey,
   taskPayload,
   transitionTaskDuePrecision,
 } from '@/task-ui'
@@ -77,79 +77,78 @@ function selectedPriorityLabel(priority: TaskPriority | ''): string {
 
 function PersistedChecklistSection({
   taskId,
+  initialPrivate,
   initialItems,
   disabled,
   onPendingChange,
 }: {
   taskId: string
+  initialPrivate: boolean
   initialItems: TaskItem[]
   disabled: boolean
   onPendingChange: (pending: boolean) => void
 }) {
   const queryClient = useQueryClient()
-  const [items, setItems] = useState<TaskItem[]>(initialItems)
+  const [itemSnapshot, setItemSnapshot] = useState({ source: initialItems, items: initialItems })
+  const items = itemSnapshot.source === initialItems ? itemSnapshot.items : initialItems
+  const setItems = (action: SetStateAction<TaskItem[]>) => setItemSnapshot((current) => {
+    const base = current.source === initialItems ? current.items : initialItems
+    return { source: initialItems, items: typeof action === 'function' ? action(base) : action }
+  })
   const [newContent, setNewContent] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
 
-  const refreshQueries = () => {
-    void queryClient.invalidateQueries({ queryKey: taskInvalidationKey })
-    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
-  }
-
-  const addItemMutation = useMutation({
-    mutationFn: (content: string) =>
-      apiRequest<TaskItem>(`/api/tasks/${taskId}/items`, {
-        method: 'POST',
-        body: JSON.stringify({ content, position: items.length }),
-      }),
+  const addItemMutation = useQueuedMutation({
+    mutationFn: (item: TaskItem) => queuedRequest<TaskItem>(queryClient, 'task_item.create', {
+      path: `/api/tasks/${taskId}/items`, body: item, entityId: item.id,
+      parentId: taskId, requiresPrivate: initialPrivate,
+    }),
     onMutate: () => onPendingChange(true),
     onSettled: () => onPendingChange(false),
-    onSuccess: (createdItem) => {
+    onSuccess: (_createdItem, item) => {
       setNewContent('')
-      setItems((prev) => [...prev, createdItem])
-      refreshQueries()
+      setItems((prev) => [...prev, item])
     },
   })
 
-  const updateContentMutation = useMutation({
+  const updateContentMutation = useQueuedMutation({
     mutationFn: ({ itemId, content }: { itemId: string; content: string }) =>
-      apiRequest<TaskItem>(`/api/tasks/${taskId}/items/${itemId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ content }),
+      queuedRequest<TaskItem>(queryClient, 'task_item.update', {
+        path: `/api/tasks/${taskId}/items/${itemId}`, body: { content },
+        entityId: itemId, parentId: taskId, requiresPrivate: initialPrivate,
       }),
     onMutate: () => onPendingChange(true),
     onSettled: () => onPendingChange(false),
-    onSuccess: (updatedItem) => {
+    onSuccess: (_updatedItem, variables) => {
       setItems((prev) =>
-        prev.map((i) => (i.id === updatedItem.id ? updatedItem : i)),
+        prev.map((i) => (i.id === variables.itemId ? { ...i, content: variables.content } : i)),
       )
       setEditingItemId(null)
       setEditingContent('')
-      refreshQueries()
     },
   })
 
-  const toggleCompletedMutation = useMutation({
+  const toggleCompletedMutation = useQueuedMutation({
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
-      apiRequest<TaskItem>(`/api/tasks/${taskId}/items/${item.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ is_completed: isCompleted }),
+      queuedRequest<TaskItem>(queryClient, 'task_item.update', {
+        path: `/api/tasks/${taskId}/items/${item.id}`, body: { is_completed: isCompleted },
+        entityId: item.id, parentId: taskId, requiresPrivate: initialPrivate,
       }),
     onMutate: () => onPendingChange(true),
     onSettled: () => onPendingChange(false),
-    onSuccess: (updatedItem) => {
+    onSuccess: (_updatedItem, variables) => {
       setItems((prev) =>
-        prev.map((i) => (i.id === updatedItem.id ? updatedItem : i)),
+        prev.map((i) => (i.id === variables.item.id ? { ...i, is_completed: variables.isCompleted } : i)),
       )
-      refreshQueries()
     },
   })
 
-  const removeItemMutation = useMutation({
+  const removeItemMutation = useQueuedMutation({
     mutationFn: (item: TaskItem) =>
-      apiRequest<void>(`/api/tasks/${taskId}/items/${item.id}`, {
-        method: 'DELETE',
+      queuedRequest<void>(queryClient, 'task_item.delete', {
+        path: `/api/tasks/${taskId}/items/${item.id}`, entityId: item.id,
+        parentId: taskId, requiresPrivate: initialPrivate,
       }),
     onMutate: () => onPendingChange(true),
     onSettled: () => onPendingChange(false),
@@ -159,7 +158,6 @@ function PersistedChecklistSection({
         setEditingItemId(null)
         setEditingContent('')
       }
-      refreshQueries()
     },
   })
 
@@ -178,7 +176,9 @@ function PersistedChecklistSection({
   function addPersisted() {
     const trimmed = newContent.trim()
     if (!trimmed || childPending || disabled) return
-    addItemMutation.mutate(trimmed)
+    addItemMutation.mutate({
+      id: uuidv7(), content: trimmed, is_completed: false, position: items.length,
+    })
   }
 
   function startEdit(item: TaskItem) {
@@ -656,6 +656,7 @@ export function TaskForm({
       ) : (
         <PersistedChecklistSection
           taskId={taskId}
+          initialPrivate={initial?.is_private === true}
           initialItems={initial?.items ?? []}
           disabled={pending}
           onPendingChange={setChildPending}

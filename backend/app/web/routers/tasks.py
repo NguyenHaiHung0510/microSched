@@ -16,6 +16,7 @@ from app.domain.tasks import (
     TaskCreate,
     TaskIdConflict,
     TaskItemCreate,
+    TaskItemIdConflict,
     TaskItemRead,
     TaskItemUpdate,
     TaskListStatus,
@@ -47,7 +48,7 @@ def _not_found() -> HTTPException:
 def _private_locked() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Private mode is locked",
+        detail={"code": "PRIVATE_UNLOCK_REQUIRED", "message": "Private mode is locked"},
     )
 
 
@@ -212,11 +213,16 @@ async def create_task_item(
     payload: TaskItemCreate,
     db: Database,
     session: CurrentSession,
-) -> TaskItemRead:
-    """Append a checklist item through its visible, locked parent."""
-    item = await store.add_item(db, session, task_id, payload)
+    response: Response,
+) -> TaskItemRead | Response:
+    """Append an item, returning 200 only for a readable ID replay."""
+    try:
+        item = await store.add_item(db, session, task_id, payload)
+    except TaskItemIdConflict:
+        return Response(status_code=status.HTTP_409_CONFLICT)
     if item is None:
         raise _not_found()
+    response.status_code = status.HTTP_201_CREATED if item.created else status.HTTP_200_OK
     return item
 
 

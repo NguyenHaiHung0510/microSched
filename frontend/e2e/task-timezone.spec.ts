@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, test, type TaskApiState } from './fixtures/tasks'
+import { expect, fixtureTaskIds, test, type TaskApiState } from './fixtures/tasks'
 
 function todayInVietnam(): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -15,13 +15,13 @@ function todayInVietnam(): string {
 
 async function assertVietnamSchedule(page: Page, taskApi: TaskApiState) {
   const day = todayInVietnam()
-  const timed = taskApi.tasks.find((entry) => entry.id === 'task-011')!
+  const timed = taskApi.tasks.find((entry) => entry.id === fixtureTaskIds['task-011'])!
   Object.assign(timed, {
     due_precision: 'datetime' as const,
     due_on: null,
     due_at: new Date(`${day}T09:30:00+07:00`).toISOString(),
   })
-  const civil = taskApi.tasks.find((entry) => entry.id === 'task-013')!
+  const civil = taskApi.tasks.find((entry) => entry.id === '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113')!
   Object.assign(civil, {
     due_precision: 'date' as const,
     due_on: day,
@@ -30,8 +30,8 @@ async function assertVietnamSchedule(page: Page, taskApi: TaskApiState) {
 
   await page.goto('/')
   await page.getByRole('tab', { name: 'Task' }).click()
-  const timedCard = page.locator('[data-task-id="task-011"]')
-  const civilCard = page.locator('[data-task-id="task-013"]')
+  const timedCard = page.locator(`[data-task-id="${fixtureTaskIds['task-011']}"]`)
+  const civilCard = page.locator('[data-task-id="2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4113"]')
   await expect(timedCard).toBeVisible()
   await expect(civilCard).toBeVisible()
   await expect(timedCard).toContainText('09:30')

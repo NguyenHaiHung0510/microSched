@@ -1,16 +1,20 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { apiRequest } from '@/api'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
+import type { Json } from '@/lib/outbox-db'
+import type { OperationKind } from '@/lib/outbox-adapters'
 import { TaskForm } from '@/TaskForm'
 import { TrackerForm } from '@/TrackerForm'
 import { EventForm } from '@/EventForm'
 import { useState, type ComponentProps } from 'react'
 type Task = NonNullable<ComponentProps<typeof TaskForm>['initial']>
-import type { Tracker, TrackerGroup } from '@/tracker-ui'
+import { reminderConfigurationChanged, type Tracker, type TrackerGroup } from '@/tracker-ui'
 import type { CalendarEvent } from '@/calendar-ui'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { reminderKey, type ReminderSource } from '@/reminder-ui'
-import { ensurePushSubscription } from '@/push-subscription'
+import { preparePushRegistration, PUSH_OFFLINE_NOTICE } from '@/push-subscription'
 
 export function ReminderSourceDialog({ kind, sourceId, onClose }: { kind: ReminderSource; sourceId: string; onClose: () => void }) {
   const client = useQueryClient()
@@ -21,13 +25,27 @@ export function ReminderSourceDialog({ kind, sourceId, onClose }: { kind: Remind
     queryFn: ({ signal }) => apiRequest<Task | Tracker | CalendarEvent>(path, { signal }), ...NO_POLLING_QUERY_OPTIONS })
   const groups = useQuery({ queryKey: [...reminderKey, 'groups'], enabled: kind === 'tracker',
     queryFn: ({ signal }) => apiRequest<{ items: TrackerGroup[] }>('/api/tracker/groups', { signal }), ...NO_POLLING_QUERY_OPTIONS })
-  const save = useMutation({ mutationFn: async (body: object) => {
+  const save = useQueuedMutation({ mutationFn: async (body: object) => {
+    if (!source.data) throw new Error('Chưa tải được đối tượng để lưu.')
+    const requiresPrivate = kind === 'event' ? false :
+      (source.data as Task | Tracker).is_private !== false
     const { ensure_push: ensurePush, ...payload } = body as { ensure_push?: boolean }
-    if (kind === 'tracker' && ensurePush) await ensurePushSubscription()
-    return apiRequest(kind === 'event' ? `/api/calendar/events/${sourceId}` : path,
-      { method: 'PATCH', body: JSON.stringify(payload) })
+    let registrationDeferred = false
+    if (kind === 'tracker' && ensurePush && source.data &&
+      reminderConfigurationChanged(source.data as Tracker, payload as Partial<Tracker>)) {
+      // Queue the domain write offline without registering this device or requesting permission.
+      registrationDeferred = (await preparePushRegistration(true)) === 'offline_deferred'
+    }
+    const operationKind: OperationKind = kind === 'task' ? 'task.update' : kind === 'tracker' ? 'tracker.update' : 'calendar_event.update'
+    const result = await queuedRequest(client, operationKind, {
+      path: kind === 'event' ? `/api/calendar/events/${sourceId}` : path,
+      body: payload as unknown as Json,
+      entityId: sourceId,
+      requiresPrivate,
+    })
+    if (registrationDeferred) toast.info(PUSH_OFFLINE_NOTICE)
+    return result
     }, onSuccess: () => {
-      void Promise.all([reminderKey, ['tasks'], ['calendar'], ['tracker'], ['subscription']].map((queryKey) => client.invalidateQueries({ queryKey })))
       onClose()
     } })
   return <Dialog open onOpenChange={(v) => { if (!v) onClose() }}>

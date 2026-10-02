@@ -1,8 +1,12 @@
-import { memo, useCallback, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, ChevronLeft, ChevronRight, Edit3, Plus, Trash2 } from 'lucide-react'
 
 import { apiRequest } from '@/api'
+import { queuedRequest, useQueuedMutation } from '@/lib/queued-mutation'
+import type { Json, OutboxRow } from '@/lib/outbox-db'
+import { uuidv7 } from '@/lib/uuidv7'
+import { useDomainReadControl } from '@/lib/use-domain-outbox'
 import { EventForm } from '@/EventForm'
 import {
   addVietnamDays,
@@ -36,21 +40,58 @@ import { SourceForm } from '@/SourceForm'
 
 type SourceEnvelope = { items: CalendarSource[] }
 type EventEnvelope = { items: CalendarEvent[] }
+type ImportRequestReceipt = {
+  sourceId: string
+  startedAt: number
+  acknowledged: boolean
+  acknowledgedResponse?: unknown
+}
 type ConfirmState =
   | { kind: 'source'; source: CalendarSource }
   | { kind: 'event'; event: CalendarEvent }
   | null
 
-const VIEW_KEY = 'microsched:calendar-view'
-
-async function getSources(): Promise<SourceEnvelope> {
-  return apiRequest<SourceEnvelope>('/api/calendar/sources')
+// eslint-disable-next-line react-refresh/only-export-components -- pure report validator is unit-tested separately.
+export function validateImportReport(value: unknown): ImportReport | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const report = value as Record<string, unknown>
+  const counters = [report.parsed, report.inserted, report.removed, report.duplicates]
+  if (!counters.every((count) => Number.isSafeInteger(count) && (count as number) >= 0)) return null
+  if (!Array.isArray(report.skipped) || !report.skipped.every((reason) => typeof reason === 'string')) return null
+  const parsed = report.parsed as number
+  const inserted = report.inserted as number
+  const duplicates = report.duplicates as number
+  const removed = report.removed as number
+  if (parsed !== inserted + duplicates + report.skipped.length) return null
+  return {
+    parsed,
+    inserted,
+    removed,
+    duplicates,
+    skipped: report.skipped as string[],
+  }
 }
 
-async function getEvents(startDay: string): Promise<EventEnvelope> {
+// eslint-disable-next-line react-refresh/only-export-components -- pure correlation predicate is unit-tested separately.
+export function matchesImportAcknowledgement(
+  request: Pick<ImportRequestReceipt, 'sourceId' | 'startedAt'>,
+  row: Pick<OutboxRow, 'operation_kind' | 'entity_id' | 'created_at'>,
+): boolean {
+  return row.operation_kind === 'calendar.import' && row.entity_id === request.sourceId &&
+    row.created_at >= request.startedAt
+}
+
+const VIEW_KEY = 'microsched:calendar-view'
+
+async function getSources(signal?: AbortSignal): Promise<SourceEnvelope> {
+  return apiRequest<SourceEnvelope>('/api/calendar/sources', { signal })
+}
+
+async function getEvents(startDay: string, signal?: AbortSignal): Promise<EventEnvelope> {
   const query = rangeQuery(startDay)
   return apiRequest<EventEnvelope>(
     `/api/calendar/events?from=${encodeURIComponent(query.from)}&to=${encodeURIComponent(query.to)}`,
+    { signal },
   )
 }
 
@@ -136,6 +177,7 @@ const EventCard = memo(function EventCard({
 
 export function CalendarScreen() {
   const queryClient = useQueryClient()
+  const readControl = useDomainReadControl(['calendar'], false)
   const [view, setView] = useState<'grid' | 'list'>(() => {
     try {
       return window.localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'
@@ -151,21 +193,46 @@ export function CalendarScreen() {
   const [sourceError, setSourceError] = useState<string | null>(null)
   const [sourceConflict, setSourceConflict] = useState<ReturnType<typeof importConflict>>(null)
   const [importReport, setImportReport] = useState<ImportReport | null>(null)
+  const [importPending, setImportPending] = useState(false)
+  const importRequestRef = useRef<ImportRequestReceipt | null>(null)
   const [confirm, setConfirm] = useState<ConfirmState>(null)
   const [editingSource, setEditingSource] = useState<CalendarSource | null>(null)
   const [eventDialogOpen, setEventDialogOpen] = useState(false)
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | undefined>()
   const [eventError, setEventError] = useState<string | null>(null)
 
+  useEffect(() => {
+    const onAcknowledged = (event: Event) => {
+      const detail = (event as CustomEvent<{ row: OutboxRow; response: unknown }>).detail
+      const request = importRequestRef.current
+      if (!detail?.row || !request || !matchesImportAcknowledgement(request, detail.row)) return
+      request.acknowledged = true
+      request.acknowledgedResponse = detail.response
+      const report = validateImportReport(detail.response)
+      setImportPending(false)
+      if (report) {
+        setSourceError(null)
+        setImportReport(report)
+      } else {
+        setImportReport(null)
+        setSourceError('Máy chủ đã hoàn tất nhập lịch nhưng báo cáo trả về không hợp lệ.')
+      }
+    }
+    window.addEventListener('microsched:outbox-acknowledged', onAcknowledged)
+    return () => window.removeEventListener('microsched:outbox-acknowledged', onAcknowledged)
+  }, [])
+
   const sources = useQuery({
     queryKey: ['calendar', 'sources'],
-    queryFn: getSources,
+    queryFn: ({ signal }) => getSources(signal),
     ...CALENDAR_QUERY_OPTIONS,
+    ...readControl,
   })
   const events = useQuery({
     queryKey: ['calendar', 'events', rangeStart],
-    queryFn: () => getEvents(rangeStart),
+    queryFn: ({ signal }) => getEvents(rangeStart, signal),
     ...CALENDAR_QUERY_OPTIONS,
+    ...readControl,
   })
   const manualSources = useMemo(
     () => (sources.data?.items ?? []).filter((source) => source.kind === 'manual'),
@@ -176,42 +243,58 @@ export function CalendarScreen() {
     [sources.data?.items],
   )
 
-  /* 010b §2 mục 9: một buổi/dấu ngày có thể đổi sang tháng khác, nên mọi
-     mutation phải invalidate CẢ họ ["calendar"], không chỉ tháng đang mở. */
-  const refreshCalendar = () =>
-    void queryClient.invalidateQueries({ queryKey: ['calendar'] })
-
-  const importFile = useMutation({
-    mutationFn: async ({ sourceId, file }: { sourceId: string; file: File }) => {
+  const importFile = useQueuedMutation({
+    mutationFn: async ({ sourceId, file, startedAt }: { sourceId: string; file: File; startedAt: number }) => {
+      if (importRequestRef.current?.startedAt !== startedAt) throw new Error('Yêu cầu nhập lịch đã được thay thế.')
       const problem = validateFile(file)
       if (problem) throw new Error(problem)
-      return apiRequest<ImportReport>(`/api/calendar/sources/${sourceId}/import`, {
-        method: 'POST',
-        timeoutMs: 60_000,
-        body: JSON.stringify({ filename: file.name, content: await file.text() }),
-      })
+      return queuedRequest<ImportReport | null>(queryClient, 'calendar.import', {
+        path: `/api/calendar/sources/${sourceId}/import`,
+        body: { filename: file.name, content: await file.text() }, entityId: sourceId, parentId: sourceId,
+      }, { timeoutMs: 60_000 })
     },
-    onSuccess: (report) => {
-      setImportReport(report)
+    onMutate: ({ sourceId, startedAt }) => {
+      // Bind the expected source before mutationFn/file.text()/queue can yield.
+      importRequestRef.current = { sourceId, startedAt, acknowledged: false }
+      setImportReport(null)
+      setImportPending(false)
+    },
+    onSuccess: (report, { sourceId, startedAt }) => {
+      if (importRequestRef.current?.sourceId !== sourceId || importRequestRef.current.startedAt !== startedAt) return
       setSourceError(null)
-      refreshCalendar()
+      const actualReport = validateImportReport(report) ??
+        validateImportReport(importRequestRef.current?.acknowledgedResponse)
+      if (actualReport) {
+        setImportReport(actualReport)
+        setImportPending(false)
+        return
+      }
+      if (importRequestRef.current?.acknowledged) {
+        setImportReport(null)
+        setImportPending(false)
+        setSourceError('Máy chủ đã hoàn tất nhập lịch nhưng báo cáo trả về không hợp lệ.')
+        return
+      }
+      if (report === null) {
+        setImportPending(true)
+        return
+      }
+      setImportReport(null)
+      setImportPending(false)
+      setSourceError('Máy chủ trả về báo cáo nhập lịch không hợp lệ.')
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
 
-  const createSource = useMutation({
-    mutationFn: (value: { name: string; kind: 'ics' | 'manual'; color: string }) =>
-      apiRequest<CalendarSource>('/api/calendar/sources', {
-        method: 'POST',
-        body: JSON.stringify(value),
-      }),
+  const createSource = useQueuedMutation({
+    mutationFn: (value: { id: string; name: string; kind: 'ics' | 'manual'; color: string }) =>
+      queuedRequest<CalendarSource>(queryClient, 'calendar_source.create', { path: '/api/calendar/sources', body: value, entityId: value.id }),
     onSuccess: (source) => {
       setSourceDialogOpen(false)
       setSourceError(null)
       setSourceConflict(null)
-      refreshCalendar()
       if (sourceKind === 'ics' && pickedFile) {
-        importFile.mutate({ sourceId: source.id, file: pickedFile })
+        importFile.mutate({ sourceId: source.id, file: pickedFile, startedAt: Date.now() })
       }
     },
     onError: (error) => {
@@ -221,7 +304,7 @@ export function CalendarScreen() {
     },
   })
 
-  const updateSource = useMutation({
+  const updateSource = useQueuedMutation({
     mutationFn: ({
       sourceId,
       isVisible,
@@ -237,61 +320,45 @@ export function CalendarScreen() {
       if (isVisible !== undefined) body.is_visible = isVisible
       if (name !== undefined) body.name = name
       if (color !== undefined) body.color = color
-      return apiRequest<CalendarSource>(`/api/calendar/sources/${sourceId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      })
+      return queuedRequest<CalendarSource>(queryClient, 'calendar_source.update', { path: `/api/calendar/sources/${sourceId}`, body: body as unknown as Json, entityId: sourceId })
     },
     onSuccess: () => {
       setEditingSource(null)
-      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
 
-  const deleteSource = useMutation({
-    mutationFn: (sourceId: string) =>
-      apiRequest<void>(`/api/calendar/sources/${sourceId}`, { method: 'DELETE' }),
+  const deleteSource = useQueuedMutation({
+    mutationFn: (sourceId: string) => queuedRequest<void>(queryClient, 'calendar_source.delete', { path: `/api/calendar/sources/${sourceId}`, entityId: sourceId }),
     onSuccess: () => {
       setConfirm(null)
-      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
 
-  const createEvent = useMutation({
-    mutationFn: (value: Record<string, unknown>) =>
-      apiRequest<CalendarEvent>('/api/calendar/events', {
-        method: 'POST',
-        body: JSON.stringify(value),
-      }),
+  const createEvent = useQueuedMutation({
+    mutationFn: (value: Record<string, unknown> & { id: string }) =>
+      queuedRequest<CalendarEvent>(queryClient, 'calendar_event.create', { path: '/api/calendar/events', body: value as unknown as Json, entityId: value.id, parentId: typeof value.source_id === 'string' ? value.source_id : null }),
     onSuccess: () => {
       setEventDialogOpen(false)
-      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
 
-  const updateEvent = useMutation({
+  const updateEvent = useQueuedMutation({
     mutationFn: ({ eventId, value }: { eventId: string; value: Record<string, unknown> }) =>
-      apiRequest<CalendarEvent>(`/api/calendar/events/${eventId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(value),
-      }),
+      queuedRequest<CalendarEvent>(queryClient, 'calendar_event.update', { path: `/api/calendar/events/${eventId}`, body: value as unknown as Json, entityId: eventId }),
     onSuccess: () => {
       setEventDialogOpen(false)
       setEditingEvent(undefined)
-      refreshCalendar()
     },
     onError: (error) => setEventError(importErrorMessage(error)),
   })
 
-  const deleteEvent = useMutation({
-    mutationFn: (eventId: string) =>
-      apiRequest<void>(`/api/calendar/events/${eventId}`, { method: 'DELETE' }),
+  const deleteEvent = useQueuedMutation({
+    mutationFn: (eventId: string) => queuedRequest<void>(queryClient, 'calendar_event.delete', { path: `/api/calendar/events/${eventId}`, entityId: eventId }),
     onSuccess: () => {
       setConfirm(null)
-      refreshCalendar()
     },
     onError: (error) => setSourceError(importErrorMessage(error)),
   })
@@ -336,7 +403,7 @@ export function CalendarScreen() {
       return
     }
     setSourceName(value.name)
-    createSource.mutate({ name: value.name, color: value.color, kind: sourceKind })
+    createSource.mutate({ id: uuidv7(), name: value.name, color: value.color, kind: sourceKind })
   }
 
   const openNewEvent = useCallback(() => {
@@ -399,6 +466,12 @@ export function CalendarScreen() {
         <p className="text-sm text-bad" role="alert">
           {sourceError ?? importErrorMessage(mutationError)}
         </p>
+          ) : null}
+
+          {importPending ? (
+            <p data-testid="calendar-import-pending" role="status" className="text-sm text-muted-foreground">
+              Tệp đã lưu trong hàng đợi. Báo cáo số buổi chỉ xuất hiện sau khi máy chủ hoàn tất import.
+            </p>
           ) : null}
 
           {importReport ? (
@@ -483,7 +556,7 @@ export function CalendarScreen() {
                     label="Nhập lại"
                     accept=".ics,text/calendar"
                     disabled={importFile.isPending}
-                    onPick={(file) => importFile.mutate({ sourceId: source.id, file })}
+                    onPick={(file) => importFile.mutate({ sourceId: source.id, file, startedAt: Date.now() })}
                   />
                 ) : null}
                 <Button
@@ -599,7 +672,7 @@ export function CalendarScreen() {
                     disabled={importFile.isPending}
                     onClick={() => {
                       setSourceDialogOpen(false)
-                      importFile.mutate({ sourceId: sourceConflict.existingSourceId, file: pickedFile })
+                      importFile.mutate({ sourceId: sourceConflict.existingSourceId, file: pickedFile, startedAt: Date.now() })
                     }}
                   >
                     Nhập đè
@@ -653,7 +726,7 @@ export function CalendarScreen() {
               if (editingEvent) {
                 updateEvent.mutate({ eventId: editingEvent.id, value })
               } else {
-                createEvent.mutate(value)
+                createEvent.mutate({ ...value, id: uuidv7() })
               }
             }}
             onCancel={() => setEventDialogOpen(false)}

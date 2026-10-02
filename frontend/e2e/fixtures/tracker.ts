@@ -45,7 +45,7 @@ function nowIso(): string {
 
 function tracker(overrides: Partial<FixtureTracker>): FixtureTracker {
   return {
-    id: 'tracker-001',
+    id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4201',
     name: 'Hút thuốc',
     kind: 'health',
     direction: 'out',
@@ -70,7 +70,7 @@ function tracker(overrides: Partial<FixtureTracker>): FixtureTracker {
 function entry(overrides: Partial<FixtureEntry>): FixtureEntry {
   return {
     id: `entry-${Date.now()}`,
-    tracker_id: 'tracker-001',
+    tracker_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4201',
     occurred_at: nowIso(),
     quantity: null,
     amount: null,
@@ -95,19 +95,19 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
   trackerApi: [
     async ({ page }, use) => {
       const state: TrackerApiState = {
-        groups: [{ id: 'group-001', name: 'Sức khoẻ', kind: 'health', tracker_count: 1 }],
+        groups: [{ id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4299', name: 'Sức khoẻ', kind: 'health', tracker_count: 1 }],
         trackers: [
           tracker({
-            id: 'tracker-001',
+            id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4201',
             name: 'Hút thuốc',
             kind: 'health',
             input_mode: 'event',
-            group_id: 'group-001',
+            group_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4299',
             entry_count_30d: 3,
             last_entry_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
           }),
           tracker({
-            id: 'tracker-002',
+            id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4202',
             name: 'Ăn uống',
             kind: 'finance',
             direction: 'out',
@@ -116,7 +116,7 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
             last_entry_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
           }),
           tracker({
-            id: 'tracker-003',
+            id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4203',
             name: 'Đọc sách',
             kind: 'health',
             input_mode: 'quantity',

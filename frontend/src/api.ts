@@ -5,11 +5,13 @@ export class UnauthenticatedError extends Error {}
 export class ApiError extends Error {
   status: number
   body: unknown
+  headers: Headers
 
-  constructor(status: number, message: string, body?: unknown) {
+  constructor(status: number, message: string, body?: unknown, headers?: Headers) {
     super(message)
     this.status = status
     this.body = body
+    this.headers = headers ?? new Headers()
   }
 }
 
@@ -98,6 +100,7 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
     response.status === 401 &&
     (body === undefined || detail === 'Not authenticated')
   ) {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('microsched:unauthenticated'))
     throw new UnauthenticatedError('No active session')
   }
 
@@ -106,7 +109,7 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
       typeof detail === 'string'
         ? detail
         : `API request failed with status ${response.status}`
-    throw new ApiError(response.status, message, body)
+    throw new ApiError(response.status, message, body, response.headers)
   }
 
   if (response.status === 204) return undefined as T

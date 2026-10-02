@@ -27,7 +27,7 @@ test('finance charts show exact periods, composition and keyboard disclosure wit
     corrupted_entry_count: 0, f1_total: 1800000, f2_current: 1800000, f2_previous: 2100000, f5_net: -1800000,
     report_months: 1, previous_period_start: '2026-07-01T00:00:00+07:00', previous_period_end: '2026-08-01T00:00:00+07:00',
     finance_months: [{ month: '2026-08', period_start: '2026-08-01T00:00:00+07:00', period_end: '2026-09-01T00:00:00+07:00', total: 1800000 }], activity_month: '2026-08', activity_days: [],
-    f3_groups: [{ name: 'Nhóm ' + 'X'.repeat(70), total: 1800000, trackers: [{ tracker_id: 'tracker-002', name: '', total: 1800000 }] }],
+    f3_groups: [{ name: 'Nhóm ' + 'X'.repeat(70), total: 1800000, trackers: [{ tracker_id: '2c9d8a1e-4b73-4d5f-9a21-6e8b0c3f4202', name: '', total: 1800000 }] }],
     f4_top: [], a2_gap: [], a3_counts: { week: 1, month: 2, year: 3 }, a4_trend: { current_month: 2, prev_avg: 3, trend: 'down' },
     f6: { monthly_burn: 0, subscription_count: 0, corrupted_subscription_count: 0, upcoming: [] },
   } }))

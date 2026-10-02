@@ -20,8 +20,15 @@ NonEmptyText = Annotated[str, Field(min_length=1)]
 class NoteItemCreate(BaseModel):
     """Fields accepted when appending a checklist item."""
 
+    id: UUID | None = None
     content: str = Field(min_length=1)
     position: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def require_uuidv7(self) -> "NoteItemCreate":
+        if self.id is not None and self.id.version != 7:
+            raise ValueError("id must be a UUIDv7")
+        return self
 
 
 class NoteItemUpdate(BaseModel):
@@ -50,6 +57,30 @@ class NoteItemRead(BaseModel):
     position: int
     created_at: datetime | None
     updated_at: datetime | None
+    created: bool | None = Field(default=None, exclude=True)
+
+
+class NoteItemPosition(BaseModel):
+    """One absolute position in an atomic note-item reorder."""
+
+    id: UUID
+    position: int = Field(ge=0)
+
+
+class NoteItemsReorder(BaseModel):
+    """A set of item positions applied as one transaction."""
+
+    items: list[NoteItemPosition] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def reject_duplicates(self) -> "NoteItemsReorder":
+        ids = [item.id for item in self.items]
+        positions = [item.position for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("item ids must be unique")
+        if len(positions) != len(set(positions)):
+            raise ValueError("item positions must be unique")
+        return self
 
 
 class NoteCreate(BaseModel):
@@ -103,6 +134,10 @@ class NoteRead(BaseModel):
 
 class NoteIdConflict(Exception):
     """A client-selected ID belongs to a row hidden by a reading gate."""
+
+
+class NoteItemIdConflict(Exception):
+    """A client-selected item ID belongs to a different note or hidden row."""
 
 
 class PrivateWriteLocked(Exception):
@@ -356,18 +391,95 @@ class NoteStore:
         note_id: UUID,
         payload: NoteItemCreate,
     ) -> NoteItemRead | None:
-        """Append an item after locking and resolving its visible parent."""
+        """Insert a child once, preserving requested order and replay state."""
         parent = await self._parent(db, auth, note_id, for_update=True)
         if parent is None:
             return None
-        item = NoteItem(
-            note_id=parent.id,
-            content=_sealed(payload.content) if parent.is_private else payload.content,
-            position=payload.position,
+        siblings = list(
+            (
+                await db.execute(
+                    select(NoteItem)
+                    .where(NoteItem.note_id == parent.id)
+                    .order_by(NoteItem.position, NoteItem.created_at, NoteItem.id)
+                    .with_for_update()
+                )
+            ).scalars()
         )
-        db.add(item)
+        ties = sum(item.position == payload.position for item in siblings)
+        position = payload.position + ties
+        values = {
+            "note_id": parent.id,
+            "content": _sealed(payload.content) if parent.is_private else payload.content,
+            "position": position,
+        }
+        if payload.id is None:
+            for sibling in siblings:
+                if sibling.position > payload.position:
+                    sibling.position += ties + 1
+            item = NoteItem(**values)
+            db.add(item)
+            await db.flush()
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(NoteItem)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[NoteItem.id])
+                    .returning(NoteItem.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                existing = await db.scalar(
+                    select(NoteItem).where(
+                        NoteItem.id == payload.id,
+                        NoteItem.note_id == parent.id,
+                    )
+                )
+                if existing is None:
+                    raise NoteItemIdConflict
+                result = self._item_read(existing)
+                result.created = False
+                return result
+            for sibling in siblings:
+                if sibling.position > payload.position:
+                    sibling.position += ties + 1
+            await db.flush()
+            item = await db.scalar(select(NoteItem).where(NoteItem.id == inserted_id))
+            if item is None:
+                raise RuntimeError("created note item disappeared")
+        result = self._item_read(item)
+        result.created = True
+        return result
+
+    async def reorder_items(
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        note_id: UUID,
+        payload: NoteItemsReorder,
+    ) -> list[NoteItemRead] | None:
+        """Apply absolute positions after validating every item under the parent lock."""
+        parent = await self._parent(db, auth, note_id, for_update=True)
+        if parent is None:
+            return None
+        item_ids = [position.id for position in payload.items]
+        rows = list(
+            (
+                await db.execute(
+                    select(NoteItem)
+                    .where(NoteItem.note_id == parent.id, NoteItem.id.in_(item_ids))
+                    .with_for_update()
+                )
+            ).scalars()
+        )
+        if len(rows) != len(item_ids):
+            raise ValueError("every item must belong to the note")
+        positions_by_id = {position.id: position.position for position in payload.items}
+        for item in rows:
+            item.position = positions_by_id[item.id]
         await db.flush()
-        return self._item_read(item)
+        rows.sort(key=lambda item: (item.position, item.id))
+        return [self._item_read(item) for item in rows]
 
     async def update_item(
         self,
