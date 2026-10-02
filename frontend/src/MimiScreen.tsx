@@ -37,6 +37,7 @@ import {
   resolveMimiFeedbackTarget,
 } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
+import { selectCreatedMimiConversation } from '@/mimi-selection'
 
 function errorMessage(error: unknown): string {
   if (error instanceof TimeoutError) return error.message
@@ -253,6 +254,7 @@ export function MimiScreen({
   const createConversation = useMutation({
     mutationFn: () => createMimiConversation(),
     onSuccess: (created) => {
+      selectCreatedMimiConversation(queryClient, created)
       onConversationCreated?.(created.id)
       void queryClient.invalidateQueries({ queryKey: ['mimi'] })
     },

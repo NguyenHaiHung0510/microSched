@@ -119,7 +119,7 @@ class ContextEnvelope(StrictModel):
     policy_text: str
     authority: AuthorityEnvelope
     manifest: ContextManifest
-    checkpoint: str | None
+    checkpoint: str | dict[str, Any] | None
     transcript_suffix: tuple[dict[str, str], ...]
     pending_state: dict[str, Any]
     domain_evidence: tuple[dict[str, Any], ...]
