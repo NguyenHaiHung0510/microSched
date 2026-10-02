@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { QueryClient } from '@tanstack/react-query'
+import type { InfiniteData, QueryClient } from '@tanstack/react-query'
 import type { MimiConversationPage, MimiConversationSummary } from '@/mimi-api'
 
 const key = 'mimi.standard.selected-conversation.v1'
@@ -49,6 +49,13 @@ export function selectCreatedMimiConversation(client: QueryClient, created: Mimi
       items: [created, ...(old?.items ?? []).filter((item) => item.id !== created.id)],
       next_cursor: old?.next_cursor ?? null,
     }))
+    client.setQueryData<InfiniteData<MimiConversationPage>>(['mimi', 'conversations', 'paged', state], (old) => {
+      if (!old) return undefined
+      return { ...old, pages: old.pages.map((page, index) => ({
+        ...page,
+        items: [...(index === 0 ? [created] : []), ...page.items.filter((item) => item.id !== created.id)],
+      })) }
+    })
   }
   selectMimiConversation(created.id)
 }

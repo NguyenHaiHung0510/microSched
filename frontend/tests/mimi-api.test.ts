@@ -4,6 +4,7 @@ import { afterEach, test } from 'vitest'
 import {
   decideMimiChangeSet,
   fetchCurrentMimiConversation,
+  fetchMimiConversations,
   fetchMimiConfiguration,
   pauseMimiRun,
   saveMimiConfiguration,
@@ -15,6 +16,17 @@ import {
 const realFetch = globalThis.fetch
 afterEach(() => {
   globalThis.fetch = realFetch
+})
+
+test('conversation history passes the opaque cursor unchanged in a bounded next-page request', async () => {
+  const paths: string[] = []
+  globalThis.fetch = async (path) => {
+    paths.push(String(path))
+    return new Response(JSON.stringify({items:[],next_cursor:null}), {status:200,headers:{'Content-Type':'application/json'}})
+  }
+  await fetchMimiConversations('all')
+  await fetchMimiConversations('archived', 'opaque+/cursor=')
+  assert.deepEqual(paths, ['/api/mimi/conversations?state=all&limit=50', '/api/mimi/conversations?state=archived&limit=50&cursor=opaque%2B%2Fcursor%3D'])
 })
 
 test('Mimi writes carry the scoped CSRF header and stable client generation', async () => {
