@@ -77,6 +77,7 @@ def make_semantic_checkpoint(
     if (
         not isinstance(candidate["summary"], str)
         or not candidate["summary"].strip()
+        or not any(character.isalnum() for character in candidate["summary"])
         or len(candidate["summary"]) > 6000
     ):
         raise ValueError("checkpoint_semantic_summary_invalid")

@@ -111,6 +111,25 @@ def test_checkpoint_binds_source_hashes_frontier_and_pending_state() -> None:
     validate_checkpoint(checkpoint, expected_sources=sources, prior=None)
 
 
+@pytest.mark.parametrize("summary", ["...", "—\n…", "  !!!  "])
+def test_semantic_summary_without_any_lexical_content_is_rejected(summary):
+    source = _source(1, "Chỉ học buổi tối.")
+    with pytest.raises(ValueError, match="checkpoint_semantic_summary_invalid"):
+        make_semantic_checkpoint(
+            sources=[source],
+            prior=None,
+            policy_sha256="a" * 64,
+            pending_preview=None,
+            pending_draft=None,
+            candidate={
+                "summary": summary,
+                "constraints": [],
+                "supersessions": [],
+                "resolutions": [],
+            },
+        )
+
+
 def test_compaction_wire_prior_retains_active_ids_and_meaning_without_canonical_duplicates():
     from app.agent.service import _compaction_messages
 
