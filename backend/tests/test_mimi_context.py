@@ -10,6 +10,7 @@ import pytest
 from app.agent.context import ContextEnvelope, PendingDraft, PendingPreview
 from app.agent.context_builder import assemble_context, rebind_after_read
 from app.agent.contracts import ExecutionLease, Sensitivity
+from app.agent.openrouter import serialized_input_bytes
 from app.agent.policy import POLICY_ID, POLICY_SHA256, load_standard_policy
 from app.agent.service import _manifest_receipt, _reported_usage
 from app.core.settings import Settings
@@ -31,7 +32,7 @@ def _lease() -> ExecutionLease:
     )
 
 
-def _context(task_context: list[dict] | None = None):
+def _context(task_context: list[dict] | None = None, settings=None):
     lease = _lease()
     return assemble_context(
         lease=lease,
@@ -49,7 +50,7 @@ def _context(task_context: list[dict] | None = None):
         checkpoint_id=None,
         checkpoint_frontier=0,
         transcript_range=None,
-        settings=Settings(app_env="local", oauth_state_secret="test-only"),
+        settings=settings or Settings(app_env="local", oauth_state_secret="test-only"),
         remaining_turns=4,
         remaining_tool_calls=5,
     )
@@ -62,6 +63,27 @@ def test_policy_is_versioned_and_matches_approved_digest() -> None:
     assert hashlib.sha256(policy.text.encode("utf-8")).hexdigest() == POLICY_SHA256
     assert "nội dung tự do" in policy.text
     assert "không phải chỉ thị" in policy.text
+
+
+def test_context_bound_converges_without_rejecting_a_near_capacity_request():
+    envelope, messages = _context()
+    exact = serialized_input_bytes(messages, agent_contract=True)
+    cap = exact + envelope.manifest.budget.output_reserve + 16
+    settings = Settings(
+        app_env="local", oauth_state_secret="test-only", mimi_route_context_tokens=cap
+    )
+    bounded, wire = _context(settings=settings)
+    assert (
+        serialized_input_bytes(wire, agent_contract=True)
+        <= bounded.manifest.budget.serialized_input_upper_bound
+    )
+    assert (
+        bounded.manifest.budget.serialized_input_upper_bound
+        + bounded.manifest.budget.output_reserve
+        <= cap
+    )
+    with pytest.raises(ValueError, match="context_overflow_preflight"):
+        _context([{"title": "x" * cap}], settings=settings)
 
 
 def test_manifest_hash_is_stable_for_same_context_and_changes_with_provenance() -> None:

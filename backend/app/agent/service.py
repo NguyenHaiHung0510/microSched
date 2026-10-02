@@ -678,13 +678,35 @@ def _compaction_messages(
         .joinpath("mimi-compaction-v2.md")
         .read_text(encoding="utf-8")
     )
+    # Canonical provenance/quotes remain encrypted on the server. The helper
+    # needs active meanings and IDs for source-bound changes, not duplicated
+    # historical receipts, inactive records or server-owned pending objects.
+    wire_prior = None
+    if prior is not None:
+        wire_prior = {key: prior[key] for key in ("frontier", "summary", "summary_kind")}
+        if "constraint_ledger" in prior:
+            wire_prior["constraint_ledger"] = [
+                {
+                    "id": entry["id"],
+                    "text": entry["text"],
+                    "kind": entry["kind"],
+                    "status": entry["status"],
+                    "source": {
+                        key: value for key, value in entry["source"].items() if key != "quote"
+                    },
+                }
+                for entry in prior["constraint_ledger"]
+                if entry["status"] == "active"
+            ]
+        else:
+            wire_prior.update({key: prior.get(key, []) for key in ("decisions", "unresolved")})
     return [
         {"role": "system", "content": prompt},
         {
             "role": "user",
             "content": json.dumps(
                 {
-                    "prior": prior,
+                    "prior": wire_prior,
                     "sources": [
                         {
                             "id": str(source.id),
@@ -707,6 +729,7 @@ def _compaction_messages(
                     ),
                 },
                 ensure_ascii=False,
+                separators=(",", ":"),
             ),
         },
     ]

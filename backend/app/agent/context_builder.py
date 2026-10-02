@@ -204,7 +204,7 @@ def assemble_context(
             break
         budget = ContextBudget.model_validate(
             envelope.manifest.budget.model_copy(
-                update={"serialized_input_upper_bound": exact_bytes + 256}
+                update={"serialized_input_upper_bound": exact_bytes}
             ).model_dump()
         )
         manifest = envelope.manifest.model_copy(update={"budget": budget})
@@ -322,7 +322,7 @@ def rebind_after_read(
             return updated, rebound
         next_budget = ContextBudget.model_validate(
             updated.manifest.budget.model_copy(
-                update={"serialized_input_upper_bound": exact_bytes + 256}
+                update={"serialized_input_upper_bound": exact_bytes}
             ).model_dump()
         )
         updated = updated.model_copy(
