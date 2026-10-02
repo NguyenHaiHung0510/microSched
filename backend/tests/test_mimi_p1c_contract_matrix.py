@@ -138,7 +138,8 @@ def test_bounded_read_pages_rebind_provenance_and_remaining_budget(page_count):
                 page = query_pages_requested + 1
                 if page > 1:
                     assert any(
-                        f'"call_id":"page-{page - 1}"' in str(message.get("content", ""))
+                        message.get("role") == "tool"
+                        and message.get("tool_call_id") == f"page-{page - 1}"
                         for message in current_messages
                     )
                 requests = [

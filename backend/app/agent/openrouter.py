@@ -113,6 +113,79 @@ TASK_CREATE_TOOL = {
     },
 }
 
+COMPACTION_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "mimi_compaction_v2",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["summary", "constraints", "supersessions", "resolutions"],
+            "properties": {
+                "summary": {"type": "string", "minLength": 1, "maxLength": 6000},
+                "constraints": {
+                    "type": "array",
+                    "maxItems": 40,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["text", "kind", "source_sequence", "source_sha256", "quote"],
+                        "properties": {
+                            "text": {"type": "string", "minLength": 1, "maxLength": 1000},
+                            "kind": {"enum": ["decision", "unresolved"]},
+                            "source_sequence": {"type": "integer", "minimum": 1},
+                            "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "quote": {"type": "string", "minLength": 1, "maxLength": 1000},
+                        },
+                    },
+                },
+                "supersessions": {
+                    "type": "array",
+                    "maxItems": 40,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "prior_id",
+                            "source_sequence",
+                            "source_sha256",
+                            "quote",
+                            "replacement_text",
+                        ],
+                        "properties": {
+                            "prior_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "source_sequence": {"type": "integer", "minimum": 1},
+                            "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "quote": {"type": "string", "minLength": 1, "maxLength": 1000},
+                            "replacement_text": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1000,
+                            },
+                        },
+                    },
+                },
+                "resolutions": {
+                    "type": "array",
+                    "maxItems": 40,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["prior_id", "source_sequence", "source_sha256", "quote"],
+                        "properties": {
+                            "prior_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "source_sequence": {"type": "integer", "minimum": 1},
+                            "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "quote": {"type": "string", "minLength": 1, "maxLength": 1000},
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
 
 def _route_identity(settings: Settings) -> tuple[str, str]:
     if settings.mimi_standard_api_key is None or settings.mimi_route_model is None:
@@ -164,14 +237,17 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
     }
 
 
-def serialized_input_bytes(messages: list[dict[str, Any]], *, agent_contract: bool) -> int:
+def serialized_input_bytes(
+    messages: list[dict[str, Any]], *, agent_contract: bool, summary_mode: bool = False
+) -> int:
     """Bound the full model-visible input, including output and tool schemas."""
 
-    payload = {
-        "messages": messages,
-        "tools": list(TOOLS) if agent_contract else [TASK_CREATE_TOOL],
-    }
-    if agent_contract:
+    payload = {"messages": messages}
+    if summary_mode:
+        payload["response_format"] = COMPACTION_RESPONSE_FORMAT
+    else:
+        payload["tools"] = list(TOOLS) if agent_contract else [TASK_CREATE_TOOL]
+    if agent_contract and not summary_mode:
         payload["response_format"] = AGENT_RESPONSE_FORMAT
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
@@ -184,14 +260,17 @@ def build_request(
     session_id: str | None = None,
     force_task_tool: bool = False,
     agent_contract: bool = False,
+    summary_mode: bool = False,
 ) -> dict[str, Any]:
     """Build either the attributable exact lane or bounded adaptive dogfood lane."""
     route = settings or get_settings()
     _, model = _route_identity(route)
-    active_tools = list(TOOLS) if agent_contract else [TASK_CREATE_TOOL]
+    if summary_mode and agent_contract:
+        raise RouteContractError("summary_mode_conflicts_with_agent_contract")
+    active_tools = [] if summary_mode else (list(TOOLS) if agent_contract else [TASK_CREATE_TOOL])
     # Conservative preflight: it may reject early but cannot make overflow safe.
     if (
-        serialized_input_bytes(messages, agent_contract=agent_contract)
+        serialized_input_bytes(messages, agent_contract=agent_contract, summary_mode=summary_mode)
         + route.mimi_route_max_output_tokens
         > route.mimi_route_context_tokens
     ):
@@ -199,13 +278,9 @@ def build_request(
     request: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "tools": active_tools,
         # Ordinary turns implement Mimi's terminal union. An explicit revision
         # of an existing preview is different: text claiming that a preview was
         # changed is not a state transition, so require the typed replacement.
-        "tool_choice": _tool_choice(
-            route, force_task_tool=force_task_tool, agent_contract=agent_contract
-        ),
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the
         # terminal parser independently enforces at most one tool call.
@@ -223,9 +298,16 @@ def build_request(
         "usage": {"include": True},
         "provider": _provider_policy(route),
     }
+    if not summary_mode:
+        request["tools"] = active_tools
+        request["tool_choice"] = _tool_choice(
+            route, force_task_tool=force_task_tool, agent_contract=agent_contract
+        )
     if stream:
         request["stream_options"] = {"include_usage": True}
-    if agent_contract and route.mimi_text_response_format == "structured":
+    if summary_mode:
+        request["response_format"] = COMPACTION_RESPONSE_FORMAT
+    elif agent_contract and route.mimi_text_response_format == "structured":
         request["response_format"] = AGENT_RESPONSE_FORMAT
     if session_id:
         request["session_id"] = session_id
@@ -301,6 +383,34 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
         raise
     except (KeyError, TypeError, ValueError, ValidationError) as error:
         raise RouteContractError("invalid_agent_terminal_payload") from error
+
+
+def parse_compaction_completion(payload: dict[str, Any]) -> AgentCompletion:
+    """Parse the strict summary-only JSON shape; any function call is invalid."""
+    try:
+        choices = payload["choices"]
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise RouteContractError("provider_must_return_one_choice")
+        message = choices[0]["message"]
+        if not isinstance(message, dict) or message.get("tool_calls"):
+            raise RouteContractError("compaction_requires_summary_not_tool_or_draft")
+        raw = message.get("content")
+        candidate = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(candidate, dict):
+            raise RouteContractError("compaction_summary_payload_invalid")
+        return AgentCompletion(
+            outcome=AssistantText(
+                kind="assistant_text", text=json.dumps(candidate, ensure_ascii=False)
+            ),
+            response_id=str(payload.get("id", "")),
+            usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            provider=payload.get("provider") if isinstance(payload.get("provider"), str) else None,
+            model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+        )
+    except RouteContractError:
+        raise
+    except (KeyError, TypeError, ValueError) as error:
+        raise RouteContractError("compaction_summary_payload_invalid") from error
 
 
 def _tool_choice(settings: Settings, *, force_task_tool: bool, agent_contract: bool = False) -> Any:
@@ -429,6 +539,7 @@ async def complete(
     session_id: str | None = None,
     force_task_tool: bool = False,
     agent_contract: bool = False,
+    summary_mode: bool = False,
 ) -> ProviderCompletion | AgentCompletion:
     """Dispatch once. Retry authority belongs to persisted run state."""
     route = settings or get_settings()
@@ -442,6 +553,7 @@ async def complete(
             session_id=session_id,
             force_task_tool=force_task_tool,
             agent_contract=agent_contract,
+            summary_mode=summary_mode,
         )
     api_key, _ = _route_identity(route)
     request = build_request(
@@ -450,6 +562,7 @@ async def complete(
         session_id=session_id,
         force_task_tool=force_task_tool,
         agent_contract=agent_contract,
+        summary_mode=summary_mode,
     )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
@@ -476,6 +589,8 @@ async def complete(
             raise RouteContractError("provider_terminal_payload_is_not_json") from error
         if not isinstance(payload, dict):
             raise RouteContractError("provider_terminal_payload_is_not_an_object")
+        if summary_mode:
+            return parse_compaction_completion(payload)
         return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
     finally:
         if owns_client:
@@ -491,6 +606,7 @@ async def complete_stream(
     on_event: ProviderEventSink | None = None,
     force_task_tool: bool = False,
     agent_contract: bool = False,
+    summary_mode: bool = False,
 ) -> ProviderCompletion | AgentCompletion:
     """Normalize OpenRouter SSE without exposing raw chunks or partial tool JSON."""
     route = settings or get_settings()
@@ -505,6 +621,7 @@ async def complete_stream(
             on_event=on_event,
             force_task_tool=force_task_tool,
             agent_contract=agent_contract,
+            summary_mode=summary_mode,
         )
     api_key, _ = _route_identity(route)
     request = build_request(
@@ -514,6 +631,7 @@ async def complete_stream(
         session_id=session_id,
         force_task_tool=force_task_tool,
         agent_contract=agent_contract,
+        summary_mode=summary_mode,
     )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
@@ -656,7 +774,11 @@ async def complete_stream(
             }
             for _, item in sorted(tool_calls.items())
         ]
-        parser = parse_agent_completion if agent_contract else parse_completion
+        parser = (
+            parse_compaction_completion
+            if summary_mode
+            else (parse_agent_completion if agent_contract else parse_completion)
+        )
         completion = parser(
             {
                 "id": response_id,

@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.agent import crypto as mimi_crypto
 from app.agent import service as mimi_service
 from app.agent.context import AssistantText
-from app.agent.models import MimiConversation, MimiEvent, MimiMessage, MimiRun
-from app.agent.openrouter import AgentCompletion
+from app.agent.models import MimiConversation, MimiEvent, MimiMessage, MimiProviderCall, MimiRun
+from app.agent.openrouter import AgentCompletion, RouteContractError
 from app.agent.route_config import bind_configuration
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
@@ -169,7 +169,8 @@ def test_checkpoint_rehydrates_across_sessions_and_rejects_tamper(pg_dsn) -> Non
 
 
 @pytest.mark.parametrize(
-    "failure_mode", [None, "invalid_summary", "frontier_conflict", "capacity_short"]
+    "failure_mode",
+    [None, "invalid_summary", "frontier_conflict", "capacity_short", "actual_capacity"],
 )
 def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activation(
     pg_dsn, monkeypatch, failure_mode
@@ -185,9 +186,10 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
         async def summary(messages, **kwargs):
             nonlocal dispatched
             dispatched += 1
-            assert kwargs["settings"].mimi_route_context_tokens == 100000
+            assert kwargs["settings"].mimi_route_context_tokens == 32000
             assert kwargs["settings"].mimi_route_max_output_tokens == 2048
-            assert "Chỉ học buổi tối" in messages[-1]["content"]
+            source_payload = json.loads(messages[-1]["content"])
+            first_source = next((s for s in source_payload["sources"] if s["sequence"] == 1), None)
             if failure_mode == "frontier_conflict":
                 async with maker() as concurrent:
                     changed = await concurrent.get(MimiConversation, cid)
@@ -198,8 +200,19 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
                     text=json.dumps(
                         {
                             "summary": "Chỉ học buổi tối, không đổi ngày thi (nguồn#1).",
-                            "decisions": ["Nguồn#1: chỉ học buổi tối"],
-                            "unresolved": ["Chưa chốt lịch"],
+                            "constraints": [
+                                {
+                                    "text": "Chỉ học buổi tối",
+                                    "kind": "decision",
+                                    "source_sequence": 1,
+                                    "source_sha256": first_source["sha256"] if first_source else "",
+                                    "quote": "Chỉ học buổi tối",
+                                }
+                            ]
+                            if first_source
+                            else [],
+                            "supersessions": [],
+                            "resolutions": [],
                             **(
                                 {"untrusted_extra": True}
                                 if failure_mode == "invalid_summary"
@@ -287,11 +300,56 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
                     assert len(raw_messages) == 18
                     return
 
-                def capacity_probe(history, checkpoint):
+                def capacity_probe(history, checkpoint, *_metadata):
                     # Simulate complete-request overhead reducing history space;
                     # raw history is below the old 60% trigger in this variant.
                     if len(history) >= 8:
                         raise ValueError("context_overflow_preflight")
+
+                from app.agent.context_builder import assemble_context
+                from app.agent.contracts import ExecutionLease, Sensitivity
+                from app.agent.openrouter import build_request, serialized_input_bytes
+
+                lease = ExecutionLease(
+                    lease_id=uuid7(),
+                    owner_id=uuid7(),
+                    run_id=rid,
+                    capabilities=("task.query.v1",),
+                    issued_at=datetime.now(UTC),
+                    deadline=datetime.now(UTC) + timedelta(minutes=5),
+                    max_turns=4,
+                    max_tool_calls=6,
+                    cost_cap_minor=0,
+                    sensitivity=Sensitivity.STANDARD,
+                )
+                test_settings = settings.model_copy(
+                    update={"mimi_standard_api_key": "synthetic-no-key"}
+                )
+                exact_inputs = []
+
+                def actual_probe(history, checkpoint, checkpoint_id, frontier, span):
+                    _ctx, wire = assemble_context(
+                        lease=lease,
+                        reserved_task_id=uuid7(),
+                        conversation_id=cid,
+                        generation=1,
+                        request_id="capacity-full-wire",
+                        transcript_suffix=history,
+                        current_user_turn="Giữ buổi tối, trình phương án trước khi ghi.",
+                        task_context=[],
+                        pending_preview_content=[{"title": "Pending synthetic"}],
+                        pending_preview=None,
+                        pending_draft=None,
+                        checkpoint=checkpoint,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_frontier=frontier,
+                        transcript_range=span,
+                        settings=test_settings,
+                        remaining_turns=4,
+                        remaining_tool_calls=6,
+                    )
+                    build_request(wire, test_settings, agent_contract=True)
+                    exact_inputs.append(serialized_input_bytes(wire, agent_contract=True))
 
                 suffix, span, checkpoint, event_id = await mimi_service._prepare_context_history(
                     db,
@@ -302,21 +360,271 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
                     None,
                     None,
                     settings=settings,
-                    context_probe=capacity_probe if failure_mode == "capacity_short" else None,
+                    context_probe=(
+                        actual_probe
+                        if failure_mode == "actual_capacity"
+                        else capacity_probe
+                        if failure_mode == "capacity_short"
+                        else None
+                    ),
                 )
                 await db.commit()
                 assert checkpoint["summary_kind"] == "semantic_model"
                 assert "buổi tối" in checkpoint["summary"]
-                assert checkpoint["frontier"] < span[0]
-                assert dispatched == 1
-                assert suffix
+                if span is not None:
+                    assert checkpoint["frontier"] < span[0]
+                else:
+                    assert failure_mode == "actual_capacity" and checkpoint["frontier"] == 18
+                assert 1 <= dispatched <= 4
+                if failure_mode == "actual_capacity":
+                    assert exact_inputs and exact_inputs[-1] + 8192 <= 32000
+                assert suffix or failure_mode == "actual_capacity"
             async with maker() as db:
                 row = await db.get(MimiConversation, cid)
                 _, _, restored, _ = await mimi_service._prepare_context_history(
                     db, row, dek, rid, 19, None, None, settings=settings
                 )
                 assert restored["summary"] == checkpoint["summary"]
-                assert dispatched == 1
+                assert 1 <= dispatched <= 4
+        finally:
+            async with maker() as db:
+                row = await db.get(MimiConversation, cid)
+                if row:
+                    await db.delete(row)
+                    await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure_mode", ["small_cap", "reservation"])
+def test_compaction_preflight_or_reservation_failure_halts_without_dispatch_or_history_loss(
+    pg_dsn, monkeypatch, failure_mode
+):
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        cid, rid = uuid7(), uuid7()
+        wrapped = mimi_crypto.create_wrapped_dek()
+        dek = mimi_crypto.unwrap_dek(wrapped)
+        calls = 0
+
+        async def unexpected_dispatch(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise AssertionError("preflight failure must halt before dispatch")
+
+        monkeypatch.setattr(mimi_service, "openrouter_complete", unexpected_dispatch)
+        if failure_mode == "reservation":
+            from app.agent import local_budget
+
+            def fail_reservation(*args, **kwargs):
+                raise RouteContractError("synthetic_reservation_refused")
+
+            monkeypatch.setattr(local_budget, "reserve", fail_reservation)
+        try:
+            async with maker() as db:
+                conversation = MimiConversation(
+                    id=cid,
+                    owner_id=uuid7(),
+                    sensitivity="standard",
+                    dek_wrapped=wrapped,
+                    next_message_sequence=19,
+                )
+                db.add(conversation)
+                await db.flush()
+                db.add(
+                    MimiRun(
+                        id=rid,
+                        conversation_id=cid,
+                        generation=1,
+                        state="building",
+                        execution_lease={},
+                        source_versions={},
+                        deadline=datetime.now(UTC) + timedelta(minutes=5),
+                    )
+                )
+                await db.flush()
+                for seq in range(1, 19):
+                    role = "user" if seq % 2 else "assistant"
+                    content = f"synthetic-preserved-{seq}-" + "x" * 1800
+                    db.add(
+                        MimiMessage(
+                            conversation_id=cid,
+                            run_id=rid,
+                            sequence=seq,
+                            role=role,
+                            content_ciphertext=mimi_crypto.seal_content(
+                                dek,
+                                content,
+                                aad=mimi_crypto.message_aad(cid, seq, role),
+                            ),
+                            content_bytes=len(content.encode()),
+                            content_sha256=hashlib.sha256(content.encode()).hexdigest(),
+                        )
+                    )
+                await db.commit()
+
+            async with maker() as db:
+                conversation = await db.get(MimiConversation, cid)
+                settings = bind_configuration(
+                    get_settings(),
+                    {"profile_id": "luna", "effort": "medium", "input_tokens": 32000},
+                )
+                if failure_mode == "small_cap":
+                    settings = settings.model_copy(update={"mimi_route_context_tokens": 2048})
+                with pytest.raises(HTTPException) as stopped:
+                    await mimi_service._prepare_context_history(
+                        db, conversation, dek, rid, 19, None, None, settings=settings
+                    )
+                assert stopped.value.status_code == 409
+                run = await db.get(MimiRun, rid)
+                assert run.state == "budget_exceeded"
+                assert run.completed_at is not None
+                assert conversation.context_frontier_sequence == 0
+                rows = (
+                    (
+                        await db.execute(
+                            select(MimiMessage).where(MimiMessage.conversation_id == cid)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                provider_calls = (
+                    (
+                        await db.execute(
+                            select(MimiProviderCall).where(MimiProviderCall.run_id == rid)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert len(rows) == 18
+                assert provider_calls == []
+                assert calls == 0
+        finally:
+            async with maker() as db:
+                row = await db.get(MimiConversation, cid)
+                if row:
+                    await db.delete(row)
+                    await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_compaction_stops_after_four_helper_calls_and_keeps_all_raw_sources(pg_dsn, monkeypatch):
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        cid, rid = uuid7(), uuid7()
+        wrapped = mimi_crypto.create_wrapped_dek()
+        dek = mimi_crypto.unwrap_dek(wrapped)
+        calls = 0
+
+        async def summary(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return AgentCompletion(
+                outcome=AssistantText(
+                    text=json.dumps(
+                        {
+                            "summary": "bounded synthetic summary",
+                            "constraints": [],
+                            "supersessions": [],
+                            "resolutions": [],
+                        }
+                    )
+                ),
+                response_id=f"summary-{calls}",
+                usage={},
+                provider="Synthetic",
+                model="openai/gpt-6-luna",
+            )
+
+        monkeypatch.setattr(mimi_service, "openrouter_complete", summary)
+        try:
+            async with maker() as db:
+                conversation = MimiConversation(
+                    id=cid,
+                    owner_id=uuid7(),
+                    sensitivity="standard",
+                    dek_wrapped=wrapped,
+                    next_message_sequence=61,
+                )
+                db.add(conversation)
+                await db.flush()
+                db.add(
+                    MimiRun(
+                        id=rid,
+                        conversation_id=cid,
+                        generation=1,
+                        state="building",
+                        execution_lease={},
+                        source_versions={},
+                        deadline=datetime.now(UTC) + timedelta(minutes=5),
+                    )
+                )
+                await db.flush()
+                for seq in range(1, 61):
+                    role = "user" if seq % 2 else "assistant"
+                    content = f"synthetic-chunk-{seq}-" + "x" * 50
+                    db.add(
+                        MimiMessage(
+                            conversation_id=cid,
+                            run_id=rid,
+                            sequence=seq,
+                            role=role,
+                            content_ciphertext=mimi_crypto.seal_content(
+                                dek,
+                                content,
+                                aad=mimi_crypto.message_aad(cid, seq, role),
+                            ),
+                            content_bytes=len(content.encode()),
+                            content_sha256=hashlib.sha256(content.encode()).hexdigest(),
+                        )
+                    )
+                await db.commit()
+
+            async with maker() as db:
+                conversation = await db.get(MimiConversation, cid)
+                settings = bind_configuration(
+                    get_settings(),
+                    {"profile_id": "luna", "effort": "medium", "input_tokens": 32000},
+                )
+
+                def always_overflow(_history, _checkpoint, *_metadata):
+                    raise ValueError("context_overflow_preflight")
+
+                with pytest.raises(HTTPException) as stopped:
+                    await mimi_service._prepare_context_history(
+                        db,
+                        conversation,
+                        dek,
+                        rid,
+                        61,
+                        None,
+                        None,
+                        settings=settings,
+                        context_probe=always_overflow,
+                    )
+                assert stopped.value.detail == "mimi_compaction_helper_call_limit"
+                assert calls == 4
+                run = await db.get(MimiRun, rid)
+                assert run.state == "budget_exceeded"
+                assert conversation.context_frontier_sequence > 0
+                rows = (
+                    (
+                        await db.execute(
+                            select(MimiMessage).where(MimiMessage.conversation_id == cid)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert len(rows) == 60
+                assert all(row.content_ciphertext.startswith("mimi:v1:") for row in rows)
         finally:
             async with maker() as db:
                 row = await db.get(MimiConversation, cid)

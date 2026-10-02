@@ -129,5 +129,8 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
             "mimi_route_max_output_tokens": profile["output_reserve"],
             "mimi_route_max_input_price": profile["input_price"],
             "mimi_route_max_output_price": profile["output_price"],
+            # All four frozen exact endpoints advertise named function choice.
+            # Revisions still require a typed replacement before server activation.
+            "mimi_route_forced_tool_choice": "function",
         }
     )

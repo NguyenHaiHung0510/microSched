@@ -20,7 +20,12 @@ from sqlalchemy import and_, false, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import crypto as mimi_crypto
-from app.agent.compaction import CheckpointSource, make_checkpoint, make_semantic_checkpoint
+from app.agent.compaction import (
+    CheckpointSource,
+    active_constraint_context,
+    make_checkpoint,
+    make_semantic_checkpoint,
+)
 from app.agent.context import (
     TERMINAL_ADAPTER,
     AssistantText,
@@ -51,6 +56,8 @@ from app.agent.openrouter import (
     ProviderCompletion,
     ProviderDispatchError,
     RouteContractError,
+    build_request,
+    serialized_input_bytes,
 )
 from app.agent.openrouter import (
     complete as openrouter_complete,
@@ -658,6 +665,50 @@ async def _provider_history(
     ]
 
 
+def _compaction_messages(
+    prior: dict[str, Any] | None,
+    sources: list[CheckpointSource],
+    current_user_source: CheckpointSource | None = None,
+):
+    prompt = (
+        Path(__file__)
+        .with_name("policy")
+        .joinpath("mimi-compaction-v2.md")
+        .read_text(encoding="utf-8")
+    )
+    return [
+        {"role": "system", "content": prompt},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "prior": prior,
+                    "sources": [
+                        {
+                            "id": str(source.id),
+                            "sequence": source.sequence,
+                            "role": source.role,
+                            "sha256": source.content_sha256,
+                            "content": source.content,
+                        }
+                        for source in sources
+                    ],
+                    "current_authenticated_user_source": (
+                        {
+                            "sequence": current_user_source.sequence,
+                            "sha256": current_user_source.content_sha256,
+                            "quoteable_content": current_user_source.content,
+                        }
+                        if current_user_source
+                        else None
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+        },
+    ]
+
+
 async def _semantic_checkpoint(
     db: AsyncSession,
     conversation: MimiConversation,
@@ -667,48 +718,52 @@ async def _semantic_checkpoint(
     pending_preview: dict[str, Any] | None,
     pending_draft: dict[str, Any] | None,
     settings: Settings,
+    current_user_source: CheckpointSource | None = None,
 ) -> dict[str, Any]:
     """One journalled helper call; invalid output cannot advance the frontier."""
     from app.agent.local_budget import account, reserve
 
-    prompt = (
-        Path(__file__)
-        .with_name("policy")
-        .joinpath("mimi-compaction-v1.md")
-        .read_text(encoding="utf-8")
-    )
     helper = settings.model_copy(
         update={
             "mimi_route_max_output_tokens": 2048,
             "mimi_text_response_format": "structured",
-            # A separately journalled helper profile, not the main chat cap.
-            # Preserve exact model/provider/privacy/price and zero retries.
-            "mimi_route_context_tokens": max(settings.mimi_route_context_tokens, 100000),
+            # Preserve the selected total cap and exact route; only output
+            # reserve is reduced for this bounded summary call.
         }
     )
-    messages = [
-        {"role": "system", "content": prompt},
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "prior": prior,
-                    "sources": [
-                        {
-                            "id": str(s.id),
-                            "sequence": s.sequence,
-                            "role": s.role,
-                            "sha256": s.content_sha256,
-                            "content": s.content,
-                        }
-                        for s in sources
-                    ],
-                },
-                ensure_ascii=False,
-            ),
-        },
-    ]
-    reservation = reserve(helper, messages, agent_contract=True)
+    messages = _compaction_messages(prior, sources, current_user_source)
+    try:
+        # A placeholder satisfies route construction during offline preflight;
+        # this built request is never dispatched and the placeholder is not sent.
+        preflight_settings = helper.model_copy(
+            update={
+                "mimi_standard_api_key": helper.mimi_standard_api_key or "preflight-only",
+            }
+        )
+        build_request(messages, settings=preflight_settings, summary_mode=True)
+        if (
+            serialized_input_bytes(messages, agent_contract=False, summary_mode=True)
+            + helper.mimi_route_max_output_tokens
+            > helper.mimi_route_context_tokens
+        ):
+            raise RouteContractError("compaction_context_overflow_preflight")
+        reservation = reserve(helper, messages, agent_contract=False, summary_mode=True)
+    except RouteContractError as error:
+        run = await db.get(MimiRun, run_id)
+        run.state = "budget_exceeded"
+        run.error_code = "compaction_preflight_or_reservation_failed"
+        run.completed_at = datetime.now(UTC)
+        await _append_event(
+            db,
+            run_id,
+            "run.terminal",
+            {
+                "state": run.state,
+                "error_code": run.error_code,
+            },
+        )
+        await db.commit()
+        raise _conflict(run.error_code) from error
     attempt = 1 + (
         (
             await db.execute(
@@ -729,7 +784,9 @@ async def _semantic_checkpoint(
             "output_reserve": helper.mimi_route_max_output_tokens,
             "model": helper.mimi_route_model,
             "reasoning_effort": helper.mimi_route_reasoning_effort,
-            "compaction_prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "compaction_prompt_sha256": hashlib.sha256(
+                str(messages[0]["content"]).encode("utf-8")
+            ).hexdigest(),
         },
     )
     db.add(call)
@@ -741,7 +798,7 @@ async def _semantic_checkpoint(
         result = await openrouter_complete(
             messages,
             settings=helper,
-            agent_contract=True,
+            summary_mode=True,
             session_id=_provider_session_id(conversation.id),
         )
         account(helper, reservation, result.usage, result.response_id)
@@ -761,6 +818,7 @@ async def _semantic_checkpoint(
             pending_preview=pending_preview,
             pending_draft=pending_draft,
             candidate=json.loads(result.outcome.text),
+            current_user_source=current_user_source,
         )
         call.state = "succeeded"
         call.result = {**call.result, "summary_sha256": _canonical_digest(checkpoint)}
@@ -835,7 +893,7 @@ async def _prepare_context_history(
     pending_preview: dict[str, Any] | None,
     pending_draft: dict[str, Any] | None,
     settings: Settings | None = None,
-    context_probe: Callable[[list[dict[str, str]], dict[str, Any] | None], None] | None = None,
+    context_probe: Callable[..., None] | None = None,
 ) -> tuple[list[dict[str, str]], tuple[int, int] | None, dict[str, Any] | None, UUID | None]:
     """Use an active validated checkpoint, replacing it before any silent suffix loss."""
 
@@ -915,13 +973,32 @@ async def _prepare_context_history(
     semantic = settings is not None and settings.mimi_route_model in {
         p["model"] for p in PROFILES.values()
     }
-    compact_count = 0
-    suffix_bytes = sum(row.content_bytes for row in rows)
-    needs_compact = not semantic or suffix_bytes > int(settings.mimi_route_context_tokens * 0.60)
-    if semantic and context_probe is not None:
-        # Check the actual complete request: static policy, schemas, current
-        # input, pending authority, checkpoint and output reserve all count.
-        raw_history = [
+    current_user_row = (
+        await db.execute(
+            select(MimiMessage).where(
+                MimiMessage.conversation_id == conversation.id,
+                MimiMessage.sequence == user_sequence,
+                MimiMessage.role == "user",
+            )
+        )
+    ).scalar_one_or_none()
+    current_user_source = None
+    if current_user_row is not None:
+        current_content = mimi_crypto.open_content(
+            dek,
+            current_user_row.content_ciphertext,
+            aad=mimi_crypto.message_aad(conversation.id, current_user_row.sequence, "user"),
+        )
+        current_user_source = CheckpointSource(
+            id=current_user_row.id,
+            sequence=current_user_row.sequence,
+            role="user",
+            content_sha256=current_user_row.content_sha256,
+            content=current_content,
+        )
+
+    def decoded(selected_rows):
+        return [
             {
                 "role": row.role,
                 "content": mimi_crypto.open_content(
@@ -930,46 +1007,143 @@ async def _prepare_context_history(
                     aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
                 ),
             }
-            for row in rows
+            for row in selected_rows
         ]
+
+    def probe(selected_rows, active_checkpoint, active_checkpoint_id):
+        if context_probe is None:
+            return True
         try:
-            context_probe(raw_history, prior)
+            selected_range = (
+                (selected_rows[0].sequence, selected_rows[-1].sequence) if selected_rows else None
+            )
+            context_probe(
+                decoded(selected_rows),
+                active_constraint_context(active_checkpoint),
+                active_checkpoint_id,
+                active_checkpoint["frontier"]
+                if active_checkpoint
+                else conversation.context_frontier_sequence,
+                selected_range,
+            )
+            return True
         except ValueError as error:
             if "context_overflow_preflight" not in str(error):
                 raise
-            needs_compact = True
-    recent_bytes = min(32768, settings.mimi_route_context_tokens // 4) if semantic else 32768
-    while needs_compact and (
-        len(rows) - compact_count > 12
-        or suffix_bytes > recent_bytes
-        or (context_probe is not None and compact_count == 0 and bool(rows))
-    ):
-        if compact_count >= len(rows):
-            raise _conflict("mimi_history_message_exceeds_context_window")
-        suffix_bytes -= rows[compact_count].content_bytes
-        compact_count += 1
-    if compact_count:
-        sources = [
-            CheckpointSource(
-                id=row.id,
-                sequence=row.sequence,
-                role=row.role,
-                content_sha256=row.content_sha256,
-                content=mimi_crypto.open_content(
-                    dek,
-                    row.content_ciphertext,
-                    aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
-                ),
+            return False
+
+    async def halt_context(code: str):
+        run = await db.get(MimiRun, run_id)
+        if run is not None and run.state not in {
+            "halted",
+            "outcome_unknown",
+            "cancelled",
+            "budget_exceeded",
+            "completed",
+        }:
+            run.state = "budget_exceeded"
+            run.error_code = code
+            run.completed_at = datetime.now(UTC)
+            await _append_event(
+                db,
+                run_id,
+                "run.terminal",
+                {
+                    "state": run.state,
+                    "error_code": code,
+                },
             )
-            for row in rows[:compact_count]
-        ]
+            await db.commit()
+        raise _conflict(code)
+
+    suffix_bytes = sum(row.content_bytes for row in rows)
+    recent_bytes = min(32768, settings.mimi_route_context_tokens // 4) if semantic else 32768
+    fits = probe(rows, prior, checkpoint_id)
+    wants_compact = (not semantic and (suffix_bytes > recent_bytes or len(rows) > 12)) or (
+        semantic
+        and context_probe is None
+        and suffix_bytes > int(settings.mimi_route_context_tokens * 0.60)
+    )
+    helper_calls = 0
+    while (not fits or wants_compact) and (
+        rows
+        or (
+            semantic and prior is not None and current_user_source is not None and helper_calls == 0
+        )
+    ):
+        if semantic:
+            if helper_calls >= 4:
+                await halt_context("mimi_compaction_helper_call_limit")
+            selected_sources = []
+            for row in rows[:12]:
+                source = CheckpointSource(
+                    id=row.id,
+                    sequence=row.sequence,
+                    role=row.role,
+                    content_sha256=row.content_sha256,
+                    content=mimi_crypto.open_content(
+                        dek,
+                        row.content_ciphertext,
+                        aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
+                    ),
+                )
+                proposed = [*selected_sources, source]
+                helper_messages = _compaction_messages(prior, proposed, current_user_source)
+                if (
+                    serialized_input_bytes(helper_messages, agent_contract=False, summary_mode=True)
+                    + 2048
+                    > settings.mimi_route_context_tokens
+                ):
+                    break
+                selected_sources.append(source)
+            if not selected_sources and not rows and current_user_source is not None:
+                selected_sources = [current_user_source]
+            if not selected_sources:
+                await halt_context("mimi_compaction_fixed_or_single_source_exceeds_context")
+            compact_count = len(selected_sources)
+            helper_calls += 1
+        else:
+            compact_count = 0
+            while (
+                len(rows) - compact_count > 12
+                or suffix_bytes > recent_bytes
+                or (context_probe is not None and not fits and compact_count == 0)
+            ):
+                if compact_count >= len(rows):
+                    break
+                suffix_bytes -= rows[compact_count].content_bytes
+                compact_count += 1
+            if compact_count == 0:
+                await halt_context("mimi_history_message_exceeds_context_window")
+            selected_sources = [
+                CheckpointSource(
+                    id=row.id,
+                    sequence=row.sequence,
+                    role=row.role,
+                    content_sha256=row.content_sha256,
+                    content=mimi_crypto.open_content(
+                        dek,
+                        row.content_ciphertext,
+                        aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
+                    ),
+                )
+                for row in rows[:compact_count]
+            ]
         if semantic:
             checkpoint = await _semantic_checkpoint(
-                db, conversation, run_id, sources, prior, pending_preview, pending_draft, settings
+                db,
+                conversation,
+                run_id,
+                selected_sources,
+                prior,
+                pending_preview,
+                pending_draft,
+                settings,
+                current_user_source,
             )
         else:
             checkpoint = make_checkpoint(
-                sources=sources,
+                sources=selected_sources,
                 prior=prior,
                 policy_sha256=policy.sha256,
                 pending_preview=pending_preview,
@@ -986,7 +1160,7 @@ async def _prepare_context_history(
         ).scalar_one()
         event.payload = {
             "frontier": checkpoint["frontier"],
-            "source_count": len(sources),
+            "source_count": len(selected_sources),
             "content_sha256": _canonical_digest(checkpoint),
             "content_ciphertext": mimi_crypto.seal_content(
                 dek,
@@ -996,20 +1170,17 @@ async def _prepare_context_history(
         }
         conversation.context_frontier_sequence = checkpoint["frontier"]
         await db.flush()
-        prior = checkpoint
-        checkpoint_id = event.id
+        prior, checkpoint_id = checkpoint, event.id
         rows = rows[compact_count:]
-    messages = [
-        {
-            "role": row.role,
-            "content": mimi_crypto.open_content(
-                dek,
-                row.content_ciphertext,
-                aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
-            ),
-        }
-        for row in rows
-    ]
+        fits = probe(rows, prior, checkpoint_id)
+        wants_compact = False
+        if fits:
+            break
+        if not rows:
+            await halt_context("mimi_compaction_fixed_current_input_exceeds_context")
+    if not fits:
+        await halt_context("mimi_compaction_fixed_current_input_exceeds_context")
+    messages = decoded(rows)
     transcript_range = (rows[0].sequence, rows[-1].sequence) if rows else None
     return messages, transcript_range, prior, checkpoint_id
 
@@ -1297,6 +1468,22 @@ async def send_message(
             .with_for_update()
         )
     ).all()
+    live_pending_previews = []
+    for old_change_set, old_run in pending_previews:
+        if old_change_set.expires_at <= datetime.now(UTC):
+            old_change_set.state = "expired"
+            old_run.state = "deadline_exceeded"
+            old_run.completed_at = datetime.now(UTC)
+            await _append_event(db, old_run.id, "change_set.expired", {})
+            await _append_event(
+                db,
+                old_run.id,
+                "run.terminal",
+                {"state": "deadline_exceeded", "error_code": "change_set_expired"},
+            )
+        else:
+            live_pending_previews.append((old_change_set, old_run))
+    pending_previews = live_pending_previews
     if len(pending_previews) > 1:
         raise _conflict("multiple_pending_previews_require_reconciliation")
     observed_pending = pending_previews[0] if pending_previews else None
@@ -1432,8 +1619,14 @@ async def send_message(
     checkpoint_id: UUID | None = None
     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
 
-        def probe_context(history, active_checkpoint):
-            assemble_context(
+        def probe_context(
+            history,
+            active_checkpoint,
+            active_checkpoint_id,
+            checkpoint_frontier,
+            selected_transcript_range,
+        ):
+            _, probe_messages = assemble_context(
                 lease=lease,
                 reserved_task_id=task_id,
                 conversation_id=conversation.id,
@@ -1454,15 +1647,18 @@ async def send_message(
                     else None
                 ),
                 pending_draft=pending_draft,
-                checkpoint=active_checkpoint["summary"] if active_checkpoint else None,
-                checkpoint_id=None,
-                checkpoint_frontier=conversation.context_frontier_sequence,
-                transcript_range=None,
+                checkpoint=active_checkpoint,
+                checkpoint_id=active_checkpoint_id,
+                checkpoint_frontier=checkpoint_frontier,
+                transcript_range=selected_transcript_range,
                 settings=settings,
                 remaining_turns=lease.max_turns,
                 remaining_tool_calls=lease.max_tool_calls,
                 pending_draft_content=pending_draft_content,
             )
+            # Exercise the same serialized contract and selected cap as the
+            # eventual provider dispatch, including tool/schema/output reserve.
+            build_request(probe_messages, settings=settings, agent_contract=True)
 
         (
             provider_history,
@@ -1548,7 +1744,7 @@ async def send_message(
                 pending_preview_content=prior_preview_operations,
                 pending_preview=pending_preview,
                 pending_draft=pending_draft,
-                checkpoint=checkpoint["summary"] if checkpoint else None,
+                checkpoint=active_constraint_context(checkpoint),
                 checkpoint_id=checkpoint_id,
                 checkpoint_frontier=conversation.context_frontier_sequence,
                 transcript_range=transcript_range,

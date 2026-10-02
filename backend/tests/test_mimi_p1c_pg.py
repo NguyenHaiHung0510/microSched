@@ -390,7 +390,7 @@ def test_iterative_read_updates_context_without_writing(pg_dsn, monkeypatch):
                 )
             else:
                 assert any(
-                    "KẾT QUẢ CÔNG CỤ ĐỌC" in str(message.get("content", "")) for message in messages
+                    message.get("role") == "tool" for message in messages
                 )
                 outcome = AssistantText(text="Không có Task STANDARD trong phạm vi đã đọc.")
             return AgentCompletion(

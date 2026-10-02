@@ -11,6 +11,7 @@ import pytest
 from app.agent.context import AGENT_RESPONSE_FORMAT, AssistantText, Clarification
 from app.agent.openai_sdk import _timeout
 from app.agent.openrouter import (
+    AgentCompletion,
     ProviderDispatchError,
     build_request,
     complete,
@@ -249,6 +250,88 @@ async def test_sdk_status_errors_are_counted_once(
     assert raised.value.outcome == outcome
     assert raised.value.status == status
     assert calls == 1
+
+
+@pytest.mark.anyio
+async def test_sdk_provider_error_text_never_enters_diagnostic_or_persistable_result() -> None:
+    private_markers = [
+        "COPIED_USER_SENTENCE_078",
+        "Bearer ordinary-looking-secret",
+        "ghp_unprefixedcredentialexample",
+        "person@example.invalid",
+        "identifying-text-078",
+    ]
+    body = {
+        "error": {
+            "message": " ".join(private_markers),
+            "code": "provider-code-" + private_markers[2],
+            "type": "provider-type-" + private_markers[3],
+            "param": "provider-param-" + private_markers[4],
+        }
+    }
+    transport = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda request: httpx2.Response(400, json=body))
+    )
+    try:
+        with pytest.raises(ProviderDispatchError) as raised:
+            await complete(
+                [{"role": "user", "content": private_markers[0]}],
+                settings=_settings(),
+                client=transport,
+            )
+    finally:
+        await transport.aclose()
+
+    persisted_result = json.dumps(
+        {"status": raised.value.status, "diagnostic": raised.value.diagnostic}
+    )
+    assert raised.value.outcome == "failed"
+    assert raised.value.status == 400
+    assert raised.value.diagnostic == {"category": "provider_rejected"}
+    assert all(marker not in persisted_result for marker in private_markers)
+
+
+@pytest.mark.anyio
+async def test_sdk_summary_dispatch_omits_tools_and_tool_choice() -> None:
+    captured: list[dict[str, Any]] = []
+    candidate = {"summary": "ok", "constraints": [], "supersessions": [], "resolutions": []}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        captured.append(json.loads(request.content))
+        return httpx2.Response(
+            200,
+            json={
+                "id": "summary-1",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "vendor/model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": json.dumps(candidate)},
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+            },
+        )
+
+    transport = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    try:
+        result = await complete(
+            [{"role": "system", "content": "summary"}],
+            settings=_settings(),
+            client=transport,
+            summary_mode=True,
+        )
+    finally:
+        await transport.aclose()
+
+    assert isinstance(result, AgentCompletion)
+    assert len(captured) == 1
+    assert "tools" not in captured[0]
+    assert "tool_choice" not in captured[0]
+    assert captured[0]["response_format"]["json_schema"]["strict"] is True
 
 
 @pytest.mark.anyio

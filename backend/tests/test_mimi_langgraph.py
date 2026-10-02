@@ -124,6 +124,10 @@ def test_langgraph_replaces_loop_and_matches_read_then_terminal_control() -> Non
         assert graph.turns == control.turns == 2
         assert graph.tool_calls == control.tool_calls == 1
         assert graph.messages == control.messages
+        assert graph.messages[-2]["content"] is None
+        assert graph.messages[-2]["tool_calls"][0]["function"]["arguments"] == '{"page":1}'
+        assert graph.messages[-1]["role"] == "tool"
+        assert graph.messages[-1]["tool_call_id"] == "read-1"
         assert [call[0] for call in calls] == [1, 2]
         assert checkpoint_thread_id(uuid4(), 1) != checkpoint_thread_id(uuid4(), 2)
         assert snapshots
@@ -657,12 +661,18 @@ def test_terminal_cleanup_deletes_only_own_graph_thread_after_durable_result() -
             **common,
         )
         assert durable_results[0][0:2] == (terminal_run, 2)
-        assert await saver.aget_tuple(
-            {"configurable": {"thread_id": checkpoint_thread_id(terminal_run, 2)}}
-        ) is None
-        assert await saver.aget_tuple(
-            {"configurable": {"thread_id": checkpoint_thread_id(retained_run, 2)}}
-        ) is not None
+        assert (
+            await saver.aget_tuple(
+                {"configurable": {"thread_id": checkpoint_thread_id(terminal_run, 2)}}
+            )
+            is None
+        )
+        assert (
+            await saver.aget_tuple(
+                {"configurable": {"thread_id": checkpoint_thread_id(retained_run, 2)}}
+            )
+            is not None
+        )
 
     _run(scenario())
 
@@ -718,7 +728,9 @@ def test_restored_terminal_returns_app_result_and_releases_only_own_thread() -> 
 def test_langgraph_database_allowlist_is_exact_local_mimi078() -> None:
     from sqlalchemy.engine import make_url
 
-    assert _authorized_local_database(make_url("postgresql://u:p@localhost:55478/microsched_mimi078"))
+    assert _authorized_local_database(
+        make_url("postgresql://u:p@localhost:55478/microsched_mimi078")
+    )
     for url in (
         "postgresql://u:p@localhost:55478/microsched_p1ca_066",
         "postgresql://u:p@localhost:55479/microsched_mimi078",

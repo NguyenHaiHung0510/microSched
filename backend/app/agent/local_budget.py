@@ -60,12 +60,16 @@ def _write(path: Path, ledger: dict) -> None:
     temporary.replace(path)
 
 
-def reserve(settings: Settings, messages: list[dict], *, agent_contract: bool) -> str | None:
+def reserve(
+    settings: Settings, messages: list[dict], *, agent_contract: bool, summary_mode: bool = False
+) -> str | None:
     path = _path(settings)
     if path is None:
         return None
     # Bytes are conservative token upper bound, including tools/schema.
-    upper_input = serialized_input_bytes(messages, agent_contract=agent_contract)
+    upper_input = serialized_input_bytes(
+        messages, agent_contract=agent_contract, summary_mode=summary_mode
+    )
     if settings.mimi_route_max_input_price is None or settings.mimi_route_max_output_price is None:
         raise RouteContractError("local_budget_route_price_missing")
     maximum = (
