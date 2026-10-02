@@ -187,6 +187,11 @@ def assemble_context(
             "read_and_preview": (
                 "Use native function tool_calls only, never serialize them as text."
             ),
+            "source_coverage": (
+                "coverage=unavailable with count=0 means data has not been loaded or queried; "
+                "it is not an empty read result. Report absence only from an actual read result "
+                "with sufficient coverage. Conversation checkpoint recall does not query Tasks."
+            ),
             "text_example": (
                 "Câu trả lời bằng tiếng Việt"
                 if settings.mimi_text_response_format == "natural"
