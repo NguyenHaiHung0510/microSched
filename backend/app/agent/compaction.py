@@ -47,12 +47,15 @@ def active_constraint_context(checkpoint: dict[str, Any] | None) -> str | dict[s
         source = {key: value for key, value in item["source"].items() if key != "quote"}
         if source not in sources:
             sources.append(source)
-        rows.append([item["id"], item["text"], item["kind"], sources.index(source)])
+        # The answering model cannot mutate the checkpoint ledger. Full IDs
+        # remain in canonical storage and the compaction helper, where they
+        # are needed for validated supersession/resolution transitions.
+        rows.append([item["text"], item["kind"], sources.index(source)])
     return {
         "schema": "mimi.active-context.v2",
         "summary": checkpoint["summary"],
         "sources": sources,
-        "columns": ["id", "text", "kind", "source_ref"],
+        "columns": ["text", "kind", "source_ref"],
         "rows": rows,
         "source_quotes": "omitted_from_wire; retained_in_canonical_checkpoint",
     }
