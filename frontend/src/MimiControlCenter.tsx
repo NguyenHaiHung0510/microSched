@@ -313,7 +313,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
           </CardContent>
         </Card>
       ) : null}
-      <div className="flex-1 min-w-0 flex justify-center h-full">
+      <div className="w-full lg:w-auto flex-1 min-w-0 max-w-full flex justify-center h-full">
         <Card className="w-full max-w-4xl min-w-0 shadow-sm h-full flex flex-col">
           <CardContent className="p-4 sm:p-5 flex-1 min-h-0 flex flex-col">
             <MimiScreen

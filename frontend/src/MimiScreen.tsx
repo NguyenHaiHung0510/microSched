@@ -598,9 +598,9 @@ export function MimiScreen({
     : (latestRun?.state === 'waiting_confirmation' ? 'ready' : 'idle')
 
   return (
-    <section className="min-w-0 flex flex-col h-full space-y-4" aria-labelledby={`mimi-title-${variant}`}>
+    <section className="w-full max-w-full min-w-0 flex flex-col h-full space-y-4" aria-labelledby={`mimi-title-${variant}`}>
       <div className="flex items-center justify-between gap-2 border-b pb-2 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex flex-1 items-center gap-2 min-w-0">
           <MimiAvatar size="xs" state={mimiState} showGlow={runtimeActive} />
           <h3 id={`mimi-title-${variant}`} className="text-sm font-bold text-foreground truncate">
             {current.title ?? 'Conversation hiện tại'}
