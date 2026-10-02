@@ -406,6 +406,8 @@ def parse_compaction_completion(payload: dict[str, Any]) -> AgentCompletion:
         choices = payload["choices"]
         if not isinstance(choices, list) or len(choices) != 1:
             raise RouteContractError("provider_must_return_one_choice")
+        if not isinstance(choices[0], dict):
+            raise RouteContractError("compaction_summary_payload_invalid")
         if choices[0].get("finish_reason") == "length":
             raise RouteContractError("compaction_summary_output_truncated")
         message = choices[0]["message"]

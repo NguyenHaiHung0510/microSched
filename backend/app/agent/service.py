@@ -2659,6 +2659,12 @@ async def send_message(
                         else "Route hiện tại không đáp ứng contract; lượt chạy đã dừng."
                     )
                 )
+                if contract_error == "local_budget_exhausted":
+                    assistant = (
+                        "Ngân sách thử nghiệm đã chạm giới hạn nên Mimi chưa gọi model "
+                        "cho lượt này. Yêu cầu không tự gửi lại; cần được cấp thêm "
+                        "ngân sách trước khi thử một lượt mới."
+                    )
                 _add_assistant_message(db, conversation, run_id, dek, assistant)
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
