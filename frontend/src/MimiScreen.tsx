@@ -37,7 +37,7 @@ import {
   resolveMimiFeedbackTarget,
 } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
-import { selectCreatedMimiConversation } from '@/mimi-selection'
+import { selectCreatedMimiConversation, setMimiComposerDraft, useMimiComposerDraft } from '@/mimi-selection'
 
 function errorMessage(error: unknown): string {
   if (error instanceof TimeoutError) return error.message
@@ -171,7 +171,6 @@ export function MimiScreen({
   onConversationCreated?: (conversationId: string) => void
 }) {
   const queryClient = useQueryClient()
-  const [draft, setDraft] = useState('')
   const [revisionTarget, setRevisionTarget] = useState<{ id: string; digest: string } | null>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
   const [online, setOnline] = useState(() => navigator.onLine)
@@ -245,6 +244,7 @@ export function MimiScreen({
   })
   const queryKey = conversationId ? ['mimi', 'conversation', conversationId] : ['mimi', 'current']
   const current = conversation.data
+  const [draft, setDraft] = useMimiComposerDraft(current?.id)
   const capabilities = useQuery({
     queryKey: ['mimi', 'capabilities'],
     queryFn: fetchMimiCapabilities,
@@ -285,7 +285,7 @@ export function MimiScreen({
     },
     onSuccess: (data, variables) => {
       queryClient.setQueryData(queryKey, data)
-      setDraft('')
+      setMimiComposerDraft(variables.current.id, '')
       if (variables.revision) setRevisionTarget(null)
       const terminalRun = data.runs.at(-1)
       if (terminalRun && runStageRunId.current === terminalRun.id) {
@@ -975,7 +975,7 @@ export function MimiScreen({
             placeholder={activeRevision
               ? 'Mô tả cách bạn muốn sửa phương án…'
               : 'Nhắn Mimi… (Nhấn Enter để gửi, Shift+Enter để xuống dòng)'}
-            disabled={runtimeActive}
+            disabled={runtimeActive || !!current.archived_at}
             className="min-h-12 w-full resize-none border-none bg-transparent p-1 text-sm shadow-none focus-visible:ring-0 focus-visible:outline-none"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -997,13 +997,13 @@ export function MimiScreen({
           />
           <div className="mt-1 flex items-center justify-between pt-1 text-xs text-muted-foreground border-t border-muted/50">
             <span aria-live="polite" className="truncate pr-2">
-              {runtimeActive ? 'Mimi đang làm việc…' : 'Chưa xác nhận thì chưa ghi thay đổi.'}
+              {current.archived_at ? 'Hội thoại đã lưu · chỉ xem lại.' : runtimeActive ? 'Mimi đang làm việc…' : 'Chưa xác nhận thì chưa ghi thay đổi.'}
             </span>
             <Button
               type="submit"
               size="sm"
               className="h-8 gap-1.5 rounded-xl px-3 font-semibold shrink-0"
-              disabled={!draft.trim() || runtimeActive || !online || (revisionTarget !== null && !activeRevision)}
+              disabled={!!current.archived_at || !draft.trim() || runtimeActive || !online || (revisionTarget !== null && !activeRevision)}
             >
               {runtimeActive ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Send className="size-3.5" />}
               <span>Gửi</span>
