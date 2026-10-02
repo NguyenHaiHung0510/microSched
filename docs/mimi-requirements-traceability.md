@@ -1,6 +1,6 @@
 # Mimi requirements-to-acceptance map
 
-Status: OWNER_APPROVED_NIGHT / IMPLEMENTATION_CANDIDATE / FINAL_LIVE_QA_PENDING. 2026-10-02. Owner direct02/10 extension expires16:00Asia/Saigon; no production delivery authorized. Source: cur_docs/PTHTTM/btl/04-spec-hop-nhat-mimi.md, Owner context decisions D1–D9, current Owner interrogation/reset overrides. This map locates evidence; it does not replace product decisions or invent authority.
+Status: OWNER_APPROVED_LOCAL / IMPLEMENTATION_CANDIDATE / FINAL_LIVE_QA_PENDING. 2026-10-02. Latest direct Owner extension expires21:00Asia/Saigon, checkpoint20:45; no production delivery authorized. Source: cur_docs/PTHTTM/btl/04-spec-hop-nhat-mimi.md, Owner context decisions D1–D9, current Owner interrogation/reset overrides. This map locates evidence; it does not replace product decisions or invent authority.
 
 Columns below will be expanded with exact source section, implementation files/lines, runtime/config hashes, case IDs, receipts and truthful state. One requirement can require multiple cases; one journey can cover multiple requirements. Existing pilot evidence is not general Mimi acceptance.
 
@@ -99,3 +99,19 @@ QA-01 phase8 actual390x844mobile/1280x900desktop measurements +5unmodifiedscreen
 Phase9 Chrome on exactr8: currentsemanticcheckpoint before reloadPASS_UI_PARTIAL; sameconversationselection after reloadFAIL byT3; ONEordinaryVietnamese preview request terminalroutecontractFAIL, therefore actionrow/rejectretake NOT_RUN. Browsercapabilitydiscovery actuallyresolved through same documented returnedBrowser binding; do not leave oldAPI-unavailableclaim as currentblocker. T3reportedviewportreset/logout/ownedtabclosed. T1independentjournal/pixelsreconciliation stillpending. Do not promote source/testPASS into browserPASS. T1groupsdiagnosis+repairbefore nextfrozenQA batch, no blindrepeatpaidrequest.
 
 Ownerlocalworkdeadline21:00/checkpoint20:45 and cumulativeUSD1 retained. Originfeaturebranchbackup permitted, production forbidden untilOwnerdirectdogfoodOK+requiredcriteriaevidence+explicitproductionpermission. Workflowbatchtrialtemporarythrough08:00Oct3 orcompletionassessment: sparseactualobservations, independentQA/review retained; no trialharness/mempromotion yet. Methodexpirydoesnotauthorizeworkafter21:00. Coreimplementation85%/livegates65% areT1qualitativeestimates, notfullMimi/productionacceptance.
+
+
+## Reconciled source and live gates — 02Oct19:05
+
+Current authority: LOCAL until21:00/checkpoint20:45, same cumulativeUSD1; feature-branch origin backup permitted. No merge/deploy/production. Workflow batching trial is temporary until08:00Oct3; method expiry does not extend executor work. T1 directly owns design/core/integration; independent QA/review retained.
+
+| Requirement | New source/evidence | Current gate |
+|---|---|---|
+| CONV/WRITE/UX | R10 real-model preview accurately proposed meaningful title/body/date+time/P2/3items, single reject, zero confirm; T1 reviewed original desktop action screenshot and synthetic DB61Tasks/one receipt unchanged | PASS for that scoped preview/reject case; general edit/delete/bulk still deferred/missing |
+| CTX-01 | Summary viewer exists; T3 read checkpoint5/current20:00–20:45/09Oct. Saved receipt image has summary disclosure closed | Actual expanded-summary pixel acceptance NOT_VERIFIED; no summary-image PASS claimed |
+| CTX-02 | Structured active-constraint/source dedup projection preserves canonical ledger; targeted tests and prior independent findings closed. Actual checkpoint+3488byte fixture minimum wire22675+8192reserve=30867 (plus bounded margin fits32k), full current suffix still needs compaction | Offline fit is not live compaction quality. R10 long32k NOT_RUN due T1 handoff metadata mismatch; r11 exact-hash retake pending |
+| RUN-01 | Selected ID/draft shared across surfaces; T3 draft isolation PASS, reload manually reselected so automatic continuity NOT_PROVEN. Recovery81b7a59 binds generation ID and requires explicit valid terminal+notcancelled; unknown stays unknown, failure stays failed, unavailable answer notice | Actual baseline cancelled-generation PG RED then exact restore; new8PG+34focusedPASS, independent source review no findings. Missing unknown-terminal answer recovery remains OPEN; no content/management-key/privacy change |
+| UX/QA-01 | R10 mobile original images+DOM prove horizontal overflow. New mobile dialog minmax(0,1fr)/min-width repair accepted in source; pagination76d798c uses bounded cursor/load-more, earlier50limit P2 closed | Frontend188PASS/lint/build. Actual mobile/reload/summary retake pending. Unmeasured long-list rendering risk retained; no speculative virtualization adopted |
+| OPS/BUDGET | One R10 preview call actual reportedUSD0.0003603376; conservative cumulative ledgerUSD0.19923326785 includes unresolved holds | Paid metadata, conservative accounting and Owner capUSD1 are distinct. No holds released, no automatic retry. Current provider dashboard snapshot stale; physical device/CI/production NOT_RUN |
+
+Review code and runtime/build receipts are separate. Original image bytes, T3 reports, request/DB/ledger receipts and T1 reconciliation are in the private task folder; they are not published as project data. Any required FAIL/NOT_RUN prevents overall livePASS or globalREADY. Entire Mimi scope still includes explicit deferred private/other-domain writes, attachments, memory, skills/jobs and device/production gates.
