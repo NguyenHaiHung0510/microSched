@@ -46,9 +46,13 @@ function summary(conversation: MimiConversation) {
   }
 }
 
-test('Mimi Control Center and shared thread keep preview-confirm-receipt usable', async ({
+for (const expiresDuringReview of [false, true]) {
+test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable expired preview across reload' : 'keep preview-confirm-receipt usable'}`, async ({
   page,
 }) => {
+  const now = new Date('2026-10-02T16:00:00Z')
+  await page.clock.install({ time: now })
+  let decisions = 0
   let conversation: MimiConversation | null = null
   await page.route('**/api/me', async (route) => {
     await route.fulfill({
@@ -139,7 +143,7 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
           state: 'pending',
           digest: 'a'.repeat(64),
           nonce: '01990000-0000-7000-8000-000000000061',
-          expires_at: '2026-09-15T01:15:00Z',
+          expires_at: new Date(now.getTime() + 60_000).toISOString(),
           policy_version: 'mimi-standard-task-create.v1',
           operation: {
             operation_id: '01990000-0000-7000-8000-000000000062',
@@ -162,6 +166,7 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
       return
     }
     if (request.method() === 'POST' && path.endsWith('/decision')) {
+      decisions += 1
       const receipt = { id: receiptId, change_set_id: changeSetId, operation_id: conversation!.change_sets[0].operation.operation_id, task_id: taskId, digest: 'a'.repeat(64), result: { task_id: taskId }, executed_at: '2026-09-15T01:01:00Z' }
       conversation = {
         ...conversation!,
@@ -192,7 +197,7 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
     })
   }
   await page.getByRole('button', { name: 'Hội thoại' }).click()
-  await page.getByRole('button', { name: 'Bắt đầu conversation STANDARD' }).click()
+  await page.getByRole('button', { name: 'Cuộc trò chuyện mới' }).click()
   await expect(page.getByLabel('Nhắn Mimi')).toBeVisible()
   await page.getByRole('button', { name: /^Tùy chọn / }).first().click()
   await page.getByRole('menuitem', { name: 'Đổi tên' }).click()
@@ -203,6 +208,26 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
   await page.getByRole('button', { name: 'Gửi' }).click()
   await expect(page.getByTestId('mimi-change-set')).toContainText('Chuẩn bị demo Mimi')
 
+  if (expiresDuringReview) {
+    await expect(page.getByRole('button', { name: 'Xác nhận tạo Task' })).toBeEnabled()
+    await page.clock.fastForward(60_000)
+    const preview = page.getByTestId('mimi-change-set')
+    await expect(preview).toContainText('Preview đã hết hạn')
+    await expect(preview).toContainText('Gửi yêu cầu mới')
+    for (const name of ['Xác nhận tạo Task', 'Sửa phương án này', 'Từ chối']) {
+      await expect(preview.getByRole('button', { name, exact: true })).toBeDisabled()
+    }
+    expect(decisions).toBe(0)
+    await page.reload()
+    await page.getByRole('tab', { name: 'Mimi', exact: true }).click()
+    await page.getByRole('button', { name: 'Hội thoại', exact: true }).click()
+    await expect(preview).toContainText('Preview đã hết hạn')
+    await expect(preview.getByRole('button', { name: 'Xác nhận tạo Task' })).toBeDisabled()
+    await expect(page.getByLabel('Nhắn Mimi')).toBeEnabled()
+    expect(decisions).toBe(0)
+    return
+  }
+
   const confirm = page.getByRole('button', { name: 'Xác nhận tạo Task' })
   const confirmBox = await confirm.boundingBox()
   expect(confirmBox).not.toBeNull()
@@ -210,9 +235,10 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
   await confirm.click()
   await expect(page.getByTestId('mimi-receipt')).toContainText(receiptId)
 
-  await page.getByLabel('Feedback về kết quả này').fill('Preview cần hiển thị nguồn rõ hơn')
+  await page.getByText('Gửi feedback (không bắt buộc)', { exact: true }).click()
+  await page.getByLabel('Điều gì cần sửa hoặc làm rõ?').fill('Preview cần hiển thị nguồn rõ hơn')
   await page.getByRole('button', { name: 'Lưu feedback' }).click()
-  await expect(page.getByText('Feedback đã lưu · còn mở để xử lý.')).toBeVisible()
+  await expect(page.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.')).toBeVisible()
 
   await page.getByRole('button', { name: /^Tùy chọn / }).first().click()
   await page.getByRole('menuitem', { name: 'Lưu trữ' }).click()
@@ -229,6 +255,7 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
   })
   expect(overflow[0]).toBeLessThanOrEqual(overflow[1])
 })
+}
 
 test('Mimi side-chat stays available from the Task surface without page overflow', async ({
   page,
