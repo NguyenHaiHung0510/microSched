@@ -34,3 +34,14 @@ def test_invalid_summary_preserves_usage_without_provider_content(reason, conten
     assert error.provider == "synthetic-provider"
     assert error.model == "synthetic-model"
     assert content not in str(error)
+
+
+@pytest.mark.parametrize("choice", [None, [], "invalid"])
+def test_malformed_choice_preserves_terminal_accounting(choice):
+    with pytest.raises(RouteContractError) as caught:
+        parse_compaction_completion(
+            {"id": "synthetic-malformed", "usage": {"cost": 0.0001}, "choices": [choice]}
+        )
+    assert str(caught.value) == "compaction_summary_payload_invalid"
+    assert caught.value.response_id == "synthetic-malformed"
+    assert caught.value.usage == {"cost": 0.0001}
