@@ -60,15 +60,13 @@ export function MimiDock({
     ...NO_POLLING_QUERY_OPTIONS,
   })
   const conversations = useQuery({
-    queryKey: ['mimi', 'conversations', 'active'],
-    queryFn: () => fetchMimiConversations('active'),
+    queryKey: ['mimi', 'conversations', 'all'],
+    queryFn: () => fetchMimiConversations('all'),
     ...NO_POLLING_QUERY_OPTIONS,
   })
 
   const conversationItems = conversations.data?.items ?? []
-  const effectiveSelectedId = selectedId && conversationItems.some((item) => item.id === selectedId)
-    ? selectedId
-    : currentConv.data?.id ?? conversationItems[0]?.id ?? null
+  const effectiveSelectedId = selectedId ?? currentConv.data?.id ?? conversationItems[0]?.id ?? null
 
   const create = useMutation({
     mutationFn: () => createMimiConversation(),

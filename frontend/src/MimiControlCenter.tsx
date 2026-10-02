@@ -116,7 +116,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
     }
     return { pinned, unpinned }
   }, [filteredItems, pinnedIds])
-  const effectiveSelectedId = selectedId && conversationItems.some((item) => item.id === selectedId) ? selectedId : conversationItems[0]?.id ?? null
+  const effectiveSelectedId = selectedId ?? conversationItems[0]?.id ?? null
   const selected = useQuery({ queryKey: ['mimi', 'conversation', effectiveSelectedId], queryFn: () => fetchMimiConversation(effectiveSelectedId!), enabled: Boolean(effectiveSelectedId), ...NO_POLLING_QUERY_OPTIONS })
 
   function togglePin(id: string) {
