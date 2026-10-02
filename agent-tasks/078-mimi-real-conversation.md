@@ -79,3 +79,11 @@ Compaction invalid/truncated payload repair preserves billing metadata without a
 Currentgaps: actualmodelcompaction/correction/reload; sourceeditorbodypersistence (twoChromeattemptsfailed, scratchHTTPPATCH/GET/DBpass); sourceconflict; stop/reconnect; readablemobile/sidechatimages and truthfulbudgetreason. Taskreadtools currentlymetadataonly, no body/checklist, which is an explicit detail-read gap. ChromeavailableAX/screenshots but currentDOM/viewportinspectionunsupported; T1verifiedbuild/devfixtureindependently, UXmeasurementNOTVERIFIED, nooverallPASS.
 
 No Owner-ready, production, whole7tier, physicaldevice, OAuth orCIclaim. Artifacts remain localprivate withdurablegrant/progress/manifest/report ratherthanrawmetadata in canonicaldocs. Explicitstatusupdate cannot reduce any approvedoutcome.
+
+## Acceptance checkpoint — 02/10 11:47
+
+Phase3 submitted five messages. Actual helper checkpoints at frontier4/5 passed hash reconciliation; two long correction turns at32k stopped with `mimi_compaction_fixed_current_input_exceeds_context` before main-provider dispatch. This is a FAIL for that capacity/UX case. One short recall at100k correctly retained20:00–20:45/09Oct and superseded19:00–20:00/06Oct; the same conversation survived reload. Recall/reload PASS does not turn32k intoPASS.
+
+T3 and independent T1 Chrome binding returned `User unavailable`. T3 stopped and delivered its final report; last owned tab cleanup is UNVERIFIED. RUN stop/reconnect, budget UI refusal, source conflict and remaining viewport/image/taste gates remain NOT_RUN/INCOMPLETE. No alternate browser/mock acceptance replaces Chrome. Two unmodified worker JPEG screenshots were durably extracted and viewed by T1; image pixels do not attest CSS viewport.
+
+Separate repair checkout adds explicit context-capacity guidance, a latest-turn button and this-run-only context manifest inspector. Lint/build PASS; these new UI changes are NOT Chrome-accepted and NOT served by the frozen386c986 runtime. Global conservative budget USD0.17580757985 includes all historical charges and unknown holds; fresh named-key usage was read, but exact journal/ledger/key reconciliation remains unclaimed. No holds released, no new inference during this checkpoint.
