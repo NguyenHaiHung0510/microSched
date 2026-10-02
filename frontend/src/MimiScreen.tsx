@@ -606,7 +606,7 @@ export function MimiScreen({
     : (latestRun?.state === 'waiting_confirmation' ? 'ready' : 'idle')
 
   return (
-    <section className="w-full max-w-full min-w-0 flex flex-col h-full space-y-4" aria-labelledby={`mimi-title-${variant}`}>
+    <section className="w-full max-w-full min-w-0 min-h-0 flex flex-col h-full space-y-4 overflow-y-auto [&>*]:shrink-0" aria-labelledby={`mimi-title-${variant}`}>
       <div className="flex items-center justify-between gap-2 border-b pb-2 shrink-0">
         <div className="flex flex-1 items-center gap-2 min-w-0">
           <MimiAvatar size="xs" state={mimiState} showGlow={runtimeActive} />
@@ -709,6 +709,13 @@ export function MimiScreen({
           ) : (
             <p className="mt-1 text-xs">Server chưa cho phép tiếp tục run này.</p>
           )}
+        </div>
+      ) : null}
+
+      {latestRun?.error_code === 'change_set_source_stale' ? (
+        <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm" data-testid="mimi-source-stale-notice">
+          <p className="font-semibold">Dữ liệu nguồn đã thay đổi; Mimi chưa tạo Task.</p>
+          <p className="mt-1 text-xs">Phương án cũ đã bị từ chối. Hãy yêu cầu Mimi đọc nguồn mới và chuẩn bị lại đề xuất trước khi xác nhận.</p>
         </div>
       ) : null}
 
