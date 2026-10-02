@@ -192,6 +192,7 @@ export function MimiScreen({
   const [runStage, setRunStage] = useState('Sẵn sàng')
   const [cancelRequestedRunId, setCancelRequestedRunId] = useState<string | null>(null)
   const [streamedText, setStreamedText] = useState('')
+  const transcriptRef = useRef<HTMLDivElement | null>(null)
   const runStageRunId = useRef<string | null>(null)
   const previousRunConversation = useRef<string | null>(null)
 
@@ -372,6 +373,13 @@ export function MimiScreen({
     : null
   const latestReceipt = current?.receipts.at(-1)
   const latestRun = current?.runs.at(-1)
+  const latestRunExceedsContext = latestRun?.state === 'budget_exceeded' && [
+    'mimi_compaction_fixed_or_single_source_exceeds_context',
+    'mimi_history_message_exceeds_context_window',
+    'mimi_compaction_fixed_current_input_exceeds_context',
+  ].includes(latestRun.error_code ?? '')
+  const latestContext = current?.events.filter((event) => event.kind === 'context.manifest' && event.run_id === latestRun?.id).at(-1)
+  const latestCheckpoint = current?.events.filter((event) => event.kind === 'context.checkpoint.activated').at(-1)
   const latestRunCanResume = latestRun ? mimiRunIsResumable(latestRun) : false
   const cancel = useMutation({
     mutationFn: (runId: string) => cancelMimiRun(runId),
@@ -704,13 +712,43 @@ export function MimiScreen({
         </div>
       ) : null}
 
+      {latestRunExceedsContext ? (
+        <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm" data-testid="mimi-context-limit-notice">
+          <p className="font-semibold">Lượt này chưa vừa giới hạn context đã chọn.</p>
+          <p className="mt-1 text-xs">Mimi giữ lịch sử và checkpoint hợp lệ, không tự gửi lại. Bạn có thể tăng giới hạn trong Cấu hình Mimi nếu model hỗ trợ, hoặc mở hội thoại mới. Ngay cả sau thu gọn, policy, tools, ràng buộc và tin nhắn hiện tại vẫn cần đủ chỗ.</p>
+        </div>
+      ) : null}
+
+      <details className="rounded-lg border border-input p-3 text-sm" data-testid="mimi-run-context-inspector">
+        <summary className="cursor-pointer font-semibold">Ngữ cảnh và nguồn của lượt chạy</summary>
+        <p className="mt-2 text-xs text-muted-foreground">Đây là receipt server của lượt gần nhất, khác với dữ liệu chỉ được mở trong rail. Số upper bound dùng byte UTF-8 làm ước lượng bảo thủ, không phải token do provider báo. Nội dung reasoning ẩn không được hiển thị.</p>
+        {latestContext ? (
+          <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+            <div><dt>Model / effort yêu cầu</dt><dd>{String(latestContext.payload.requested_model ?? 'Chưa có')} / {String(latestContext.payload.requested_effort ?? 'Chưa có')}</dd></div>
+            <div><dt>Input upper bound / context limit / output reserve</dt><dd>{String(latestContext.payload.input_upper_bound ?? 'Chưa có')} / {String(latestContext.payload.context_limit ?? 'Chưa có')} / {String(latestContext.payload.output_reserve ?? 'Chưa có')}</dd></div>
+            <div><dt>Transcript range / checkpoint frontier</dt><dd>{JSON.stringify(latestContext.payload.transcript_range)} / {String(latestContext.payload.checkpoint_frontier ?? 0)}</dd></div>
+            <div className="min-w-0"><dt>Manifest hash</dt><dd className="break-all">{String(latestContext.payload.manifest_sha256 ?? 'Chưa có')}</dd></div>
+          </dl>
+        ) : <p className="mt-2 text-xs">Lượt này chưa có manifest được ghi nhận; không suy ra đã dispatch.</p>}
+        {latestCheckpoint ? <p className="mt-2 text-xs">Checkpoint đã activate tới message {String(latestCheckpoint.payload.frontier ?? '?')}, gồm {String(latestCheckpoint.payload.source_count ?? '?')} nguồn. Đây là metadata, chưa phải bản xem toàn bộ summary.</p> : <p className="mt-2 text-xs">Chưa có checkpoint activate trong các receipt đang hiển thị.</p>}
+        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(latestContext?.payload.sources ?? [], null, 2)}</pre>
+      </details>
+
       {!online ? (
         <p role="status" className="rounded-lg bg-warn-bg p-3 text-sm text-foreground">
           Bạn đang offline. Draft được giữ trên màn hình và chưa được lưu ở trình duyệt.
         </p>
       ) : null}
 
-      <div className={variant === 'dock'
+      {current.messages.length > 0 ? (
+        <div className="flex justify-end">
+          <Button size="sm" variant="outline" onClick={() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'auto' })}>
+            Xem lượt mới nhất
+          </Button>
+        </div>
+      ) : null}
+
+      <div ref={transcriptRef} className={variant === 'dock'
         ? 'max-h-[calc(100vh-18rem)] min-h-72 space-y-3 overflow-y-auto rounded-xl bg-muted/40 p-3'
         : 'flex-1 min-h-[22rem] space-y-3 overflow-y-auto rounded-xl bg-muted/30 p-4'} data-testid="mimi-messages">
         {current.messages.length === 0 ? (
