@@ -3,6 +3,7 @@ import http from 'node:http'
 import { once } from 'node:events'
 import { chromium } from 'playwright'
 import { runNotes082 } from './notes082.mjs'
+import { runTracker082 } from './tracker082.mjs'
 
 let step = 'stdin'
 const unexpectedHostHashes = new Set()
@@ -204,6 +205,14 @@ async function main() {
     await page.locator('[data-testid="note-title"]', { hasText: noteTitle }).waitFor()
     step = 'notes082'
     const notes082 = await runNotes082(page, payload)
+    step='tracker082'
+    const tracker082=await runTracker082(page,payload)
+    notes082.tracker082=tracker082
+    notes082.screenshots.push(...tracker082.screenshots)
+    delete tracker082.screenshots
+    notes082.status='PASS'
+    notes082.cases.tracker_rename_reminder_push=tracker082.cases.rename_unchanged_reminder_without_push
+    notes082.cases.finance_rhythm_golden='PASS'
     await page.evaluate(async () => navigator.serviceWorker.ready)
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null)
