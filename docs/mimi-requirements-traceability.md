@@ -1,6 +1,6 @@
 # Mimi requirements-to-acceptance map
 
-Status: OWNER_APPROVED_NIGHT / IMPLEMENTATION_CANDIDATE / FINAL_LIVE_QA_PENDING. 2026-10-02. Owner final grant expires noon02/10; no production delivery authorized. Source: cur_docs/PTHTTM/btl/04-spec-hop-nhat-mimi.md, Owner context decisions D1–D9, current Owner interrogation/reset overrides. This map locates evidence; it does not replace product decisions or invent authority.
+Status: OWNER_APPROVED_NIGHT / IMPLEMENTATION_CANDIDATE / FINAL_LIVE_QA_PENDING. 2026-10-02. Owner direct02/10 extension expires16:00Asia/Saigon; no production delivery authorized. Source: cur_docs/PTHTTM/btl/04-spec-hop-nhat-mimi.md, Owner context decisions D1–D9, current Owner interrogation/reset overrides. This map locates evidence; it does not replace product decisions or invent authority.
 
 Columns below will be expanded with exact source section, implementation files/lines, runtime/config hashes, case IDs, receipts and truthful state. One requirement can require multiple cases; one journey can cover multiple requirements. Existing pilot evidence is not general Mimi acceptance.
 
@@ -59,3 +59,8 @@ Private raw receipts and Owner grant remain local. Curated project map/spec loca
 | Budget | named-key T1-only adapter and cumulative ledger | finite guard RED→GREEN;09:03 conservative0.14714049465, unknown holds retained; key delta residual0.0003543540 | bounded accounting evidence; no exact reconciliation or exhaustion browserPASS claim |
 
 These are additive dated checkpoints, not approval changes. The families still awaiting evidence remain required. Full seven-tier vision, physical device, CI and production are not accepted by these receipts.
+
+
+## Reconciled current gaps — 02/10 11:20
+
+READ-01 metadata aggregate/pagination live cases matchedoracle; full Taskbody/checklist read is MISSING. WRITE-02 source-conflict live remainsBLOCKED atUIsourceedit, notPASS frombackendtests. CTX-02 sourcevalidation40focusedPASS/reviewclosed, semanticmodelretakePENDING. RUN-01 actualpausehaltresume reusedknownresult noadditionalpaidgeneration; stop/reconnect stillPENDING. QA-01 ChromeAX/screenshots actualtransportavailable; DOMviewportinspectionnotavailablethissession, so viewportacceptanceNOT_VERIFIED. BUDGET oldreasonUIFAIL/sourcefixedretakePENDING. Otherdomain/private/attachments/memory/skills/jobsremainexplicitlydisabled/deferred. OverallLOCAL_LIVE_PASSnotachieved.
