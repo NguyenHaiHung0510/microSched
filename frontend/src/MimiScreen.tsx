@@ -718,7 +718,7 @@ export function MimiScreen({
       {latestRun?.error_code === 'provider_result_unavailable_after_reconcile' ? (
         <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">Provider đã hoàn tất, nhưng Mimi chưa lấy lại được câu trả lời.</p>
-          <p className="mt-1 text-xs">Mimi đã xác minh trạng thái và chi phí; chưa có nội dung hợp lệ để tiếp tục. Hệ thống không tự gửi lại. Nếu bạn gửi yêu cầu mới, đó là một lượt model mới có thể phát sinh chi phí.</p>
+          <p className="mt-1 text-xs">Mimi đã xác minh lượt gọi kết thúc; chưa có nội dung hợp lệ để tiếp tục. Hệ thống không tự gửi lại. Nếu bạn gửi yêu cầu mới, đó là một lượt model mới có thể phát sinh chi phí.</p>
         </div>
       ) : null}
       {latestRun?.error_code === 'provider_reconciliation_failed' ? (
