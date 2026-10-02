@@ -85,3 +85,17 @@ Owner restarted and directly resumed local synthetic work until16:00; prior Chro
 Phase5 misconfiguration preserved: T3 executor Luna/high was mistaken for Mimi application pin, changing its visible initialDeepSeek/high toLuna. One Luna run failed route contract; zeroactive/61Tasks/oneexecutionreceipt verified. Corrected handoff explicitly separates executor model from app route DeepSeek/high/DeepInfraFP8; new ordinary turn only after terminal reconciliation, no retry of failed run/privacy weakening. That attempt is not a content-quality result.
 
 Current readiness: implementation/evidence progress estimated~75%, live acceptance~60% of task078 scope, not all17master requirements/seven tiers. Any FAIL/BLOCKED/NOT_RUN mandatory gate prevents overallPASS. PRIVATE/otherdomainAIwrites/attachments/memory/skills/jobs remain explicit missing/deferred. Raw journey/screenshot/ledger and full decision details remain in the private task artifact directory; current matrices must be reconciled after phase5 rather than promoting this checkpoint to completion.
+
+
+## Current reconciliation — 02Oct17:00
+
+Owner extension19:00/checkpoint18:45, same cumulativeUSD1. T1direct implementation now default; independent QA/review retained. CTX-01 current summary viewer IMPLEMENTED_LOCAL r8/3e46bfb: owned STANDARD allowlistedread, same validatedfrontier/policy/source/cipher integrity, active/historicalconstraints/citations/activationtime. 13PG/HTTPPASS, ownershipbypass intendedRED→restoreGREEN, frontend184PASS/lint/build; two independentP2 closed, no open source findings. T1boundedChrome smoke sees realcheckpoint5/correct20:00–20:45/09Oct/timestamp. T3fullreload/mobileviewer acceptance PENDING phase9, not finalPASS.
+
+QA-01 phase8 actual390x844mobile/1280x900desktop measurements +5unmodifiedscreenshots persisted. T1pixelsreview: mobilefields/actionslegible afterscroll; desktopdockrejectclipped FAIL. r8actionwrap repair code/buildPASS, live retakePENDING. Realpreview/reject61Tasks/1receipt unchanged, exactjournalroute/cost and run01a0fbf4-dc2c-726f-a809-d72feefff175 independently bound. EntireMimi estimate still35–40%,078 livegates~65%; no arithmetic/globalreadinesspromotion from isolatedpass. Longfixed32k positivefitFAIL and unknownterminalanswer recovery remainopen, plus deferredPRIVATE/otherdomainwrites/attachments/memory/jobs/physicaldevice/CI/production.
+
+
+## Current acceptance correction — 02Oct17:30
+
+Phase9 Chrome on exactr8: currentsemanticcheckpoint before reloadPASS_UI_PARTIAL; sameconversationselection after reloadFAIL byT3; ONEordinaryVietnamese preview request terminalroutecontractFAIL, therefore actionrow/rejectretake NOT_RUN. Browsercapabilitydiscovery actuallyresolved through same documented returnedBrowser binding; do not leave oldAPI-unavailableclaim as currentblocker. T3reportedviewportreset/logout/ownedtabclosed. T1independentjournal/pixelsreconciliation stillpending. Do not promote source/testPASS into browserPASS. T1groupsdiagnosis+repairbefore nextfrozenQA batch, no blindrepeatpaidrequest.
+
+Ownerlocalworkdeadline21:00/checkpoint20:45 and cumulativeUSD1 retained. Originfeaturebranchbackup permitted, production forbidden untilOwnerdirectdogfoodOK+requiredcriteriaevidence+explicitproductionpermission. Workflowbatchtrialtemporarythrough08:00Oct3 orcompletionassessment: sparseactualobservations, independentQA/review retained; no trialharness/mempromotion yet. Methodexpirydoesnotauthorizeworkafter21:00. Coreimplementation85%/livegates65% areT1qualitativeestimates, notfullMimi/productionacceptance.
