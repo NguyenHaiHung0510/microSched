@@ -28,6 +28,21 @@ from app.domain.tasks import TaskCreate
 class RouteContractError(ValueError):
     """The selected route or terminal payload violated Mimi's frozen contract."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        response_id: str | None = None,
+        usage: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ):
+        super().__init__(message)
+        self.response_id = response_id
+        self.usage = usage or {}
+        self.provider = provider
+        self.model = model
+
 
 class ProviderDispatchError(RuntimeError):
     """A provider call ended without a usable terminal result."""
@@ -391,6 +406,8 @@ def parse_compaction_completion(payload: dict[str, Any]) -> AgentCompletion:
         choices = payload["choices"]
         if not isinstance(choices, list) or len(choices) != 1:
             raise RouteContractError("provider_must_return_one_choice")
+        if choices[0].get("finish_reason") == "length":
+            raise RouteContractError("compaction_summary_output_truncated")
         message = choices[0]["message"]
         if not isinstance(message, dict) or message.get("tool_calls"):
             raise RouteContractError("compaction_requires_summary_not_tool_or_draft")
@@ -407,10 +424,21 @@ def parse_compaction_completion(payload: dict[str, Any]) -> AgentCompletion:
             provider=payload.get("provider") if isinstance(payload.get("provider"), str) else None,
             model=payload.get("model") if isinstance(payload.get("model"), str) else None,
         )
-    except RouteContractError:
-        raise
-    except (KeyError, TypeError, ValueError) as error:
-        raise RouteContractError("compaction_summary_payload_invalid") from error
+    except (RouteContractError, KeyError, TypeError, ValueError) as error:
+        # Do not preserve provider-controlled prose. The observed response/usage
+        # survives validation failure so its single reservation can be accounted.
+        code = (
+            str(error)
+            if isinstance(error, RouteContractError)
+            else "compaction_summary_payload_invalid"
+        )
+        raise RouteContractError(
+            code,
+            response_id=payload.get("id") if isinstance(payload.get("id"), str) else None,
+            usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            provider=payload.get("provider") if isinstance(payload.get("provider"), str) else None,
+            model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+        ) from error
 
 
 def _tool_choice(settings: Settings, *, force_task_tool: bool, agent_contract: bool = False) -> Any:

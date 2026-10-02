@@ -725,7 +725,7 @@ async def _semantic_checkpoint(
 
     helper = settings.model_copy(
         update={
-            "mimi_route_max_output_tokens": 2048,
+            "mimi_route_max_output_tokens": min(8192, settings.mimi_route_max_output_tokens),
             "mimi_text_response_format": "structured",
             # Preserve the selected total cap and exact route; only output
             # reserve is reduced for this bounded summary call.
@@ -839,9 +839,29 @@ async def _semantic_checkpoint(
         await db.commit()
         raise _conflict("compaction_provider_outcome_requires_review") from error
     except (RouteContractError, ValueError, TypeError) as error:
+        if isinstance(error, RouteContractError) and error.response_id:
+            account(helper, reservation, error.usage, error.response_id)
+            call.usage = error.usage
+            call.result = {"response_id": error.response_id}
+            call.route = {
+                **call.route,
+                "actual_model": error.model,
+                "actual_provider": error.provider,
+            }
+        call.result = {
+            **(call.result or {}),
+            "diagnostic": {
+                "category": (
+                    "output_truncated"
+                    if str(error) == "compaction_summary_output_truncated"
+                    else "summary_validation_failed"
+                )
+            },
+        }
         call.state = "failed"
         run = await db.get(MimiRun, run_id)
         run.state = "halted"
+        run.provider_outcome = "succeeded" if call.result.get("response_id") else None
         run.error_code = "compaction_candidate_invalid_history_preserved"
         run.completed_at = datetime.now(UTC)
         await _append_event(
@@ -1092,7 +1112,7 @@ async def _prepare_context_history(
                 helper_messages = _compaction_messages(prior, proposed, current_user_source)
                 if (
                     serialized_input_bytes(helper_messages, agent_contract=False, summary_mode=True)
-                    + 2048
+                    + min(8192, settings.mimi_route_max_output_tokens)
                     > settings.mimi_route_context_tokens
                 ):
                     break

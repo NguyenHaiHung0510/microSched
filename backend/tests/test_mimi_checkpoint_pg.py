@@ -187,7 +187,7 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
             nonlocal dispatched
             dispatched += 1
             assert kwargs["settings"].mimi_route_context_tokens == 32000
-            assert kwargs["settings"].mimi_route_max_output_tokens == 2048
+            assert kwargs["settings"].mimi_route_max_output_tokens == 8192
             source_payload = json.loads(messages[-1]["content"])
             first_source = next((s for s in source_payload["sources"] if s["sequence"] == 1), None)
             if failure_mode == "frontier_conflict":
@@ -744,6 +744,110 @@ def test_real_compaction_receipt_survives_process_loss_without_redispatch(
             async with maker() as db:
                 row = await db.get(MimiConversation, cid)
                 if row is not None:
+                    await db.delete(row)
+                    await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_truncated_helper_accounts_observed_terminal_without_activating_history(
+    pg_dsn, monkeypatch
+):
+    from app.agent.compaction import CheckpointSource
+    from app.agent.openrouter import parse_compaction_completion
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        cid, rid = uuid7(), uuid7()
+        accounted = []
+        observed_caps = []
+
+        async def truncated(*args, **kwargs):
+            observed_caps.append(kwargs["settings"].mimi_route_max_output_tokens)
+            return parse_compaction_completion(
+                {
+                    "id": "synthetic-truncated-helper",
+                    "model": "synthetic-model",
+                    "provider": "synthetic-provider",
+                    "usage": {"cost": 0.00012},
+                    "choices": [
+                        {"finish_reason": "length", "message": {"content": '{"summary":"cut'}}
+                    ],
+                }
+            )
+
+        monkeypatch.setattr(mimi_service, "openrouter_complete", truncated)
+        monkeypatch.setattr("app.agent.local_budget.reserve", lambda *a, **k: "synthetic-hold")
+        monkeypatch.setattr("app.agent.local_budget.account", lambda *a: accounted.append(a))
+        source_text = "Chỉ học buổi tối."
+        source = CheckpointSource(
+            id=uuid7(),
+            sequence=1,
+            role="user",
+            content_sha256=hashlib.sha256(source_text.encode()).hexdigest(),
+            content=source_text,
+        )
+        try:
+            async with maker() as db:
+                row = MimiConversation(
+                    id=cid,
+                    owner_id=uuid7(),
+                    sensitivity="standard",
+                    dek_wrapped=mimi_crypto.create_wrapped_dek(),
+                )
+                db.add(row)
+                await db.flush()
+                db.add(
+                    MimiRun(
+                        id=rid,
+                        conversation_id=cid,
+                        generation=1,
+                        state="accepted",
+                        execution_lease={},
+                        source_versions={},
+                        deadline=datetime.now(UTC) + timedelta(minutes=5),
+                    )
+                )
+                await db.commit()
+                settings = bind_configuration(
+                    get_settings(),
+                    {"profile_id": "deepseek", "effort": "high", "input_tokens": 32000},
+                )
+                with pytest.raises(HTTPException) as caught:
+                    await mimi_service._semantic_checkpoint(
+                        db, row, rid, [source], None, None, None, settings
+                    )
+                assert caught.value.detail == "compaction_candidate_invalid_history_preserved"
+                assert observed_caps == [8192]
+                assert len(accounted) == 1
+                assert accounted[0][2:] == ({"cost": 0.00012}, "synthetic-truncated-helper")
+                await db.refresh(row)
+                assert row.context_frontier_sequence == 0
+                call = (
+                    await db.execute(select(MimiProviderCall).where(MimiProviderCall.run_id == rid))
+                ).scalar_one()
+                assert call.state == "failed"
+                assert call.result == {
+                    "response_id": "synthetic-truncated-helper",
+                    "diagnostic": {"category": "output_truncated"},
+                }
+                assert call.usage == {"cost": 0.00012}
+                run = await db.get(MimiRun, rid)
+                assert run.state == "halted" and run.provider_outcome == "succeeded"
+                assert run.completed_at is not None
+                events = (
+                    (await db.execute(select(MimiEvent).where(MimiEvent.run_id == rid)))
+                    .scalars()
+                    .all()
+                )
+                assert sum(e.kind == "run.terminal" for e in events) == 1
+                assert not any(e.kind == "context.checkpoint.activated" for e in events)
+        finally:
+            async with maker() as db:
+                row = await db.get(MimiConversation, cid)
+                if row:
                     await db.delete(row)
                     await db.commit()
             await engine.dispose()
