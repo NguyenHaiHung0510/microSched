@@ -697,6 +697,7 @@ def _compaction_messages(
                     ],
                     "current_authenticated_user_source": (
                         {
+                            "role": current_user_source.role,
                             "sequence": current_user_source.sequence,
                             "sha256": current_user_source.content_sha256,
                             "quoteable_content": current_user_source.content,
@@ -857,7 +858,30 @@ async def _semantic_checkpoint(
                     "output_truncated"
                     if str(error) == "compaction_summary_output_truncated"
                     else "summary_validation_failed"
-                )
+                ),
+                # Only bounded internal codes cross the public diagnostic
+                # boundary. Never persist the rejected summary, quote or error
+                # prose; those can contain conversation data.
+                **(
+                    {"reason": str(error)}
+                    if str(error)
+                    in {
+                        "checkpoint_semantic_candidate_shape_invalid",
+                        "checkpoint_semantic_summary_invalid",
+                        "checkpoint_semantic_lists_invalid",
+                        "checkpoint_semantic_source_shape_invalid",
+                        "checkpoint_semantic_source_quote_invalid",
+                        "checkpoint_semantic_source_hash_invalid",
+                        "checkpoint_semantic_constraint_invalid",
+                        "checkpoint_semantic_supersession_invalid",
+                        "checkpoint_semantic_resolution_invalid",
+                        "checkpoint_semantic_ledger_limit",
+                        "compaction_requires_summary_not_tool_or_draft",
+                        "compaction_summary_payload_invalid",
+                        "compaction_summary_output_truncated",
+                    }
+                    else {}
+                ),
             },
         }
         call.state = "failed"

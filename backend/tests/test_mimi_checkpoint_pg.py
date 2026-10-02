@@ -223,7 +223,14 @@ def test_checkpoint_rehydrates_across_sessions_and_rejects_tamper(pg_dsn) -> Non
 
 @pytest.mark.parametrize(
     "failure_mode",
-    [None, "invalid_summary", "frontier_conflict", "capacity_short", "actual_capacity"],
+    [
+        None,
+        "invalid_summary",
+        "invalid_quote",
+        "frontier_conflict",
+        "capacity_short",
+        "actual_capacity",
+    ],
 )
 def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activation(
     pg_dsn, monkeypatch, failure_mode
@@ -259,7 +266,9 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
                                     "kind": "decision",
                                     "source_sequence": 1,
                                     "source_sha256": first_source["sha256"] if first_source else "",
-                                    "quote": "Chỉ học buổi tối",
+                                    "quote": "fabricated synthetic quote"
+                                    if failure_mode == "invalid_quote"
+                                    else "Chỉ học buổi tối",
                                 }
                             ]
                             if first_source
@@ -330,7 +339,7 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
                     get_settings(),
                     {"profile_id": "luna", "effort": "medium", "input_tokens": 32000},
                 )
-                if failure_mode in {"invalid_summary", "frontier_conflict"}:
+                if failure_mode in {"invalid_summary", "invalid_quote", "frontier_conflict"}:
                     with pytest.raises(HTTPException) as failed:
                         await mimi_service._prepare_context_history(
                             db, row, dek, rid, 19, None, None, settings=settings
@@ -351,6 +360,18 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
                         .all()
                     )
                     assert len(raw_messages) == 18
+                    if failure_mode == "invalid_quote":
+                        call = (
+                            await db.execute(
+                                select(MimiProviderCall).where(MimiProviderCall.run_id == rid)
+                            )
+                        ).scalar_one()
+                        assert call.result["diagnostic"] == {
+                            "category": "summary_validation_failed",
+                            "reason": "checkpoint_semantic_source_quote_invalid",
+                        }
+                        assert "fabricated synthetic quote" not in json.dumps(call.result)
+                        assert dispatched == 1
                     return
 
                 def capacity_probe(history, checkpoint, *_metadata):
@@ -884,7 +905,10 @@ def test_truncated_helper_accounts_observed_terminal_without_activating_history(
                 assert call.state == "failed"
                 assert call.result == {
                     "response_id": "synthetic-truncated-helper",
-                    "diagnostic": {"category": "output_truncated"},
+                    "diagnostic": {
+                        "category": "output_truncated",
+                        "reason": "compaction_summary_output_truncated",
+                    },
                 }
                 assert call.usage == {"cost": 0.00012}
                 run = await db.get(MimiRun, rid)
