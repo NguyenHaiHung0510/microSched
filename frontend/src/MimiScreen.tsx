@@ -1,3 +1,4 @@
+import { usePreviewExpired } from './mimi-preview-expiry'
 import { MimiCheckpointViewer } from './MimiCheckpointViewer'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, X } from 'lucide-react'
@@ -74,7 +75,8 @@ function elapsedLabel(seconds: number): string {
   return `${minutes.toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
 }
 
-function ChangeSetPreview({
+
+export function ChangeSetPreview({
   changeSet,
   pending,
   error,
@@ -88,16 +90,19 @@ function ChangeSetPreview({
   onRevise: () => void
 }) {
   const task = changeSet.operation.args
+  const expired = usePreviewExpired(changeSet.expires_at)
   return (
     <Card data-testid="mimi-change-set" className="border-primary/20 bg-primary/5">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge>Chờ xác nhận</Badge>
+          <Badge role="status" aria-live="polite">{expired ? 'Preview đã hết hạn' : 'Chờ xác nhận'}</Badge>
           <Badge variant="outline">Task</Badge>
         </div>
         <CardTitle>Tạo Task “{task.title}”</CardTitle>
         <CardDescription>
-          Kiểm tra toàn bộ nội dung dưới đây. Chỉ khi bạn xác nhận, công việc mới được thêm vào danh sách.
+          {expired
+            ? 'Gửi yêu cầu mới trong ô chat để Mimi tạo preview khác. Phương án này không còn dùng để ghi thay đổi.'
+            : 'Kiểm tra toàn bộ nội dung dưới đây. Chỉ khi bạn xác nhận, công việc mới được thêm vào danh sách.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -133,12 +138,12 @@ function ChangeSetPreview({
         </details>
         {error ? <p role="alert" className="text-sm text-bad">{error}</p> : null}
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap" data-testid="mimi-preview-actions">
-          <Button className="min-h-11" variant="secondary" disabled={pending} onClick={onRevise}>
+          <Button className="min-h-11" variant="secondary" disabled={pending || expired} onClick={onRevise}>
             Sửa phương án này
           </Button>
           <Button
             className="min-h-11"
-            disabled={pending}
+            disabled={pending || expired}
             onClick={() => onDecision('confirm')}
           >
             {pending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : <Check />}
@@ -147,7 +152,7 @@ function ChangeSetPreview({
           <Button
             className="min-h-11"
             variant="outline"
-            disabled={pending}
+            disabled={pending || expired}
             onClick={() => onDecision('reject')}
           >
             <X />
@@ -369,6 +374,7 @@ export function MimiScreen({
     () => [...(current?.change_sets ?? [])].reverse().find((item) => item.state === 'pending'),
     [current?.change_sets],
   )
+  const pendingPreviewExpired = usePreviewExpired(pendingChangeSet?.expires_at ?? '')
   const activeRevision = revisionTarget
     && pendingChangeSet?.id === revisionTarget.id
     && pendingChangeSet.digest === revisionTarget.digest
@@ -622,7 +628,7 @@ export function MimiScreen({
           {!online ? <Badge variant="destructive" className="text-[10px] h-5">Mất mạng</Badge> : null}
           {latestRun?.state === 'waiting_confirmation' ? (
             <Badge variant="outline" className="text-[10px] h-5 border-amber-500/50 text-amber-600 bg-amber-50/50">
-              Chờ xác nhận
+              {pendingPreviewExpired ? 'Preview đã hết hạn' : 'Chờ xác nhận'}
             </Badge>
           ) : null}
         </div>
