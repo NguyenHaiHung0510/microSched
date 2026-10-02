@@ -6,10 +6,11 @@ import { MimiAvatar } from '@/components/brand'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { createMimiConversation, fetchCurrentMimiConversation, fetchMimiConversations } from '@/mimi-api'
+import { createMimiConversation, fetchCurrentMimiConversation } from '@/mimi-api'
 import { MimiScreen } from '@/MimiScreen'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { selectCreatedMimiConversation, useMimiSelection } from '@/mimi-selection'
+import { useMimiConversationList } from '@/mimi-conversation-list'
 
 function useDesktopDock(): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia('(min-width: 1280px)').matches)
@@ -59,13 +60,9 @@ export function MimiDock({
     queryFn: fetchCurrentMimiConversation,
     ...NO_POLLING_QUERY_OPTIONS,
   })
-  const conversations = useQuery({
-    queryKey: ['mimi', 'conversations', 'all'],
-    queryFn: () => fetchMimiConversations('all'),
-    ...NO_POLLING_QUERY_OPTIONS,
-  })
+  const conversations = useMimiConversationList('all')
 
-  const conversationItems = conversations.data?.items ?? []
+  const conversationItems = conversations.items
   const effectiveSelectedId = selectedId ?? currentConv.data?.id ?? conversationItems[0]?.id ?? null
 
   const create = useMutation({
@@ -136,6 +133,8 @@ export function MimiDock({
               </Button>
             </div>
             </div>
+            {conversations.hasNextPage ? <Button size="sm" variant="outline" disabled={conversations.isFetchingNextPage} onClick={() => void conversations.fetchNextPage()}>{conversations.isFetchingNextPage ? 'Đang tải…' : 'Xem thêm hội thoại'}</Button> : null}
+            {conversations.isError ? <p role="alert" className="px-3 text-sm text-bad">Chưa tải được lịch sử hội thoại.</p> : null}
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               <MimiScreen key={effectiveSelectedId} onOpenTasks={onOpenTasks} variant="dock" conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} />
             </div>
@@ -176,6 +175,8 @@ export function MimiDock({
               </SelectContent>
             </Select>
           ) : null}
+          {conversations.hasNextPage ? <Button variant="outline" disabled={conversations.isFetchingNextPage} onClick={() => void conversations.fetchNextPage()}>{conversations.isFetchingNextPage ? 'Đang tải…' : 'Xem thêm hội thoại'}</Button> : null}
+          {conversations.isError ? <p role="alert" className="text-sm text-bad">Chưa tải được lịch sử hội thoại.</p> : null}
         </DialogHeader>
         <MimiScreen key={effectiveSelectedId} onOpenTasks={onOpenTasks} variant="dock" conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} />
       </DialogContent>

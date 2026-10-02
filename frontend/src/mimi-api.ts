@@ -264,8 +264,9 @@ export function fetchMimiConversation(conversationId: string): Promise<MimiConve
   return apiRequest(`/api/mimi/conversations/${conversationId}`)
 }
 
-export function fetchMimiConversations(state: 'active' | 'archived' | 'all' = 'active'): Promise<MimiConversationPage> {
-  return apiRequest(`/api/mimi/conversations?state=${state}&limit=50`)
+export function fetchMimiConversations(state: 'active' | 'archived' | 'all' = 'active', cursor?: string | null): Promise<MimiConversationPage> {
+  const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+  return apiRequest(`/api/mimi/conversations?state=${state}&limit=50${suffix}`)
 }
 
 export function createMimiConversation(clientId = crypto.randomUUID()): Promise<MimiConversationSummary> {

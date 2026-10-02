@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { createMimiConversation, fetchMimiCapabilities, fetchCurrentMimiConversation, fetchMimiConversation, fetchMimiConversations, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
+import { createMimiConversation, fetchMimiCapabilities, fetchCurrentMimiConversation, fetchMimiConversation, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
 import { fetchMimiPreview, selectMimiPreviewScenario, type MimiPreviewRange, type MimiPreviewState, type MimiReasoningLevel } from '@/mimi-preview'
 import { MimiAvatar } from '@/components/brand'
 import { MimiContextRail } from '@/MimiContextRail'
@@ -17,6 +17,7 @@ import { MimiScreen } from '@/MimiScreen'
 import { mimiRunLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { selectCreatedMimiConversation, useMimiSelection } from '@/mimi-selection'
+import { useMimiConversationList } from '@/mimi-conversation-list'
 
 type CenterSection = 'overview' | 'activity' | 'conversations' | 'settings'
 
@@ -100,8 +101,8 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
   })
   const [renameTarget, setRenameTarget] = useState<MimiConversationSummary | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
-  const conversations = useQuery({ queryKey: ['mimi', 'conversations', listState], queryFn: () => fetchMimiConversations(listState), ...NO_POLLING_QUERY_OPTIONS })
-  const conversationItems = useMemo(() => conversations.data?.items ?? [], [conversations.data?.items])
+  const conversations = useMimiConversationList(listState)
+  const conversationItems = conversations.items
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return conversationItems
@@ -310,6 +311,8 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
                   {sortedItems.unpinned.map((item) => renderConversationRow(item, false))}
                 </div>
               ) : null}
+              {conversations.hasNextPage ? <Button className="w-full" variant="outline" disabled={conversations.isFetchingNextPage} onClick={() => void conversations.fetchNextPage()}>{conversations.isFetchingNextPage ? 'Đang tải…' : 'Xem thêm hội thoại'}</Button> : null}
+              {searchQuery && conversations.hasNextPage ? <p className="text-xs text-muted-foreground">Tìm trong lịch sử đã tải. Xem thêm để tìm hội thoại cũ hơn.</p> : null}
             </div>
           </CardContent>
         </Card>
