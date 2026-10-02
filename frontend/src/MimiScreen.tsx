@@ -213,7 +213,7 @@ export function MimiScreen({
       typeof data.run_id === 'string'
       && runStageRunId.current !== data.run_id
     ) return
-    else if (event === 'context.tasks_read') setRunStage('Đã đọc Task STANDARD')
+    else if (event === 'context.tasks_read') setRunStage('Đang chuẩn bị ngữ cảnh')
     else if (event === 'context.manifest') setRunStage('Đã chuẩn bị ngữ cảnh')
     else if (event === 'context.checkpoint.activated') setRunStage('Đã thu gọn ngữ cảnh')
     else if (event === 'agent.awaiting_model') setRunStage('Mimi đang suy luận')

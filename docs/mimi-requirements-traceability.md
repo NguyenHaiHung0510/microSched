@@ -1,8 +1,8 @@
 # Mimi requirements-to-acceptance map
 
-Status: OWNER_APPROVED_LOCAL / IMPLEMENTATION_CANDIDATE / FINAL_LIVE_QA_PENDING. 2026-10-02. Latest direct Owner extension expires21:00Asia/Saigon, checkpoint20:45; no production delivery authorized. Source: cur_docs/PTHTTM/btl/04-spec-hop-nhat-mimi.md, Owner context decisions D1–D9, current Owner interrogation/reset overrides. This map locates evidence; it does not replace product decisions or invent authority.
+Status: OWNER_APPROVED_LOCAL / USEFUL_SCOPED_CANDIDATE / GLOBAL_GATES_INCOMPLETE. Current03Oct04:00: grantuntil08:00/checkpoint07:45, sole destinationT1; no production delivery. R16 final32kFAIL; see latest current reconciliation below. Source: cur_docs/PTHTTM/btl/04-spec-hop-nhat-mimi.md, Owner context decisions D1–D9, current Owner interrogation/reset overrides. This map locates evidence; it does not replace product decisions or invent authority.
 
-Columns below will be expanded with exact source section, implementation files/lines, runtime/config hashes, case IDs, receipts and truthful state. One requirement can require multiple cases; one journey can cover multiple requirements. Existing pilot evidence is not general Mimi acceptance.
+Baseline gaps below describe the initial reset; latest dated/current reconciliation supersedes affected evidence states without waiving requirements. Columns will be expanded with exact source section, implementation files/lines, runtime/config hashes, case IDs, receipts and truthful state. One requirement can require multiple cases; one journey can cover multiple requirements. Existing pilot evidence is not general Mimi acceptance.
 
 | ID | User outcome / acceptance invariant | Source baseline | Current gap / required proof |
 |---|---|---|---|
@@ -84,14 +84,14 @@ Owner restarted and directly resumed local synthetic work until16:00; prior Chro
 
 Phase5 misconfiguration preserved: T3 executor Luna/high was mistaken for Mimi application pin, changing its visible initialDeepSeek/high toLuna. One Luna run failed route contract; zeroactive/61Tasks/oneexecutionreceipt verified. Corrected handoff explicitly separates executor model from app route DeepSeek/high/DeepInfraFP8; new ordinary turn only after terminal reconciliation, no retry of failed run/privacy weakening. That attempt is not a content-quality result.
 
-Current readiness: implementation/evidence progress estimated~75%, live acceptance~60% of task078 scope, not all17master requirements/seven tiers. Any FAIL/BLOCKED/NOT_RUN mandatory gate prevents overallPASS. PRIVATE/otherdomainAIwrites/attachments/memory/skills/jobs remain explicit missing/deferred. Raw journey/screenshot/ledger and full decision details remain in the private task artifact directory; current matrices must be reconciled after phase5 rather than promoting this checkpoint to completion.
+Historical75%/60% estimates retired: no weighteddenominator, not currentreadinessmeasurements. Any FAIL/BLOCKED/NOT_RUN mandatory gate prevents overallPASS. PRIVATE/otherdomainAIwrites/attachments/memory/skills/jobs remain explicit missing/deferred. Raw journey/screenshot/ledger and full decision details remain in the private task artifact directory; current matrices must be reconciled after phase5 rather than promoting this checkpoint to completion.
 
 
 ## Current reconciliation — 02Oct17:00
 
 Owner extension19:00/checkpoint18:45, same cumulativeUSD1. T1direct implementation now default; independent QA/review retained. CTX-01 current summary viewer IMPLEMENTED_LOCAL r8/3e46bfb: owned STANDARD allowlistedread, same validatedfrontier/policy/source/cipher integrity, active/historicalconstraints/citations/activationtime. 13PG/HTTPPASS, ownershipbypass intendedRED→restoreGREEN, frontend184PASS/lint/build; two independentP2 closed, no open source findings. T1boundedChrome smoke sees realcheckpoint5/correct20:00–20:45/09Oct/timestamp. T3fullreload/mobileviewer acceptance PENDING phase9, not finalPASS.
 
-QA-01 phase8 actual390x844mobile/1280x900desktop measurements +5unmodifiedscreenshots persisted. T1pixelsreview: mobilefields/actionslegible afterscroll; desktopdockrejectclipped FAIL. r8actionwrap repair code/buildPASS, live retakePENDING. Realpreview/reject61Tasks/1receipt unchanged, exactjournalroute/cost and run01a0fbf4-dc2c-726f-a809-d72feefff175 independently bound. EntireMimi estimate still35–40%,078 livegates~65%; no arithmetic/globalreadinesspromotion from isolatedpass. Longfixed32k positivefitFAIL and unknownterminalanswer recovery remainopen, plus deferredPRIVATE/otherdomainwrites/attachments/memory/jobs/physicaldevice/CI/production.
+QA-01 phase8 actual390x844mobile/1280x900desktop measurements +5unmodifiedscreenshots persisted. T1pixelsreview: mobilefields/actionslegible afterscroll; desktopdockrejectclipped FAIL. r8actionwrap repair code/buildPASS, live retakePENDING. Realpreview/reject61Tasks/1receipt unchanged, exactjournalroute/cost and run01a0fbf4-dc2c-726f-a809-d72feefff175 independently bound. Historical35–40%/65% estimates retired; no arithmetic/globalreadinesspromotion from isolatedpass. Longfixed32k positivefitFAIL and unknownterminalanswer recovery remainopen, plus deferredPRIVATE/otherdomainwrites/attachments/memory/jobs/physicaldevice/CI/production.
 
 
 ## Current acceptance correction — 02Oct17:30
@@ -115,3 +115,25 @@ Current authority: LOCAL until21:00/checkpoint20:45, same cumulativeUSD1; featur
 | OPS/BUDGET | One R10 preview call actual reportedUSD0.0003603376; conservative cumulative ledgerUSD0.19923326785 includes unresolved holds | Paid metadata, conservative accounting and Owner capUSD1 are distinct. No holds released, no automatic retry. Current provider dashboard snapshot stale; physical device/CI/production NOT_RUN |
 
 Review code and runtime/build receipts are separate. Original image bytes, T3 reports, request/DB/ledger receipts and T1 reconciliation are in the private task folder; they are not published as project data. Any required FAIL/NOT_RUN prevents overall livePASS or globalREADY. Entire Mimi scope still includes explicit deferred private/other-domain writes, attachments, memory, skills/jobs and device/production gates.
+
+
+## Current local candidate reconciliation — 03Oct04:00
+
+Code/runtime QA source `1a7759cebf84bf95793a8ec894080feafcf10f17`, repair `3b48f8ec34c337e0177ced46f7095c0cb4229189`. Full synthetic local app; same frontend bundle app-C6UQc-d7. QA freeze readiness matched source/DBup; feature origin SHAs freshly matched04:00. Later documentation commits do not retroactively change the QA source. OpenAI SDK throughOpenRouter and LangGraph; app DeepSeekV4.1Flash/high/DeepInfraFP8/ZDR, default100k/output8192,32k selected only for bounded QA then restored100k. SDK080WIP preserved. No CI/device/production claim.
+
+| Outcome | Actual scoped evidence | Status and limits |
+|---|---|---|
+| PublicTask detail and useful explanation | R12 model read body/checklist and explained optimistic version vs rowlock; oracle/receipts matched | LOCAL_LIVE_PASS for that journey; all-domain retrieval not delivered |
+| Task create/revise/reject/confirm/reload | R12 meaningful title/body/P2/due20:00Oct3/threeordereditems; dedicated UI revision; Reject/re-request/oneConfirm/reload; exactly one newTask/receipt | LOCAL_LIVE_PASS scoped; general edit/delete/bulk and full stale/duplicateconfirm matrix remain open |
+| Expiry and mobilepreview | R13 real mobilepreview readable and Reject/reload zero mutation;190frontend tests/lint/build plus4mockAPIbrowser cases | Scoped proof; mock is not modelquality; r13desktopactualpreview and oldlockedtabcleanup incomplete |
+| Long32k capacity and summary | R15 exact3483-byte LF fixture completedhelper+main/basicrecall, but summaryliteral...FAIL and false0Taskclaim. R16 lexicalsummary/sourcecoverage fixes have34PG/670nonPG1SKIP314deselected/lint/hooks and independent narrow reviews nofindings | OverallCTX-02 stillFAIL/PARTIAL; source checks are not runtimequality |
+| R16 actual final32k | Exact3900-byte fixture; onehelper succeeded USD0.0026117952; substantive2045-byte summary, frontier13→15/23activeconstraints; then fixedinputcontextoverflow beforemain | LIVE32K_FAIL. Actualminimum wire24762+8192reserve=32954>32000 offline; no mainanswer tograde. No newpaidretake |
+| Source truth and reload | R16 summary labels prior0Taskstatement as unverified assistanttext; current20–20:45/09Oct retained; samecid terminal/checkpoint reload and mobile summary originalpixels | Scoped summary/viewer/persistence proof; answercoverage/versioncomparison NOT_RUN; transientUI claimedTaskread because the initial event is unconditional; finalUIcopy changed to preparingcontext, source/build verified separately, livecopy retakeNOT_RUN |
+| Domain/accounting | AfterR16 allTask/itemSHA unchanged,62eligible56open6completed,2totalreceipts,active0;78ledgerrecords/conservativeUSD0.22577384065 includesoldholds | No domainmutation inR16; exactactualspend not claimed fromconservative total; holdsretained |
+| Recovery/operations | Historical knownterminalreuse/completedstate restart evidence preserved | Lostanswercontent recoveryOPEN; activepaidOScrash/same-rungraphcursor/versionupgrade/retention not proved |
+| Remaining master scope | PRIVATE/otherdomainAIwrites/generalCRUDbulk/attachments/memory/skills/jobs | ExplicitMISSING/DEFERRED; no scopewaiver; fullseven-tier/masterNOTREADY |
+| Environment/Owner | Chromeextension scoped syntheticjourneys, T1 originalpixels/DB; r16contextrestored100k/logout/publiclanding/tabclosed | PhysicaliPhone/Safari/realOAuth/CI/production NOT_RUN; Owner usefulness/taste acceptance pending |
+
+T1 acceptance: useful local candidate only within demonstrated journeys; global078 and full semantic32k acceptance NOTREADY. Summary preservation is not answer success. Independent reviewer/worker labels are evidence, not T1 acceptance. Old r13lockedtab logout remainsUNVERIFIED; no bypass.
+
+Trial recommendation: KEEP T1core with independentQA/selectedreview; ADJUST batching to one smallcompletejourney and packet completeness; REJECT automaticpromotion or furtherpaidretake merelybecausebudgetremains. T1bottleneck/quota, fixtureCRLF error and evidencehandoff overhead are counterarguments. No quantifiedspeedup or arithmeticcompletion percentage: activeworkingtime/agentcost/Ownerattention/baseline notmeasured. Stop paidloops, finish canonicalreport and final finite07:30checkpoint, hard08:00 closure. Required gates remain.
