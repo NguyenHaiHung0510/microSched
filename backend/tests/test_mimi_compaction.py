@@ -293,3 +293,37 @@ def test_checkpoint_rejects_tampering_and_preserves_prior_provenance() -> None:
             expected_sources=next_sources,
             prior=missing_prior_decision,
         )
+
+
+def test_new_constraint_can_cite_only_current_authenticated_user_source():
+    historical = _source(1, "Bối cảnh cũ không có giờ học.")
+    current = _source(3, "Giờ học mới là 20:00–20:45, chưa ghi Task.")
+    checkpoint = make_semantic_checkpoint(
+        sources=[historical],
+        prior=None,
+        policy_sha256="a" * 64,
+        pending_preview=None,
+        pending_draft=None,
+        current_user_source=current,
+        candidate={
+            "summary": "Giờ học 20:00–20:45; chưa ghi Task.",
+            "constraints": [
+                {
+                    "text": "Giờ học 20:00–20:45",
+                    "kind": "decision",
+                    "source_sequence": 3,
+                    "source_sha256": current.content_sha256,
+                    "quote": "20:00–20:45",
+                }
+            ],
+            "supersessions": [],
+            "resolutions": [],
+        },
+    )
+    assert checkpoint["frontier"] == 1
+    assert checkpoint["constraint_ledger"][0]["source"] == {
+        "sequence": 3,
+        "sha256": current.content_sha256,
+        "quote": "20:00–20:45",
+    }
+    assert checkpoint["constraint_ledger"][0]["status"] == "active"
