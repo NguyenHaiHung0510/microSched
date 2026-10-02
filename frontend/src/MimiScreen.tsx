@@ -667,6 +667,13 @@ export function MimiScreen({
         </div>
       ) : null}
 
+      {latestRun?.state === 'halted' && latestRun.error_code?.startsWith('compaction_') ? (
+        <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
+          <p className="font-semibold">Mimi chưa thu gọn được lịch sử nên lượt này đã dừng.</p>
+          <p className="mt-1 text-xs">Lịch sử gốc vẫn được giữ nguyên và yêu cầu không tự gửi lại. Bạn có thể tăng giới hạn context nếu model hỗ trợ, hoặc mở hội thoại mới. Việc thử lại sẽ là một lượt model mới.</p>
+        </div>
+      ) : null}
+
       {latestRun && (
         latestRunCanResume
         || ['retryable', 'deadline_exceeded', 'outcome_unknown'].includes(latestRun.state)
