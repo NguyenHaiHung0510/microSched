@@ -221,23 +221,23 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
 
   const rail = <MimiContextRail conversation={selected.data} onOpenDomain={onOpenDomain} />
   return <div className="space-y-3">
-    <div className="flex items-center justify-between gap-2 border-b pb-2">
-      <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+      <div className="flex min-w-0 w-full sm:w-auto flex-1 items-center gap-2">
         <Button
           variant="outline"
           size="sm"
-          className="gap-1.5 text-xs"
+          className="shrink-0 gap-1.5 text-xs"
           onClick={() => setLeftOpen(!leftOpen)}
           title={leftOpen ? 'Thu gọn danh sách hội thoại' : 'Mở danh sách hội thoại'}
         >
           {leftOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
           <span>{leftOpen ? 'Thu gọn hội thoại' : ('Hội thoại (' + conversationItems.length + ')')}</span>
         </Button>
-        <span className="text-xs text-muted-foreground truncate max-w-[9rem] sm:max-w-sm font-medium">
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground truncate max-w-[9rem] sm:max-w-sm font-medium">
           {selected.data?.title ? ('Đang mở: ' + selected.data.title) : 'Mimi Workspace'}
         </span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <Button
           variant={rightOpen ? 'selected' : 'outline'}
           size="sm"
