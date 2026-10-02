@@ -5,10 +5,10 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import false, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.tools.task_reads import _FIELDS, _project
+from app.agent.tools.task_reads import _FIELDS, TaskFilter, _filter_query, _project
 from app.domain.models import Task, TaskItem
 
 
@@ -16,9 +16,9 @@ class TaskContentRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
-    body_offset: int = Field(default=0, ge=0, le=1_000_000)
+    body_offset: int = Field(default=0, ge=0, le=2_147_483_647)
     body_limit: int = Field(default=4000, ge=1, le=4000)
-    items_offset: int = Field(default=0, ge=0, le=10_000)
+    items_offset: int = Field(default=0, ge=0, le=2_147_483_647)
     items_limit: int = Field(default=20, ge=1, le=20)
     expected_version: str | None = Field(default=None, max_length=64)
 
@@ -37,12 +37,7 @@ async def read_task_content(db: AsyncSession, request: TaskContentRead) -> dict[
     # lock keeps metadata/body/checklist in one consistent authorized snapshot.
     row = (
         await db.execute(
-            select(Task)
-            .where(
-                Task.id == request.id,
-                Task.deleted_at.is_(None),
-                Task.is_private == false(),
-            )
+            _filter_query(select(Task).where(Task.id == request.id), TaskFilter())
             .with_for_update(read=True)
             .execution_options(populate_existing=True)
         )

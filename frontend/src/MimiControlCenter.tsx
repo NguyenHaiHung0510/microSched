@@ -222,7 +222,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
   const rail = <MimiContextRail conversation={selected.data} onOpenDomain={onOpenDomain} />
   return <div className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
-      <div className="flex min-w-0 w-full sm:w-auto flex-1 items-center gap-2">
+      <div className="flex min-w-0 w-full sm:w-auto sm:flex-1 items-center gap-2">
         <Button
           variant="outline"
           size="sm"

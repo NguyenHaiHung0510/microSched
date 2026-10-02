@@ -218,3 +218,44 @@ def test_content_snapshot_lock_serializes_checklist_writer(pg_dsn):
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_body_continuation_crosses_former_offset_limit(pg_dsn):
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        task_id = None
+        try:
+            async with maker() as seed:
+                task = Task(title="Synthetic large body boundary", body_md="x" * 1_004_020)
+                seed.add(task)
+                await seed.flush()
+                task_id = task.id
+                await seed.commit()
+            async with maker() as reader:
+                first = await read_task_content(reader, TaskContentRead(id=task_id, body_limit=1))
+                version = first["rows"][0]["source_version"]
+                for offset in (999_999, 1_000_000, 1_000_001):
+                    page = await read_task_content(
+                        reader,
+                        TaskContentRead(id=task_id, body_offset=offset, expected_version=version),
+                    )
+                    assert len(page["rows"][0]["body_md"]) == 4000
+                    next_offset = page["next_body_offset"]
+                    assert next_offset == offset + 4000
+                    continued = await read_task_content(
+                        reader,
+                        TaskContentRead(
+                            id=task_id, body_offset=next_offset, expected_version=version
+                        ),
+                    )
+                    assert continued["next_body_offset"] is None
+                    assert continued["rows"][0]["body_range"][1] == 1_004_020
+        finally:
+            if task_id:
+                async with maker() as cleanup:
+                    await cleanup.execute(delete(Task).where(Task.id == task_id))
+                    await cleanup.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())

@@ -161,9 +161,9 @@ TOOLS: tuple[dict[str, Any], ...] = (
             ],
             "properties": {
                 "id": {"type": "string", "format": "uuid"},
-                "body_offset": {"type": "integer", "minimum": 0, "maximum": 1_000_000},
+                "body_offset": {"type": "integer", "minimum": 0, "maximum": 2_147_483_647},
                 "body_limit": {"type": "integer", "minimum": 1, "maximum": 4000},
-                "items_offset": {"type": "integer", "minimum": 0, "maximum": 10_000},
+                "items_offset": {"type": "integer", "minimum": 0, "maximum": 2_147_483_647},
                 "items_limit": {"type": "integer", "minimum": 1, "maximum": 20},
                 "expected_version": {"type": ["string", "null"], "maxLength": 64},
             },
