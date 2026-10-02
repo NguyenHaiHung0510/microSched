@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import http from 'node:http'
 import { once } from 'node:events'
 import { chromium } from 'playwright'
+import { runNotes082 } from './notes082.mjs'
 
 let step = 'stdin'
 const unexpectedHostHashes = new Set()
@@ -201,6 +202,8 @@ async function main() {
     await page.locator('[data-testid="task-title"]', { hasText: privateTitle }).waitFor()
     await page.getByRole('tab', { name: 'Ghi chú' }).click()
     await page.locator('[data-testid="note-title"]', { hasText: noteTitle }).waitFor()
+    step = 'notes082'
+    const notes082 = await runNotes082(page, payload)
     await page.evaluate(async () => navigator.serviceWorker.ready)
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null)
@@ -231,6 +234,7 @@ async function main() {
       ready_commit: readyBody.commit,
       task_count: 2,
       note_count: 1,
+      notes082,
       service_worker_controlled: true,
       outbound_requests: 0,
       context_closed: false,
