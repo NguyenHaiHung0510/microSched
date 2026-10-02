@@ -67,7 +67,8 @@ def test_active_context_projection_preserves_meaning_and_canonical_provenance():
     restored = [dict(zip(projected["columns"], row, strict=True)) for row in projected["rows"]]
     assert len(restored) == len(checkpoint["constraint_ledger"])
     for row, entry in zip(restored, checkpoint["constraint_ledger"], strict=True):
-        assert (row["id"], row["text"], row["kind"]) == (entry["id"], entry["text"], entry["kind"])
+        assert (row["text"], row["kind"]) == (entry["text"], entry["kind"])
+        assert "id" not in row
         source_ref = projected["sources"][row["source_ref"]]
         assert source_ref == {k: v for k, v in entry["source"].items() if k != "quote"}
     assert json.dumps(checkpoint, sort_keys=True) == original
