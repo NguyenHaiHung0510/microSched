@@ -278,7 +278,7 @@ def rebind_after_read(
         source_id=f"{tool_name}:{_source_hash(call_id)[:12]}",
         source_type="microsched.task.standard",
         query={"tool": tool_name, "arguments_sha256": _source_hash(arguments)},
-        projection=tuple(arguments.get("projection") or ()),
+        projection=tuple(arguments.get("projection") or result.get("projection") or ()),
         version=_source_hash([row.get("source_version") for row in rows])
         if isinstance(rows, list)
         else _source_hash(result),

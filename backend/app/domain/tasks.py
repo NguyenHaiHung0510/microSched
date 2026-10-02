@@ -1164,6 +1164,7 @@ class TaskStore:
             position=payload.position,
         )
         db.add(item)
+        parent.updated_at = datetime.now(UTC)
         await db.flush()
         return self._item_read(item)
 
@@ -1196,6 +1197,8 @@ class TaskStore:
         for field in ("is_completed", "position"):
             if field in changes:
                 setattr(item, field, changes[field])
+        if changes:
+            parent.updated_at = datetime.now(UTC)
         await db.flush()
         return self._item_read(item)
 
@@ -1216,4 +1219,5 @@ class TaskStore:
         if result.scalar_one_or_none() is None:
             return False
         await db.execute(delete(TaskItem).where(TaskItem.id == item_id))
+        parent.updated_at = datetime.now(UTC)
         return True

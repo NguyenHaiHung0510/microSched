@@ -119,6 +119,7 @@ async def test_sdk_completion_preserves_full_request_schema_provider_and_cost() 
         "task.query.v1",
         "task.aggregate.v1",
         "task.inspect_batch.v1",
+        "task.read_content.v1",
         "task.create_candidate.v2",
     ]
     assert isinstance(result.outcome, AssistantText)
