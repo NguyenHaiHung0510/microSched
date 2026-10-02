@@ -74,6 +74,29 @@ def test_active_context_projection_preserves_meaning_and_canonical_provenance():
     assert checkpoint["constraint_ledger"][0]["source"]["quote"] == "Chỉ học tối"
 
 
+def test_compaction_wire_omits_inactive_records_and_keeps_legacy_meanings():
+    from app.agent.service import _compaction_messages
+
+    prior = {
+        "frontier": 4,
+        "summary": "Legacy summary",
+        "summary_kind": "semantic_model",
+        "decisions": ["Only evening"],
+        "unresolved": ["Which date?"],
+    }
+    wire = json.loads(_compaction_messages(prior, [])[1]["content"])["prior"]
+    assert wire == prior
+    source = {"sequence": 1, "sha256": "a" * 64, "quote": "Only evening"}
+    prior["constraint_ledger"] = [
+        {"id": state, "text": state, "kind": "decision", "status": state, "source": source}
+        for state in ("active", "superseded", "resolved")
+    ]
+    original = json.dumps(prior, sort_keys=True)
+    wire = json.loads(_compaction_messages(prior, [])[1]["content"])["prior"]
+    assert [entry["id"] for entry in wire["constraint_ledger"]] == ["active"]
+    assert json.dumps(prior, sort_keys=True) == original
+
+
 def test_checkpoint_binds_source_hashes_frontier_and_pending_state() -> None:
     sources = [_source(4, "what is due?"), _source(5, "two tasks are due")]
     checkpoint = _checkpoint(sources)
@@ -85,6 +108,47 @@ def test_checkpoint_binds_source_hashes_frontier_and_pending_state() -> None:
     assert checkpoint["summary_kind"] == "extractive_excerpt"
     assert checkpoint["pending_preview"] == {"id": "preview-1"}
     validate_checkpoint(checkpoint, expected_sources=sources, prior=None)
+
+
+def test_compaction_wire_prior_retains_active_ids_and_meaning_without_canonical_duplicates():
+    from app.agent.service import _compaction_messages
+
+    source = _source(1, "Chỉ học tối")
+    checkpoint = make_semantic_checkpoint(
+        sources=[source],
+        prior=None,
+        policy_sha256="a" * 64,
+        pending_preview={"id": "server-owned"},
+        pending_draft=None,
+        candidate={
+            "summary": "Học tối.",
+            "constraints": [
+                {
+                    "text": "Chỉ học tối",
+                    "kind": "decision",
+                    "source_sequence": 1,
+                    "source_sha256": source.content_sha256,
+                    "quote": source.content,
+                }
+            ],
+            "supersessions": [],
+            "resolutions": [],
+        },
+    )
+    original = json.dumps(checkpoint, sort_keys=True)
+    prior = json.loads(_compaction_messages(checkpoint, [source])[1]["content"])["prior"]
+    assert prior["frontier"] == checkpoint["frontier"]
+    assert prior["summary"] == checkpoint["summary"]
+    entry = prior["constraint_ledger"][0]
+    canonical = checkpoint["constraint_ledger"][0]
+    assert {key: entry[key] for key in ("id", "text", "kind", "status")} == {
+        key: canonical[key] for key in ("id", "text", "kind", "status")
+    }
+    assert entry["source"] == {
+        key: value for key, value in canonical["source"].items() if key != "quote"
+    }
+    assert "pending_preview" not in prior and "source_refs" not in prior
+    assert json.dumps(checkpoint, sort_keys=True) == original
 
 
 @pytest.mark.parametrize("duplicate_candidate", [False, True])
