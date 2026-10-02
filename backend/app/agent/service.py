@@ -3766,6 +3766,20 @@ async def request_run_pause(db: AsyncSession, auth: AuthSession, run_id: UUID) -
     return {"run_id": run_id, "state": found.state, "pause_requested": True}
 
 
+def _generation_metadata_outcome(metadata: dict[str, Any]) -> str:
+    """Billing metadata alone is not proof of a usable completed generation."""
+    if metadata.get("cancelled") is True:
+        return "failed"
+    if metadata.get("cancelled") is not False:
+        return "unknown"
+    reason = metadata.get("finish_reason")
+    if reason in ("stop", "tool_calls"):
+        return "succeeded"
+    if reason in ("length", "error", "content_filter"):
+        return "failed"
+    return "unknown"
+
+
 async def reconcile_unknown_run(
     db: AsyncSession,
     auth: AuthSession,
@@ -3808,6 +3822,8 @@ async def reconcile_unknown_run(
         metadata = await openrouter_get_generation(response_id)
     except (ProviderDispatchError, RouteContractError) as error:
         raise _conflict("provider_reconciliation_unavailable") from error
+    if metadata.get("id") != response_id:
+        raise _conflict("provider_reconciliation_generation_mismatch")
 
     # Do not hold a database row lock across provider I/O. Re-lock and verify
     # that cancel/resume/reconcile did not advance the run while we waited.
@@ -3840,24 +3856,31 @@ async def reconcile_unknown_run(
             "total_cost",
             "latency",
             "generation_time",
+            "finish_reason",
+            "cancelled",
         )
         if key in metadata
     }
-    call.state = "succeeded"
+    outcome = _generation_metadata_outcome(metadata)
+    call.state = outcome
     call.result = {
         **(call.result or {}),
-        "terminal": "reconciled_generation_exists",
+        "terminal": f"reconciled_generation_{outcome}",
         "generation": safe_fields,
     }
-    run.provider_outcome = "succeeded"
-    run.state = "halted"
-    run.error_code = "provider_result_unavailable_after_reconcile"
+    run.provider_outcome = outcome
+    run.state = "outcome_unknown" if outcome == "unknown" else "halted"
+    run.error_code = (
+        "provider_result_unavailable_after_reconcile"
+        if outcome == "succeeded"
+        else f"provider_reconciliation_{outcome}"
+    )
     run.completed_at = datetime.now(UTC)
     await _append_event(
         db,
         run.id,
         "run.reconciled",
-        {"provider_outcome": "succeeded", "result_available": False},
+        {"provider_outcome": outcome, "result_available": False},
     )
     await db.flush()
     return {

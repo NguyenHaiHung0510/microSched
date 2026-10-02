@@ -148,10 +148,10 @@ export function MimiDock({
       <DialogContent
         id="mimi-side-chat"
         data-testid="mimi-side-chat"
-        className="inset-0 h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-4"
+        className="inset-0 grid-cols-[minmax(0,1fr)] h-dvh max-h-dvh w-full min-w-0 max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-4"
       >
-        <DialogHeader>
-          <div className="flex items-center justify-between w-full">
+        <DialogHeader className="min-w-0">
+          <div className="flex min-w-0 items-center justify-between w-full pr-10">
             <DialogTitle className="flex items-center gap-2"><MimiAvatar size="sm" state="idle" />Chat với Mimi</DialogTitle>
             <Button
               size="icon-sm"
@@ -167,7 +167,7 @@ export function MimiDock({
           <DialogDescription>Conversation STANDARD hiện tại · nội dung chính vẫn giữ nguyên khi đóng.</DialogDescription>
           {conversationItems.length > 0 ? (
             <Select value={effectiveSelectedId ?? ''} onValueChange={setSelectedId}>
-              <SelectTrigger aria-label="Chọn cuộc trò chuyện" className="min-h-11 w-full text-sm">
+              <SelectTrigger aria-label="Chọn cuộc trò chuyện" className="min-h-11 w-full min-w-0 text-sm">
                 <SelectValue placeholder="Chọn hội thoại…" />
               </SelectTrigger>
               <SelectContent>

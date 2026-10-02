@@ -715,6 +715,18 @@ export function MimiScreen({
         </div>
       ) : null}
 
+      {latestRun?.error_code === 'provider_result_unavailable_after_reconcile' ? (
+        <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
+          <p className="font-semibold">Provider đã hoàn tất, nhưng Mimi chưa lấy lại được câu trả lời.</p>
+          <p className="mt-1 text-xs">Mimi đã xác minh trạng thái và chi phí; chưa có nội dung hợp lệ để tiếp tục. Hệ thống không tự gửi lại. Nếu bạn gửi yêu cầu mới, đó là một lượt model mới có thể phát sinh chi phí.</p>
+        </div>
+      ) : null}
+      {latestRun?.error_code === 'provider_reconciliation_failed' ? (
+        <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
+          <p className="font-semibold">Provider đã dừng và chưa trả kết quả dùng được.</p>
+          <p className="mt-1 text-xs">Mimi không tự gửi lại lượt đã huỷ, bị cắt hoặc thất bại. Bạn có thể điều chỉnh yêu cầu rồi bắt đầu lượt mới.</p>
+        </div>
+      ) : null}
       {latestRun?.error_code === 'change_set_source_stale' ? (
         <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm" data-testid="mimi-source-stale-notice">
           <p className="font-semibold">Dữ liệu nguồn đã thay đổi; Mimi chưa tạo Task.</p>
