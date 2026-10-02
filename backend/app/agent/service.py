@@ -14,6 +14,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid7
 from zoneinfo import ZoneInfo
 
+from cryptography.exceptions import InvalidTag
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import and_, false, func, or_, select, text
@@ -905,19 +906,10 @@ async def _semantic_checkpoint(
     return checkpoint
 
 
-async def _prepare_context_history(
-    db: AsyncSession,
-    conversation: MimiConversation,
-    dek: bytes,
-    run_id: UUID,
-    user_sequence: int,
-    pending_preview: dict[str, Any] | None,
-    pending_draft: dict[str, Any] | None,
-    settings: Settings | None = None,
-    context_probe: Callable[..., None] | None = None,
-) -> tuple[list[dict[str, str]], tuple[int, int] | None, dict[str, Any] | None, UUID | None]:
-    """Use an active validated checkpoint, replacing it before any silent suffix loss."""
-
+async def _load_active_checkpoint(
+    db: AsyncSession, conversation: MimiConversation, dek: bytes
+) -> tuple[dict[str, Any] | None, UUID | None]:
+    """Read the same validated snapshot used by the next model turn; never activate."""
     policy = load_standard_policy()
     prior: dict[str, Any] | None = None
     checkpoint_id: UUID | None = None
@@ -972,6 +964,24 @@ async def _prepare_context_history(
         ):
             raise _conflict("mimi_active_checkpoint_source_drift")
         checkpoint_id = active.id
+    return prior, checkpoint_id
+
+
+async def _prepare_context_history(
+    db: AsyncSession,
+    conversation: MimiConversation,
+    dek: bytes,
+    run_id: UUID,
+    user_sequence: int,
+    pending_preview: dict[str, Any] | None,
+    pending_draft: dict[str, Any] | None,
+    settings: Settings | None = None,
+    context_probe: Callable[..., None] | None = None,
+) -> tuple[list[dict[str, str]], tuple[int, int] | None, dict[str, Any] | None, UUID | None]:
+    """Use an active validated checkpoint, replacing it before any silent suffix loss."""
+
+    policy = load_standard_policy()
+    prior, checkpoint_id = await _load_active_checkpoint(db, conversation, dek)
     rows = (
         (
             await db.execute(
@@ -3364,6 +3374,39 @@ def _feedback_target_query(conversation_id: UUID, target_type: str, target_id: s
     else:
         return None
     return target_query
+
+
+async def conversation_checkpoint_view(
+    db: AsyncSession, auth: AuthSession, conversation_id: UUID
+) -> dict[str, Any]:
+    conversation = await _conversation(db, auth, conversation_id)
+    if conversation.sensitivity != "standard":
+        raise HTTPException(status_code=404, detail="mimi_conversation_not_found")
+    try:
+        dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+        checkpoint, checkpoint_id = await _load_active_checkpoint(db, conversation, dek)
+    except (ValueError, KeyError, TypeError, AttributeError, InvalidTag) as exc:
+        raise _conflict("mimi_active_checkpoint_invalid") from exc
+    active = await db.get(MimiEvent, checkpoint_id) if checkpoint_id else None
+    visible_checkpoint = (
+        {
+            key: checkpoint[key]
+            for key in ("summary", "summary_kind", "decisions", "unresolved", "source_refs")
+        }
+        if checkpoint
+        else None
+    )
+    if visible_checkpoint is not None and "constraint_ledger" in checkpoint:
+        visible_checkpoint["constraint_ledger"] = checkpoint["constraint_ledger"]
+    # Hash binds the full validated snapshot; only its allowlisted view is returned.
+    return {
+        "conversation_id": str(conversation.id),
+        "checkpoint_id": str(checkpoint_id) if checkpoint_id else None,
+        "frontier": conversation.context_frontier_sequence,
+        "checkpoint_sha256": _canonical_digest(checkpoint) if checkpoint else None,
+        "activated_at": active.created_at.isoformat() if active else None,
+        "checkpoint": visible_checkpoint,
+    }
 
 
 async def conversation_view(

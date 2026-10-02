@@ -232,6 +232,34 @@ export function fetchCurrentMimiConversation(): Promise<MimiConversation | null>
   return apiRequest('/api/mimi/conversations/current')
 }
 
+export type MimiCheckpointConstraint = {
+  id: string
+  text: string
+  kind: string
+  status: 'active' | 'superseded' | 'resolved'
+  source?: { sequence?: number; quote?: string; sha256?: string; legacy_checkpoint_sha256?: string }
+}
+
+export type MimiCheckpointView = {
+  conversation_id: string
+  checkpoint_id: string | null
+  frontier: number
+  checkpoint_sha256: string | null
+  activated_at: string | null
+  checkpoint: {
+    summary: string
+    summary_kind: string
+    constraint_ledger?: MimiCheckpointConstraint[]
+    decisions: string[]
+    unresolved: string[]
+    source_refs: { id: string; sequence: number; sha256: string }[]
+  } | null
+}
+
+export function fetchMimiCheckpoint(conversationId: string): Promise<MimiCheckpointView> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/context`)
+}
+
 export function fetchMimiConversation(conversationId: string): Promise<MimiConversation> {
   return apiRequest(`/api/mimi/conversations/${conversationId}`)
 }

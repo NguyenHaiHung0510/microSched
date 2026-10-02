@@ -25,6 +25,7 @@ from app.agent.service import (
     FeedbackCreate,
     MessageCreate,
     confirm_change_set,
+    conversation_checkpoint_view,
     conversation_configuration,
     conversation_view,
     create_conversation,
@@ -183,6 +184,16 @@ async def read_current_conversation(db: Database, session: CurrentSession) -> di
 )
 async def read_conversation(conversation_id: UUID, db: Database, session: CurrentSession) -> dict:
     return await conversation_view(db, session, conversation_id)
+
+
+@router.get(
+    "/conversations/{conversation_id}/context",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_conversation_context(
+    conversation_id: UUID, db: Database, session: CurrentSession
+) -> dict:
+    return await conversation_checkpoint_view(db, session, conversation_id)
 
 
 @router.patch(

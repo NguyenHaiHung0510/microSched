@@ -1,3 +1,4 @@
+import { MimiCheckpointViewer } from './MimiCheckpointViewer'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, LoaderCircle, MessageSquareWarning, ReceiptText, RotateCcw, Send, Square, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -130,7 +131,7 @@ function ChangeSetPreview({
           </dl>
         </details>
         {error ? <p role="alert" className="text-sm text-bad">{error}</p> : null}
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap" data-testid="mimi-preview-actions">
           <Button className="min-h-11" variant="secondary" disabled={pending} onClick={onRevise}>
             Sửa phương án này
           </Button>
@@ -613,7 +614,7 @@ export function MimiScreen({
           <h3 id={`mimi-title-${variant}`} className="text-sm font-bold text-foreground truncate">
             {current.title ?? 'Conversation hiện tại'}
           </h3>
-          <span className="text-[11px] text-muted-foreground shrink-0">· STANDARD</span>
+          <span className="text-xs text-muted-foreground shrink-0">· STANDARD</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {!online ? <Badge variant="destructive" className="text-[10px] h-5">Mất mạng</Badge> : null}
@@ -737,7 +738,8 @@ export function MimiScreen({
             <div className="min-w-0"><dt>Manifest hash</dt><dd className="break-all">{String(latestContext.payload.manifest_sha256 ?? 'Chưa có')}</dd></div>
           </dl>
         ) : <p className="mt-2 text-xs">Lượt này chưa có manifest được ghi nhận; không suy ra đã dispatch.</p>}
-        {latestCheckpoint ? <p className="mt-2 text-xs">Checkpoint đã activate tới message {String(latestCheckpoint.payload.frontier ?? '?')}, gồm {String(latestCheckpoint.payload.source_count ?? '?')} nguồn. Đây là metadata, chưa phải bản xem toàn bộ summary.</p> : <p className="mt-2 text-xs">Chưa có checkpoint activate trong các receipt đang hiển thị.</p>}
+        {latestCheckpoint ? <p className="mt-2 text-xs">Checkpoint đã activate tới message {String(latestCheckpoint.payload.frontier ?? '?')}, gồm {String(latestCheckpoint.payload.source_count ?? '?')} nguồn. Metadata của receipt; bản tóm tắt hiện hành có thể mở bên dưới.</p> : <p className="mt-2 text-xs">Chưa có checkpoint activate trong các receipt đang hiển thị.</p>}
+        <MimiCheckpointViewer key={current.id} conversationId={current.id} frontier={Number(latestCheckpoint?.payload.frontier ?? 0)} generation={current.generation} />
         <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(latestContext?.payload.sources ?? [], null, 2)}</pre>
       </details>
 

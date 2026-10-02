@@ -22,6 +22,7 @@ from app.agent.route_config import bind_configuration
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
+from app.domain.models import AuthSession
 
 pytestmark = pytest.mark.pg
 
@@ -44,6 +45,12 @@ def test_checkpoint_rehydrates_across_sessions_and_rejects_tamper(pg_dsn) -> Non
     async def scenario() -> None:
         engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
+        auth = AuthSession(
+            token_hash="synthetic-checkpoint-reader",
+            user_email="checkpoint@example.invalid",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        other = auth.model_copy(update={"user_email": "other-checkpoint@example.invalid"})
         conversation_id = uuid7()
         run_id = uuid7()
         wrapped = mimi_crypto.create_wrapped_dek()
@@ -52,7 +59,7 @@ def test_checkpoint_rehydrates_across_sessions_and_rejects_tamper(pg_dsn) -> Non
             async with maker() as db:
                 conversation = MimiConversation(
                     id=conversation_id,
-                    owner_id=uuid7(),
+                    owner_id=mimi_service._owner_id(auth),
                     sensitivity="standard",
                     dek_wrapped=wrapped,
                     next_message_sequence=15,
@@ -129,6 +136,29 @@ def test_checkpoint_rehydrates_across_sessions_and_rejects_tamper(pg_dsn) -> Non
                 suffix, span, restored, restored_id = await mimi_service._prepare_context_history(
                     db, conversation, dek, run_id, 15, None, None
                 )
+                view = await mimi_service.conversation_checkpoint_view(db, auth, conversation_id)
+                assert view["checkpoint"]["summary"] == restored["summary"]
+                assert view["checkpoint"]["source_refs"] == restored["source_refs"]
+                assert "pending_preview" not in view["checkpoint"]
+                assert "pending_draft" not in view["checkpoint"]
+                assert "policy_sha256" not in view["checkpoint"]
+                assert datetime.fromisoformat(view["activated_at"]) == event.created_at
+                assert view["checkpoint_id"] == str(checkpoint_id)
+                assert view["frontier"] == 2
+                assert view["checkpoint_sha256"] == mimi_service._canonical_digest(restored)
+                assert not db.new and not db.dirty and not db.deleted
+                with pytest.raises(HTTPException) as isolated:
+                    await mimi_service.conversation_checkpoint_view(db, other, conversation_id)
+                assert isolated.value.status_code == 404
+                source = await db.get(MimiMessage, restored["source_refs"][0]["id"])
+                original_hash = source.content_sha256
+                source.content_sha256 = "f" * 64
+                await db.flush()
+                with pytest.raises(HTTPException) as drift:
+                    await mimi_service.conversation_checkpoint_view(db, auth, conversation_id)
+                assert drift.value.detail == "mimi_active_checkpoint_source_drift"
+                source.content_sha256 = original_hash
+                await db.flush()
                 assert restored_id == checkpoint_id
                 assert restored == checkpoint
                 assert span == (3, 14)
@@ -153,6 +183,29 @@ def test_checkpoint_rehydrates_across_sessions_and_rejects_tamper(pg_dsn) -> Non
                     )
                 assert blocked.value.status_code == 409
                 assert blocked.value.detail == "mimi_active_checkpoint_invalid"
+                with pytest.raises(HTTPException) as viewer_blocked:
+                    await mimi_service.conversation_checkpoint_view(db, auth, conversation_id)
+                assert viewer_blocked.value.status_code == 409
+                event = await db.get(MimiEvent, checkpoint_id)
+                blob = bytearray(
+                    base64.urlsafe_b64decode(
+                        event.payload["content_ciphertext"][
+                            len(mimi_crypto.MIMI_CIPHERTEXT_PREFIX) :
+                        ]
+                    )
+                )
+                blob[-1] ^= 1
+                event.payload = {
+                    **event.payload,
+                    "content_sha256": mimi_service._canonical_digest(checkpoint),
+                    "content_ciphertext": mimi_crypto.MIMI_CIPHERTEXT_PREFIX
+                    + base64.urlsafe_b64encode(blob).decode(),
+                }
+                await db.commit()
+                with pytest.raises(HTTPException) as cipher_tamper:
+                    await mimi_service.conversation_checkpoint_view(db, auth, conversation_id)
+                assert cipher_tamper.value.status_code == 409
+                assert cipher_tamper.value.detail == "mimi_active_checkpoint_invalid"
         finally:
             async with maker() as db:
                 conversation = (
@@ -850,6 +903,75 @@ def test_truncated_helper_accounts_observed_terminal_without_activating_history(
                 if row:
                     await db.delete(row)
                     await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_checkpoint_reader_http_auth_no_checkpoint_and_private_unavailable(pg_dsn):
+    import httpx
+    from fastapi import FastAPI
+
+    from app.web.routers import mimi as router_module
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        auth = AuthSession(
+            token_hash="synthetic-reader-http",
+            user_email="checkpoint-http@example.invalid",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        cid = uuid7()
+        app = FastAPI()
+        app.include_router(router_module.router, prefix="/api")
+
+        async def database():
+            async with maker() as db:
+                yield db
+
+        app.dependency_overrides[router_module.get_session] = database
+        try:
+            async with maker() as db:
+                db.add(
+                    MimiConversation(
+                        id=cid,
+                        owner_id=mimi_service._owner_id(auth),
+                        sensitivity="standard",
+                        dek_wrapped=mimi_crypto.create_wrapped_dek(),
+                    )
+                )
+                await db.commit()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://synthetic.local"
+            ) as client:
+                response = await client.get(f"/api/mimi/conversations/{cid}/context")
+                assert response.status_code == 401
+                app.dependency_overrides[router_module.require_session] = lambda: auth
+                response = await client.get(f"/api/mimi/conversations/{cid}/context")
+                assert response.status_code == 200
+                assert response.json()["checkpoint"] is None
+                assert response.json()["activated_at"] is None
+                assert response.json()["frontier"] == 0
+                app.dependency_overrides[router_module.require_session] = lambda: auth.model_copy(
+                    update={"user_email": "other-reader@example.invalid"}
+                )
+                response = await client.get(f"/api/mimi/conversations/{cid}/context")
+                assert response.status_code == 404
+                app.dependency_overrides[router_module.require_session] = lambda: auth
+                async with maker() as db:
+                    row = await db.get(MimiConversation, cid)
+                    row.sensitivity = "private"
+                    row.is_private = True
+                    await db.commit()
+                response = await client.get(f"/api/mimi/conversations/{cid}/context")
+                assert response.status_code == 404
+        finally:
+            from sqlalchemy import delete
+
+            async with maker() as db:
+                await db.execute(delete(MimiConversation).where(MimiConversation.id == cid))
+                await db.commit()
             await engine.dispose()
 
     asyncio.run(scenario())
