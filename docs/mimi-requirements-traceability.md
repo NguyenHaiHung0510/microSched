@@ -85,3 +85,16 @@ Owner restarted and directly resumed local synthetic work until16:00; prior Chro
 Phase5 misconfiguration preserved: T3 executor Luna/high was mistaken for Mimi application pin, changing its visible initialDeepSeek/high toLuna. One Luna run failed route contract; zeroactive/61Tasks/oneexecutionreceipt verified. Corrected handoff explicitly separates executor model from app route DeepSeek/high/DeepInfraFP8; new ordinary turn only after terminal reconciliation, no retry of failed run/privacy weakening. That attempt is not a content-quality result.
 
 Current readiness: implementation/evidence progress estimated~75%, live acceptance~60% of task078 scope, not all17master requirements/seven tiers. Any FAIL/BLOCKED/NOT_RUN mandatory gate prevents overallPASS. PRIVATE/otherdomainAIwrites/attachments/memory/skills/jobs remain explicit missing/deferred. Raw journey/screenshot/ledger and full decision details remain in the private task artifact directory; current matrices must be reconciled after phase5 rather than promoting this checkpoint to completion.
+
+## Reconciled evidence — 02/10 14:53
+
+Source3258965ef25ac9b83eb373e8569963678d5999c6/r7/app-Bh4ekgxH.js is frozen for phase6. Owner directly reports delegation fixed and resumes agents; the temporary subagent hold is released. Same T3 Luna/high receives a fresh bounded grant until15:30,8messages, one Chrome writer. Overall checkpoint15:45/stop16:00 and ONE cumulativeUSD1 remain unchanged; peer lane remains stopped.
+
+| Requirement | Actual new evidence | Boundary |
+|---|---|---|
+| READ-01 | Real DeepSeek/high run used native inspect_batch and read_content. Final persisted visible answer matches public body227chars/all3checklist items, explicitly says numeric expected outputs are absent and separates general suggestions | LOCAL_LIVE_PASS for this fixture; full answer screenshot incomplete, not arbitrary domain/private proof |
+| WRITE-02 | One source edit07:16:11 after frozen preview; ONE old confirmation07:19:32 before expiry halted as change_set_source_stale. Same preview became stale,61eligibleTasks/one execution receipt unchanged | LOCAL_LIVE_PASS for this source-CAS fixture; no related Task created, no second confirmation |
+| QA-01/UX | Phase5 preview card collapsed to badges and refusal disappeared: actual screenshots FAIL. r7 repairs pane scrolling/flex shrink and persistent notice; frontend182PASS/lint/build. T1 actual Chrome smoke sees notice on exact served asset and logs out/closes tab | Warning smoke PASS only. Whole-preview/mobile/dock retake pending; prior FAIL retained until visual evidence closes it |
+| OPS/BUDGET | Conservative ledger14:52USD0.19611294225 includes historical accounting and unknown holds; provider metadata13:24weeklyUSD0.054495949/keytotalUSD0.061470069 | Conservative bound is not charged spend; no hold release, fresh accounting reconciliation still required |
+
+No global ChromePASS, Owner-ready or production claim. Long fixed32k turn failure and full checkpoint-summary viewer gap remain. PRIVATE/otherdomainAIwrites/attachments/memory/skills/jobs/device/CI/OAuth/production remain missing/deferred or NOT_RUN. Source review, actual model semantics, screenshot taste and Owner acceptance are different evidence layers.

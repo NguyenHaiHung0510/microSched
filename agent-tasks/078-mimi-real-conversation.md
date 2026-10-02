@@ -1,5 +1,7 @@
 # 078 — Mimi requirements-led local release candidate
 
+Current checkpoint02Oct14:53: phase5 real Task body/checklist read and stale-source refusal have independent journal/domain proof;61eligibleTasks/one execution receipt unchanged by stale confirmation. Phase5 UXFAIL (clipped preview/invisible refusal) prompted r7 scroll/notice repair, frontend182PASS/lint/build. Exact3258965/r7/app-Bh4ekgxH.js frozen; T1 Chrome smoke saw explicit notice. Fresh phase6 T3 grant until15:30/max8messages retakes full preview/desktop/mobile/dock; it does not extend expired phase5. Owner directly fixed temporary delegation hold. Global checkpoint15:45/stop16:00, shared cumulativeUSD1 and no production/merge/deploy remain. Full-summary viewer/long32k and deferred domain gaps stay explicit; not READY.
+
 Status: **ACTIVE / OWNER_APPROVED_NIGHT**. Date 2026-10-01 Asia/Saigon. Base c21b1893df50c8693f376b222f1d4ab81aea51b6. Branch feat/078-mimi-real-conversation. Owner final approval received directly, expires 16:00 2026-10-02 Asia/Saigon after direct Owner extension at11:00; checkpoint-only from15:45. SharedUSD1 budget and original boundaries unchanged.
 
 ## Current authority
