@@ -113,8 +113,9 @@ export function sanitizePersistedClient(client: PersistedClient): PersistedClien
           : { items: publicItems(list.items) }
       } else return []
     } else if (key[0] === 'calendar' && ['tasks', 'annotations'].includes(String(key[1]))) {
-      if (!list) return []
-      safe = { items: publicItems(list.items) }
+      if (key[1] === 'tasks' && Array.isArray(data)) safe = publicItems(data)
+      else if (list) safe = { items: publicItems(list.items) }
+      else return []
     } else if (key[0] === 'calendar' && ['sources', 'events'].includes(String(key[1]))) {
       if (!list) return []
       safe = { items: list.items }

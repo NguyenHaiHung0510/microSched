@@ -96,3 +96,17 @@ describe('confirmed baseline while outbox overlays are pending', () => {
     expect(result.clientState.queries[0]?.state.data).toEqual([pub])
   })
 })
+
+it('persists the mounted CalendarTask array as public-only and retains nested public checklist data', () => {
+  const publicTask = { ...pub, items: [{ id: 'public-child', content: 'PUBLIC_CHILD_CANARY' }] }
+  const privateTask = { ...priv, items: [{ id: 'private-child', content: 'PRIVATE_CHILD_CANARY' }] }
+  const key = ['calendar', 'tasks', 'all', '2026-10-01', '2026-10-31'] as const
+  const result = sanitizePersistedClient(snapshot([[key, [publicTask, privateTask, { id: 'unclassified', title: 'UNKNOWN_CALENDAR_CANARY' }]]]))
+  expect(result.clientState.queries).toHaveLength(1)
+  expect(result.clientState.queries[0]?.queryKey).toEqual(key)
+  expect(result.clientState.queries[0]?.state.data).toEqual([publicTask])
+  expect(JSON.stringify(result)).toContain('PUBLIC_CHILD_CANARY')
+  expect(JSON.stringify(result)).not.toContain('PRIVATE_CANARY')
+  expect(JSON.stringify(result)).not.toContain('PRIVATE_CHILD_CANARY')
+  expect(JSON.stringify(result)).not.toContain('UNKNOWN_CALENDAR_CANARY')
+})
