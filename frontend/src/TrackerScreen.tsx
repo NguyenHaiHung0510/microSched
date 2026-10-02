@@ -58,6 +58,7 @@ import {
   upcomingReminderDate,
   upcomingReminderTime,
   groupTrackersByGroup,
+  reminderConfigurationChanged,
   sortTrackersForGrid,
   trackerKindLabel,
   trackerInvalidationKey,
@@ -311,7 +312,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             onError: (error) => toast.error(errorMessage(error)),
           },
         )
-      if (ensurePush) {
+      if (ensurePush && reminderConfigurationChanged(editingTracker, trackerPayload)) {
         void ensurePushSubscription()
           .then(saveTracker)
           .catch((error: unknown) =>

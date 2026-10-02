@@ -545,6 +545,29 @@ export function capturePayload(
 }
 
 /** Seam: every tracker write goes through these mutations (017 wraps this one door). */
+type ReminderConfig = Pick<
+  Tracker,
+  'reminder_time' | 'reminder_text' | 'reminder_mode' |
+  'reminder_interval_days' | 'reminder_action'
+>
+
+export function reminderConfigurationChanged(
+  current: ReminderConfig,
+  next: Partial<ReminderConfig>,
+): boolean {
+  const fields: Array<keyof ReminderConfig> = [
+    'reminder_time',
+    'reminder_text',
+    'reminder_mode',
+    'reminder_interval_days',
+    'reminder_action',
+  ]
+  return fields.some((field) =>
+    Object.prototype.hasOwnProperty.call(next, field) &&
+    (current[field] ?? null) !== (next[field] ?? null))
+}
+
+
 export function useTrackerWrites(refresh: () => void) {
   const createGroup = useMutation({
     mutationFn: (payload: { id?: string; name: string; kind: TrackerKind }) =>

@@ -47,32 +47,34 @@ export function NoteChecklist({ items, pending, failed = false, preview = false,
 
   function renderRow(item: NoteItem, hidden: boolean) {
     const toggle = (
-      <label
-        data-testid="note-item-toggle"
-        className={cn(
-          'inline-flex min-h-11 w-fit max-w-full cursor-pointer items-start gap-2.5 rounded-md px-1 py-2 text-sm',
-          pending && 'cursor-wait opacity-50',
-        )}
-      >
+      <div className="flex min-w-0 items-start gap-1 text-sm">
+        <label
+          data-testid="note-item-toggle"
+          className={cn(
+            'inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md',
+            pending && 'cursor-wait opacity-50',
+          )}
+        >
         <Checkbox
           data-testid="note-item-checkbox"
           aria-label={`Đánh dấu ${item.content} hoàn thành`}
           checked={item.is_completed}
           disabled={pending}
-          className="mt-1 after:inset-0"
+          className="after:inset-0"
           onCheckedChange={(checked) => {
             focusAfterToggle.current = { id: item.id, checked: checked === true, element: document.activeElement }
             if (checked !== true) setRemainingExpanded(true)
             onToggle(item, checked === true)
           }}
         />
+        </label>
         <span
           data-testid="note-item-content"
-          className={cn('min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]', item.is_completed && 'text-muted-foreground line-through')}
+          className={cn('min-w-0 py-2.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere]', item.is_completed && 'text-muted-foreground line-through')}
         >
           {item.content}
         </span>
-      </label>
+      </div>
     )
     return (
       <div data-testid="note-item" data-note-item-id={item.id} key={item.id} hidden={hidden}>
