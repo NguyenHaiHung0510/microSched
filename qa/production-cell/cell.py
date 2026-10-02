@@ -591,7 +591,7 @@ def _compose_service_id(run: CellRun, service: str) -> str:
 def create_service(run: CellRun, service: str) -> str:
     assert_migration_gate(run.migration_exit_code, service)
     result = run.compose(
-        ["create", "--no-build", "--no-deps", service],
+        ["up", "--no-start", "--no-deps", "--no-build", service],
         timeout=SETUP_TIMEOUT,
     )
     if result.returncode != 0:

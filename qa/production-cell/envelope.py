@@ -68,7 +68,7 @@ COMPOSE_TARGET_OPTIONS = (
     "-f",
     "-p",
 )
-COMPOSE_COMMANDS = frozenset({"build", "config", "create", "ps", "version"})
+COMPOSE_COMMANDS = frozenset({"build", "config", "create", "ps", "version", "up"})
 
 
 @dataclass(frozen=True)
@@ -319,6 +319,12 @@ class CommandEnvelope:
             raise GuardDenied("Compose target override option is forbidden")
         if not args or args[0] not in COMPOSE_COMMANDS:
             raise GuardDenied("Compose command is outside the QA025 allowlist")
+        if args[0] == "up" and (
+            len(args) != 5
+            or tuple(args[1:4]) != ("--no-start", "--no-deps", "--no-build")
+            or args[4] not in {"db", "bootstrap", "migrate", "seed", "app", "browser"}
+        ):
+            raise GuardDenied("Compose up must create exactly one service without starting")
 
     def _run(
         self,
