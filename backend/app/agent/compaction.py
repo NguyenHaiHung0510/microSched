@@ -19,7 +19,7 @@ def _constraint_id(
     return _digest({"text": text, "sequence": sequence, "sha256": source_hash, "kind": kind})
 
 
-def active_constraint_context(checkpoint: dict[str, Any] | None) -> str | None:
+def active_constraint_context(checkpoint: dict[str, Any] | None) -> str | dict[str, Any] | None:
     """Render only validated active semantic records with their source citations."""
     if not checkpoint or checkpoint.get("summary_kind") != "semantic_model":
         return checkpoint["summary"] if checkpoint else None
@@ -38,20 +38,24 @@ def active_constraint_context(checkpoint: dict[str, Any] | None) -> str | None:
         )
     ledger = checkpoint["constraint_ledger"]
     active = [entry for entry in ledger if entry["status"] == "active"]
-    citations = [
-        {
-            "id": item["id"],
-            "text": item["text"],
-            "kind": item["kind"],
-            "source": item["source"],
-        }
-        for item in active
-    ]
-    return (
-        checkpoint["summary"]
-        + "\nACTIVE_CONSTRAINT_LEDGER="
-        + json.dumps(citations, ensure_ascii=False, separators=(",", ":"))
-    )
+    sources: list[dict[str, Any]] = []
+    rows = []
+    for item in active:
+        # The encrypted canonical ledger and user inspector keep original
+        # quotes. Main-model context needs the complete constraint meaning
+        # plus immutable provenance, not a second copy of every source quote.
+        source = {key: value for key, value in item["source"].items() if key != "quote"}
+        if source not in sources:
+            sources.append(source)
+        rows.append([item["id"], item["text"], item["kind"], sources.index(source)])
+    return {
+        "schema": "mimi.active-context.v2",
+        "summary": checkpoint["summary"],
+        "sources": sources,
+        "columns": ["id", "text", "kind", "source_ref"],
+        "rows": rows,
+        "source_quotes": "omitted_from_wire; retained_in_canonical_checkpoint",
+    }
 
 
 def make_semantic_checkpoint(

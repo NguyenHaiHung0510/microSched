@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { createMimiConversation, fetchCurrentMimiConversation, fetchMimiConversations } from '@/mimi-api'
 import { MimiScreen } from '@/MimiScreen'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
+import { selectCreatedMimiConversation, useMimiSelection } from '@/mimi-selection'
 
 function useDesktopDock(): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia('(min-width: 1280px)').matches)
@@ -52,7 +53,7 @@ export function MimiDock({
 }) {
   const desktop = useDesktopDock()
   const queryClient = useQueryClient()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useMimiSelection()
   const currentConv = useQuery({
     queryKey: ['mimi', 'current'],
     queryFn: fetchCurrentMimiConversation,
@@ -72,7 +73,7 @@ export function MimiDock({
   const create = useMutation({
     mutationFn: () => createMimiConversation(),
     onSuccess: (created) => {
-      setSelectedId(created.id)
+      selectCreatedMimiConversation(queryClient, created)
       void queryClient.invalidateQueries({ queryKey: ['mimi'] })
     },
   })
@@ -138,7 +139,7 @@ export function MimiDock({
             </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <MimiScreen onOpenTasks={onOpenTasks} variant="dock" conversationId={selectedId} onConversationCreated={setSelectedId} />
+              <MimiScreen key={effectiveSelectedId} onOpenTasks={onOpenTasks} variant="dock" conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} />
             </div>
           </div>
         </aside>
@@ -167,8 +168,18 @@ export function MimiDock({
             </Button>
           </div>
           <DialogDescription>Conversation STANDARD hiện tại · nội dung chính vẫn giữ nguyên khi đóng.</DialogDescription>
+          {conversationItems.length > 0 ? (
+            <Select value={effectiveSelectedId ?? ''} onValueChange={setSelectedId}>
+              <SelectTrigger aria-label="Chọn cuộc trò chuyện" className="min-h-11 w-full text-sm">
+                <SelectValue placeholder="Chọn hội thoại…" />
+              </SelectTrigger>
+              <SelectContent>
+                {conversationItems.map((item) => <SelectItem key={item.id} value={item.id}>{item.title}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          ) : null}
         </DialogHeader>
-        <MimiScreen onOpenTasks={onOpenTasks} variant="dock" conversationId={selectedId} onConversationCreated={setSelectedId} />
+        <MimiScreen key={effectiveSelectedId} onOpenTasks={onOpenTasks} variant="dock" conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} />
       </DialogContent>
     </Dialog>
   )

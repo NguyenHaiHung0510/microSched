@@ -59,6 +59,7 @@ from app.agent.openrouter import (
     RouteContractError,
     build_request,
     serialized_input_bytes,
+    validate_task_candidate,
 )
 from app.agent.openrouter import (
     complete as openrouter_complete,
@@ -2421,12 +2422,7 @@ async def send_message(
                 if isinstance(outcome, PreviewCandidate):
                     if outcome.tool != CREATE_CANDIDATE_TOOL:
                         raise RouteContractError("preview_candidate_tool_invalid")
-                    try:
-                        candidate = TaskCreate.model_validate(outcome.arguments)
-                    except ValidationError as error:
-                        raise RouteContractError("preview_candidate_schema_invalid") from error
-                    if candidate.is_private:
-                        raise RouteContractError("standard_route_proposed_private_task")
+                    candidate = validate_task_candidate(outcome.arguments, require_id=False)
                     completion = ProviderCompletion(
                         kind="task", task=candidate, text=None, **common
                     )
@@ -2609,6 +2605,39 @@ async def send_message(
                         dek,
                         "Mimi đã nhận phản hồi nhưng không thể lưu bước chạy tiếp theo. "
                         "Chưa có thay đổi nào được ghi; bạn có thể gửi yêu cầu mới.",
+                    )
+                await db.flush()
+                return await conversation_view(db, auth, conversation_id)
+            if isinstance(error, RouteContractError) and call.state == "succeeded":
+                # Validation/materialization happens after a paid terminal. Keep
+                # that terminal reusable for diagnosis; never rewrite transport
+                # success as a failed dispatch or silently send another request.
+                run.provider_outcome = "succeeded"
+                run.state = "halted"
+                run.error_code = f"provider_contract_{_provider_contract_code(str(error))}"
+                run.completed_at = datetime.now(UTC)
+                call.result = {**(call.result or {}), "materialization_error": str(error)}
+                await _append_event(
+                    db, run_id, "agent.output_rejected", {"error_code": run.error_code}
+                )
+                await _append_event(
+                    db,
+                    run_id,
+                    "run.terminal",
+                    {
+                        "state": run.state,
+                        "provider_outcome": "succeeded",
+                        "error_code": run.error_code,
+                    },
+                )
+                if conversation.generation == generation + 1:
+                    _add_assistant_message(
+                        db,
+                        conversation,
+                        run_id,
+                        dek,
+                        "Mimi đã nhận phản hồi nhưng đề xuất chưa đáp ứng quy tắc dữ liệu. "
+                        "Chưa có thay đổi nào được ghi và yêu cầu không tự gửi lại.",
                     )
                 await db.flush()
                 return await conversation_view(db, auth, conversation_id)

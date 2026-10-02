@@ -16,6 +16,7 @@ import { MimiContextRail } from '@/MimiContextRail'
 import { MimiScreen } from '@/MimiScreen'
 import { mimiRunLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
+import { selectCreatedMimiConversation, useMimiSelection } from '@/mimi-selection'
 
 type CenterSection = 'overview' | 'activity' | 'conversations' | 'settings'
 
@@ -84,7 +85,7 @@ type WorkspaceDomain = 'tasks' | 'notes' | 'calendar' | 'tracker'
 function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: WorkspaceDomain) => void }) {
   const queryClient = useQueryClient()
   const [listState, setListState] = useState<'active' | 'archived'>('active')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useMimiSelection()
   const [leftOpen, setLeftOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -130,7 +131,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
     })
   }
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['mimi'] })
-  const create = useMutation({ mutationFn: () => createMimiConversation(), onSuccess: (item) => { setListState('active'); setSelectedId(item.id); refresh() } })
+  const create = useMutation({ mutationFn: () => createMimiConversation(), onSuccess: (item) => { setListState('active'); selectCreatedMimiConversation(queryClient, item); refresh() } })
   const rename = useMutation({ mutationFn: ({ item, title }: { item: MimiConversationSummary; title: string }) => renameMimiConversation(item, title), onSuccess: () => { setRenameTarget(null); refresh() } })
   const archive = useMutation({ mutationFn: ({ item, archived }: { item: MimiConversationSummary; archived: boolean }) => setMimiConversationArchived(item, archived), onSuccess: refresh })
 
@@ -317,6 +318,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
         <Card className="w-full max-w-4xl min-w-0 shadow-sm h-full flex flex-col">
           <CardContent className="p-4 sm:p-5 flex-1 min-h-0 flex flex-col">
             <MimiScreen
+              key={effectiveSelectedId}
               onOpenTasks={() => onOpenDomain('tasks')}
               variant="workspace"
               conversationId={effectiveSelectedId}

@@ -456,6 +456,61 @@ def _tool_choice(settings: Settings, *, force_task_tool: bool, agent_contract: b
     return {"type": "function", "function": {"name": name}}
 
 
+def validate_task_candidate(decoded: dict[str, Any], *, require_id: bool = True) -> TaskCreate:
+    """One domain validation seam for legacy and context-loop previews."""
+    allowed_fields = {
+        "id",
+        "title",
+        "body_md",
+        "status",
+        "priority",
+        "due_precision",
+        "due_on",
+        "due_at",
+        "is_private",
+        "items",
+    }
+    if unknown_fields := set(decoded) - allowed_fields:
+        raise RouteContractError(
+            "provider_task_schema_invalid_extra_fields_" + "_".join(sorted(unknown_fields))
+        )
+    # P1 owns the lifecycle state. A provider has no legitimate choice for
+    # this field, so normalize it at the trust boundary rather than letting
+    # harmless casing/default drift turn a valid preview into a dead run.
+    decoded = {**decoded, "status": "open"}
+    # Providers sometimes populate both nullable schedule siblings despite
+    # the strict schema. Precision is authoritative; clear only the sibling
+    # that cannot be represented by that precision, while still requiring
+    # the selected value itself to validate below.
+    if decoded.get("due_precision") == "datetime":
+        decoded["due_on"] = None
+    elif decoded.get("due_precision") == "date":
+        decoded["due_at"] = None
+    elif decoded.get("due_precision") == "none":
+        decoded["due_on"] = None
+        decoded["due_at"] = None
+    try:
+        task = TaskCreate.model_validate(decoded)
+    except ValidationError as error:
+        first = error.errors(include_url=False, include_context=False, include_input=False)[0]
+        location = "_".join(str(item) for item in first["loc"]) or "root"
+        error_type = str(first["type"])
+        raise RouteContractError(f"provider_task_schema_invalid_{location}_{error_type}") from error
+    if task.is_private:
+        raise RouteContractError("standard_route_proposed_private_task")
+    if require_id and task.id is None:
+        raise RouteContractError("provider_task_id_missing")
+    if len(task.title) > 200:
+        raise RouteContractError("provider_task_schema_invalid_title_too_long")
+    if task.body_md is not None and len(task.body_md) > 20_000:
+        raise RouteContractError("provider_task_schema_invalid_body_md_too_long")
+    if len(task.items) > 20:
+        raise RouteContractError("provider_task_schema_invalid_items_too_long")
+    if any(len(item) > 500 for item in task.items):
+        raise RouteContractError("provider_task_schema_invalid_items_item_too_long")
+    return task
+
+
 def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
     """Accept ordinary assistant text XOR exactly one validated task proposal."""
     try:
@@ -489,62 +544,11 @@ def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
             raise RouteContractError("provider_tool_arguments_not_json") from error
         if not isinstance(decoded, dict):
             raise RouteContractError("provider_tool_arguments_not_object")
-        allowed_fields = {
-            "id",
-            "title",
-            "body_md",
-            "status",
-            "priority",
-            "due_precision",
-            "due_on",
-            "due_at",
-            "is_private",
-            "items",
-        }
-        if unknown_fields := set(decoded) - allowed_fields:
-            raise RouteContractError(
-                "provider_task_schema_invalid_extra_fields_" + "_".join(sorted(unknown_fields))
-            )
-        # P1 owns the lifecycle state. A provider has no legitimate choice for
-        # this field, so normalize it at the trust boundary rather than letting
-        # harmless casing/default drift turn a valid preview into a dead run.
-        decoded = {**decoded, "status": "open"}
-        # Providers sometimes populate both nullable schedule siblings despite
-        # the strict schema. Precision is authoritative; clear only the sibling
-        # that cannot be represented by that precision, while still requiring
-        # the selected value itself to validate below.
-        if decoded.get("due_precision") == "datetime":
-            decoded["due_on"] = None
-        elif decoded.get("due_precision") == "date":
-            decoded["due_at"] = None
-        elif decoded.get("due_precision") == "none":
-            decoded["due_on"] = None
-            decoded["due_at"] = None
-        try:
-            task = TaskCreate.model_validate(decoded)
-        except ValidationError as error:
-            first = error.errors(include_url=False, include_context=False, include_input=False)[0]
-            location = "_".join(str(item) for item in first["loc"]) or "root"
-            error_type = str(first["type"])
-            raise RouteContractError(
-                f"provider_task_schema_invalid_{location}_{error_type}"
-            ) from error
+        task = validate_task_candidate(decoded)
     except RouteContractError:
         raise
     except (KeyError, TypeError, ValueError) as error:
         raise RouteContractError("invalid_provider_terminal_payload") from error
-    if task.is_private:
-        raise RouteContractError("standard_route_proposed_private_task")
-    if task.id is None:
-        raise RouteContractError("provider_task_id_missing")
-    if len(task.title) > 200:
-        raise RouteContractError("provider_task_schema_invalid_title_too_long")
-    if task.body_md is not None and len(task.body_md) > 20_000:
-        raise RouteContractError("provider_task_schema_invalid_body_md_too_long")
-    if len(task.items) > 20:
-        raise RouteContractError("provider_task_schema_invalid_items_too_long")
-    if any(len(item) > 500 for item in task.items):
-        raise RouteContractError("provider_task_schema_invalid_items_item_too_long")
     return ProviderCompletion(kind="task", task=task, text=None, **common)
 
 

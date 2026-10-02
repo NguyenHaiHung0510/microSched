@@ -59,6 +59,92 @@ def _auth() -> AuthSession:
     )
 
 
+@pytest.mark.parametrize("valid_schedule", [True, False])
+def test_agent_preview_schedule_and_durable_success(pg_dsn, monkeypatch, valid_schedule):
+    """Wire drift must not erase a paid terminal or bypass preview validation."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        auth = _auth()
+        cid = None
+        calls = 0
+
+        async def completion(messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            return AgentCompletion(
+                outcome=PreviewCandidate(
+                    tool=CREATE_CANDIDATE_TOOL,
+                    arguments={
+                        "title": "Đối chiếu optimistic version",
+                        "due_precision": "datetime",
+                        "due_on": "2026-10-03",
+                        "due_at": "2026-10-03T19:00:00+07:00" if valid_schedule else "invalid-time",
+                        "items": ["Đọc", "Cập nhật", "Kiểm tra conflict"],
+                    },
+                ),
+                response_id="synthetic-paid-terminal",
+                usage={},
+                provider="Synthetic",
+                model="synthetic/model",
+            )
+
+        monkeypatch.setattr(mimi_service, "openrouter_complete", completion)
+        try:
+            async with maker() as db:
+                cid = (
+                    await mimi_service.create_conversation(
+                        db, auth, mimi_service.ConversationCreate(client_id="schedule-drift")
+                    )
+                )["id"]
+                await db.commit()
+            async with maker() as db:
+                result = await mimi_service.send_message(
+                    db,
+                    auth,
+                    cid,
+                    mimi_service.MessageCreate(
+                        client_id="schedule-turn",
+                        content="Lập preview cho tối mai",
+                        expected_generation=1,
+                    ),
+                )
+                await db.commit()
+                run = result["runs"][-1]
+                assert run["state"] == ("waiting_confirmation" if valid_schedule else "halted")
+                assert run["provider_outcome"] == "succeeded"
+                call = (
+                    await db.execute(
+                        select(MimiProviderCall).where(MimiProviderCall.run_id == run["id"])
+                    )
+                ).scalar_one()
+                assert call.state == "succeeded"
+                assert call.result["terminal_ciphertext"]
+                assert call.result["response_id"] == "synthetic-paid-terminal"
+                assert calls == 1
+                if valid_schedule:
+                    assert len(result["change_sets"]) == 1
+                    operation = result["change_sets"][0]["operation"]
+                    assert operation["args"]["due_on"] is None
+                    assert datetime.fromisoformat(operation["args"]["due_at"]) == datetime(
+                        2026, 10, 3, 12, tzinfo=UTC
+                    )
+                else:
+                    assert not result["change_sets"]
+                    assert "provider_task_schema_invalid" in run["error_code"]
+        finally:
+            if cid:
+                async with maker() as db:
+                    conversation = await db.get(MimiConversation, cid)
+                    if conversation:
+                        await db.delete(conversation)
+                        await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_owner_pause_preserves_durable_terminal_and_resume_does_not_redispatch(pg_dsn, monkeypatch):
     """Model result completes once; successor consumes it with a fresh lease."""
 
@@ -389,9 +475,7 @@ def test_iterative_read_updates_context_without_writing(pg_dsn, monkeypatch):
                     )
                 )
             else:
-                assert any(
-                    message.get("role") == "tool" for message in messages
-                )
+                assert any(message.get("role") == "tool" for message in messages)
                 outcome = AssistantText(text="Không có Task STANDARD trong phạm vi đã đọc.")
             return AgentCompletion(
                 outcome=outcome,
