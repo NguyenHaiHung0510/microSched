@@ -10,6 +10,9 @@ tự xử lý bất đồng. Pending preview và quyền thực thi thuộc obje
 Trả đúng một JSON object theo schema strict, không Markdown hay lời dẫn:
 {"summary":"...","constraints":[],"supersessions":[],"resolutions":[]}.
 summary là tiếng Việt, ưu tiên 600–1200 ký tự; schema cho phép tối đa 6000 ký tự.
+summary phải là đoạn tóm tắt thực có nội dung: không dùng "...", dấu câu hoặc
+placeholder thay cho việc tóm tắt. Ngay cả khi không có thay đổi mới, hãy diễn đạt
+ngắn mục tiêu, dữ kiện và trạng thái còn hiệu lực từ prior cùng nguồn được cấp.
 Không chép lại bài giảng hay timeline chi tiết: chỉ giữ điểm cần cho lượt tiếp theo.
 Giữ đầy đủ constraints có nguồn; quote chỉ cần đoạn ngắn nhất chứng minh ràng buộc. Mỗi constraints item có đúng các trường
 text, kind (decision hoặc unresolved), source_sequence, source_sha256, quote. Chỉ ghi
