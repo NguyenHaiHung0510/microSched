@@ -634,3 +634,118 @@ def test_compaction_stops_after_four_helper_calls_and_keeps_all_raw_sources(pg_d
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("crash_boundary", ["intent", "dispatched"])
+def test_real_compaction_receipt_survives_process_loss_without_redispatch(
+    pg_dsn, monkeypatch, crash_boundary
+):
+    from app.agent.compaction import CheckpointSource
+
+    class SimulatedProcessLoss(BaseException):
+        pass
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mimi_service, "get_engine", lambda: engine)
+        cid, rid = uuid7(), uuid7()
+        dispatches = 0
+
+        async def crash_dispatch(*args, **kwargs):
+            nonlocal dispatches
+            dispatches += 1
+            raise SimulatedProcessLoss()
+
+        monkeypatch.setattr(mimi_service, "openrouter_complete", crash_dispatch)
+        monkeypatch.setattr(
+            "app.agent.local_budget.reserve", lambda *args, **kwargs: "synthetic-hold"
+        )
+        source_text = "Chỉ học buổi tối."
+        source = CheckpointSource(
+            id=uuid7(),
+            sequence=1,
+            role="user",
+            content_sha256=hashlib.sha256(source_text.encode()).hexdigest(),
+            content=source_text,
+        )
+        try:
+            async with maker() as db:
+                db.add(
+                    MimiConversation(
+                        id=cid,
+                        owner_id=uuid7(),
+                        sensitivity="standard",
+                        dek_wrapped=mimi_crypto.create_wrapped_dek(),
+                    )
+                )
+                await db.flush()
+                db.add(
+                    MimiRun(
+                        id=rid,
+                        conversation_id=cid,
+                        generation=1,
+                        state="accepted",
+                        execution_lease={},
+                        source_versions={},
+                        deadline=datetime.now(UTC) + timedelta(minutes=5),
+                    )
+                )
+                await db.commit()
+            async with maker() as db:
+                row = await db.get(MimiConversation, cid)
+                actual_commit = db.commit
+
+                async def commit_at_crash_seam():
+                    await actual_commit()
+                    if crash_boundary == "intent":
+                        raise SimulatedProcessLoss()
+
+                monkeypatch.setattr(db, "commit", commit_at_crash_seam)
+                settings = bind_configuration(
+                    get_settings(),
+                    {"profile_id": "deepseek", "effort": "high", "input_tokens": 32000},
+                )
+                with pytest.raises(SimulatedProcessLoss):
+                    await mimi_service._semantic_checkpoint(
+                        db, row, rid, [source], None, None, None, settings
+                    )
+            assert dispatches == (0 if crash_boundary == "intent" else 1)
+            async with maker() as db:
+                assert await mimi_service.reconcile_orphaned_mimi_runs(db) == 1
+                assert await mimi_service.reconcile_orphaned_mimi_runs(db) == 0
+                run = await db.get(MimiRun, rid)
+                call = (
+                    await db.execute(select(MimiProviderCall).where(MimiProviderCall.run_id == rid))
+                ).scalar_one()
+                assert call.route["purpose"] == "compaction"
+                assert call.route["run_guard_version"] == 1
+                assert call.state == ("fenced" if crash_boundary == "intent" else "unknown")
+                assert run.state == (
+                    "retryable" if crash_boundary == "intent" else "outcome_unknown"
+                )
+                assert run.error_code == (
+                    "process_lost_before_dispatch"
+                    if crash_boundary == "intent"
+                    else "process_lost_after_dispatch"
+                )
+                assert run.completed_at is not None
+                conversation = await db.get(MimiConversation, cid)
+                assert conversation.context_frontier_sequence == 0
+                events = (
+                    (await db.execute(select(MimiEvent).where(MimiEvent.run_id == rid)))
+                    .scalars()
+                    .all()
+                )
+                assert sum(e.kind == "run.terminal" for e in events) == 1
+                assert not any(e.kind == "context.checkpoint.activated" for e in events)
+            assert dispatches == (0 if crash_boundary == "intent" else 1)
+        finally:
+            async with maker() as db:
+                row = await db.get(MimiConversation, cid)
+                if row is not None:
+                    await db.delete(row)
+                    await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())

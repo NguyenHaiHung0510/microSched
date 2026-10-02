@@ -230,7 +230,10 @@ def make_semantic_checkpoint(
             },
         }
     existing_ids = {entry["id"] for entry in ledger}
-    ledger.extend(entry for entry in new_entries if entry["id"] not in existing_ids)
+    for entry in new_entries:
+        if entry["id"] not in existing_ids:
+            ledger.append(entry)
+            existing_ids.add(entry["id"])
     if len(ledger) > MAX_CONSTRAINTS:
         raise ValueError("checkpoint_semantic_ledger_limit")
     checkpoint.update(
@@ -383,6 +386,9 @@ def validate_checkpoint(
         ledger = checkpoint["constraint_ledger"]
         if not isinstance(ledger, list) or len(ledger) > MAX_CONSTRAINTS:
             raise ValueError("checkpoint_semantic_ledger_limit")
+        ids = [item.get("id") for item in ledger if isinstance(item, dict)]
+        if len(ids) != len(ledger) or len(set(ids)) != len(ids):
+            raise ValueError("checkpoint_semantic_duplicate_id")
         if (
             prior
             and "constraint_ledger" in prior

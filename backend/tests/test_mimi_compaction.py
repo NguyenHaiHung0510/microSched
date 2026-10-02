@@ -46,7 +46,10 @@ def test_checkpoint_binds_source_hashes_frontier_and_pending_state() -> None:
     validate_checkpoint(checkpoint, expected_sources=sources, prior=None)
 
 
-def test_semantic_constraint_supersession_requires_current_user_quote_and_keeps_pending_exact():
+@pytest.mark.parametrize("duplicate_candidate", [False, True])
+def test_semantic_constraint_supersession_requires_current_user_quote_and_keeps_pending_exact(
+    duplicate_candidate,
+):
     old_source = _source(1, "Tôi muốn hoàn thành việc này trước ngày 10/06.")
     prior = make_semantic_checkpoint(
         sources=[old_source],
@@ -64,11 +67,19 @@ def test_semantic_constraint_supersession_requires_current_user_quote_and_keeps_
                     "source_sha256": old_source.content_sha256,
                     "quote": "trước ngày 10/06",
                 }
-            ],
+            ]
+            * (2 if duplicate_candidate else 1),
             "supersessions": [],
             "resolutions": [],
         },
     )
+    assert len(prior["constraint_ledger"]) == 1
+    duplicate = {
+        **prior,
+        "constraint_ledger": [*prior["constraint_ledger"], dict(prior["constraint_ledger"][0])],
+    }
+    with pytest.raises(ValueError, match="checkpoint_semantic_duplicate_id"):
+        validate_checkpoint(duplicate, expected_sources=[old_source], prior=None)
     old_entry = prior["constraint_ledger"][0]
     current = _source(3, "Tôi đổi quyết định: hạn mới là 15/06.")
     replacement = "Hoàn thành trước 15/06"
