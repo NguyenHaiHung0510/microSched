@@ -226,13 +226,7 @@ async def aggregate_tasks(db: AsyncSession, request: TaskAggregate) -> dict[str,
 async def inspect_tasks(db: AsyncSession, request: TaskInspectBatch) -> dict[str, Any]:
     ids = set(request.ids)
     rows = (
-        (
-            await db.execute(
-                select(Task).where(
-                    Task.id.in_(ids), Task.deleted_at.is_(None), Task.is_private == false()
-                )
-            )
-        )
+        (await db.execute(_filter_query(select(Task).where(Task.id.in_(ids)), TaskFilter())))
         .scalars()
         .all()
     )

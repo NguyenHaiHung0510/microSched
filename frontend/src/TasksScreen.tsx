@@ -3,6 +3,7 @@ import {
   type MouseEvent,
   memo,
   useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -132,6 +133,13 @@ export function TasksScreen() {
   const [loadedStart, setLoadedStart] = useState(defaultStart)
   const [loadedEnd, setLoadedEnd] = useState(defaultEnd)
   const [extraTasks, setExtraTasks] = useState<Task[]>([])
+  const handleTaskUpdated = useCallback((updated: Task) => {
+    // Extended ranges are held outside the default-range React Query entry.
+    // Apply the successful server response there before the editor closes.
+    setExtraTasks((current) => current.some((task) => task.id === updated.id)
+      ? current.map((task) => task.id === updated.id ? updated : task)
+      : current)
+  }, [])
   const [bucketCursors, setBucketCursors] = useState<Record<TimelineBucket, string | null>>({
     overdue: null,
     dated: null,
@@ -515,8 +523,8 @@ export function TasksScreen() {
           ) : null}
         </div>
         <div className="space-y-3">
-          {open.map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />)}
-          {isOpen ? <div id={`task-completed-${day}`} className="space-y-3">{completed.map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />)}</div> : null}
+          {open.map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />)}
+          {isOpen ? <div id={`task-completed-${day}`} className="space-y-3">{completed.map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />)}</div> : null}
         </div>
       </Card>
     )
@@ -594,14 +602,14 @@ export function TasksScreen() {
               Quá hạn trước đó ({groups.overdue.length})
             </h3>
             {groups.overdue.map((task) => (
-              <TaskCard key={task.id} task={task} migratingPins={migratingPins} />
+              <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />
             ))}
           </div>
         ) : null}
         <div data-testid="task-list" className="grid grid-cols-2 gap-3 sm:grid-cols-3 [&>section]:col-span-full">
           {groups.dateGroups.map(({ day, tasks: groupTasks }) => renderGroup(day, groupTasks))}
-          {groups.undated.some((task) => task.status === 'open') && filter !== 'completed' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3>{groups.undated.filter((task) => task.status === 'open').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />)}</section> : null}
-          {groups.undated.some((task) => task.status === 'completed') && filter !== 'open' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3><Button data-testid="task-day-completed-toggle" size="lg" variant="ghost" aria-expanded={completedOpen.has('undated')} onClick={() => setCompletedOpen((current) => new Set(current).has('undated') ? new Set([...current].filter((key) => key !== 'undated')) : new Set([...current, 'undated']))}>Đã xong ({groups.undated.filter((task) => task.status === 'completed').length})</Button>{completedOpen.has('undated') ? groups.undated.filter((task) => task.status === 'completed').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />) : null}</section> : null}
+          {groups.undated.some((task) => task.status === 'open') && filter !== 'completed' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3>{groups.undated.filter((task) => task.status === 'open').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />)}</section> : null}
+          {groups.undated.some((task) => task.status === 'completed') && filter !== 'open' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3><Button data-testid="task-day-completed-toggle" size="lg" variant="ghost" aria-expanded={completedOpen.has('undated')} onClick={() => setCompletedOpen((current) => new Set(current).has('undated') ? new Set([...current].filter((key) => key !== 'undated')) : new Set([...current, 'undated']))}>Đã xong ({groups.undated.filter((task) => task.status === 'completed').length})</Button>{completedOpen.has('undated') ? groups.undated.filter((task) => task.status === 'completed').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />) : null}</section> : null}
         </div>
         <div className="flex flex-wrap gap-2 pt-2">
           <Button data-testid="task-load-earlier" size="lg" variant="outline" disabled={loadingDirection !== null || !hasPrevious} title={!hasPrevious ? 'Không còn ngày trước trong phạm vi có thể xem' : undefined} onClick={() => void loadBlock('earlier')}>{loadingDirection === 'earlier' ? 'Đang tải…' : 'Xem thêm ngày trước'}</Button>
@@ -700,9 +708,11 @@ function PriorityBadge({ priority }: { priority: TaskPriority }) {
 const TaskCard = memo(function TaskCard({
   task,
   migratingPins,
+  onTaskUpdated,
 }: {
   task: Task
   migratingPins: boolean
+  onTaskUpdated?: (task: Task) => void
 }) {
   const queryClient = useQueryClient()
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -726,7 +736,8 @@ const TaskCard = memo(function TaskCard({
         method: 'PATCH',
         body: JSON.stringify(variables.next),
       }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (updated, variables) => {
+      onTaskUpdated?.(updated)
       refresh()
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -751,7 +762,8 @@ const TaskCard = memo(function TaskCard({
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      onTaskUpdated?.(updated)
       setEditing(false)
       refresh()
     },
