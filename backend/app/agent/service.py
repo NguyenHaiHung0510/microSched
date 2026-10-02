@@ -780,6 +780,7 @@ async def _semantic_checkpoint(
         route={
             "kind": "openrouter",
             "purpose": "compaction",
+            "run_guard_version": 1,
             "context_limit": helper.mimi_route_context_tokens,
             "output_reserve": helper.mimi_route_max_output_tokens,
             "model": helper.mimi_route_model,
