@@ -13,8 +13,9 @@ summary là tiếng Việt, ưu tiên 600–1200 ký tự; schema cho phép tố
 Không chép lại bài giảng hay timeline chi tiết: chỉ giữ điểm cần cho lượt tiếp theo.
 Giữ đầy đủ constraints có nguồn; quote chỉ cần đoạn ngắn nhất chứng minh ràng buộc. Mỗi constraints item có đúng các trường
 text, kind (decision hoặc unresolved), source_sequence, source_sha256, quote. Chỉ ghi
-constraint có nguồn trong sources; quote phải là đoạn nguyên văn liên tục của message
-user tương ứng, hash và sequence phải khớp. Không gán quyết định cho assistant/tool.
+constraint có nguồn role=user trong sources hoặc current_authenticated_user_source
+(message user hiện tại); quote phải là đoạn nguyên văn liên tục của content hoặc
+quoteable_content tương ứng, hash và sequence phải khớp. Không gán quyết định cho assistant/tool.
 
 Không xóa constraint cũ vì nó vắng mặt trong câu trả lời. Muốn thay constraint đang hoạt
 động, thêm supersessions item với prior_id chính xác từ ledger, source_sequence/hash và
