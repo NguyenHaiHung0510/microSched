@@ -33,6 +33,9 @@ export async function runNotes082(page, payload) {
   const dialog = page.locator('[data-testid="note-detail-dialog"]')
   await dialog.waitFor()
   const checkbox = dialog.locator('[data-testid="note-item-checkbox"]')
+  const target = await dialog.locator('[data-testid="note-item-toggle"]').first().boundingBox()
+  check(target && target.width >= 44 && target.height >= 44, 'checkbox hit area under44CSSpx')
+  cases.subnote_hit_area_csspx = { width: target.width, height: target.height, status: 'PASS' }
   await checkbox.focus()
   await page.keyboard.press('Space')
   await page.waitForFunction((selector) => document.querySelector(selector)?.getAttribute('data-state') === 'checked', '[data-testid="note-detail-dialog"] [data-testid="note-item-checkbox"]')
@@ -47,7 +50,12 @@ export async function runNotes082(page, payload) {
 
   const temporaryText = `${itemText}\n${itemText} · mục tạm`
   const addInput = dialog.locator('[data-testid="note-item-add-input"]')
-  await addInput.fill(temporaryText)
+  await addInput.fill(itemText)
+  await addInput.press('End')
+  await addInput.press('Enter')
+  await addInput.pressSequentially(`${itemText} · mục tạm`)
+  check(await addInput.inputValue() === temporaryText, 'Enter did not insert a newline')
+  cases.subnote_enter_newline = 'PASS'
   let observedAddFailure = false
   const failAdd = async (route) => {
     const request = route.request()

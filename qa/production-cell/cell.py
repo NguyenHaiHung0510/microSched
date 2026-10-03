@@ -646,8 +646,23 @@ def start_one_shot(
     state = _container_state(run, container_id)
     exit_code = state.get("ExitCode")
     if result.returncode != 0 or exit_code != 0:
+        capture_one_shot_failure(run, service, container_id, result, exit_code)
         raise AssertionFailure(f"one-shot service {service} exited nonzero")
     return result.stdout
+
+
+def capture_one_shot_failure(run: CellRun, service: str, container_id: str, result: Any, exit_code: Any) -> None:
+    """Capture only the failed, manifest-owned synthetic service before teardown."""
+    run._verify_manifest()
+    if container_id not in run.resources["containers"]:
+        raise GuardDenied("failure diagnostics container is not manifest-owned")
+    labels = _resource_labels(run, "containers", container_id)
+    if labels.get("com.microsched.qa025.run_id") != run.run_id or labels.get("com.docker.compose.project") != run.run_id:
+        raise GuardDenied("failure diagnostics container ownership mismatch")
+    logs = run.docker(["logs", "--tail", "60", container_id], timeout=30)
+    replacements = {str(v): "<synthetic-secret-redacted>" for v in run.secret_values.values() if isinstance(v, str) and len(v) >= 4}
+    text = redact_text((logs.stdout + logs.stderr).decode("utf-8", errors="replace"), replacements=replacements)
+    _write_runtime_file(run.run_directory / "one-shot-failure.json", json.dumps({"service": service, "cli_exit": result.returncode, "container_exit": exit_code, "logs_exit": logs.returncode, "output": text[:12000]}, indent=2))
 
 
 def _record_migration_nonzero(run: CellRun, exit_code: int) -> None:

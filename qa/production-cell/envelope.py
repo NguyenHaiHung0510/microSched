@@ -40,6 +40,7 @@ DOCKER_COMMANDS = frozenset(
         "image",
         "info",
         "inspect",
+        "logs",
         "network",
         "pull",
         "rm",
@@ -301,6 +302,12 @@ class CommandEnvelope:
             raise GuardDenied("Docker target override option is forbidden")
         if not args or args[0] not in DOCKER_COMMANDS | {"context"}:
             raise GuardDenied("Docker command is outside the QA025 allowlist")
+        if args[0] == "logs" and (
+            len(args) != 4 or tuple(args[1:3]) != ("--tail", "60")
+            or len(args[3]) != 64
+            or any(c not in "0123456789abcdef" for c in args[3])
+        ):
+            raise GuardDenied("Logs require one exact container ID and bounded tail")
         if args[0] == "context" and tuple(args) != CONTEXT_LIST_ARGS:
             raise GuardDenied("Docker context mutation is forbidden")
         allowed_subcommands = {
