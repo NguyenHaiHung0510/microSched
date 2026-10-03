@@ -219,7 +219,9 @@ async function main() {
     assert(tracker083.status === 'PASS', 'tracker083 ' + JSON.stringify(tracker083.cases))
     assert(Object.values(tracker083.cases).every(value => value === 'PASS'), 'tracker083 incomplete matrix')
     notes082.tracker083 = tracker083
-    notes082.screenshots.push(...tracker083.screenshots)
+    // The preceding evidence line carries the PNG bytes once; do not duplicate
+    // them into the final attestation and overflow Docker's bounded log tail.
+    notes082.screenshots.push(...tracker083.screenshots.map(({ png_base64: _png, ...metadata }) => metadata))
     delete tracker083.screenshots
     notes082.cases.records_heatmap_083 = 'PASS'
     await page.evaluate(async () => navigator.serviceWorker.ready)

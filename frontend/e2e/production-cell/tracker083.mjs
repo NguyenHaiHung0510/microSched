@@ -46,7 +46,17 @@ function periodBounds(mode, anchor) {
 }
 
 async function shot(page, name, selector) {
-  const png = await page.locator(selector).screenshot({ animations: 'disabled', timeout: 15_000 })
+  const target = page.locator(selector)
+  await target.locator('h3').first().scrollIntoViewIfNeeded()
+  const box = await target.boundingBox()
+  check(box, 'screenshot target absent')
+  // Capture a normal-window slice, not an entire fifty-row scrolling list.
+  const viewport = page.viewportSize()
+  const png = await page.screenshot({ animations: 'disabled', timeout: 15_000, clip: {
+    x: Math.max(0, box.x), y: Math.max(0, box.y),
+    width: Math.min(box.x + box.width, viewport.width) - Math.max(0, box.x),
+    height: Math.min(box.y + box.height, viewport.height) - Math.max(0, box.y),
+  } })
   return {
     name: `${name}.png`,
     viewport: await page.evaluate(() => ({ width: innerWidth, height: innerHeight })),
