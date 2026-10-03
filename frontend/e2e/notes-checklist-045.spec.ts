@@ -3,7 +3,7 @@ import type { Note } from '../src/note-ui'
 
 const noteId = 'note-checklist-045'
 const longText = 'Kiểm tra tiếng Việt và nội dung nhiều dòng. '.repeat(6) + 'ChuỗiKhôngKhoảngTrắng'.repeat(12)
-const test = base.extend<{ notes: { note: Note; patches: object[]; fail: boolean; hold: Promise<void> | null } }>({
+const test = base.extend<{ notes: { note: Note; patches: object[]; creates: object[]; fail: boolean; hold: Promise<void> | null } }>({
   notes: [async ({ page }, use) => {
     const state = {
       note: {
@@ -14,7 +14,7 @@ const test = base.extend<{ notes: { note: Note; patches: object[]; fail: boolean
           is_completed: index % 2 === 0, position: index,
         })),
       } satisfies Note,
-      patches: [] as object[], fail: false, hold: null as Promise<void> | null,
+      patches: [] as object[], creates: [] as object[], fail: false, hold: null as Promise<void> | null,
     }
     await page.route('**/api/notes**', async (route) => {
       const request = route.request()
@@ -22,6 +22,14 @@ const test = base.extend<{ notes: { note: Note; patches: object[]; fail: boolean
       if (request.method() === 'GET') {
         state.note.items.sort((left, right) => left.position - right.position)
         await route.fulfill({ json: { items: Number(url.searchParams.get('offset')) ? [] : [state.note] } })
+        return
+      }
+      if (request.method() === 'POST' && url.pathname.endsWith('/items')) {
+        const body = request.postDataJSON() as { content: string; position: number }
+        state.creates.push(body)
+        const created = { id: `item-added-${state.creates.length}`, content: body.content, position: body.position, is_completed: false }
+        state.note.items.push(created)
+        await route.fulfill({ status: 201, json: created })
         return
       }
       const item = state.note.items.find((entry) => url.pathname.endsWith(`/items/${entry.id}`))
@@ -63,7 +71,7 @@ test('row whitespace opens detail without toggling; explicit title still opens d
   expect(notes.patches).toEqual([])
 })
 
-test('groups disclose reversibly and checkbox/text update state without position writes', async ({ page, notes }, testInfo) => {
+test('groups disclose reversibly and only checkbox updates state without position writes', async ({ page, notes }, testInfo) => {
   const card = page.getByTestId('note-card')
   const completed = card.getByTestId('note-items-completed-toggle')
   await expect(completed).toHaveText('Đã xong (5)')
@@ -79,6 +87,9 @@ test('groups disclose reversibly and checkbox/text update state without position
   const done = card.locator('[data-note-item-id="item-0"]')
   await expect(done).toBeVisible()
   await done.getByTestId('note-item-content').click()
+  await expect(done.getByRole('checkbox')).toBeChecked()
+  expect(notes.patches).toEqual([])
+  await done.getByRole('checkbox').click()
   await expect(card.locator('[data-note-item-id="item-0"]').getByRole('checkbox')).not.toBeChecked()
   const open = card.locator('[data-note-item-id="item-1"]').getByRole('checkbox')
   await open.focus()
@@ -103,7 +114,7 @@ test('collapsed completed group receives keyboard focus after checking an open i
   await expect(card.locator('[data-note-item-id="item-1"]').getByRole('checkbox')).toBeVisible()
 })
 
-test('detail text toggles, whitespace does not, long text fits and editing persists', async ({ page, notes }, testInfo) => {
+test('detail text does not toggle, checkbox does, long text fits and editing persists', async ({ page, notes }, testInfo) => {
   await page.getByTestId('note-title').click()
   const dialog = page.getByTestId('note-detail-dialog')
   const row = dialog.locator('[data-note-item-id="item-1"]')
@@ -121,6 +132,9 @@ test('detail text toggles, whitespace does not, long text fits and editing persi
   await whitespace.click({ position: { x: box.width - 2, y: 10 } })
   expect(notes.patches).toEqual([])
   await row.getByTestId('note-item-content').click()
+  await expect(row.getByRole('checkbox')).not.toBeChecked()
+  expect(notes.patches).toEqual([])
+  await row.getByRole('checkbox').click()
   await expect(dialog.getByTestId('note-items-completed-toggle')).toHaveText('Đã xong (6)')
   await dialog.getByTestId('note-items-completed-toggle').click()
   await dialog.locator('[data-note-item-id="item-1"]').getByRole('checkbox').click()
@@ -159,4 +173,33 @@ test('pending blocks duplicate toggles and failure preserves state and focus', a
   await expect(checkbox).not.toBeChecked()
   await expect(checkbox).toBeFocused()
   expect(notes.patches).toHaveLength(1)
+})
+
+
+test('multiline add and edit retain line breaks and only save on explicit action', async ({ page, notes }) => {
+  await page.getByTestId('note-title').click()
+  const dialog = page.getByTestId('note-detail-dialog')
+  const input = dialog.getByTestId('note-item-add-input')
+  await expect(input).toHaveJSProperty('tagName', 'TEXTAREA')
+  await input.fill('Dòng đầu tiếng Việt')
+  await input.press('Enter')
+  await input.pressSequentially('Dòng thứ hai')
+  await expect(input).toHaveValue('Dòng đầu tiếng Việt\nDòng thứ hai')
+  expect(notes.creates).toEqual([])
+  await dialog.getByTestId('note-item-add-submit').click()
+  const created = dialog.locator('[data-note-item-id="item-added-1"]')
+  await expect(created.getByTestId('note-item-content')).toHaveText('Dòng đầu tiếng Việt\nDòng thứ hai')
+  expect(notes.creates).toEqual([{ content: 'Dòng đầu tiếng Việt\nDòng thứ hai', position: 9 }])
+  await created.getByTestId('note-item-edit').click()
+  const edit = created.getByTestId('note-item-edit-input')
+  await expect(edit).toHaveJSProperty('tagName', 'TEXTAREA')
+  await edit.fill('Đã sửa dòng một\nDòng hai vẫn còn')
+  expect(notes.patches).toEqual([])
+  await created.getByTestId('note-item-edit-save').click()
+  await expect(created.getByTestId('note-item-content')).toHaveText('Đã sửa dòng một\nDòng hai vẫn còn')
+  expect(notes.patches).toEqual([{ content: 'Đã sửa dòng một\nDòng hai vẫn còn' }])
+  await page.reload()
+  await page.getByRole('tab', { name: 'Ghi chú' }).click()
+  await page.getByTestId('note-title').click()
+  await expect(page.getByTestId('note-detail-dialog').locator('[data-note-item-id="item-added-1"]').getByTestId('note-item-content')).toHaveText('Đã sửa dòng một\nDòng hai vẫn còn')
 })

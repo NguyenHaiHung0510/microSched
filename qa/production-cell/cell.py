@@ -28,6 +28,7 @@ from contract import (
     canonical_json,
     fixture_label_ledger,
     guard_parent_environment,
+    redact_text,
     sha256_bytes,
     sha256_file,
     timeout_status_for_phase,
@@ -476,6 +477,7 @@ def _generate_secrets(run: CellRun) -> None:
     for name, value in file_values.items():
         _write_runtime_file(run.secret_directory / name, value + "\n", secret_file=True)
     run.secret_values = {
+        **file_values,
         "session_token": session_token,
         "pin": pin,
         "email": f"qa025-{secrets.token_hex(5)}@example.invalid",
@@ -591,7 +593,7 @@ def _compose_service_id(run: CellRun, service: str) -> str:
 def create_service(run: CellRun, service: str) -> str:
     assert_migration_gate(run.migration_exit_code, service)
     result = run.compose(
-        ["create", "--no-build", "--no-deps", service],
+        ["up", "--no-start", "--no-deps", "--no-build", service],
         timeout=SETUP_TIMEOUT,
     )
     if result.returncode != 0:
@@ -646,8 +648,34 @@ def start_one_shot(
     state = _container_state(run, container_id)
     exit_code = state.get("ExitCode")
     if result.returncode != 0 or exit_code != 0:
+        capture_one_shot_failure(run, service, container_id, result, exit_code)
         raise AssertionFailure(f"one-shot service {service} exited nonzero")
+    if not result.stdout.strip():
+        # Windows Docker attach can lose the stream even when the service exits0.
+        # Read only the same completed, manifest-owned service; never rerun it.
+        return owned_one_shot_logs(run, container_id).stdout
     return result.stdout
+
+
+def owned_one_shot_logs(run: CellRun, container_id: str) -> Any:
+    run._verify_manifest()
+    if container_id not in run.resources["containers"]:
+        raise GuardDenied("diagnostics container is not manifest-owned")
+    labels = _resource_labels(run, "containers", container_id)
+    if labels.get("com.microsched.qa025.run_id") != run.run_id or labels.get("com.docker.compose.project") != run.run_id:
+        raise GuardDenied("diagnostics container ownership mismatch")
+    result = run.docker(["logs", "--tail", "60", container_id], timeout=30)
+    if result.returncode != 0:
+        raise AssertionFailure("owned one-shot logs could not be read")
+    return result
+
+
+def capture_one_shot_failure(run: CellRun, service: str, container_id: str, result: Any, exit_code: Any) -> None:
+    """Capture only the failed, manifest-owned synthetic service before teardown."""
+    logs = owned_one_shot_logs(run, container_id)
+    replacements = {str(v): "<synthetic-secret-redacted>" for v in run.secret_values.values() if isinstance(v, str) and len(v) >= 4}
+    text = redact_text((logs.stdout + logs.stderr).decode("utf-8", errors="replace"), replacements=replacements)
+    _write_runtime_file(run.run_directory / "one-shot-failure.json", json.dumps({"service": service, "cli_exit": result.returncode, "container_exit": exit_code, "logs_exit": logs.returncode, "output": text[:12000]}, indent=2))
 
 
 def _record_migration_nonzero(run: CellRun, exit_code: int) -> None:

@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto'
 import http from 'node:http'
 import { once } from 'node:events'
 import { chromium } from 'playwright'
+import { readJsonLine } from './read-json-line.mjs'
+import { runNotes082 } from './notes082.mjs'
+import { runTracker082 } from './tracker082.mjs'
 
 let step = 'stdin'
 const unexpectedHostHashes = new Set()
@@ -13,9 +16,7 @@ function assert(condition, message) {
 }
 
 async function readPayload() {
-  const chunks = []
-  for await (const chunk of process.stdin) chunks.push(chunk)
-  const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  const payload = await readJsonLine()
   const expected = ['candidate_sha', 'email', 'fixture_labels', 'pin', 'prefix', 'run_id', 'session_token']
   assert(Object.keys(payload).sort().join(',') === expected.join(','), 'stdin fields')
   assert(/^msqa025-[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}$/.test(payload.run_id), 'run id')
@@ -201,6 +202,16 @@ async function main() {
     await page.locator('[data-testid="task-title"]', { hasText: privateTitle }).waitFor()
     await page.getByRole('tab', { name: 'Ghi chú' }).click()
     await page.locator('[data-testid="note-title"]', { hasText: noteTitle }).waitFor()
+    step = 'notes082'
+    const notes082 = await runNotes082(page, payload)
+    step='tracker082'
+    const tracker082=await runTracker082(page,payload)
+    notes082.tracker082=tracker082
+    notes082.screenshots.push(...tracker082.screenshots)
+    delete tracker082.screenshots
+    notes082.status='PASS'
+    notes082.cases.tracker_rename_reminder_push=tracker082.cases.rename_unchanged_reminder_without_push
+    notes082.cases.finance_rhythm_golden='PASS'
     await page.evaluate(async () => navigator.serviceWorker.ready)
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null)
@@ -231,6 +242,7 @@ async function main() {
       ready_commit: readyBody.commit,
       task_count: 2,
       note_count: 1,
+      notes082,
       service_worker_controlled: true,
       outbound_requests: 0,
       context_closed: false,
@@ -250,10 +262,11 @@ async function main() {
   console.log(JSON.stringify(result))
 }
 
-main().catch(() => {
+main().catch((error) => {
   console.error(
     JSON.stringify({
       browser: 'FAIL',
+      error: String(error?.message ?? 'browser failure').split('\n')[0].slice(0, 240),
       step,
       unexpected_host_sha256: [...unexpectedHostHashes].sort(),
     }),

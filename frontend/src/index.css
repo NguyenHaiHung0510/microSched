@@ -57,8 +57,8 @@
   --bad:     #b04a3a; /* 5,40:1 trên --card; 4,73:1 trên --bad-bg */
   --bad-bg:  #fdeceb;
   /* Future reflections are correspondence, not privacy or warning state. */
-  --reflection-bg: #eef3f8;
-  --reflection-foreground: #49657e;
+  --reflection-bg: #fdf5df;
+  --reflection-foreground: #87631a;
 
   /* --- hợp đồng token của shadcn: component đang chạy đọc đúng các tên này --- */
   --background:             var(--n-50);

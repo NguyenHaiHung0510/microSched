@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import { activityCountByTrackerDay, daysInReportMonth, isFutureActivityDay, reportMonthOffset } from '@/tracker-rhythm'
+import { activityCountByTrackerDay, daysInReportMonth, isFutureActivityDay, reportMonthOffset, initialReportWeek } from '@/tracker-rhythm'
 import type { DashboardResponse, Tracker } from '@/tracker-ui'
 
 const WEEKDAYS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
@@ -16,7 +16,7 @@ function vietnamDate(day: string): string {
 
 export function TrackerRhythm({ dashboard, trackers }: { dashboard: DashboardResponse; trackers: Tracker[] }) {
   const [mode, setMode] = useState<'week' | 'month'>('week')
-  const [week, setWeek] = useState(0)
+  const [week, setWeek] = useState(() => initialReportWeek(dashboard.activity_month))
   const [showAll, setShowAll] = useState(false)
   const [selectedTracker, setSelectedTracker] = useState<string | null>(trackers[0]?.id ?? null)
   const [selected, setSelected] = useState<{ trackerId: string; day: string } | null>(null)
