@@ -90,6 +90,9 @@ async function currentVietnamDate(page) {
 }
 
 export async function runTracker083(page, payload) {
+  page.setDefaultTimeout(15_000)
+  page.setDefaultNavigationTimeout(20_000)
+  console.log(JSON.stringify({ tracker083_progress: 'setup' }))
   const cases = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`A${String(i + 1).padStart(2, '0')}`, 'NOT_RUN']))
   const screenshots = []
   const ownedEntryIds = []
@@ -103,12 +106,14 @@ export async function runTracker083(page, payload) {
   }
 
   async function runCase(caseId, action) {
+    console.log(JSON.stringify({ tracker083_progress: caseId, state: 'START' }))
     try {
       await action()
       cases[caseId] = 'PASS'
     } catch (error) {
       fail(caseId, error)
     }
+    console.log(JSON.stringify({ tracker083_progress: caseId, state: cases[caseId] }))
   }
 
   try {
