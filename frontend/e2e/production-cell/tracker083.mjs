@@ -400,7 +400,13 @@ export async function runTracker083(page, payload) {
       let releaseRead
       const delayedRead = new Promise(resolve => { releaseRead = resolve })
       const delayedUrl = '**/api/tracker/entries?*'
-      await page.route(delayedUrl, async route => { await delayedRead; await route.continue() })
+      await page.route(delayedUrl, async route => {
+        await delayedRead
+        try { await route.continue() } catch (error) {
+          // unroute may already release this in-flight handler; only that lifecycle race is expected.
+          if (!String(error.message).includes('Route is already handled')) throw error
+        }
+      })
       try {
         await selectOption(page, 'records-mode', 'Theo ngày')
         await page.getByTestId('records-date').fill('1899-01-01')
