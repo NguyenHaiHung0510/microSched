@@ -28,6 +28,7 @@ from contract import (
     canonical_json,
     fixture_label_ledger,
     guard_parent_environment,
+    redact_text,
     sha256_bytes,
     sha256_file,
     timeout_status_for_phase,
