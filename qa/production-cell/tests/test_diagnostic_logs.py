@@ -2,6 +2,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+from pathlib import Path
+import json
+import subprocess
+from common import workspace_temporary_directory
 from cell import capture_one_shot_failure
 from common import CELL_ROOT
 from contract import GuardDenied
@@ -25,3 +29,22 @@ class DiagnosticLogsTests(unittest.TestCase):
         run.resources["containers"] = []
         with self.assertRaises(GuardDenied):
             capture_one_shot_failure(run, "seed", cid, SimpleNamespace(returncode=0), 20)
+
+    def test_cli_zero_container_nonzero_keeps_sanitized_diagnostic(self):
+        cid = "a" * 64
+        with workspace_temporary_directory() as tmp:
+            run = SimpleNamespace(_verify_manifest=lambda: None, resources={"containers": [cid]}, run_id="owned", secret_values={"app_password": "synthetic-test-password", "session_token": "synthetic-test-token"}, run_directory=Path(tmp))
+            commands = []
+            def docker(args, **kwargs):
+                commands.append(args)
+                return subprocess.CompletedProcess(args, 0, b"error synthetic-test-password synthetic-test-token", b"")
+            run.docker = docker
+            labels = {"com.microsched.qa025.run_id": "owned", "com.docker.compose.project": "owned"}
+            with patch("cell._resource_labels", return_value=labels):
+                capture_one_shot_failure(run, "seed", cid, SimpleNamespace(returncode=0), 20)
+            value = json.loads((Path(tmp) / "one-shot-failure.json").read_text())
+            self.assertEqual(value["container_exit"], 20)
+            self.assertEqual(value["cli_exit"], 0)
+            self.assertNotIn("synthetic-test-password", value["output"])
+            self.assertNotIn("synthetic-test-token", value["output"])
+            self.assertEqual(commands, [["logs", "--tail", "60", cid]])
