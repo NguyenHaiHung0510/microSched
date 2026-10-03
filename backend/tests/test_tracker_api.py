@@ -957,12 +957,18 @@ def test_rename_tracker_persists_encrypted_name_and_keeps_reminder(pg_dsn: str):
         try:
             tracker = await _create_tracker(client, name="QA082 original")
             tracker_id = UUID(tracker["id"])
-            reminder = {"reminder_mode": "fixed", "reminder_interval_days": 3,
-                        "reminder_action": "confirm_event", "reminder_time": "08:30:00",
-                        "reminder_text": "QA082 reminder"}
+            reminder = {
+                "reminder_mode": "fixed",
+                "reminder_interval_days": 3,
+                "reminder_action": "confirm_event",
+                "reminder_time": "08:30:00",
+                "reminder_text": "QA082 reminder",
+            }
             enabled = await client.patch(f"/api/tracker/trackers/{tracker_id}", json=reminder)
             assert enabled.status_code == 200
-            renamed = await client.patch(f"/api/tracker/trackers/{tracker_id}", json={"name": "QA082 renamed"})
+            renamed = await client.patch(
+                f"/api/tracker/trackers/{tracker_id}", json={"name": "QA082 renamed"}
+            )
             assert renamed.status_code == 200
             assert renamed.json()["name"] == "QA082 renamed"
             listed = (await client.get("/api/tracker/trackers")).json()["items"]
@@ -972,7 +978,9 @@ def test_rename_tracker_persists_encrypted_name_and_keeps_reminder(pg_dsn: str):
                 assert persisted[key] == value
             conn = await asyncpg.connect(pg_dsn)
             try:
-                stored = await conn.fetchval("SELECT name FROM microsched.tracker WHERE id=$1", tracker_id)
+                stored = await conn.fetchval(
+                    "SELECT name FROM microsched.tracker WHERE id=$1", tracker_id
+                )
             finally:
                 await conn.close()
             assert stored.startswith("enc:v1:")
@@ -981,4 +989,5 @@ def test_rename_tracker_persists_encrypted_name_and_keeps_reminder(pg_dsn: str):
             await client.aclose()
             await _cleanup(pg_dsn, "tracker", [tracker_id])
             await engine.dispose()
+
     asyncio.run(scenario())
