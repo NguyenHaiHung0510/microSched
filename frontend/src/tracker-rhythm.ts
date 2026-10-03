@@ -5,7 +5,10 @@ export function daysInReportMonth(month: string): string[] {
   if (!match) return []
   const year = Number(match[1])
   const monthNumber = Number(match[2])
-  const days = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()
+  const end = new Date(`${String(year).padStart(4, '0')}-${String(monthNumber).padStart(2, '0')}-01T00:00:00Z`)
+  end.setUTCMonth(end.getUTCMonth() + 1)
+  end.setUTCDate(0)
+  const days = end.getUTCDate()
   return Array.from({ length: days }, (_, index) => `${month}-${String(index + 1).padStart(2, '0')}`)
 }
 
@@ -13,7 +16,7 @@ export function daysInReportMonth(month: string): string[] {
 export function reportMonthOffset(month: string): number {
   const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month)
   if (!match) return 0
-  return (new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)).getUTCDay() + 6) % 7
+  return (new Date(`${month}-01T00:00:00Z`).getUTCDay() + 6) % 7
 }
 
 export function activityCountByTrackerDay(rows: ActivityDay[]): Map<string, number> {
