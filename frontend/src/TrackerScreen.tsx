@@ -18,7 +18,7 @@ import {
 import { toast } from 'sonner'
 
 import { apiRequest } from '@/api'
-import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
+import { vietnamInputToIso } from '@/calendar-ui'
 import { navigate } from '@/lib/route'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -34,6 +34,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { CaptureGrid } from '@/CaptureGrid'
 import { DashboardPanel } from '@/DashboardPanel'
+import { TrackerRecords } from '@/TrackerRecords'
+import { TrackerHeatmap } from '@/TrackerHeatmap'
+import { initialRecordsSelection } from '@/tracker-records'
 import { EntryEditDialog, type EntryEditPayload } from '@/EntryEditDialog'
 import { GroupForm } from '@/GroupForm'
 import { TrackerForm, type TrackerWritePayload } from '@/TrackerForm'
@@ -51,7 +54,6 @@ import {
   backdateOptions,
   capturePayload,
   currentVietnamMonth,
-  formatQuantity,
   formatReminderSummary,
   formatVnd,
   groupUpcomingReminders,
@@ -96,15 +98,13 @@ function reportMonthLabel(month: string, months: 1 | 3 | 6 | 12): string {
   return `${monthLabel(shiftMonth(month, 1 - months))} – ${monthLabel(month)}`
 }
 
-function formatEntryLine(entry: Entry): string {
-  if (entry.amount != null) return `${entry.amount.toLocaleString('vi-VN')} ₫`
-  if (entry.quantity != null) return formatQuantity(entry.quantity)
-  return 'Đã ghi'
-}
-
 export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean }) {
   const queryClient = useQueryClient()
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+  const [records, setRecords] = useState(initialRecordsSelection)
+  const refresh = () => {
+    setRecords(previous => ({ ...previous, page: 0 }))
+    void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
+  }
   const writes = useTrackerWrites(refresh)
   const currentMonth = currentVietnamMonth()
   const [month, setMonth] = useState(currentMonth)
@@ -130,11 +130,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
     queryFn: () => apiRequest<DashboardResponse>(`/api/tracker/dashboard?month=${month}&months=${reportMonths}`),
     refetchInterval: standardRefetchInterval,
   })
-  const entriesQuery = useQuery({
-    queryKey: trackerQueryKey('entries'),
-    queryFn: () => apiRequest<{ items: Entry[] }>('/api/tracker/entries?limit=20'),
-    refetchInterval: standardRefetchInterval,
-  })
   const subscriptionsQuery = useQuery({
     queryKey: subscriptionQueryKey('subscriptions'),
     queryFn: () => apiRequest<{ items: Subscription[] }>('/api/subscriptions'),
@@ -146,7 +141,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
     refetchInterval: standardRefetchInterval,
   })
 
-  const trackers = trackersQuery.data?.items ?? EMPTY_TRACKERS
+  const trackerRows = trackersQuery.data?.items ?? EMPTY_TRACKERS
+  const trackers = privateUnlocked ? trackerRows : trackerRows.filter(tracker => !tracker.is_private)
   const groups = groupsQuery.data?.items ?? EMPTY_GROUPS
 
   // §5.2: order is computed once per membership change and then frozen — a capture
@@ -179,7 +175,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [capturingIds, setCapturingIds] = useState<ReadonlySet<string>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set(groups.map((g) => g.id)))
  const [unassignedCollapsed, setUnassignedCollapsed] = useState(true)
- const [entriesCollapsed, setEntriesCollapsed] = useState(true)
  const [rhythmCollapsed, setRhythmCollapsed] = useState(true)
  const createReturnRef = useRef<HTMLButtonElement | null>(null)
   const editReturnRef = useRef<HTMLButtonElement | null>(null)
@@ -203,6 +198,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       setBackdateCustom('')
       setArchiveFor(null)
       setEditingEntry(null)
+      setRecords(initialRecordsSelection())
       setLockedIds(new Set())
       setCapturingIds(new Set())
       editReturnRef.current = null
@@ -400,7 +396,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   // covers the remaining shared queries only.
   const queryError =
     groupsQuery.error ??
-    entriesQuery.error ??
     subscriptionsQuery.error ??
     settingsQuery.error
   const showListPrice =
@@ -881,100 +876,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         )}
       </Card>
 
-      <Card className="gap-3 p-4 shadow-1 ring-0">
-        <Button
-          type="button"
-          variant="ghost"
-          data-testid="tracker-entries-toggle"
-          aria-expanded={!entriesCollapsed}
-          aria-controls="tracker-recent-entries"
-          className="flex min-h-11 w-full items-center justify-between gap-3 text-left cursor-pointer select-none h-auto p-0 hover:bg-transparent"
-          onClick={() => setEntriesCollapsed(!entriesCollapsed)}
-        >
-          <div className="flex flex-wrap items-baseline gap-2">
-            <h3 className="text-base font-bold">Bản ghi gần đây</h3>
-            <span className="text-xs text-muted-foreground">{entriesQuery.data?.items.length ?? 0} bản ghi mới nhất</span>
-          </div>
-        {entriesCollapsed ? (
-          <ChevronDown className="size-4 text-muted-foreground" />
-        ) : (
-          <ChevronUp className="size-4 text-muted-foreground" />
-        )}
-        </Button>
-      {!entriesCollapsed ? (
-        entriesQuery.isPending ? <p className="text-sm text-muted-foreground">Đang tải bản ghi…</p> : entriesQuery.isError ? (
-          <div role="alert" className="space-y-2 text-sm text-bad"><p>Không tải được bản ghi gần đây.</p><Button variant="outline" className="min-h-11" onClick={() => void entriesQuery.refetch()}>Thử lại</Button></div>
-        ) : entriesQuery.data?.items.length ? (
-          <div id="tracker-recent-entries" className="divide-y divide-border">
-            {entriesQuery.data.items.map((entry) => {
-              const tracker = trackers.find((item) => item.id === entry.tracker_id)
-              return (
-                <div
-                  key={entry.id}
-                  data-testid="entry-row"
-                  data-entry-id={entry.id}
-                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-3"
-                >
-                  <div className="min-w-0">
-                    <p className="max-w-full break-words text-sm font-semibold">
-                      {tracker?.name ?? 'Đã archive'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {entry.occurred_at
-                        ? new Intl.DateTimeFormat('vi-VN', {
-                            timeZone: VIETNAM_TIME_ZONE,
-                            day: '2-digit',
-                            month: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          }).format(new Date(entry.occurred_at))
-                        : ''}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
-                    <span className="basis-full text-right text-sm font-bold tabular-nums sm:basis-auto">
-                      {showListPrice &&
-                      entry.list_amount != null &&
-                      entry.amount != null &&
-                      entry.list_amount !== entry.amount ? (
-                        <span className="mr-2 text-xs font-normal text-muted-foreground line-through">
-                          {formatVnd(entry.list_amount)}
-                        </span>
-                      ) : null}
-                      {formatEntryLine(entry)}
-                    </span>
-                    <Button
-                      data-testid="entry-edit"
-                      data-entry-id={entry.id}
-                      variant="ghost"
-                      size="icon-lg"
-                      className="size-11"
-                      aria-label="Sửa bản ghi"
-                      onClick={() => setEditingEntry(entry)}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      data-testid="entry-undo"
-                      data-entry-id={entry.id}
-                      variant="ghost"
-                      size="icon-lg"
-                      className="size-11"
-                      aria-label="Xoá bản ghi"
-                      onClick={() => removeEntry(entry)}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Chưa có bản ghi nào.</p>
-        )
-      ) : null}
-      </Card>
+      <TrackerRecords trackers={trackers} selection={records} onChange={setRecords} onEdit={setEditingEntry} onRemove={removeEntry} showListPrice={showListPrice} privateUnlocked={privateUnlocked} />
 
       <Card id="tracker-report" className="scroll-mt-4 gap-3 p-4 shadow-1 ring-0">
         <Button
@@ -1005,6 +907,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         error={dashboardQuery.error}
         onRetry={() => void refresh()}
       />
+      <div className="mt-4"><TrackerHeatmap key={String(privateUnlocked) + month} trackers={trackers} initialMonth={month} privateUnlocked={privateUnlocked} onDay={(trackerId, day) => {
+        setRecords({ mode: 'day', trackerId, anchor: day, order: 'desc', page: 0, expanded: true })
+        window.requestAnimationFrame(() => document.getElementById('tracker-records')?.scrollIntoView({ block: 'start' }))
+      }} /></div>
           </div>
         ) : null}
       </Card>

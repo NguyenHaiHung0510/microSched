@@ -113,6 +113,91 @@ async def _create_entry(client, tracker_id, **overrides):
     return resp
 
 
+def test_activity_calendar_privacy_and_stable_entries_paging_083(pg_dsn: str):
+    """083 counts the VN calendar, gates before grouping, and preserves bounded paging."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        try:
+            public = await _create_tracker(client, name="083 visible", kind="general")
+            private = await _create_tracker(
+                client, name="083 private", kind="general", is_private=True
+            )
+            archived = await _create_tracker(client, name="083 archived", kind="general")
+            tracker_ids.extend(UUID(t["id"]) for t in [public, private, archived])
+            ids = []
+            for _ in range(61):
+                r = await _create_entry(client, public["id"], occurred_at="2024-02-28T17:00:00Z")
+                assert r.status_code == 201, r.text
+                ids.append(r.json()["id"])
+            edge = await _create_entry(client, public["id"], occurred_at="2024-02-28T16:59:59Z")
+            assert edge.status_code == 201
+            r = await _create_entry(client, private["id"], occurred_at="2024-02-28T17:00:00Z")
+            assert r.status_code == 201
+            r = await _create_entry(client, archived["id"], occurred_at="2024-02-28T17:00:00Z")
+            assert r.status_code == 201
+            assert (
+                await client.delete(f"/api/tracker/trackers/{archived['id']}")
+            ).status_code == 204
+            removed = await _create_entry(client, public["id"], occurred_at="2024-02-28T17:00:00Z")
+            assert (
+                await client.delete(f"/api/tracker/entries/{removed.json()['id']}")
+            ).status_code == 204
+            params = {
+                "tracker_id": public["id"],
+                "from": "2024-02-29T00:00:00+07:00",
+                "to": "2024-03-01T00:00:00+07:00",
+                "limit": 50,
+            }
+            page1 = (await client.get("/api/tracker/entries", params=params)).json()["items"]
+            page2 = (
+                await client.get("/api/tracker/entries", params={**params, "offset": 50})
+            ).json()["items"]
+            assert [e["id"] for e in page1 + page2] == sorted(ids)
+            assert len(page1) == 50 and len(page2) == 11
+            asc = (
+                await client.get(
+                    "/api/tracker/entries",
+                    params={"tracker_id": public["id"], "order": "asc", "limit": 1},
+                )
+            ).json()["items"]
+            assert asc[0]["id"] == edge.json()["id"]
+            public_counts = await client.get(
+                "/api/tracker/activity", params={"year": 2024, "tracker_id": public["id"]}
+            )
+            assert public_counts.status_code == 200
+            assert public_counts.json()["items"] == [
+                {"day": "2024-02-28", "count": 1},
+                {"day": "2024-02-29", "count": 61},
+            ]
+            all_counts = (await client.get("/api/tracker/activity?year=2024")).json()["items"]
+            assert next(row["count"] for row in all_counts if row["day"] == "2024-02-29") == 62
+            auth_state["value"] = _auth(unlocked=False)
+            locked = (await client.get("/api/tracker/activity?year=2024")).json()["items"]
+            assert next(row["count"] for row in locked if row["day"] == "2024-02-29") == 61
+            assert (
+                await client.get(
+                    "/api/tracker/activity", params={"year": 2024, "tracker_id": private["id"]}
+                )
+            ).json()["items"] == []
+            assert (
+                await client.get("/api/tracker/entries", params={"tracker_id": private["id"]})
+            ).json()["items"] == []
+            for value in ["0", "9999", "nope"]:
+                assert (
+                    await client.get("/api/tracker/activity", params={"year": value})
+                ).status_code == 422
+            assert (await client.get("/api/tracker/entries?order=amount")).status_code == 422
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", tracker_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_public_tracker_name_is_ciphertext_at_rest(pg_dsn: str):
     """Tạo tracker công khai ⇒ `name` trong DB bắt đầu bằng `enc:v1:` (spec §2.1 #1)."""
 

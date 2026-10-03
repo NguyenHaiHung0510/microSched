@@ -5,6 +5,7 @@ import { chromium } from 'playwright'
 import { readJsonLine } from './read-json-line.mjs'
 import { runNotes082 } from './notes082.mjs'
 import { runTracker082 } from './tracker082.mjs'
+import { runTracker083 } from './tracker083.mjs'
 
 let step = 'stdin'
 const unexpectedHostHashes = new Set()
@@ -212,6 +213,14 @@ async function main() {
     notes082.status='PASS'
     notes082.cases.tracker_rename_reminder_push=tracker082.cases.rename_unchanged_reminder_without_push
     notes082.cases.finance_rhythm_golden='PASS'
+    step='tracker083'
+    const tracker083 = await runTracker083(page, payload)
+    assert(tracker083.status === 'PASS', 'tracker083 ' + JSON.stringify(tracker083.cases))
+    assert(Object.values(tracker083.cases).every(value => value === 'PASS'), 'tracker083 incomplete matrix')
+    notes082.tracker083 = tracker083
+    notes082.screenshots.push(...tracker083.screenshots)
+    delete tracker083.screenshots
+    notes082.cases.records_heatmap_083 = 'PASS'
     await page.evaluate(async () => navigator.serviceWorker.ready)
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null)
