@@ -6,7 +6,7 @@ from pathlib import Path
 import json
 import subprocess
 from common import workspace_temporary_directory
-from cell import capture_one_shot_failure
+from cell import capture_one_shot_failure, start_one_shot
 from common import CELL_ROOT
 from contract import GuardDenied
 from envelope import CommandEnvelope
@@ -48,3 +48,19 @@ class DiagnosticLogsTests(unittest.TestCase):
             self.assertNotIn("synthetic-test-password", value["output"])
             self.assertNotIn("synthetic-test-token", value["output"])
             self.assertEqual(commands, [["logs", "--tail", "60", cid]])
+
+    def test_empty_successful_attach_uses_same_owned_container_logs(self):
+        cid = "a" * 64
+        run = SimpleNamespace(service_containers={"seed": cid}, docker=lambda *args, **kwargs: subprocess.CompletedProcess([], 0, b"", b""))
+        output = b'{"status":"PASS"}\n'
+        with patch("cell._container_state", return_value={"ExitCode": 0}), patch("cell.owned_one_shot_logs", return_value=subprocess.CompletedProcess([], 0, output, b"")) as logs:
+            self.assertEqual(start_one_shot(run, "seed"), output)
+            logs.assert_called_once_with(run, cid)
+
+    def test_nonempty_attach_never_reads_logs(self):
+        cid = "a" * 64
+        output = b'{"status":"PASS"}\n'
+        run = SimpleNamespace(service_containers={"seed": cid}, docker=lambda *args, **kwargs: subprocess.CompletedProcess([], 0, output, b""))
+        with patch("cell._container_state", return_value={"ExitCode": 0}), patch("cell.owned_one_shot_logs") as logs:
+            self.assertEqual(start_one_shot(run, "seed"), output)
+            logs.assert_not_called()
