@@ -402,6 +402,19 @@ export async function runTracker083(page, payload) {
     })
 
     await runCase('A09', async () => {
+      // Reuse this run's own fixture; long Vietnamese text must remain readable.
+      const longNote = `${fixtureLabel} T083 Chi tiết bản ghi tiếng Việt có dấu, nội dung nhiều dòng để kiểm tra bố cục và khả năng đọc trên cửa sổ thông thường.\nDòng thứ hai vẫn được giữ nguyên và tự xuống dòng.`
+      const sampleId = [...expectedById.entries()].find(([, entry]) => entry.tag === 'leap-page-0')[0]
+      expect2xx(await api(page, `/api/tracker/entries/${sampleId}`, 'PATCH', { note_md: longNote }), 'prepare owned long-note fixture')
+      await selectOption(page, 'records-mode', 'Theo ngày')
+      await page.getByTestId('records-date').fill('2024-02-29')
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.getByRole('tab', { name: 'Theo dõi', exact: true }).click()
+      await page.getByTestId('tracker-open-report').click()
+      await page.getByTestId('tracker-entries-toggle').click()
+      await selectOption(page, 'records-mode', 'Theo ngày')
+      await page.getByTestId('records-date').fill('2024-02-29')
+      await page.getByTestId('records-list').getByText(longNote, { exact: true }).waitFor()
       for (const viewport of [{ width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1280, height: 695 }]) {
         await page.setViewportSize(viewport)
         const metrics = await page.evaluate(() => ({
@@ -416,6 +429,16 @@ export async function runTracker083(page, payload) {
           return { width: rect.width, height: rect.height, font: parseFloat(getComputedStyle(node).fontSize) }
         }))
         check(buttons.every((button) => button.width >= 44 && button.height >= 44 && button.font >= 12), `day target/font below floor at ${viewport.width}`)
+        const records = page.getByTestId('tracker-records')
+        const recordMetrics = await records.locator('button,input,[role="combobox"]').evaluateAll(nodes => nodes.filter(node => node.getClientRects().length).map(node => {
+          const r = node.getBoundingClientRect()
+          return { width: r.width, height: r.height, right: r.right, left: r.left, font: parseFloat(getComputedStyle(node).fontSize), tag: node.tagName }
+        }))
+        check(recordMetrics.length > 5 && recordMetrics.every(item => item.width >= 44 && item.height >= 44 && item.font >= 12 && item.left >= 0 && item.right <= viewport.width), `Records control target/font/clipping failed at ${viewport.width}`)
+        const recordTextSizes = await records.locator('h3,p,span,label').evaluateAll(nodes => nodes.filter(node => node.getClientRects().length).map(node => parseFloat(getComputedStyle(node).fontSize)))
+        check(recordTextSizes.length > 0 && recordTextSizes.every(size => size >= 12), `Records text below 12px at ${viewport.width}`)
+        const noteMetrics = await records.getByText(longNote, { exact: true }).evaluate(node => ({ client: node.clientWidth, scroll: node.scrollWidth, wrap: getComputedStyle(node).whiteSpace }))
+        check(noteMetrics.scroll <= noteMetrics.client + 1 && noteMetrics.wrap === 'pre-wrap', `Records long Vietnamese note clipped or lost wrapping at ${viewport.width}`)
         const gridMetrics = await heatmap.getByTestId('heatmap-month-grid').evaluate((grid) => {
           const scroller = grid.parentElement
           return {
@@ -431,7 +454,10 @@ export async function runTracker083(page, payload) {
         }
         const typeSizes = await heatmap.locator('h3,p,span,label,button').evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length).map((node) => parseFloat(getComputedStyle(node).fontSize)))
         check(typeSizes.every((size) => size >= 12), `heatmap text below 12px at ${viewport.width}`)
-        if (viewport.width === 390) screenshots.push(await shot(page, 'tracker083-heatmap-390x844', '[data-testid="tracker-heatmap"]'))
+        if (viewport.width === 390) {
+          screenshots.push(await shot(page, 'tracker083-heatmap-390x844', '[data-testid="tracker-heatmap"]'))
+          screenshots.push(await shot(page, 'tracker083-records-390x844', '[data-testid="tracker-records"]'))
+        }
         if (viewport.width === 768) screenshots.push(await shot(page, 'tracker083-records-768x1024', '[data-testid="tracker-records"]'))
         if (viewport.width === 1280) {
           screenshots.push(await shot(page, 'tracker083-heatmap-1280x695', '[data-testid="tracker-heatmap"]'))
