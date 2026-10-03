@@ -116,7 +116,7 @@ export async function runNotes082(page, payload) {
   cases.subnote_edit_failure_retains_multiline = 'PASS'
 
   await dialog.locator('[data-testid="note-item-edit-save"]').click()
-  await page.locator('[data-testid="note-item-content"]', { hasText: 'nội dung rất dài' }).waitFor()
+  await dialog.locator('[data-testid="note-item-content"]', { hasText: 'nội dung rất dài' }).waitFor()
   cases.subnote_edit_save = 'PASS'
 
   // Parent edit/cancel and save are separate from the acknowledged item write.
@@ -137,7 +137,7 @@ export async function runNotes082(page, payload) {
   await page.locator('[data-testid="note-card"]', { has: page.locator('[data-testid="note-title"]', { hasText: noteTitle }) }).waitFor()
   await page.locator('[data-testid="note-title"]', { hasText: noteTitle }).click()
   await dialog.getByText('Bản sửa cha đã lưu').waitFor()
-  await page.locator('[data-testid="note-item-content"]', { hasText: 'nội dung rất dài' }).waitFor()
+  await dialog.locator('[data-testid="note-item-content"]', { hasText: 'nội dung rất dài' }).waitFor()
   cases.parent_save_reload_subnote_independent = 'PASS'
 
   await page.setViewportSize({ width: 390, height: 844 })
