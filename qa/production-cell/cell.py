@@ -476,6 +476,7 @@ def _generate_secrets(run: CellRun) -> None:
     for name, value in file_values.items():
         _write_runtime_file(run.secret_directory / name, value + "\n", secret_file=True)
     run.secret_values = {
+        **file_values,
         "session_token": session_token,
         "pin": pin,
         "email": f"qa025-{secrets.token_hex(5)}@example.invalid",
