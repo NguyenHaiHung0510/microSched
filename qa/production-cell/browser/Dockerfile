@@ -10,3 +10,5 @@ COPY frontend/e2e/production-cell/notes082.mjs /qa/frontend/notes082.mjs
 COPY frontend/e2e/production-cell/tracker082.mjs /qa/frontend/tracker082.mjs
 
 CMD ["node", "/qa/frontend/run.mjs"]
+
+COPY frontend/e2e/production-cell/read-json-line.mjs /qa/frontend/read-json-line.mjs
