@@ -261,6 +261,16 @@ export async function runTracker083(page, payload) {
       check(!(await page.getByTestId('entry-edit-dialog').count()), 'cancel left edit dialog open')
       await page.locator(`[data-testid="entry-edit"][data-entry-id="${targetId}"]`).click()
       const editDialog = page.getByTestId('entry-edit-dialog')
+      const failedWriteNote = `${fixtureLabel} T083 failed write`
+      const failedWriteUrl = `**/api/tracker/entries/${targetId}`
+      await page.route(failedWriteUrl, route => route.request().method() === 'PATCH' ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'synthetic T083 write failure' }) }) : route.continue())
+      try {
+        await editDialog.locator('textarea').first().fill(failedWriteNote)
+        await editDialog.getByRole('button', { name: 'Lưu', exact: true }).click()
+        await page.getByText('synthetic T083 write failure', { exact: true }).waitFor()
+        check(await editDialog.isVisible() && await editDialog.locator('textarea').first().inputValue() === failedWriteNote, 'failed write discarded draft or closed dialog')
+        check(expect2xx(await api(page, `/api/tracker/entries/${targetId}`), 'read after failed write').note_md === before, 'failed write changed server note')
+      } finally { await page.unroute(failedWriteUrl) }
       await editDialog.locator('textarea').first().fill(`${fixtureLabel} T083 edited`)
       await editDialog.getByRole('button', { name: 'Lưu', exact: true }).click()
       await editDialog.waitFor({ state: 'hidden' })
@@ -333,10 +343,12 @@ export async function runTracker083(page, payload) {
       await page.getByTestId('private-badge').filter({ hasText: 'đang khoá' }).waitFor()
       const publicOnly = expect2xx(await api(page, '/api/tracker/activity?year=2024'), 'locked visibility aggregate')
       check(publicOnly.items.find((item) => item.day === '2024-02-29')?.count === 62, 'locked aggregate included private activity or lost a public entry')
-      const privateLocked = expect2xx(await api(page, `/api/tracker/activity?year=2024&tracker_id=${privateTracker.id}`), 'locked private tracker aggregate')
-      check(privateLocked.items.length === 0, 'locked private tracker leaked aggregated days')
+      // Remove the held route before requesting the same URL for server validation.
+      // Otherwise that validation waits for the release that comes after itself.
       releaseResponse()
       await page.unroute(privateUrl)
+      const privateLocked = expect2xx(await api(page, `/api/tracker/activity?year=2024&tracker_id=${privateTracker.id}`), 'locked private tracker aggregate')
+      check(privateLocked.items.length === 0, 'locked private tracker leaked aggregated days')
       await page.getByTestId('heatmap-tracker').waitFor()
       await page.getByTestId('heatmap-year').fill('2024')
       await page.getByTestId('heatmap-month').fill('2024-02')
@@ -385,6 +397,18 @@ export async function runTracker083(page, payload) {
     })
 
     await runCase('A08', async () => {
+      let releaseRead
+      const delayedRead = new Promise(resolve => { releaseRead = resolve })
+      const delayedUrl = '**/api/tracker/entries?*'
+      await page.route(delayedUrl, async route => { await delayedRead; await route.continue() })
+      try {
+        await selectOption(page, 'records-mode', 'Theo ngày')
+        await page.getByTestId('records-date').fill('1899-01-01')
+        await page.getByText('Đang tải bản ghi…', { exact: true }).waitFor()
+        check(await page.getByText('Không có bản ghi trong lựa chọn này.', { exact: true }).count() === 0, 'loading presented as empty success')
+      } finally { releaseRead(); await page.unroute(delayedUrl) }
+      await page.getByText('Không có bản ghi trong lựa chọn này.', { exact: true }).waitFor()
+
       await page.route('**/api/tracker/entries?*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{"detail":"synthetic T083 read failure"' }))
       await selectOption(page, 'records-mode', 'Theo ngày')
       await page.getByTestId('records-date').fill('1900-01-01')
