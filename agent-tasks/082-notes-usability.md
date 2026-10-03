@@ -13,7 +13,7 @@ Status: IMPLEMENTED CANDIDATE; required QA/reviews pending. Owner resumed 03/10/
 
 ## Scope/non-goals
 
-Frontend changes only; no new dependency/schema/private boundary/outbox. Groups2–5 remain separate future batches (calendar, record explorer, income association, heatmap/day reminder/cost/background, logging reuse/spec). Push duplicate manual mute approved, no browser settings change claimed.
+Frontend changes plus backend tracker-name persistence bug fix; no new dependency/schema/private boundary/outbox. Groups2–5 remain separate future batches (calendar, record explorer, income association, heatmap/day reminder/cost/background, logging reuse/spec). Push duplicate manual mute approved, no browser settings change claimed.
 
 ## Required evidence
 

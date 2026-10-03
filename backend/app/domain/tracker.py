@@ -995,6 +995,7 @@ class TrackerStore:
             changes["name"] = _sealed(changes["name"])
 
         for field in (
+            "name",
             "kind",
             "direction",
             "input_mode",
