@@ -72,6 +72,7 @@ async function waitForEntryIds(page, expectedIds) {
 }
 
 async function unlockThroughUI(page, pin) {
+  if (await page.getByTestId('private-lock-now').isVisible()) return
   await page.getByTestId('private-unlock-open').click()
   await page.getByTestId('private-pin-input').fill(pin)
   await page.getByTestId('private-unlock-submit').click()
@@ -264,7 +265,9 @@ export async function runTracker083(page, payload) {
       await delRow.getByTestId('entry-undo').click()
       await page.getByText('Đã xoá bản ghi', { exact: true }).waitFor()
       check((await api(page, `/api/tracker/entries/${targetId}`)).status === 404, 'deleted entry remained readable')
+      const restored = page.waitForResponse(response => response.url().includes(`/api/tracker/entries/${targetId}/restore`) && response.request().method() === 'POST')
       await page.getByRole('button', { name: 'Hoàn tác', exact: true }).last().click()
+      check((await restored).ok(), 'restore request failed')
       expect2xx(await api(page, `/api/tracker/entries/${targetId}`), 'verify delete undo')
       check((await api(page, `/api/tracker/activity?year=2024&tracker_id=${trackerA.id}`)).status === 200, 'heatmap query failed after write/undo')
     })
@@ -272,13 +275,13 @@ export async function runTracker083(page, payload) {
     await runCase('A05', async () => {
       const activity = expect2xx(await api(page, `/api/tracker/activity?year=2024`), 'read year activity')
       const counts = new Map(activity.items.map((item) => [item.day, item.count]))
-      for (const [day, count] of [['2024-01-13', 5], ['2024-01-12', 3], ['2024-01-11', 2], ['2024-01-10', 1], ['2024-01-09', 0], ['2024-02-29', 62]]) {
+      for (const [day, count] of [['2024-01-14', 5], ['2024-01-13', 3], ['2024-01-12', 2], ['2024-01-11', 1], ['2024-01-10', 0], ['2024-02-29', 62]]) {
         check((counts.get(day) ?? 0) === count, `activity count on ${day}: expected ${count}, got ${counts.get(day) ?? 0}`)
       }
       await page.getByTestId('heatmap-year').fill('2024')
       await page.getByTestId('heatmap-month').fill('2024-01')
       const dayButtons = page.getByTestId('heatmap-day')
-      for (const [day, count, level] of [['2024-01-13', '5', '3'], ['2024-01-12', '3', '3'], ['2024-01-11', '2', '2'], ['2024-01-10', '1', '1'], ['2024-01-09', '0', '0']]) {
+      for (const [day, count, level] of [['2024-01-14', '5', '3'], ['2024-01-13', '3', '3'], ['2024-01-12', '2', '2'], ['2024-01-11', '1', '1'], ['2024-01-10', '0', '0']]) {
         const cell = page.locator(`[data-testid="heatmap-day"][data-day="${day}"]`)
         check(await cell.getAttribute('data-count') === count && await cell.getAttribute('data-level') === level, `visible heatmap bucket mismatch for ${day}`)
       }
@@ -435,6 +438,12 @@ export async function runTracker083(page, payload) {
           return { width: r.width, height: r.height, right: r.right, left: r.left, font: parseFloat(getComputedStyle(node).fontSize), tag: node.tagName }
         }))
         check(recordMetrics.length > 5 && recordMetrics.every(item => item.width >= 44 && item.height >= 44 && item.font >= 12 && item.left >= 0 && item.right <= viewport.width), `Records control target/font/clipping failed at ${viewport.width}`)
+        const actionGaps = await records.getByTestId('entry-row').evaluateAll(rows => rows.map(row => {
+          const edit = row.querySelector('[data-testid="entry-edit"]').getBoundingClientRect()
+          const remove = row.querySelector('[data-testid="entry-undo"]').getBoundingClientRect()
+          return remove.left - edit.right
+        }))
+        check(actionGaps.length > 0 && actionGaps.every(gap => gap >= 8), `Records adjacent touch gap below 8px at ${viewport.width}`)
         const recordTextSizes = await records.locator('h3,p,span,label').evaluateAll(nodes => nodes.filter(node => node.getClientRects().length).map(node => parseFloat(getComputedStyle(node).fontSize)))
         check(recordTextSizes.length > 0 && recordTextSizes.every(size => size >= 12), `Records text below 12px at ${viewport.width}`)
         const noteMetrics = await records.getByText(longNote, { exact: true }).evaluate(node => ({ client: node.clientWidth, scroll: node.scrollWidth, wrap: getComputedStyle(node).whiteSpace }))

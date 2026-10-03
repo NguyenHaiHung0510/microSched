@@ -215,6 +215,7 @@ async function main() {
     notes082.cases.finance_rhythm_golden='PASS'
     step='tracker083'
     const tracker083 = await runTracker083(page, payload)
+    console.log(JSON.stringify({ tracker083_evidence: tracker083 }))
     assert(tracker083.status === 'PASS', 'tracker083 ' + JSON.stringify(tracker083.cases))
     assert(Object.values(tracker083.cases).every(value => value === 'PASS'), 'tracker083 incomplete matrix')
     notes082.tracker083 = tracker083
