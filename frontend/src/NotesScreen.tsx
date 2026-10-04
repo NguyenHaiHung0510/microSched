@@ -125,8 +125,8 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         method: 'POST',
         body: JSON.stringify({ content, position: note.items.length }),
       }),
-    onSuccess: () => {
-      setNewItem('')
+    onSuccess: (_data, variables) => {
+      setNewItem((current) => (current === variables || current.trim() === variables ? '' : current))
       refresh()
     },
   })
@@ -136,9 +136,16 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         method: 'PATCH',
         body: JSON.stringify(changes),
       }),
-    onSuccess: () => {
-      setEditingItemId(null)
-      setEditingItemContent('')
+    onSuccess: (_data, variables) => {
+      if (variables.changes.content !== undefined) {
+        setEditingItemContent((current) => {
+          if (current === variables.changes.content) {
+            setEditingItemId((currentId) => (currentId === variables.item.id ? null : currentId))
+            return ''
+          }
+          return current
+        })
+      }
       refresh()
     },
   })
@@ -842,8 +849,9 @@ export function NotesScreen() {
       }),
     onSuccess: (_note, variables) => {
       if (variables.source === 'quick') {
-        setQuickTitle('')
-        window.requestAnimationFrame(() => quickInputRef.current?.focus())
+        const submittedTitle = variables.payload.title
+        setQuickTitle((current) => (current === submittedTitle || current.trim() === submittedTitle ? '' : current))
+        window.requestAnimationFrame(() => quickInputRef.current?.focus({ preventScroll: true }))
       } else {
         setCreateOpen(false)
       }

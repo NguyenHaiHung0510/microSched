@@ -61,8 +61,8 @@
   --reflection-foreground: #87631a;
   /* Fixed daily activity scale: 0, 1, 2, >=3. Count is also exposed as text. */
   --heatmap-0: var(--n-100);
-  --heatmap-1: var(--rose-100);
-  --heatmap-2: var(--rose-300);
+  --heatmap-1: var(--rose-200);
+  --heatmap-2: var(--rose-400);
   --heatmap-3: var(--rose-700);
 
   /* --- hợp đồng token của shadcn: component đang chạy đọc đúng các tên này --- */
