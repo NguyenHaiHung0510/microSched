@@ -65,6 +65,199 @@ type AnnotationFormState =
   | { mode: 'edit'; annotation: DayAnnotation }
   | null
 
+function DayOverdueTasksSection({
+  day,
+  open,
+  privateLocked,
+  onEditTask,
+  onMoveTask,
+  onToggleStatus,
+  onDeleteTask,
+  isRescheduling,
+  isDeleting,
+}: {
+  day: string
+  open: boolean
+  privateLocked: boolean
+  onEditTask: (task: CalendarTask) => void
+  onMoveTask: (task: CalendarTask) => void
+  onToggleStatus: (variables: { taskId: string; status: 'completed' | 'open' }) => void
+  onDeleteTask: (taskId: string) => void
+  isRescheduling: boolean
+  isDeleting: boolean
+}) {
+  const [extraOverdue, setExtraOverdue] = useState<CalendarTask[]>([])
+  const [extraCursor, setExtraCursor] = useState<string | null>(null)
+  const [extraLoading, setExtraLoading] = useState(false)
+  const [extraError, setExtraError] = useState<string | null>(null)
+
+  const overdueQuery = useQuery({
+    queryKey: ['tasks', 'overdue-before', day, privateLocked],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        status: 'open',
+        to: `${day}T00:00:00+07:00`,
+        bucket: 'dated',
+        limit: '50',
+      })
+      return apiRequest<{ items: CalendarTask[]; next_cursor?: string | null }>(
+        `/api/tasks?${params.toString()}`,
+      )
+    },
+    enabled: open && Boolean(day),
+  })
+
+  const allOverdueTasks = useMemo(() => {
+    const base = overdueQuery.data?.items ?? []
+    return [...base, ...extraOverdue]
+  }, [overdueQuery.data?.items, extraOverdue])
+
+  const overdueNextCursor = extraCursor ?? overdueQuery.data?.next_cursor ?? null
+  const isOverdueLoading = overdueQuery.isLoading || extraLoading
+  const overdueErrorText = overdueQuery.isError
+    ? importErrorMessage(overdueQuery.error)
+    : extraError
+
+  async function loadMoreOverdue() {
+    const cursor = overdueNextCursor
+    if (!cursor || extraLoading) return
+    setExtraLoading(true)
+    setExtraError(null)
+    try {
+      const params = new URLSearchParams({
+        status: 'open',
+        to: `${day}T00:00:00+07:00`,
+        bucket: 'dated',
+        limit: '50',
+        cursor,
+      })
+      const page = await apiRequest<{ items: CalendarTask[]; next_cursor?: string | null }>(
+        `/api/tasks?${params.toString()}`,
+      )
+      setExtraOverdue((current) => {
+        const existingIds = new Set([
+          ...(overdueQuery.data?.items ?? []).map((t) => t.id),
+          ...current.map((t) => t.id),
+        ])
+        const newItems = page.items.filter((t) => !existingIds.has(t.id))
+        return [...current, ...newItems]
+      })
+      setExtraCursor(page.next_cursor ?? null)
+    } catch (error) {
+      setExtraError(importErrorMessage(error))
+    } finally {
+      setExtraLoading(false)
+    }
+  }
+
+  return (
+    <section aria-labelledby="day-overdue-tasks-heading" className="space-y-2">
+                <h4
+                  id="day-overdue-tasks-heading"
+                  className="text-sm font-bold uppercase tracking-wider text-muted-foreground"
+                >
+                  Việc quá hạn trước ngày này ({isOverdueLoading && allOverdueTasks.length === 0 ? '…' : allOverdueTasks.length})
+                </h4>
+                {isOverdueLoading && allOverdueTasks.length === 0 ? (
+                  <p data-testid="calendar-day-overdue-loading" className="text-sm text-muted-foreground">
+                    Đang tải việc quá hạn…
+                  </p>
+                ) : overdueErrorText ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p data-testid="calendar-day-overdue-error" className="text-sm text-bad" role="alert">
+                      {overdueErrorText}
+                    </p>
+                    <Button size="sm" variant="outline" onClick={() => void overdueQuery.refetch()}>
+                      Thử lại
+                    </Button>
+                  </div>
+                ) : allOverdueTasks.length === 0 ? (
+                  <p data-testid="calendar-day-overdue-empty" className="text-sm text-muted-foreground">
+                    Không có việc quá hạn trước ngày này.
+                  </p>
+                ) : (
+                  allOverdueTasks.map((task) => (
+                    <div
+                      data-testid="calendar-day-overdue-task"
+                      data-task-id={task.id}
+                      data-private={task.is_private}
+                      key={task.id}
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg border border-bad/30 bg-bad/5 p-2 text-left transition-colors hover:bg-bad/10',
+                        task.is_private && PRIVATE_SURFACE_CLASS,
+                        task.status === 'completed' && 'opacity-70',
+                      )}
+                    >
+                      <Checkbox
+                        data-testid="calendar-day-overdue-task-toggle"
+                        aria-label={`Đổi trạng thái ${task.title}`}
+                        checked={task.status === 'completed'}
+                        onCheckedChange={(checked) => {
+                          onToggleStatus({
+                            taskId: task.id,
+                            status: checked === true ? 'completed' : 'open',
+                          })
+                        }}
+                        className="size-4 rounded-sm ml-1"
+                      />
+                      <Button
+                        variant="ghost"
+                        data-testid="calendar-day-overdue-task-edit-trigger"
+                        className={cn(
+                          'h-auto min-w-0 flex-1 flex-col items-start justify-start whitespace-normal break-words p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
+                          task.status === 'completed' && 'line-through',
+                        )}
+                        onClick={() => onEditTask(task)}
+                      >
+                        <span>{task.title}</span>
+                        {scheduleDay(task) ? (
+                          <span className="text-xs font-bold text-bad">
+                            Hạn: {formatShortVietnamDate(scheduleDay(task) as string)}
+                          </span>
+                        ) : null}
+                        {task.is_private ? <PrivateMarker /> : null}
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        data-testid="calendar-day-overdue-task-reschedule"
+                        className="text-muted-foreground hover:text-foreground"
+                        aria-label={`Dời ${task.title} sang ngày này`}
+                        title="Dời sang ngày này"
+                        disabled={isRescheduling}
+                        onClick={() => onMoveTask(task)}
+                      >
+                        <Calendar className="size-4" />
+                      </Button>
+                      <Button
+                        data-testid="calendar-day-overdue-task-delete"
+                        size="icon-sm"
+                        variant="ghost"
+                        className="text-bad hover:text-bad"
+                        aria-label={`Xoá ${task.title}`}
+                        disabled={isDeleting}
+                        onClick={() => onDeleteTask(task.id)}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  ))
+                )}
+                {overdueNextCursor ? (
+                  <Button
+                    data-testid="calendar-day-overdue-load-more"
+                    size="sm"
+                    variant="outline"
+                    disabled={isOverdueLoading}
+                    onClick={() => void loadMoreOverdue()}
+                  >
+                    {isOverdueLoading ? 'Đang tải…' : 'Xem thêm việc quá hạn'}
+                  </Button>
+                ) : null}
+              </section>
+  )
+}
+
 export function DayDetailDialog({
   open,
   onOpenChange,
@@ -90,23 +283,6 @@ export function DayDetailDialog({
   const [annotationForm, setAnnotationForm] = useState<AnnotationFormState>(null)
   const [eventForm, setEventForm] = useState<EventFormState>(null)
   const [taskEdit, setTaskEdit] = useState<CalendarTask | null>(null)
-  const [extraOverdueState, setExtraOverdueState] = useState<{
-    day: string
-    items: CalendarTask[]
-    cursor: string | null
-    error: string | null
-    loading: boolean
-  }>({
-    day,
-    items: [],
-    cursor: null,
-    error: null,
-    loading: false,
-  })
-
-  const extraCursor = extraOverdueState.day === day ? extraOverdueState.cursor : null
-  const extraError = extraOverdueState.day === day ? extraOverdueState.error : null
-  const extraLoading = extraOverdueState.day === day ? extraOverdueState.loading : false
   const [moveOpen, setMoveOpen] = useState(false)
   const [moveNow, setMoveNow] = useState(0)
   const [moveTasks, setMoveTasks] = useState<CalendarTask[]>([])
@@ -122,83 +298,6 @@ export function DayDetailDialog({
   const refreshAll = () => {
     void queryClient.invalidateQueries({ queryKey: ['tasks'] })
     refreshCalendar()
-    setExtraOverdueState({ day, items: [], cursor: null, error: null, loading: false })
-  }
-
-  const overdueQuery = useQuery({
-    queryKey: ['tasks', 'overdue-before', day, privateLocked],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        status: 'open',
-        to: `${day}T00:00:00+07:00`,
-        bucket: 'dated',
-        limit: '50',
-      })
-      return apiRequest<{ items: CalendarTask[]; next_cursor?: string | null }>(
-        `/api/tasks?${params.toString()}`,
-      )
-    },
-    enabled: open && Boolean(day),
-  })
-
-  const allOverdueTasks = useMemo(() => {
-    const base = overdueQuery.data?.items ?? []
-    const extra = extraOverdueState.day === day ? extraOverdueState.items : []
-    return [...base, ...extra]
-  }, [overdueQuery.data?.items, extraOverdueState.day, extraOverdueState.items, day])
-
-  const overdueNextCursor = extraCursor ?? overdueQuery.data?.next_cursor ?? null
-  const isOverdueLoading = overdueQuery.isLoading || extraLoading
-  const overdueErrorText = overdueQuery.isError
-    ? importErrorMessage(overdueQuery.error)
-    : extraError
-
-  async function loadMoreOverdue() {
-    const cursor = overdueNextCursor
-    if (!cursor || extraLoading) return
-    const requestedDay = day
-    setExtraOverdueState((current) => ({
-      ...current,
-      day: requestedDay,
-      loading: true,
-      error: null,
-    }))
-    try {
-      const params = new URLSearchParams({
-        status: 'open',
-        to: `${requestedDay}T00:00:00+07:00`,
-        bucket: 'dated',
-        limit: '50',
-        cursor,
-      })
-      const page = await apiRequest<{ items: CalendarTask[]; next_cursor?: string | null }>(
-        `/api/tasks?${params.toString()}`,
-      )
-      setExtraOverdueState((current) => {
-        if (current.day !== requestedDay) return current
-        const existingIds = new Set([
-          ...(overdueQuery.data?.items ?? []).map((t) => t.id),
-          ...current.items.map((t) => t.id),
-        ])
-        const newItems = page.items.filter((t) => !existingIds.has(t.id))
-        return {
-          day: requestedDay,
-          items: [...current.items, ...newItems],
-          cursor: page.next_cursor ?? null,
-          error: null,
-          loading: false,
-        }
-      })
-    } catch (error) {
-      setExtraOverdueState((current) => {
-        if (current.day !== requestedDay) return current
-        return {
-          ...current,
-          error: importErrorMessage(error),
-          loading: false,
-        }
-      })
-    }
   }
 
   const manualSources = useMemo(
@@ -424,7 +523,6 @@ export function DayDetailDialog({
     setMoveCursor(null)
     setMoveError(null)
     setTaskEdit(null)
-    setExtraOverdueState({ day, items: [], cursor: null, error: null, loading: false })
   }
 
   const editingIcsEvent =
@@ -667,110 +765,18 @@ export function DayDetailDialog({
                 )}
               </section>
 
-              <section aria-labelledby="day-overdue-tasks-heading" className="space-y-2">
-                <h4
-                  id="day-overdue-tasks-heading"
-                  className="text-sm font-bold uppercase tracking-wider text-muted-foreground"
-                >
-                  Việc quá hạn trước ngày này ({isOverdueLoading && allOverdueTasks.length === 0 ? '…' : allOverdueTasks.length})
-                </h4>
-                {isOverdueLoading && allOverdueTasks.length === 0 ? (
-                  <p data-testid="calendar-day-overdue-loading" className="text-sm text-muted-foreground">
-                    Đang tải việc quá hạn…
-                  </p>
-                ) : overdueErrorText ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p data-testid="calendar-day-overdue-error" className="text-sm text-bad" role="alert">
-                      {overdueErrorText}
-                    </p>
-                    <Button size="sm" variant="outline" onClick={() => void overdueQuery.refetch()}>
-                      Thử lại
-                    </Button>
-                  </div>
-                ) : allOverdueTasks.length === 0 ? (
-                  <p data-testid="calendar-day-overdue-empty" className="text-sm text-muted-foreground">
-                    Không có việc quá hạn trước ngày này.
-                  </p>
-                ) : (
-                  allOverdueTasks.map((task) => (
-                    <div
-                      data-testid="calendar-day-overdue-task"
-                      data-task-id={task.id}
-                      data-private={task.is_private}
-                      key={task.id}
-                      className={cn(
-                        'flex items-center gap-2 rounded-lg border border-bad/30 bg-bad/5 p-2 text-left transition-colors hover:bg-bad/10',
-                        task.is_private && PRIVATE_SURFACE_CLASS,
-                        task.status === 'completed' && 'opacity-70',
-                      )}
-                    >
-                      <Checkbox
-                        data-testid="calendar-day-overdue-task-toggle"
-                        aria-label={`Đổi trạng thái ${task.title}`}
-                        checked={task.status === 'completed'}
-                        onCheckedChange={(checked) => {
-                          toggleTaskStatus.mutate({
-                            taskId: task.id,
-                            status: checked === true ? 'completed' : 'open',
-                          })
-                        }}
-                        className="size-4 rounded-sm ml-1"
-                      />
-                      <Button
-                        variant="ghost"
-                        data-testid="calendar-day-overdue-task-edit-trigger"
-                        className={cn(
-                          'h-auto min-w-0 flex-1 flex-col items-start justify-start whitespace-normal break-words p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
-                          task.status === 'completed' && 'line-through',
-                        )}
-                        onClick={() => setTaskEdit(task)}
-                      >
-                        <span>{task.title}</span>
-                        {scheduleDay(task) ? (
-                          <span className="text-xs font-bold text-bad">
-                            Hạn: {formatShortVietnamDate(scheduleDay(task) as string)}
-                          </span>
-                        ) : null}
-                        {task.is_private ? <PrivateMarker /> : null}
-                      </Button>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        data-testid="calendar-day-overdue-task-reschedule"
-                        className="text-muted-foreground hover:text-foreground"
-                        aria-label={`Dời ${task.title} sang ngày này`}
-                        title="Dời sang ngày này"
-                        disabled={rescheduleTask.isPending}
-                        onClick={() => moveTask(task)}
-                      >
-                        <Calendar className="size-4" />
-                      </Button>
-                      <Button
-                        data-testid="calendar-day-overdue-task-delete"
-                        size="icon-sm"
-                        variant="ghost"
-                        className="text-bad hover:text-bad"
-                        aria-label={`Xoá ${task.title}`}
-                        disabled={deleteTask.isPending}
-                        onClick={() => deleteTask.mutate(task.id)}
-                      >
-                        <Trash2 />
-                      </Button>
-                    </div>
-                  ))
-                )}
-                {overdueNextCursor ? (
-                  <Button
-                    data-testid="calendar-day-overdue-load-more"
-                    size="sm"
-                    variant="outline"
-                    disabled={isOverdueLoading}
-                    onClick={() => void loadMoreOverdue()}
-                  >
-                    {isOverdueLoading ? 'Đang tải…' : 'Xem thêm việc quá hạn'}
-                  </Button>
-                ) : null}
-              </section>
+              <DayOverdueTasksSection
+                key={day}
+                day={day}
+                open={open}
+                privateLocked={privateLocked}
+                onEditTask={(task) => setTaskEdit(task)}
+                onMoveTask={(task) => moveTask(task)}
+                onToggleStatus={(vars) => toggleTaskStatus.mutate(vars)}
+                onDeleteTask={(taskId) => deleteTask.mutate(taskId)}
+                isRescheduling={rescheduleTask.isPending}
+                isDeleting={deleteTask.isPending}
+              />
 
               <div className="flex flex-wrap gap-2 border-t pt-4">
                 <Button
