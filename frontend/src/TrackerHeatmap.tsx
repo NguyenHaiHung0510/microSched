@@ -75,6 +75,7 @@ function HeatmapDayDetail({
   privateUnlocked,
   today,
   onJump,
+  mode = 'dialog',
 }: {
   day: string
   count: number
@@ -83,6 +84,7 @@ function HeatmapDayDetail({
   privateUnlocked: boolean
   today: string
   onJump: () => void
+  mode?: 'tooltip' | 'dialog'
 }) {
   const isFuture = day > today
   const bounds = useMemo(() => periodBounds('day', day), [day])
@@ -92,7 +94,7 @@ function HeatmapDayDetail({
       const params = new URLSearchParams({
         from: bounds!.from,
         to: bounds!.to,
-        limit: '100',
+        limit: '500',
       })
       if (trackerId !== 'all') params.set('tracker_id', trackerId)
       return apiRequest<{ items: Entry[] }>(`/api/tracker/entries?${params.toString()}`, { signal })
@@ -166,15 +168,21 @@ function HeatmapDayDetail({
       )}
 
       {!isFuture && count > 0 ? (
-        <Button
-          data-testid="heatmap-detail-jump"
-          size="sm"
-          variant="secondary"
-          className="mt-2 w-full text-xs font-semibold"
-          onClick={onJump}
-        >
-          Xem chi tiết trong bảng bản ghi
-        </Button>
+        mode === 'tooltip' ? (
+          <p className="mt-2 text-center text-[11px] text-muted-foreground">
+            Nhấp ô ngày để xem trong bảng bản ghi
+          </p>
+        ) : (
+          <Button
+            data-testid="heatmap-detail-jump"
+            size="sm"
+            variant="secondary"
+            className="mt-2 w-full text-xs font-semibold"
+            onClick={onJump}
+          >
+            Xem chi tiết trong bảng bản ghi
+          </Button>
+        )
       ) : null}
     </div>
   )
@@ -271,6 +279,7 @@ export function TrackerHeatmap({ trackers, initialMonth, onDay, privateUnlocked 
                     privateUnlocked={privateUnlocked}
                     today={today}
                     onJump={()=>onDay(trackerId,day)}
+                    mode="tooltip"
                   />
                 </TooltipContent>
               </Tooltip>

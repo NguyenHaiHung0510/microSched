@@ -114,6 +114,14 @@ export function DayDetailDialog({
     setExtraError(null)
   }
 
+  const [prevDay, setPrevDay] = useState(day)
+  if (day !== prevDay) {
+    setPrevDay(day)
+    setExtraOverdue([])
+    setExtraCursor(null)
+    setExtraError(null)
+  }
+
   const overdueQuery = useQuery({
     queryKey: ['tasks', 'overdue-before', day, privateLocked],
     queryFn: async () => {
