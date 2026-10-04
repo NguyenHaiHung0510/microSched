@@ -90,10 +90,23 @@ export function DayDetailDialog({
   const [annotationForm, setAnnotationForm] = useState<AnnotationFormState>(null)
   const [eventForm, setEventForm] = useState<EventFormState>(null)
   const [taskEdit, setTaskEdit] = useState<CalendarTask | null>(null)
-  const [extraOverdue, setExtraOverdue] = useState<CalendarTask[]>([])
-  const [extraCursor, setExtraCursor] = useState<string | null>(null)
-  const [extraLoading, setExtraLoading] = useState(false)
-  const [extraError, setExtraError] = useState<string | null>(null)
+  const [extraOverdueState, setExtraOverdueState] = useState<{
+    day: string
+    items: CalendarTask[]
+    cursor: string | null
+    error: string | null
+    loading: boolean
+  }>({
+    day,
+    items: [],
+    cursor: null,
+    error: null,
+    loading: false,
+  })
+
+  const extraCursor = extraOverdueState.day === day ? extraOverdueState.cursor : null
+  const extraError = extraOverdueState.day === day ? extraOverdueState.error : null
+  const extraLoading = extraOverdueState.day === day ? extraOverdueState.loading : false
   const [moveOpen, setMoveOpen] = useState(false)
   const [moveNow, setMoveNow] = useState(0)
   const [moveTasks, setMoveTasks] = useState<CalendarTask[]>([])
@@ -109,17 +122,7 @@ export function DayDetailDialog({
   const refreshAll = () => {
     void queryClient.invalidateQueries({ queryKey: ['tasks'] })
     refreshCalendar()
-    setExtraOverdue([])
-    setExtraCursor(null)
-    setExtraError(null)
-  }
-
-  const [prevDay, setPrevDay] = useState(day)
-  if (day !== prevDay) {
-    setPrevDay(day)
-    setExtraOverdue([])
-    setExtraCursor(null)
-    setExtraError(null)
+    setExtraOverdueState({ day, items: [], cursor: null, error: null, loading: false })
   }
 
   const overdueQuery = useQuery({
@@ -140,8 +143,9 @@ export function DayDetailDialog({
 
   const allOverdueTasks = useMemo(() => {
     const base = overdueQuery.data?.items ?? []
-    return [...base, ...extraOverdue]
-  }, [overdueQuery.data?.items, extraOverdue])
+    const extra = extraOverdueState.day === day ? extraOverdueState.items : []
+    return [...base, ...extra]
+  }, [overdueQuery.data?.items, extraOverdueState.day, extraOverdueState.items, day])
 
   const overdueNextCursor = extraCursor ?? overdueQuery.data?.next_cursor ?? null
   const isOverdueLoading = overdueQuery.isLoading || extraLoading
@@ -152,12 +156,17 @@ export function DayDetailDialog({
   async function loadMoreOverdue() {
     const cursor = overdueNextCursor
     if (!cursor || extraLoading) return
-    setExtraLoading(true)
-    setExtraError(null)
+    const requestedDay = day
+    setExtraOverdueState((current) => ({
+      ...current,
+      day: requestedDay,
+      loading: true,
+      error: null,
+    }))
     try {
       const params = new URLSearchParams({
         status: 'open',
-        to: `${day}T00:00:00+07:00`,
+        to: `${requestedDay}T00:00:00+07:00`,
         bucket: 'dated',
         limit: '50',
         cursor,
@@ -165,19 +174,30 @@ export function DayDetailDialog({
       const page = await apiRequest<{ items: CalendarTask[]; next_cursor?: string | null }>(
         `/api/tasks?${params.toString()}`,
       )
-      setExtraOverdue((current) => {
+      setExtraOverdueState((current) => {
+        if (current.day !== requestedDay) return current
         const existingIds = new Set([
           ...(overdueQuery.data?.items ?? []).map((t) => t.id),
-          ...current.map((t) => t.id),
+          ...current.items.map((t) => t.id),
         ])
         const newItems = page.items.filter((t) => !existingIds.has(t.id))
-        return [...current, ...newItems]
+        return {
+          day: requestedDay,
+          items: [...current.items, ...newItems],
+          cursor: page.next_cursor ?? null,
+          error: null,
+          loading: false,
+        }
       })
-      setExtraCursor(page.next_cursor ?? null)
     } catch (error) {
-      setExtraError(importErrorMessage(error))
-    } finally {
-      setExtraLoading(false)
+      setExtraOverdueState((current) => {
+        if (current.day !== requestedDay) return current
+        return {
+          ...current,
+          error: importErrorMessage(error),
+          loading: false,
+        }
+      })
     }
   }
 
@@ -404,9 +424,7 @@ export function DayDetailDialog({
     setMoveCursor(null)
     setMoveError(null)
     setTaskEdit(null)
-    setExtraOverdue([])
-    setExtraCursor(null)
-    setExtraError(null)
+    setExtraOverdueState({ day, items: [], cursor: null, error: null, loading: false })
   }
 
   const editingIcsEvent =
