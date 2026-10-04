@@ -77,7 +77,7 @@ export function NoteChecklist({ items, pending, failed = false, preview = false,
     const row = rows.find((element) => element.dataset.noteItemId === focus.id)
     if (row && !row.closest('[hidden]')) {
       row.querySelector<HTMLButtonElement>('[role="checkbox"]')?.focus({ preventScroll: true })
-    } else if (focus.neighborId) {
+    } else if (!preview && focus.neighborId) {
       const neighbor = rows.find((element) => element.dataset.noteItemId === focus.neighborId)
       if (neighbor && !neighbor.closest('[hidden]')) {
         neighbor.querySelector<HTMLButtonElement>('[role="checkbox"]')?.focus({ preventScroll: true })
