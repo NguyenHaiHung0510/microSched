@@ -112,6 +112,26 @@ test('date-only is overdue only after its Vietnam civil day ends', () => {
   assert.equal(isTaskScheduleOverdue(schedule, new Date('2026-08-24T17:00:00Z')), true)
 })
 
+test('overdue before selected day D strictly uses D at Vietnam midnight 00:00 +07:00', () => {
+  const dateSchedule = { due_precision: 'date' as const, due_on: '2026-10-03', due_at: null }
+  const dateSameDay = { due_precision: 'date' as const, due_on: '2026-10-04', due_at: null }
+  const datetimeBeforeMidnight = {
+    due_precision: 'datetime' as const,
+    due_on: null,
+    due_at: '2026-10-03T23:59:59+07:00',
+  }
+  const datetimeAtMidnight = {
+    due_precision: 'datetime' as const,
+    due_on: null,
+    due_at: '2026-10-04T00:00:00+07:00',
+  }
+  const selectedDayBoundary = new Date('2026-10-03T17:00:00Z') // 2026-10-04T00:00:00+07:00
+  assert.equal(dateSchedule.due_on < '2026-10-04', true)
+  assert.equal(dateSameDay.due_on < '2026-10-04', false)
+  assert.equal(Date.parse(datetimeBeforeMidnight.due_at) < selectedDayBoundary.getTime(), true)
+  assert.equal(Date.parse(datetimeAtMidnight.due_at) < selectedDayBoundary.getTime(), false)
+})
+
 test('reschedule preserves datetime clock, date precision, and promotes none to date', () => {
   assert.deepEqual(
     rescheduleTaskSchedule(

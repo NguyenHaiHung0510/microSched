@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -21,24 +21,72 @@ export function NoteChecklist({ items, pending, failed = false, preview = false,
   const [completedExpanded, setCompletedExpanded] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const completedRef = useRef<HTMLButtonElement>(null)
-  const focusAfterToggle = useRef<{ id: string; checked: boolean; element: Element | null } | null>(null)
+  const focusAfterToggle = useRef<{
+    id: string
+    checked: boolean
+    element: Element | null
+    neighborId: string | null
+  } | null>(null)
+  const scrollAnchor = useRef<{
+    container: HTMLElement | null
+    isWindow: boolean
+    anchorId: string
+    offset: number
+  } | null>(null)
   const id = useId()
   const remaining = items.filter((item) => !item.is_completed)
   const completed = items.filter((item) => item.is_completed)
   const hiddenRemaining = preview ? Math.max(0, remaining.length - 3) : 0
 
+  useLayoutEffect(() => {
+    const anchor = scrollAnchor.current
+    if (!anchor) return
+    const row = rootRef.current?.querySelector<HTMLElement>(`[data-note-item-id="${anchor.anchorId}"]`)
+    if (row && !row.closest('[hidden]')) {
+      const rect = row.getBoundingClientRect()
+      const containerTop = anchor.container ? anchor.container.getBoundingClientRect().top : 0
+      const currentOffset = rect.top - containerTop
+      const delta = currentOffset - anchor.offset
+      if (Math.abs(delta) > 1) {
+        if (anchor.container) {
+          anchor.container.scrollTop += delta
+        } else if (anchor.isWindow && typeof window !== 'undefined') {
+          window.scrollBy({ top: delta, behavior: 'instant' as ScrollBehavior })
+        }
+      }
+    }
+    if (!pending) {
+      scrollAnchor.current = null
+    }
+  }, [items, pending])
+
   useEffect(() => {
     const focus = focusAfterToggle.current
     if (!focus || pending) return
     // Do not steal focus if the user has moved to another control while saving.
-    if (document.activeElement !== focus.element && document.activeElement !== document.body) {
+    const active = document.activeElement
+    if (active && active !== focus.element && active !== document.body) {
+      if (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || (active as HTMLElement).isContentEditable) {
+        focusAfterToggle.current = null
+        return
+      }
       focusAfterToggle.current = null
       return
     }
-    const row = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-note-item-id]') ?? [])
-      .find((element) => element.dataset.noteItemId === focus.id)
-    if (row && !row.closest('[hidden]')) row.querySelector<HTMLButtonElement>('[role="checkbox"]')?.focus()
-    else completedRef.current?.focus()
+    const rows = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-note-item-id]') ?? [])
+    const row = rows.find((element) => element.dataset.noteItemId === focus.id)
+    if (row && !row.closest('[hidden]')) {
+      row.querySelector<HTMLButtonElement>('[role="checkbox"]')?.focus({ preventScroll: true })
+    } else if (!preview && focus.neighborId) {
+      const neighbor = rows.find((element) => element.dataset.noteItemId === focus.neighborId)
+      if (neighbor && !neighbor.closest('[hidden]')) {
+        neighbor.querySelector<HTMLButtonElement>('[role="checkbox"]')?.focus({ preventScroll: true })
+      } else {
+        completedRef.current?.focus({ preventScroll: true })
+      }
+    } else {
+      completedRef.current?.focus({ preventScroll: true })
+    }
     focus.element = document.activeElement
     if (failed || items.find((item) => item.id === focus.id)?.is_completed === focus.checked) {
       focusAfterToggle.current = null
@@ -47,32 +95,55 @@ export function NoteChecklist({ items, pending, failed = false, preview = false,
 
   function renderRow(item: NoteItem, hidden: boolean) {
     const toggle = (
-      <label
-        data-testid="note-item-toggle"
-        className={cn(
-          'inline-flex min-h-11 w-fit max-w-full cursor-pointer items-start gap-2.5 rounded-md px-1 py-2 text-sm',
-          pending && 'cursor-wait opacity-50',
-        )}
-      >
+      <div className="flex min-w-0 items-start gap-1 text-sm">
+        <label
+          data-testid="note-item-toggle"
+          className={cn(
+            'inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md',
+            pending && 'cursor-wait opacity-50',
+          )}
+        >
         <Checkbox
           data-testid="note-item-checkbox"
           aria-label={`Đánh dấu ${item.content} hoàn thành`}
           checked={item.is_completed}
           disabled={pending}
-          className="mt-1 after:inset-0"
+          className="after:inset-0"
           onCheckedChange={(checked) => {
-            focusAfterToggle.current = { id: item.id, checked: checked === true, element: document.activeElement }
+            const dialogContainer = rootRef.current?.closest<HTMLElement>('[data-testid="note-detail-dialog"]')
+            const containerTop = dialogContainer ? dialogContainer.getBoundingClientRect().top : 0
+            const visibleRows = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-note-item-id]') ?? [])
+              .filter((el) => !el.closest('[hidden]') && el.dataset.noteItemId !== item.id)
+            const unaffected = visibleRows.find((el) => el.getBoundingClientRect().bottom > containerTop + 10)
+            if (unaffected && unaffected.dataset.noteItemId) {
+              scrollAnchor.current = {
+                container: dialogContainer ?? null,
+                isWindow: !dialogContainer,
+                anchorId: unaffected.dataset.noteItemId,
+                offset: unaffected.getBoundingClientRect().top - containerTop,
+              }
+            }
+            const currentGroup = item.is_completed ? completed : remaining
+            const itemIdx = currentGroup.findIndex((entry) => entry.id === item.id)
+            const neighbor = currentGroup[itemIdx + 1] ?? currentGroup[itemIdx - 1] ?? null
+            focusAfterToggle.current = {
+              id: item.id,
+              checked: checked === true,
+              element: document.activeElement,
+              neighborId: neighbor?.id ?? null,
+            }
             if (checked !== true) setRemainingExpanded(true)
             onToggle(item, checked === true)
           }}
         />
+        </label>
         <span
           data-testid="note-item-content"
-          className={cn('min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]', item.is_completed && 'text-muted-foreground line-through')}
+          className={cn('min-w-0 py-2.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere]', item.is_completed && 'text-muted-foreground line-through')}
         >
           {item.content}
         </span>
-      </label>
+      </div>
     )
     return (
       <div data-testid="note-item" data-note-item-id={item.id} key={item.id} hidden={hidden}>

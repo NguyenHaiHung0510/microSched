@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.dashboard import REPORT_MONTHS, DashboardResponse, DashboardService
 from app.domain.models import AuthSession
 from app.domain.tracker import (
+    ActivityDayRead,
     EntryCreate,
     EntryIdConflict,
     EntryInvalid,
@@ -224,6 +225,7 @@ async def list_entries(
     to: datetime | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    order: Literal["asc", "desc"] = Query(default="desc"),
 ) -> dict[str, list[EntryRead]]:
     """List visible entries, optionally filtered and paginated."""
     _tz_aware(from_, "from")
@@ -232,7 +234,14 @@ async def list_entries(
         raise HTTPException(status_code=422, detail="from must be before to")
     return {
         "items": await store.list_entries(
-            db, session, tracker_id=tracker_id, from_=from_, to=to, limit=limit, offset=offset
+            db,
+            session,
+            tracker_id=tracker_id,
+            from_=from_,
+            to=to,
+            limit=limit,
+            offset=offset,
+            order=order,
         )
     }
 
@@ -303,6 +312,17 @@ async def restore_entry(entry_id: UUID, db: Database, session: CurrentSession) -
 
 
 # ------------------------------------------------------------------ dashboard
+
+
+@router.get("/tracker/activity", response_model=dict[str, list[ActivityDayRead]])
+async def tracker_activity(
+    db: Database,
+    session: CurrentSession,
+    year: int = Query(ge=1, le=9998),
+    tracker_id: UUID | None = Query(default=None),
+) -> dict[str, list[ActivityDayRead]]:
+    """Sparse positive daily counts for one Vietnam calendar year."""
+    return {"items": await store.activity_days(db, session, year=year, tracker_id=tracker_id)}
 
 
 @router.get("/tracker/dashboard", response_model=DashboardResponse)

@@ -202,7 +202,33 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         }
 
         if (path === '/api/tracker/entries' && method === 'GET') {
-          await route.fulfill(jsonResponse({ items: state.entries }))
+          const params = new URL(request.url()).searchParams
+          const trackerId = params.get('tracker_id')
+          const from = params.get('from')
+          const to = params.get('to')
+          const items = state.entries.filter(item =>
+            (!trackerId || item.tracker_id === trackerId) &&
+            (!from || (item.occurred_at != null && new Date(item.occurred_at) >= new Date(from))) &&
+            (!to || (item.occurred_at != null && new Date(item.occurred_at) < new Date(to)))
+          ).sort((a,b) => {
+            const order = params.get('order') === 'asc' ? 1 : -1
+            return order * ((a.occurred_at ?? '').localeCompare(b.occurred_at ?? '')) || a.id.localeCompare(b.id)
+          })
+          const offset = Number(params.get('offset') ?? 0)
+          await route.fulfill(jsonResponse({ items: items.slice(offset,offset+Number(params.get('limit') ?? 100)) }))
+          return
+        }
+        if (path === '/api/tracker/activity' && method === 'GET') {
+          const params = new URL(request.url()).searchParams
+          const counts = new Map<string,number>()
+          for (const item of state.entries) {
+            if (!item.occurred_at || (params.has('tracker_id') && params.get('tracker_id') !== item.tracker_id)) continue
+            const parts = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(item.occurred_at))
+            const part = (type:string) => parts.find(p=>p.type===type)?.value
+            const day = `${part('year')}-${part('month')}-${part('day')}`
+            if (day.slice(0,4) === params.get('year')) counts.set(day,(counts.get(day)??0)+1)
+          }
+          await route.fulfill(jsonResponse({items:[...counts].map(([day,count])=>({day,count}))}))
           return
         }
         if (path === '/api/tracker/entries' && method === 'POST') {
