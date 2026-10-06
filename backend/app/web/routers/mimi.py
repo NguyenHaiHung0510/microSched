@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.policy import POLICY_ID, POLICY_SHA256
 from app.agent.route_config import ConfigurationChange, profiles_for_ui
-from app.agent.runtime import hold_run_guard_if_enabled
+from app.agent.runtime import admit_run, hold_run_guard_if_enabled, release_run
 from app.agent.service import (
     ConfirmationDecision,
     ConversationCreate,
@@ -86,8 +86,11 @@ async def mimi_capabilities(_session: CurrentSession) -> dict:
         ),
         "route_mode": settings.mimi_route_mode if settings.mimi_live_provider_enabled else None,
         "model_selection_enabled": (
-            settings.app_env == "local" and settings.mimi_live_provider_enabled
+            settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
         ),
+        "context_policy": "observed_prompt_trigger",
+        "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
+        "payload_limit_bytes": settings.mimi_max_payload_bytes,
         "model_profiles": profiles_for_ui(settings),
         "conversation_planning_mode": "prose",
         "runner": settings.mimi_runner,
@@ -295,6 +298,7 @@ async def stream_message(
     conversation_id: UUID,
     payload: MessageCreate,
     request: Request,
+    db: Database,
     session: CurrentSession,
 ) -> StreamingResponse:
     """Start server-owned work and observe it over a disconnect-safe SSE stream."""
@@ -303,6 +307,8 @@ async def stream_message(
         raise HTTPException(status_code=503, detail="Database is not configured")
     run_id = uuid7()
     detached_session = AuthSession.model_validate(session.model_dump())
+    # Authentication is complete; do not retain its ORM checkout for the SSE lifetime.
+    await db.commit()
 
     async def work_body() -> None:
         async with factory() as worker_db:
@@ -340,11 +346,18 @@ async def stream_message(
                     await terminal_db.commit()
 
     async def work() -> None:
-        async with hold_run_guard_if_enabled(run_id):
+        async with hold_run_guard_if_enabled(run_id, already_admitted=True):
             await work_body()
 
     supervisor = request.app.state.mimi_run_supervisor
-    supervisor.start(run_id, work())
+    admit_run(run_id)
+    coroutine = work()
+    try:
+        supervisor.start(run_id, coroutine)
+    except Exception:
+        coroutine.close()
+        release_run(run_id)
+        raise
 
     return StreamingResponse(
         _observe_run(factory, supervisor, detached_session, run_id, conversation_id),
@@ -380,6 +393,7 @@ async def observe_existing_run(
     """Reattach to a durable run without creating a new model turn."""
 
     snapshot = await run_events_after(db, session, run_id, after=after)
+    await db.commit()
     factory = get_sessionmaker()
     if factory is None:
         raise HTTPException(status_code=503, detail="Database is not configured")
@@ -489,11 +503,18 @@ async def resume_run(
                     await terminal_db.commit()
 
     async def work() -> None:
-        async with hold_run_guard_if_enabled(successor_id):
+        async with hold_run_guard_if_enabled(successor_id, already_admitted=True):
             await work_body()
 
     supervisor = request.app.state.mimi_run_supervisor
-    supervisor.start(successor_id, work())
+    admit_run(successor_id)
+    coroutine = work()
+    try:
+        supervisor.start(successor_id, coroutine)
+    except Exception:
+        coroutine.close()
+        release_run(successor_id)
+        raise
     return StreamingResponse(
         _observe_run(
             factory,

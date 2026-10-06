@@ -1,0 +1,39 @@
+# Mimi STANDARD alpha — phase1 implementation
+
+Owner approved phase1 on2026-10-06. This supersedes the historical selected32k/100k/200k context admission policy. Historical receipts, including R16 helper success followed by32k main failure, retain their original meaning. This document records implementation support, not review/Owner/CI/live/production acceptance.
+
+## Context and receipts
+
+The sole new alpha preset is100,000 provider-reported **main prompt input tokens**, observed after a call. It is a delayed compaction trigger. It is not a send cap, a byte-to-token estimate or total/output/reasoning usage. Missing prompt usage is unknown. The configured endpoint context/output metadata is separate; MiMo/DeepSeek/GLM context is1,048,576 and Luna is1,050,000 in the dated profile snapshot. The application output cap is8,192 for profile-bound runs.
+
+Receipt epochs bind the active checkpoint, frozen configuration version, exact route/pool, policy/tool/output-schema hashes and response format. Appending messages does not invalidate a prior main observation. Checkpoint activation or route/context changes do. Raw request fingerprints remain separate provenance. A decision is consumed durably before helper dispatch; helper usage and copied/reused calls never drive the main trigger. Successful activation makes the previous observation stale. A failed or unknown helper with no new active checkpoint blocks further main dispatch on that epoch, without blind helper retry. Unknown helper outcomes retain their reconciliation route; a new conversation is the supported way to continue when compact cannot be activated.
+
+If a main read-loop call reports the trigger, Mimi completes the current bounded READ journey within its existing turn/tool/deadline/output/budget limits. The latest main receipt is considered at the next admitted conversation turn, where compaction happens automatically before main dispatch. Reaching100k does not force manual extra turns. The tradeoff is delayed knowledge: intermediate model steps can continue above the trigger, and the endpoint may still refuse its actual hard limit. No new in-run checkpoint architecture is introduced. Tool results are not substituted for canonical checkpoint message sources. If the next-turn helper fails or is unknown, mandatory refusal applies as described above; recovery is a new conversation (with needed constraints restated), or reconciliation of the unknown original run, not a blind retry.
+
+Semantic checkpoint validation, user source quotes, active/superseded constraints, canonical encrypted history and frontier CAS remain in place. Pending previews are informational checkpoint content; they never gain confirmation authority. STANDARD Task READ and CREATE preview/Confirm retain source freshness, auth, frozen payload, transaction, idempotency and execution receipts. Other-domain writes, edit/delete/bulk, PRIVATE, memory, skills and jobs remain outside alpha.
+
+## Observation in the real conversation
+
+The Run rail exposes main input, the preceding observation used for a compact decision, helper/main call purpose/route/state, checkpoint activations, elapsed run time, reason for stopping and per-run costs. Costs come from reported numeric receipt fields, deduplicated by provider generation; reuse is not another paid dispatch. Known main/helper/total costs are shown alongside missing-cost counts. Missing usage/cost is not zero. Legacy/pathological snapshot truncation marks totals incomplete. Provider-double test receipts do not establish live model quality or actual paid spending.
+
+## Explicit production configuration
+
+Features remain dark by default. A supported alpha configuration uses APP_ENV=production, real-chat/live/context flags, MIMI_RUNNER=langgraph, MIMI_TRANSPORT=openai_sdk and MIMI_TEXT_RESPONSE_FORMAT=natural. It still requires the production public origin, exact route/key and price caps, ZDR/data-collection policy and ordinary session/CSRF guards. No APP_ENV=local bypass is required or permitted for release.
+
+The evidence-admitted default is DeepSeekV4.1Flash/high/DeepInfraFP8. All four shortlist profiles remain visible. MiMo/GLM have smoke-only evidence and are disabled pending route-specific alpha qualification; Luna retains the observed ZDR404 refusal. Metadata is not live acceptance. An unqualified saved model is refused, never silently replaced. Legacy stored context presets remain auditable; new configuration exposes100k and applies only to the next run.
+
+OpenAI3.22.1, LangGraph1.2.12, checkpoint-postgres3.1.2 and psycopg[binary]3.3.6 are runtime dependencies. Docker's frozen/no-dev install and the Production dependency check consume these root dependencies. The CI job additionally imports the actual framework classes and validates synthetic production alpha settings without creating a client or sending a request. Package/framework imports remain lazy in the ordinary app; a dark app boots without a configured provider.
+
+LangGraph production dispatch binds its checkpoint database to the already configured application DATABASE_URL and explicit alpha flags. The runtime identity stays the existing CRUD app role. Saver tables and narrowly scoped DML require an explicit owner/migrator setup before enabling it; there is no startup/deploy auto-DDL. Missing saver setup produces a bounded Mimi failure. Production migration/schema/key-cap/auth/release verification remains a later authorized gate.
+
+## Ordinary failure and resource limits
+
+The existing ORM pool has5 base connections and10 overflow. Mimi admission defaults to2 active runs, configurable within1–4. With one observer per admitted run, guard, worker and observer use at most3 ORM connections per run; auth returns its checkout before SSE and the ordinary worker session commits before waiting for a provider. LangGraph adds at most one separate saver connection per admitted run. A busy request returns503 before a worker/run-guard is created. Cancellation/failure releases admission, including cancellation before the worker starts. Ordinary Task routes share no Mimi admission limit.
+
+The separate transaction advisory **run guard remains held throughout dispatch ownership**. Releasing the ordinary service session does not release this lock. Orphan reconciliation uses the existing try-lock/run_guard_version1 protocol and cannot classify a live guarded run as abandoned.
+
+Payload defaults to2MiB, configurable64KiB–4MiB; output/turn/tool/deadline/provider-response and local grant/budget/unknown-hold guards remain. Bytes are a resource bound, not tokens. There is no new process architecture, polling service, global concurrency1, Fly memory change or production key change. Shared-process OOM/event-loop stalls are **not isolated by these limits**. Disposable concurrency tests are bounded evidence, not a production load guarantee. Overlapping reconnect observers, multiple application processes and production pressure have not been load-tested; admission is process-local and does not promise global workload isolation.
+
+## Evidence and remaining gates
+
+Phase1 uses deterministic provider doubles, synthetic PostgreSQL and local frontend checks. Safety mutations must fail for the intended violation and pass after exact restoration. No paid app-model calls, real/Neon data, browser live journey, push/merge/deploy or harness/privacy/security authority changes are part of this phase. Parent T1 freezes/reconciles the patch and independently reviews/accepts it. Live semantic continuity, device/usefulness, Linux image/CI, production role/schema/key/config and release/rollback remain separate gates.

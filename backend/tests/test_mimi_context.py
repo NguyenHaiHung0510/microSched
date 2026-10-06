@@ -82,8 +82,8 @@ def test_context_bound_converges_without_rejecting_a_near_capacity_request():
         + bounded.manifest.budget.output_reserve
         <= cap
     )
-    with pytest.raises(ValueError, match="context_overflow_preflight"):
-        _context([{"title": "x" * cap}], settings=settings)
+    large, _ = _context([{"title": "x" * cap}], settings=settings)
+    assert large.manifest.budget.serialized_input_upper_bound > cap
 
 
 def test_manifest_hash_is_stable_for_same_context_and_changes_with_provenance() -> None:
@@ -234,5 +234,5 @@ def test_context_budget_rejects_overflow() -> None:
     too_small = envelope.manifest.budget.model_copy(
         update={"context_limit": envelope.manifest.budget.output_reserve - 1}
     )
-    with pytest.raises(ValueError, match="context_overflow_preflight"):
+    with pytest.raises(ValueError, match="output_reserve_exceeds_route_limit"):
         too_small.model_validate(too_small.model_dump())

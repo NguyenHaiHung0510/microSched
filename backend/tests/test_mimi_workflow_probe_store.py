@@ -31,9 +31,7 @@ def test_record_storage_budget_blocks_before_crypto_or_connection(monkeypatch):
     def forbidden_crypto():
         raise AssertionError("record_budget_guard_was_bypassed")
 
-    monkeypatch.setattr(
-        "app.agent.workflow_probe.store.create_wrapped_dek", forbidden_crypto
-    )
+    monkeypatch.setattr("app.agent.workflow_probe.store.create_wrapped_dek", forbidden_crypto)
     store = PgFrameStore("postgresql://microsched_app@127.0.0.1:55466/microsched_p1ca_068")
     now = datetime.now(UTC)
     with pytest.raises(ProbeBlocked, match="frame_budget_exceeded"):

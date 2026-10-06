@@ -414,9 +414,8 @@ async def test_sdk_stream_cancellation_is_unknown_single_dispatch_and_closes_str
     assert closed.is_set()
 
 
-def test_sdk_transport_is_rejected_in_production() -> None:
-    with pytest.raises(ValueError, match="local-candidate-only"):
-        Settings(mimi_transport="openai_sdk")
+def test_sdk_transport_is_supported_in_production() -> None:
+    assert Settings(_env_file=None, mimi_transport="openai_sdk").is_production
 
 
 @pytest.mark.anyio

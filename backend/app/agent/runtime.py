@@ -13,6 +13,7 @@ from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.core.db import get_engine
@@ -51,14 +52,39 @@ async def hold_run_guard(run_id: UUID):
             yield
 
 
+_admitted_runs: set[UUID] = set()
+
+
+def admit_run(run_id: UUID) -> None:
+    """Fail fast before creating a worker or a long-lived run-guard connection.
+
+    No queue or timer. This app already has one process; this allowance protects
+    its15-connection ORM pool while leaving ordinary Task paths unmodified.
+    """
+    if run_id in _admitted_runs:
+        raise HTTPException(status_code=409, detail="mimi_run_already_admitted")
+    if len(_admitted_runs) >= get_settings().mimi_max_active_runs:
+        raise HTTPException(status_code=503, detail="mimi_busy_try_later")
+    _admitted_runs.add(run_id)
+
+
+def release_run(run_id: UUID) -> None:
+    _admitted_runs.discard(run_id)
+
+
 @asynccontextmanager
-async def hold_run_guard_if_enabled(run_id: UUID):
-    settings = get_settings()
-    if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
-        async with hold_run_guard(run_id):
+async def hold_run_guard_if_enabled(run_id: UUID, *, already_admitted: bool = False):
+    if not already_admitted:
+        admit_run(run_id)
+    try:
+        settings = get_settings()
+        if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+            async with hold_run_guard(run_id):
+                yield
+        else:
             yield
-    else:
-        yield
+    finally:
+        release_run(run_id)
 
 
 class MimiRunSupervisor:
@@ -77,6 +103,8 @@ class MimiRunSupervisor:
         task.add_done_callback(lambda completed: self._forget(run_id, completed))
 
     def _forget(self, run_id: UUID, completed: asyncio.Task[None]) -> None:
+        # Cancellation before the coroutine starts never enters its finally.
+        release_run(run_id)
         if self._tasks.get(run_id) is completed:
             self._tasks.pop(run_id, None)
         # Retrieve the exception so detached failures never become an unhandled

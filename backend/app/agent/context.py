@@ -38,9 +38,10 @@ class ContextBudget(StrictModel):
     deadline: datetime
 
     @model_validator(mode="after")
-    def reject_overflow(self) -> ContextBudget:
-        if self.serialized_input_upper_bound + self.output_reserve > self.context_limit:
-            raise ValueError("context_overflow_preflight")
+    def validate_output_reserve(self) -> ContextBudget:
+        # Serialized UTF-8 bytes are payload metadata, not provider token usage.
+        if self.output_reserve > self.context_limit:
+            raise ValueError("output_reserve_exceeds_route_limit")
         return self
 
 

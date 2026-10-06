@@ -52,6 +52,7 @@ from app.agent.models import (
     MimiRefreshMarker,
     MimiRun,
 )
+from app.agent.observations import context_revision, prompt_observation, reported_number, run_costs
 from app.agent.openrouter import (
     AgentCompletion,
     ProviderCompletion,
@@ -311,6 +312,10 @@ def _manifest_receipt(envelope: ContextEnvelope) -> dict[str, Any]:
         "checkpoint_frontier": manifest.checkpoint_frontier,
         "transcript_range": manifest.transcript_range,
         "input_upper_bound": manifest.budget.serialized_input_upper_bound,
+        "input_measurement": "serialized_bytes",
+        "compaction_trigger_tokens": 100_000,
+        "budget": manifest.budget.model_dump(mode="json"),
+        "route": manifest.route.model_dump(mode="json"),
         "context_limit": manifest.budget.context_limit,
         "output_reserve": manifest.budget.output_reserve,
         "remaining_turns": manifest.budget.remaining_turns,
@@ -341,7 +346,7 @@ def _reported_usage(usage: dict[str, Any] | None) -> dict[str, int | float]:
     reported: dict[str, int | float] = {}
     for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost", "cached_tokens"):
         value = usage.get(key)
-        if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+        if reported_number(value) is not None:
             reported[key] = value
     for field, output in (
         ("prompt_tokens_details", "cache_read_tokens"),
@@ -351,7 +356,7 @@ def _reported_usage(usage: dict[str, Any] | None) -> dict[str, int | float]:
         key = "cached_tokens" if field == "prompt_tokens_details" else "reasoning_tokens"
         if isinstance(details, dict):
             value = details.get(key)
-            if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+            if reported_number(value) is not None:
                 reported[output] = value
     return reported
 
@@ -767,12 +772,6 @@ async def _semantic_checkpoint(
             }
         )
         build_request(messages, settings=preflight_settings, summary_mode=True)
-        if (
-            serialized_input_bytes(messages, agent_contract=False, summary_mode=True)
-            + helper.mimi_route_max_output_tokens
-            > helper.mimi_route_context_tokens
-        ):
-            raise RouteContractError("compaction_context_overflow_preflight")
         reservation = reserve(helper, messages, agent_contract=False, summary_mode=True)
     except RouteContractError as error:
         run = await db.get(MimiRun, run_id)
@@ -807,6 +806,7 @@ async def _semantic_checkpoint(
             "kind": "openrouter",
             "purpose": "compaction",
             "run_guard_version": 1,
+            "context_revision": context_revision(settings, conversation.route_config_version, None),
             "context_limit": helper.mimi_route_context_tokens,
             "output_reserve": helper.mimi_route_max_output_tokens,
             "model": helper.mimi_route_model,
@@ -1025,6 +1025,7 @@ async def _prepare_context_history(
     pending_draft: dict[str, Any] | None,
     settings: Settings | None = None,
     context_probe: Callable[..., None] | None = None,
+    route_config_version: int | None = None,
 ) -> tuple[list[dict[str, str]], tuple[int, int] | None, dict[str, Any] | None, UUID | None]:
     """Use an active validated checkpoint, replacing it before any silent suffix loss."""
 
@@ -1138,11 +1139,52 @@ async def _prepare_context_history(
     suffix_bytes = sum(row.content_bytes for row in rows)
     recent_bytes = min(32768, settings.mimi_route_context_tokens // 4) if semantic else 32768
     fits = probe(rows, prior, checkpoint_id)
-    wants_compact = (not semantic and (suffix_bytes > recent_bytes or len(rows) > 12)) or (
-        semantic
-        and context_probe is None
-        and suffix_bytes > int(settings.mimi_route_context_tokens * 0.60)
-    )
+    wants_compact = not semantic and (suffix_bytes > recent_bytes or len(rows) > 12)
+    if semantic:
+        revision = context_revision(
+            settings,
+            route_config_version
+            if route_config_version is not None
+            else conversation.route_config_version,
+            checkpoint_id,
+        )
+        latest_main = (
+            await db.execute(
+                select(MimiProviderCall)
+                .join(MimiRun, MimiRun.id == MimiProviderCall.run_id)
+                .where(
+                    MimiRun.conversation_id == conversation.id,
+                    MimiProviderCall.run_id != run_id,
+                    MimiProviderCall.route["purpose"].astext.is_distinct_from("compaction"),
+                )
+                .order_by(MimiProviderCall.created_at.desc(), MimiProviderCall.attempt.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        consumed = False
+        if latest_main is not None:
+            consumed = (
+                await db.execute(
+                    select(MimiEvent.id)
+                    .join(MimiRun, MimiRun.id == MimiEvent.run_id)
+                    .where(
+                        MimiRun.conversation_id == conversation.id,
+                        MimiEvent.kind == "context.compaction.decided",
+                        MimiEvent.payload["source_call_id"].astext == str(latest_main.id),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none() is not None
+        observation = prompt_observation(latest_main, revision, consumed=consumed)
+        await _append_event(db, run_id, "context.usage.observed", observation)
+        if observation["compaction_blocked"]:
+            await halt_context("mimi_compaction_required_unactivated")
+        wants_compact = observation["should_compact"]
+        if wants_compact:
+            # Consume before dispatch, including failed/unknown helper outcomes.
+            # One provider receipt is never an endless compaction retry budget.
+            await _append_event(db, run_id, "context.compaction.decided", observation)
+            await db.commit()
     helper_calls = 0
     while (not fits or wants_compact) and (
         rows
@@ -1170,8 +1212,7 @@ async def _prepare_context_history(
                 helper_messages = _compaction_messages(prior, proposed, current_user_source)
                 if (
                     serialized_input_bytes(helper_messages, agent_contract=False, summary_mode=True)
-                    + min(8192, settings.mimi_route_max_output_tokens)
-                    > settings.mimi_route_context_tokens
+                    > settings.mimi_max_payload_bytes
                 ):
                     break
                 selected_sources.append(source)
@@ -1413,9 +1454,13 @@ async def conversation_configuration(
     settings = get_settings()
     row = await _conversation(db, auth, conversation_id, lock=change is not None)
     if change is not None:
-        if settings.app_env != "local" or not settings.mimi_live_provider_enabled:
+        if not (settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled):
             raise HTTPException(status_code=409, detail="mimi_model_selection_not_enabled")
-        config = validate_configuration(change.model_dump(exclude={"expected_version"}))
+        config = validate_configuration(change.model_dump(exclude={"expected_version"}), alpha=True)
+        if not next(p for p in profiles_for_ui(settings) if p["id"] == config.profile_id)[
+            "available"
+        ]:
+            raise _conflict("mimi_route_not_alpha_qualified")
         if change.expected_version != row.route_config_version:
             raise _conflict("mimi_route_config_stale")
         row.route_config = config.model_dump()
@@ -1433,7 +1478,12 @@ async def conversation_configuration(
         )
     ).scalar_one_or_none()
     return {
-        "config": row.route_config or default_configuration(settings),
+        "config": {
+            **(row.route_config or default_configuration(settings)),
+            "input_tokens": 100_000,
+        },
+        "stored_config": row.route_config or default_configuration(settings),
+        "context_policy": "observed_prompt_trigger",
         "version": row.route_config_version,
         "applies_to": "next_run",
         "active_run_id": str(active) if active else None,
@@ -1514,9 +1564,9 @@ async def send_message(
 
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
     settings = get_settings()
+    run_config_version = conversation.route_config_version
     if (
-        settings.app_env == "local"
-        and settings.mimi_context_v1_enabled
+        settings.mimi_context_v1_enabled
         and settings.mimi_live_provider_enabled
         and (
             conversation.route_config
@@ -1763,6 +1813,7 @@ async def send_message(
             pending_draft.model_dump(mode="json") if pending_draft else None,
             settings=settings,
             context_probe=probe_context,
+            route_config_version=run_config_version,
         )
 
     live_messages = [
@@ -2019,6 +2070,9 @@ async def send_message(
         route=(
             {
                 "kind": "openrouter",
+                "purpose": "main",
+                "context_revision": context_revision(settings, run_config_version, checkpoint_id),
+                "compaction_trigger_tokens": 100_000,
                 "mode": settings.mimi_route_mode,
                 "model": settings.mimi_route_model,
                 "providers": (
@@ -2034,7 +2088,7 @@ async def send_message(
                 "reasoning_effort": settings.mimi_route_reasoning_effort,
                 "context_limit": settings.mimi_route_context_tokens,
                 "output_reserve": settings.mimi_route_max_output_tokens,
-                "route_config_version": conversation.route_config_version,
+                "route_config_version": run_config_version,
                 "parent_run_id": str(parent_run_id) if parent_run_id else None,
                 "checkpoint": "provider_dispatch",
                 "runner_version": (
@@ -2131,6 +2185,9 @@ async def send_message(
                             await db.commit()
                         raise OwnerPauseRequested()
                     if turn > 1:
+                        # Finish this bounded read journey. Observed prompt input
+                        # triggers compact at the next admitted conversation turn,
+                        # not a token admission cap between model/read steps.
                         call = MimiProviderCall(
                             run_id=run_id,
                             attempt=attempt_offset + turn,
@@ -2151,6 +2208,9 @@ async def send_message(
                         await db.commit()
                         call.state = "dispatched"
                         await db.commit()
+                    # Return the ORM connection to the shared pool while waiting
+                    # for the provider. The separate run guard keeps crash fencing.
+                    await db.commit()
                     if turn == 1 and continuation_completion is not None:
                         result = continuation_completion
                         call.route = {
@@ -2404,10 +2464,7 @@ async def send_message(
                         limits=LoopLimits(
                             max_turns=lease.max_turns,
                             max_tool_calls=lease.max_tool_calls,
-                            max_serialized_bytes=(
-                                settings.mimi_route_context_tokens
-                                - settings.mimi_route_max_output_tokens
-                            ),
+                            max_serialized_bytes=settings.mimi_max_payload_bytes,
                             deadline=deadline,
                         ),
                         invoke_model=invoke_agent_model,
@@ -2421,10 +2478,7 @@ async def send_message(
                         limits=LoopLimits(
                             max_turns=lease.max_turns,
                             max_tool_calls=lease.max_tool_calls,
-                            max_serialized_bytes=(
-                                settings.mimi_route_context_tokens
-                                - settings.mimi_route_max_output_tokens
-                            ),
+                            max_serialized_bytes=settings.mimi_max_payload_bytes,
                             deadline=deadline,
                         ),
                         invoke_model=invoke_agent_model,
@@ -2435,6 +2489,7 @@ async def send_message(
                         tool_registry_sha256=context_envelope.manifest.tool_registry_sha256,
                         output_schema_sha256=context_envelope.manifest.output_schema_sha256,
                         database_url=settings.database_url,
+                        deployment_settings=settings,
                         on_stage=persist_agent_stage,
                         on_context_update=update_agent_context,
                         terminal_checkpoint_safe=terminal_checkpoint_safe,
@@ -3527,7 +3582,7 @@ async def conversation_view(
                     select(MimiProviderCall)
                     .where(MimiProviderCall.run_id.in_(run_ids))
                     .order_by(MimiProviderCall.created_at, MimiProviderCall.attempt)
-                    .limit(MAX_EVENTS)
+                    .limit(MAX_MESSAGES * 8 + 1)
                 )
             )
             .scalars()
@@ -3644,12 +3699,46 @@ async def conversation_view(
         ],
         "receipts": [_receipt_read(row) for row in receipts],
         "events": [_event_read(row, dek) for row in events],
+        "run_observations": {
+            str(run.id): {
+                **run_costs([call for call in provider_calls if call.run_id == run.id]),
+                "elapsed_ms": (
+                    max(0, int((run.completed_at - run.created_at).total_seconds() * 1000))
+                    if run.completed_at
+                    else None
+                ),
+                "context_observations": [
+                    event.payload
+                    for event in events
+                    if event.run_id == run.id and event.kind == "context.usage.observed"
+                ],
+                "checkpoint_activations": sum(
+                    event.run_id == run.id and event.kind == "context.checkpoint.activated"
+                    for event in events
+                ),
+                "error_code": run.error_code,
+                **(
+                    {"cost_complete": False, "receipts_truncated": True}
+                    if len(provider_calls) > MAX_MESSAGES * 8
+                    else {}
+                ),
+            }
+            for run in runs
+        },
         "provider_calls": [
             {
                 "id": row.id,
                 "run_id": row.run_id,
                 "attempt": row.attempt,
                 "state": row.state,
+                "purpose": row.route.get("purpose", "main"),
+                "context_revision": row.route.get("context_revision"),
+                "paid_dispatch": row.route.get("paid_dispatch") is not False,
+                "response_id": (row.result or {}).get("response_id"),
+                "cost_state": "reported"
+                if reported_number((row.usage or {}).get("cost")) is not None
+                else "unknown",
+                "created_at": row.created_at,
                 "requested_model": row.route.get("model"),
                 "requested_effort": row.route.get("reasoning_effort"),
                 "actual_model": row.route.get("actual_model"),

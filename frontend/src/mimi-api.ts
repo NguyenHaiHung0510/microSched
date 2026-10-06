@@ -100,6 +100,41 @@ export type MimiProviderCall = {
   actual_model: string | null
   actual_provider: string | null
   usage: Record<string, number>
+  purpose?: 'main' | 'compaction'
+  context_revision?: string | null
+  paid_dispatch?: boolean
+  response_id?: string | null
+  cost_state?: 'reported' | 'unknown'
+  created_at?: string
+}
+
+export type MimiContextObservation = {
+  prompt_tokens: number | null
+  source_call_id: string | null
+  context_revision: string
+  trigger_tokens: number
+  eligible: boolean
+  should_compact: boolean
+  compaction_blocked?: boolean
+  reason: string
+}
+
+export type MimiRunObservation = {
+  known_cost_usd: number
+  main_known_cost_usd: number
+  helper_known_cost_usd: number
+  unknown_cost_calls: number
+  main_unknown_cost_calls: number
+  helper_unknown_cost_calls: number
+  cost_complete: boolean
+  receipts_truncated?: boolean
+  main_calls: number
+  helper_calls: number
+  reused_calls: number
+  elapsed_ms: number | null
+  context_observations: MimiContextObservation[]
+  checkpoint_activations: number
+  error_code: string | null
 }
 
 export type MimiCapabilities = {
@@ -117,6 +152,9 @@ export type MimiCapabilities = {
   model_profiles?: MimiModelProfile[]
   conversation_planning_mode?: 'prose' | string
   runner?: 'langgraph' | 'current' | string
+  context_policy?: string
+  compaction_trigger_tokens?: number
+  payload_limit_bytes?: number
 }
 
 export type MimiModelProfile = {
@@ -130,6 +168,8 @@ export type MimiModelProfile = {
   output_reserve: number
   available: boolean
   unavailable_reason: string | null
+  evidence?: string
+  compaction_trigger_tokens?: number
 }
 
 export type MimiRouteConfig = {
@@ -164,6 +204,7 @@ export type MimiConversation = {
   feedback: MimiFeedback[]
   draft?: MimiDraftDirection | null
   provider_calls?: MimiProviderCall[]
+  run_observations?: Record<string, MimiRunObservation>
 }
 
 export type MimiConversationSummary = {

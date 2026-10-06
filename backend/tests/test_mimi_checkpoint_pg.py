@@ -17,6 +17,7 @@ from app.agent import crypto as mimi_crypto
 from app.agent import service as mimi_service
 from app.agent.context import AssistantText
 from app.agent.models import MimiConversation, MimiEvent, MimiMessage, MimiProviderCall, MimiRun
+from app.agent.observations import context_revision
 from app.agent.openrouter import AgentCompletion, RouteContractError
 from app.agent.route_config import bind_configuration
 from app.core import crypto
@@ -221,6 +222,46 @@ def test_checkpoint_rehydrates_across_sessions_and_rejects_tamper(pg_dsn) -> Non
     asyncio.run(scenario())
 
 
+async def _seed_observed_trigger(db, conversation, run_id, settings):
+    """A main provider-double receipt drives delayed compaction, never raw bytes."""
+    current = await db.get(MimiRun, run_id)
+    current.generation = 2
+    await db.flush()
+    previous = MimiRun(
+        id=uuid7(),
+        conversation_id=conversation.id,
+        generation=1,
+        state="completed",
+        execution_lease={},
+        source_versions={},
+        deadline=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    db.add(previous)
+    await db.flush()
+    db.add(
+        MimiProviderCall(
+            run_id=previous.id,
+            attempt=1,
+            state="succeeded",
+            request_fingerprint="c" * 64,
+            usage={"prompt_tokens": 100_001},
+            result={"response_id": str(uuid7())},
+            route={
+                "kind": "openrouter",
+                "purpose": "main",
+                "context_revision": context_revision(
+                    settings, conversation.route_config_version, None
+                ),
+                "model": settings.mimi_route_model,
+                "actual_model": settings.mimi_route_model,
+                "actual_provider": settings.mimi_route_provider,
+                "providers": [settings.mimi_route_provider],
+            },
+        )
+    )
+    await db.commit()
+
+
 @pytest.mark.parametrize(
     "failure_mode",
     [
@@ -247,7 +288,7 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
         async def summary(messages, **kwargs):
             nonlocal dispatched
             dispatched += 1
-            assert kwargs["settings"].mimi_route_context_tokens == 32000
+            assert kwargs["settings"].mimi_route_context_tokens == 1_050_000
             assert kwargs["settings"].mimi_route_max_output_tokens == 8192
             source_payload = json.loads(messages[-1]["content"])
             first_source = next((s for s in source_payload["sources"] if s["sequence"] == 1), None)
@@ -342,6 +383,7 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
                     get_settings(),
                     {"profile_id": "luna", "effort": "medium", "input_tokens": 32000},
                 )
+                await _seed_observed_trigger(db, row, rid, settings)
                 if failure_mode in {
                     "invalid_summary",
                     "empty_semantic_summary",
@@ -461,7 +503,7 @@ def test_semantic_compaction_retains_late_constraint_and_rejects_invalid_activat
                     assert failure_mode == "actual_capacity" and checkpoint["frontier"] == 18
                 assert 1 <= dispatched <= 4
                 if failure_mode == "actual_capacity":
-                    assert exact_inputs and exact_inputs[-1] + 8192 <= 32000
+                    assert exact_inputs and exact_inputs[-1] <= settings.mimi_max_payload_bytes
                 assert suffix or failure_mode == "actual_capacity"
             async with maker() as db:
                 row = await db.get(MimiConversation, cid)
@@ -555,8 +597,11 @@ def test_compaction_preflight_or_reservation_failure_halts_without_dispatch_or_h
                     get_settings(),
                     {"profile_id": "luna", "effort": "medium", "input_tokens": 32000},
                 )
+                await _seed_observed_trigger(db, conversation, rid, settings)
                 if failure_mode == "small_cap":
+                    # Endpoint output bound remains a real guard, independent of bytes.
                     settings = settings.model_copy(update={"mimi_route_context_tokens": 2048})
+                    # Keep binding on the same model/epoch for this resource refusal.
                 with pytest.raises(HTTPException) as stopped:
                     await mimi_service._prepare_context_history(
                         db, conversation, dek, rid, 19, None, None, settings=settings

@@ -20,8 +20,8 @@ function profile(overrides: Partial<MimiModelProfile> = {}): MimiModelProfile {
 }
 
 test('context presets include the output reserve and stay within the model context', () => {
-  expect(availableInputPresets(profile())).toEqual([32_000, 100_000, 200_000])
-  expect(availableInputPresets(profile({ context_limit: 132_000 }))).toEqual([32_000, 100_000])
+  expect(availableInputPresets(profile())).toEqual([100_000])
+  expect(availableInputPresets(profile({ context_limit: 132_000 }))).toEqual([100_000])
   expect(availableInputPresets(profile({ context_limit: 31_999 }))).toEqual([])
 })
 

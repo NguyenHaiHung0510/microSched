@@ -1,4 +1,4 @@
-"""Local-only LangGraph replacement for Mimi's bounded read-loop progression.
+"""Alpha LangGraph replacement for Mimi's bounded read-loop progression.
 
 LangGraph checkpoints contain only run identity, version/hash refs and counters.
 Conversation text and read results remain in the existing encrypted app store or
@@ -35,6 +35,7 @@ from app.agent.openrouter import (
     serialized_input_bytes,
 )
 from app.agent.tools.registry import READ_TOOLS
+from app.core.settings import Settings
 
 RUNNER_VERSION = "mimi-langgraph-v1"
 STATE_SCHEMA_VERSION = 1
@@ -135,6 +136,7 @@ async def run_langgraph(
     tool_registry_sha256: str,
     output_schema_sha256: str,
     database_url: str,
+    deployment_settings: Settings | None = None,
     on_stage: StageSink | None = None,
     on_context_update: ContextUpdate | None = None,
     checkpointer_for_test: Any | None = None,
@@ -470,8 +472,17 @@ async def run_langgraph(
         return result
     else:
         parsed_url = make_url(database_url)
-        if not _authorized_local_database(parsed_url):
-            raise RouteContractError("mimi_langgraph_requires_local_mimi078_database")
+        production_bound = (
+            deployment_settings is not None
+            and deployment_settings.is_production
+            and deployment_settings.mimi_real_chat_enabled
+            and deployment_settings.mimi_live_provider_enabled
+            and deployment_settings.mimi_context_v1_enabled
+            and deployment_settings.mimi_runner == "langgraph"
+            and deployment_settings.database_url == database_url
+        )
+        if not production_bound and not _authorized_local_database(parsed_url):
+            raise RouteContractError("mimi_langgraph_requires_authorized_app_database")
         psycopg_url = parsed_url.set(drivername="postgresql").render_as_string(hide_password=False)
         async with AsyncPostgresSaver.from_conn_string(psycopg_url) as checkpointer:
             final_state, resumed = await resume_or_start(checkpointer)

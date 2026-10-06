@@ -43,6 +43,7 @@ import { selectCreatedMimiConversation, setMimiComposerDraft, useMimiComposerDra
 function errorMessage(error: unknown): string {
   if (error instanceof TimeoutError) return error.message
   if (error instanceof ApiError) {
+    if (error.status === 503 && error.message === 'mimi_busy_try_later') return 'Mimi đang bận. Nội dung bạn nhập vẫn được giữ; thử lại sau. Task vẫn dùng bình thường.'
     if (error.status === 409) return 'Preview hoặc conversation đã thay đổi. Tải lại trước khi thử tiếp.'
     if (error.status === 410) return 'Preview đã hết hạn. Gửi lại yêu cầu để Mimi tạo preview mới.'
     return error.message
@@ -302,7 +303,9 @@ export function MimiScreen({
       }
       void queryClient.invalidateQueries({ queryKey: ['mimi', 'conversations'] })
     },
-    onError: () => setRunStage('Mất kết nối quan sát · run có thể vẫn tiếp tục'),
+    onError: (error) => setRunStage(error instanceof ApiError && error.status === 503
+      ? 'Mimi đang bận · yêu cầu chưa được nhận'
+      : 'Mất kết nối quan sát · run có thể vẫn tiếp tục'),
   })
 
   const resume = useMutation({
@@ -684,10 +687,16 @@ export function MimiScreen({
         </div>
       ) : null}
 
+      {latestRun?.error_code === 'mimi_compaction_required_unactivated' ? (
+        <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
+          <p className="font-semibold">Context cần compact nhưng checkpoint chưa được kích hoạt.</p>
+          <p className="mt-1 text-xs">Mimi đã dừng trước khi gọi main và không tự gọi helper lại. Mở hội thoại mới để tiếp tục. Nếu helper trước có outcome unknown, mở lượt đó và Reconcile trước khi xử lý tiếp.</p>
+        </div>
+      ) : null}
       {latestRun?.state === 'halted' && latestRun.error_code?.startsWith('compaction_') ? (
         <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">Mimi chưa thu gọn được lịch sử nên lượt này đã dừng.</p>
-          <p className="mt-1 text-xs">Lịch sử gốc vẫn được giữ nguyên và yêu cầu không tự gửi lại. Bạn có thể tăng giới hạn context nếu model hỗ trợ, hoặc mở hội thoại mới. Việc thử lại sẽ là một lượt model mới.</p>
+          <p className="mt-1 text-xs">Lịch sử gốc vẫn được giữ nguyên; Mimi không tự gọi helper lại trên cùng context. Bạn có thể mở hội thoại mới. Nếu kết quả provider chưa rõ, cần Reconcile ở lượt bị lỗi.</p>
         </div>
       ) : null}
 

@@ -149,8 +149,8 @@ def test_preflight_refuses_overflow_instead_of_truncating() -> None:
         mimi_route_context_tokens=16_384,
         mimi_route_max_output_tokens=4_096,
     )
-    with pytest.raises(RouteContractError, match="context_overflow_preflight"):
-        build_request([{"role": "user", "content": "x" * 13_000}], settings)
+    request = build_request([{"role": "user", "content": "x" * 13_000}], settings)
+    assert len(request["messages"][0]["content"]) == 13_000
 
 
 def test_selected_32k_request_checks_policy_tools_current_pending_checkpoint_suffix_and_reserve():
@@ -160,8 +160,8 @@ def test_selected_32k_request_checks_policy_tools_current_pending_checkpoint_suf
         {"role": "user", "content": "OLD_HISTORY " + "h" * 12_000},
         {"role": "assistant", "content": "OLD_REPLY " + "r" * 8_000},
     ]
-    with pytest.raises(RouteContractError, match="context_overflow_preflight"):
-        build_request(oversized, settings, agent_contract=True)
+    request = build_request(oversized, settings, agent_contract=True)
+    assert request["messages"] == oversized
 
     compacted = [
         {"role": "system", "content": "FIXED_POLICY_AND_CAPABILITIES " + "p" * 6_000},
@@ -500,6 +500,5 @@ def test_native_chat_keeps_tool_and_privacy_contract_without_forcing_text_json()
     assert request["store"] is False
 
 
-def test_native_chat_option_cannot_be_enabled_in_production():
-    with pytest.raises(ValueError, match="local-candidate-only"):
-        Settings(mimi_text_response_format="natural")
+def test_native_chat_option_is_supported_in_production():
+    assert Settings(_env_file=None, mimi_text_response_format="natural").is_production

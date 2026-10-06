@@ -283,13 +283,14 @@ def build_request(
     if summary_mode and agent_contract:
         raise RouteContractError("summary_mode_conflicts_with_agent_contract")
     active_tools = [] if summary_mode else (list(TOOLS) if agent_contract else [TASK_CREATE_TOOL])
-    # Conservative preflight: it may reject early but cannot make overflow safe.
+    # Payload resource bound is independent of provider tokens and 100k trigger.
     if (
         serialized_input_bytes(messages, agent_contract=agent_contract, summary_mode=summary_mode)
-        + route.mimi_route_max_output_tokens
-        > route.mimi_route_context_tokens
+        > route.mimi_max_payload_bytes
     ):
-        raise RouteContractError("context_overflow_preflight")
+        raise RouteContractError("payload_bytes_exceeded")
+    if route.mimi_route_max_output_tokens > route.mimi_route_context_tokens:
+        raise RouteContractError("output_reserve_exceeds_route_limit")
     request: dict[str, Any] = {
         "model": model,
         "messages": messages,

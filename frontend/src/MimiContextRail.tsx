@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Activity, CalendarDays, CheckCircle2, CircleDot, FileText, ListTodo, MessageSquareText, PanelRight, ReceiptText } from 'lucide-react'
 import { useState } from 'react'
 import { usePreviewExpired } from './mimi-preview-expiry'
+import { MimiRunObservations } from './MimiRunObservations'
 
 import { apiRequest } from '@/api'
 import { Badge } from '@/components/ui/badge'
@@ -73,7 +74,8 @@ function RunPanel({ conversation }: { conversation: MimiConversation | null | un
   const route = manifest?.route as Record<string, unknown> | undefined
   const budget = manifest?.budget as Record<string, unknown> | undefined
   const sources = Array.isArray(manifest?.sources) ? manifest.sources as Array<Record<string, unknown>> : []
-  const providerCall = conversation?.provider_calls?.filter((call) => call.run_id === run.id).at(-1)
+  const runCalls = conversation?.provider_calls?.filter((call) => call.run_id === run.id) ?? []
+  const providerCall = runCalls.filter((call) => (call.purpose ?? 'main') === 'main').at(-1)
   const reported = providerCall?.usage ?? {}
   return <div className="space-y-3">
     <div className="flex items-center justify-between gap-2"><Badge variant="outline">{mimiRunLabel(run.state)}</Badge><span className="text-xs text-muted-foreground">Run {run.generation}</span></div>
@@ -81,12 +83,13 @@ function RunPanel({ conversation }: { conversation: MimiConversation | null | un
       <div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Bắt đầu</dt><dd>{new Date(run.created_at).toLocaleString('vi-VN')}</dd></div>
       <div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Deadline</dt><dd>{new Date(run.deadline).toLocaleString('vi-VN')}</dd></div>
     </dl>
+    <MimiRunObservations observation={conversation?.run_observations?.[run.id]} calls={runCalls} />
     <details className="rounded-lg border p-3 text-xs" data-testid="mimi-context-inspector">
       <summary className="cursor-pointer font-semibold">Route, nguồn context và mức dùng</summary>
       <dl className="mt-3 space-y-2">
         <div><dt className="font-semibold">Model / effort yêu cầu</dt><dd>{providerCall?.requested_model ?? String(route?.requested_model ?? 'Chưa có')} · {providerCall?.requested_effort ?? String(route?.requested_effort ?? 'chưa rõ')}</dd></div>
         <div><dt className="font-semibold">Tuyến hiệu lực đã ghi nhận</dt><dd>{providerCall?.actual_model ? `${providerCall.actual_model} · ${providerCall.actual_provider ?? 'provider chưa được báo'}` : providerCall ? `Chưa có route thực tế trong receipt; trạng thái provider call: ${providerCall.state}` : 'Run này chưa có provider call'}</dd></div>
-        <div><dt className="font-semibold">Kích thước input ước lượng / tổng context đã chọn</dt><dd>{typeof budget?.serialized_input_upper_bound === 'number' ? `${budget.serialized_input_upper_bound.toLocaleString('vi-VN')} byte (giới hạn trên)` : 'Chưa có'} / {typeof budget?.context_limit === 'number' ? `${budget.context_limit.toLocaleString('vi-VN')} token` : 'chưa rõ'}</dd></div>
+        <div><dt className="font-semibold">Payload bytes / giới hạn context endpoint</dt><dd>{typeof budget?.serialized_input_upper_bound === 'number' ? `${budget.serialized_input_upper_bound.toLocaleString('vi-VN')} byte (không phải token)` : 'Chưa có'} / {typeof budget?.context_limit === 'number' ? `${budget.context_limit.toLocaleString('vi-VN')} token` : 'chưa rõ'}</dd></div>
         <div><dt className="font-semibold">Checkpoint</dt><dd>{typeof manifest?.checkpoint_frontier === 'number' && manifest.checkpoint_frontier > 0 ? `Đến message ${manifest.checkpoint_frontier}` : 'Chưa compact'}</dd></div>
         <div><dt className="font-semibold">Token / cache / chi phí do nguồn báo</dt><dd>{typeof reported.total_tokens === 'number' ? `${reported.total_tokens.toLocaleString('vi-VN')} token` : 'Chưa có token'} · {typeof reported.cache_read_tokens === 'number' ? `${reported.cache_read_tokens.toLocaleString('vi-VN')} cache read` : 'cache chưa báo'} · {typeof reported.cost === 'number' ? `$${reported.cost.toFixed(5)}` : 'chi phí chưa báo'}</dd></div>
       </dl>

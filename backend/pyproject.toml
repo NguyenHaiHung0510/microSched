@@ -15,6 +15,9 @@ dependencies = [
     # its httpx client at package-import time, so the app will not boot without it.
     "httpx>=0.28.0",
     "itsdangerous>=2.2.0",
+    "langgraph==1.2.12",
+    "langgraph-checkpoint-postgres==3.1.2",
+    "psycopg[binary]==3.3.6",
     "openai==3.22.1",
     "pgvector>=0.5.0",
     "pydantic-settings",
@@ -31,10 +34,7 @@ dev = [
     "ruff",
 ]
 prototype = [
-    "langgraph==1.2.12",
-    "langgraph-checkpoint-postgres==3.1.2",
-    # The slim Linux QA image has no system libpq; keep it in this optional group.
-    "psycopg[binary]==3.3.6",
+    # Compatibility group for historical QA invocations; runtime owns delivery.
 ]
 
 [tool.ruff]

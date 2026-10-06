@@ -887,8 +887,11 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "itsdangerous" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-postgres" },
     { name = "openai" },
     { name = "pgvector" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
     { name = "pywebpush" },
     { name = "sqlmodel" },
@@ -901,11 +904,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-prototype = [
-    { name = "langgraph" },
-    { name = "langgraph-checkpoint-postgres" },
-    { name = "psycopg", extra = ["binary"] },
-]
+prototype = []
 
 [package.metadata]
 requires-dist = [
@@ -917,8 +916,11 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "itsdangerous", specifier = ">=2.2.0" },
+    { name = "langgraph", specifier = "==1.2.12" },
+    { name = "langgraph-checkpoint-postgres", specifier = "==3.1.2" },
     { name = "openai", specifier = "==3.22.1" },
     { name = "pgvector", specifier = ">=0.5.0" },
+    { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
     { name = "pydantic-settings" },
     { name = "pywebpush", specifier = ">=2.4.0" },
     { name = "sqlmodel" },
@@ -931,11 +933,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-prototype = [
-    { name = "langgraph", specifier = "==1.2.12" },
-    { name = "langgraph-checkpoint-postgres", specifier = "==3.1.2" },
-    { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
-]
+prototype = []
 
 [[package]]
 name = "multidict"

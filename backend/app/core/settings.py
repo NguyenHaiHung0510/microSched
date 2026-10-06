@@ -88,15 +88,14 @@ class Settings(BaseSettings):
     mimi_real_chat_enabled: bool = False
     mimi_live_provider_enabled: bool = False
     mimi_context_v1_enabled: bool = False
-    # Experimental execution engine. The default remains the shipped loop.
+    # Alpha can explicitly select LangGraph; feature flags remain dark by default.
     mimi_runner: Literal["current", "langgraph"] = "current"
     mimi_workflow_pilot_enabled: bool = False
     mimi_public_origin: str | None = None
     mimi_preview_ttl_minutes: int = 15
     mimi_run_deadline_seconds: int = 1_800
     mimi_standard_api_key: str | None = None
-    # Keep the production transport unchanged unless an Owner explicitly opts
-    # into the local SDK candidate after adapter parity has been verified.
+    # Explicit alpha transport selection; no automatic fallback on route failure.
     mimi_transport: Literal["httpx", "openai_sdk"] = "httpx"
     mimi_text_response_format: Literal["structured", "natural"] = "structured"
     mimi_route_mode: Literal["exact", "adaptive"] = "exact"
@@ -109,7 +108,14 @@ class Settings(BaseSettings):
     mimi_route_reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high"] = (
         "low"
     )
-    mimi_route_context_tokens: int = 131_072
+    # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
+    mimi_route_context_tokens: int = 1_048_576
+    mimi_compaction_trigger_tokens: Literal[100_000] = 100_000
+    mimi_max_payload_bytes: int = 2_097_152
+    # At most four runs: guard + worker + observer <=12 of the existing15
+    # ORM pool connections; auth returns its checkout before SSE. LangGraph adds
+    # one direct checkpoint connection/run. Default two leaves ample Task room.
+    mimi_max_active_runs: int = 2
     mimi_route_max_output_tokens: int = 4_096
     mimi_route_max_input_price: float | None = None
     mimi_route_max_output_price: float | None = None
@@ -224,12 +230,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MIMI_PUBLIC_ORIGIN is required when Mimi real chat is enabled in production"
             )
-        if self.is_production and self.mimi_runner == "langgraph":
-            raise ValueError("MIMI_RUNNER=langgraph is local-prototype-only")
-        if self.is_production and self.mimi_text_response_format == "natural":
-            raise ValueError("MIMI_TEXT_RESPONSE_FORMAT=natural is local-candidate-only")
-        if self.is_production and self.mimi_transport == "openai_sdk":
-            raise ValueError("MIMI_TRANSPORT=openai_sdk is local-candidate-only")
+        # Explicit alpha configuration supports the same transport/runner in
+        # production. Egress, origin, route, privacy and confirmation guards stay.
+        if not 65_536 <= self.mimi_max_payload_bytes <= 4_194_304:
+            raise ValueError("MIMI_MAX_PAYLOAD_BYTES must be between 65536 and 4194304")
+        if not 1 <= self.mimi_max_active_runs <= 4:
+            raise ValueError("MIMI_MAX_ACTIVE_RUNS must be between 1 and 4")
         if self.mimi_runner == "langgraph" and not (
             self.mimi_context_v1_enabled and self.mimi_live_provider_enabled
         ):

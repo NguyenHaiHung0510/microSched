@@ -1,7 +1,7 @@
-"""Allowlisted local model profiles and immutable per-run configuration.
+"""Allowlisted alpha model profiles and immutable per-run configuration.
 
-Snapshot evidence: OpenRouter public models/endpoints, 2026-10-01. This is a
-local candidate packet, not a benchmark champion or production default.
+Endpoint metadata snapshot: 2026-10-06. Route evidence is separate from metadata;
+only the default with the strongest existing app receipts is alpha-admitted.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ PROFILES = {
         "quantization": "unknown",
         "supported_efforts": ["none", "low", "medium", "high"],
         "context_limit": 1_050_000,
+        "max_output_tokens": 128_000,
         "output_reserve": 8192,
         "input_price": 0.10,
         "output_price": 0.50,
@@ -31,7 +32,8 @@ PROFILES = {
         "provider": "deepinfra",
         "quantization": "fp8",
         "supported_efforts": ["default"],
-        "context_limit": 1_050_000,
+        "context_limit": 1_048_576,
+        "max_output_tokens": 943_718,
         "output_reserve": 8192,
         "input_price": 0.43,
         "output_price": 0.87,
@@ -43,6 +45,7 @@ PROFILES = {
         "quantization": "fp8",
         "supported_efforts": ["low", "high"],
         "context_limit": 1_048_576,
+        "max_output_tokens": 131_072,
         "output_reserve": 8192,
         # Conservative undiscounted ceiling, not dependence on 30% promotion.
         "input_price": 0.20,
@@ -55,6 +58,7 @@ PROFILES = {
         "quantization": "fp4",
         "supported_efforts": ["low", "high"],
         "context_limit": 1_048_576,
+        "max_output_tokens": 131_072,
         "output_reserve": 8192,
         # Conservative undiscounted ceiling, not dependence on 50% promotion.
         "input_price": 0.15,
@@ -75,29 +79,45 @@ class ConfigurationChange(RouteConfiguration):
 
 
 def profiles_for_ui(settings: Settings) -> list[dict[str, Any]]:
-    enabled = (
-        settings.app_env == "local"
-        and settings.mimi_live_provider_enabled
-        and settings.mimi_route_model in {p["model"] for p in PROFILES.values()}
-    )
+    enabled = settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
+    evidence = {
+        "deepseek": (
+            True,
+            "Task078 app read/create and checkpoint receipts, 2026-10-03; "
+            "alpha100k live retake pending",
+        ),
+        "mimo": (False, "Route smoke exists; alpha tools/compaction continuity not qualified"),
+        "glm": (False, "Route smoke exists; alpha tools/compaction continuity not qualified"),
+        "luna": (False, "Observed ZDR eligibility404; no successful matching app route"),
+    }
     return [
         {
             **{k: v for k, v in p.items() if k not in {"input_price", "output_price"}},
             "id": key,
-            "available": enabled,
-            "unavailable_reason": None if enabled else "Model thật chưa được bật ở môi trường này.",
+            "available": enabled and evidence[key][0],
+            "evidence": evidence[key][1],
+            "compaction_trigger_tokens": 100_000,
+            "unavailable_reason": (
+                None
+                if enabled and evidence[key][0]
+                else evidence[key][1]
+                if enabled
+                else "Model thật chưa được bật ở môi trường này."
+            ),
         }
         for key, p in PROFILES.items()
     ]
 
 
-def validate_configuration(value: dict[str, Any]) -> RouteConfiguration:
+def validate_configuration(value: dict[str, Any], *, alpha: bool = False) -> RouteConfiguration:
     config = RouteConfiguration.model_validate(value)
     profile = PROFILES.get(config.profile_id)
     if profile is None or config.effort not in profile["supported_efforts"]:
         raise HTTPException(status_code=422, detail="mimi_route_selection_not_supported")
     if config.input_tokens not in {32000, 100000, 200000}:
         raise HTTPException(status_code=422, detail="mimi_context_preset_not_supported")
+    if alpha and config.input_tokens != 100_000:
+        raise HTTPException(status_code=422, detail="mimi_alpha_trigger_requires_100k")
     if config.input_tokens > profile["context_limit"]:
         raise HTTPException(status_code=422, detail="mimi_context_exceeds_model_limit")
     return config
@@ -116,7 +136,13 @@ def default_configuration(settings: Settings) -> dict[str, Any]:
 
 def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
     """Copy settings at run admission; later UI changes cannot mutate this copy."""
+    # Old saved32k/200k configuration remains history. Every new alpha run
+    # observes100k; do not rewrite old receipts or silently reroute a saved model.
     config = validate_configuration(value)
+    if settings.mimi_live_provider_enabled:
+        availability = {p["id"]: p for p in profiles_for_ui(settings)}
+        if not availability[config.profile_id]["available"]:
+            raise HTTPException(status_code=409, detail="mimi_route_not_alpha_qualified")
     profile = PROFILES[config.profile_id]
     return settings.model_copy(
         update={
@@ -125,7 +151,8 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
             "mimi_route_provider": profile["provider"],
             "mimi_route_quantization": profile["quantization"],
             "mimi_route_reasoning_effort": config.effort,
-            "mimi_route_context_tokens": config.input_tokens,
+            "mimi_route_context_tokens": profile["context_limit"],
+            "mimi_compaction_trigger_tokens": 100_000,
             "mimi_route_max_output_tokens": profile["output_reserve"],
             "mimi_route_max_input_price": profile["input_price"],
             "mimi_route_max_output_price": profile["output_price"],

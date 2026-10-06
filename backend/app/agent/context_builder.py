@@ -200,8 +200,8 @@ def assemble_context(
             "output_schema_sha256": OUTPUT_SCHEMA_SHA256,
         },
     )
-    # UTF-8 bytes conservatively bound text token count. Rebuild until the
-    # manifest's own budget digits have reached a fixed point.
+    # Record payload bytes independently from tokens. Rebuild until the
+    # manifest's own byte-count digits have reached a fixed point.
     for _ in range(4):
         messages = serialize_openrouter_messages(envelope)
         exact_bytes = serialized_input_bytes(messages, agent_contract=True)

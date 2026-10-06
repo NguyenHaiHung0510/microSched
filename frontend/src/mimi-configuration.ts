@@ -1,6 +1,6 @@
 import type { MimiModelProfile } from './mimi-api'
 
-const INPUT_PRESETS = [32_000, 100_000, 200_000]
+const INPUT_PRESETS = [100_000]
 
 export function availableInputPresets(profile: MimiModelProfile | undefined) {
   if (!profile) return []

@@ -1,4 +1,4 @@
-"""Local OpenAI Python SDK transport to OpenRouter for the Mimi candidate lane."""
+"""OpenAI Python SDK transport to OpenRouter for the explicit Mimi alpha lane."""
 
 from __future__ import annotations
 

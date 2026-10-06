@@ -27,6 +27,7 @@ def test_configuration_cas_changes_next_run_without_rewriting_active_receipt(pg_
     monkeypatch.setenv("OAUTH_STATE_SECRET", "synthetic-configuration")
     monkeypatch.setenv("MIMI_REAL_CHAT_ENABLED", "true")
     monkeypatch.setenv("MIMI_LIVE_PROVIDER_ENABLED", "true")
+    monkeypatch.setenv("MIMI_CONTEXT_V1_ENABLED", "true")
     monkeypatch.setenv("MIMI_STANDARD_API_KEY", "synthetic-never-sent")
     monkeypatch.setenv("MIMI_ROUTE_MODEL", "deepseek/deepseek-v4.1-flash")
     monkeypatch.setenv("MIMI_ROUTE_PROVIDER", "deepinfra")
@@ -82,16 +83,17 @@ def test_configuration_cas_changes_next_run_without_rewriting_active_receipt(pg_
                     cid,
                     ConfigurationChange(
                         expected_version=before["version"],
-                        profile_id="luna",
-                        effort="medium",
-                        input_tokens=32000,
+                        profile_id="deepseek",
+                        effort="high",
+                        input_tokens=100000,
                     ),
                 )
                 await db.commit()
                 assert saved["version"] == before["version"] + 1
                 assert saved["active_run_id"] == str(run.id)
                 assert saved["applies_to"] == "next_run"
-                assert saved["config"]["profile_id"] == "luna"
+                assert saved["config"]["profile_id"] == "deepseek"
+                assert saved["config"]["effort"] == "high"
                 await db.refresh(call)
                 assert call.route["model"] == "deepseek/deepseek-v4.1-flash"
                 assert call.route["configuration_version"] == before["version"]
@@ -102,8 +104,8 @@ def test_configuration_cas_changes_next_run_without_rewriting_active_receipt(pg_
                         cid,
                         ConfigurationChange(
                             expected_version=before["version"],
-                            profile_id="glm",
-                            effort="high",
+                            profile_id="deepseek",
+                            effort="low",
                             input_tokens=100000,
                         ),
                     )

@@ -36,6 +36,7 @@ function ModelProfileDetails({ profiles }: { profiles: MimiModelProfile[] }) {
             <p className="text-xs text-muted-foreground">
               Tổng context model: {profile.context_limit.toLocaleString('vi-VN')} token · dành {profile.output_reserve.toLocaleString('vi-VN')} token cho câu trả lời
             </p>
+            {profile.evidence ? <p className="mt-1 text-xs text-muted-foreground">Bằng chứng route: {profile.evidence}</p> : null}
             {!profile.available && profile.unavailable_reason ? (
               <p className="mt-1 text-xs">Lý do: {profile.unavailable_reason}</p>
             ) : null}
@@ -195,7 +196,7 @@ export function MimiConfiguration({
             </div>
 
             <div className="min-w-0 space-y-1.5">
-              <label htmlFor={`mimi-context-${conversationId}`} className="text-sm font-semibold">Ngân sách ngữ cảnh</label>
+              <label htmlFor={`mimi-context-${conversationId}`} className="text-sm font-semibold">Ngưỡng compact quan sát</label>
               <Select
                 value={String(selection.input_tokens)}
                 disabled={save.isPending || !selectedProfile?.available || presets.length === 0}
@@ -212,7 +213,7 @@ export function MimiConfiguration({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Tổng context của lượt: {selection.input_tokens.toLocaleString('vi-VN')} token, đã dành {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token cho câu trả lời; giới hạn model là {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token. Lưu cấu hình chỉ áp dụng từ lượt chạy tiếp theo
+            Mimi compact ở lượt sau khi provider báo input main đạt {selection.input_tokens.toLocaleString('vi-VN')} token. Request có thể vượt ngưỡng này; giới hạn endpoint là {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token, output tối đa {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token. Lưu cấu hình chỉ áp dụng từ lượt chạy tiếp theo
             {activeRunId || runtimeActive ? '; lượt đang chạy giữ nguyên lựa chọn đã chốt.' : '.'}
           </p>
           {!hasCurrentPreset ? <p role="alert" className="text-sm text-bad">Mức ngữ cảnh hiện tại không còn hợp lệ cho model này. Chọn mức được hỗ trợ để lưu.</p> : null}
