@@ -136,6 +136,12 @@ class Settings(BaseSettings):
     neon_owner_url: str | None = None
     neon_migrator_url: str | None = None
 
+    @field_validator("mimi_compaction_trigger_tokens", mode="before")
+    @classmethod
+    def parse_compaction_trigger_environment(cls, value: object) -> object:
+        """Allow the approved integer preset through environment string input."""
+        return 100_000 if value == "100000" else value
+
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
         # Capture the DECLARED database URL (OS env or .env) before the develop
