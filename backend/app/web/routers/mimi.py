@@ -548,7 +548,16 @@ async def decide_change_set(
     session: CurrentSession,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
 ) -> dict:
-    return await confirm_change_set(db, session, change_set_id, payload, idempotency_key)
+    result = await confirm_change_set(db, session, change_set_id, payload, idempotency_key)
+    # Yield-dependency cleanup may run after HTTP success headers. Keep the
+    # Task, receipt and idempotency commit ahead of every success response.
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("mimi_confirmation_commit_failed change_set_id=%s", change_set_id)
+        raise HTTPException(status_code=503, detail="mimi_confirmation_commit_failed") from None
+    return result
 
 
 @router.post(

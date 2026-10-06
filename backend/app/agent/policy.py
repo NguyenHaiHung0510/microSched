@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 POLICY_ID = "mimi-standard-v2"
-POLICY_SHA256 = "60b25fe507b79f823a9db3c01ebe94a5e2aa848218164bade326bf153a73f5e1"
+POLICY_SHA256 = "1ffc135a42c8cf04f3d6d17a2a987f399037d00fce48ff9b00425f318a4a44ab"
 _POLICY_PATH = Path(__file__).with_name("policy") / "mimi-standard-v2.md"
 
 
