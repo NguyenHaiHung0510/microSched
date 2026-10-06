@@ -113,6 +113,7 @@ def test_confirmation_http_stays_behind_commit(monkeypatch, caplog, commit_failu
             assert receipt["task_id"] not in response
             assert "mimi_confirmation_commit_failed" in caplog.text
             assert "synthetic storage unavailable" not in response
+            assert "synthetic storage unavailable" not in caplog.text
         else:
             assert start[0][0]["status"] == 200 and start[0][1], (
                 "success escaped before durable commit"

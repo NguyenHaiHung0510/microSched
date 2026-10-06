@@ -553,9 +553,14 @@ async def decide_change_set(
     # Task, receipt and idempotency commit ahead of every success response.
     try:
         await db.commit()
-    except Exception:
+    except Exception as error:
         await db.rollback()
-        logger.exception("mimi_confirmation_commit_failed change_set_id=%s", change_set_id)
+        # Driver exceptions may embed SQL parameters or connection details.
+        logger.error(
+            "mimi_confirmation_commit_failed change_set_id=%s error_type=%s",
+            change_set_id,
+            type(error).__name__,
+        )
         raise HTTPException(status_code=503, detail="mimi_confirmation_commit_failed") from None
     return result
 
