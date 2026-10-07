@@ -11,7 +11,7 @@ English | [Tiếng Việt](README.vi.md)
 
 **microSched** is my all-in-one personal app and personal software laboratory—the third and most mature version so far in my journey of building personal tools.
 
-That journey started with [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap) (a basic C++ CLI from my first year at university), continued with [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian) (a vibe-coded Python/Flet desktop app packaged as an `.exe`), and led to microSched (harness engineering + AI engineering). It reflects how my product thinking, engineering, and collaboration with AI have matured. I have been using microSched in real life since **21 July 2026** and continue to improve it based on real-world feedback.
+That journey started with [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap) (a basic C++ CLI from my first year at university), continued with [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian) (a vibe-coded Python/Flet desktop app packaged as an `.exe`), and led to microSched (harness engineering + AI engineering). It reflects how my product thinking, engineering, and collaboration with AI have matured. I have been using microSched in real life since **21 August 2026** and continue to improve it based on real-world feedback.
 
 > This is a personal project under active development. This document describes what is currently in the code; not every idea on the roadmap has shipped.
 

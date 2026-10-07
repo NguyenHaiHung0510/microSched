@@ -125,8 +125,8 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         method: 'POST',
         body: JSON.stringify({ content, position: note.items.length }),
       }),
-    onSuccess: () => {
-      setNewItem('')
+    onSuccess: (_data, variables) => {
+      setNewItem((current) => (current === variables || current.trim() === variables ? '' : current))
       refresh()
     },
   })
@@ -136,9 +136,16 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         method: 'PATCH',
         body: JSON.stringify(changes),
       }),
-    onSuccess: () => {
-      setEditingItemId(null)
-      setEditingItemContent('')
+    onSuccess: (_data, variables) => {
+      if (variables.changes.content !== undefined) {
+        setEditingItemContent((current) => {
+          if (current === variables.changes.content) {
+            setEditingItemId((currentId) => (currentId === variables.item.id ? null : currentId))
+            return ''
+          }
+          return current
+        })
+      }
       refresh()
     },
   })
@@ -187,7 +194,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     if (!(target instanceof Element)) return
     if (
       target.closest(
-        'button, a, input, textarea, select, label, [role="button"], [contenteditable="true"]',
+        'button, a, input, textarea, select, label, [role="button"], [contenteditable="true"], [data-testid="note-item-content"]',
       )
     ) {
       return
@@ -526,9 +533,10 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 rounded-md bg-muted/40 p-2 sm:px-2.5 sm:py-1.5">
                         {editingItemId === item.id ? (
                           <>
-                            <Input
+                            <Textarea
                               data-testid="note-item-edit-input"
-                              className="h-10 min-w-0 flex-1 bg-card"
+                              rows={2}
+                              className="min-h-20 min-w-0 flex-1 resize-y bg-card"
                               aria-label={`Sửa mục ${item.content}`}
                               value={editingItemContent}
                               onChange={(event) => setEditingItemContent(event.target.value)}
@@ -604,17 +612,18 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 )}
 
                 <form
-                  className="flex gap-2"
+                  className="flex items-start gap-2"
                   onSubmit={(event) => {
                     event.preventDefault()
                     const content = newItem.trim()
                     if (content) addItem.mutate(content)
                   }}
                 >
-                  <Input
+                  <Textarea
                     data-testid="note-item-add-input"
+                    rows={2}
                     aria-label={`Thêm checklist cho ${label}`}
-                    className="h-10 bg-card"
+                    className="min-h-20 resize-y bg-card"
                     placeholder="Thêm checklist…"
                     value={newItem}
                     onChange={(event) => setNewItem(event.target.value)}
@@ -840,8 +849,9 @@ export function NotesScreen() {
       }),
     onSuccess: (_note, variables) => {
       if (variables.source === 'quick') {
-        setQuickTitle('')
-        window.requestAnimationFrame(() => quickInputRef.current?.focus())
+        const submittedTitle = variables.payload.title
+        setQuickTitle((current) => (current === submittedTitle || current.trim() === submittedTitle ? '' : current))
+        window.requestAnimationFrame(() => quickInputRef.current?.focus({ preventScroll: true }))
       } else {
         setCreateOpen(false)
       }

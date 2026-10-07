@@ -45,9 +45,19 @@ import {
 import { DayCell, type DropTaskPayload } from '@/DayCell'
 import { DayDetailDialog } from '@/DayDetailDialog'
 import { MiniNav } from '@/MiniNav'
+import { TaskForm } from '@/TaskForm'
+import { importErrorMessage } from '@/calendar-ui'
+import { type TaskWritePayload } from '@/task-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
   Tooltip,
@@ -216,6 +226,7 @@ export function CalendarScrollView() {
   const [visibleWeekKeys, setVisibleWeekKeys] = useState<string[]>([])
   const [centerWeekKey, setCenterWeekKey] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [agendaTaskEdit, setAgendaTaskEdit] = useState<CalendarTask | null>(null)
   const visibleRef = useRef(new Map<string, boolean>())
   const extendingRef = useRef(false)
   const prependScrollRef = useRef<number | null>(null)
@@ -302,6 +313,18 @@ export function CalendarScrollView() {
         body: JSON.stringify({ status: variables.status }),
       }),
     onSuccess: () => {
+      refreshAll()
+    },
+  })
+
+  const editAgendaTask = useMutation({
+    mutationFn: ({ taskId, payload }: { taskId: string; payload: TaskWritePayload }) =>
+      apiRequest<CalendarTask>(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      setAgendaTaskEdit(null)
       refreshAll()
     },
   })
@@ -1163,19 +1186,21 @@ export function CalendarScrollView() {
                         className="size-6 shrink-0 rounded-sm"
                         aria-label={`Đổi trạng thái ${task.title}`}
                       />
-                      <span
-                        data-testid="calendar-agenda-task-title"
+                    <Button
+                      variant="ghost"
+                      data-testid="calendar-agenda-task-edit-trigger"
                         className={cn(
-                          'min-w-0 flex-1 text-sm font-semibold break-words',
+                        'h-auto min-w-0 flex-1 flex-col items-start justify-start whitespace-normal break-words p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                           task.status === 'completed' && 'line-through text-muted-foreground',
                         )}
+                      onClick={() => setAgendaTaskEdit(task)}
                       >
-                        {task.title}
+                      <span data-testid="calendar-agenda-task-title">{task.title}</span>
                         {toggleTaskStatus.isPending && toggleTaskStatus.variables?.taskId === task.id ? (
                           <span role="status" data-testid="calendar-agenda-task-pending" className="mt-1 block text-xs text-muted-foreground">Đang lưu…</span>
                         ) : null}
                         {task.is_private ? <span className="mt-1 block"><PrivateMarker /></span> : null}
-                      </span>
+                    </Button>
                       {task.due_at ? (
                         <span className="text-xs text-muted-foreground shrink-0">
                           {formatTaskDue(task.due_at)}
@@ -1275,6 +1300,31 @@ export function CalendarScrollView() {
         sourceById={sourceById}
         privateLocked={privateLocked}
       />
+
+      <Dialog open={agendaTaskEdit !== null} onOpenChange={(next) => !next && setAgendaTaskEdit(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sửa · {agendaTaskEdit?.title}</DialogTitle>
+            <DialogDescription>Cập nhật nội dung, ưu tiên, hạn hoặc chế độ riêng tư.</DialogDescription>
+          </DialogHeader>
+          {agendaTaskEdit ? (
+            <TaskForm
+              initial={agendaTaskEdit}
+              submitLabel="Lưu thay đổi"
+              pending={editAgendaTask.isPending}
+              onSubmit={(payload) =>
+                editAgendaTask.mutate({ taskId: agendaTaskEdit.id, payload })
+              }
+              onCancel={() => setAgendaTaskEdit(null)}
+            />
+          ) : null}
+          {editAgendaTask.isError ? (
+            <p className="text-sm text-bad" role="alert">
+              {importErrorMessage(editAgendaTask.error)}
+            </p>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

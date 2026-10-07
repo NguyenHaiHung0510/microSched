@@ -285,13 +285,14 @@ test.describe('mobile (390x844, touch)', () => {
     const before = taskApi.count('GET', '/api/tasks')
     await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
     await expect(page.getByTestId('calendar-day-dialog')).toBeVisible()
-    expect(taskApi.count('GET', '/api/tasks')).toBe(before)
+    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 1)
+    const afterDayOpen = taskApi.count('GET', '/api/tasks')
     await page.getByTestId('calendar-day-move-task').tap()
     await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
-    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 1)
+    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(afterDayOpen + 1)
     if (await page.getByTestId('calendar-move-load-more').isVisible()) {
       await page.getByTestId('calendar-move-load-more').click()
-      await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 2)
+      await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(afterDayOpen + 2)
     }
   })
 

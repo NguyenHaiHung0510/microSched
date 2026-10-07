@@ -94,6 +94,8 @@ test('rhythm selection survives focus, changes month cleanly and hides private r
   await page.route('**/api/tracker/dashboard?*',route=>{const q=new URL(route.request().url()).searchParams;return route.fulfill({json:report(q.get('month')??'2026-09',Number(q.get('months')??1),Boolean(taskApi.privateUntil))})})
   await page.goto('/');await page.getByRole('tab',{name:'Theo dõi'}).click();await page.getByTestId('tracker-open-report').click()
   const rhythm=page.getByTestId('tracker-rhythm')
+  await expect(rhythm).toContainText('Tuần 2 / 5')
+  await rhythm.getByRole('button', { name: 'Tuần trước', exact: true }).click()
   const day=rhythm.getByRole('button',{name:'Đọc sách, 02/09/2026: 2 lần ghi',exact:true})
   await day.focus();await page.keyboard.press('Enter')
   await expect(day).toBeFocused();await expect(page.getByTestId('rhythm-detail')).toContainText('2 lần ghi')

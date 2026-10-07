@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 import { DashboardPanel } from '../src/DashboardPanel'
 import { financeBarScale, financePeriodLabels, financeShares } from '../src/finance-chart'
-import { activityCountByTrackerDay, daysInReportMonth, reportMonthOffset } from '../src/tracker-rhythm'
+import { activityCountByTrackerDay, daysInReportMonth, reportMonthOffset, initialReportWeek } from '../src/tracker-rhythm'
 import type { DashboardResponse, Tracker } from '../src/tracker-ui'
 
 const dashboard: DashboardResponse = {
@@ -158,4 +158,21 @@ test('corruption warnings remain visible and a missing preceding full window is 
   assert.doesNotMatch(html, /Chưa có khoản cố định nào/)
   assert.match(html, /Chưa có kỳ trước để so sánh/)
   assert.doesNotMatch(html, /Ít hơn 100\.000/)
+})
+
+test('expense composition bars show shares of the total rather than filling the largest category', () => {
+  const html = render({ ...dashboard, f3_groups: [
+    { name: 'Sinh hoạt', total: 300, trackers: [] }, { name: 'Di chuyển', total: 100, trackers: [] },
+  ] })
+  const composition = html.slice(html.indexOf('data-testid="dashboard-finance-composition"'), html.indexOf('Khoản cố định hiện tại'))
+  assert.match(composition, /75%/)
+  assert.match(composition, /width:75%/)
+  assert.match(composition, /width:25%/)
+  assert.doesNotMatch(composition, /width:100%/)
+})
+
+test('rhythm opens the current Vietnamese week including the timezone month boundary', () => {
+  expect(initialReportWeek('2026-09', new Date('2026-09-30T12:00:00Z'))).toBe(4)
+  expect(initialReportWeek('2026-10', new Date('2026-09-30T17:00:00Z'))).toBe(0)
+  expect(initialReportWeek('2026-08', new Date('2026-09-30T12:00:00Z'))).toBe(0)
 })

@@ -377,6 +377,13 @@ class EntryUpdate(BaseModel):
         return self
 
 
+class ActivityDayRead(BaseModel):
+    """Daily visible entry counts; never a money or completion metric."""
+
+    day: date
+    count: int
+
+
 class EntryRead(BaseModel):
     """Decrypted entry returned at the API boundary; money is a number, not a string."""
 
@@ -995,6 +1002,7 @@ class TrackerStore:
             changes["name"] = _sealed(changes["name"])
 
         for field in (
+            "name",
             "kind",
             "direction",
             "input_mode",
@@ -1064,6 +1072,7 @@ class TrackerStore:
         to: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
+        order: Literal["asc", "desc"] = "desc",
     ) -> list[EntryRead]:
         """List entries (paginated) through their visible parent trackers."""
         stmt = select(Entry).join(Tracker, Entry.tracker_id == Tracker.id)
@@ -1075,9 +1084,25 @@ class TrackerStore:
             stmt = stmt.where(Entry.occurred_at >= from_)
         if to is not None:
             stmt = stmt.where(Entry.occurred_at < to)
-        stmt = stmt.order_by(Entry.occurred_at.desc(), Entry.id).limit(limit).offset(offset)
+        timestamp_order = Entry.occurred_at.asc() if order == "asc" else Entry.occurred_at.desc()
+        stmt = stmt.order_by(timestamp_order, Entry.id).limit(limit).offset(offset)
         result = await db.execute(stmt)
         return [self._entry_read(entry) for entry in result.scalars()]
+
+    async def activity_days(
+        self, db: AsyncSession, auth: AuthSession, *, year: int, tracker_id: UUID | None = None
+    ) -> list[ActivityDayRead]:
+        """Bound one calendar year, applying visibility before aggregating in SQL."""
+        start = datetime(year, 1, 1, tzinfo=VN_TZ)
+        end = datetime(year + 1, 1, 1, tzinfo=VN_TZ)
+        day = func.date(func.timezone("Asia/Ho_Chi_Minh", Entry.occurred_at)).label("day")
+        stmt = select(day, func.count(Entry.id)).join(Tracker, Entry.tracker_id == Tracker.id)
+        stmt = not_deleted(readable(stmt, Tracker, auth), Entry)
+        stmt = stmt.where(Entry.occurred_at >= start, Entry.occurred_at < end)
+        if tracker_id is not None:
+            stmt = stmt.where(Entry.tracker_id == tracker_id)
+        result = await db.execute(stmt.group_by(day).order_by(day))
+        return [ActivityDayRead(day=value, count=count) for value, count in result.all()]
 
     async def get_entry(
         self, db: AsyncSession, auth: AuthSession, entry_id: UUID
