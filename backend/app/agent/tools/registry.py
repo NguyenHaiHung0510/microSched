@@ -96,6 +96,8 @@ TOOLS: tuple[dict[str, Any], ...] = (
     _tool(
         "task.query.v1",
         "Read a bounded page of authorized STANDARD Tasks. "
+        "Use title_contains to locate a named Task and include id in the projection. "
+        "Use task.read_content.v1 for body/checklist. "
         "Use the cursor until coverage is complete.",
         {
             "type": "object",
@@ -112,7 +114,9 @@ TOOLS: tuple[dict[str, Any], ...] = (
     ),
     _tool(
         "task.aggregate.v1",
-        "Count authorized STANDARD Tasks by one declared facet after an explicit filter.",
+        "Count authorized STANDARD Tasks by one declared facet after an explicit filter. "
+        "Counts lack entity versions: use only for answers/drafts, not a run that "
+        "produces a create preview. Read concrete Tasks instead for previews.",
         {
             "type": "object",
             "additionalProperties": False,

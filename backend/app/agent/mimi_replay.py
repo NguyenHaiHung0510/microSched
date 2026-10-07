@@ -109,6 +109,15 @@ def deterministic_baseline(text: str) -> DecisionClass:
     return DecisionClass.ANSWER
 
 
+def canonical_policy_sha256(path: Path) -> str:
+    """Bind policy text independently of checkout line endings; reject encoding drift."""
+
+    text = path.read_bytes().decode("utf-8", errors="strict").replace("\r\n", "\n")
+    if text.startswith("\ufeff") or "\r" in text or not text.endswith("\n"):
+        raise ValueError("invalid_replay_policy_encoding")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def load_fixture(path: Path, *, expected_policy_sha256: str) -> ReplayFixture:
     """Validate raw fixture bytes and all provenance before a manual offline replay."""
 
@@ -185,7 +194,7 @@ def main() -> None:
         raise SystemExit("usage: python -m app.agent.mimi_replay --fixture PATH")
     fixture_path = Path(sys.argv[2])
     policy_path = Path(__file__).with_name("policy") / "mimi-standard-v1.md"
-    policy_sha256 = hashlib.sha256(policy_path.read_bytes()).hexdigest()
+    policy_sha256 = canonical_policy_sha256(policy_path)
     fixture = load_fixture(fixture_path, expected_policy_sha256=policy_sha256)
     print(json.dumps(run_replay(fixture, FixtureDecisionFacade()), ensure_ascii=False, indent=2))
 

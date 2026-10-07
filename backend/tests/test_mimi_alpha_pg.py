@@ -272,6 +272,7 @@ def test_service_commit_does_not_release_dispatch_guard_or_admit_orphan(pg_dsn, 
         )
         monkeypatch.setattr(runtime, "get_settings", lambda: settings)
         cid = uuid7()
+        ordinary_task_id = None
         run = make_run(cid, state="running")
         try:
             async with maker() as db:
@@ -333,6 +334,7 @@ def test_service_commit_does_not_release_dispatch_guard_or_admit_orphan(pg_dsn, 
                                 auth,
                                 TaskCreate(title="Phase1 ordinary Task while Mimi busy"),
                             )
+                            ordinary_task_id = created.id
                             await ordinary.commit()
                             assert created.title == "Phase1 ordinary Task while Mimi busy"
                 async with maker() as reconciler:
@@ -341,6 +343,15 @@ def test_service_commit_does_not_release_dispatch_guard_or_admit_orphan(pg_dsn, 
                 await db.refresh(run)
                 assert run.state == "outcome_unknown" and run.provider_outcome == "unknown"
         finally:
+            if ordinary_task_id is not None:
+                async with maker() as cleanup:
+                    from app.domain.models import Task
+
+                    own_task = await cleanup.get(Task, ordinary_task_id)
+                    if own_task is not None:
+                        await cleanup.delete(own_task)
+                        await cleanup.commit()
+                    assert await cleanup.get(Task, ordinary_task_id) is None
             await _remove_own_conversations(maker, [cid])
             await engine.dispose()
 
@@ -572,6 +583,16 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
         engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         monkeypatch.setattr(service, "get_sessionmaker", lambda: maker)
+        if runner == "langgraph":
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from sqlalchemy.engine import make_url
+
+            # This test explicitly exercises a durable saver. CI must prepare
+            # it here; app startup never creates its tables. DDL stays local.
+            saver_url = make_url(pg_dsn)
+            assert saver_url.host in {"localhost", "127.0.0.1", "::1"}
+            async with AsyncPostgresSaver.from_conn_string(pg_dsn) as saver:
+                await saver.setup()
         main_calls, helper_calls = 0, 0
 
         async def provider(messages, **kwargs):

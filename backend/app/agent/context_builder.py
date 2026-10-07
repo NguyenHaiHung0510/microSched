@@ -187,6 +187,15 @@ def assemble_context(
             "read_and_preview": (
                 "Use native function tool_calls only, never serialize them as text."
             ),
+            "task_preview_reads": (
+                "For a create preview that copies an existing Task, first query by "
+                "title_contains with a projection including id, then use "
+                "task.read_content.v1 for its body and checklist. Use the returned "
+                "source_version and complete content. Do not call task.aggregate.v1 "
+                "in a preview-producing run: counts lack entity versions and the "
+                "server blocks such previews. Revise a pending preview from its "
+                "provided operations, retaining unchanged fields. Confirm is required."
+            ),
             "source_coverage": (
                 "coverage=unavailable with count=0 means data has not been loaded or queried; "
                 "it is not an empty read result. Report absence only from an actual read result "

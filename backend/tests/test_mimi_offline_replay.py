@@ -13,6 +13,7 @@ from app.agent.mimi_replay import (
     DecisionResult,
     FixtureDecisionFacade,
     ReplayTimeout,
+    canonical_policy_sha256,
     load_fixture,
     parse_fixture_bytes,
     run_replay,
@@ -23,7 +24,7 @@ POLICY = Path(__file__).parents[1] / "app" / "agent" / "policy" / "mimi-standard
 
 
 def test_frozen_authored_synthetic_cases_compare_fake_transport_and_baseline() -> None:
-    policy_hash = hashlib.sha256(POLICY.read_bytes()).hexdigest()
+    policy_hash = canonical_policy_sha256(POLICY)
     fixture = load_fixture(FIXTURE, expected_policy_sha256=policy_hash)
 
     report = run_replay(fixture, FixtureDecisionFacade())
@@ -74,9 +75,7 @@ def test_replay_rejects_unrecognized_authority_fields() -> None:
 
 
 def test_facade_timeout_becomes_typed_abstention() -> None:
-    fixture = load_fixture(
-        FIXTURE, expected_policy_sha256=hashlib.sha256(POLICY.read_bytes()).hexdigest()
-    )
+    fixture = load_fixture(FIXTURE, expected_policy_sha256=canonical_policy_sha256(POLICY))
 
     class TimedOutFacade:
         def decide(self, _case):
@@ -103,3 +102,24 @@ def test_typed_probabilities_require_complete_distribution_and_explicit_abstenti
                 kind: (1.0 if kind is DecisionClass.ABSTAIN else 0.0) for kind in DecisionClass
             },
         )
+
+
+def test_replay_policy_digest_is_checkout_independent_and_still_detects_drift(tmp_path):
+    canonical = POLICY.read_bytes().decode("utf-8").replace("\r\n", "\n").encode()
+    lf_policy, crlf_policy = tmp_path / "lf.md", tmp_path / "crlf.md"
+    lf_policy.write_bytes(canonical)
+    crlf_policy.write_bytes(canonical.replace(b"\n", b"\r\n"))
+    expected = canonical_policy_sha256(lf_policy)
+    assert canonical_policy_sha256(crlf_policy) == expected
+    load_fixture(FIXTURE, expected_policy_sha256=expected)
+    crlf_policy.write_bytes(canonical + "Policy changed.\n".encode())
+    with pytest.raises(ValueError, match="policy_sha256"):
+        load_fixture(FIXTURE, expected_policy_sha256=canonical_policy_sha256(crlf_policy))
+
+
+@pytest.mark.parametrize("payload", [b"\xef\xbb\xbfpolicy\n", b"policy\r", b"policy"])
+def test_replay_rejects_invalid_policy_encoding(tmp_path, payload):
+    path = tmp_path / "invalid.md"
+    path.write_bytes(payload)
+    with pytest.raises(ValueError, match="invalid_replay_policy_encoding"):
+        canonical_policy_sha256(path)

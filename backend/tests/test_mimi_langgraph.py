@@ -752,7 +752,8 @@ def test_local_qa_selector_loop_factory_is_scoped_and_operational():
     loop = factory()
     try:
         assert isinstance(loop, asyncio.SelectorEventLoop)
-        assert not isinstance(loop, asyncio.ProactorEventLoop)
+        if hasattr(asyncio, "ProactorEventLoop"):
+            assert not isinstance(loop, asyncio.ProactorEventLoop)
     finally:
         loop.close()
 
