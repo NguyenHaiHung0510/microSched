@@ -315,3 +315,26 @@ def test_production_graph_uses_only_explicitly_bound_app_database(monkeypatch):
         assert result.outcome.text == "Xin chào" and len(calls) == 1
 
     asyncio.run(scenario(), loop_factory=asyncio.SelectorEventLoop)
+
+
+def test_alpha_emergency_settings_remain_finite_and_separate_from_cost():
+    settings = alpha_settings()
+    assert settings.mimi_run_max_turns == 32
+    assert settings.mimi_run_max_tool_calls == 64
+    assert settings.mimi_run_deadline_seconds == 1_800
+    overridden = alpha_settings(mimi_run_max_turns=12, mimi_run_max_tool_calls=24)
+    assert (overridden.mimi_run_max_turns, overridden.mimi_run_max_tool_calls) == (12, 24)
+
+
+@pytest.mark.parametrize(
+    ("setting", "invalid", "message"),
+    [
+        ("mimi_run_max_turns", 0, "MIMI_RUN_MAX_TURNS"),
+        ("mimi_run_max_turns", 129, "MIMI_RUN_MAX_TURNS"),
+        ("mimi_run_max_tool_calls", 0, "MIMI_RUN_MAX_TOOL_CALLS"),
+        ("mimi_run_max_tool_calls", 257, "MIMI_RUN_MAX_TOOL_CALLS"),
+    ],
+)
+def test_alpha_rejects_unbounded_emergency_settings(setting, invalid, message):
+    with pytest.raises(ValueError, match=message):
+        alpha_settings(**{setting: invalid})

@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     mimi_public_origin: str | None = None
     mimi_preview_ttl_minutes: int = 15
     mimi_run_deadline_seconds: int = 1_800
+    # Provisional emergency bounds, not a per-run dollar budget.
+    # Issued leases freeze these values; changing config does not alter old runs.
+    mimi_run_max_turns: int = 32
+    mimi_run_max_tool_calls: int = 64
     mimi_standard_api_key: str | None = None
     # Explicit alpha transport selection; no automatic fallback on route failure.
     mimi_transport: Literal["httpx", "openai_sdk"] = "httpx"
@@ -288,6 +292,10 @@ class Settings(BaseSettings):
                 raise ValueError(f"{field_name.upper()} cannot be negative")
         if not 1 <= self.mimi_preview_ttl_minutes <= 60:
             raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 60")
+        if not 1 <= self.mimi_run_max_turns <= 128:
+            raise ValueError("MIMI_RUN_MAX_TURNS must be between 1 and 128")
+        if not 1 <= self.mimi_run_max_tool_calls <= 256:
+            raise ValueError("MIMI_RUN_MAX_TOOL_CALLS must be between 1 and 256")
         if not 30 <= self.mimi_run_deadline_seconds <= 7_200:
             raise ValueError("MIMI_RUN_DEADLINE_SECONDS must be between 30 and 7200")
         return self

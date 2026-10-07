@@ -32,6 +32,7 @@ from app.agent.loop import LoopLimits, run_read_loop
 from app.agent.openrouter import AgentCompletion, ProviderDispatchError, RouteContractError
 from app.agent.service import _checkpoint_failure_outcome
 from app.core.qa_event_loop import selector_loop_factory
+from app.core.settings import Settings
 
 
 def _run(coroutine):
@@ -754,3 +755,63 @@ def test_local_qa_selector_loop_factory_is_scoped_and_operational():
         assert not isinstance(loop, asyncio.ProactorEventLoop)
     finally:
         loop.close()
+
+
+@pytest.mark.parametrize("runner", ["current", "langgraph"])
+@pytest.mark.parametrize("boundary", ["turns", "tools"])
+def test_emergency_bounds_stop_before_over_limit_dispatch_or_read(runner, boundary):
+    async def scenario():
+        settings = Settings(_env_file=None)
+        limits = _limits(
+            max_turns=settings.mimi_run_max_turns,
+            max_tool_calls=settings.mimi_run_max_tool_calls,
+            max_serialized_bytes=100_000,
+        )
+        invocations, reads = [], []
+
+        async def invoke(messages, turn):
+            invocations.append(turn)
+            # Twenty-one valid batches read63 items; the next batch would
+            # exceed64 and must be rejected before either read executes.
+            count = (2 if turn == 22 else 3) if boundary == "tools" else 1
+            return _completion(
+                ToolRequests(
+                    requests=tuple(
+                        ToolRequest(
+                            call_id=f"step-{turn}-{index}",
+                            name="task.query.v1",
+                            arguments={"page": turn, "index": index},
+                        )
+                        for index in range(count)
+                    )
+                )
+            )
+
+        async def read(name, arguments):
+            reads.append(arguments)
+            return {"count": 0, "coverage": "complete"}
+
+        common = dict(limits=limits, invoke_model=invoke, execute_read=read)
+        if runner == "current":
+            result = await run_read_loop([{"role": "system", "content": "synthetic"}], **common)
+        else:
+            result = await run_langgraph(
+                [{"role": "system", "content": "synthetic"}],
+                **common,
+                run_id=uuid4(),
+                generation=1,
+                policy_sha256="a" * 64,
+                tool_registry_sha256="b" * 64,
+                output_schema_sha256="c" * 64,
+                database_url="",
+                checkpointer_for_test=InMemorySaver(),
+            )
+        assert result.stop_code == "budget_exceeded"
+        if boundary == "turns":
+            assert invocations == list(range(1, 33))
+            assert len(reads) == 32
+        else:
+            assert invocations == list(range(1, 23))
+            assert len(reads) == 63
+
+    _run(scenario())

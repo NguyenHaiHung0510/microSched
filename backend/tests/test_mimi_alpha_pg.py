@@ -470,8 +470,9 @@ def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
 
 
 @pytest.mark.parametrize("runner", ["current", "langgraph"])
+@pytest.mark.parametrize("execution_limits", [(32, 64), (12, 24)])
 def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
-    pg_dsn, monkeypatch, runner
+    pg_dsn, monkeypatch, runner, execution_limits
 ):
     from uuid import UUID
 
@@ -483,6 +484,8 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
         "DATABASE_URL": async_postgres_url(pg_dsn),
         "MIMI_PUBLIC_ORIGIN": "https://alpha.example.invalid",
         "MIMI_RUNNER": runner,
+        "MIMI_RUN_MAX_TURNS": str(execution_limits[0]),
+        "MIMI_RUN_MAX_TOOL_CALLS": str(execution_limits[1]),
         "MIMI_REAL_CHAT_ENABLED": "true",
         "MIMI_LIVE_PROVIDER_ENABLED": "true",
         "MIMI_CONTEXT_V1_ENABLED": "true",
@@ -525,13 +528,16 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
                     provider="DeepInfra",
                 )
             main_calls += 1
-            if main_calls == 1:
+            if main_calls <= 4:
                 outcome = ToolRequests(
                     requests=(
                         ToolRequest(
-                            call_id="alpha-read",
+                            call_id=f"alpha-read-{main_calls}",
                             name="task.aggregate.v1",
-                            arguments={"filter": {}, "group_by": "status"},
+                            arguments={
+                                "filter": {"title_contains": f"synthetic-step-{main_calls}"},
+                                "group_by": "status",
+                            },
                         ),
                     )
                 )
@@ -541,7 +547,7 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
                 outcome=outcome,
                 response_id=f"synthetic-main-{main_calls}",
                 usage={
-                    "prompt_tokens": 100_001 + main_calls if main_calls <= 2 else 30,
+                    "prompt_tokens": 100_001 + main_calls if main_calls <= 5 else 30,
                     "cost": 0.03,
                 },
                 model="deepseek/deepseek-v4.1-flash",
@@ -569,7 +575,12 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
                     service.MessageCreate(client_id="alpha-loop", content="Đọc Task đang mở"),
                 )
                 await db.commit()  # Match the router/request transaction boundary.
-                assert main_calls == 2 and helper_calls == 0
+                assert main_calls == 5 and helper_calls == 0
+                initial_run = await db.get(MimiRun, UUID(str(view["runs"][-1]["id"])))
+                assert (
+                    initial_run.execution_lease["max_turns"],
+                    initial_run.execution_lease["max_tool_calls"],
+                ) == execution_limits
                 assert view["runs"][-1]["state"] == "completed"
                 assert view["runs"][-1]["error_code"] is None
                 latest_main = view["provider_calls"][-1]
@@ -587,7 +598,7 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
                     ),
                 )
                 await db.commit()
-                assert main_calls == 3 and helper_calls == 1
+                assert main_calls == 6 and helper_calls == 1
                 assert continued["runs"][-1]["state"] == "completed"
                 current_run = str(continued["runs"][-1]["id"])
                 compact = [
