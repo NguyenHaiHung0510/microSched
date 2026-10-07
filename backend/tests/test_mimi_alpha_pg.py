@@ -347,7 +347,7 @@ def test_service_commit_does_not_release_dispatch_guard_or_admit_orphan(pg_dsn, 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("helper_outcome", ["invalid", "unknown"])
+@pytest.mark.parametrize("helper_outcome", ["invalid", "unknown", "retryable"])
 def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
     pg_dsn, monkeypatch, helper_outcome
 ):
@@ -379,10 +379,14 @@ def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
             nonlocal main_calls, helper_calls
             if kwargs.get("summary_mode"):
                 helper_calls += 1
-                if helper_outcome == "unknown":
+                if helper_outcome in {"unknown", "retryable"}:
                     from app.agent.openrouter import ProviderDispatchError
 
-                    raise ProviderDispatchError("unknown", None)
+                    raise ProviderDispatchError(
+                        helper_outcome,
+                        429 if helper_outcome == "retryable" else None,
+                        diagnostic={"category": "rate_limited", "raw_body": "UNTRUSTED_ECHO"},
+                    )
                 return AgentCompletion(
                     outcome=AssistantText(
                         text=json.dumps(
@@ -431,7 +435,7 @@ def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
                     HTTPException,
                     match=(
                         "compaction_provider_outcome_requires_review"
-                        if helper_outcome == "unknown"
+                        if helper_outcome in {"unknown", "retryable"}
                         else "compaction_candidate_invalid_history_preserved"
                     ),
                 ):
@@ -443,6 +447,70 @@ def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
                             client_id="alpha-failed-helper", content="Tiếp tục kế hoạch"
                         ),
                     )
+                if helper_outcome == "retryable":
+                    failed_call = (
+                        await db.execute(
+                            select(MimiProviderCall).where(
+                                MimiProviderCall.route["purpose"].astext == "compaction",
+                                MimiProviderCall.run_id.in_(
+                                    select(MimiRun.id).where(MimiRun.conversation_id == cid)
+                                ),
+                            )
+                        )
+                    ).scalar_one()
+                    assert failed_call.result["status"] == 429
+                    assert failed_call.result["diagnostic"] == {"category": "rate_limited"}
+                    assert "UNTRUSTED_ECHO" not in str(failed_call.result)
+
+                # The real HTTP surface must reject before SSE/admission, with
+                # no new canonical input, run or provider dispatch.
+                import httpx
+
+                from app.main import create_app
+                from app.web.deps import get_session, require_session
+                from app.web.routers import mimi as mimi_router
+
+                app = create_app()
+
+                class NoWorker:
+                    def start(self, *args):
+                        raise AssertionError("worker launched after failed helper")
+
+                app.state.mimi_run_supervisor = NoWorker()
+                monkeypatch.setattr(mimi_router, "get_sessionmaker", lambda: maker)
+
+                async def current_session():
+                    return auth
+
+                async def request_session():
+                    async with maker() as request_db:
+                        yield request_db
+
+                app.dependency_overrides[require_session] = current_session
+                app.dependency_overrides[get_session] = request_session
+                before = await service.conversation_view(db, auth, cid)
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                    base_url="http://test",
+                ) as client:
+                    response = await client.post(
+                        f"/api/mimi/conversations/{cid}/messages/stream",
+                        json={"client_id": "alpha-http-refused", "content": "Tiếp tục lượt sau"},
+                        headers={
+                            "Origin": "http://test",
+                            "Sec-Fetch-Site": "same-origin",
+                            "X-Mimi-CSRF": "1",
+                        },
+                    )
+                assert response.status_code == 409, response.text
+                assert response.json()["detail"] == "mimi_compaction_required_unactivated"
+                after = await service.conversation_view(db, auth, cid)
+                assert [r["id"] for r in after["runs"]] == [r["id"] for r in before["runs"]]
+                assert [m["id"] for m in after["messages"]] == [m["id"] for m in before["messages"]]
+                assert [c["id"] for c in after["provider_calls"]] == [
+                    c["id"] for c in before["provider_calls"]
+                ]
+
                 with pytest.raises(HTTPException, match="mimi_compaction_required_unactivated"):
                     await service.send_message(
                         db,

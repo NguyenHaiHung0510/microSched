@@ -852,8 +852,26 @@ async def _semantic_checkpoint(
         await db.commit()
     except ProviderDispatchError as error:
         call.state = "unknown" if error.outcome == "unknown" else "failed"
-        if error.response_id:
-            call.result = {"response_id": error.response_id}
+        # Store locally classified metadata, never provider-controlled error
+        # bodies or chained SDK exceptions (which can echo prompts or secrets).
+        category = (
+            "rate_limited"
+            if error.status == 429
+            else "provider_rejected"
+            if error.status is not None and 400 <= error.status < 500
+            else "provider_unavailable"
+            if error.status is not None and error.status >= 500
+            else "provider_outcome_unknown"
+            if error.outcome == "unknown"
+            else "provider_failed"
+        )
+        call.result = {
+            **(call.result or {}),
+            "terminal": error.outcome,
+            "status": error.status,
+            "diagnostic": {"category": category},
+            "response_id": error.response_id or (call.result or {}).get("response_id"),
+        }
         run = await db.get(MimiRun, run_id)
         run.state = "outcome_unknown" if error.outcome == "unknown" else "halted"
         run.provider_outcome = "unknown" if error.outcome == "unknown" else "failed"
@@ -1015,6 +1033,93 @@ async def _load_active_checkpoint(
     return prior, checkpoint_id
 
 
+async def _context_prompt_observation(
+    db: AsyncSession,
+    conversation: MimiConversation,
+    settings: Settings,
+    checkpoint_id: UUID | None,
+    *,
+    ignore_run_id: UUID | None = None,
+    route_config_version: int | None = None,
+) -> dict[str, Any]:
+    revision = context_revision(
+        settings,
+        route_config_version
+        if route_config_version is not None
+        else conversation.route_config_version,
+        checkpoint_id,
+    )
+    statement = (
+        select(MimiProviderCall)
+        .join(MimiRun, MimiRun.id == MimiProviderCall.run_id)
+        .where(
+            MimiRun.conversation_id == conversation.id,
+            MimiProviderCall.route["purpose"].astext.is_distinct_from("compaction"),
+        )
+        .order_by(MimiProviderCall.created_at.desc(), MimiProviderCall.attempt.desc())
+        .limit(1)
+    )
+    if ignore_run_id is not None:
+        statement = statement.where(MimiProviderCall.run_id != ignore_run_id)
+    latest_main = (await db.execute(statement)).scalar_one_or_none()
+    consumed = False
+    if latest_main is not None:
+        consumed = (
+            await db.execute(
+                select(MimiEvent.id)
+                .join(MimiRun, MimiRun.id == MimiEvent.run_id)
+                .where(
+                    MimiRun.conversation_id == conversation.id,
+                    MimiEvent.kind == "context.compaction.decided",
+                    MimiEvent.payload["source_call_id"].astext == str(latest_main.id),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none() is not None
+    return prompt_observation(latest_main, revision, consumed=consumed)
+
+
+async def ensure_message_admissible(
+    db: AsyncSession, auth: AuthSession, conversation_id: UUID, payload: MessageCreate
+) -> None:
+    """Refuse a known blocked epoch before SSE; the worker rechecks for races."""
+    conversation = await _conversation(db, auth, conversation_id)
+    existing = (
+        await db.execute(
+            select(MimiMessage).where(
+                MimiMessage.conversation_id == conversation.id,
+                MimiMessage.client_id == payload.client_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        if existing.content_sha256 != hashlib.sha256(payload.content.encode("utf-8")).hexdigest():
+            raise _conflict("message_client_id_reused_with_different_content")
+        return  # An idempotent replay is not a new context/provider turn.
+    if (
+        payload.expected_generation is not None
+        and payload.expected_generation != conversation.generation
+    ):
+        raise _conflict("conversation_generation_stale")
+    settings = get_settings()
+    if not (settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled):
+        return
+    if conversation.route_config or settings.mimi_route_model in {
+        p["model"] for p in PROFILES.values()
+    }:
+        settings = bind_configuration(
+            settings, conversation.route_config or default_configuration(settings)
+        )
+    if settings.mimi_route_model not in {p["model"] for p in PROFILES.values()}:
+        return
+    _, checkpoint_id = await _load_active_checkpoint(
+        db, conversation, mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    )
+    observation = await _context_prompt_observation(db, conversation, settings, checkpoint_id)
+    if observation["compaction_blocked"]:
+        raise _conflict("mimi_compaction_required_unactivated")
+
+
 async def _prepare_context_history(
     db: AsyncSession,
     conversation: MimiConversation,
@@ -1141,41 +1246,14 @@ async def _prepare_context_history(
     fits = probe(rows, prior, checkpoint_id)
     wants_compact = not semantic and (suffix_bytes > recent_bytes or len(rows) > 12)
     if semantic:
-        revision = context_revision(
+        observation = await _context_prompt_observation(
+            db,
+            conversation,
             settings,
-            route_config_version
-            if route_config_version is not None
-            else conversation.route_config_version,
             checkpoint_id,
+            ignore_run_id=run_id,
+            route_config_version=route_config_version,
         )
-        latest_main = (
-            await db.execute(
-                select(MimiProviderCall)
-                .join(MimiRun, MimiRun.id == MimiProviderCall.run_id)
-                .where(
-                    MimiRun.conversation_id == conversation.id,
-                    MimiProviderCall.run_id != run_id,
-                    MimiProviderCall.route["purpose"].astext.is_distinct_from("compaction"),
-                )
-                .order_by(MimiProviderCall.created_at.desc(), MimiProviderCall.attempt.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        consumed = False
-        if latest_main is not None:
-            consumed = (
-                await db.execute(
-                    select(MimiEvent.id)
-                    .join(MimiRun, MimiRun.id == MimiEvent.run_id)
-                    .where(
-                        MimiRun.conversation_id == conversation.id,
-                        MimiEvent.kind == "context.compaction.decided",
-                        MimiEvent.payload["source_call_id"].astext == str(latest_main.id),
-                    )
-                    .limit(1)
-                )
-            ).scalar_one_or_none() is not None
-        observation = prompt_observation(latest_main, revision, consumed=consumed)
         await _append_event(db, run_id, "context.usage.observed", observation)
         if observation["compaction_blocked"]:
             await halt_context("mimi_compaction_required_unactivated")

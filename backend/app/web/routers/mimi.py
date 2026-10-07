@@ -31,6 +31,7 @@ from app.agent.service import (
     create_conversation,
     current_conversation,
     decide_draft_direction,
+    ensure_message_admissible,
     finish_interrupted_run,
     list_conversations,
     list_standard_tasks,
@@ -272,6 +273,7 @@ async def post_message(
     db: Database,
     session: CurrentSession,
 ) -> dict:
+    await ensure_message_admissible(db, session, conversation_id, payload)
     run_id = uuid7()
     async with hold_run_guard_if_enabled(run_id):
         return await send_message(db, session, conversation_id, payload, reserved_run_id=run_id)
@@ -305,6 +307,7 @@ async def stream_message(
     factory = get_sessionmaker()
     if factory is None:
         raise HTTPException(status_code=503, detail="Database is not configured")
+    await ensure_message_admissible(db, session, conversation_id, payload)
     run_id = uuid7()
     detached_session = AuthSession.model_validate(session.model_dump())
     # Authentication is complete; do not retain its ORM checkout for the SSE lifetime.
@@ -333,8 +336,15 @@ async def stream_message(
                     )
                     await terminal_db.commit()
                 raise
-            except Exception:
-                logger.exception("mimi_run_worker_failed run_id=%s", run_id)
+            except Exception as error:
+                # SDK/driver chains can contain echoed requests or SQL values.
+                # Durable run/call receipts keep the bounded diagnostic.
+                logger.error(
+                    "mimi_run_worker_failed run_id=%s error_type=%s status=%s",
+                    run_id,
+                    type(error).__name__,
+                    error.status_code if isinstance(error, HTTPException) else None,
+                )
                 await worker_db.rollback()
                 async with factory() as terminal_db:
                     await finish_interrupted_run(
