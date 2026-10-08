@@ -33,6 +33,7 @@ import { ReminderCenter } from '@/ReminderCenter'
 import { MimiControlCenter } from '@/MimiControlCenter'
 import { MimiDock, MimiDockButton } from '@/MimiDock'
 import { isHomepage, type PublicAuthState } from '@/public-navigation'
+import { selectMimiConversation } from '@/mimi-selection'
 
 type SessionResponse = PrivateSessionState & {
   email: string
@@ -99,7 +100,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
     // (the OAuth redirect), so logging out being one too keeps the two halves
     // symmetric - and it makes the server the single source of truth instead of
     // resting on how the query cache reacts to being invalidated or removed.
-    onSuccess: () => window.location.assign('/'),
+    onSuccess: () => { selectMimiConversation(null); window.location.assign('/') },
   })
 
   return (

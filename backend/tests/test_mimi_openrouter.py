@@ -7,11 +7,14 @@ import httpx
 import pytest
 
 from app.agent.openrouter import (
+    ProviderDispatchError,
     RouteContractError,
+    _raise_for_status,
     build_request,
     complete_stream,
     get_generation,
     parse_completion,
+    serialized_input_bytes,
 )
 from app.core.settings import Settings
 
@@ -34,6 +37,15 @@ def _settings(**overrides) -> Settings:
     return Settings(**values)
 
 
+def test_gateway_5xx_is_unknown_not_safe_to_retry() -> None:
+    with pytest.raises(ProviderDispatchError) as raised:
+        _raise_for_status(500)
+    assert raised.value.outcome == "unknown"
+    with pytest.raises(ProviderDispatchError) as throttled:
+        _raise_for_status(429)
+    assert throttled.value.outcome == "retryable"
+
+
 def test_request_pins_provider_quantization_parameters_zdr_and_price() -> None:
     request = build_request([{"role": "user", "content": "Tạo task"}], _settings())
     assert request["model"] == "vendor/model"
@@ -50,6 +62,25 @@ def test_request_pins_provider_quantization_parameters_zdr_and_price() -> None:
         "zdr": True,
         "max_price": {"prompt": 0.2, "completion": 0.8},
     }
+
+
+def test_unknown_exact_quantization_keeps_provider_pin_without_claiming_precision() -> None:
+    request = build_request(
+        [{"role": "user", "content": "hello"}],
+        _settings(mimi_route_quantization="unknown"),
+    )
+    assert request["provider"]["only"] == ["provider-a"]
+    assert request["provider"]["order"] == ["provider-a"]
+    assert request["provider"]["allow_fallbacks"] is False
+    assert "quantizations" not in request["provider"]
+
+
+def test_default_reasoning_effort_omits_effort_but_keeps_reasoning_excluded() -> None:
+    request = build_request(
+        [{"role": "user", "content": "hello"}],
+        _settings(mimi_route_reasoning_effort="default"),
+    )
+    assert request["reasoning"] == {"exclude": True}
 
 
 def test_adaptive_request_has_bounded_pool_without_manual_order() -> None:
@@ -118,8 +149,47 @@ def test_preflight_refuses_overflow_instead_of_truncating() -> None:
         mimi_route_context_tokens=16_384,
         mimi_route_max_output_tokens=4_096,
     )
-    with pytest.raises(RouteContractError, match="context_overflow_preflight"):
-        build_request([{"role": "user", "content": "x" * 13_000}], settings)
+    request = build_request([{"role": "user", "content": "x" * 13_000}], settings)
+    assert len(request["messages"][0]["content"]) == 13_000
+
+
+def test_selected_32k_request_checks_policy_tools_current_pending_checkpoint_suffix_and_reserve():
+    settings = _settings(mimi_route_context_tokens=32_000, mimi_route_max_output_tokens=8_192)
+    oversized = [
+        {"role": "system", "content": "FIXED_POLICY_AND_CAPABILITIES " + "p" * 13_000},
+        {"role": "user", "content": "OLD_HISTORY " + "h" * 12_000},
+        {"role": "assistant", "content": "OLD_REPLY " + "r" * 8_000},
+    ]
+    request = build_request(oversized, settings, agent_contract=True)
+    assert request["messages"] == oversized
+
+    compacted = [
+        {"role": "system", "content": "FIXED_POLICY_AND_CAPABILITIES " + "p" * 6_000},
+        {"role": "system", "content": "checkpoint + active constraint citations " + "c" * 2_000},
+        {"role": "assistant", "content": "retained transcript suffix " + "s" * 1_500},
+        {"role": "system", "content": "exact server pending preview object " + "d" * 1_000},
+        {"role": "user", "content": "current user input " + "u" * 1_000},
+    ]
+    request = build_request(compacted, settings, agent_contract=True)
+    serialized = serialized_input_bytes(compacted, agent_contract=True)
+    assert serialized + request["max_tokens"] <= 32_000
+    assert request["tools"] and request["response_format"]
+
+
+def test_summary_mode_has_strict_summary_schema_and_no_function_tools_or_choice():
+    settings = _settings(mimi_route_context_tokens=32_000, mimi_route_max_output_tokens=2_048)
+    messages = [
+        {"role": "system", "content": "compact safely"},
+        {"role": "user", "content": "synthetic source"},
+    ]
+    request = build_request(messages, settings, summary_mode=True)
+    assert "tools" not in request
+    assert "tool_choice" not in request
+    assert request["response_format"]["json_schema"]["strict"] is True
+    assert request["max_tokens"] == 2_048
+    assert (
+        serialized_input_bytes(messages, agent_contract=False, summary_mode=True) + 2_048 <= 32_000
+    )
 
 
 def test_terminal_tool_args_are_independently_validated() -> None:
@@ -339,6 +409,7 @@ async def test_stream_normalizes_text_deltas_and_usage() -> None:
     assert completion.usage["mimi_timing"]["output_tokens_per_second"] > 0
     assert observed == [
         ("provider.connected", {"status": 200}),
+        ("provider.response_identity", {"response_id": "generation-stream"}),
         ("assistant.delta", {"text": "Xin "}),
         ("assistant.delta", {"text": "chào"}),
     ]
@@ -369,6 +440,27 @@ async def test_generation_reconciliation_reads_only_canonical_metadata() -> None
     }
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("transport_error", [httpx.ReadError, httpx.RemoteProtocolError])
+async def test_generation_reconciliation_transport_failure_is_unknown_without_retry(
+    transport_error: type[httpx.TransportError],
+) -> None:
+    requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        raise transport_error("synthetic metadata transport failure", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ProviderDispatchError) as raised:
+            await get_generation("generation-stream", settings=_settings(), client=client)
+
+    assert raised.value.outcome == "unknown"
+    assert raised.value.response_id == "generation-stream"
+    assert requests == 1
+
+
 def test_terminal_payload_cannot_cross_standard_private_boundary() -> None:
     with pytest.raises(RouteContractError):
         parse_completion(
@@ -393,3 +485,20 @@ def test_terminal_payload_cannot_cross_standard_private_boundary() -> None:
                 ]
             }
         )
+
+
+def test_native_chat_keeps_tool_and_privacy_contract_without_forcing_text_json():
+    settings = _settings(mimi_text_response_format="natural")
+    request = build_request(
+        [{"role": "user", "content": "Đếm công việc"}], settings, agent_contract=True
+    )
+    assert "response_format" not in request
+    assert request["tools"]
+    assert request["tool_choice"] == "auto"
+    assert request["provider"]["require_parameters"] is True
+    assert request["provider"]["data_collection"] == "deny"
+    assert request["store"] is False
+
+
+def test_native_chat_option_is_supported_in_production():
+    assert Settings(_env_file=None, mimi_text_response_format="natural").is_production

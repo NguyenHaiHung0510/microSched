@@ -43,6 +43,8 @@ class MimiConversation(UUIDTimestampModel, table=True):
         CheckConstraint("title_source IN ('auto', 'owner')", name="title_source"),
         CheckConstraint("(title_source = 'owner') = title_locked", name="title_lock"),
         CheckConstraint("metadata_version >= 1", name="metadata_version"),
+        CheckConstraint("route_config_version >= 1", name="route_config_version"),
+        CheckConstraint("jsonb_typeof(route_config) = 'object'", name="route_config_object"),
         CheckConstraint("(sensitivity = 'private') = is_private", name="sensitivity_private_match"),
         Index(
             "uq_mimi_conversation_owner_client",
@@ -86,6 +88,13 @@ class MimiConversation(UUIDTimestampModel, table=True):
     )
     archived_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    route_config: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    )
+    route_config_version: int = Field(
+        default=1, sa_column=Column(Integer, nullable=False, server_default=text("1"))
     )
     is_private: bool = Field(
         default=False,

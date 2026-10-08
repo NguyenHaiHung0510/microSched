@@ -1,3 +1,5 @@
+import type { MimiFeedbackTarget } from '@/mimi-api'
+
 const runLabels: Record<string, string> = {
   accepted: 'Đã nhận',
   building: 'Đang chuẩn bị',
@@ -9,7 +11,148 @@ const runLabels: Record<string, string> = {
   halted: 'Đã dừng',
   cancelled: 'Đã huỷ',
   retryable: 'Có thể thử lại',
+  owner_paused: 'Đã tạm dừng theo yêu cầu',
+  paused: 'Đã tạm dừng',
   outcome_unknown: 'Đang đối soát kết quả',
+  deadline_exceeded: 'Hết thời gian run',
+  budget_exceeded: 'Chạm giới hạn context',
+}
+
+export function mimiFeedbackTargets(source: {
+  messages: Array<{ id: string; role: string; sequence: number }>
+  runs: Array<{ id: string; generation: number; state: string }>
+  provider_calls?: Array<{ id: string; run_id?: string; attempt: number; state: string }> | null
+  receipts: Array<{ id: string }>
+}): MimiFeedbackTarget[] {
+  return [
+    ...source.messages
+      .filter((message) => message.role === 'assistant')
+      .map((message) => ({
+        target_type: 'turn' as const,
+        target_id: message.id,
+        label: `Câu trả lời · lượt ${message.sequence}`,
+      })),
+    ...source.runs.map((run) => ({
+      target_type: 'run' as const,
+      target_id: run.id,
+      label: `Run ${run.generation} · ${mimiRunLabel(run.state)}`,
+    })),
+    ...(source.provider_calls ?? []).map((call, index) => {
+      const run = source.runs.find((item) => item.id === call.run_id)
+      return {
+      target_type: 'call' as const,
+      target_id: call.id,
+      label: `${run ? `Run ${run.generation} · ` : ''}Lần gọi ${index + 1} · ${({
+        intent: 'đang chuẩn bị',
+        dispatched: 'đã gửi',
+        succeeded: 'hoàn tất',
+        failed: 'thất bại',
+        unknown: 'chưa rõ kết quả',
+        fenced: 'đã chặn',
+      } as Record<string, string>)[call.state] ?? 'chưa rõ trạng thái'}`,
+      }
+    }),
+    ...source.receipts.map((receipt, index) => ({
+      target_type: 'receipt' as const,
+      target_id: receipt.id,
+      label: `Receipt ${index + 1}`,
+    })),
+  ]
+}
+
+export function resolveMimiFeedbackTarget(
+  targets: MimiFeedbackTarget[],
+  selectedKey: string,
+  conversationId: string,
+  hasDraft: boolean,
+  binding: { conversationId: string; targetKey: string } | null,
+): MimiFeedbackTarget | null {
+  const selected = targets.find(
+    (target) => `${target.target_type}:${target.target_id}` === selectedKey,
+  )
+  if (!hasDraft) return selected ?? targets[0] ?? null
+  if (!binding || binding.conversationId !== conversationId || binding.targetKey !== selectedKey) {
+    return null
+  }
+  return selected ?? null
+}
+
+export function mimiTerminalRunStage(state: string, providerOutcome: string | null): string {
+  if (state === 'cancelled' && providerOutcome === 'unknown') {
+    return 'Kết quả chưa xác định · cần đối soát'
+  }
+  const terminalLabels: Record<string, string> = {
+    completed: 'Đã hoàn tất',
+    waiting_confirmation: 'Chờ bạn xác nhận',
+    cancelled: 'Đã huỷ run',
+    halted: 'Run đã dừng',
+    retryable: 'Run có thể tiếp tục',
+    owner_paused: 'Run đã tạm dừng theo yêu cầu',
+    paused: 'Run đã tạm dừng',
+    outcome_unknown: 'Kết quả chưa xác định · cần đối soát',
+    deadline_exceeded: 'Run đã hết thời gian',
+    budget_exceeded: 'Run đã chạm giới hạn',
+  }
+  return terminalLabels[state] ?? mimiRunLabel(state)
+}
+
+const LEGACY_RESUMABLE_RUN_STATES = ['retryable', 'deadline_exceeded', 'outcome_unknown']
+
+export function mimiRunIsResumable(run: {
+  state: string
+  provider_outcome: string | null
+  resumable?: boolean
+}): boolean {
+  if (typeof run.resumable === 'boolean') return run.resumable
+  return LEGACY_RESUMABLE_RUN_STATES.includes(run.state) && run.provider_outcome !== 'unknown'
+}
+
+export function resolveCancelAcknowledgment(
+  targetRunId: string,
+  displayedRunId: string | null,
+  latestRun: { id: string; state: string; provider_outcome: string | null } | null,
+  responseState: string,
+): { apply: boolean; stage: string | null; clearActiveRun: boolean; needsReconcile: boolean } {
+  const matchesLatest = !latestRun || latestRun.id === targetRunId
+  const latestIsTerminal = !!latestRun && matchesLatest && [
+    'waiting_confirmation', 'completed', 'halted', 'cancelled', 'retryable',
+    'outcome_unknown', 'deadline_exceeded', 'budget_exceeded',
+  ].includes(latestRun.state)
+  // A null display ref is safe only when the latest snapshot proves this same
+  // run is terminal. Otherwise a late callback could label an unrelated state.
+  const matchesDisplay = displayedRunId === targetRunId
+    || (displayedRunId === null && latestIsTerminal)
+  const needsReconcile = !!latestRun && matchesLatest && (
+    latestRun.state === 'outcome_unknown'
+    || latestRun.state === 'deadline_exceeded'
+    || (latestRun.state === 'cancelled' && latestRun.provider_outcome === 'unknown')
+  )
+
+  if (!matchesLatest || !matchesDisplay || latestIsTerminal) {
+    return {
+      apply: false,
+      stage: latestIsTerminal && latestRun
+        ? mimiTerminalRunStage(latestRun.state, latestRun.provider_outcome)
+        : null,
+      clearActiveRun: displayedRunId === targetRunId,
+      needsReconcile,
+    }
+  }
+
+  if (responseState === 'cancelling') {
+    return {
+      apply: true,
+      stage: 'Đang huỷ theo yêu cầu',
+      clearActiveRun: displayedRunId === targetRunId,
+      needsReconcile: false,
+    }
+  }
+  return {
+    apply: true,
+    stage: mimiTerminalRunStage(responseState, latestRun?.provider_outcome ?? null),
+    clearActiveRun: displayedRunId === targetRunId,
+    needsReconcile,
+  }
 }
 
 export function mimiRunLabel(state: string): string {

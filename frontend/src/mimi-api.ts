@@ -17,6 +17,7 @@ export type MimiRun = {
   provider_outcome: 'succeeded' | 'failed' | 'unknown' | null
   deadline: string
   error_code: string | null
+  resumable?: boolean
   created_at: string
   completed_at: string | null
 }
@@ -67,6 +68,12 @@ export type MimiFeedback = {
   created_at: string
 }
 
+export type MimiFeedbackTarget = {
+  target_type: 'turn' | 'run' | 'call' | 'operation' | 'receipt'
+  target_id: string
+  label: string
+}
+
 export type MimiEvent = {
   id: string
   run_id: string
@@ -74,6 +81,109 @@ export type MimiEvent = {
   kind: string
   payload: Record<string, unknown>
   created_at: string
+}
+
+export type MimiDraftDirection = {
+  id: string
+  revision: number
+  content_sha256: string
+  direction_state: 'pending' | 'approved' | 'rejected'
+}
+
+export type MimiProviderCall = {
+  id: string
+  run_id: string
+  attempt: number
+  state: string
+  requested_model: string | null
+  requested_effort: string | null
+  actual_model: string | null
+  actual_provider: string | null
+  usage: Record<string, number>
+  purpose?: 'main' | 'compaction'
+  context_revision?: string | null
+  paid_dispatch?: boolean
+  response_id?: string | null
+  cost_state?: 'reported' | 'unknown'
+  created_at?: string
+}
+
+export type MimiContextObservation = {
+  prompt_tokens: number | null
+  source_call_id: string | null
+  context_revision: string
+  trigger_tokens: number
+  eligible: boolean
+  should_compact: boolean
+  compaction_blocked?: boolean
+  reason: string
+}
+
+export type MimiRunObservation = {
+  known_cost_usd: number
+  main_known_cost_usd: number
+  helper_known_cost_usd: number
+  unknown_cost_calls: number
+  main_unknown_cost_calls: number
+  helper_unknown_cost_calls: number
+  cost_complete: boolean
+  receipts_truncated?: boolean
+  main_calls: number
+  helper_calls: number
+  reused_calls: number
+  elapsed_ms: number | null
+  context_observations: MimiContextObservation[]
+  checkpoint_activations: number
+  error_code: string | null
+}
+
+export type MimiCapabilities = {
+  context_v1_enabled: boolean
+  workflow_pilot_enabled: boolean
+  live_provider_enabled: boolean
+  requested_model: string | null
+  requested_effort: string | null
+  route_mode: string | null
+  model_selection_enabled: boolean
+  context_limit: number
+  output_reserve: number
+  policy_id: string | null
+  policy_sha256: string | null
+  model_profiles?: MimiModelProfile[]
+  conversation_planning_mode?: 'prose' | string
+  runner?: 'langgraph' | 'current' | string
+  context_policy?: string
+  compaction_trigger_tokens?: number
+  payload_limit_bytes?: number
+}
+
+export type MimiModelProfile = {
+  id: string
+  label: string
+  model: string
+  provider: string
+  quantization: string
+  supported_efforts: string[]
+  context_limit: number
+  output_reserve: number
+  available: boolean
+  unavailable_reason: string | null
+  evidence?: string
+  compaction_trigger_tokens?: number
+}
+
+export type MimiRouteConfig = {
+  profile_id: string
+  effort: string
+  input_tokens: number
+}
+
+export type MimiConversationConfiguration = {
+  config: MimiRouteConfig
+  version: number
+  applies_to: 'next_run'
+  active_run_id: string | null
+  profiles: MimiModelProfile[]
 }
 
 export type MimiConversation = {
@@ -92,6 +202,9 @@ export type MimiConversation = {
   receipts: MimiReceipt[]
   events: MimiEvent[]
   feedback: MimiFeedback[]
+  draft?: MimiDraftDirection | null
+  provider_calls?: MimiProviderCall[]
+  run_observations?: Record<string, MimiRunObservation>
 }
 
 export type MimiConversationSummary = {
@@ -114,16 +227,87 @@ export type MimiConversationPage = {
 
 const MIMI_WRITE_HEADERS = { 'X-Mimi-CSRF': '1' }
 
+export function fetchMimiCapabilities(): Promise<MimiCapabilities> {
+  return apiRequest('/api/mimi/capabilities')
+}
+
+export function fetchMimiConfiguration(conversationId: string): Promise<MimiConversationConfiguration> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/configuration`)
+}
+
+export function saveMimiConfiguration(
+  conversationId: string,
+  config: MimiRouteConfig,
+  expectedVersion: number,
+): Promise<MimiConversationConfiguration> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/configuration`, {
+    method: 'PUT',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({
+      expected_version: expectedVersion,
+      profile_id: config.profile_id,
+      effort: config.effort,
+      input_tokens: config.input_tokens,
+    }),
+  })
+}
+
+export function decideMimiDraftDirection(
+  conversationId: string,
+  draft: MimiDraftDirection,
+  decision: 'approve' | 'reject',
+): Promise<{ draft_id: string; state: string }> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/draft-direction`, {
+    method: 'POST',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({
+      draft_id: draft.id,
+      expected_revision: draft.revision,
+      expected_content_sha256: draft.content_sha256,
+      decision,
+    }),
+  })
+}
+
 export function fetchCurrentMimiConversation(): Promise<MimiConversation | null> {
   return apiRequest('/api/mimi/conversations/current')
+}
+
+export type MimiCheckpointConstraint = {
+  id: string
+  text: string
+  kind: string
+  status: 'active' | 'superseded' | 'resolved'
+  source?: { sequence?: number; quote?: string; sha256?: string; legacy_checkpoint_sha256?: string }
+}
+
+export type MimiCheckpointView = {
+  conversation_id: string
+  checkpoint_id: string | null
+  frontier: number
+  checkpoint_sha256: string | null
+  activated_at: string | null
+  checkpoint: {
+    summary: string
+    summary_kind: string
+    constraint_ledger?: MimiCheckpointConstraint[]
+    decisions: string[]
+    unresolved: string[]
+    source_refs: { id: string; sequence: number; sha256: string }[]
+  } | null
+}
+
+export function fetchMimiCheckpoint(conversationId: string): Promise<MimiCheckpointView> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/context`)
 }
 
 export function fetchMimiConversation(conversationId: string): Promise<MimiConversation> {
   return apiRequest(`/api/mimi/conversations/${conversationId}`)
 }
 
-export function fetchMimiConversations(state: 'active' | 'archived' | 'all' = 'active'): Promise<MimiConversationPage> {
-  return apiRequest(`/api/mimi/conversations?state=${state}&limit=50`)
+export function fetchMimiConversations(state: 'active' | 'archived' | 'all' = 'active', cursor?: string | null): Promise<MimiConversationPage> {
+  const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+  return apiRequest(`/api/mimi/conversations?state=${state}&limit=50${suffix}`)
 }
 
 export function createMimiConversation(clientId = crypto.randomUUID()): Promise<MimiConversationSummary> {
@@ -256,8 +440,35 @@ async function consumeMimiStream(
   return finalSnapshot
 }
 
+export async function observeMimiRun(
+  runId: string,
+  onEvent: (envelope: MimiStreamEnvelope) => void,
+  signal?: AbortSignal,
+): Promise<MimiConversation> {
+  const response = await fetch(`/api/mimi/runs/${runId}/events/stream?after=0`, {
+    method: 'GET',
+    credentials: 'same-origin',
+    signal,
+  })
+  return consumeMimiStream(response, onEvent)
+}
+
 export function cancelMimiRun(runId: string): Promise<{ run_id: string; state: string }> {
   return apiRequest(`/api/mimi/runs/${runId}/cancel`, {
+    method: 'POST',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({}),
+  })
+}
+
+export type MimiPauseAcknowledgment = {
+  run_id: string
+  state: string
+  pause_requested: true
+}
+
+export function pauseMimiRun(runId: string): Promise<MimiPauseAcknowledgment> {
+  return apiRequest(`/api/mimi/runs/${runId}/pause`, {
     method: 'POST',
     headers: MIMI_WRITE_HEADERS,
     body: JSON.stringify({}),
@@ -308,8 +519,9 @@ export function decideMimiChangeSet(
 
 export function saveMimiFeedback(
   conversationId: string,
-  receiptId: string,
+  target: Pick<MimiFeedbackTarget, 'target_type' | 'target_id'>,
   comment: string,
+  expected: string,
   clientId: string,
 ): Promise<MimiFeedback> {
   return apiRequest(`/api/mimi/conversations/${conversationId}/feedback`, {
@@ -317,9 +529,10 @@ export function saveMimiFeedback(
     headers: MIMI_WRITE_HEADERS,
     body: JSON.stringify({
       client_id: clientId,
-      target_type: 'receipt',
-      target_id: receiptId,
+      target_type: target.target_type,
+      target_id: target.target_id,
       comment,
+      expected: expected.trim() || null,
       evidence_bundle_ids: [],
     }),
   })

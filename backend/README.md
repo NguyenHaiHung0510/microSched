@@ -62,3 +62,7 @@ uv run python -m scripts.check_migration_drift
 
 Job CI **Migration QA** chạy Postgres 18 + pgvector, `upgrade head`, drift-check,
 `downgrade base`, `upgrade head` và drift-check lần cuối. Job không dùng secret Neon.
+
+## Mimi STANDARD alpha
+
+Cấu hình production và dependency delivery được mô tả trong [alpha implementation](../docs/mimi-standard-alpha.md). `uv sync --frozen --no-dev` cài SDK/LangGraph vào runtime; `uv run --no-dev python -m scripts.check_mimi_alpha_runtime` kiểm import/config không gọi model. Đây không phải quyền enable/deploy hoặc bằng chứng live semantic QA.

@@ -36,7 +36,18 @@ CSRF_HEADERS = {
 }
 
 
-def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("generation_terminal", "expected_outcome"),
+    [
+        ({"finish_reason": "stop", "cancelled": False}, "succeeded"),
+        ({}, "unknown"),
+        ({"finish_reason": "stop", "cancelled": True}, "failed"),
+        ({"finish_reason": "length", "cancelled": False}, "failed"),
+    ],
+)
+def test_stream_normalizes_events_and_encrypts_partial_text(
+    pg_dsn, monkeypatch, generation_terminal, expected_outcome
+) -> None:
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "mimi-stream-api-test")
     monkeypatch.setenv(
@@ -179,6 +190,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
             "total_cost": 0.001,
             "tokens_prompt": 12,
             "tokens_completion": 2,
+            **generation_terminal,
         }
 
     monkeypatch.setattr("app.agent.service.openrouter_get_generation", fake_get_generation)
@@ -457,12 +469,14 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                     assert reconciled.status_code == 200
                     assert reconciled.json() == {
                         "run_id": unknown_run["id"],
-                        "state": "halted",
-                        "provider_outcome": "succeeded",
+                        "state": "outcome_unknown" if expected_outcome == "unknown" else "halted",
+                        "provider_outcome": expected_outcome,
                         "result_available": False,
                     }
                     reconciled_view = await client.get(f"/api/mimi/conversations/{unknown_id}")
-                    assert reconciled_view.json()["runs"][0]["state"] == "halted"
+                    assert reconciled_view.json()["runs"][0]["state"] == (
+                        "outcome_unknown" if expected_outcome == "unknown" else "halted"
+                    )
                     assert any(
                         item["kind"] == "run.reconciled"
                         for item in reconciled_view.json()["events"]

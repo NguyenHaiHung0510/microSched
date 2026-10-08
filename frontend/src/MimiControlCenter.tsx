@@ -9,13 +9,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { createMimiConversation, fetchCurrentMimiConversation, fetchMimiConversation, fetchMimiConversations, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
+import { createMimiConversation, fetchMimiCapabilities, fetchCurrentMimiConversation, fetchMimiConversation, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
 import { fetchMimiPreview, selectMimiPreviewScenario, type MimiPreviewRange, type MimiPreviewState, type MimiReasoningLevel } from '@/mimi-preview'
 import { MimiAvatar } from '@/components/brand'
 import { MimiContextRail } from '@/MimiContextRail'
 import { MimiScreen } from '@/MimiScreen'
 import { mimiRunLabel } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
+import { selectCreatedMimiConversation, useMimiSelection } from '@/mimi-selection'
+import { useMimiConversationList } from '@/mimi-conversation-list'
 
 type CenterSection = 'overview' | 'activity' | 'conversations' | 'settings'
 
@@ -84,7 +86,7 @@ type WorkspaceDomain = 'tasks' | 'notes' | 'calendar' | 'tracker'
 function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: WorkspaceDomain) => void }) {
   const queryClient = useQueryClient()
   const [listState, setListState] = useState<'active' | 'archived'>('active')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useMimiSelection()
   const [leftOpen, setLeftOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -99,8 +101,8 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
   })
   const [renameTarget, setRenameTarget] = useState<MimiConversationSummary | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
-  const conversations = useQuery({ queryKey: ['mimi', 'conversations', listState], queryFn: () => fetchMimiConversations(listState), ...NO_POLLING_QUERY_OPTIONS })
-  const conversationItems = useMemo(() => conversations.data?.items ?? [], [conversations.data?.items])
+  const conversations = useMimiConversationList(listState)
+  const conversationItems = conversations.items
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return conversationItems
@@ -115,7 +117,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
     }
     return { pinned, unpinned }
   }, [filteredItems, pinnedIds])
-  const effectiveSelectedId = selectedId && conversationItems.some((item) => item.id === selectedId) ? selectedId : conversationItems[0]?.id ?? null
+  const effectiveSelectedId = selectedId ?? conversationItems[0]?.id ?? null
   const selected = useQuery({ queryKey: ['mimi', 'conversation', effectiveSelectedId], queryFn: () => fetchMimiConversation(effectiveSelectedId!), enabled: Boolean(effectiveSelectedId), ...NO_POLLING_QUERY_OPTIONS })
 
   function togglePin(id: string) {
@@ -130,7 +132,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
     })
   }
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['mimi'] })
-  const create = useMutation({ mutationFn: () => createMimiConversation(), onSuccess: (item) => { setListState('active'); setSelectedId(item.id); refresh() } })
+  const create = useMutation({ mutationFn: () => createMimiConversation(), onSuccess: (item) => { setListState('active'); selectCreatedMimiConversation(queryClient, item); refresh() } })
   const rename = useMutation({ mutationFn: ({ item, title }: { item: MimiConversationSummary; title: string }) => renameMimiConversation(item, title), onSuccess: () => { setRenameTarget(null); refresh() } })
   const archive = useMutation({ mutationFn: ({ item, archived }: { item: MimiConversationSummary; archived: boolean }) => setMimiConversationArchived(item, archived), onSuccess: refresh })
 
@@ -221,23 +223,23 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
 
   const rail = <MimiContextRail conversation={selected.data} onOpenDomain={onOpenDomain} />
   return <div className="space-y-3">
-    <div className="flex items-center justify-between gap-2 border-b pb-2">
-      <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+      <div className="flex min-w-0 w-full sm:w-auto sm:flex-1 items-center gap-2">
         <Button
           variant="outline"
           size="sm"
-          className="gap-1.5 text-xs"
+          className="shrink-0 gap-1.5 text-xs"
           onClick={() => setLeftOpen(!leftOpen)}
           title={leftOpen ? 'Thu gọn danh sách hội thoại' : 'Mở danh sách hội thoại'}
         >
           {leftOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
           <span>{leftOpen ? 'Thu gọn hội thoại' : ('Hội thoại (' + conversationItems.length + ')')}</span>
         </Button>
-        <span className="text-xs text-muted-foreground truncate max-w-[9rem] sm:max-w-sm font-medium">
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground truncate max-w-[9rem] sm:max-w-sm font-medium">
           {selected.data?.title ? ('Đang mở: ' + selected.data.title) : 'Mimi Workspace'}
         </span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <Button
           variant={rightOpen ? 'selected' : 'outline'}
           size="sm"
@@ -293,7 +295,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
             <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-0.5">
               {sortedItems.pinned.length > 0 ? (
                 <div className="space-y-1">
-                  <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                  <p className="px-1 text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
                     <Pin className="size-3" />Đã ghim
                   </p>
                   {sortedItems.pinned.map((item) => renderConversationRow(item, true))}
@@ -302,21 +304,24 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
               {sortedItems.unpinned.length > 0 ? (
                 <div className="space-y-1">
                   {sortedItems.pinned.length > 0 ? (
-                    <p className="px-1 pt-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <p className="px-1 pt-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
                       Gần đây
                     </p>
                   ) : null}
                   {sortedItems.unpinned.map((item) => renderConversationRow(item, false))}
                 </div>
               ) : null}
+              {conversations.hasNextPage ? <Button className="w-full" variant="outline" disabled={conversations.isFetchingNextPage} onClick={() => void conversations.fetchNextPage()}>{conversations.isFetchingNextPage ? 'Đang tải…' : 'Xem thêm hội thoại'}</Button> : null}
+              {searchQuery && conversations.hasNextPage ? <p className="text-xs text-muted-foreground">Tìm trong lịch sử đã tải. Xem thêm để tìm hội thoại cũ hơn.</p> : null}
             </div>
           </CardContent>
         </Card>
       ) : null}
-      <div className="flex-1 min-w-0 flex justify-center h-full">
+      <div className="w-full lg:w-auto flex-1 min-w-0 max-w-full flex justify-center h-full">
         <Card className="w-full max-w-4xl min-w-0 shadow-sm h-full flex flex-col">
           <CardContent className="p-4 sm:p-5 flex-1 min-h-0 flex flex-col">
             <MimiScreen
+              key={effectiveSelectedId}
               onOpenTasks={() => onOpenDomain('tasks')}
               variant="workspace"
               conversationId={effectiveSelectedId}
@@ -338,7 +343,9 @@ export function MimiControlCenter({ onOpenDomain }: { onOpenDomain: (domain: Wor
   const [reasoningLevel, setReasoningLevel] = useState<MimiReasoningLevel>('balanced')
   const [leaseMinutes, setLeaseMinutes] = useState('30')
   const conversation = useQuery({ queryKey: ['mimi', 'current'], queryFn: fetchCurrentMimiConversation, ...NO_POLLING_QUERY_OPTIONS })
-  const preview = useQuery({ queryKey: ['mimi', 'preview', range], queryFn: () => fetchMimiPreview(range), retry: false, staleTime: 0 })
+  const capabilities = useQuery({ queryKey: ['mimi', 'capabilities'], queryFn: fetchMimiCapabilities, ...NO_POLLING_QUERY_OPTIONS })
+  const realConversation = capabilities.data?.live_provider_enabled === true
+  const preview = useQuery({ queryKey: ['mimi', 'preview', range], queryFn: () => fetchMimiPreview(range), enabled: capabilities.isSuccess && !realConversation, retry: false, staleTime: 0 })
   const selectScenario = useMutation({ mutationFn: selectMimiPreviewScenario, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['mimi', 'preview'] }); void queryClient.invalidateQueries({ queryKey: ['mimi', 'current'] }) } })
   const current = conversation.data
   const synthetic = preview.data
@@ -346,6 +353,10 @@ export function MimiControlCenter({ onOpenDomain }: { onOpenDomain: (domain: Wor
   const pendingApprovals = synthetic?.attention.pending_approvals ?? current?.change_sets.filter((item) => item.state === 'pending').length ?? 0
   const unresolvedFeedback = synthetic?.attention.unresolved_feedback ?? current?.feedback.filter((item) => item.unresolved).length ?? 0
   const scenarioDescription = useMemo(() => synthetic?.scenarios.find((item) => item.id === synthetic.scenario)?.description, [synthetic])
+
+  if (capabilities.isPending) return <p role="status" className="py-6 text-sm text-muted-foreground">Đang kết nối Mimi…</p>
+  if (capabilities.isError) return <p role="alert" className="py-6 text-sm text-bad">Chưa kết nối được Mimi. Tải lại để thử lại.</p>
+  if (realConversation) return <section aria-label="Trò chuyện với Mimi"><ConversationWorkspace onOpenDomain={onOpenDomain} /></section>
 
   return <section className="space-y-5" aria-labelledby="mimi-control-title">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="space-y-1"><div className="flex items-center gap-2"><MimiAvatar size="sm" state="idle" /><h2 id="mimi-control-title" className="text-2xl font-extrabold text-primary">Mimi Control Center</h2></div><p className="max-w-2xl text-sm text-muted-foreground">Quản lý trạng thái, mức dùng, hoạt động, hội thoại và cấu hình đang thực sự có hiệu lực.</p></div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">P1R · local preview</Badge>{synthetic ? <Badge variant="secondary">Synthetic data</Badge> : null}</div></div>

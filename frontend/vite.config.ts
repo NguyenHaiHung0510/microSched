@@ -9,7 +9,7 @@ const backendOrigin = process.env.VITE_BACKEND_ORIGIN ?? 'http://localhost:8000'
 // https://vite.dev/config/
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, '**/e2e/**'],
+    exclude: [...configDefaults.exclude, '**/e2e/**', '**/integrated/**'],
   },
   plugins: [
     react(),

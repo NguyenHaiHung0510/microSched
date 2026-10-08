@@ -71,3 +71,7 @@ def conversation_title_aad(conversation_id: UUID) -> str:
 
 def event_content_aad(run_id: UUID, sequence: int, kind: str) -> str:
     return f"mimi-event:{run_id}:{sequence}:{kind}:content"
+
+
+def provider_terminal_aad(run_id: UUID, attempt: int) -> str:
+    return f"mimi-provider:{run_id}:{attempt}:terminal"

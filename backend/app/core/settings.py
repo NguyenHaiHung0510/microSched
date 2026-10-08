@@ -87,10 +87,21 @@ class Settings(BaseSettings):
     # separate, explicit configuration decision.
     mimi_real_chat_enabled: bool = False
     mimi_live_provider_enabled: bool = False
+    mimi_context_v1_enabled: bool = False
+    # Alpha can explicitly select LangGraph; feature flags remain dark by default.
+    mimi_runner: Literal["current", "langgraph"] = "current"
+    mimi_workflow_pilot_enabled: bool = False
     mimi_public_origin: str | None = None
     mimi_preview_ttl_minutes: int = 15
     mimi_run_deadline_seconds: int = 1_800
+    # Provisional emergency bounds, not a per-run dollar budget.
+    # Issued leases freeze these values; changing config does not alter old runs.
+    mimi_run_max_turns: int = 32
+    mimi_run_max_tool_calls: int = 64
     mimi_standard_api_key: str | None = None
+    # Explicit alpha transport selection; no automatic fallback on route failure.
+    mimi_transport: Literal["httpx", "openai_sdk"] = "httpx"
+    mimi_text_response_format: Literal["structured", "natural"] = "structured"
     mimi_route_mode: Literal["exact", "adaptive"] = "exact"
     mimi_route_model: str | None = None
     mimi_route_provider: str | None = None
@@ -98,8 +109,17 @@ class Settings(BaseSettings):
     mimi_route_allowed_providers: str = ""
     mimi_route_allowed_quantizations: str = ""
     mimi_route_forced_tool_choice: Literal["none", "required", "function"] = "none"
-    mimi_route_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] = "low"
-    mimi_route_context_tokens: int = 131_072
+    mimi_route_reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high"] = (
+        "low"
+    )
+    # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
+    mimi_route_context_tokens: int = 1_048_576
+    mimi_compaction_trigger_tokens: Literal[100_000] = 100_000
+    mimi_max_payload_bytes: int = 2_097_152
+    # At most four runs: guard + worker + observer <=12 of the existing15
+    # ORM pool connections; auth returns its checkout before SSE. LangGraph adds
+    # one direct checkpoint connection/run. Default two leaves ample Task room.
+    mimi_max_active_runs: int = 2
     mimi_route_max_output_tokens: int = 4_096
     mimi_route_max_input_price: float | None = None
     mimi_route_max_output_price: float | None = None
@@ -119,6 +139,12 @@ class Settings(BaseSettings):
     # never connects through them; they only define which hosts are prod.
     neon_owner_url: str | None = None
     neon_migrator_url: str | None = None
+
+    @field_validator("mimi_compaction_trigger_tokens", mode="before")
+    @classmethod
+    def parse_compaction_trigger_environment(cls, value: object) -> object:
+        """Allow the approved integer preset through environment string input."""
+        return 100_000 if value == "100000" else value
 
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
@@ -214,6 +240,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MIMI_PUBLIC_ORIGIN is required when Mimi real chat is enabled in production"
             )
+        # Explicit alpha configuration supports the same transport/runner in
+        # production. Egress, origin, route, privacy and confirmation guards stay.
+        if not 65_536 <= self.mimi_max_payload_bytes <= 4_194_304:
+            raise ValueError("MIMI_MAX_PAYLOAD_BYTES must be between 65536 and 4194304")
+        if not 1 <= self.mimi_max_active_runs <= 4:
+            raise ValueError("MIMI_MAX_ACTIVE_RUNS must be between 1 and 4")
+        if self.mimi_runner == "langgraph" and not (
+            self.mimi_context_v1_enabled and self.mimi_live_provider_enabled
+        ):
+            raise ValueError("MIMI_RUNNER=langgraph requires the P1C-A context runner path")
         if self.mimi_live_provider_enabled and not self.mimi_real_chat_enabled:
             raise ValueError("MIMI_LIVE_PROVIDER_ENABLED requires MIMI_REAL_CHAT_ENABLED")
         if self.mimi_live_provider_enabled:
@@ -256,6 +292,10 @@ class Settings(BaseSettings):
                 raise ValueError(f"{field_name.upper()} cannot be negative")
         if not 1 <= self.mimi_preview_ttl_minutes <= 60:
             raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 60")
+        if not 1 <= self.mimi_run_max_turns <= 128:
+            raise ValueError("MIMI_RUN_MAX_TURNS must be between 1 and 128")
+        if not 1 <= self.mimi_run_max_tool_calls <= 256:
+            raise ValueError("MIMI_RUN_MAX_TOOL_CALLS must be between 1 and 256")
         if not 30 <= self.mimi_run_deadline_seconds <= 7_200:
             raise ValueError("MIMI_RUN_DEADLINE_SECONDS must be between 30 and 7200")
         return self

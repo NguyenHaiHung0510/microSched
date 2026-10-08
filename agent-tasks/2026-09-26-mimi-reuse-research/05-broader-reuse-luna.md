@@ -1,0 +1,13 @@
+# Round 2A — broader microSched reuse watchlist
+
+Research by GPT-6 Luna; T1 transcribed after checking the local code/brief. Snapshot 2026-09-26. Read-only. This is a **watchlist**, not permission to replace architectural choices.
+
+| Candidate | Observed seam | Credible reusable option | Why not switch immediately |
+| --- | --- | --- | --- |
+| iCalendar parser | `backend/app/core/ics.py` manually unfolds, unescapes and parses iCalendar with 1 MiB/5,000-event limits and deliberate RRULE/RDATE/EXDATE/DURATION skips. | [`icalendar` parser](https://icalendar.readthedocs.io/en/latest/usage.html) for [RFC 5545](https://www.rfc-editor.org/info/rfc5545/). | Preserve the current import policy, timezone normalization, dedupe, skip report and resource limits. Compare fixtures, code/tests removed and RAM/image cost first. This is the highest-value small parity investigation outside Mimi. |
+| Offline capture/outbox | `docs/frontend-brief.md` chooses Dexie + narrow outbox; `frontend/src/tracker-ui.ts` and `subscription-ui.ts` currently show future seams, not a completed sync engine. | [TanStack DB mutations](https://tanstack.com/db/latest/docs/guides/mutations) when the outbox is actually built. | This is **not yet observed reinvention**. Transaction state does not alone prove server acknowledgment. PowerSync/Electric bring extra infrastructure currently contrary to the one-user/one-process architecture. |
+| Cron timer | `backend/app/core/cron_timer.py` contains a sizeable heap/snapshot/retry/ownership implementation. | [APScheduler AsyncScheduler/persistent datastore](https://apscheduler.readthedocs.io/en/master/userguide.html). | High migration blast radius: domain recurrence, batching, idempotent Web Push, recovery, ownership and especially Neon idle/query cadence. Need exact parity and measured maintenance reduction before considering. |
+
+Justified bespoke seams: Mimi's authenticated read/source authority and frozen preview→confirm/audit; synthetic-only `backend/app/agent/feedback_store.py` encrypted review store (not a second production DB truth). The latter should be re-evaluated only if promoted into runtime or if it duplicates Neon data. The core architecture [modular monolith](../../../docs/architecture-brief.md) intentionally avoids adding Redis/Celery or a second serving process; this is a constraint, not evidence that all custom code is ideal.
+
+Scope and confidence: local code/brief observation high; practical benefit of any library substitution unmeasured. No dependency installed and no product behavior changed. The watchlist must be prioritized below immediate Mimi dogfood blockers unless a parity spike reveals a concrete defect or material time saving.

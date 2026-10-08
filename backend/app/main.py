@@ -22,6 +22,7 @@ from app.web.routers.calendar import router as calendar_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
 from app.web.routers.mimi import router as mimi_router
+from app.web.routers.mimi_workflow_pilot import router as mimi_workflow_pilot_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
 from app.web.routers.push import router as push_router
@@ -39,6 +40,23 @@ async def lifespan(app: FastAPI):
     mimi_runs = MimiRunSupervisor()
     app.state.mimi_run_supervisor = mimi_runs
     try:
+        settings = get_settings()
+        if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+            from app.agent.service import reconcile_orphaned_mimi_runs
+            from app.core.db import get_sessionmaker
+
+            factory = get_sessionmaker()
+            if factory is not None:
+                try:
+                    async with factory() as recovery_db:
+                        recovered = await reconcile_orphaned_mimi_runs(recovery_db)
+                    if recovered:
+                        logger.info("mimi_startup_recovered_runs count=%s", recovered)
+                except Exception:
+                    # Do not relabel a run without proof that the old worker is
+                    # gone. The durable ledger remains available for later
+                    # reconciliation when Neon connectivity returns.
+                    logger.exception("mimi_startup_reconciliation_failed")
         if not getattr(app.state, "cron_runtime_enabled", False):
             yield
             return
@@ -242,6 +260,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(push_router)
     protected_api.include_router(reminders_router)
     protected_api.include_router(mimi_router)
+    protected_api.include_router(mimi_workflow_pilot_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
     def api_not_found(path: str) -> None:

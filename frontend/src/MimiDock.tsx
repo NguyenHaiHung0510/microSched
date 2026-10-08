@@ -6,9 +6,11 @@ import { MimiAvatar } from '@/components/brand'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { createMimiConversation, fetchCurrentMimiConversation, fetchMimiConversations } from '@/mimi-api'
+import { createMimiConversation, fetchCurrentMimiConversation } from '@/mimi-api'
 import { MimiScreen } from '@/MimiScreen'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
+import { selectCreatedMimiConversation, useMimiSelection } from '@/mimi-selection'
+import { useMimiConversationList } from '@/mimi-conversation-list'
 
 function useDesktopDock(): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia('(min-width: 1280px)').matches)
@@ -52,27 +54,21 @@ export function MimiDock({
 }) {
   const desktop = useDesktopDock()
   const queryClient = useQueryClient()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useMimiSelection()
   const currentConv = useQuery({
     queryKey: ['mimi', 'current'],
     queryFn: fetchCurrentMimiConversation,
     ...NO_POLLING_QUERY_OPTIONS,
   })
-  const conversations = useQuery({
-    queryKey: ['mimi', 'conversations', 'active'],
-    queryFn: () => fetchMimiConversations('active'),
-    ...NO_POLLING_QUERY_OPTIONS,
-  })
+  const conversations = useMimiConversationList('all')
 
-  const conversationItems = conversations.data?.items ?? []
-  const effectiveSelectedId = selectedId && conversationItems.some((item) => item.id === selectedId)
-    ? selectedId
-    : currentConv.data?.id ?? conversationItems[0]?.id ?? null
+  const conversationItems = conversations.items
+  const effectiveSelectedId = selectedId ?? currentConv.data?.id ?? conversationItems[0]?.id ?? null
 
   const create = useMutation({
     mutationFn: () => createMimiConversation(),
     onSuccess: (created) => {
-      setSelectedId(created.id)
+      selectCreatedMimiConversation(queryClient, created)
       void queryClient.invalidateQueries({ queryKey: ['mimi'] })
     },
   })
@@ -137,8 +133,10 @@ export function MimiDock({
               </Button>
             </div>
             </div>
+            {conversations.hasNextPage ? <Button size="sm" variant="outline" disabled={conversations.isFetchingNextPage} onClick={() => void conversations.fetchNextPage()}>{conversations.isFetchingNextPage ? 'Đang tải…' : 'Xem thêm hội thoại'}</Button> : null}
+            {conversations.isError ? <p role="alert" className="px-3 text-sm text-bad">Chưa tải được lịch sử hội thoại.</p> : null}
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <MimiScreen onOpenTasks={onOpenTasks} variant="dock" conversationId={selectedId} onConversationCreated={setSelectedId} />
+              <MimiScreen key={effectiveSelectedId} onOpenTasks={onOpenTasks} variant="dock" conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} />
             </div>
           </div>
         </aside>
@@ -150,10 +148,10 @@ export function MimiDock({
       <DialogContent
         id="mimi-side-chat"
         data-testid="mimi-side-chat"
-        className="inset-0 h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-4"
+        className="inset-0 grid-cols-[minmax(0,1fr)] h-dvh max-h-dvh w-full min-w-0 max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-4"
       >
-        <DialogHeader>
-          <div className="flex items-center justify-between w-full">
+        <DialogHeader className="min-w-0">
+          <div className="flex min-w-0 items-center justify-between w-full pr-10">
             <DialogTitle className="flex items-center gap-2"><MimiAvatar size="sm" state="idle" />Chat với Mimi</DialogTitle>
             <Button
               size="icon-sm"
@@ -167,8 +165,20 @@ export function MimiDock({
             </Button>
           </div>
           <DialogDescription>Conversation STANDARD hiện tại · nội dung chính vẫn giữ nguyên khi đóng.</DialogDescription>
+          {conversationItems.length > 0 ? (
+            <Select value={effectiveSelectedId ?? ''} onValueChange={setSelectedId}>
+              <SelectTrigger aria-label="Chọn cuộc trò chuyện" className="min-h-11 w-full min-w-0 text-sm">
+                <SelectValue placeholder="Chọn hội thoại…" />
+              </SelectTrigger>
+              <SelectContent>
+                {conversationItems.map((item) => <SelectItem key={item.id} value={item.id}>{item.title}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          ) : null}
+          {conversations.hasNextPage ? <Button variant="outline" disabled={conversations.isFetchingNextPage} onClick={() => void conversations.fetchNextPage()}>{conversations.isFetchingNextPage ? 'Đang tải…' : 'Xem thêm hội thoại'}</Button> : null}
+          {conversations.isError ? <p role="alert" className="text-sm text-bad">Chưa tải được lịch sử hội thoại.</p> : null}
         </DialogHeader>
-        <MimiScreen onOpenTasks={onOpenTasks} variant="dock" conversationId={selectedId} onConversationCreated={setSelectedId} />
+        <MimiScreen key={effectiveSelectedId} onOpenTasks={onOpenTasks} variant="dock" conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} />
       </DialogContent>
     </Dialog>
   )

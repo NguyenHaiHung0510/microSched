@@ -279,6 +279,9 @@ test.describe('mobile (390x844, touch)', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
     await expect(page.getByTestId('calendar-scroll-container')).toBeVisible()
+    // The grid's bounded Task pages may still be loading after the container
+    // mounts. Establish the baseline only after those initial requests settle.
+    await page.waitForLoadState('networkidle')
     const before = taskApi.count('GET', '/api/tasks')
     await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
     await expect(page.getByTestId('calendar-day-dialog')).toBeVisible()

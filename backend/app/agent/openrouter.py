@@ -11,12 +11,37 @@ from typing import Any, Literal
 import httpx
 from pydantic import ValidationError
 
+from app.agent.context import (
+    AGENT_RESPONSE_FORMAT,
+    AssistantText,
+    PreviewCandidate,
+    TerminalOutcome,
+    ToolRequest,
+    ToolRequests,
+    parse_terminal_wire,
+)
+from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, TOOLS
 from app.core.settings import Settings, get_settings
 from app.domain.tasks import TaskCreate
 
 
 class RouteContractError(ValueError):
     """The selected route or terminal payload violated Mimi's frozen contract."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        response_id: str | None = None,
+        usage: dict[str, Any] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ):
+        super().__init__(message)
+        self.response_id = response_id
+        self.usage = usage or {}
+        self.provider = provider
+        self.model = model
 
 
 class ProviderDispatchError(RuntimeError):
@@ -28,11 +53,13 @@ class ProviderDispatchError(RuntimeError):
         status: int | None,
         *,
         response_id: str | None = None,
+        diagnostic: dict[str, Any] | None = None,
     ):
         super().__init__(f"provider dispatch ended as {outcome}")
         self.outcome = outcome
         self.status = status
         self.response_id = response_id
+        self.diagnostic = diagnostic or {}
 
 
 @dataclass(frozen=True)
@@ -40,6 +67,15 @@ class ProviderCompletion:
     kind: Literal["text", "task"]
     task: TaskCreate | None
     text: str | None
+    response_id: str
+    usage: dict[str, Any]
+    provider: str | None
+    model: str | None
+
+
+@dataclass(frozen=True)
+class AgentCompletion:
+    outcome: TerminalOutcome
     response_id: str
     usage: dict[str, Any]
     provider: str | None
@@ -92,6 +128,79 @@ TASK_CREATE_TOOL = {
     },
 }
 
+COMPACTION_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "mimi_compaction_v2",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["summary", "constraints", "supersessions", "resolutions"],
+            "properties": {
+                "summary": {"type": "string", "minLength": 1, "maxLength": 6000},
+                "constraints": {
+                    "type": "array",
+                    "maxItems": 40,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["text", "kind", "source_sequence", "source_sha256", "quote"],
+                        "properties": {
+                            "text": {"type": "string", "minLength": 1, "maxLength": 1000},
+                            "kind": {"enum": ["decision", "unresolved"]},
+                            "source_sequence": {"type": "integer", "minimum": 1},
+                            "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "quote": {"type": "string", "minLength": 1, "maxLength": 1000},
+                        },
+                    },
+                },
+                "supersessions": {
+                    "type": "array",
+                    "maxItems": 40,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "prior_id",
+                            "source_sequence",
+                            "source_sha256",
+                            "quote",
+                            "replacement_text",
+                        ],
+                        "properties": {
+                            "prior_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "source_sequence": {"type": "integer", "minimum": 1},
+                            "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "quote": {"type": "string", "minLength": 1, "maxLength": 1000},
+                            "replacement_text": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1000,
+                            },
+                        },
+                    },
+                },
+                "resolutions": {
+                    "type": "array",
+                    "maxItems": 40,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["prior_id", "source_sequence", "source_sha256", "quote"],
+                        "properties": {
+                            "prior_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "source_sequence": {"type": "integer", "minimum": 1},
+                            "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                            "quote": {"type": "string", "minLength": 1, "maxLength": 1000},
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
 
 def _route_identity(settings: Settings) -> tuple[str, str]:
     if settings.mimi_standard_api_key is None or settings.mimi_route_model is None:
@@ -118,13 +227,17 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
     if settings.mimi_route_mode == "exact":
         if settings.mimi_route_provider is None or settings.mimi_route_quantization is None:
             raise RouteContractError("exact Mimi route is not configured")
-        return {
+        policy = {
             **shared,
             "order": [settings.mimi_route_provider],
             "only": [settings.mimi_route_provider],
-            "quantizations": [settings.mimi_route_quantization],
             "allow_fallbacks": False,
         }
+        # `unknown` records that exact provider/model metadata did not attest a
+        # quantization. Keep the provider pin but do not claim a precision.
+        if settings.mimi_route_quantization != "unknown":
+            policy["quantizations"] = [settings.mimi_route_quantization]
+        return policy
     providers = list(settings.mimi_allowed_provider_list)
     quantizations = list(settings.mimi_allowed_quantization_list)
     if not providers or not quantizations:
@@ -139,47 +252,199 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
     }
 
 
+def serialized_input_bytes(
+    messages: list[dict[str, Any]], *, agent_contract: bool, summary_mode: bool = False
+) -> int:
+    """Bound the full model-visible input, including output and tool schemas."""
+
+    payload = {"messages": messages}
+    if summary_mode:
+        payload["response_format"] = COMPACTION_RESPONSE_FORMAT
+    else:
+        payload["tools"] = list(TOOLS) if agent_contract else [TASK_CREATE_TOOL]
+    if agent_contract and not summary_mode:
+        payload["response_format"] = AGENT_RESPONSE_FORMAT
+    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 def build_request(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     settings: Settings | None = None,
     *,
     stream: bool = False,
     session_id: str | None = None,
     force_task_tool: bool = False,
+    agent_contract: bool = False,
+    summary_mode: bool = False,
 ) -> dict[str, Any]:
     """Build either the attributable exact lane or bounded adaptive dogfood lane."""
     route = settings or get_settings()
     _, model = _route_identity(route)
-    serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    # Conservative preflight: it may reject early but cannot make overflow safe.
-    if len(serialized) + route.mimi_route_max_output_tokens > route.mimi_route_context_tokens:
-        raise RouteContractError("context_overflow_preflight")
+    if summary_mode and agent_contract:
+        raise RouteContractError("summary_mode_conflicts_with_agent_contract")
+    active_tools = [] if summary_mode else (list(TOOLS) if agent_contract else [TASK_CREATE_TOOL])
+    # Payload resource bound is independent of provider tokens and 100k trigger.
+    if (
+        serialized_input_bytes(messages, agent_contract=agent_contract, summary_mode=summary_mode)
+        > route.mimi_max_payload_bytes
+    ):
+        raise RouteContractError("payload_bytes_exceeded")
+    if route.mimi_route_max_output_tokens > route.mimi_route_context_tokens:
+        raise RouteContractError("output_reserve_exceeds_route_limit")
     request: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "tools": [TASK_CREATE_TOOL],
         # Ordinary turns implement Mimi's terminal union. An explicit revision
         # of an existing preview is different: text claiming that a preview was
         # changed is not a state transition, so require the typed replacement.
-        "tool_choice": _tool_choice(route, force_task_tool=force_task_tool),
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the
         # terminal parser independently enforces at most one tool call.
         "stream": stream,
         "store": False,
         "max_tokens": route.mimi_route_max_output_tokens,
-        "reasoning": {"effort": route.mimi_route_reasoning_effort, "exclude": True},
+        "reasoning": {
+            **(
+                {"effort": route.mimi_route_reasoning_effort}
+                if route.mimi_route_reasoning_effort != "default"
+                else {}
+            ),
+            "exclude": True,
+        },
         "usage": {"include": True},
         "provider": _provider_policy(route),
     }
+    if not summary_mode:
+        request["tools"] = active_tools
+        request["tool_choice"] = _tool_choice(
+            route, force_task_tool=force_task_tool, agent_contract=agent_contract
+        )
     if stream:
         request["stream_options"] = {"include_usage": True}
+    if summary_mode:
+        request["response_format"] = COMPACTION_RESPONSE_FORMAT
+    elif agent_contract and route.mimi_text_response_format == "structured":
+        request["response_format"] = AGENT_RESPONSE_FORMAT
     if session_id:
         request["session_id"] = session_id
     return request
 
 
-def _tool_choice(settings: Settings, *, force_task_tool: bool) -> Any:
+def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
+    """Validate one model turn before any server-owned read or preview transition."""
+
+    try:
+        choices = payload["choices"]
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise RouteContractError("provider_must_return_one_choice")
+        message = choices[0]["message"]
+        if not isinstance(message, dict):
+            raise RouteContractError("provider_message_invalid")
+        calls = message.get("tool_calls") or []
+        raw_content = message.get("content")
+        content = raw_content.strip() if isinstance(raw_content, str) else ""
+        if calls:
+            if not isinstance(calls, list) or len(calls) > 3:
+                raise RouteContractError("provider_tool_call_count_invalid")
+            requests: list[ToolRequest] = []
+            for index, call in enumerate(calls):
+                function = call["function"]
+                name = function["name"]
+                if name not in READ_TOOLS | {CREATE_CANDIDATE_TOOL}:
+                    raise RouteContractError("provider_tool_not_allowed")
+                arguments = function["arguments"]
+                decoded = json.loads(arguments) if isinstance(arguments, str) else arguments
+                if not isinstance(decoded, dict):
+                    raise RouteContractError("provider_tool_arguments_not_object")
+                requests.append(
+                    ToolRequest(
+                        call_id=str(call.get("id") or f"tool-{index}"),
+                        name=name,
+                        arguments=decoded,
+                    )
+                )
+            if any(item.name == CREATE_CANDIDATE_TOOL for item in requests):
+                if len(requests) != 1:
+                    raise RouteContractError("candidate_cannot_share_tool_turn")
+                request = requests[0]
+                if set(request.arguments) != {"task"} or not isinstance(
+                    request.arguments["task"], dict
+                ):
+                    raise RouteContractError("candidate_arguments_invalid")
+                outcome: TerminalOutcome = PreviewCandidate(
+                    tool=CREATE_CANDIDATE_TOOL, arguments=request.arguments["task"]
+                )
+            else:
+                outcome = ToolRequests(requests=tuple(requests))
+        elif content:
+            try:
+                decoded_content = json.loads(content)
+            except json.JSONDecodeError:
+                outcome = AssistantText(text=content)
+            else:
+                if isinstance(decoded_content, dict) and "kind" in decoded_content:
+                    outcome = parse_terminal_wire(decoded_content)
+                else:
+                    outcome = AssistantText(text=content)
+        else:
+            raise RouteContractError("provider_terminal_empty")
+        return AgentCompletion(
+            outcome=outcome,
+            response_id=str(payload.get("id", "")),
+            usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            provider=payload.get("provider") if isinstance(payload.get("provider"), str) else None,
+            model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+        )
+    except RouteContractError:
+        raise
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        raise RouteContractError("invalid_agent_terminal_payload") from error
+
+
+def parse_compaction_completion(payload: dict[str, Any]) -> AgentCompletion:
+    """Parse the strict summary-only JSON shape; any function call is invalid."""
+    try:
+        choices = payload["choices"]
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise RouteContractError("provider_must_return_one_choice")
+        if not isinstance(choices[0], dict):
+            raise RouteContractError("compaction_summary_payload_invalid")
+        if choices[0].get("finish_reason") == "length":
+            raise RouteContractError("compaction_summary_output_truncated")
+        message = choices[0]["message"]
+        if not isinstance(message, dict) or message.get("tool_calls"):
+            raise RouteContractError("compaction_requires_summary_not_tool_or_draft")
+        raw = message.get("content")
+        candidate = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(candidate, dict):
+            raise RouteContractError("compaction_summary_payload_invalid")
+        return AgentCompletion(
+            outcome=AssistantText(
+                kind="assistant_text", text=json.dumps(candidate, ensure_ascii=False)
+            ),
+            response_id=str(payload.get("id", "")),
+            usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            provider=payload.get("provider") if isinstance(payload.get("provider"), str) else None,
+            model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+        )
+    except (RouteContractError, KeyError, TypeError, ValueError) as error:
+        # Do not preserve provider-controlled prose. The observed response/usage
+        # survives validation failure so its single reservation can be accounted.
+        code = (
+            str(error)
+            if isinstance(error, RouteContractError)
+            else "compaction_summary_payload_invalid"
+        )
+        raise RouteContractError(
+            code,
+            response_id=payload.get("id") if isinstance(payload.get("id"), str) else None,
+            usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            provider=payload.get("provider") if isinstance(payload.get("provider"), str) else None,
+            model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+        ) from error
+
+
+def _tool_choice(settings: Settings, *, force_task_tool: bool, agent_contract: bool = False) -> Any:
     if not force_task_tool:
         return "auto"
     capability = settings.mimi_route_forced_tool_choice
@@ -188,7 +453,63 @@ def _tool_choice(settings: Settings, *, force_task_tool: bool) -> Any:
     if capability == "required":
         # Mimi exposes exactly one tool in this request.
         return "required"
-    return {"type": "function", "function": {"name": "task.create.v1"}}
+    name = CREATE_CANDIDATE_TOOL if agent_contract else "task.create.v1"
+    return {"type": "function", "function": {"name": name}}
+
+
+def validate_task_candidate(decoded: dict[str, Any], *, require_id: bool = True) -> TaskCreate:
+    """One domain validation seam for legacy and context-loop previews."""
+    allowed_fields = {
+        "id",
+        "title",
+        "body_md",
+        "status",
+        "priority",
+        "due_precision",
+        "due_on",
+        "due_at",
+        "is_private",
+        "items",
+    }
+    if unknown_fields := set(decoded) - allowed_fields:
+        raise RouteContractError(
+            "provider_task_schema_invalid_extra_fields_" + "_".join(sorted(unknown_fields))
+        )
+    # P1 owns the lifecycle state. A provider has no legitimate choice for
+    # this field, so normalize it at the trust boundary rather than letting
+    # harmless casing/default drift turn a valid preview into a dead run.
+    decoded = {**decoded, "status": "open"}
+    # Providers sometimes populate both nullable schedule siblings despite
+    # the strict schema. Precision is authoritative; clear only the sibling
+    # that cannot be represented by that precision, while still requiring
+    # the selected value itself to validate below.
+    if decoded.get("due_precision") == "datetime":
+        decoded["due_on"] = None
+    elif decoded.get("due_precision") == "date":
+        decoded["due_at"] = None
+    elif decoded.get("due_precision") == "none":
+        decoded["due_on"] = None
+        decoded["due_at"] = None
+    try:
+        task = TaskCreate.model_validate(decoded)
+    except ValidationError as error:
+        first = error.errors(include_url=False, include_context=False, include_input=False)[0]
+        location = "_".join(str(item) for item in first["loc"]) or "root"
+        error_type = str(first["type"])
+        raise RouteContractError(f"provider_task_schema_invalid_{location}_{error_type}") from error
+    if task.is_private:
+        raise RouteContractError("standard_route_proposed_private_task")
+    if require_id and task.id is None:
+        raise RouteContractError("provider_task_id_missing")
+    if len(task.title) > 200:
+        raise RouteContractError("provider_task_schema_invalid_title_too_long")
+    if task.body_md is not None and len(task.body_md) > 20_000:
+        raise RouteContractError("provider_task_schema_invalid_body_md_too_long")
+    if len(task.items) > 20:
+        raise RouteContractError("provider_task_schema_invalid_items_too_long")
+    if any(len(item) > 500 for item in task.items):
+        raise RouteContractError("provider_task_schema_invalid_items_item_too_long")
+    return task
 
 
 def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
@@ -224,90 +545,59 @@ def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
             raise RouteContractError("provider_tool_arguments_not_json") from error
         if not isinstance(decoded, dict):
             raise RouteContractError("provider_tool_arguments_not_object")
-        allowed_fields = {
-            "id",
-            "title",
-            "body_md",
-            "status",
-            "priority",
-            "due_precision",
-            "due_on",
-            "due_at",
-            "is_private",
-            "items",
-        }
-        if unknown_fields := set(decoded) - allowed_fields:
-            raise RouteContractError(
-                "provider_task_schema_invalid_extra_fields_" + "_".join(sorted(unknown_fields))
-            )
-        # P1 owns the lifecycle state. A provider has no legitimate choice for
-        # this field, so normalize it at the trust boundary rather than letting
-        # harmless casing/default drift turn a valid preview into a dead run.
-        decoded = {**decoded, "status": "open"}
-        # Providers sometimes populate both nullable schedule siblings despite
-        # the strict schema. Precision is authoritative; clear only the sibling
-        # that cannot be represented by that precision, while still requiring
-        # the selected value itself to validate below.
-        if decoded.get("due_precision") == "datetime":
-            decoded["due_on"] = None
-        elif decoded.get("due_precision") == "date":
-            decoded["due_at"] = None
-        elif decoded.get("due_precision") == "none":
-            decoded["due_on"] = None
-            decoded["due_at"] = None
-        try:
-            task = TaskCreate.model_validate(decoded)
-        except ValidationError as error:
-            first = error.errors(include_url=False, include_context=False, include_input=False)[0]
-            location = "_".join(str(item) for item in first["loc"]) or "root"
-            error_type = str(first["type"])
-            raise RouteContractError(
-                f"provider_task_schema_invalid_{location}_{error_type}"
-            ) from error
+        task = validate_task_candidate(decoded)
     except RouteContractError:
         raise
     except (KeyError, TypeError, ValueError) as error:
         raise RouteContractError("invalid_provider_terminal_payload") from error
-    if task.is_private:
-        raise RouteContractError("standard_route_proposed_private_task")
-    if task.id is None:
-        raise RouteContractError("provider_task_id_missing")
-    if len(task.title) > 200:
-        raise RouteContractError("provider_task_schema_invalid_title_too_long")
-    if task.body_md is not None and len(task.body_md) > 20_000:
-        raise RouteContractError("provider_task_schema_invalid_body_md_too_long")
-    if len(task.items) > 20:
-        raise RouteContractError("provider_task_schema_invalid_items_too_long")
-    if any(len(item) > 500 for item in task.items):
-        raise RouteContractError("provider_task_schema_invalid_items_item_too_long")
     return ProviderCompletion(kind="task", task=task, text=None, **common)
 
 
 def _raise_for_status(status_code: int) -> None:
     if status_code in {408, 409}:
         raise ProviderDispatchError("unknown", status_code)
-    if status_code == 429 or status_code >= 500:
+    if status_code >= 500:
+        # A gateway failure does not prove its upstream generation was never
+        # started. Reconcile before any Owner-triggered successor dispatch.
+        raise ProviderDispatchError("unknown", status_code)
+    if status_code == 429:
         raise ProviderDispatchError("retryable", status_code)
     if status_code >= 400:
         raise ProviderDispatchError("failed", status_code)
 
 
 async def complete(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
     session_id: str | None = None,
     force_task_tool: bool = False,
-) -> ProviderCompletion:
+    agent_contract: bool = False,
+    summary_mode: bool = False,
+) -> ProviderCompletion | AgentCompletion:
     """Dispatch once. Retry authority belongs to persisted run state."""
     route = settings or get_settings()
+    if route.mimi_transport == "openai_sdk":
+        from app.agent.openai_sdk import complete as complete_with_openai_sdk
+
+        return await complete_with_openai_sdk(
+            messages,
+            settings=route,
+            client=client,
+            session_id=session_id,
+            force_task_tool=force_task_tool,
+            agent_contract=agent_contract,
+            summary_mode=summary_mode,
+        )
     api_key, _ = _route_identity(route)
     request = build_request(
         messages,
         route,
         session_id=session_id,
         force_task_tool=force_task_tool,
+        agent_contract=agent_contract,
+        summary_mode=summary_mode,
     )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
@@ -334,23 +624,40 @@ async def complete(
             raise RouteContractError("provider_terminal_payload_is_not_json") from error
         if not isinstance(payload, dict):
             raise RouteContractError("provider_terminal_payload_is_not_an_object")
-        return parse_completion(payload)
+        if summary_mode:
+            return parse_compaction_completion(payload)
+        return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
     finally:
         if owns_client:
             await active_client.aclose()
 
 
 async def complete_stream(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
     session_id: str | None = None,
     on_event: ProviderEventSink | None = None,
     force_task_tool: bool = False,
-) -> ProviderCompletion:
+    agent_contract: bool = False,
+    summary_mode: bool = False,
+) -> ProviderCompletion | AgentCompletion:
     """Normalize OpenRouter SSE without exposing raw chunks or partial tool JSON."""
     route = settings or get_settings()
+    if route.mimi_transport == "openai_sdk":
+        from app.agent.openai_sdk import complete_stream as stream_with_openai_sdk
+
+        return await stream_with_openai_sdk(
+            messages,
+            settings=route,
+            client=client,
+            session_id=session_id,
+            on_event=on_event,
+            force_task_tool=force_task_tool,
+            agent_contract=agent_contract,
+            summary_mode=summary_mode,
+        )
     api_key, _ = _route_identity(route)
     request = build_request(
         messages,
@@ -358,6 +665,8 @@ async def complete_stream(
         stream=True,
         session_id=session_id,
         force_task_tool=force_task_tool,
+        agent_contract=agent_contract,
+        summary_mode=summary_mode,
     )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
@@ -413,8 +722,13 @@ async def complete_stream(
                         if isinstance(code, int) and code >= 400:
                             _raise_for_status(code)
                         raise RouteContractError("provider_stream_error_envelope")
-                    if isinstance(chunk.get("id"), str):
-                        response_id = chunk["id"]
+                    if isinstance(chunk.get("id"), str) and chunk["id"]:
+                        if chunk["id"] != response_id:
+                            response_id = chunk["id"]
+                            if on_event:
+                                await on_event(
+                                    "provider.response_identity", {"response_id": response_id}
+                                )
                     if isinstance(chunk.get("provider"), str):
                         provider = chunk["provider"]
                     if isinstance(chunk.get("model"), str):
@@ -451,7 +765,11 @@ async def complete_stream(
                             index = raw_call.get("index", 0)
                             if not isinstance(index, int):
                                 raise RouteContractError("provider_tool_call_index_invalid")
-                            target = tool_calls.setdefault(index, {"name": "", "arguments": ""})
+                            target = tool_calls.setdefault(
+                                index, {"id": "", "name": "", "arguments": ""}
+                            )
+                            if isinstance(raw_call.get("id"), str):
+                                target["id"] += raw_call["id"]
                             function = raw_call.get("function")
                             if isinstance(function, dict):
                                 if isinstance(function.get("name"), str):
@@ -485,10 +803,18 @@ async def complete_stream(
             )
         usage = {**usage, "mimi_timing": timing}
         terminal_calls = [
-            {"function": {"name": item["name"], "arguments": item["arguments"]}}
+            {
+                "id": item["id"],
+                "function": {"name": item["name"], "arguments": item["arguments"]},
+            }
             for _, item in sorted(tool_calls.items())
         ]
-        completion = parse_completion(
+        parser = (
+            parse_compaction_completion
+            if summary_mode
+            else (parse_agent_completion if agent_contract else parse_completion)
+        )
+        completion = parser(
             {
                 "id": response_id,
                 "provider": provider,
@@ -504,7 +830,11 @@ async def complete_stream(
                 ],
             }
         )
-        if completion.kind == "text" and on_event:
+        is_text = (
+            isinstance(completion, AgentCompletion)
+            and isinstance(completion.outcome, AssistantText)
+        ) or (isinstance(completion, ProviderCompletion) and completion.kind == "text")
+        if is_text and on_event:
             for text in content_parts:
                 await on_event("assistant.delta", {"text": text})
         return completion
@@ -519,7 +849,11 @@ async def get_generation(
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any]:
-    """Read OpenRouter's canonical generation metadata for reconciliation."""
+    """Read canonical generation metadata through HTTPX for reconciliation.
+
+    This read-only endpoint stays on HTTPX for both chat transports; the OpenAI
+    SDK does not expose a typed generation endpoint with this contract.
+    """
     route = settings or get_settings()
     api_key, _ = _route_identity(route)
     owns_client = client is None
@@ -534,6 +868,10 @@ async def get_generation(
         except httpx.ConnectError as error:
             raise ProviderDispatchError("retryable", None) from error
         except httpx.TimeoutException as error:
+            raise ProviderDispatchError("unknown", None, response_id=response_id) from error
+        except httpx.TransportError as error:
+            # An interrupted metadata read does not establish whether the
+            # original generation exists; never re-dispatch it implicitly.
             raise ProviderDispatchError("unknown", None, response_id=response_id) from error
         _raise_for_status(response.status_code)
         try:
