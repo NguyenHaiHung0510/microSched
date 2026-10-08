@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     # Explicit alpha transport selection; no automatic fallback on route failure.
     mimi_transport: Literal["httpx", "openai_sdk"] = "httpx"
     mimi_text_response_format: Literal["structured", "natural"] = "structured"
+    mimi_route_min_uptime_percent: float = 95.0
+    mimi_route_uptime_window: Literal["1d", "30m"] = "1d"
+    mimi_route_catalog_checked_at: float | None = None
+    mimi_route_catalog_sha256: str | None = None
+    mimi_collection_enabled: bool = False
+    mimi_revision_collection: bool = False
+    mimi_notifications_enabled: bool = False
     mimi_route_mode: Literal["exact", "adaptive"] = "exact"
     mimi_route_model: str | None = None
     mimi_route_provider: str | None = None
@@ -109,9 +116,9 @@ class Settings(BaseSettings):
     mimi_route_allowed_providers: str = ""
     mimi_route_allowed_quantizations: str = ""
     mimi_route_forced_tool_choice: Literal["none", "required", "function"] = "none"
-    mimi_route_reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high"] = (
-        "low"
-    )
+    mimi_route_reasoning_effort: Literal[
+        "default", "none", "minimal", "low", "medium", "high", "max"
+    ] = "low"
     # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
     mimi_route_context_tokens: int = 1_048_576
     mimi_compaction_trigger_tokens: Literal[100_000] = 100_000
@@ -299,6 +306,15 @@ class Settings(BaseSettings):
         if not 30 <= self.mimi_run_deadline_seconds <= 7_200:
             raise ValueError("MIMI_RUN_DEADLINE_SECONDS must be between 30 and 7200")
         return self
+
+    @field_validator("mimi_route_min_uptime_percent")
+    @classmethod
+    def finite_uptime_threshold(cls, value):
+        import math
+
+        if not math.isfinite(value) or not 0 <= value < 100:
+            raise ValueError("uptime threshold must be finite and0<=value<100")
+        return value
 
     @property
     def mimi_allowed_provider_list(self) -> tuple[str, ...]:

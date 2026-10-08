@@ -242,7 +242,13 @@ def test_readonly_answer_then_preview_has_no_write_before_confirmation(pg_dsn, m
         calls: list[list[dict]] = []
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             assert agent_contract is True
             assert force_task_tool is False
@@ -342,7 +348,13 @@ def test_draft_direction_is_not_write_confirmation(pg_dsn, monkeypatch):
         conversation_id = None
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             assert agent_contract and not force_task_tool
             return AgentCompletion(
@@ -460,7 +472,13 @@ def test_iterative_read_updates_context_without_writing(pg_dsn, monkeypatch):
         monkeypatch.setattr(mimi_service, "get_sessionmaker", lambda: maker)
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             assert agent_contract and not force_task_tool
             requests.append(messages)

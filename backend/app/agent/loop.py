@@ -17,7 +17,7 @@ from app.agent.openrouter import (
     RouteContractError,
     serialized_input_bytes,
 )
-from app.agent.tools.registry import READ_TOOLS
+from app.agent.tools.registry import READ_TOOLS, validate_read_arguments
 
 InvokeModel = Callable[[list[dict[str, Any]], int], Awaitable[AgentCompletion]]
 ExecuteRead = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -50,6 +50,49 @@ class LoopResult:
     stop_code: Literal["deadline_exceeded", "budget_exceeded", "no_progress"] | None = None
 
 
+FINAL_MARKER = "MIMI_SERVER_FINAL_ANSWER_ONLY_V1"
+
+
+def messages_final_only(messages):
+    return bool(
+        messages
+        and messages[-1].get("role") == "system"
+        and messages[-1].get("content", "").startswith(FINAL_MARKER)
+    )
+
+
+def finalization_messages(messages, reason, not_run=()):
+    return [
+        *messages,
+        {
+            "role": "system",
+            "content": FINAL_MARKER
+            + " "
+            + _canonical_json(
+                {
+                    "reason": reason,
+                    "not_run_reads": list(not_run),
+                    "instruction": (
+                        "Return an honest Vietnamese final/partial answer from completed reads. "
+                        "Keep exact selection/page/alias obligations and provenance. "
+                        "No more tool calls or proposals."
+                    ),
+                }
+            ),
+        },
+    ]
+
+
+def validate_fanout(outcome):
+    for request in outcome.requests:
+        if request.name not in READ_TOOLS:
+            raise RouteContractError("model_requested_non_read_tool_in_loop")
+        try:
+            validate_read_arguments(request.name, request.arguments)
+        except ValueError as error:
+            raise RouteContractError("model_read_batch_arguments_invalid") from error
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -69,6 +112,7 @@ async def run_read_loop(
     seen_calls: set[str] = set()
     total_calls = 0
     last_completion: AgentCompletion | None = None
+    final_reason = None
     for turn in range(1, limits.max_turns + 1):
         if datetime.now(UTC) >= limits.deadline:
             return LoopResult(
@@ -79,6 +123,9 @@ async def run_read_loop(
                 tuple(messages),
                 "deadline_exceeded",
             )
+        if final_reason or total_calls >= limits.max_tool_calls or turn == limits.max_turns:
+            if not messages_final_only(messages):
+                messages = finalization_messages(messages, final_reason or "reserved_final_turn")
         if serialized_input_bytes(messages, agent_contract=True) > limits.max_serialized_bytes:
             return LoopResult(
                 Blocked(reason="Ngữ cảnh vượt giới hạn đã cấp; cần compact hoặc thu hẹp phạm vi."),
@@ -109,20 +156,31 @@ async def run_read_loop(
             raise ProviderDispatchError("unknown", None) from error
         last_completion = completion
         outcome = completion.outcome
+        if messages_final_only(messages) and outcome.kind == "preview_candidate":
+            raise RouteContractError("model_violated_final_no_tools")
         if not isinstance(outcome, ToolRequests):
             return LoopResult(outcome, completion, turn, total_calls, tuple(messages))
-        if total_calls + len(outcome.requests) > limits.max_tool_calls:
-            return LoopResult(
-                Blocked(reason="Mimi đã dùng hết số lần đọc được cấp cho lượt này."),
-                completion,
-                turn,
-                total_calls,
-                tuple(messages),
-                "budget_exceeded",
+        if messages_final_only(messages):
+            raise RouteContractError("model_violated_final_no_tools")
+        validate_fanout(outcome)
+        allowance = max(0, limits.max_tool_calls - total_calls)
+        not_run = outcome.requests[allowance:]
+        if not_run:
+            final_reason = "read_budget_exhausted"
+            messages.append(
+                {
+                    "role": "system",
+                    "content": _canonical_json(
+                        {
+                            "not_run_reads": [r.model_dump(mode="json") for r in not_run],
+                            "reason": final_reason,
+                        }
+                    ),
+                }
             )
         if on_stage:
             await on_stage("executing_read_tools", {"turn": turn, "count": len(outcome.requests)})
-        for request in outcome.requests:
+        for request in outcome.requests[:allowance]:
             if datetime.now(UTC) >= limits.deadline:
                 return LoopResult(
                     Blocked(reason="Mimi đã chạm thời hạn lượt chạy; bạn có thể tiếp tục sau."),

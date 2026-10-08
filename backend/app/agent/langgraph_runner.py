@@ -27,6 +27,9 @@ from app.agent.loop import (
     LoopLimits,
     LoopResult,
     StageSink,
+    finalization_messages,
+    messages_final_only,
+    validate_fanout,
 )
 from app.agent.openrouter import (
     AgentCompletion,
@@ -73,11 +76,10 @@ def checkpoint_thread_id(run_id: UUID, generation: int) -> str:
 
 
 def _authorized_local_database(parsed_url: Any) -> bool:
-    return (
-        parsed_url.host in {"localhost", "127.0.0.1", "::1"}
-        and parsed_url.port == 55478
-        and parsed_url.database == "microsched_mimi078"
-    )
+    return parsed_url.host in {"localhost", "127.0.0.1", "::1"} and (
+        parsed_url.port,
+        parsed_url.database,
+    ) in {(55478, "microsched_mimi078"), (21886, "microsched_mimi086"), (21887, "mimi086_qa")}
 
 
 def validate_checkpoint_values(values: Any, expected: GraphState) -> None:
@@ -173,6 +175,7 @@ async def run_langgraph(
         "read_results": {},
         "read_result_fingerprints": {},
         "replay_cached_call_ids": set(),
+        "final_reason": None,
     }
 
     def finish_blocked(
@@ -191,6 +194,15 @@ async def run_langgraph(
                 frame["last_completion"],
             )
             return {"phase": "terminal", "turn": turn - 1, "step": state["step"] + 1}
+        if frame["pending_completion"] is None and (
+            frame["final_reason"]
+            or state["tool_calls"] >= limits.max_tool_calls
+            or turn == limits.max_turns
+        ):
+            if not messages_final_only(frame["messages"]):
+                frame["messages"] = finalization_messages(
+                    frame["messages"], frame["final_reason"] or "reserved_final_turn"
+                )
         if (
             serialized_input_bytes(frame["messages"], agent_contract=True)
             > limits.max_serialized_bytes
@@ -223,13 +235,33 @@ async def run_langgraph(
         frame["last_completion"] = completion
         frame["completion"] = completion
         frame["outcome"] = completion.outcome
+        if (
+            messages_final_only(frame["messages"])
+            and completion.outcome.kind == "preview_candidate"
+        ):
+            raise RouteContractError("model_violated_final_no_tools")
         if not isinstance(completion.outcome, ToolRequests):
             return {"phase": "terminal", "turn": turn, "step": state["step"] + 1}
-        if state["tool_calls"] + len(completion.outcome.requests) > limits.max_tool_calls:
-            finish_blocked(
-                "Mimi đã dùng hết số lần đọc được cấp cho lượt này.", "budget_exceeded", completion
+        if messages_final_only(frame["messages"]):
+            raise RouteContractError("model_violated_final_no_tools")
+        validate_fanout(completion.outcome)
+        allowance = max(0, limits.max_tool_calls - state["tool_calls"])
+        if len(completion.outcome.requests) > allowance:
+            frame["final_reason"] = "read_budget_exhausted"
+            frame["messages"].append(
+                {
+                    "role": "system",
+                    "content": _canonical_json(
+                        {
+                            "not_run_reads": [
+                                r.model_dump(mode="json")
+                                for r in completion.outcome.requests[allowance:]
+                            ],
+                            "reason": "read_budget_exhausted",
+                        }
+                    ),
+                }
             )
-            return {"phase": "terminal", "turn": turn, "step": state["step"] + 1}
         return {"phase": "read", "turn": turn, "step": state["step"] + 1}
 
     async def read_step(state: GraphState) -> dict[str, Any]:
@@ -237,7 +269,7 @@ async def run_langgraph(
         if completion is None or not isinstance(completion.outcome, ToolRequests):
             raise RouteContractError("langgraph_read_without_tool_requests")
         total_calls = state["tool_calls"]
-        for request in completion.outcome.requests:
+        for request in completion.outcome.requests[: max(0, limits.max_tool_calls - total_calls)]:
             if datetime.now(UTC) >= limits.deadline:
                 finish_blocked(
                     "Mimi đã chạm thời hạn lượt chạy; bạn có thể tiếp tục sau.",

@@ -18,14 +18,25 @@ class MimiPolicy:
     text: str
 
 
-def load_standard_policy() -> MimiPolicy:
+def load_standard_policy(*, collection_enabled: bool | None = None) -> MimiPolicy:
     """Fail closed on encoding or source drift from the versioned local candidate text."""
 
-    raw = _POLICY_PATH.read_bytes()
+    if collection_enabled is None:
+        from app.core.settings import get_settings
+
+        collection_enabled = get_settings().mimi_collection_enabled
+    path = _POLICY_PATH.with_name("mimi-standard-v3.md") if collection_enabled else _POLICY_PATH
+    expected_sha256 = (
+        "8cf35b4fdbb223410f9cfa6f22d8aa57a667e096d99a0444d0a73415d6b8afef"
+        if collection_enabled
+        else POLICY_SHA256
+    )
+    policy_id = "mimi-standard-v3" if collection_enabled else POLICY_ID
+    raw = path.read_bytes()
     text = raw.decode("utf-8", errors="strict").replace("\r\n", "\n")
     if text.startswith("\ufeff") or "\r" in text or not text.endswith("\n"):
         raise ValueError("invalid_mimi_policy_encoding")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    if digest != POLICY_SHA256:
+    if digest != expected_sha256:
         raise ValueError("mimi_policy_digest_mismatch")
-    return MimiPolicy(policy_id=POLICY_ID, sha256=digest, text=text)
+    return MimiPolicy(policy_id=policy_id, sha256=digest, text=text)

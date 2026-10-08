@@ -40,7 +40,7 @@ from app.agent.context import (
 )
 from app.agent.context_builder import assemble_context, rebind_after_read
 from app.agent.contracts import ChangeOperation, ExecutionLease, FrozenChangeSet, Sensitivity
-from app.agent.loop import LoopLimits, run_read_loop
+from app.agent.loop import LoopLimits, messages_final_only, run_read_loop
 from app.agent.models import (
     MimiChangeSet,
     MimiConversation,
@@ -77,6 +77,18 @@ from app.agent.route_config import (
     validate_configuration,
 )
 from app.agent.runtime import OwnerPauseRequested, run_guard_key
+from app.agent.selection import SELECTION_TOOL, covered_versions, load_selection, persist_selection
+from app.agent.task_collection import (
+    COLLECTION_CANDIDATE_TOOL,
+    COLLECTION_TOOL,
+    CollectionCandidate,
+    PreparedCollection,
+    execute_collection,
+    freeze_collection,
+)
+from app.agent.task_collection import (
+    canonical as collection_json,
+)
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, execute_read_tool
 from app.core.db import get_engine, get_sessionmaker
 from app.core.settings import Settings, get_settings
@@ -390,6 +402,10 @@ async def _append_event(
     sequence = (latest or 0) + 1
     db.add(MimiEvent(run_id=run_id, sequence=sequence, kind=kind, payload=payload))
     await db.flush()
+    if kind in {"run.terminal", "change_set.ready"} and get_settings().mimi_notifications_enabled:
+        from app.agent.notifications import queue_completion
+
+        await queue_completion(db, run_id, sequence, kind)
     return sequence
 
 
@@ -1592,6 +1608,7 @@ async def list_standard_tasks(
             "due_on": row.due_on,
             "due_at": row.due_at,
             "source_version": row.updated_at,
+            "collection_version": row.collection_version,
             "provenance": "microsched.task.standard.v1",
         }
         for row in rows
@@ -1654,6 +1671,15 @@ async def send_message(
         settings = bind_configuration(
             settings, conversation.route_config or default_configuration(settings)
         )
+    route_pool = None
+    if settings.mimi_live_provider_enabled and settings.mimi_route_mode == "adaptive":
+        from app.agent.route_pool import NoEligibleEndpoint, bind_pool
+
+        try:
+            settings, route_pool = await bind_pool(settings)
+        except NoEligibleEndpoint as error:
+            raise HTTPException(409, str(error)) from error
+
     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
         provider_history: list[dict[str, str]] = []
         transcript_range: tuple[int, int] | None = None
@@ -1738,6 +1764,14 @@ async def send_message(
         for old_change_set, _ in pending_previews
     ]
     force_task_tool = payload.intent == "revise_pending_preview"
+    if force_task_tool and prior_preview_operations:
+        settings = settings.model_copy(
+            update={
+                "mimi_revision_collection": any(
+                    op.get("tool") == COLLECTION_TOOL for op in prior_preview_operations
+                )
+            }
+        )
     observed_pending_id = observed_pending[0].id if observed_pending else None
     observed_pending_digest = observed_pending[0].digest_sha256 if observed_pending else None
 
@@ -1765,14 +1799,34 @@ async def send_message(
         owner_id=conversation.owner_id,
         run_id=run_id,
         capabilities=(
-            (*sorted(READ_TOOLS), CREATE_CANDIDATE_TOOL)
+            (
+                *sorted(READ_TOOLS - {SELECTION_TOOL}),
+                CREATE_CANDIDATE_TOOL,
+                *(
+                    (SELECTION_TOOL, COLLECTION_CANDIDATE_TOOL, COLLECTION_TOOL)
+                    if settings.mimi_collection_enabled
+                    else ()
+                ),
+            )
             if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
             else (TOOL_VERSION, "task.read.standard.v1")
         ),
         issued_at=now,
         deadline=deadline,
-        max_turns=settings.mimi_run_max_turns if settings.mimi_context_v1_enabled else 1,
-        max_tool_calls=settings.mimi_run_max_tool_calls if settings.mimi_context_v1_enabled else 1,
+        max_turns=(
+            min(32, settings.mimi_run_max_turns)
+            if settings.mimi_collection_enabled
+            else settings.mimi_run_max_turns
+        )
+        if settings.mimi_context_v1_enabled
+        else 1,
+        max_tool_calls=(
+            min(64, settings.mimi_run_max_tool_calls)
+            if settings.mimi_collection_enabled
+            else settings.mimi_run_max_tool_calls
+        )
+        if settings.mimi_context_v1_enabled
+        else 1,
         cost_cap_minor=0,
         sensitivity=Sensitivity.STANDARD,
         source_versions=source_versions,
@@ -1928,6 +1982,11 @@ async def send_message(
         {"role": "user", "content": payload.content},
     ]
     context_envelope = None
+    selection_context = None
+    if settings.mimi_collection_enabled:
+        from app.agent.selection import latest_selection
+
+        selection_context = await latest_selection(db, conversation.id, dek)
     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
         pending_preview = (
             PendingPreview(
@@ -1960,6 +2019,7 @@ async def send_message(
                 remaining_turns=lease.max_turns,
                 remaining_tool_calls=lease.max_tool_calls,
                 pending_draft_content=pending_draft_content,
+                selection_context=selection_context,
             )
         except ValueError as error:
             run.state = "budget_exceeded"
@@ -2152,6 +2212,8 @@ async def send_message(
                 "context_revision": context_revision(settings, run_config_version, checkpoint_id),
                 "compaction_trigger_tokens": 100_000,
                 "mode": settings.mimi_route_mode,
+                "catalog_sha256": settings.mimi_route_catalog_sha256,
+                "catalog_checked_at": settings.mimi_route_catalog_checked_at,
                 "model": settings.mimi_route_model,
                 "providers": (
                     [settings.mimi_route_provider]
@@ -2289,6 +2351,38 @@ async def send_message(
                     # Return the ORM connection to the shared pool while waiting
                     # for the provider. The separate run guard keeps crash fencing.
                     await db.commit()
+                    if not (turn == 1 and continuation_completion is not None):
+                        request_sequence = await _append_event(
+                            db, run_id, "provider.request_context", {}
+                        )
+                        request_event = (
+                            await db.scalars(
+                                select(MimiEvent).where(
+                                    MimiEvent.run_id == run_id,
+                                    MimiEvent.sequence == request_sequence,
+                                )
+                            )
+                        ).one()
+                        request_snapshot = {
+                            "call_id": str(call.id),
+                            "attempt": call.attempt,
+                            "messages": messages,
+                            "manifest": context_envelope.manifest.model_dump(mode="json"),
+                            "route_config": conversation.route_config
+                            or default_configuration(settings),
+                            "final_answer_only": messages_final_only(messages),
+                        }
+                        request_event.payload = {
+                            "sha256": _canonical_digest(request_snapshot),
+                            "body_ciphertext": mimi_crypto.seal_content(
+                                dek,
+                                collection_json(request_snapshot),
+                                aad=mimi_crypto.event_content_aad(
+                                    run_id, request_sequence, request_event.kind
+                                ),
+                            ),
+                        }
+                        await db.commit()
                     if turn == 1 and continuation_completion is not None:
                         result = continuation_completion
                         call.route = {
@@ -2308,6 +2402,7 @@ async def send_message(
                                 on_event=persist_agent_event,
                                 force_task_tool=force_task_tool,
                                 agent_contract=True,
+                                final_answer_only=messages_final_only(messages),
                             )
                         except RouteContractError as error:
                             receipt = getattr(error, "terminal_receipt", None)
@@ -2357,6 +2452,7 @@ async def send_message(
                             session_id=_provider_session_id(conversation.id),
                             force_task_tool=force_task_tool,
                             agent_contract=True,
+                            final_answer_only=messages_final_only(messages),
                         )
                         account(settings, reservation, result.usage, result.response_id)
                     if not isinstance(result, AgentCompletion):
@@ -2403,15 +2499,33 @@ async def send_message(
                         cached = continuation_read_cache.pop(
                             (name, _canonical_digest(arguments)), None
                         )
-                        if cached is not None:
-                            return cached
                         read_factory = get_sessionmaker()
                         if read_factory is None:
                             raise RouteContractError("mimi_read_database_unavailable")
                         # A cancelled bounded read must not poison the ledger
                         # transaction used to record the run's terminal state.
-                        async with read_factory() as read_db:
-                            result = await execute_read_tool(read_db, name, arguments)
+                        if cached is not None:
+                            result = cached
+                        elif name == SELECTION_TOOL:
+                            if not settings.mimi_collection_enabled:
+                                raise RouteContractError("mimi_collection_feature_disabled")
+                            selection = await persist_selection(
+                                db, conversation.id, run_id, dek, arguments, _append_event
+                            )
+                            result = {
+                                "selection": selection,
+                                "rows": [],
+                                "count": len(selection["members"]),
+                                "coverage": "complete"
+                                if selection["semantic_complete"]
+                                else "partial",
+                                "data_as_of": selection["as_of"],
+                                "omitted_fields": [],
+                                "projection": [],
+                            }
+                        else:
+                            async with read_factory() as read_db:
+                                result = await execute_read_tool(read_db, name, arguments)
                     except ValueError as error:
                         raise RouteContractError(str(error)) from error
                     sequence = await _append_event(
@@ -2600,12 +2714,32 @@ async def send_message(
                     "model": last.model if last else None,
                 }
                 if isinstance(outcome, PreviewCandidate):
-                    if outcome.tool != CREATE_CANDIDATE_TOOL:
+                    if outcome.tool == COLLECTION_CANDIDATE_TOOL:
+                        if not settings.mimi_collection_enabled:
+                            raise RouteContractError("mimi_collection_feature_disabled")
+                        candidate = CollectionCandidate.model_validate(outcome.arguments)
+                        ids = [entry.id for entry in candidate.entries if entry.id is not None]
+                        bound = {}
+                        if ids:
+                            selection = await load_selection(
+                                db, conversation.id, candidate.selection_id, dek
+                            )
+                            bound = covered_versions(selection, ids)
+                        prepared = await freeze_collection(db, candidate, covered_versions=bound)
+                        completion = ProviderCompletion(
+                            kind="collection",
+                            task=None,
+                            text=None,
+                            collection=prepared.model_dump(mode="json"),
+                            **common,
+                        )
+                    elif outcome.tool == CREATE_CANDIDATE_TOOL:
+                        candidate = validate_task_candidate(outcome.arguments, require_id=False)
+                        completion = ProviderCompletion(
+                            kind="task", task=candidate, text=None, **common
+                        )
+                    else:
                         raise RouteContractError("preview_candidate_tool_invalid")
-                    candidate = validate_task_candidate(outcome.arguments, require_id=False)
-                    completion = ProviderCompletion(
-                        kind="task", task=candidate, text=None, **common
-                    )
                 else:
                     if isinstance(outcome, AssistantText):
                         text_result = outcome.text
@@ -2680,7 +2814,11 @@ async def send_message(
                     session_id=_provider_session_id(conversation.id),
                     force_task_tool=force_task_tool,
                 )
-            if force_task_tool and completion.kind != "task" and agent_stop_code is None:
+            if (
+                force_task_tool
+                and completion.kind not in {"task", "collection"}
+                and agent_stop_code is None
+            ):
                 raise RouteContractError("provider_revision_must_return_task_tool")
             if (
                 completion.kind == "task"
@@ -2912,6 +3050,10 @@ async def send_message(
                     "kind": "text",
                     "result_sha256": hashlib.sha256(completion.text.encode("utf-8")).hexdigest(),
                 }
+        elif completion.kind == "collection":
+            if completion.collection is None:
+                raise RouteContractError("provider_collection_result_missing")
+            provider_args = completion.collection
         else:
             if completion.task is None:
                 raise RouteContractError("provider_task_result_missing")
@@ -3163,9 +3305,14 @@ async def send_message(
     operation_id = uuid7()
     nonce = uuid7()
     expires_at = now + timedelta(minutes=settings.mimi_preview_ttl_minutes)
+    operation_tool = (
+        COLLECTION_TOOL
+        if operation_args.get("schema_version") == "mimi.task-collection.v1"
+        else TOOL_VERSION
+    )
     operation = ChangeOperation(
         operation_id=operation_id,
-        tool=TOOL_VERSION,
+        tool=operation_tool,
         args=operation_args,
         expected_entity_version=None,
         reversible=True,
@@ -3199,7 +3346,12 @@ async def send_message(
     db.add(change_set)
     run.state = "waiting_confirmation"
 
-    assistant = "Mình đã đóng băng một preview tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
+    assistant = (
+        f"Mình đã đóng băng phương án cho {len(operation_args['entries'])} Task. "
+        "Chưa áp dụng; hãy kiểm tra thay đổi và xác nhận."
+        if operation_tool == COLLECTION_TOOL
+        else "Mình đã đóng băng một preview tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
+    )
     _add_assistant_message(db, conversation, run_id, dek, assistant)
     await _append_event(
         db,
@@ -3249,6 +3401,15 @@ async def confirm_change_set(
         ):
             raise _conflict("idempotency_key_reused_with_different_digest")
         return _receipt_read(receipt)
+
+    if (
+        await db.scalar(
+            select(MimiExecutionReceipt.id).where(
+                MimiExecutionReceipt.idempotency_key == idempotency_key
+            )
+        )
+    ) is not None:
+        raise _conflict("idempotency_key_not_available")
 
     result = await db.execute(
         select(MimiChangeSet, MimiRun, MimiConversation)
@@ -3326,6 +3487,34 @@ async def confirm_change_set(
         )
         await db.flush()
         return {"change_set_id": change_set.id, "state": "rejected"}
+
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    try:
+        decoded_operation = ChangeOperation.model_validate(
+            json.loads(
+                mimi_crypto.open_content(
+                    dek,
+                    change_set.operation_ciphertext,
+                    aad=mimi_crypto.change_set_aad(conversation.id, change_set.id),
+                )
+            )
+        )
+    except ValueError, ValidationError:
+        await invalidate_frozen_change_set("change_set_ciphertext_invalid")
+    if decoded_operation.tool == COLLECTION_TOOL:
+        if not get_settings().mimi_collection_enabled:
+            raise HTTPException(409, "mimi_collection_feature_disabled")
+        return await _confirm_collection(
+            db,
+            auth,
+            conversation,
+            run,
+            change_set,
+            decoded_operation,
+            idempotency_key,
+            dek,
+            invalidate_frozen_change_set,
+        )
 
     # A preview is bound to the versioned Task evidence the model saw. Hold
     # read locks through the domain write so a concurrent edit cannot pass the
@@ -3436,6 +3625,9 @@ async def confirm_change_set(
         "change_set.executed",
         {"receipt_id": str(receipt.id), "task_id": str(task.id)},
     )
+    _add_assistant_message(
+        db, conversation, run.id, dek, "Đã tạo Task theo phương án bạn xác nhận."
+    )
     change_set.state = "executed"
     run.state = "completed"
     run.completed_at = now
@@ -3465,6 +3657,10 @@ async def save_feedback(
     if not target_exists:
         raise _not_found()
 
+    from app.agent.evidence import capture_feedback
+
+    # Validate caller refs even on idempotent replay, but do not create another
+    # bundle unless a new feedback client ID is inserted.
     existing = (
         await db.execute(
             select(MimiFeedback).where(
@@ -3476,6 +3672,9 @@ async def save_feedback(
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
     if existing is None:
         feedback_id = uuid7()
+        bundle = await capture_feedback(
+            db, conversation, payload.target_type, payload.target_id, payload.evidence_bundle_ids
+        )
         existing = MimiFeedback(
             id=feedback_id,
             conversation_id=conversation.id,
@@ -3496,7 +3695,10 @@ async def save_feedback(
                 if payload.expected is not None
                 else None
             ),
-            evidence_bundle_ids=[str(item) for item in payload.evidence_bundle_ids],
+            evidence_bundle_ids=[
+                str(bundle.id),
+                *[str(item) for item in payload.evidence_bundle_ids],
+            ],
         )
         db.add(existing)
         await db.flush()
@@ -3520,7 +3722,8 @@ async def save_feedback(
             or existing.target_id != payload.target_id
             or existing_comment != payload.comment
             or existing_expected != payload.expected
-            or existing.evidence_bundle_ids != [str(item) for item in payload.evidence_bundle_ids]
+            or existing.evidence_bundle_ids[1:]
+            != [str(item) for item in payload.evidence_bundle_ids]
         ):
             raise _conflict("feedback_client_id_reused_with_different_content")
     return {
@@ -3528,6 +3731,7 @@ async def save_feedback(
         "client_id": existing.client_id,
         "target_type": existing.target_type,
         "target_id": existing.target_id,
+        "evidence_bundle_ids": existing.evidence_bundle_ids,
         "state": existing.state,
         "unresolved": existing.unresolved,
         "created_at": existing.created_at,
@@ -4336,3 +4540,219 @@ async def reconcile_refresh_markers_after_snapshot(db: AsyncSession) -> None:
     """Cron hook: ACK markers only after a successful durable-state snapshot."""
     if await reconcile_refresh_markers(db):
         await db.commit()
+
+
+async def _confirm_collection(
+    db, auth, conversation, run, change_set, operation, idempotency_key, dek, invalidate
+):
+    frozen = FrozenChangeSet(
+        change_set_id=change_set.id,
+        run_id=run.id,
+        operations=(operation,),
+        expires_at=change_set.expires_at,
+        nonce=change_set.nonce,
+        digest_sha256=change_set.digest_sha256,
+        idempotency_key=f"preview:{change_set.id}",
+    )
+    if frozen.calculated_digest() != change_set.digest_sha256:
+        await invalidate("change_set_digest_invalid")
+    if conversation.sensitivity != "standard" or conversation.is_private:
+        await invalidate("task_collection_conversation_not_standard")
+    if conversation.generation != run.generation + 1:
+        await invalidate("change_set_frontier_stale")
+    lease = run.execution_lease
+    if lease.get("revoked_at") is not None or COLLECTION_TOOL not in lease.get("capabilities", []):
+        await invalidate("change_set_collection_lease_not_authorized")
+    try:
+        plan = PreparedCollection.model_validate(operation.args)
+    except ValueError, ValidationError:
+        await invalidate("change_set_collection_invalid")
+    # Execution errors MUST unwind the request transaction; invalidation commits
+    # are permitted only before the first domain mutation.
+    recovery = await execute_collection(db, auth, plan)
+    # execute_collection validates every target before any mutation. An HTTP409
+    # from it unwinds the request with rollback; it is never caught to commit partials.
+    receipt = MimiExecutionReceipt(
+        id=uuid7(),
+        change_set_id=change_set.id,
+        operation_id=operation.operation_id,
+        task_id=plan.entries[0].id,
+        digest_sha256=change_set.digest_sha256,
+        idempotency_key=idempotency_key,
+        result={
+            "schema_version": "mimi.execution-receipt.v2",
+            "task_ids": [str(e.id) for e in plan.entries],
+            "count": len(plan.entries),
+            "undo_available": True,
+        },
+        executed_at=datetime.now(UTC),
+    )
+    receipt.result_ciphertext = mimi_crypto.seal_content(
+        dek, collection_json(recovery), aad=f"mimi-receipt:{conversation.id}:{receipt.id}:recovery"
+    )
+    db.add(receipt)
+    await db.flush()
+    db.add(
+        MimiRefreshMarker(
+            receipt_id=receipt.id, state="pending", reason="mimi.task.collection.committed"
+        )
+    )
+    db.add(
+        AuditLog(
+            trace_id=conversation.id,
+            turn_id=run.id,
+            action="mimi.task.collection.executed",
+            tool=COLLECTION_TOOL,
+            entity_type="task",
+            entity_id=plan.entries[0].id,
+            payload={
+                "receipt_id": str(receipt.id),
+                "digest": change_set.digest_sha256,
+                "count": len(plan.entries),
+            },
+        )
+    )
+    _add_assistant_message(
+        db,
+        conversation,
+        run.id,
+        dek,
+        f"Đã áp dụng thay đổi cho {len(plan.entries)} Task. "
+        "Bạn có thể xem receipt và chuẩn bị hoàn tác.",
+    )
+    change_set.state = "executed"
+    run.state = "completed"
+    run.completed_at = datetime.now(UTC)
+    await _append_event(
+        db,
+        run.id,
+        "change_set.executed",
+        {"receipt_id": str(receipt.id), "count": len(plan.entries)},
+    )
+    await _append_event(
+        db, run.id, "run.terminal", {"state": "completed", "result": "collection_executed"}
+    )
+    await db.flush()
+    return _receipt_read(receipt)
+
+
+async def prepare_receipt_undo(db, auth, receipt_id):
+    if not get_settings().mimi_collection_enabled:
+        raise HTTPException(409, "mimi_collection_feature_disabled")
+    found = (
+        await db.execute(
+            select(MimiExecutionReceipt, MimiChangeSet, MimiRun, MimiConversation)
+            .join(MimiChangeSet, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
+            .where(
+                MimiExecutionReceipt.id == receipt_id, MimiConversation.owner_id == _owner_id(auth)
+            )
+            .with_for_update()
+        )
+    ).first()
+    if found is None:
+        raise _not_found()
+    receipt, _, _, conversation = found
+    if receipt.result_ciphertext is None:
+        raise _conflict("receipt_has_no_durable_inverse")
+    if await db.scalar(
+        select(MimiRun.id)
+        .where(
+            MimiRun.conversation_id == conversation.id,
+            MimiRun.state.in_(
+                ["accepted", "building", "running", "waiting_confirmation", "executing"]
+            ),
+        )
+        .limit(1)
+    ):
+        raise _conflict("finish_active_run_before_undo")
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    recovery = json.loads(
+        mimi_crypto.open_content(
+            dek,
+            receipt.result_ciphertext,
+            aad=f"mimi-receipt:{conversation.id}:{receipt.id}:recovery",
+        )
+    )
+    from app.agent.task_collection import freeze_undo
+
+    plan = await freeze_undo(db, receipt.id, recovery)
+    now = datetime.now(UTC)
+    rid = uuid7()
+    generation = conversation.generation
+    lease = ExecutionLease(
+        lease_id=uuid7(),
+        owner_id=conversation.owner_id,
+        run_id=rid,
+        capabilities=(COLLECTION_TOOL,),
+        issued_at=now,
+        deadline=now + timedelta(minutes=15),
+        max_turns=1,
+        max_tool_calls=1,
+        cost_cap_minor=0,
+        sensitivity=Sensitivity.STANDARD,
+    )
+    run = MimiRun(
+        id=rid,
+        conversation_id=conversation.id,
+        generation=generation,
+        state="waiting_confirmation",
+        execution_lease=lease.model_dump(mode="json"),
+        deadline=lease.deadline,
+        source_versions={},
+    )
+    db.add(run)
+    conversation.generation += 1
+    await db.flush()
+    cid = uuid7()
+    nonce = uuid7()
+    operation = ChangeOperation(
+        operation_id=uuid7(),
+        tool=COLLECTION_TOOL,
+        args=plan.model_dump(mode="json"),
+        reversible=True,
+    )
+    frozen = FrozenChangeSet(
+        change_set_id=cid,
+        run_id=rid,
+        operations=(operation,),
+        expires_at=lease.deadline,
+        nonce=nonce,
+        digest_sha256="0" * 64,
+        idempotency_key=f"preview:{cid}",
+    )
+    change = MimiChangeSet(
+        id=cid,
+        run_id=rid,
+        state="pending",
+        digest_sha256=frozen.calculated_digest(),
+        nonce=nonce,
+        expires_at=lease.deadline,
+        policy_version=POLICY_VERSION,
+        operation_ciphertext=mimi_crypto.seal_content(
+            dek,
+            collection_json(operation.model_dump(mode="json")),
+            aad=mimi_crypto.change_set_aad(conversation.id, cid),
+        ),
+    )
+    db.add(change)
+    _add_assistant_message(
+        db,
+        conversation,
+        rid,
+        dek,
+        "Đã chuẩn bị phương án hoàn tác có kiểm tra phiên bản. Chưa áp dụng.",
+    )
+    await _append_event(
+        db,
+        rid,
+        "change_set.ready",
+        {
+            "change_set_id": str(cid),
+            "digest": change.digest_sha256,
+            "undo_receipt_id": str(receipt.id),
+        },
+    )
+    await db.flush()
+    return await conversation_view(db, auth, conversation.id)

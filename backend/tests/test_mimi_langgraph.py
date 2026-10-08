@@ -29,7 +29,7 @@ from app.agent.langgraph_runner import (
     run_langgraph,
     validate_checkpoint_values,
 )
-from app.agent.loop import LoopLimits, run_read_loop
+from app.agent.loop import LoopLimits, messages_final_only, run_read_loop
 from app.agent.openrouter import AgentCompletion, ProviderDispatchError, RouteContractError
 from app.agent.service import _checkpoint_failure_outcome
 from app.core.qa_event_loop import selector_loop_factory
@@ -54,7 +54,7 @@ def _limits(**overrides):
     values = {
         "max_turns": 4,
         "max_tool_calls": 3,
-        "max_serialized_bytes": 10_000,
+        "max_serialized_bytes": 100_000,
         "deadline": datetime.now(UTC) + timedelta(seconds=5),
     }
     values.update(overrides)
@@ -106,7 +106,7 @@ async def _run_graph(
 def test_langgraph_replaces_loop_and_matches_read_then_terminal_control() -> None:
     async def scenario():
         request = ToolRequests(
-            requests=(ToolRequest(call_id="read-1", name="task.query.v1", arguments={"page": 1}),)
+            requests=(ToolRequest(call_id="read-1", name="task.query.v1", arguments={"limit": 1}),)
         )
 
         async def control_invoke(messages, turn):
@@ -127,7 +127,7 @@ def test_langgraph_replaces_loop_and_matches_read_then_terminal_control() -> Non
         assert graph.tool_calls == control.tool_calls == 1
         assert graph.messages == control.messages
         assert graph.messages[-2]["content"] is None
-        assert graph.messages[-2]["tool_calls"][0]["function"]["arguments"] == '{"page":1}'
+        assert graph.messages[-2]["tool_calls"][0]["function"]["arguments"] == '{"limit":1}'
         assert graph.messages[-1]["role"] == "tool"
         assert graph.messages[-1]["tool_call_id"] == "read-1"
         assert [call[0] for call in calls] == [1, 2]
@@ -148,7 +148,9 @@ def test_langgraph_no_progress_and_write_tool_fail_closed() -> None:
     async def scenario():
         same = _completion(
             ToolRequests(
-                requests=(ToolRequest(call_id="same", name="task.query.v1", arguments={"p": 1}),)
+                requests=(
+                    ToolRequest(call_id="same", name="task.query.v1", arguments={"limit": 1}),
+                )
             )
         )
         graph, calls, _ = await _run_graph([same, same], lambda name, args: _read_value())
@@ -225,56 +227,44 @@ def test_langgraph_deadline_and_turn_budget_match_current_control():
         assert graph.stop_code == control.stop_code == "deadline_exceeded"
         assert calls == []
 
-        repeated = _completion(
-            ToolRequests(
-                requests=(ToolRequest(call_id="p", name="task.query.v1", arguments={"p": 1}),)
-            )
-        )
-        control_responses = [repeated, repeated]
-        graph_responses = [repeated, repeated]
+        final = _completion(AssistantText(text="Partial answer; no further reads."))
 
-        async def control_invoke(messages, turn):
-            return control_responses.pop(0)
+        async def final_invoke(messages, turn):
+            assert messages_final_only(messages)
+            return final
 
         control = await run_read_loop(
-            [],
-            limits=_limits(max_turns=1),
-            invoke_model=control_invoke,
-            execute_read=_read_value,
+            [], limits=_limits(max_turns=1), invoke_model=final_invoke, execute_read=_read_value
         )
-        graph, calls, _ = await _run_graph(
-            graph_responses, _read_value, limits=_limits(max_turns=1)
-        )
-        assert graph.outcome == control.outcome
-        assert graph.stop_code == control.stop_code == "budget_exceeded"
+        graph, calls, _ = await _run_graph([final], _read_value, limits=_limits(max_turns=1))
+        assert graph.outcome == control.outcome == final.outcome
+        assert graph.tool_calls == control.tool_calls == 0
         assert graph.turns == control.turns == 1
-        assert graph.tool_calls == control.tool_calls == 1
         assert len(calls) == 1
 
         two_reads = _completion(
             ToolRequests(
                 requests=(
-                    ToolRequest(call_id="one", name="task.query.v1", arguments={"p": 1}),
-                    ToolRequest(call_id="two", name="task.query.v1", arguments={"p": 2}),
+                    ToolRequest(call_id="one", name="task.query.v1", arguments={"limit": 1}),
+                    ToolRequest(call_id="two", name="task.query.v1", arguments={"limit": 2}),
                 )
             )
         )
 
         async def over_tool_budget(messages, turn):
-            return two_reads
+            return two_reads if turn == 1 else final
 
         tight_calls = _limits(max_tool_calls=1)
+        initial = [{"role": "system", "content": "synthetic policy"}]
         control = await run_read_loop(
-            [],
-            limits=tight_calls,
-            invoke_model=over_tool_budget,
-            execute_read=_read_value,
+            initial, limits=tight_calls, invoke_model=over_tool_budget, execute_read=_read_value
         )
-        graph, calls, _ = await _run_graph([two_reads], _read_value, limits=tight_calls)
-        assert graph.outcome == control.outcome
-        assert graph.stop_code == control.stop_code == "budget_exceeded"
-        assert graph.tool_calls == control.tool_calls == 0
-        assert len(calls) == 1
+        graph, calls, _ = await _run_graph([two_reads, final], _read_value, limits=tight_calls)
+        assert graph.outcome == control.outcome == final.outcome
+        assert graph.messages == control.messages
+        assert graph.tool_calls == control.tool_calls == 1
+        assert len(calls) == 2
+        assert "not_run_reads" in str(control.messages)
 
         tight_bytes = _limits(max_serialized_bytes=8)
         control = await run_read_loop(
@@ -406,7 +396,7 @@ def test_restart_after_read_reuses_journaled_result_without_second_read() -> Non
         run_id = uuid4()
         request = ToolRequests(
             requests=(
-                ToolRequest(call_id="cached-call", name="task.query.v1", arguments={"page": 1}),
+                ToolRequest(call_id="cached-call", name="task.query.v1", arguments={"limit": 1}),
             )
         )
         completion = _completion(request)
@@ -416,7 +406,7 @@ def test_restart_after_read_reuses_journaled_result_without_second_read() -> Non
         cached = {"count": 7, "coverage": "complete"}
         fingerprint = hashlib.sha256(
             json.dumps(
-                {"name": "task.query.v1", "arguments": {"page": 1}},
+                {"name": "task.query.v1", "arguments": {"limit": 1}},
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -773,8 +763,11 @@ def test_emergency_bounds_stop_before_over_limit_dispatch_or_read(runner, bounda
 
         async def invoke(messages, turn):
             invocations.append(turn)
-            # Twenty-one valid batches read63 items; the next batch would
-            # exceed64 and must be rejected before either read executes.
+            if messages_final_only(messages):
+                return _completion(
+                    AssistantText(text="Honest partial result from completed reads.")
+                )
+            # Last fitting read executes; omitted reads are reported before finalization.
             count = (2 if turn == 22 else 3) if boundary == "tools" else 1
             return _completion(
                 ToolRequests(
@@ -782,7 +775,7 @@ def test_emergency_bounds_stop_before_over_limit_dispatch_or_read(runner, bounda
                         ToolRequest(
                             call_id=f"step-{turn}-{index}",
                             name="task.query.v1",
-                            arguments={"page": turn, "index": index},
+                            arguments={"filter": {"title_contains": f"synthetic-{turn}-{index}"}},
                         )
                         for index in range(count)
                     )
@@ -808,13 +801,15 @@ def test_emergency_bounds_stop_before_over_limit_dispatch_or_read(runner, bounda
                 database_url="",
                 checkpointer_for_test=InMemorySaver(),
             )
-        assert result.stop_code == "budget_exceeded"
+        assert result.stop_code is None
+        assert isinstance(result.outcome, AssistantText)
         if boundary == "turns":
             assert invocations == list(range(1, 33))
-            assert len(reads) == 32
+            assert len(reads) == 31
         else:
-            assert invocations == list(range(1, 23))
-            assert len(reads) == 63
+            assert invocations == list(range(1, 24))
+            assert len(reads) == 64
+            assert "not_run_reads" in str(result.messages)
 
     _run(scenario())
 

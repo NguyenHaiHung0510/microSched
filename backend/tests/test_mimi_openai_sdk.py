@@ -34,6 +34,7 @@ def _settings(**overrides: Any) -> Settings:
         "mimi_route_quantization": "fp8",
         "mimi_route_forced_tool_choice": "required",
         "mimi_route_reasoning_effort": "high",
+        "mimi_collection_enabled": True,
         "mimi_route_max_input_price": 0.2,
         "mimi_route_max_output_price": 0.8,
     }
@@ -121,6 +122,8 @@ async def test_sdk_completion_preserves_full_request_schema_provider_and_cost() 
         "task.inspect_batch.v1",
         "task.read_content.v1",
         "task.create_candidate.v2",
+        "task.freeze_selection.v1",
+        "task.collection_candidate.v1",
     ]
     assert isinstance(result.outcome, AssistantText)
     assert result.outcome.text == "Xin chào"

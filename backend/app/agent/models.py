@@ -280,6 +280,10 @@ class MimiExecutionReceipt(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
     __delete_gate__: ClassVar[Gate] = Gate.NONE
     __table_args__ = (
+        CheckConstraint(
+            "result_ciphertext IS NULL OR result_ciphertext LIKE 'mimi:v1:%'",
+            name="result_ciphertext",
+        ),
         UniqueConstraint("change_set_id", name="uq_mimi_execution_receipt_change_set"),
         UniqueConstraint("idempotency_key", name="uq_mimi_execution_receipt_idempotency"),
         {"schema": SCHEMA},
@@ -304,6 +308,7 @@ class MimiExecutionReceipt(UUIDTimestampModel, table=True):
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     )
+    result_ciphertext: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     executed_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     )
@@ -396,6 +401,10 @@ class MimiEvidence(UUIDTimestampModel, table=True):
             "capture_status IN ('complete','incomplete','failed')", name="capture_status"
         ),
         CheckConstraint("content_bytes BETWEEN 0 AND 1048576", name="content_bytes"),
+        CheckConstraint(
+            "content_ciphertext IS NULL OR content_ciphertext LIKE 'mimi:v1:%'",
+            name="content_ciphertext",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -419,6 +428,7 @@ class MimiEvidence(UUIDTimestampModel, table=True):
         sa_column=Column(JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     )
     content_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    content_ciphertext: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     content_bytes: int = Field(
         default=0, sa_column=Column(Integer, nullable=False, server_default=text("0"))
     )
@@ -430,3 +440,121 @@ Index(
     MimiRefreshMarker.__table__.c.created_at,
     postgresql_where=text("state = 'pending'"),
 )
+
+
+class MimiDevicePreference(UUIDTimestampModel, table=True):
+    __tablename__ = "mimi_device_preference"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="revision"),
+        UniqueConstraint("subscription_id", name="uq_mimi_device_preference_subscription"),
+        {"schema": SCHEMA},
+    )
+    owner_id: UUID = Field(sa_column=Column(PGUUID(as_uuid=True), nullable=False))
+    subscription_id: UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.push_subscription.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    enabled: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default=text("false"))
+    )
+    revision: int = Field(
+        default=1, sa_column=Column(Integer, nullable=False, server_default=text("1"))
+    )
+
+
+class MimiNotificationIntent(UUIDTimestampModel, table=True):
+    __tablename__ = "mimi_notification_intent"
+    __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        CheckConstraint("kind IN ('completed','approval_ready')", name="kind"),
+        CheckConstraint("copy_ciphertext LIKE 'mimi:v1:%'", name="copy_ciphertext"),
+        UniqueConstraint("event_id", "kind", name="uq_mimi_notification_intent_event_kind"),
+        UniqueConstraint("locator", name="uq_mimi_notification_intent_locator"),
+        Index(
+            "ix_mimi_notification_intent_unread",
+            "owner_id",
+            "created_at",
+            postgresql_where=text("read_at IS NULL"),
+        ),
+        {"schema": SCHEMA},
+    )
+    owner_id: UUID = Field(sa_column=Column(PGUUID(as_uuid=True), nullable=False))
+    conversation_id: UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.mimi_conversation.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    run_id: UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.mimi_run.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    event_id: UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.mimi_event.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    kind: str = Field(sa_column=Column(Text, nullable=False))
+    copy_ciphertext: str = Field(sa_column=Column(Text, nullable=False))
+    locator: str = Field(sa_column=Column(Text, nullable=False))
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    read_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
+
+class MimiNotificationDelivery(UUIDTimestampModel, table=True):
+    __tablename__ = "mimi_notification_delivery"
+    __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending','sending','accepted','unknown',"
+            "'retryable','expired','suppressed')",
+            name="state",
+        ),
+        CheckConstraint("attempt_count BETWEEN 0 AND 4", name="attempt_count"),
+        UniqueConstraint("intent_id", "preference_id", name="uq_mimi_notification_delivery_target"),
+        Index(
+            "ix_mimi_notification_delivery_pending",
+            "next_at",
+            postgresql_where=text("state IN ('pending','retryable')"),
+        ),
+        {"schema": SCHEMA},
+    )
+    intent_id: UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.mimi_notification_intent.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    preference_id: UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.mimi_device_preference.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    state: str = Field(
+        default="pending", sa_column=Column(Text, nullable=False, server_default=text("'pending'"))
+    )
+    attempt_count: int = Field(
+        default=0, sa_column=Column(Integer, nullable=False, server_default=text("0"))
+    )
+    next_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    )
+    last_error: str | None = Field(default=None, sa_column=Column(Text, nullable=True))

@@ -23,7 +23,7 @@ from app.agent.context import (
 from app.agent.contracts import ExecutionLease
 from app.agent.openrouter import serialized_input_bytes
 from app.agent.policy import load_standard_policy
-from app.agent.tools.registry import REGISTRY_SHA256, TOOLS
+from app.agent.tools.registry import registry_hash, tools_for_settings
 from app.core.settings import Settings
 
 
@@ -56,10 +56,13 @@ def assemble_context(
     remaining_turns: int,
     remaining_tool_calls: int,
     pending_draft_content: str | None = None,
+    selection_context: dict | None = None,
 ) -> tuple[ContextEnvelope, list[dict[str, str]]]:
     """Return ephemeral plaintext and provider messages; callers persist only metadata."""
 
-    policy = load_standard_policy()
+    policy = load_standard_policy(collection_enabled=settings.mimi_collection_enabled)
+    tools = tools_for_settings(settings)
+    tools_sha256 = registry_hash(tools)
     source = SourceManifest(
         source_id="task.recent.standard.v1" if task_context else "task.reads.demand.v1",
         source_type="microsched.task.standard",
@@ -106,7 +109,7 @@ def assemble_context(
     cache = CacheManifest(
         eligible_layers=("provider_prompt_prefix",),
         requested_mode="prefix_only",
-        cache_key_components=(policy.sha256, REGISTRY_SHA256, route.route_policy_id),
+        cache_key_components=(policy.sha256, tools_sha256, route.route_policy_id),
     )
     authority = AuthorityEnvelope(
         lease_id=lease.lease_id,
@@ -115,7 +118,11 @@ def assemble_context(
         deadline=lease.deadline,
         sensitivity="standard",
         write_mode="normal",
-        allowed_tools=tuple(item["function"]["name"] for item in TOOLS),
+        allowed_tools=tuple(
+            item["function"]["name"]
+            for item in tools
+            if item["function"]["name"] in lease.capabilities
+        ),
         disallowed_capabilities=("private", "auto_write", "web_search", "shell", "sql"),
         timezone="Asia/Ho_Chi_Minh",
         remaining_turns=remaining_turns,
@@ -136,7 +143,7 @@ def assemble_context(
         run_id=lease.run_id,
         policy_id=policy.policy_id,
         policy_sha256=policy.sha256,
-        tool_registry_sha256=REGISTRY_SHA256,
+        tool_registry_sha256=tools_sha256,
         output_schema_sha256=OUTPUT_SCHEMA_SHA256,
         sensitivity="standard",
         write_mode="normal",
@@ -164,6 +171,19 @@ def assemble_context(
         "draft": pending_draft.model_dump(mode="json") if pending_draft else None,
         "preview": pending_preview.model_dump(mode="json") if pending_preview else None,
     }
+    selection_source = SourceManifest(
+        source_id="task.selection.frozen.v1",
+        source_type="microsched.task.standard",
+        query={"mode": "frozen_selection_ref"},
+        projection=("snapshot",),
+        version=_source_hash(selection_context),
+        content_sha256=_source_hash(selection_context),
+        count=1 if selection_context else 0,
+        coverage="complete" if selection_context else "unavailable",
+        data_as_of=datetime.now(UTC),
+    )
+    if selection_context:
+        manifest = manifest.model_copy(update={"sources": (*manifest.sources, selection_source)})
     envelope = ContextEnvelope(
         policy_text=policy.text,
         authority=authority,
@@ -171,7 +191,21 @@ def assemble_context(
         checkpoint=checkpoint,
         transcript_suffix=tuple(transcript_suffix),
         pending_state=pending_state,
-        domain_evidence=(evidence, preview_evidence, draft_evidence),
+        domain_evidence=(
+            evidence,
+            preview_evidence,
+            draft_evidence,
+            *(
+                (
+                    {
+                        "source": selection_source.model_dump(mode="json"),
+                        "selection": selection_context,
+                    },
+                )
+                if selection_context
+                else ()
+            ),
+        ),
         current_user_turn=current_user_turn,
         output_contract={
             "text_wire": (
@@ -187,6 +221,14 @@ def assemble_context(
             "read_and_preview": (
                 "Use native function tool_calls only, never serialize them as text."
             ),
+            "collection_selection": (
+                "When collection tools are leased, use exact frozen selection ID and versions. "
+                "Preserve query/page/content/alias obligations from the selection "
+                "snapshot across turns. "
+                "A named subset is not all-scope; UI filters never change confirmation targets."
+            )
+            if settings.mimi_collection_enabled
+            else "Collection tools are not leased.",
             "task_preview_reads": (
                 "For a create preview that copies an existing Task, first query by "
                 "title_contains with a projection including id, then use "

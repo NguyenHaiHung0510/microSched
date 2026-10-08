@@ -13,7 +13,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.policy import POLICY_ID, POLICY_SHA256
+from app.agent.notifications import (
+    DevicePreferenceChange,
+    acknowledge,
+    list_attention,
+    resolve_locator,
+    set_preference,
+)
+from app.agent.policy import load_standard_policy
 from app.agent.route_config import ConfigurationChange, profiles_for_ui
 from app.agent.runtime import admit_run, hold_run_guard_if_enabled, release_run
 from app.agent.service import (
@@ -24,6 +31,7 @@ from app.agent.service import (
     DraftDirectionDecision,
     FeedbackCreate,
     MessageCreate,
+    _owner_id,
     confirm_change_set,
     conversation_checkpoint_view,
     conversation_configuration,
@@ -97,8 +105,12 @@ async def mimi_capabilities(_session: CurrentSession) -> dict:
         "runner": settings.mimi_runner,
         "context_limit": settings.mimi_route_context_tokens,
         "output_reserve": settings.mimi_route_max_output_tokens,
-        "policy_id": POLICY_ID if settings.mimi_context_v1_enabled else None,
-        "policy_sha256": POLICY_SHA256 if settings.mimi_context_v1_enabled else None,
+        "collection_enabled": settings.mimi_collection_enabled,
+        "notifications_enabled": settings.mimi_notifications_enabled,
+        "policy_id": load_standard_policy().policy_id if settings.mimi_context_v1_enabled else None,
+        "policy_sha256": load_standard_policy().sha256
+        if settings.mimi_context_v1_enabled
+        else None,
     }
 
 
@@ -587,3 +599,132 @@ async def post_feedback(
     session: CurrentSession,
 ) -> dict:
     return await save_feedback(db, session, conversation_id, payload)
+
+
+async def require_mimi_notifications():
+    if not get_settings().mimi_notifications_enabled:
+        raise HTTPException(404, "Mimi attention is disabled")
+
+
+@router.post(
+    "/devices/preference",
+    dependencies=[
+        Depends(require_mimi_available),
+        Depends(require_mimi_csrf),
+        Depends(require_mimi_notifications),
+    ],
+)
+async def change_mimi_device_preference(
+    payload: DevicePreferenceChange, db: Database, session: CurrentSession
+):
+    return await set_preference(db, _owner_id(session), payload)
+
+
+@router.get(
+    "/attention",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_notifications)],
+)
+async def read_mimi_attention(db: Database, session: CurrentSession):
+    return await list_attention(db, _owner_id(session))
+
+
+@router.post(
+    "/attention/{intent_id}/read",
+    dependencies=[
+        Depends(require_mimi_available),
+        Depends(require_mimi_csrf),
+        Depends(require_mimi_notifications),
+    ],
+)
+async def read_mimi_attention_ack(intent_id: UUID, db: Database, session: CurrentSession):
+    return await acknowledge(db, _owner_id(session), intent_id)
+
+
+@router.get(
+    "/attention/resolve/{locator}",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_notifications)],
+)
+async def resolve_mimi_attention(locator: str, db: Database, session: CurrentSession):
+    if not 1 <= len(locator) <= 100:
+        raise HTTPException(404, "Mimi attention not found")
+    return await resolve_locator(db, _owner_id(session), locator)
+
+
+@router.get(
+    "/conversations/{conversation_id}/evidence/{bundle_id}",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_mimi_evidence(
+    conversation_id: UUID, bundle_id: UUID, db: Database, session: CurrentSession
+):
+    from app.agent.evidence import read_evidence
+    from app.agent.service import _conversation
+
+    conversation = await _conversation(db, session, conversation_id)
+    return await read_evidence(db, conversation, bundle_id)
+
+
+@router.post(
+    "/receipts/{receipt_id}/undo-preview",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def prepare_mimi_undo(receipt_id: UUID, db: Database, session: CurrentSession):
+    from app.agent.service import prepare_receipt_undo
+
+    return await prepare_receipt_undo(db, session, receipt_id)
+
+
+@router.get(
+    "/conversations/{conversation_id}/selections/{selection_id}",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_mimi_selection(
+    conversation_id: UUID, selection_id: UUID, db: Database, session: CurrentSession
+):
+    from app.agent import crypto
+    from app.agent.selection import load_selection
+    from app.agent.service import _conversation
+
+    if not get_settings().mimi_collection_enabled:
+        raise HTTPException(404, "Mimi collections are disabled")
+    conversation = await _conversation(db, session, conversation_id)
+    if conversation.is_private or conversation.sensitivity != "standard":
+        raise HTTPException(404, "Mimi selection not found")
+    return await load_selection(
+        db, conversation.id, selection_id, crypto.unwrap_dek(conversation.dek_wrapped)
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/provider-pool/refresh",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def refresh_mimi_provider_pool(conversation_id: UUID, db: Database, session: CurrentSession):
+    from app.agent.route_config import bind_configuration, default_configuration
+    from app.agent.route_pool import NoEligibleEndpoint, bind_pool
+    from app.agent.service import _conversation
+
+    settings = get_settings()
+    if not settings.mimi_collection_enabled or not settings.mimi_live_provider_enabled:
+        raise HTTPException(404, "Mimi endpoint pool is disabled")
+    conversation = await _conversation(db, session, conversation_id)
+    if conversation.is_private or conversation.sensitivity != "standard":
+        raise HTTPException(404, "Mimi endpoint pool not found")
+    selected = bind_configuration(
+        settings, conversation.route_config or default_configuration(settings)
+    )
+    try:
+        _, pool = await bind_pool(selected, manual=True)
+    except NoEligibleEndpoint as error:
+        raise HTTPException(409, str(error)) from error
+    return {
+        "model": pool.model,
+        "effort": pool.effort,
+        "tags": pool.tags,
+        "checked_at": pool.checked_at,
+        "snapshot_sha256": pool.snapshot_sha256,
+        "min_uptime_percent": pool.threshold,
+        "window": pool.window,
+        "exclusions": pool.exclusions,
+        "qualification": "METADATA_ONLY_NO_MODEL_CALL",
+    }

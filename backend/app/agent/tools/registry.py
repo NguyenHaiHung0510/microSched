@@ -9,8 +9,11 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.selection import SELECTION_TOOL, SelectionCandidate
+from app.agent.task_collection import COLLECTION_CANDIDATE_TOOL, CollectionCandidate
 from app.agent.tools.task_content import TaskContentRead, read_task_content
 from app.agent.tools.task_reads import (
+    _FIELDS,
     TaskAggregate,
     TaskInspectBatch,
     TaskQuery,
@@ -20,15 +23,22 @@ from app.agent.tools.task_reads import (
 )
 
 READ_TOOLS = frozenset(
-    {"task.query.v1", "task.aggregate.v1", "task.inspect_batch.v1", "task.read_content.v1"}
+    {
+        "task.query.v1",
+        "task.aggregate.v1",
+        "task.inspect_batch.v1",
+        "task.read_content.v1",
+        SELECTION_TOOL,
+    }
 )
 CREATE_CANDIDATE_TOOL = "task.create_candidate.v2"
 
 _FILTER = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["status", "priority", "due_from", "due_through", "title_contains"],
+    "required": ["status", "priority", "due_from", "due_through", "title_contains", "lifecycle"],
     "properties": {
+        "lifecycle": {"enum": ["active", "deleted", "all"]},
         "status": {"type": ["string", "null"], "enum": ["open", "completed", None]},
         "priority": {"type": ["string", "null"], "enum": ["p1", "p2", "p3", None]},
         "due_from": {"type": ["string", "null"], "format": "date"},
@@ -39,11 +49,11 @@ _FILTER = {
 _PROJECTION = {
     "type": "array",
     "minItems": 1,
-    "maxItems": 7,
+    "maxItems": len(_FIELDS),
     "uniqueItems": True,
     "items": {
         "type": "string",
-        "enum": ["id", "title", "status", "priority", "due_precision", "due_on", "due_at"],
+        "enum": list(_FIELDS),
     },
 }
 _TASK_CANDIDATE = {
@@ -186,9 +196,83 @@ TOOLS: tuple[dict[str, Any], ...] = (
     ),
 )
 
+
+def _typed_tool(name, description, model):
+    schema = model.model_json_schema()
+    definitions = schema.pop("$defs", {})
+
+    def inline(value):
+        if isinstance(value, dict):
+            if "$ref" in value:
+                return inline(definitions[value["$ref"].split("/")[-1]])
+            return {k: inline(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [inline(v) for v in value]
+        return value
+
+    tool = _tool(name, description, inline(schema))
+    # Patch maps are intentionally flexible; server typed validation is authoritative.
+    tool["function"]["strict"] = False
+    return tool
+
+
+TOOLS += (
+    _typed_tool(
+        SELECTION_TOOL,
+        "Freeze semantic classifications from actual Task read receipts. "
+        "Record query/page and alias obligations. This never mutates domain data.",
+        SelectionCandidate,
+    ),
+    _typed_tool(
+        COLLECTION_CANDIDATE_TOOL,
+        "Propose one bounded STANDARD Task collection with full fields/checklist/reminder effects. "
+        "Existing targets require exact frozen selection UUID/version. "
+        "Server validates/freezes; never executes before explicit confirmation.",
+        CollectionCandidate,
+    ),
+)
+
+# Content continuations and lifecycle fields come from the exact server DTO.
+TOOLS = tuple(
+    _typed_tool(t["function"]["name"], t["function"]["description"], TaskContentRead)
+    if t["function"]["name"] == "task.read_content.v1"
+    else t
+    for t in TOOLS
+)
+
+
+def tools_for_settings(settings):
+    return tuple(
+        t
+        for t in TOOLS
+        if settings.mimi_collection_enabled
+        or t["function"]["name"] not in {SELECTION_TOOL, COLLECTION_CANDIDATE_TOOL}
+    )
+
+
+def registry_hash(tools):
+    return hashlib.sha256(
+        json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 REGISTRY_SHA256 = hashlib.sha256(
     json.dumps(TOOLS, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
+
+
+def validate_read_arguments(name: str, arguments: dict[str, Any]) -> None:
+    """Validate every request in a fanout before executing the first read."""
+    models = {
+        "task.query.v1": TaskQuery,
+        "task.aggregate.v1": TaskAggregate,
+        "task.inspect_batch.v1": TaskInspectBatch,
+        "task.read_content.v1": TaskContentRead,
+        SELECTION_TOOL: SelectionCandidate,
+    }
+    if name not in models:
+        raise ValueError("mimi_tool_not_read_only")
+    models[name].model_validate(arguments)
 
 
 async def execute_read_tool(
@@ -199,6 +283,8 @@ async def execute_read_tool(
     if name not in READ_TOOLS:
         raise ValueError("mimi_tool_not_read_only")
     try:
+        if name == SELECTION_TOOL:
+            raise ValueError("selection_requires_encrypted_run_receipts")
         if name == "task.query.v1":
             return await query_tasks(db, TaskQuery.model_validate(arguments))
         if name == "task.aggregate.v1":

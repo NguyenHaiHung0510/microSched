@@ -43,6 +43,9 @@ EXPECTED_TABLES = {
     "mimi_refresh_marker",
     "mimi_feedback",
     "mimi_evidence",
+    "mimi_device_preference",
+    "mimi_notification_intent",
+    "mimi_notification_delivery",
 }
 
 GATE_AXES = {

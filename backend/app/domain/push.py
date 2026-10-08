@@ -228,3 +228,51 @@ async def send_push(
             type(exc).__name__,
         )
         return PushResult.TEMPORARY_FAILURE
+
+
+async def send_push_detailed(
+    subscription, payload, *, timeout_seconds=20.0, provider_work_tracker=None, ttl_seconds=None
+):
+    """Mimi seam: no DB commit, distinguish unknown send from safe pre-dispatch failure."""
+    settings = get_settings()
+    if not settings.vapid_private_key or not settings.vapid_claims_sub:
+        return "retryable"
+    dispatched = False
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            if not await validate_push_endpoint(subscription.endpoint):
+                return "retryable"
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    _do_webpush_sync,
+                    subscription.endpoint,
+                    subscription.p256dh,
+                    subscription.auth,
+                    json.dumps(payload, ensure_ascii=False),
+                    settings.vapid_private_key,
+                    settings.vapid_claims_sub,
+                    timeout_seconds,
+                    ttl_seconds,
+                )
+            )
+            if provider_work_tracker is not None:
+                provider_work_tracker.track(worker)
+            dispatched = True
+            status = await asyncio.shield(worker)
+            if status in (200, 201, 202):
+                return "accepted"
+            if status in (404, 410):
+                return "dead_subscription"
+            # A concrete rejection is safe for the existing bounded retry policy.
+            return "retryable"
+    except TimeoutError:
+        return "unknown" if dispatched else "retryable"
+    except WebPushException as error:
+        status = error.response.status_code if error.response is not None else None
+        if status in (404, 410):
+            return "dead_subscription"
+        return "retryable" if status is not None else "unknown"
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return "unknown" if dispatched else "retryable"

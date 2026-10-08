@@ -10,9 +10,11 @@ import json
 import os
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from uuid import uuid4
+
+import httpx
 
 from app.agent.openrouter import RouteContractError, serialized_input_bytes
 from app.core.settings import Settings
@@ -60,6 +62,29 @@ def _write(path: Path, ledger: dict) -> None:
     temporary.replace(path)
 
 
+def key_meter(settings):
+    # Secure runtime mapping of MIMI_DEMO_1 supplied by the authorized dotenv
+    # loader; never print headers/value or pass it in command arguments.
+    if not settings.mimi_standard_api_key:
+        raise RouteContractError("local_budget_authorized_key_missing")
+    try:
+        with httpx.Client(timeout=10, follow_redirects=False) as client:
+            response = client.get(
+                "https://openrouter.ai/api/v1/key",
+                headers={"Authorization": "Bearer " + settings.mimi_standard_api_key},
+            )
+        if response.status_code != 200:
+            raise RouteContractError("local_budget_key_meter_unavailable")
+        data = response.json()["data"]
+        usage = Decimal(str(data["usage"]))
+        remaining = Decimal(str(data["limit_remaining"]))
+        if not usage.is_finite() or not remaining.is_finite() or usage < 0 or remaining < 0:
+            raise ValueError("meter_invalid")
+        return usage, remaining
+    except httpx.HTTPError, KeyError, TypeError, ValueError, InvalidOperation:
+        raise RouteContractError("local_budget_key_meter_unknown") from None
+
+
 def reserve(
     settings: Settings, messages: list[dict], *, agent_contract: bool, summary_mode: bool = False
 ) -> str | None:
@@ -83,9 +108,35 @@ def reserve(
             raise RouteContractError("local_budget_grant_invalid")
         if datetime.now(UTC) >= datetime.fromisoformat(ledger["expires_at_utc"]):
             raise RouteContractError("local_budget_grant_expired")
+        if any(c["state"] != "accounted" for c in ledger["calls"]):
+            raise RouteContractError("local_budget_prior_spend_unknown")
+        max_calls = ledger.get("max_paid_dispatches", 16)
+        if (
+            not isinstance(max_calls, int)
+            or isinstance(max_calls, bool)
+            or not 1 <= max_calls <= 16
+        ):
+            raise RouteContractError("local_budget_dispatch_grant_invalid")
+        if len(ledger["calls"]) >= max_calls:
+            raise RouteContractError("local_budget_dispatch_cap_exhausted")
         total = Decimal(ledger["historical_accounted_usd"]) + sum(
             (Decimal(c["charged_or_reserved_usd"]) for c in ledger["calls"]), Decimal(0)
         )
+        usage, remaining = key_meter(settings)
+        baseline = ledger.get("baseline_key_usage")
+        if baseline is None:
+            raise RouteContractError("local_budget_key_meter_baseline_missing")
+        measured = usage - Decimal(str(baseline))
+        if measured < 0:
+            raise RouteContractError("local_budget_key_meter_lineage_invalid")
+        ledger["last_key_meter"] = {
+            "usage": str(usage),
+            "remaining": str(remaining),
+            "observed_at": datetime.now(UTC).isoformat(),
+        }
+        _write(path, ledger)
+        if measured + maximum > Decimal(ledger["cap_usd"]) or remaining < maximum:
+            raise RouteContractError("local_budget_key_meter_exhausted")
         if total + maximum > Decimal(ledger["cap_usd"]):
             raise RouteContractError("local_budget_exhausted")
         call_id = str(uuid4())
@@ -126,6 +177,8 @@ def account(settings: Settings, call_id: str | None, usage: dict, response_id: s
             call["charged_or_reserved_usd"] = str(charged)
         call["observed_at"] = datetime.now(UTC).isoformat()
         _write(path, ledger)
+        if call["state"] != "accounted":
+            raise RouteContractError("local_budget_current_spend_unknown")
         if sum(
             (Decimal(c["charged_or_reserved_usd"]) for c in ledger["calls"]),
             Decimal(ledger["historical_accounted_usd"]),

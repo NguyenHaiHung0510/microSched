@@ -125,6 +125,12 @@ def test_removed_target_scope_would_accept_foreign_run(monkeypatch) -> None:
         lambda _dek, value, **_kwargs: f"encrypted:{value}",
     )
 
+    async def isolated_bundle(*_args):
+        # Isolate this historical query mutation; real causal-binding tests use PG.
+        return SimpleNamespace(id=uuid4())
+
+    monkeypatch.setattr("app.agent.evidence.capture_feedback", isolated_bundle)
+
     class ForeignRunDb:
         def __init__(self):
             self.lookups = 0
@@ -171,6 +177,15 @@ def test_feedback_duplicate_client_id_replays_one_encrypted_record(monkeypatch) 
         lambda _dek, value, **_kwargs: value.removeprefix("encrypted:"),
     )
 
+    bundles = []
+
+    async def isolated_bundle(*_args):
+        bundle = SimpleNamespace(id=uuid4())
+        bundles.append(bundle)
+        return bundle
+
+    monkeypatch.setattr("app.agent.evidence.capture_feedback", isolated_bundle)
+
     class IdempotentDb:
         def __init__(self):
             self.calls = 0
@@ -201,6 +216,8 @@ def test_feedback_duplicate_client_id_replays_one_encrypted_record(monkeypatch) 
         first = await save_feedback(db, SimpleNamespace(), conversation.id, payload)
         second = await save_feedback(db, SimpleNamespace(), conversation.id, payload)
         assert first["id"] == second["id"]
+        assert len(bundles) == 1
+        assert first["evidence_bundle_ids"] == [str(bundles[0].id)]
         assert db.record.comment_ciphertext == "encrypted:Synthetic feedback comment"
         assert db.record.expected_ciphertext == "encrypted:Synthetic expected classification"
         with pytest.raises(HTTPException) as raised:

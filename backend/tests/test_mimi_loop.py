@@ -35,7 +35,11 @@ def test_terminal_union_parses_read_request_and_rejects_unknown_shape() -> None:
         {
             "kind": "tool_requests",
             "requests": [
-                {"call_id": "c1", "name": "task.query.v1", "arguments": {"status": "open"}}
+                {
+                    "call_id": "c1",
+                    "name": "task.query.v1",
+                    "arguments": {"filter": {"status": "open"}},
+                }
             ],
         }
     )
@@ -54,7 +58,7 @@ def test_read_loop_executes_one_read_then_returns_terminal_answer() -> None:
             _completion(
                 ToolRequests(
                     requests=(
-                        ToolRequest(call_id="read-1", name="task.query.v1", arguments={"page": 1}),
+                        ToolRequest(call_id="read-1", name="task.query.v1", arguments={"limit": 1}),
                     )
                 )
             ),
@@ -69,7 +73,7 @@ def test_read_loop_executes_one_read_then_returns_terminal_answer() -> None:
                 call = messages[-2]["tool_calls"][0]
                 assert call["id"] == "read-1" and call["type"] == "function"
                 assert call["function"]["name"] == "task.query.v1"
-                assert json.loads(call["function"]["arguments"]) == {"page": 1}
+                assert json.loads(call["function"]["arguments"]) == {"limit": 1}
                 assert messages[-1]["role"] == "tool"
                 assert messages[-1]["tool_call_id"] == "read-1"
                 assert json.loads(messages[-1]["content"]) == {"count": 3, "coverage": "complete"}
@@ -96,7 +100,7 @@ def test_read_loop_executes_one_read_then_returns_terminal_answer() -> None:
         assert result.turns == 2
         assert result.tool_calls == 1
         assert len(model_calls) == 2
-        assert reads == [("task.query.v1", {"page": 1})]
+        assert reads == [("task.query.v1", {"limit": 1})]
         assert updates == [("task.query.v1", "read-1", 3, 3)]
         assert len(result.messages) == 3
 
@@ -107,7 +111,9 @@ def test_read_loop_stops_repeated_equivalent_tool_call_without_second_read() -> 
     async def scenario() -> None:
         request = ToolRequests(
             requests=(
-                ToolRequest(call_id="same", name="task.query.v1", arguments={"status": "open"}),
+                ToolRequest(
+                    call_id="same", name="task.query.v1", arguments={"filter": {"status": "open"}}
+                ),
             )
         )
         responses = [
@@ -179,22 +185,24 @@ def test_read_loop_enforces_deadline_tool_limit_and_input_byte_limit() -> None:
             [],
             limits=_limits(calls=1),
             invoke_model=lambda messages, turn: _async_value(
-                _completion(
+                _completion(AssistantText(text="Đã đọc phần trong ngân sách."))
+                if turn > 1
+                else _completion(
                     ToolRequests(
                         requests=(
-                            ToolRequest(call_id="a", name="task.query.v1", arguments={"a": 1}),
-                            ToolRequest(call_id="b", name="task.query.v1", arguments={"b": 2}),
+                            ToolRequest(call_id="a", name="task.query.v1", arguments={"limit": 1}),
+                            ToolRequest(call_id="b", name="task.query.v1", arguments={"limit": 2}),
                         )
                     )
                 )
             ),
             execute_read=execute,
         )
-        assert isinstance(over_budget.outcome, Blocked)
-        assert over_budget.stop_code == "budget_exceeded"
-        assert "hết số lần đọc" in over_budget.outcome.reason
-        assert over_budget.tool_calls == 0
-        assert reads == 0
+        assert isinstance(over_budget.outcome, AssistantText)
+        assert over_budget.turns == 2
+        assert over_budget.tool_calls == 1
+        assert reads == 1
+        assert any("not_run_reads" in str(message) for message in over_budget.messages)
 
     asyncio.run(scenario())
 

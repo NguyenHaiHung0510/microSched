@@ -372,38 +372,102 @@ def test_throwaway_restore_reports_foreign_session_metadata() -> None:
 
 @pytest.fixture(scope="module", autouse=True)
 def cutover_approved_schema():
-    """012 cutover has a frozen 0012 catalog; do not widen its deletion grant.
+    """Historical 0012 rehearsal owns a separate local DB, not current recovery.
 
-    047 adds source-owned reminders that this historical purge tool cannot
-    preserve. Keep its full original rehearsal on 0012, then restore current
-    head for the rest of the suite. A separate current-schema test proves the
-    tool refuses the new table rather than silently deleting it.
+    0017 intentionally refuses dropping tombstones/receipts/intents. Downgrading
+    the shared head DB would either fail correctly or destroy other case evidence.
+    Preserve the original frozen 0012 catalog in an exact disposable child DB.
     """
+    # Historical0012 rehearsal must use historical0012 table projections and
+    # metadata, while retaining its exact catalog/mutation oracles. This clone
+    # is test-only: product metadata and the cutover production script stay intact.
+    from types import SimpleNamespace
+
     from alembic.config import Config
+    from sqlalchemy import MetaData
 
     from alembic import command
+    from scripts import cutover_v2
+    from scripts.prepare_ci_database import prepare
 
+    historical = MetaData()
+    for table in cutover_v2.SQLModel.metadata.tables.values():
+        table.to_metadata(historical)
+    task = historical.tables["microsched.task"]
+    task.constraints = {c for c in task.constraints if c.name != "ck_task_collection_version"}
+    task._columns.remove(task.c.collection_version)
+    child = historical.tables["microsched.task_item"]
+    child.indexes = {i for i in child.indexes if i.name != "ix_task_item_active_position"}
+    child._columns.remove(child.c.deleted_at)
+    patch = pytest.MonkeyPatch()
+    patch.setattr(cutover_v2, "SQLModel", SimpleNamespace(metadata=historical))
+    patch.setattr(
+        cutover_v2,
+        "MODEL_TABLES",
+        {
+            name: historical.tables[table.fullname]
+            for name, table in cutover_v2.MODEL_TABLES.items()
+        },
+    )
     raw = os.environ.get("NEON_MIGRATOR_URL")
     if not raw:
-        yield
+        try:
+            yield
+        finally:
+            patch.undo()
         return
     parsed = make_url(raw)
     if parsed.host not in {"localhost", "127.0.0.1", "::1", "postgres", "db"}:
-        pytest.fail("cutover historical schema rehearsal requires local disposable PostgreSQL")
+        pytest.fail("cutover historical rehearsal requires disposable local PostgreSQL")
+    prior_ci = os.environ.get("CI_MIGRATOR_URL")
+    bootstrap_raw = os.environ.get("CI_PG_BOOTSTRAP_URL", raw)
+    bootstrap = make_url(bootstrap_raw)
+    name = "mimi086_cutover_" + uuid4().hex[:12]
+    control = bootstrap.set(database="postgres").render_as_string(hide_password=False)
+    child_bootstrap = bootstrap.set(database=name).render_as_string(hide_password=False)
     owner_url = parsed.set(
-        username="microsched_migrator", password=os.environ["CI_MIGRATOR_PASSWORD"]
+        database=name, username="microsched_migrator", password=os.environ["CI_MIGRATOR_PASSWORD"]
     ).render_as_string(hide_password=False)
+    child_raw = bootstrap.set(database=name).render_as_string(hide_password=False)
+
+    async def create():
+        conn = await asyncpg.connect(control)
+        try:
+            await conn.execute(f'CREATE DATABASE "{name}"')
+        finally:
+            await conn.close()
+        await prepare(
+            bootstrap_url=child_bootstrap,
+            migrator_password=os.environ["CI_MIGRATOR_PASSWORD"],
+            app_password=os.environ["CI_APP_PASSWORD"],
+        )
+
+    _run(create())
     try:
         os.environ["NEON_MIGRATOR_URL"] = owner_url
-        command.downgrade(Config("alembic.ini"), "0012")
-        os.environ["NEON_MIGRATOR_URL"] = raw
+        os.environ["CI_MIGRATOR_URL"] = owner_url
+        command.upgrade(Config("alembic.ini"), "0012")
+        os.environ["NEON_MIGRATOR_URL"] = child_raw
         yield
     finally:
-        os.environ["NEON_MIGRATOR_URL"] = owner_url
+        os.environ["NEON_MIGRATOR_URL"] = raw
+        if prior_ci is None:
+            os.environ.pop("CI_MIGRATOR_URL", None)
+        else:
+            os.environ["CI_MIGRATOR_URL"] = prior_ci
+
+        async def drop():
+            conn = await asyncpg.connect(control)
+            try:
+                assert name.startswith("mimi086_cutover_") and name.replace("_", "").isalnum()
+                await conn.execute(f'DROP DATABASE "{name}"')
+            finally:
+                await conn.close()
+
         try:
-            command.upgrade(Config("alembic.ini"), "head")
+            _run(drop())
         finally:
-            os.environ["NEON_MIGRATOR_URL"] = raw
+            patch.undo()
 
 
 @pytest.fixture
@@ -1020,7 +1084,9 @@ def test_schema_attestation_red_green_for_indexes_and_grantees(
                     "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$1)", extra_role
                 )
                 if role_exists:
-                    await admin.execute(f'REASSIGN OWNED BY "{extra_role}" TO postgres')
+                    actor = await admin.fetchval("SELECT current_user")
+                    quoted_actor = await admin.fetchval("SELECT quote_ident($1)", actor)
+                    await admin.execute(f'REASSIGN OWNED BY "{extra_role}" TO {quoted_actor}')
                     await admin.execute(f'DROP OWNED BY "{extra_role}"')
                     await admin.execute(
                         f"REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA microsched "

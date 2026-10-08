@@ -14,10 +14,13 @@ testing the trigger and not itself. See the PR body for that red/green transcrip
 
 import asyncio
 import contextlib
+import os
 from pathlib import Path
+from uuid import uuid4
 
 import asyncpg
 import pytest
+from sqlalchemy.engine import make_url
 
 pytestmark = pytest.mark.pg
 
@@ -202,53 +205,51 @@ async def _wait_until_blocked(monitor: asyncpg.Connection, pid: int, timeout: fl
 
 
 def test_concurrent_toggle_and_insert_breaks_without_lock_and_holds_with_lock(pg_dsn):
-    """Case 6: the trigger is a last net; the parent-row lock is the primary one.
+    """0017 raw child bump serializes and rechecks privacy after acquiring parent.
 
-    Two READ COMMITTED transactions do not see each other's uncommitted work, so a
-    session flipping a task to private and a session inserting a plaintext child can
-    each pass their own trigger check and still leave a plaintext item under a private
-    task. The write path closes that window with ``SELECT ... FOR UPDATE`` on the
-    parent (spec §2.5); this test reproduces the break without it and the hold with it.
+    The historical 0016 unlocked race no longer runs synchronously: an AFTER
+    child trigger waits for the parent, so the test must release A before awaiting
+    B. The existing app parent-first lock contract remains independently tested.
     """
 
-    async def without_lock_reproduces_the_break():
+    async def aggregate_trigger_holds_without_app_lock():
         setup = await asyncpg.connect(pg_dsn)
         a = await asyncpg.connect(pg_dsn)
         b = await asyncpg.connect(pg_dsn)
+        monitor = await asyncpg.connect(pg_dsn)
         task_id = None
+        child_work = None
         try:
             task_id = await _create_task(setup, title=CIPHER_TITLE, is_private=False)
-
-            # A flips to private (no plaintext children yet) but does not commit.
-            ta = a.transaction()
-            await ta.start()
-            await a.execute("UPDATE microsched.task SET is_private = true WHERE id = $1", task_id)
-
-            # B, on its own snapshot, still sees a public task and inserts plaintext.
-            # Its FK insert takes only FOR KEY SHARE on the parent, which does not
-            # conflict with A's FOR NO KEY UPDATE, so nothing makes B wait.
-            tb = b.transaction()
-            await tb.start()
-            await b.execute(
-                "INSERT INTO microsched.task_item (task_id, content) VALUES ($1, $2)",
-                task_id,
-                "leaked plaintext",
+            await a.execute("BEGIN")
+            await a.execute("UPDATE microsched.task SET is_private=true WHERE id=$1", task_id)
+            await b.execute("BEGIN")
+            pid = await b.fetchval("SELECT pg_backend_pid()")
+            child_work = asyncio.create_task(
+                b.execute(
+                    "INSERT INTO microsched.task_item(task_id,content) "
+                    "VALUES($1,'leaked plaintext')",
+                    task_id,
+                )
             )
-
-            await ta.commit()
-            await tb.commit()
-
-            is_private = await setup.fetchval(
-                "SELECT is_private FROM microsched.task WHERE id = $1", task_id
+            await _wait_until_blocked(monitor, pid)
+            await a.execute("COMMIT")
+            with pytest.raises(asyncpg.exceptions.RaiseError, match=ITEM_REJECT):
+                await asyncio.wait_for(child_work, timeout=10)
+            await b.execute("ROLLBACK")
+            assert await setup.fetchval(
+                "SELECT is_private FROM microsched.task WHERE id=$1", task_id
             )
-            leaked = await _plaintext_item_count(setup, task_id)
-            # The invariant is violated: this is the gap the row lock has to close.
-            assert is_private is True
-            assert leaked == 1
+            assert await _plaintext_item_count(setup, task_id) == 0
         finally:
-            await _delete_task(setup, task_id)
+            if child_work is not None:
+                child_work.cancel()
+                with contextlib.suppress(BaseException):
+                    await child_work
             await a.close()
             await b.close()
+            await monitor.close()
+            await _delete_task(setup, task_id)
             await setup.close()
 
     async def with_lock_holds_the_invariant():
@@ -304,7 +305,7 @@ def test_concurrent_toggle_and_insert_breaks_without_lock_and_holds_with_lock(pg
             await setup.close()
 
     async def scenario():
-        await without_lock_reproduces_the_break()
+        await aggregate_trigger_holds_without_app_lock()
         await with_lock_holds_the_invariant()
 
     asyncio.run(scenario())
@@ -333,22 +334,56 @@ async def _trigger_names(dsn: str) -> set[str]:
 
 
 def test_migration_0003_round_trip_drops_and_recreates_triggers(pg_dsn):
-    """Case 7: 0003 downgrade removes both triggers; upgrade puts them back.
-
-    Driven through NEON_MIGRATOR_URL (the same env var pg_dsn required), so the whole
-    round-trip runs against the ephemeral CI service, never a real database. The
-    finally clause always returns the schema to head, whatever the assertions do.
-    """
+    """Round trip an empty test-owned child DB; preserve current recovery data."""
     from alembic.config import Config
 
     from alembic import command
+    from scripts.prepare_ci_database import prepare
 
+    parsed = make_url(os.environ.get("CI_PG_BOOTSTRAP_URL", pg_dsn))
+    assert parsed.host in {"localhost", "127.0.0.1", "::1", "postgres", "db"}
+    name = "mimi086_trigger_" + uuid4().hex[:12]
+    control = parsed.set(database="postgres").render_as_string(hide_password=False)
+    bootstrap = parsed.set(database=name).render_as_string(hide_password=False)
+    owner = parsed.set(
+        database=name, username="microsched_migrator", password="synthetic-migrator"
+    ).render_as_string(hide_password=False)
+    prior_ci = os.environ.get("CI_MIGRATOR_URL")
+
+    async def create():
+        conn = await asyncpg.connect(control)
+        try:
+            await conn.execute(f'CREATE DATABASE "{name}"')
+        finally:
+            await conn.close()
+        await prepare(
+            bootstrap_url=bootstrap,
+            migrator_password="synthetic-migrator",
+            app_password="synthetic-app",
+        )
+
+    asyncio.run(create())
     both = {"trg_task_item_privacy", "trg_task_children_privacy"}
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     try:
+        os.environ["CI_MIGRATOR_URL"] = owner
+        command.upgrade(config, "head")
         command.downgrade(config, "0002")
-        assert asyncio.run(_trigger_names(pg_dsn)) == set()
+        assert asyncio.run(_trigger_names(owner)) == set()
         command.upgrade(config, "head")
-        assert asyncio.run(_trigger_names(pg_dsn)) == both
+        assert asyncio.run(_trigger_names(owner)) == both
     finally:
-        command.upgrade(config, "head")
+        if prior_ci is None:
+            os.environ.pop("CI_MIGRATOR_URL", None)
+        else:
+            os.environ["CI_MIGRATOR_URL"] = prior_ci
+
+        async def drop():
+            conn = await asyncpg.connect(control)
+            try:
+                assert name.startswith("mimi086_trigger_") and name.replace("_", "").isalnum()
+                await conn.execute(f'DROP DATABASE "{name}"')
+            finally:
+                await conn.close()
+
+        asyncio.run(drop())

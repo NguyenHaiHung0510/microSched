@@ -39,7 +39,16 @@ async def lifespan(app: FastAPI):
 
     mimi_runs = MimiRunSupervisor()
     app.state.mimi_run_supervisor = mimi_runs
+    attention_dispatcher = None
     try:
+        if get_settings().mimi_notifications_enabled:
+            from app.agent.notifications import NotificationDispatcher
+            from app.core.db import get_sessionmaker
+
+            if get_sessionmaker() is not None:
+                attention_dispatcher = NotificationDispatcher(get_sessionmaker())
+                await attention_dispatcher.start()
+                app.state.mimi_notification_dispatcher = attention_dispatcher
         settings = get_settings()
         if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
             from app.agent.service import reconcile_orphaned_mimi_runs
@@ -87,6 +96,8 @@ async def lifespan(app: FastAPI):
                 await timer.stop()
     finally:
         await mimi_runs.stop()
+        if attention_dispatcher is not None:
+            await attention_dispatcher.stop()
 
 
 logger = logging.getLogger(__name__)

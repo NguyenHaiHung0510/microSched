@@ -108,7 +108,13 @@ def test_aggregate_read_then_candidate_is_blocked_without_preview_or_task_write(
         monkeypatch.setattr(mimi_service, "get_sessionmaker", lambda: maker)
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             nonlocal calls
             calls += 1
@@ -191,7 +197,13 @@ def test_same_task_version_change_between_reads_halts_before_candidate(pg_dsn, m
         monkeypatch.setattr(mimi_service, "get_sessionmaker", lambda: maker)
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             nonlocal calls
             calls += 1
