@@ -121,6 +121,26 @@ def _current_qa_prompt(messages: list[dict[str, Any]]) -> str:
     raise RuntimeError("browser QA provider received an undeclared prompt")
 
 
+def _qa_authority(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Read the server system envelope independently of prefix/history length."""
+    authorities = []
+    for message in messages:
+        if message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("authority_envelope"), dict):
+            authorities.append(payload["authority_envelope"])
+    if len(authorities) != 1:
+        raise RuntimeError("browser QA requires one server authority envelope")
+    return authorities[0]
+
+
 async def _fake_complete(
     messages: list[dict[str, Any]],
     *,
@@ -200,7 +220,7 @@ async def _fake_complete(
         else:
             outcome = AssistantText(text="Mình đã đọc Task STANDARD được cấp trong lượt này.")
     elif prompt.startswith("QA_P1CA_CREATE"):
-        authority = json.loads(messages[1]["content"])["authority_envelope"]
+        authority = _qa_authority(messages)
         title = prompt.removeprefix("QA_P1CA_CREATE").strip() or "QA_P1CA synthetic Task"
         outcome = PreviewCandidate(
             tool=CREATE_CANDIDATE_TOOL,
