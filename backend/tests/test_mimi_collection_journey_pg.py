@@ -203,3 +203,269 @@ def test_current_serializer_fake_collection_journey_and_causal_request_capture(p
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_old_answer_feedback_exports_exact_causal_parts_after_newer_run(pg_dsn, monkeypatch):
+    import os
+    from datetime import UTC, datetime, timedelta
+    from uuid import uuid7
+
+    from fastapi import HTTPException
+    from test_mimi_collection_service_pg import prepare
+
+    from app.agent import crypto, evidence
+    from app.agent.models import (
+        MimiChangeSet,
+        MimiEvidence,
+        MimiExecutionReceipt,
+        MimiMessage,
+        MimiProviderCall,
+        MimiRun,
+    )
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        actor, cid, rid, ids, change_id, decision = await prepare(maker)
+        expected_contexts, expected_reads, expected_calls = [], [], []
+        try:
+            async with maker() as db:
+                conv = await db.get(MimiConversation, cid)
+                dek = crypto.unwrap_dek(conv.dek_wrapped)
+                run = await db.get(MimiRun, rid)
+                run.source_versions = {
+                    f"task:{t.id}": str(t.collection_version)
+                    for t in (await db.scalars(select(Task).where(Task.id.in_(ids)))).all()
+                }
+                expected_versions = dict(run.source_versions)
+                expected_lease = dict(run.execution_lease)
+                change = await db.get(MimiChangeSet, change_id)
+                operation = json.loads(
+                    crypto.open_content(
+                        dek, change.operation_ciphertext, aad=crypto.change_set_aad(cid, change_id)
+                    )
+                )
+                for attempt in (1, 2):
+                    body = {
+                        "manifest": {"policy_id": "mimi-standard-v3", "run_id": str(rid)},
+                        "messages": [{"role": "user", "content": f"original request {attempt}"}],
+                        "attempt": attempt,
+                    }
+                    call = MimiProviderCall(
+                        run_id=rid,
+                        attempt=attempt,
+                        state="succeeded",
+                        request_fingerprint=evidence.digest(body),
+                        route={"model": "deepseek/deepseek-v4.1-flash", "provider": "Synthetic"},
+                        usage={"input_tokens": attempt, "output_tokens": 2},
+                    )
+                    db.add(call)
+                    await db.flush()
+                    expected_calls.append(
+                        {
+                            "id": str(call.id),
+                            "attempt": attempt,
+                            "state": "succeeded",
+                            "route": dict(call.route),
+                            "usage": dict(call.usage),
+                            "request_fingerprint": call.request_fingerprint,
+                        }
+                    )
+                    sequence = await service._append_event(db, rid, "provider.request_context", {})
+                    event = (
+                        await db.scalars(
+                            select(MimiEvent).where(
+                                MimiEvent.run_id == rid, MimiEvent.sequence == sequence
+                            )
+                        )
+                    ).one()
+                    event.payload = {
+                        "body_ciphertext": crypto.seal_content(
+                            dek,
+                            json.dumps(body),
+                            aad=crypto.event_content_aad(rid, sequence, event.kind),
+                        )
+                    }
+                    expected_contexts.append(
+                        {"event_id": str(event.id), "kind": event.kind, "body": body}
+                    )
+                for kind, body in (
+                    (
+                        "tool.read_result",
+                        {
+                            "tool": "task.query.v1",
+                            "arguments": {"limit": 50},
+                            "rows": [{"id": str(i)} for i in ids],
+                        },
+                    ),
+                    (
+                        "selection.frozen",
+                        {
+                            "selection_id": operation["args"]["selection_id"],
+                            "members": [{"id": str(i)} for i in ids],
+                        },
+                    ),
+                ):
+                    sequence = await service._append_event(db, rid, kind, {})
+                    event = (
+                        await db.scalars(
+                            select(MimiEvent).where(
+                                MimiEvent.run_id == rid, MimiEvent.sequence == sequence
+                            )
+                        )
+                    ).one()
+                    event.payload = {
+                        "body_ciphertext": crypto.seal_content(
+                            dek, json.dumps(body), aad=crypto.event_content_aad(rid, sequence, kind)
+                        )
+                    }
+                    expected_reads.append({"event_id": str(event.id), "kind": kind, "body": body})
+                await service.confirm_change_set(
+                    db, actor, change_id, decision, f"last-causal-{cid}"
+                )
+                await db.commit()
+            async with maker() as db:
+                conv = await db.get(MimiConversation, cid)
+                dek = crypto.unwrap_dek(conv.dek_wrapped)
+                messages = (
+                    await db.scalars(
+                        select(MimiMessage)
+                        .where(MimiMessage.run_id == rid)
+                        .order_by(MimiMessage.sequence)
+                    )
+                ).all()
+                old_answer = next(m for m in reversed(messages) if m.role == "assistant")
+                expected_messages = [
+                    {
+                        "id": str(m.id),
+                        "role": m.role,
+                        "sequence": m.sequence,
+                        "content": crypto.open_content(
+                            dek,
+                            m.content_ciphertext,
+                            aad=crypto.message_aad(cid, m.sequence, m.role),
+                        ),
+                    }
+                    for m in messages
+                ]
+                receipts = (
+                    await db.scalars(
+                        select(MimiExecutionReceipt).where(
+                            MimiExecutionReceipt.change_set_id == change_id
+                        )
+                    )
+                ).all()
+                expected_receipts = [
+                    {
+                        "id": str(r.id),
+                        "operation_id": str(r.operation_id),
+                        "digest": r.digest_sha256,
+                        "result": r.result,
+                        "executed_at": r.executed_at.isoformat(),
+                    }
+                    for r in receipts
+                ]
+                events = (
+                    await db.scalars(
+                        select(MimiEvent)
+                        .where(MimiEvent.run_id == rid)
+                        .order_by(MimiEvent.sequence)
+                    )
+                ).all()
+                expected_events = [
+                    {
+                        "id": str(e.id),
+                        "sequence": e.sequence,
+                        "kind": e.kind,
+                        "payload_sha256": evidence.digest(e.payload),
+                    }
+                    for e in events
+                ]
+                later = MimiRun(
+                    id=uuid7(),
+                    conversation_id=cid,
+                    generation=conv.generation,
+                    state="completed",
+                    source_versions={"later-only": "excluded"},
+                    execution_lease={"later-only": True},
+                    deadline=datetime.now(UTC) + timedelta(minutes=5),
+                )
+                conv.generation += 1
+                db.add(later)
+                await db.flush()
+                service._add_assistant_message(
+                    db, conv, later.id, dek, "LATER_RUN_MUST_BE_EXCLUDED"
+                )
+                db.add(
+                    MimiProviderCall(
+                        run_id=later.id,
+                        attempt=1,
+                        state="succeeded",
+                        request_fingerprint="later-only",
+                        route={"later-only": True},
+                        usage={},
+                    )
+                )
+                await service._append_event(
+                    db, later.id, "synthetic.later", {"marker": "later-only"}
+                )
+                await db.commit()
+                later_id, old_id = later.id, old_answer.id
+            if os.environ.get("MIMI086_LAST_NEGATIVE") == "causal":
+
+                async def misbound(*args):
+                    return later_id
+
+                monkeypatch.setattr(evidence, "target_run", misbound)
+            payload = service.FeedbackCreate(
+                client_id=f"last-old-answer-{cid}",
+                target_type="turn",
+                target_id=str(old_id),
+                comment="Synthetic exact old causal set",
+            )
+            async with maker() as db:
+                saved = await service.save_feedback(db, actor, cid, payload)
+                bid = UUID(saved["evidence_bundle_ids"][0])
+                bundle = await evidence.read_evidence(db, await db.get(MimiConversation, cid), bid)
+                assert (await db.get(MimiEvidence, bid)).run_id == rid, (
+                    "causal target run guard was bypassed"
+                )
+                assert bundle["capture_status"] == "complete"
+                content = bundle["content"]
+                assert content["messages"] == expected_messages
+                assert content["calls"] == expected_calls
+                assert content["source_versions"] == expected_versions and expected_versions
+                assert content["execution_lease"] == expected_lease
+                assert content["request_contexts"] == expected_contexts
+                assert content["reads_and_selection"] == expected_reads
+                assert content["operations"] == [operation]
+                assert content["receipts"] == expected_receipts and expected_receipts
+                assert content["event_refs"] == expected_events
+                assert "LATER_RUN_MUST_BE_EXCLUDED" not in json.dumps(content)
+                assert "later-only" not in json.dumps(content)
+                assert bundle["metadata"]["target_id"] == str(old_id)
+                assert bundle["metadata"]["hidden_reasoning"] == "EXCLUDED"
+                assert bundle["metadata"]["provider_raw_response"] == "NOT_CAPTURED"
+                await db.commit()
+            async with maker() as db:
+                replay = await service.save_feedback(db, actor, cid, payload)
+                assert (
+                    replay["id"] == saved["id"]
+                    and replay["evidence_bundle_ids"] == saved["evidence_bundle_ids"]
+                )
+                with pytest.raises(HTTPException, match="not found"):
+                    await service.save_feedback(
+                        db,
+                        actor.model_copy(update={"user_email": "foreign-last@example.test"}),
+                        cid,
+                        payload,
+                    )
+                conv = await db.get(MimiConversation, cid)
+                with pytest.raises(HTTPException, match="causal_binding"):
+                    await evidence.capture_feedback(db, conv, "run", str(later_id), [bid])
+                await db.rollback()
+        finally:
+            await cleanup(maker, cid, ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())

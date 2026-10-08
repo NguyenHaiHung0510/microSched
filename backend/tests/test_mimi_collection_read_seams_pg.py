@@ -312,3 +312,167 @@ def test_receipt_lookup_exact_owner_binding_outside_snapshot_window_zero_replay(
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_attention_http_owner_known_route_get_zero_domain_writes(pg_dsn, monkeypatch):
+    import hashlib
+    import json
+    import re
+
+    from sqlalchemy import delete, text
+
+    from app.core.sessions import SESSION_COOKIE_NAME, hash_session_token
+    from app.domain.auth import PostgresSessionStore
+    from app.domain.models import AuthSession
+    from app.web.deps import get_session_store
+    from app.web.routers import mimi as router
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        actor, cid, rid, ids, ch, decision = await prepare(maker)
+        session_ids = []
+        counters = {"confirm": 0, "provider": 0}
+        tables = (
+            "task",
+            "task_item",
+            "one_shot_reminder",
+            "reminder_dispatch",
+            "mimi_conversation",
+            "mimi_message",
+            "mimi_run",
+            "mimi_event",
+            "mimi_provider_call",
+            "mimi_change_set",
+            "mimi_execution_receipt",
+            "mimi_refresh_marker",
+            "mimi_notification_intent",
+            "mimi_notification_delivery",
+            "mimi_device_preference",
+            "mimi_feedback",
+            "mimi_evidence",
+        )
+
+        async def snapshot():
+            result = {}
+            async with maker() as db:
+                for table in tables:
+                    value = (
+                        await db.execute(
+                            text(
+                                f"SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY id), '[]'::jsonb) "
+                                f"FROM microsched.{table} t"
+                            )
+                        )
+                    ).scalar_one()
+                    result[table] = hashlib.sha256(
+                        json.dumps(value, sort_keys=True).encode()
+                    ).hexdigest()
+            return result
+
+        async def forbidden_confirm(*args, **kwargs):
+            counters["confirm"] += 1
+            pytest.fail("locator GET must not confirm")
+
+        async def forbidden_provider(*args, **kwargs):
+            counters["provider"] += 1
+            pytest.fail("locator GET must not dispatch a provider")
+
+        monkeypatch.setattr(router, "confirm_change_set", forbidden_confirm)
+        monkeypatch.setattr(service, "openrouter_complete", forbidden_provider)
+        try:
+            store = PostgresSessionStore(maker, 30)
+            tokens = [
+                await store.create(actor.user_email),
+                await store.create("foreign-last-http@example.test"),
+                await store.create(actor.user_email),
+            ]
+            async with maker() as db:
+                for token in tokens:
+                    row = (
+                        await db.scalars(
+                            select(AuthSession).where(
+                                AuthSession.token_hash == hash_session_token(token)
+                            )
+                        )
+                    ).one()
+                    session_ids.append(row.id)
+                expired = await db.get(AuthSession, session_ids[2])
+                expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                owner_session = await db.get(AuthSession, session_ids[0])
+                initial_seen, initial_expiry = owner_session.last_seen_at, owner_session.expires_at
+                intent = (
+                    await db.scalars(
+                        select(MimiNotificationIntent).where(MimiNotificationIntent.run_id == rid)
+                    )
+                ).one()
+                iid, locator = intent.id, intent.locator
+                owner_id = (await db.get(MimiConversation, cid)).owner_id
+                assert re.fullmatch(r"[A-Za-z0-9_-]{32}", locator)
+                await db.commit()
+            app = create_app()
+            app.dependency_overrides[get_session_store] = lambda: store
+
+            async def db_session():
+                async with maker() as db:
+                    try:
+                        yield db
+                        await db.commit()
+                    except Exception:
+                        await db.rollback()
+                        raise
+
+            app.dependency_overrides[get_session] = db_session
+            assert require_session not in app.dependency_overrides
+            if os.environ.get("MIMI086_LAST_NEGATIVE") == "locator_owner":
+                original_resolver = router.resolve_locator
+
+                async def wrong_owner(db, _owner, supplied):
+                    return await original_resolver(db, owner_id, supplied)
+
+                monkeypatch.setattr(router, "resolve_locator", wrong_owner)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://test"
+            ) as client:
+                path = "/api/mimi/attention/resolve/" + locator
+                for token, suffix, expected in (
+                    (None, "", 401),
+                    ("synthetic-unknown-session", "", 401),
+                    (tokens[2], "", 401),
+                    (tokens[1], "", 404),
+                    (tokens[0], "tampered", 404),
+                    (tokens[0], "", 200),
+                ):
+                    client.cookies.clear()
+                    if token is not None:
+                        client.cookies.set(SESSION_COOKIE_NAME, token)
+                    before = await snapshot()
+                    response = await client.get(
+                        path + suffix,
+                        headers={"Origin": "http://test", "Sec-Fetch-Site": "same-origin"},
+                    )
+                    assert response.status_code == expected, (
+                        "HTTP locator owner/auth guard was bypassed"
+                    )
+                    assert await snapshot() == before, "locator GET caused a business/Mimi write"
+                    assert counters == {"confirm": 0, "provider": 0}
+                    if expected == 200:
+                        assert response.json()["path"] == "/mimi"
+                        assert response.json()["conversation_id"] == str(cid)
+                        assert response.json()["run_id"] == str(rid)
+                        assert "access-control-allow-origin" not in response.headers
+            async with maker() as db:
+                owner_session = await db.get(AuthSession, session_ids[0])
+                assert owner_session.last_seen_at > initial_seen
+                assert owner_session.expires_at > initial_expiry
+                assert await db.get(AuthSession, session_ids[2]) is None
+                assert (await db.get(MimiNotificationIntent, iid)).read_at is None
+                assert counters == {"confirm": 0, "provider": 0}
+        finally:
+            await cleanup(maker, cid, ids)
+            async with maker() as db:
+                await db.execute(delete(AuthSession).where(AuthSession.id.in_(session_ids)))
+                await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())

@@ -296,3 +296,113 @@ def test_send_fence_bounded_retries_and_ambiguous_no_redispatch(pg_dsn, outcome)
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_startup_rehydrates_committed_pending_once_with_inapp_ack(pg_dsn, monkeypatch):
+    import os
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        actor, cid, rid, ids, ch, decision = await prepare(maker)
+        sid, dispatcher = None, None
+        calls = []
+        try:
+            async with maker() as db:
+                owner = (await db.get(MimiConversation, cid)).owner_id
+            sid, pref = await device(maker, owner)
+            async with maker() as db:
+                intent = (
+                    await db.scalars(
+                        select(MimiNotificationIntent).where(MimiNotificationIntent.run_id == rid)
+                    )
+                ).one()
+                iid = intent.id
+                pref = (
+                    await db.scalars(
+                        select(MimiDevicePreference).where(
+                            MimiDevicePreference.subscription_id == sid
+                        )
+                    )
+                ).one()
+                delivery = MimiNotificationDelivery(intent_id=iid, preference_id=pref.id)
+                db.add(delivery)
+                await db.flush()
+                did = delivery.id
+                await db.commit()
+            sent = asyncio.Event()
+
+            async def send(sub, payload, **kwargs):
+                assert sub.id == sid
+                assert set(payload) == {"title", "body", "url", "tag"}
+                async with maker() as db:
+                    assert (await db.get(MimiNotificationDelivery, did)).state == "sending"
+                calls.append(payload)
+                sent.set()
+                return "accepted"
+
+            dispatcher = n.NotificationDispatcher(maker, send=send)
+            if os.environ.get("MIMI086_LAST_NEGATIVE") == "pending":
+
+                async def disabled_drain():
+                    return None
+
+                monkeypatch.setattr(dispatcher, "drain_once", disabled_drain)
+            await dispatcher.start()
+            try:
+                await asyncio.wait_for(sent.wait(), timeout=5)
+            except TimeoutError:
+                pytest.fail("pending startup rehydration guard was bypassed")
+            await dispatcher.stop()
+            dispatcher = None
+            async with maker() as db:
+                delivery = await db.get(MimiNotificationDelivery, did)
+                intent = await db.get(MimiNotificationIntent, iid)
+                assert delivery.state == "accepted" and delivery.attempt_count == 1
+                assert intent.read_at is None and len(calls) == 1
+                assert (await n.list_attention(db, owner))[0]["unread"]
+                assert (
+                    await db.scalar(
+                        select(func.count())
+                        .select_from(MimiNotificationIntent)
+                        .where(MimiNotificationIntent.run_id == rid)
+                    )
+                    == 1
+                )
+            drained = asyncio.Event()
+
+            async def forbidden(*args, **kwargs):
+                pytest.fail("restart must not redispatch accepted delivery")
+
+            dispatcher = n.NotificationDispatcher(maker, send=forbidden)
+            original_drain = dispatcher.drain_once
+
+            async def observe_drain():
+                result = await original_drain()
+                drained.set()
+                return result
+
+            monkeypatch.setattr(dispatcher, "drain_once", observe_drain)
+            await dispatcher.start()
+            await asyncio.wait_for(drained.wait(), timeout=5)
+            await dispatcher.stop()
+            dispatcher = None
+            async with maker() as db:
+                intent = await db.get(MimiNotificationIntent, iid)
+                delivery = await db.get(MimiNotificationDelivery, did)
+                assert intent.read_at is None and delivery.attempt_count == 1
+                assert delivery.state == "accepted" and len(calls) == 1
+                await n.acknowledge(db, owner, iid)
+                await db.commit()
+            async with maker() as db:
+                assert (await db.get(MimiNotificationIntent, iid)).read_at is not None
+                assert (await db.get(MimiNotificationDelivery, did)).state == "accepted"
+        finally:
+            if dispatcher is not None:
+                await dispatcher.stop()
+            await cleanup(maker, cid, ids)
+            if sid is not None:
+                await drop_device(maker, sid)
+            await engine.dispose()
+
+    asyncio.run(scenario())
