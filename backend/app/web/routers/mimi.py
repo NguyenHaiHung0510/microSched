@@ -15,8 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.notifications import (
     DevicePreferenceChange,
+    DevicePreferenceProof,
     acknowledge,
     list_attention,
+    read_preference,
     resolve_locator,
     set_preference,
 )
@@ -44,6 +46,7 @@ from app.agent.service import (
     list_conversations,
     list_standard_tasks,
     prepare_run_resume,
+    read_execution_receipt,
     reconcile_unknown_run,
     rename_conversation,
     request_run_pause,
@@ -607,6 +610,21 @@ async def require_mimi_notifications():
 
 
 @router.post(
+    "/devices/preference/read",
+    dependencies=[
+        Depends(require_mimi_available),
+        Depends(require_mimi_csrf),
+        Depends(require_mimi_notifications),
+    ],
+)
+async def read_mimi_device_preference(
+    payload: DevicePreferenceProof, db: Database, session: CurrentSession
+):
+    # Proof stays in a CSRF-protected body, never URL/query/referrer state.
+    return await read_preference(db, _owner_id(session), payload)
+
+
+@router.post(
     "/devices/preference",
     dependencies=[
         Depends(require_mimi_available),
@@ -662,6 +680,24 @@ async def read_mimi_evidence(
 
     conversation = await _conversation(db, session, conversation_id)
     return await read_evidence(db, conversation, bundle_id)
+
+
+@router.get(
+    "/conversations/{conversation_id}/change-sets/{change_set_id}/receipt",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_mimi_execution_receipt(
+    conversation_id: UUID,
+    change_set_id: UUID,
+    db: Database,
+    session: CurrentSession,
+    digest: Annotated[str, Query(min_length=64, max_length=64, pattern="^[0-9a-f]{64}$")],
+    nonce: UUID,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=160)],
+):
+    return await read_execution_receipt(
+        db, session, conversation_id, change_set_id, digest, nonce, idempotency_key
+    )
 
 
 @router.post(

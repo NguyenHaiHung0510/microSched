@@ -152,30 +152,53 @@ def clear_rollback_wake(session):
     session.info.pop(WAKE, None)
 
 
-class DevicePreferenceChange(BaseModel):
+class DevicePreferenceProof(BaseModel):
     model_config = ConfigDict(extra="forbid")
     subscription_id: UUID
     endpoint: str = Field(min_length=1, max_length=4096)
     p256dh: str = Field(min_length=1, max_length=1024)
     auth: str = Field(min_length=1, max_length=1024)
+
+
+class DevicePreferenceChange(DevicePreferenceProof):
     enabled: bool
     expected_revision: int | None = Field(default=None, ge=1)
 
 
-async def set_preference(db, owner_id, payload):
-    sub = (
-        await db.scalars(
-            select(PushSubscription)
-            .where(PushSubscription.id == payload.subscription_id)
-            .with_for_update()
-        )
-    ).one_or_none()
+async def _proved_subscription(db, payload, *, lock=False):
+    query = select(PushSubscription).where(PushSubscription.id == payload.subscription_id)
+    if lock:
+        query = query.with_for_update()
+    sub = (await db.scalars(query)).one_or_none()
     if sub is None or not (
         secrets.compare_digest(sub.endpoint, payload.endpoint)
         and secrets.compare_digest(sub.p256dh, payload.p256dh)
         and secrets.compare_digest(sub.auth, payload.auth)
     ):
         raise HTTPException(404, "Mimi device not found")
+    return sub
+
+
+async def read_preference(db, owner_id, payload: DevicePreferenceProof):
+    """Prove the device without creating consent or advancing its revision."""
+    sub = await _proved_subscription(db, payload)
+    pref = (
+        await db.scalars(
+            select(MimiDevicePreference).where(MimiDevicePreference.subscription_id == sub.id)
+        )
+    ).one_or_none()
+    if pref is not None and pref.owner_id != owner_id:
+        raise HTTPException(404, "Mimi device not found")
+    return {
+        "subscription_id": str(sub.id),
+        "enabled": pref.enabled if pref is not None else False,
+        "revision": pref.revision if pref is not None else None,
+        "registered": pref is not None,
+    }
+
+
+async def set_preference(db, owner_id, payload):
+    sub = await _proved_subscription(db, payload, lock=True)
     pref = (
         await db.scalars(
             select(MimiDevicePreference)

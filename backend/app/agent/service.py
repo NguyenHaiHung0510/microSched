@@ -4037,6 +4037,7 @@ async def conversation_view(
                 "target_id": row.target_id,
                 "state": row.state,
                 "unresolved": row.unresolved,
+                "evidence_bundle_ids": row.evidence_bundle_ids,
                 "created_at": row.created_at,
             }
             for row in feedback
@@ -4633,6 +4634,36 @@ async def _confirm_collection(
         db, run.id, "run.terminal", {"state": "completed", "result": "collection_executed"}
     )
     await db.flush()
+    return _receipt_read(receipt)
+
+
+async def read_execution_receipt(db, auth, conversation_id, change_set_id, digest, nonce, key):
+    """Bounded owner-bound recovery read, independent of truncated snapshot history.
+
+    A missing result is not proof that a request was unsent. Never confirm,
+    acquire a write lock, reconcile a provider or return another owner's key.
+    """
+    found = (
+        await db.execute(
+            select(MimiExecutionReceipt, MimiChangeSet)
+            .join(MimiChangeSet, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
+            .where(
+                MimiChangeSet.id == change_set_id,
+                MimiConversation.id == conversation_id,
+                MimiConversation.owner_id == _owner_id(auth),
+                MimiConversation.sensitivity == "standard",
+                MimiConversation.is_private.is_(False),
+            )
+            .limit(1)
+        )
+    ).first()
+    if found is None:
+        raise _not_found()
+    receipt, change = found
+    if receipt.idempotency_key != key or receipt.digest_sha256 != digest or change.nonce != nonce:
+        raise _conflict("receipt_recovery_binding_mismatch")
     return _receipt_read(receipt)
 
 

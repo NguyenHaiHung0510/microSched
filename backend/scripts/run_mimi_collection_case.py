@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,11 +37,26 @@ def main():
         url = make_url(raw)
         if (url.host, url.port, url.database) not in {
             ("127.0.0.1", 21886, "microsched_mimi086_ci2"),
+            ("127.0.0.1", 21886, "microsched_mimi086_ci3"),
             ("127.0.0.1", 21887, "mimi086_qa"),
         }:
             raise SystemExit("case runner refuses undeclared/nonlocal database")
     args.output.mkdir(parents=True, exist_ok=True)
-    command = [sys.executable, "-m", "pytest", *case["pytest_selectors"], "-q", "--tb=short"]
+    # One OS-temp root per invocation; pytest may clean only its child.
+    # Retain the root for evidence. No retry loop or repository cache writes.
+    temp_root = Path(tempfile.mkdtemp(prefix=f"mimi086-{args.case_id}-"))
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        *case["pytest_selectors"],
+        "-q",
+        "--tb=short",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        str(temp_root / "pytest"),
+    ]
     if args.collect_only:
         command += ["--collect-only"]
     start = datetime.now(UTC)
@@ -68,6 +84,7 @@ def main():
         "case_verdict": "NOT_GRADED_SELECTOR_RESULT_ONLY",
         "paid_calls": 0,
         "collection_only": args.collect_only,
+        "os_temp_root": str(temp_root),
     }
     (args.output / (args.case_id + ".json")).write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
