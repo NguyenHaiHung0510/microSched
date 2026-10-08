@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -816,3 +817,73 @@ def test_emergency_bounds_stop_before_over_limit_dispatch_or_read(runner, bounda
             assert len(reads) == 63
 
     _run(scenario())
+
+
+@pytest.mark.parametrize("tls_mode", ["require", "verify-full"])
+def test_real_saver_handoff_accepts_normalized_production_tls(monkeypatch, tls_mode):
+    """The real libpq parser accepts the DSN handed off by the production runner."""
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg.conninfo import conninfo_to_dict
+
+    settings = Settings(
+        _env_file=None,
+        app_env="production",
+        enable_inprocess_cron=False,
+        database_url=(
+            "postgresql://app_role:fixture-password@example.invalid:5432/appdb"
+            f"?sslmode={tls_mode}&application_name=mimi-fixture"
+            "&sslrootcert=/synthetic/ca.pem"
+        ),
+        mimi_real_chat_enabled=True,
+        mimi_live_provider_enabled=True,
+        mimi_context_v1_enabled=True,
+        mimi_runner="langgraph",
+        mimi_public_origin="https://app.example.invalid",
+        mimi_standard_api_key="synthetic-not-a-key",
+        mimi_route_model="synthetic/no-key",
+        mimi_route_provider="synthetic",
+        mimi_route_quantization="fp8",
+        mimi_route_max_input_price=0.2,
+        mimi_route_max_output_price=0.6,
+    )
+    captured = []
+
+    @asynccontextmanager
+    async def saver_factory(dsn):
+        # Parsing is real; there is deliberately no DB connection or network.
+        captured.append(conninfo_to_dict(dsn))
+        yield InMemorySaver()
+
+    monkeypatch.setattr(AsyncPostgresSaver, "from_conn_string", staticmethod(saver_factory))
+
+    async def scenario():
+        async def invoke(messages, turn):
+            return _completion(AssistantText(text="synthetic terminal"))
+
+        result = await run_langgraph(
+            [{"role": "system", "content": "synthetic policy"}],
+            limits=_limits(),
+            invoke_model=invoke,
+            execute_read=_read_value,
+            run_id=uuid4(),
+            generation=1,
+            policy_sha256="a" * 64,
+            tool_registry_sha256="b" * 64,
+            output_schema_sha256="c" * 64,
+            database_url=settings.database_url,
+            deployment_settings=settings,
+        )
+        assert result.outcome == AssistantText(text="synthetic terminal")
+
+    _run(scenario())
+    assert len(captured) == 1
+    assert captured[0] == {
+        "user": "app_role",
+        "password": "fixture-password",
+        "host": "example.invalid",
+        "port": "5432",
+        "dbname": "appdb",
+        "sslmode": tls_mode,
+        "application_name": "mimi-fixture",
+        "sslrootcert": "/synthetic/ca.pem",
+    }
