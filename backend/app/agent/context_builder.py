@@ -235,9 +235,13 @@ def assemble_context(
 
 
 def serialize_openrouter_messages(envelope: ContextEnvelope) -> list[dict[str, str]]:
-    """Keep authority in system messages and untrusted Task prose in a data message."""
+    """Keep reusable context ahead of fresh system authority; domain prose stays data."""
 
     stable = {"role": "system", "content": envelope.policy_text}
+    contract = {
+        "role": "system",
+        "content": _canonical_json({"output_contract": envelope.output_contract}),
+    }
     authority = {
         "role": "system",
         "content": _canonical_json(
@@ -245,7 +249,6 @@ def serialize_openrouter_messages(envelope: ContextEnvelope) -> list[dict[str, s
                 "authority_envelope": envelope.authority.model_dump(mode="json"),
                 "context_manifest": envelope.manifest.model_dump(mode="json"),
                 "pending_state": envelope.pending_state,
-                "output_contract": envelope.output_contract,
             }
         ),
     }
@@ -267,9 +270,10 @@ def serialize_openrouter_messages(envelope: ContextEnvelope) -> list[dict[str, s
     }
     return [
         stable,
-        authority,
+        contract,
         data,
         *envelope.transcript_suffix,
+        authority,
         {"role": "user", "content": envelope.current_user_turn},
     ]
 
@@ -287,6 +291,15 @@ def rebind_after_read(
 ) -> tuple[ContextEnvelope, list[dict[str, Any]]]:
     """Bind each new read source and actual remaining budget before another model turn."""
 
+    # Bind to the exact previous server-authored message, not a positional
+    # prefix or provider/domain text that happens to contain envelope keys.
+    prior_authority = serialize_openrouter_messages(envelope)[-2]
+    authority_positions = [
+        index for index, message in enumerate(messages) if message == prior_authority
+    ]
+    if len(authority_positions) != 1:
+        raise ValueError("context_authority_message_mismatch")
+    authority_position = authority_positions[0]
     rows = result.get("rows")
     groups = result.get("groups")
     count = result.get("count")
@@ -330,7 +343,8 @@ def rebind_after_read(
     )
     updated = envelope.model_copy(update={"authority": authority, "manifest": manifest})
     for _ in range(4):
-        rebound = [*serialize_openrouter_messages(updated)[:2], *messages[2:]]
+        rebound = list(messages)
+        rebound[authority_position] = serialize_openrouter_messages(updated)[-2]
         exact_bytes = serialized_input_bytes(rebound, agent_contract=True)
         if exact_bytes <= updated.manifest.budget.serialized_input_upper_bound:
             return updated, rebound

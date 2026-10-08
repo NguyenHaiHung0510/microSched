@@ -28,6 +28,23 @@ LangGraph production dispatch binds its checkpoint database to the already confi
 
 For rollback, disable real-chat/live/context together and set runner=current, retaining workflowpilot=false. Keep canonical history, receipts and checkpoint tables; do not downgrade/drop live data. The deployment receipt and bounded production checks must verify the actual commit and DB after activation. Alpha retains incomplete physical-device/offline/load evidence, refusal of ordinary revision messages while a preview is pending, possible unavailable answers after recovery, and deferred inefficient compaction in the historical216K stress case. The nominal110K live case compacted below100K and continued after reload; that scoped result does not close the stress finding.
 
+## Prompt prefix ordering
+
+The context serializer places immutable policy and the stable output contract first,
+followed by server reference data/checkpoint and the bounded historical transcript.
+Fresh system authority (lease, deadline, remaining budget, source manifest and pending
+state) follows the history and precedes the current user turn. It is still a system
+message; domain/checkpoint prose stays untrusted user data. The current read loop
+replaces the exact previous server authority message and preserves all history and
+assistant/tool pairs. It refuses missing, duplicate or altered authority before
+rebinding. Freshness, hashes and byte admission are retained.
+
+This makes historical context eligible for a longer reusable prefix across runs with
+the same data/checkpoint. In-run rebinding still changes authority before appended
+read messages; no claim of whole-run prefix reuse or remote cache savings is made.
+Provider tokenization, TTL/eviction and live model role handling remain separate
+qualification evidence. A local serialization test is not a paid cache-hit test.
+
 ## Ordinary failure and resource limits
 
 Cost is the primary financial policy: the configured OpenRouter key cap is shared, while actual per-run main/helper costs, unknowns and reuse are attributed from receipts. This alpha does not promise a hard per-run USD ceiling or add a reservation ledger. Context-v1 leases snapshot provisional server emergency bounds of32 main model turns and64 read calls (`MIMI_RUN_MAX_TURNS` / `MIMI_RUN_MAX_TOOL_CALLS`), not a product allowance or optimal measured ceiling. The1800-second technical deadline, exact-repeat no-progress stop, cancel/unknown recovery, helper-call and payload/output/admission guards remain. Old persisted leases retain their limits on resume; non-context runs remain1/1. Missing cost is unknown, not zero; the key cap and privacy/route policy are unchanged.
