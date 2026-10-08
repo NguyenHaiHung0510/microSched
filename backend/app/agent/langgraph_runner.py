@@ -483,7 +483,12 @@ async def run_langgraph(
         )
         if not production_bound and not _authorized_local_database(parsed_url):
             raise RouteContractError("mimi_langgraph_requires_authorized_app_database")
-        psycopg_url = parsed_url.set(drivername="postgresql").render_as_string(hide_password=False)
+        query = dict(parsed_url.query)
+        if "ssl" in query:
+            query["sslmode"] = query.pop("ssl")
+        psycopg_url = parsed_url.set(drivername="postgresql", query=query).render_as_string(
+            hide_password=False
+        )
         async with AsyncPostgresSaver.from_conn_string(psycopg_url) as checkpointer:
             final_state, resumed = await resume_or_start(checkpointer)
             if resumed and frame.get("terminal_result") is not None:
