@@ -18,13 +18,15 @@ The Run rail exposes main input, the preceding observation used for a compact de
 
 ## Explicit production configuration
 
-Features remain dark by default. A supported alpha configuration uses APP_ENV=production, real-chat/live/context flags, MIMI_RUNNER=langgraph, MIMI_TRANSPORT=openai_sdk and MIMI_TEXT_RESPONSE_FORMAT=natural. It still requires the production public origin, exact route/key and price caps, ZDR/data-collection policy and ordinary session/CSRF guards. No APP_ENV=local bypass is required or permitted for release.
+Code defaults remain dark. Owner approved the explicit Fly alpha configuration on2026-10-08 for deployment through develop: APP_ENV=production, real-chat/live/context flags, MIMI_RUNNER=langgraph, MIMI_TRANSPORT=openai_sdk and MIMI_TEXT_RESPONSE_FORMAT=natural. It requires the production public origin, exact route/key and price caps, ZDR/data-collection policy and ordinary session/CSRF guards. No APP_ENV=local bypass is required or permitted for release. The separate Owner-installed production key has a USD3 cap without automatic reset; its value never belongs in Git. Owner premerge UAT is waived, not PASS. Main/tag release remains pending Owner experience with the develop deployment.
 
 The evidence-admitted default is DeepSeekV4.1Flash/high/DeepInfraFP8. All four shortlist profiles remain visible. MiMo/GLM have smoke-only evidence and are disabled pending route-specific alpha qualification; Luna retains the observed ZDR404 refusal. Metadata is not live acceptance. An unqualified saved model is refused, never silently replaced. Legacy stored context presets remain auditable; new configuration exposes100k and applies only to the next run.
 
 OpenAI3.22.1, LangGraph1.2.12, checkpoint-postgres3.1.2 and psycopg[binary]3.3.6 are runtime dependencies. Docker's frozen/no-dev install and the Production dependency check consume these root dependencies. The CI job additionally imports the actual framework classes and validates synthetic production alpha settings without creating a client or sending a request. Package/framework imports remain lazy in the ordinary app; a dark app boots without a configured provider.
 
 LangGraph production dispatch binds its checkpoint database to the already configured application DATABASE_URL and explicit alpha flags. The runtime identity stays the existing CRUD app role. Saver tables and narrowly scoped DML require an explicit owner/migrator setup before enabling it; there is no startup/deploy auto-DDL. Missing saver setup produces a bounded Mimi failure. Production migration/schema/key-cap/auth/release verification remains a later authorized gate.
+
+For rollback, disable real-chat/live/context together and set runner=current, retaining workflowpilot=false. Keep canonical history, receipts and checkpoint tables; do not downgrade/drop live data. The deployment receipt and bounded production checks must verify the actual commit and DB after activation. Alpha retains incomplete physical-device/offline/load evidence, refusal of ordinary revision messages while a preview is pending, possible unavailable answers after recovery, and deferred inefficient compaction in the historical216K stress case. The nominal110K live case compacted below100K and continued after reload; that scoped result does not close the stress finding.
 
 ## Ordinary failure and resource limits
 

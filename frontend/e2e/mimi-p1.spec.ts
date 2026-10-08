@@ -282,6 +282,25 @@ test('Mimi side-chat stays available from the Task surface without page overflow
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation) })
       return
     }
+    if (route.request().method() === 'GET' && path.endsWith('/conversations')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        items: conversation ? [summary(conversation)] : [], next_cursor: null,
+      }) })
+      return
+    }
+    if (route.request().method() === 'GET' && path.endsWith(`/conversations/${conversationId}`)) {
+      await route.fulfill({ status: conversation ? 200 : 404, contentType: 'application/json', body: JSON.stringify(conversation ?? {}) })
+      return
+    }
+    if (route.request().method() === 'GET' && path.endsWith('/capabilities')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        context_v1_enabled: false, live_provider_enabled: false,
+        requested_model: null, requested_effort: null, route_mode: null,
+        model_selection_enabled: false, context_limit: 131072,
+        output_reserve: 4096, policy_id: null, policy_sha256: null,
+      }) })
+      return
+    }
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   })
 
