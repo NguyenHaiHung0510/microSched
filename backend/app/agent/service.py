@@ -2839,11 +2839,7 @@ async def send_message(
                 and agent_stop_code is None
             ):
                 raise RouteContractError("provider_revision_must_return_task_tool")
-            if (
-                force_task_tool
-                and settings.mimi_revision_collection
-                and completion.kind == "task"
-            ):
+            if force_task_tool and settings.mimi_revision_collection and completion.kind == "task":
                 raise RouteContractError("provider_revision_must_return_collection_tool")
             if (
                 force_task_tool

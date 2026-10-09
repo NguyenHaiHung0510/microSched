@@ -1,4 +1,4 @@
-import { expect } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 
 import { test } from './fixtures/tasks'
 import type { MimiConversation } from '../src/mimi-api'
@@ -29,6 +29,34 @@ function emptyConversation(): MimiConversation {
     events: [],
     feedback: [],
   }
+}
+
+// Approved Workspace keeps desktop rails visible and opens mobile rails in dialogs.
+async function openConversationRail(page: Page) {
+  const create=page.getByRole('button',{name:'Cuộc trò chuyện mới',exact:true})
+  if (!await create.isVisible()) await page.getByRole('button',{name:/^(?:Hội thoại(?: \(\d+\))?|Thu gọn hội thoại)$/}).click()
+  await expect(create).toBeVisible()
+}
+async function closeMobileRail(page: Page) {
+  if ((page.viewportSize()?.width ?? 1280)<1024) await page.keyboard.press('Escape')
+}
+async function createWorkspaceConversation(page: Page) {
+  await openConversationRail(page)
+  await page.getByRole('button',{name:'Cuộc trò chuyện mới',exact:true}).click()
+  await closeMobileRail(page)
+  await expect(page.getByTestId('mimi-input')).toBeVisible()
+}
+
+async function openDataRail(page: Page) {
+  const visible=page.locator('[data-testid="mimi-context-rail"]:visible')
+  if (!await visible.isVisible()) await page.getByRole('button',{name:(page.viewportSize()?.width ?? 1280)>=1024?'Xem dữ liệu liên quan':'Dữ liệu và thông báo',exact:true}).click()
+  await expect(visible).toBeVisible()
+  return visible
+}
+async function closeDataRail(page: Page) {
+  if ((page.viewportSize()?.width ?? 1280)>=1024) await page.getByRole('button',{name:'Đóng dữ liệu',exact:true}).click()
+  else await page.keyboard.press('Escape')
+  await expect(page.locator('[data-testid="mimi-context-rail"]:visible')).toHaveCount(0)
 }
 
 function summary(conversation: MimiConversation) {
@@ -178,6 +206,8 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
       return
     }
     if (request.method() === 'POST' && path.endsWith('/feedback')) {
+      expect(request.postDataJSON().target_type).toBe('receipt')
+      expect(request.postDataJSON().target_id).toBe(receiptId)
       const feedback = { id: 'feedback-1', client_id: 'feedback-client', target_type: 'receipt', target_id: receiptId, state: 'new', unresolved: true, created_at: '2026-09-15T01:02:00Z' }
       conversation = { ...conversation!, feedback: [feedback] }
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(feedback) })
@@ -188,22 +218,27 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
 
   await page.goto('/')
   await page.getByRole('tab', { name: 'Mimi' }).click()
-  await expect(page.getByRole('heading', { name: 'Mimi Control Center' })).toBeVisible()
-  await expect(page.getByText('Route hiệu lực')).toBeVisible()
+  await expect(page.getByTestId('mimi-workspace')).toBeVisible()
+  await expect(page.getByTestId('mimi-workspace-center')).toBeVisible()
   if (capturePreview) {
     await page.screenshot({
       path: `test-results/task-058/control-center-${page.viewportSize()?.width ?? 'unknown'}.png`,
       fullPage: true,
     })
   }
-  await page.getByRole('button', { name: 'Hội thoại' }).click()
-  await page.getByRole('button', { name: 'Cuộc trò chuyện mới' }).click()
+  await createWorkspaceConversation(page)
   await expect(page.getByLabel('Nhắn Mimi')).toBeVisible()
+  await page.getByTestId('mimi-configuration-hub-toggle').click()
+  await expect(page.getByRole('dialog',{name:'Cấu hình Mimi · Workspace'})).toBeVisible()
+  await expect(page.getByText('Lượt chat này chưa dùng model bên ngoài.')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await openConversationRail(page)
   await page.getByRole('button', { name: /^Tùy chọn / }).first().click()
   await page.getByRole('menuitem', { name: 'Đổi tên' }).click()
   await page.getByRole('textbox', { name: 'Tên hội thoại' }).fill('Tổng duyệt demo Mimi')
   await page.getByRole('button', { name: 'Lưu tên' }).click()
   await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
+  await closeMobileRail(page)
   await page.getByLabel('Nhắn Mimi').fill('Tạo task Chuẩn bị demo Mimi')
   await page.getByRole('button', { name: 'Gửi' }).click()
   await expect(page.getByTestId('mimi-change-set')).toContainText('Chuẩn bị demo Mimi')
@@ -220,7 +255,7 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
     expect(decisions).toBe(0)
     await page.reload()
     await page.getByRole('tab', { name: 'Mimi', exact: true }).click()
-    await page.getByRole('button', { name: 'Hội thoại', exact: true }).click()
+    await expect(page.getByTestId('mimi-workspace-center')).toBeVisible()
     await expect(preview).toContainText('Preview đã hết hạn')
     await expect(preview.getByRole('button', { name: 'Xác nhận tạo Task' })).toBeDisabled()
     await expect(page.getByLabel('Nhắn Mimi')).toBeEnabled()
@@ -233,22 +268,30 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
   expect(confirmBox).not.toBeNull()
   expect(confirmBox!.height).toBeGreaterThanOrEqual(44)
   await confirm.click()
-  await expect(page.getByTestId('mimi-receipt')).toContainText(receiptId)
+  const receipt=page.getByTestId('mimi-receipt')
+  await receipt.locator('summary').click()
+  await expect(receipt).toContainText(receiptId)
 
-  await page.getByText('Gửi feedback (không bắt buộc)', { exact: true }).click()
+  await page.getByRole('button',{name:'Chưa tốt · câu trả lời 2',exact:true}).click()
+  await page.getByRole('combobox',{name:'Mục cần góp ý'}).click()
+  await page.getByRole('option',{name:/Receipt 1/}).click()
   await page.getByLabel('Điều gì cần sửa hoặc làm rõ?').fill('Preview cần hiển thị nguồn rõ hơn')
   await page.getByRole('button', { name: 'Lưu feedback' }).click()
   await expect(page.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.')).toBeVisible()
+  await page.keyboard.press('Escape')
 
+  await openConversationRail(page)
   await page.getByRole('button', { name: /^Tùy chọn / }).first().click()
   await page.getByRole('menuitem', { name: 'Lưu trữ' }).click()
   await page.getByRole('button', { name: 'Đã lưu' }).click()
   await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
+  await openConversationRail(page)
   await page.getByRole('button', { name: /^Tùy chọn / }).first().click()
   await page.getByRole('menuitem', { name: 'Khôi phục' }).click()
   await page.getByRole('button', { name: 'Đang dùng' }).click()
   await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
 
+  await closeMobileRail(page)
   const overflow = await page.evaluate(() => {
     const root = document.scrollingElement ?? document.documentElement
     return [root.scrollWidth, root.clientWidth]
@@ -438,8 +481,7 @@ test('P1C-A synthetic browser loop keeps one conversation observable and compose
 
   await page.goto('/')
   await page.getByRole('tab', { name: 'Mimi' }).click()
-  await page.getByRole('button', { name: 'Hội thoại' }).click()
-  await page.getByRole('button', { name: 'Cuộc trò chuyện mới' }).click()
+  await createWorkspaceConversation(page)
   const composer = page.getByTestId('mimi-input')
   await expect(composer).toBeVisible()
   await composer.scrollIntoViewIfNeeded()
@@ -464,26 +506,27 @@ test('P1C-A synthetic browser loop keeps one conversation observable and compose
   else await dockToggle.click()
   await expect(page.getByTestId('mimi-side-chat')).toHaveCount(0)
 
+  await openConversationRail(page)
   await page.getByRole('button', { name: 'Thu gọn danh sách' }).click()
-  await expect(page.getByRole('heading', { name: 'Cuộc trò chuyện' })).toHaveCount(0)
-  await page.getByRole('button', { name: /Hội thoại \(/ }).click()
+  await expect(page.getByRole('heading', { name: 'Cuộc trò chuyện', exact:true })).not.toBeVisible()
+  await openConversationRail(page)
   await expect(page.getByRole('button', { name: 'Thu gọn danh sách' })).toBeVisible()
-  await page.getByRole('button', { name: 'Xem dữ liệu liên quan' }).click()
-  await expect(page.getByTestId('mimi-context-rail')).toContainText('Task chỉ hiện trong rail')
-  await expect(page.getByText('Bạn nhìn thấy ở rail không đồng nghĩa nội dung tự động được gửi cho model.')).toBeVisible()
-  await page.getByRole('button', { name: 'Đóng dữ liệu' }).click()
-  await expect(page.getByTestId('mimi-context-rail')).toHaveCount(0)
+  await closeMobileRail(page)
+  if ((page.viewportSize()?.width ?? 1280)>=1024) await closeDataRail(page)
+  const rail=await openDataRail(page)
+  await expect(rail).toContainText('Task chỉ hiện trong rail')
+  await expect(rail).toContainText('Dữ liệu đang xem không tự gửi vào model.')
+  await closeDataRail(page)
 
-  // A standard browser viewport is enough: no fullscreen/F11 is used to reach the composer.
+  // Standard viewport, no fullscreen/F11; reload does not repeat the message POST.
   await page.reload()
   await page.getByRole('tab', { name: 'Mimi' }).click()
-  await page.getByRole('button', { name: 'Hội thoại' }).click()
   await expect(page.getByTestId('mimi-input')).toBeVisible()
   await expect.poll(() => observerGets).toBeGreaterThan(0)
-  await page.getByRole('button', { name: 'Xem dữ liệu liên quan' }).click()
-  await expect(page.getByTestId('mimi-context-rail')).toContainText('Task chỉ hiện trong rail')
-  await page.getByRole('tab', { name: 'Run', exact: true }).click()
-  const inspector = page.getByTestId('mimi-context-inspector')
+  const restoredRail=await openDataRail(page)
+  await expect(restoredRail).toContainText('Task chỉ hiện trong rail')
+  await restoredRail.getByRole('button', { name: 'Run', exact:true }).click()
+  const inspector = restoredRail.getByTestId('mimi-context-inspector')
   await inspector.locator('summary').click()
   await expect(inspector).toContainText('tasks.standard')
   await expect(inspector).toContainText('Không gửi: body_md')

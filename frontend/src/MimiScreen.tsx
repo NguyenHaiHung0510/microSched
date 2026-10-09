@@ -4,7 +4,7 @@ import { MimiBackdrop } from '@/MimiBackdrop'
 import { MimiCollectionReview } from '@/MimiCollectionReview'
 import { MimiFeedbackEvidence } from '@/MimiFeedbackEvidence'
 import { mimiChangeTitle } from '@/mimi-collection'
-import { clearMimiIntent, hasAuthoritativeMimiRefusal, readMimiIntent, saveMimiIntent, type MimiDecisionIntent } from '@/mimi-recovery'
+import { clearMimiIntent, publishAuthoritativeMimiRefusal, readMimiIntent, saveMimiIntent, type MimiDecisionIntent } from '@/mimi-recovery'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePreviewExpired } from './mimi-preview-expiry'
 import { MimiRunObservations } from '@/MimiRunObservations'
@@ -402,7 +402,7 @@ export function MimiScreen({
       if (intent.choice === 'confirm' && intent.changeSet.operation.tool === 'task.collection.v1' && error instanceof ApiError && error.status === 409 && ['change_set_frontier_stale', 'change_set_stale'].includes(String(detail))) {
         try {
           const snapshot = await fetchMimiConversation(intent.conversationId)
-          if (hasAuthoritativeMimiRefusal(intent, snapshot.change_sets)) {
+          if (await publishAuthoritativeMimiRefusal(queryClient, intent, snapshot)) {
             clearMimiIntent(intent.conversationId)
             setDecisionIntent(null)
             setRecoveryNotice('Server đã từ chối preview cũ; không áp dụng thay đổi. Hãy yêu cầu Mimi lập phương án mới.')
@@ -422,7 +422,7 @@ export function MimiScreen({
         try { return await recoverMimiReceipt(intent.conversationId, intent.changeSet, intent.key) } catch (error) {
           if (!(error instanceof ApiError) || error.status !== 404) throw error
           const snapshot = await fetchMimiConversation(intent.conversationId)
-          if (!hasAuthoritativeMimiRefusal(intent, snapshot.change_sets)) throw error
+          if (!await publishAuthoritativeMimiRefusal(queryClient, intent, snapshot)) throw error
           return null // Authoritative terminal refusal, not inferred from receipt absence.
         }
       }
