@@ -498,6 +498,9 @@ test('P1C-A synthetic browser loop keeps one conversation observable and compose
   await composer.press('Enter')
   await expect.poll(() => messagePosts).toBe(1)
 
+  // The shared dock is exposed on domain screens, not inside its full Workspace.
+  await page.getByRole('tab', { name: 'Task', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Task', exact: true })).toHaveAttribute('aria-selected', 'true')
   const dockToggle = page.getByTestId('mimi-dock-toggle')
   await dockToggle.click()
   await expect(page.getByTestId('mimi-side-chat')).toBeVisible()
@@ -506,6 +509,8 @@ test('P1C-A synthetic browser loop keeps one conversation observable and compose
   else await dockToggle.click()
   await expect(page.getByTestId('mimi-side-chat')).toHaveCount(0)
 
+  await page.getByRole('tab', { name: 'Mimi', exact: true }).click()
+  await expect(page.getByTestId('mimi-workspace')).toBeVisible()
   await openConversationRail(page)
   await page.getByRole('button', { name: 'Thu gọn danh sách' }).click()
   await expect(page.getByRole('heading', { name: 'Cuộc trò chuyện', exact:true })).not.toBeVisible()

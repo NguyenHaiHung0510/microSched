@@ -10,7 +10,7 @@ export async function publishAuthoritativeMimiRefusal(client: QueryClient, inten
   if (snapshot.id !== intent.conversationId || !hasAuthoritativeMimiRefusal(intent, snapshot.change_sets)) return false
   const key = ['mimi', 'conversation', intent.conversationId]
   await client.cancelQueries({ queryKey: key, exact: true })
-  if (client.getQueryData<MimiConversation>(['mimi', 'current'])?.id === intent.conversationId) await client.cancelQueries({ queryKey: ['mimi', 'current'], exact: true })
+  await client.cancelQueries({ queryKey: ['mimi', 'current'], exact: true })
   client.setQueryData(key, snapshot)
   client.setQueryData<MimiConversation | null>(['mimi', 'current'], (current) => current?.id === intent.conversationId ? snapshot : current)
   return true

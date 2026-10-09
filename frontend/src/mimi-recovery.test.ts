@@ -55,11 +55,37 @@ it('never overwrites another current conversation and refuses mismatched/absent/
   const before={id:'owner-conv',change_sets:[c]} as MimiConversation
   const other={id:'other-conv',change_sets:[]} as unknown as MimiConversation
   const key=['mimi','conversation','owner-conv'];client.setQueryData(key,before);client.setQueryData(['mimi','current'],other)
-  for(const bad of [{...before,id:'other-conv'}, {...before,change_sets:[]},before,{...before,change_sets:[{...c,state:'stale',nonce:'wrong'}]}]) {
+  for(const bad of [{...before,id:'other-conv'}, {...before,change_sets:[]},before,{...before,change_sets:[{...c,state:'stale',nonce:'wrong'}]},{...before,change_sets:[{...c,state:'stale',digest:'wrong'}]}]) {
     expect(await publishAuthoritativeMimiRefusal(client,intent,bad)).toBe(false)
     expect(client.getQueryData(key)).toEqual(before)
   }
   const good={...before,change_sets:[{...c,state:'stale',confirmation_preflight:{status:'blocked' as const,reason:'change_set_stale'}}]}
   expect(await publishAuthoritativeMimiRefusal(client,intent,good)).toBe(true)
   expect(client.getQueryData(['mimi','current'])).toEqual(other);client.clear()
+})
+
+it('cancels an empty current cache inflight read before releasing a matching refusal intent', async () => {
+  const client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:0}}})
+  const c={id:'c',digest:'d',nonce:'n',state:'pending',confirmation_preflight:{status:'eligible',reason:null}} as MimiChangeSet
+  const intent={conversationId:'owner-conv',changeSet:c,choice:'confirm' as const,key:'same-key'}
+  const before={id:intent.conversationId,change_sets:[c]} as MimiConversation
+  const snapshot={...before,change_sets:[{...c,state:'stale',confirmation_preflight:{status:'blocked' as const,reason:'change_set_stale'}}]}
+  const key=['mimi','conversation',intent.conversationId]
+  const currentKey=['mimi','current']
+  const store=new Map<string,string>();vi.stubGlobal('sessionStorage',{setItem:(k:string,v:string)=>store.set(k,v),getItem:(k:string)=>store.get(k),removeItem:(k:string)=>store.delete(k)})
+  saveMimiIntent(intent)
+  let finishRead!:(value:MimiConversation)=>void
+  const inflight=client.fetchQuery({queryKey:currentKey,queryFn:()=>new Promise<MimiConversation>((resolve)=>{finishRead=resolve})}).catch(()=>null)
+  expect(client.getQueryData(currentKey)).toBeUndefined()
+  expect(client.getQueryState(currentKey)?.fetchStatus).toBe('fetching')
+  expect(await publishAuthoritativeMimiRefusal(client,intent,snapshot)).toBe(true)
+  expect(client.getQueryState(currentKey)?.fetchStatus).toBe('idle')
+  expect(client.getQueryData(key)).toEqual(snapshot)
+  expect(collectionConfirmationNotice(snapshot.change_sets[0])).not.toBeNull()
+  expect(readMimiIntent(intent.conversationId,[c])?.key).toBe('same-key')
+  clearMimiIntent(intent.conversationId)
+  finishRead(before);await inflight
+  expect(client.getQueryData(currentKey)).toBeUndefined()
+  expect(client.getQueryData(key)).toEqual(snapshot)
+  expect(readMimiIntent(intent.conversationId,[c])).toBeNull();client.clear()
 })
