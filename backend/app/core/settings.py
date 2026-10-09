@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     mimi_runner: Literal["current", "langgraph"] = "current"
     mimi_workflow_pilot_enabled: bool = False
     mimi_public_origin: str | None = None
-    mimi_preview_ttl_minutes: int = 15
+    mimi_preview_ttl_minutes: int = 180
     mimi_run_deadline_seconds: int = 1_800
     # Provisional emergency bounds, not a per-run dollar budget.
     # Issued leases freeze these values; changing config does not alter old runs.
@@ -297,8 +297,8 @@ class Settings(BaseSettings):
             price = getattr(self, field_name)
             if price is not None and price < 0:
                 raise ValueError(f"{field_name.upper()} cannot be negative")
-        if not 1 <= self.mimi_preview_ttl_minutes <= 60:
-            raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 60")
+        if not 1 <= self.mimi_preview_ttl_minutes <= 180:
+            raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 180")
         if not 1 <= self.mimi_run_max_turns <= 128:
             raise ValueError("MIMI_RUN_MAX_TURNS must be between 1 and 128")
         if not 1 <= self.mimi_run_max_tool_calls <= 256:
