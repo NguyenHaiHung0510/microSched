@@ -61,7 +61,7 @@ def eligible_pool(
     quantizations=("fp8",),
     now=None,
 ):
-    if model != ADMITTED_MODEL or effort not in {"low", "high"}:
+    if model != ADMITTED_MODEL or effort not in {"low", "high", "max"}:
         raise NoEligibleEndpoint("selected_model_or_effort_not_admitted")
     if not math.isfinite(threshold) or not 0 <= threshold < 100 or window not in {"1d", "30m"}:
         raise NoEligibleEndpoint("uptime_policy_invalid")

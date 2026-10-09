@@ -48,11 +48,12 @@ def anyio_backend() -> str:
 
 
 @pytest.mark.anyio
-async def test_sdk_completion_preserves_full_request_schema_provider_and_cost() -> None:
+@pytest.mark.parametrize("effort", ["low", "high", "max"])
+async def test_sdk_completion_preserves_full_request_schema_provider_and_cost(effort) -> None:
     messages = [{"role": "user", "content": "synthetic"}]
     expected = build_request(
         messages,
-        _settings(),
+        _settings(mimi_route_reasoning_effort=effort),
         session_id="opaque-session",
         force_task_tool=True,
         agent_contract=True,
@@ -96,7 +97,7 @@ async def test_sdk_completion_preserves_full_request_schema_provider_and_cost() 
     try:
         result = await complete(
             messages,
-            settings=_settings(),
+            settings=_settings(mimi_route_reasoning_effort=effort),
             client=transport,
             session_id="opaque-session",
             agent_contract=True,
@@ -111,7 +112,7 @@ async def test_sdk_completion_preserves_full_request_schema_provider_and_cost() 
     assert json.loads(captured[0].content) == expected
     assert expected["response_format"] == AGENT_RESPONSE_FORMAT
     assert expected["provider"]["only"] == ["provider-a"]
-    assert expected["reasoning"] == {"effort": "high", "exclude": True}
+    assert expected["reasoning"] == {"effort": effort, "exclude": True}
     assert expected["usage"] == {"include": True}
     assert expected["store"] is False
     assert expected["session_id"] == "opaque-session"
@@ -132,10 +133,15 @@ async def test_sdk_completion_preserves_full_request_schema_provider_and_cost() 
 
 
 @pytest.mark.anyio
-async def test_sdk_stream_buffers_text_until_strict_terminal_and_keeps_receipts() -> None:
+@pytest.mark.parametrize("effort", ["low", "high", "max"])
+async def test_sdk_stream_buffers_text_until_strict_terminal_and_keeps_receipts(effort) -> None:
     messages = [{"role": "user", "content": "synthetic"}]
     expected = build_request(
-        messages, _settings(), stream=True, session_id="opaque-session", agent_contract=True
+        messages,
+        _settings(mimi_route_reasoning_effort=effort),
+        stream=True,
+        session_id="opaque-session",
+        agent_contract=True,
     )
     captured: list[httpx2.Request] = []
     events: list[tuple[str, dict[str, Any]]] = []
@@ -196,7 +202,7 @@ async def test_sdk_stream_buffers_text_until_strict_terminal_and_keeps_receipts(
     try:
         result = await complete_stream(
             messages,
-            settings=_settings(),
+            settings=_settings(mimi_route_reasoning_effort=effort),
             client=transport,
             session_id="opaque-session",
             agent_contract=True,
@@ -207,6 +213,7 @@ async def test_sdk_stream_buffers_text_until_strict_terminal_and_keeps_receipts(
 
     assert len(captured) == 1
     assert json.loads(captured[0].content) == expected
+    assert expected["reasoning"] == {"effort": effort, "exclude": True}
     assert expected["response_format"] == AGENT_RESPONSE_FORMAT
     assert expected["stream_options"] == {"include_usage": True}
     assert isinstance(result.outcome, Clarification)
@@ -296,7 +303,8 @@ async def test_sdk_provider_error_text_never_enters_diagnostic_or_persistable_re
 
 
 @pytest.mark.anyio
-async def test_sdk_summary_dispatch_omits_tools_and_tool_choice() -> None:
+@pytest.mark.parametrize("effort", ["low", "high", "max"])
+async def test_sdk_summary_dispatch_omits_tools_and_tool_choice(effort) -> None:
     captured: list[dict[str, Any]] = []
     candidate = {"summary": "ok", "constraints": [], "supersessions": [], "resolutions": []}
 
@@ -324,7 +332,7 @@ async def test_sdk_summary_dispatch_omits_tools_and_tool_choice() -> None:
     try:
         result = await complete(
             [{"role": "system", "content": "summary"}],
-            settings=_settings(),
+            settings=_settings(mimi_route_reasoning_effort=effort),
             client=transport,
             summary_mode=True,
         )
@@ -335,6 +343,7 @@ async def test_sdk_summary_dispatch_omits_tools_and_tool_choice() -> None:
     assert len(captured) == 1
     assert "tools" not in captured[0]
     assert "tool_choice" not in captured[0]
+    assert captured[0]["reasoning"] == {"effort": effort, "exclude": True}
     assert captured[0]["response_format"]["json_schema"]["strict"] is True
 
 

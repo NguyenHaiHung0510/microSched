@@ -174,6 +174,33 @@ test('route configuration saves the expected version with the Mimi CSRF header',
   assert.equal(result.version, 8)
 })
 
+test.each(['low', 'high', 'max'])('DeepSeek %s saves and reloads without effort conversion', async (effort) => {
+  let stored: Record<string, unknown> = {}
+  let savedVersion = 7
+  globalThis.fetch = async (_path, init) => {
+    if (init?.method === 'PUT') {
+      const payload = JSON.parse(String(init.body))
+      assert.equal(payload.expected_version, savedVersion)
+      assert.equal((init.headers as Record<string, string>)['X-Mimi-CSRF'], '1')
+      stored = payload
+      savedVersion += 1
+    }
+    return new Response(JSON.stringify({
+      config: stored, stored_config: stored, version: savedVersion,
+      applies_to: 'next_run', active_run_id: 'active-run', profiles: [],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  const saved = await saveMimiConfiguration('conversation-84', {
+    profile_id: 'deepseek', effort, input_tokens: 100_000,
+  }, 7)
+  const reloaded = await fetchMimiConfiguration('conversation-84')
+  assert.equal(saved.config.effort, effort)
+  assert.equal(reloaded.config.effort, effort)
+  assert.equal(reloaded.version, 8)
+  assert.equal(reloaded.applies_to, 'next_run')
+  assert.equal(reloaded.active_run_id, 'active-run')
+})
+
 test('only the explicit preview action sends an exact revision target', async () => {
   const requests: Array<Record<string, unknown>> = []
   globalThis.fetch = async (_path, init) => {

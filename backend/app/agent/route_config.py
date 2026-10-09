@@ -43,7 +43,7 @@ PROFILES = {
         "model": "deepseek/deepseek-v4.1-flash",
         "provider": "deepinfra",
         "quantization": "fp8",
-        "supported_efforts": ["low", "high"],
+        "supported_efforts": ["low", "high", "max"],
         "context_limit": 1_048_576,
         "max_output_tokens": 131_072,
         "output_reserve": 8192,

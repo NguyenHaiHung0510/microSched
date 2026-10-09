@@ -245,16 +245,20 @@ def test_fanout8_remaining3_final_wire_omits_tools_and_preserves_obligations():
     asyncio.run(scenario())
 
 
-def test_pool_native_exact_model_effort_privacy_price_and_variant_boundary():
-    pool = eligible_pool(catalog(), model=ADMITTED_MODEL, effort="high")
+@pytest.mark.parametrize("effort", ["low", "high", "max"])
+def test_pool_native_exact_model_effort_privacy_price_and_variant_boundary(effort):
+    pool = eligible_pool(catalog(), model=ADMITTED_MODEL, effort=effort)
     wire = build_request(
         [],
         settings=settings(
-            mimi_route_mode="adaptive", mimi_route_allowed_providers=",".join(pool.tags)
+            mimi_route_mode="adaptive",
+            mimi_route_reasoning_effort=effort,
+            mimi_route_allowed_providers=",".join(pool.tags),
         ),
         agent_contract=True,
     )
-    assert wire["model"] == ADMITTED_MODEL and wire["reasoning"]["effort"] == "high"
+    assert wire["model"] == ADMITTED_MODEL and wire["reasoning"]["effort"] == effort
+    assert pool.effort == effort
     assert wire["provider"]["only"] == ["deepinfra/fp8"]
     assert wire["provider"]["zdr"] is True and wire["provider"]["data_collection"] == "deny"
     assert wire["provider"]["require_parameters"] is True and "order" not in wire["provider"]
@@ -263,7 +267,7 @@ def test_pool_native_exact_model_effort_privacy_price_and_variant_boundary():
         eligible_pool(
             catalog({"tag": "deepinfra"}, {"tag": "deepinfra/fp8", "uptime_last_1d": 95}),
             model=ADMITTED_MODEL,
-            effort="high",
+            effort=effort,
         )
     for override in (
         {"quantization": "fp4"},
@@ -271,13 +275,13 @@ def test_pool_native_exact_model_effort_privacy_price_and_variant_boundary():
         {"data_collection": "allow"},
         {"supported_parameters": ["reasoning"]},
         {"pricing": {"prompt": "NaN", "completion": ".0000006"}},
-        {"supported_reasoning_efforts": ["low"]},
+        {"supported_reasoning_efforts": ["high"] if effort == "low" else ["low"]},
     ):
         with pytest.raises(NoEligibleEndpoint):
-            eligible_pool(catalog(override), model=ADMITTED_MODEL, effort="high")
-    for model, effort in (("xiaomi/mimo-v2.6-pro", "high"), (ADMITTED_MODEL, "max")):
+            eligible_pool(catalog(override), model=ADMITTED_MODEL, effort=effort)
+    for model, unsupported in (("xiaomi/mimo-v2.6-pro", effort), (ADMITTED_MODEL, "medium")):
         with pytest.raises(NoEligibleEndpoint):
-            eligible_pool(catalog(), model=model, effort=effort)
+            eligible_pool(catalog(), model=model, effort=unsupported)
     assert [p["id"] for p in profiles_for_ui(settings()) if p["available"]] == ["deepseek"]
     with pytest.raises(HTTPException):
         default_configuration(settings(mimi_route_model="unselected/unknown"))
