@@ -20,7 +20,7 @@ export default defineConfig({
       filename: 'sw.ts',
       registerType: 'autoUpdate',
       injectManifest: {
-        globPatterns: ['**/*.{js,css,html,ico,png,woff2}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,webp,woff2}'],
         globIgnores: ['**/*cyrillic*'],
       },
       manifest: {

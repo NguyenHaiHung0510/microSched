@@ -33,6 +33,16 @@
   --brand-gold-leaf:   #cfa348;
   --brand-deep-berry:  #4a1521;
 
+  /* Owner53 frosted Mimi surfaces; text retains the existing contrast tokens. */
+  --mimi-glass: color-mix(in srgb, var(--n-0) 78%, transparent);
+  --mimi-rail-glass: color-mix(in srgb, var(--n-0) 89%, transparent);
+  --mimi-assistant-glass: color-mix(in srgb, var(--n-0) 94%, transparent);
+  --mimi-decor-border: var(--rose-200);
+  --mimi-user-bg: var(--rose-100);
+  --mimi-petal-light: var(--rose-100);
+  --mimi-petal-deep: var(--rose-300);
+  --mimi-floral-corner: url("/brand/sakura-corner.webp");
+
   /* --- trung tính ngả ấm: xám lạnh đặt cạnh hồng ấm sẽ trông bẩn --- */
   --n-0:   #ffffff;
   --n-25:  #fdfbfb;

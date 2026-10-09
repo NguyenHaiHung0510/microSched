@@ -9,7 +9,8 @@ describe('Brand Identity System (microSched · Mimi · Orbit)', () => {
       expect(html).toContain('data-testid="mimi-avatar"')
       expect(html).toContain('data-state="' + state + '"')
       expect(html).toContain('role="img"')
-      expect(html).toContain('src="/brand/mimi-' + state + '.svg"')
+      expect(html).toContain('src="/brand/principal-mimi-logo.svg"')
+      expect(html).not.toContain('/brand/mimi-' + state + '.svg')
       // Guardrail: must not contain Lucide bot SVG or lucide classes
       expect(html).not.toContain('lucide-bot')
       expect(html).not.toContain('lucide')
@@ -17,16 +18,16 @@ describe('Brand Identity System (microSched · Mimi · Orbit)', () => {
 
     it('renders accessible state descriptions', () => {
       const htmlIdle = renderToStaticMarkup(<MimiAvatar state="idle" />)
-      expect(htmlIdle).toContain('aria-label="Mimi đang lắng nghe (A Quiet Bud)"')
+      expect(htmlIdle).toContain('aria-label="Mimi"')
 
       const htmlThinking = renderToStaticMarkup(<MimiAvatar state="thinking" />)
-      expect(htmlThinking).toContain('aria-label="Mimi đang suy nghĩ (Ideas Unfurl)"')
+      expect(htmlThinking).toContain('aria-label="Mimi đang suy nghĩ"')
 
       const htmlExecuting = renderToStaticMarkup(<MimiAvatar state="executing" />)
-      expect(htmlExecuting).toContain('aria-label="Mimi đang thực thi (Turning Plans into Progress)"')
+      expect(htmlExecuting).toContain('aria-label="Mimi đang thực thi"')
 
       const htmlReady = renderToStaticMarkup(<MimiAvatar state="ready" />)
-      expect(htmlReady).toContain('aria-label="Mimi đã sẵn sàng (All Set)"')
+      expect(htmlReady).toContain('aria-label="Mimi đã sẵn sàng"')
     })
   })
 

@@ -1,7 +1,10 @@
+import { ChevronDown, SlidersHorizontal } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { ApiError } from '@/api'
+import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { availableInputPresets, effortOptions } from '@/mimi-configuration'
@@ -12,6 +15,7 @@ import {
   type MimiModelProfile,
   type MimiRouteConfig,
   saveMimiConfiguration,
+  refreshMimiProviderPool,
 } from '@/mimi-api'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
@@ -58,10 +62,14 @@ export function MimiConfiguration({
   conversationId,
   capabilities,
   runtimeActive,
+  open,
+  onOpenChange,
 }: {
   conversationId: string
   capabilities: MimiCapabilities | undefined
   runtimeActive: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
   const enabled = capabilities?.model_selection_enabled === true
   const queryClient = useQueryClient()
@@ -109,24 +117,14 @@ export function MimiConfiguration({
     save.reset()
   }
 
+  const refreshPool = useMutation({ mutationFn: () => refreshMimiProviderPool(conversationId) })
   const activeRunId = configuration.data?.active_run_id
   const profiles = configuration.data?.profiles.length
     ? configuration.data.profiles
     : capabilities?.model_profiles ?? []
 
   return (
-    <details className="shrink-0 rounded-xl border bg-card px-3 py-2" data-testid="mimi-route-settings">
-      <summary className="cursor-pointer py-1 text-sm font-semibold">
-        Cấu hình Mimi
-        <span className="ml-2 font-normal text-muted-foreground">
-          {selectedProfile?.label ?? (capabilities?.live_provider_enabled ? 'Theo server' : 'Chế độ local')}
-        </span>
-        {enabled && (activeRunId || runtimeActive) ? (
-          <span className="ml-2 font-normal text-muted-foreground" role="status" data-testid="mimi-next-run-notice">
-            Run đang hoạt động · cấu hình mới áp dụng từ lượt sau
-          </span>
-        ) : null}
-      </summary>
+    <Dialog open={open} onOpenChange={onOpenChange}><DialogTrigger asChild><Button type="button" size="sm" variant="ghost" className="mimi-model-chip mb-1 max-w-full justify-start gap-1.5 text-xs" data-testid="mimi-route-settings" aria-label="Cấu hình model và effort"><SlidersHorizontal className="size-3.5" /><span className="truncate">{selectedProfile?.label ?? 'Model theo server'} · {selection?.effort ?? capabilities?.requested_effort ?? 'chưa rõ'}</span><ChevronDown className="size-3" /></Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>Cấu hình Mimi</DialogTitle><DialogDescription>Áp dụng cho lượt chạy tiếp theo; giữ đúng model và effort đã chọn.</DialogDescription></DialogHeader>{enabled && (activeRunId || runtimeActive) ? <p role="status" className="text-xs" data-testid="mimi-next-run-notice">Run đang hoạt động · cấu hình mới áp dụng từ lượt sau</p> : null}
 
       {!enabled ? (
         <div className="space-y-3 pb-2 pt-1">
@@ -146,7 +144,7 @@ export function MimiConfiguration({
         </div>
       ) : selection ? (
         <div className="space-y-3 pb-2 pt-2">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="min-w-0 space-y-1.5">
               <label htmlFor={`mimi-profile-${conversationId}`} className="text-sm font-semibold">Model</label>
               <Select
@@ -158,6 +156,7 @@ export function MimiConfiguration({
                   const nextEfforts = effortOptions(profile)
                   const nextPresets = availableInputPresets(profile)
                   updateSelection({
+                    ...selection,
                     profile_id: profile.id,
                     effort: nextEfforts.includes(selection.effort) ? selection.effort : nextEfforts[0],
                     input_tokens: nextPresets.includes(selection.input_tokens)
@@ -170,7 +169,7 @@ export function MimiConfiguration({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {configuration.data?.profiles.map((profile) => (
+                  {configuration.data?.profiles.filter((profile) => profile.id === 'deepseek').map((profile) => (
                     <SelectItem key={profile.id} value={profile.id} disabled={!profile.available}>
                       {profile.label} · {profile.model}{!profile.available && profile.unavailable_reason ? ` · ${profile.unavailable_reason}` : ''}
                     </SelectItem>
@@ -210,8 +209,10 @@ export function MimiConfiguration({
                 </SelectContent>
               </Select>
             </div>
+            <div className="min-w-0 space-y-1.5"><label htmlFor={`mimi-window-budget-${conversationId}`} className="text-sm font-semibold">Cửa sổ ngữ cảnh / ngân sách input</label><Select value="profile" disabled><SelectTrigger id={`mimi-window-budget-${conversationId}`} className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="profile">{selectedProfile ? `${(selectedProfile.context_limit - selectedProfile.output_reserve).toLocaleString('vi-VN')} token input` : 'Theo profile server'}</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Tổng cửa sổ {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token, dành {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token output. Profile hiện tại chốt cửa sổ; chưa hỗ trợ đổi riêng ngân sách input.</p></div>
           </div>
 
+          <fieldset className="space-y-3 rounded-lg border p-3"><legend className="px-1 text-xs font-semibold">Provider của đúng model / effort đã chọn</legend><div className="grid gap-3 sm:grid-cols-3"><div><label className="text-xs font-semibold" htmlFor={`mimi-routing-${conversationId}`}>Chính sách</label><Select value={selection.routing_mode ?? 'adaptive'} onValueChange={(value) => updateSelection({ ...selection, routing_mode: value as 'exact' | 'adaptive' })}><SelectTrigger id={`mimi-routing-${conversationId}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="adaptive">Provider thích ứng</SelectItem><SelectItem value="exact">Provider đã cấu hình</SelectItem></SelectContent></Select></div><div><label className="text-xs font-semibold" htmlFor={`mimi-uptime-${conversationId}`}>Uptime phải lớn hơn (%)</label><Input id={`mimi-uptime-${conversationId}`} type="number" min={0} max={99.999} step={0.1} value={selection.min_uptime_percent ?? 95} onChange={(event) => updateSelection({ ...selection, min_uptime_percent: event.target.value === '' ? Number.NaN : Number(event.target.value) })} /></div><div><label className="text-xs font-semibold" htmlFor={`mimi-window-${conversationId}`}>Cửa sổ uptime</label><Select value={selection.uptime_window ?? '1d'} onValueChange={(value) => updateSelection({ ...selection, uptime_window: value as '1d' | '30m' })}><SelectTrigger id={`mimi-window-${conversationId}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1d">1 ngày</SelectItem><SelectItem value="30m">30 phút</SelectItem></SelectContent></Select></div></div><p className="text-xs text-muted-foreground">Chỉ đổi provider đủ điều kiện về privacy, giá và uptime; giữ nguyên DeepSeek V4.1 Flash cùng effort. Không hạ privacy hoặc đổi model khi không có endpoint phù hợp.</p><Button type="button" size="sm" variant="outline" disabled={refreshPool.isPending || save.isPending || dirty} onClick={() => refreshPool.mutate()}>{refreshPool.isPending ? 'Đang đọc metadata…' : 'Làm mới pool đã lưu'}</Button>{refreshPool.isError ? <p role="alert" className="text-xs text-bad">Chưa đọc được pool đủ điều kiện. Không tự đổi model.</p> : null}{refreshPool.data ? <p className="break-words text-xs">{refreshPool.data.model} · {refreshPool.data.effort} · {refreshPool.data.tags.join(', ') || 'Không có endpoint'} · uptime &gt; {refreshPool.data.min_uptime_percent}% / {refreshPool.data.window} · lúc {new Date(refreshPool.data.checked_at * 1000).toLocaleString('vi-VN')}</p> : null}</fieldset>
           <p className="text-xs text-muted-foreground">
             Mimi compact ở lượt sau khi provider báo input main đạt {selection.input_tokens.toLocaleString('vi-VN')} token. Request có thể vượt ngưỡng này; giới hạn endpoint là {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token, output tối đa {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token. Lưu cấu hình chỉ áp dụng từ lượt chạy tiếp theo
             {activeRunId || runtimeActive ? '; lượt đang chạy giữ nguyên lựa chọn đã chốt.' : '.'}
@@ -233,13 +234,13 @@ export function MimiConfiguration({
           <Button
             type="button"
             size="lg"
-            disabled={!dirty || save.isPending || !selectedProfile?.available || !efforts.includes(selection.effort) || !presets.includes(selection.input_tokens)}
+            disabled={!Number.isFinite(selection.min_uptime_percent ?? 95) || (selection.min_uptime_percent ?? 95) < 0 || (selection.min_uptime_percent ?? 95) >= 100 || !dirty || save.isPending || !selectedProfile?.available || !efforts.includes(selection.effort) || !presets.includes(selection.input_tokens)}
             onClick={() => configuration.data && save.mutate({ next: selection, expectedVersion: configuration.data.version })}
           >
             {save.isPending ? 'Đang lưu…' : 'Lưu lựa chọn'}
           </Button>
         </div>
       ) : null}
-    </details>
+    </DialogContent></Dialog>
   )
 }

@@ -144,7 +144,7 @@ test('App and ReminderConfirm wire the explicit no-poll session policy', () => {
   for (const filename of ['App.tsx', 'ReminderConfirmScreen.tsx']) {
     const source = readFileSync(new URL(`../src/${filename}`, import.meta.url), 'utf8')
     const spreads = source.match(/\.\.\.NO_POLLING_QUERY_OPTIONS/g) ?? []
-    assert.equal(spreads.length, 1, `${filename} must explicitly spread no-poll options`)
+    assert.equal(spreads.length, filename === 'App.tsx' ? 2 : 1, `${filename} must explicitly spread no-poll options for session and every locator read`)
   }
 })
 

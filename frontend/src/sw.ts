@@ -3,7 +3,7 @@
 import { createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
 
-import { type PushNotificationPayload, showPushNotification } from './sw-notification'
+import { type PushNotificationPayload, showPushNotification, openNotificationTarget } from './sw-notification'
 
 declare const self: ServiceWorkerGlobalScope
 
@@ -30,19 +30,5 @@ self.addEventListener('push', (event: PushEvent) => {
 
 self.addEventListener('notificationclick', (event: NotificationEvent) => {
   event.notification.close()
-  const targetUrl = (event.notification.data?.url as string) ?? '/'
-
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window' }).then((clientList) => {
-      for (const client of clientList) {
-        if ('focus' in client) {
-          client.navigate(targetUrl)
-          return client.focus()
-        }
-      }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl)
-      }
-    })
-  )
+  event.waitUntil(openNotificationTarget(self.clients, event.notification.data?.url ?? '/', self.location.origin))
 })

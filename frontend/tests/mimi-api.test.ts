@@ -167,6 +167,9 @@ test('route configuration saves the expected version with the Mimi CSRF header',
     profile_id: 'profile-2',
     effort: 'default',
     input_tokens: 32_000,
+    routing_mode: 'adaptive',
+    min_uptime_percent: 95,
+    uptime_window: '1d',
   })
   assert.equal(result.version, 8)
 })
