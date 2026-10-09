@@ -1,5 +1,15 @@
 import type { MimiChangeSet, MimiCollectionEntry, MimiCollectionPlan, MimiSelection } from './mimi-api'
 
+export function collectionConfirmationNotice(change: MimiChangeSet): string | null {
+  if (change.confirmation_preflight?.status === 'eligible') return null
+  const reason = change.confirmation_preflight?.reason
+  if (reason === 'change_set_frontier_stale') return 'Preview vẫn được giữ để xem, nhưng hội thoại đã thay đổi. Hãy yêu cầu Mimi lập phương án mới trước khi xác nhận.'
+  if (reason === 'change_set_stale') return 'Preview vẫn được giữ để xem nhưng không còn hợp lệ để xác nhận. Hãy yêu cầu Mimi lập phương án mới.'
+  if (reason === 'change_set_expired') return 'Preview đã hết hạn. Hãy yêu cầu Mimi lập phương án mới.'
+  if (!change.confirmation_preflight) return 'Chưa có trạng thái xác nhận từ server. Hãy đọc lại hội thoại trước khi xác nhận.'
+  return 'Server chưa cho phép xác nhận preview này. Hãy đọc lại hội thoại và yêu cầu phương án mới nếu cần.'
+}
+
 export const MIMI_REVIEW_PAGE_SIZE = 20
 export function mimiChangeTitle(change: MimiChangeSet): string {
   return change.operation.tool === 'task.collection.v1'

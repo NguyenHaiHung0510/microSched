@@ -4,7 +4,7 @@ import { MimiBackdrop } from '@/MimiBackdrop'
 import { MimiCollectionReview } from '@/MimiCollectionReview'
 import { MimiFeedbackEvidence } from '@/MimiFeedbackEvidence'
 import { mimiChangeTitle } from '@/mimi-collection'
-import { clearMimiIntent, readMimiIntent, saveMimiIntent, type MimiDecisionIntent } from '@/mimi-recovery'
+import { clearMimiIntent, hasAuthoritativeMimiRefusal, readMimiIntent, saveMimiIntent, type MimiDecisionIntent } from '@/mimi-recovery'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePreviewExpired } from './mimi-preview-expiry'
 import { MimiRunObservations } from '@/MimiRunObservations'
@@ -396,7 +396,21 @@ export function MimiScreen({
       setRecoveryNotice(null)
       void queryClient.invalidateQueries({ queryKey: ['mimi'] })
     },
-    onError: () => {
+    onError: async (error, intent) => {
+      // A known frontier refusal still needs a matching authoritative snapshot.
+      const detail = error instanceof ApiError && error.body && typeof error.body === 'object' && 'detail' in error.body ? error.body.detail : null
+      if (intent.choice === 'confirm' && intent.changeSet.operation.tool === 'task.collection.v1' && error instanceof ApiError && error.status === 409 && ['change_set_frontier_stale', 'change_set_stale'].includes(String(detail))) {
+        try {
+          const snapshot = await fetchMimiConversation(intent.conversationId)
+          if (hasAuthoritativeMimiRefusal(intent, snapshot.change_sets)) {
+            clearMimiIntent(intent.conversationId)
+            setDecisionIntent(null)
+            setRecoveryNotice('Server đã từ chối preview cũ; không áp dụng thay đổi. Hãy yêu cầu Mimi lập phương án mới.')
+            void queryClient.invalidateQueries({ queryKey: ['mimi'] })
+            return
+          }
+        } catch { /* Missing snapshot leaves the original intent UNKNOWN. */ }
+      }
       setRecoveryNotice('Chưa biết kết quả ghi. Đã giữ đúng khóa lần xác nhận; không tự gửi lại. Đọc receipt để đối chiếu.')
       void queryClient.invalidateQueries({ queryKey })
     },
@@ -408,8 +422,7 @@ export function MimiScreen({
         try { return await recoverMimiReceipt(intent.conversationId, intent.changeSet, intent.key) } catch (error) {
           if (!(error instanceof ApiError) || error.status !== 404) throw error
           const snapshot = await fetchMimiConversation(intent.conversationId)
-          const change = snapshot.change_sets.find((c) => c.id === intent.changeSet.id && c.digest === intent.changeSet.digest && c.nonce === intent.changeSet.nonce)
-          if (!change || !['invalidated', 'expired', 'superseded', 'rejected'].includes(change.state)) throw error
+          if (!hasAuthoritativeMimiRefusal(intent, snapshot.change_sets)) throw error
           return null // Authoritative terminal refusal, not inferred from receipt absence.
         }
       }

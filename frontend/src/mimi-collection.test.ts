@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { collectionConfirmable, collectionCounts, collectionFieldDiff, collectionPage } from './mimi-collection'
-import type { MimiCollectionPlan, MimiSelection } from './mimi-api'
+import { collectionConfirmable, collectionConfirmationNotice, collectionCounts, collectionFieldDiff, collectionPage } from './mimi-collection'
+import type { MimiChangeSet, MimiCollectionPlan, MimiSelection } from './mimi-api'
 describe('frozen collection review', () => {
   const plan: MimiCollectionPlan = { schema_version: 'mimi.task-collection.v1', selection_id: 'selection', entries: Array.from({ length: 200 }, (_, i) => ({ id: `id-${i}`, command: { action: 'edit', expected_collection_version: 7, fields: { priority: 'p1' }, children: [], reminder: { action: 'keep' } }, before: { fields: { title: `Task ${i}`, body_md: 'ế'.repeat(12000), priority: null }, children: [] }, after: { fields: { title: `Task ${i}`, body_md: 'ế'.repeat(12000), priority: 'p1' }, children: [] }, reminder_effect: { action: 'keep' } })) }
   const selection = { members: [...plan.entries.map((e) => ({ id: e.id, classification: 'included' })), { id: 'incidental', classification: 'excluded' }, { id: 'uncertain', classification: 'uncertain' }] } as MimiSelection
@@ -26,4 +26,16 @@ describe('frozen collection review', () => {
     expect(collectionConfirmable(plan, { ...bound, members: bound.members.slice(1) })).toBe(false)
   })
 
+})
+
+describe('server-owned collection preflight', () => {
+  it('keeps a stale/expired/missing preflight disabled without modifying frozen bindings', () => {
+    const change = { id:'c',digest:'d',nonce:'n',expires_at:'2026-10-10',confirmation_preflight:{status:'blocked',reason:'change_set_frontier_stale'} } as MimiChangeSet
+    const frozen = JSON.stringify(change)
+    expect(collectionConfirmationNotice(change)).toContain('hội thoại đã thay đổi')
+    expect(JSON.stringify(change)).toBe(frozen)
+    expect(collectionConfirmationNotice({...change,confirmation_preflight:{status:'blocked',reason:'change_set_expired'}})).toContain('hết hạn')
+    expect(collectionConfirmationNotice({...change,confirmation_preflight:undefined})).toContain('Chưa có trạng thái')
+    expect(collectionConfirmationNotice({...change,confirmation_preflight:{status:'eligible',reason:null}})).toBeNull()
+  })
 })

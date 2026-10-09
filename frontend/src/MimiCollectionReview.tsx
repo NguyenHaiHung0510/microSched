@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { fetchMimiSelection, type MimiChangeSet, type MimiCollectionEntry, type MimiCollectionPlan } from '@/mimi-api'
-import { collectionConfirmable, collectionCounts, collectionFieldDiff, collectionPage } from '@/mimi-collection'
+import { collectionConfirmable, collectionConfirmationNotice, collectionCounts, collectionFieldDiff, collectionPage } from '@/mimi-collection'
 import { usePreviewExpired } from '@/mimi-preview-expiry'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { MimiCollectionEntryDetails } from '@/MimiCollectionEntryDetails'
@@ -24,7 +24,8 @@ export function MimiCollectionReview({ changeSet, plan, conversationId, pending,
   const counts = collectionCounts(plan, selection.data)
   const view = collectionPage(plan, query, classification, selection.data, page)
   const selectionReady = collectionConfirmable(plan, selection.data)
-  const disabled = pending || expired || changeSet.state !== 'pending' || !selectionReady
+  const confirmationNotice = collectionConfirmationNotice(changeSet)
+  const disabled = pending || expired || changeSet.state !== 'pending' || !selectionReady || confirmationNotice !== null
   const review = <div className="space-y-3 min-w-0" data-testid="mimi-collection-review">
     <p className="rounded-lg bg-muted p-3 text-sm" data-testid="mimi-global-counts">Toàn bộ tập đã chốt: {counts.included} bao gồm · {counts.excluded} loại trừ · {counts.uncertain} chưa chắc · <strong>{counts.affected} Task sẽ thay đổi</strong>.</p>
     <p className="text-xs text-muted-foreground">Tìm kiếm và phân trang chỉ đổi phần đang xem. Xác nhận luôn áp dụng cả {plan.entries.length} Task đã chốt, cùng một giao dịch.</p>
@@ -37,6 +38,7 @@ export function MimiCollectionReview({ changeSet, plan, conversationId, pending,
     {!view.visibleCount ? <p className="text-sm text-muted-foreground">Không có dòng khớp bộ lọc; phạm vi xác nhận vẫn là {plan.entries.length} Task.</p> : null}
     <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs">Trang {view.currentPage + 1}/{view.pageCount} · {view.visibleCount}/{plan.entries.length} dòng khớp</span><div className="flex gap-1"><Button size="icon" variant="outline" aria-label="Trang trước" disabled={view.currentPage === 0} onClick={() => setPage(view.currentPage - 1)}><ChevronLeft /></Button><Button size="icon" variant="outline" aria-label="Trang sau" disabled={view.currentPage + 1 >= view.pageCount} onClick={() => setPage(view.currentPage + 1)}><ChevronRight /></Button></div></div>
     <p className="text-xs">{expired ? 'Preview đã hết hạn. Cần phương án mới.' : `Hết hạn ${new Date(changeSet.expires_at).toLocaleString('vi-VN')}. Chưa ghi thay đổi.`}</p>
+    {confirmationNotice ? <p role="status" className="text-sm" data-testid="mimi-confirmation-preflight">{confirmationNotice}</p> : null}
     {error ? <p role="alert" className="text-sm text-bad">{error}</p> : null}
     <div className="flex flex-wrap gap-2" data-testid="mimi-preview-actions"><Button variant="secondary" disabled={pending || expired} onClick={onRevise}>Sửa phương án này</Button><Button disabled={disabled} onClick={() => onDecision('confirm')}><Check />Xác nhận toàn bộ {plan.entries.length} Task</Button><Button variant="outline" disabled={pending || expired} onClick={() => onDecision('reject')}><X />Từ chối</Button></div>
     <details className="text-xs"><summary className="cursor-pointer">Mã đối chiếu</summary><p className="break-all">{changeSet.id} · {changeSet.digest}</p></details>

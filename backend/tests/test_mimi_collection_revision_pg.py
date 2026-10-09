@@ -268,6 +268,11 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
                     if mode == "full_subset_full":
                         assert old.state == "stale"
                         new = next(c for c in changes if c.state == "pending")
+                        latest = next(c for c in view["change_sets"] if c["id"] == new.id)
+                        assert latest["confirmation_preflight"] == {
+                            "status": "eligible",
+                            "reason": None,
+                        }
                         dek = crypto.unwrap_dek((await db.get(MimiConversation, cid)).dek_wrapped)
                         operation = json.loads(
                             crypto.open_content(
@@ -297,6 +302,11 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
                         await db.rollback()
                     else:
                         assert len(changes) == 1 and old.state == "pending"
+                        kept = next(c for c in view["change_sets"] if c["id"] == old.id)
+                        assert kept["confirmation_preflight"] == {
+                            "status": "blocked",
+                            "reason": "change_set_frontier_stale",
+                        }
                         if mode == "single_create":
                             assert view["runs"][-1]["error_code"] == (
                                 "provider_contract_provider_revision_must_return_collection_tool"

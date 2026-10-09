@@ -3883,6 +3883,31 @@ async def conversation_checkpoint_view(
     }
 
 
+def _collection_confirmation_block_reason(conversation, run) -> str | None:
+    # Shared with POST; no source CAS or domain validation is performed by GET.
+    if conversation.sensitivity != "standard" or conversation.is_private:
+        return "task_collection_conversation_not_standard"
+    if conversation.generation != run.generation + 1:
+        return "change_set_frontier_stale"
+    lease = run.execution_lease
+    if lease.get("revoked_at") is not None or COLLECTION_TOOL not in lease.get("capabilities", []):
+        return "change_set_collection_lease_not_authorized"
+    return None
+
+
+def _collection_confirmation_preflight(conversation, run, change_set, now) -> dict[str, Any]:
+    """Read-time eligibility only. POST remains authoritative against concurrent changes."""
+    if change_set.state != "pending":
+        reason = f"change_set_{change_set.state}"
+    elif change_set.expires_at <= now:
+        reason = "change_set_expired"
+    elif not get_settings().mimi_collection_enabled:
+        reason = "mimi_collection_feature_disabled"
+    else:
+        reason = _collection_confirmation_block_reason(conversation, run)
+    return {"status": "blocked" if reason else "eligible", "reason": reason}
+
+
 async def conversation_view(
     db: AsyncSession, auth: AuthSession, conversation_id: UUID
 ) -> dict[str, Any]:
@@ -3982,6 +4007,33 @@ async def conversation_view(
     from app.agent.message_provenance import read_message_provenance
 
     provenance = await read_message_provenance(db, conversation, messages, dek)
+    runs_by_id = {run.id: run for run in runs}
+    preflight_at = datetime.now(UTC)
+
+    def change_set_view(row):
+        operation = json.loads(
+            mimi_crypto.open_content(
+                dek,
+                row.operation_ciphertext,
+                aad=mimi_crypto.change_set_aad(conversation.id, row.id),
+            )
+        )
+        result = {
+            "id": row.id,
+            "run_id": row.run_id,
+            "state": row.state,
+            "digest": row.digest_sha256,
+            "nonce": row.nonce,
+            "expires_at": row.expires_at,
+            "operation": operation,
+            "policy_version": row.policy_version,
+        }
+        if operation.get("tool") == COLLECTION_TOOL:
+            result["confirmation_preflight"] = _collection_confirmation_preflight(
+                conversation, runs_by_id[row.run_id], row, preflight_at
+            )
+        return result
+
     return {
         "id": conversation.id,
         "sensitivity": conversation.sensitivity,
@@ -4026,25 +4078,7 @@ async def conversation_view(
             }
             for row in reversed(runs)
         ],
-        "change_sets": [
-            {
-                "id": row.id,
-                "run_id": row.run_id,
-                "state": row.state,
-                "digest": row.digest_sha256,
-                "nonce": row.nonce,
-                "expires_at": row.expires_at,
-                "operation": json.loads(
-                    mimi_crypto.open_content(
-                        dek,
-                        row.operation_ciphertext,
-                        aad=mimi_crypto.change_set_aad(conversation.id, row.id),
-                    )
-                ),
-                "policy_version": row.policy_version,
-            }
-            for row in change_sets
-        ],
+        "change_sets": [change_set_view(row) for row in change_sets],
         "receipts": [_receipt_read(row) for row in receipts],
         "events": [_event_read(row, dek) for row in events],
         "run_observations": {
@@ -4624,13 +4658,8 @@ async def _confirm_collection(
     )
     if frozen.calculated_digest() != change_set.digest_sha256:
         await invalidate("change_set_digest_invalid")
-    if conversation.sensitivity != "standard" or conversation.is_private:
-        await invalidate("task_collection_conversation_not_standard")
-    if conversation.generation != run.generation + 1:
-        await invalidate("change_set_frontier_stale")
-    lease = run.execution_lease
-    if lease.get("revoked_at") is not None or COLLECTION_TOOL not in lease.get("capabilities", []):
-        await invalidate("change_set_collection_lease_not_authorized")
+    if reason := _collection_confirmation_block_reason(conversation, run):
+        await invalidate(reason)
     try:
         plan = PreparedCollection.model_validate(operation.args)
     except ValueError, ValidationError:

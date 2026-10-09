@@ -1,5 +1,8 @@
 import type { MimiChangeSet } from './mimi-api'
 export type MimiDecisionIntent = { conversationId: string; changeSet: MimiChangeSet; choice: 'confirm' | 'reject'; key: string }
+export function hasAuthoritativeMimiRefusal(intent: MimiDecisionIntent, changes: MimiChangeSet[]): boolean {
+  return changes.some((change) => change.id === intent.changeSet.id && change.digest === intent.changeSet.digest && change.nonce === intent.changeSet.nonce && ['invalidated', 'expired', 'superseded', 'rejected', 'stale'].includes(change.state))
+}
 const prefix = 'mimi-decision-intent:'
 // Only opaque write bindings, never conversation prose or device credentials.
 export function saveMimiIntent(intent: MimiDecisionIntent) {

@@ -31,7 +31,11 @@ export type MimiRun = {
   completed_at: string | null
 }
 
+export type MimiConfirmationPreflight = { status: 'eligible' | 'blocked'; reason: string | null }
+
 export type MimiChangeSet = {
+  // Snapshot eligibility only; POST still validates the frozen binding and source CAS.
+  confirmation_preflight?: MimiConfirmationPreflight
   id: string
   run_id: string
   state: string

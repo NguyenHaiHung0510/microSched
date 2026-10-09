@@ -224,3 +224,13 @@ operation, digest, nonce and persisted expiry. Retention does not rebase an old
 preview's generation authority: existing frontier/CAS, source-version, PRIVATE,
 lease, expiry and atomic confirmation gates still apply. A valid replacement gets
 its own preview clock; a retained preview's existing expiry is never extended.
+
+Collection conversation GET includes server-owned `confirmation_preflight`
+(`eligible`/`blocked`, reason). It reports the current pending/expiry/feature,
+STANDARD/frontier and execution-lease checks without mutating the preview or
+revalidating the full source CAS. `eligible` is a read-time snapshot, not permission
+to skip POST. The review disables Confirm for a blocked or absent preflight and
+explains a retained stale preview; its frozen payload and persisted expiry stay
+unchanged. A later race still yields authoritative POST refusal. The client only
+clears a known frontier-refusal intent after a matching ID/digest/nonce terminal
+server snapshot; receipt absence or a transport error remains UNKNOWN/no replay.
