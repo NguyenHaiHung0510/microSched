@@ -131,7 +131,14 @@ async def prepare(maker, count=2):
             ),
         )
         db.add(change)
-        service._add_assistant_message(db, conv, rid, dek, "Chuẩn bị đổi độ ưu tiên. Chưa áp dụng.")
+        await service._add_assistant_message(
+            db,
+            conv,
+            rid,
+            dek,
+            "Chuẩn bị đổi độ ưu tiên. Chưa áp dụng.",
+            producer_code="preview_prepared",
+        )
         await service._append_event(db, rid, "change_set.ready", {"change_set_id": str(change_id)})
         await db.commit()
         decision = service.ConfirmationDecision(

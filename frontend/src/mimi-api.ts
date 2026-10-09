@@ -1,6 +1,15 @@
 import { ApiError, apiRequest } from '@/api'
 
+export type MimiMessageProvenance = {
+  origin: 'model_answer' | 'server_notice' | 'unknown'
+  producer_code: string | null
+  version: 1 | null
+  event_sequence: number | null
+  source: 'server_verified' | 'absent_or_unverified'
+}
+
 export type MimiMessage = {
+  provenance?: MimiMessageProvenance
   id: string
   run_id: string | null
   client_id: string | null

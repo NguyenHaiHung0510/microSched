@@ -27,7 +27,9 @@ def test_bundle_bound_truncation_tamper_expiry_and_cross_run_refs(pg_dsn, monkey
                 conv = await db.get(MimiConversation, cid)
                 dek = crypto.unwrap_dek(conv.dek_wrapped)
                 body = "Synthetic long causal message " * 500
-                service._add_assistant_message(db, conv, rid, dek, body)
+                await service._add_assistant_message(
+                    db, conv, rid, dek, body, producer_code="preview_prepared"
+                )
                 await db.commit()
             async with maker() as db:
                 conv = await db.get(MimiConversation, cid)

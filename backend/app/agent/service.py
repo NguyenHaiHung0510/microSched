@@ -572,31 +572,28 @@ def _receipt_read(row: MimiExecutionReceipt) -> dict[str, Any]:
     }
 
 
-def _add_assistant_message(
+async def _add_assistant_message(
     db: AsyncSession,
     conversation: MimiConversation,
     run_id: UUID,
     dek: bytes,
     content: str,
-) -> None:
-    sequence = conversation.next_message_sequence
-    raw = content.encode("utf-8")
-    db.add(
-        MimiMessage(
-            conversation_id=conversation.id,
-            run_id=run_id,
-            sequence=sequence,
-            role="assistant",
-            content_ciphertext=mimi_crypto.seal_content(
-                dek,
-                content,
-                aad=mimi_crypto.message_aad(conversation.id, sequence, "assistant"),
-            ),
-            content_bytes=len(raw),
-            content_sha256=hashlib.sha256(raw).hexdigest(),
-        )
+    *,
+    producer_code: str,
+    provider_call_id: UUID | None = None,
+) -> MimiMessage:
+    from app.agent.message_provenance import append_message
+
+    return await append_message(
+        db,
+        conversation,
+        run_id,
+        dek,
+        content,
+        producer_code=producer_code,
+        provider_call_id=provider_call_id,
+        append_event=_append_event,
     )
-    conversation.next_message_sequence += 1
 
 
 async def create_conversation(
@@ -1416,7 +1413,12 @@ def _event_read(row: MimiEvent, dek: bytes) -> dict[str, Any]:
             "source_count": payload.get("source_count"),
             "content_sha256": payload.get("content_sha256"),
         }
-    elif row.kind in {"tool.read_result", "graph.terminal_durable", "provider.terminal_rejected"}:
+    elif row.kind in {
+        "tool.read_result",
+        "graph.terminal_durable",
+        "provider.terminal_rejected",
+        "message.provenance.v1",
+    }:
         payload = {k: v for k, v in payload.items() if not k.endswith("ciphertext")}
     return {
         "id": row.id,
@@ -2025,12 +2027,13 @@ async def send_message(
             run.state = "budget_exceeded"
             run.error_code = str(error)[:120]
             run.completed_at = datetime.now(UTC)
-            _add_assistant_message(
+            await _add_assistant_message(
                 db,
                 conversation,
                 run_id,
                 dek,
                 "Ngữ cảnh vượt giới hạn an toàn của route; cần compact hoặc thu hẹp phạm vi.",
+                producer_code="context_budget_stop",
             )
             await _append_event(
                 db, run_id, "run.terminal", {"state": run.state, "error_code": run.error_code}
@@ -2891,12 +2894,13 @@ async def send_message(
                     {"state": run.state, "provider_outcome": "unknown"},
                 )
                 if conversation.generation == generation + 1:
-                    _add_assistant_message(
+                    await _add_assistant_message(
                         db,
                         conversation,
                         run_id,
                         dek,
                         "Kết quả provider chưa xác định; Mimi sẽ không tự gửi lại yêu cầu.",
+                        producer_code="checkpoint_unknown",
                     )
                 await db.flush()
                 return await conversation_view(db, auth, conversation_id)
@@ -2916,13 +2920,14 @@ async def send_message(
                     },
                 )
                 if conversation.generation == generation + 1:
-                    _add_assistant_message(
+                    await _add_assistant_message(
                         db,
                         conversation,
                         run_id,
                         dek,
                         "Mimi đã nhận phản hồi nhưng không thể lưu bước chạy tiếp theo. "
                         "Chưa có thay đổi nào được ghi; bạn có thể gửi yêu cầu mới.",
+                        producer_code="checkpoint_materialization_failed",
                     )
                 await db.flush()
                 return await conversation_view(db, auth, conversation_id)
@@ -2949,13 +2954,14 @@ async def send_message(
                     },
                 )
                 if conversation.generation == generation + 1:
-                    _add_assistant_message(
+                    await _add_assistant_message(
                         db,
                         conversation,
                         run_id,
                         dek,
                         "Mimi đã nhận phản hồi nhưng đề xuất chưa đáp ứng quy tắc dữ liệu. "
                         "Chưa có thay đổi nào được ghi và yêu cầu không tự gửi lại.",
+                        producer_code="provider_output_rejected",
                     )
                 await db.flush()
                 return await conversation_view(db, auth, conversation_id)
@@ -3022,7 +3028,9 @@ async def send_message(
                         "cho lượt này. Yêu cầu không tự gửi lại; cần được cấp thêm "
                         "ngân sách trước khi thử một lượt mới."
                     )
-                _add_assistant_message(db, conversation, run_id, dek, assistant)
+                await _add_assistant_message(
+                    db, conversation, run_id, dek, assistant, producer_code="provider_terminal"
+                )
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
 
@@ -3119,7 +3127,15 @@ async def send_message(
             assert completion.text is not None
             if provider_stream and context_envelope is None:
                 await flush_stream_buffer()
-            _add_assistant_message(db, conversation, run_id, dek, completion.text)
+            await _add_assistant_message(
+                db,
+                conversation,
+                run_id,
+                dek,
+                completion.text,
+                producer_code="provider_text",
+                provider_call_id=call.id,
+            )
             if agent_result_kind == "draft" and not settings.mimi_context_v1_enabled:
                 draft_id = uuid7()
                 await _append_event(
@@ -3193,7 +3209,14 @@ async def send_message(
         await _append_event(db, run_id, "provider.succeeded", {"attempt": 1})
         if local_kind == "text":
             assert isinstance(local_result, str)
-            _add_assistant_message(db, conversation, run_id, dek, local_result)
+            await _add_assistant_message(
+                db,
+                conversation,
+                run_id,
+                dek,
+                local_result,
+                producer_code="local_deterministic_result",
+            )
             run.state = "completed"
             run.completed_at = datetime.now(UTC)
             await _append_event(
@@ -3220,13 +3243,14 @@ async def send_message(
             "run.terminal",
             {"state": "halted", "error_code": run.error_code},
         )
-        _add_assistant_message(
+        await _add_assistant_message(
             db,
             conversation,
             run_id,
             dek,
             "Conversation đã thay đổi trong lúc Mimi chuẩn bị preview; "
             "preview hiện tại được giữ nguyên.",
+            producer_code="conversation_frontier_changed",
         )
         await db.flush()
         return await conversation_view(db, auth, conversation_id)
@@ -3257,12 +3281,13 @@ async def send_message(
                 "run.terminal",
                 {"state": "halted", "error_code": run.error_code},
             )
-            _add_assistant_message(
+            await _add_assistant_message(
                 db,
                 conversation,
                 run_id,
                 dek,
                 "Preview nền đã thay đổi; Mimi không thay thế quyết định mới hơn của bạn.",
+                producer_code="preview_frontier_changed",
             )
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
@@ -3277,13 +3302,14 @@ async def send_message(
             "run.terminal",
             {"state": "halted", "error_code": run.error_code},
         )
-        _add_assistant_message(
+        await _add_assistant_message(
             db,
             conversation,
             run_id,
             dek,
             "Bạn đang có một preview chờ quyết định. Hãy xác nhận, từ chối hoặc sửa preview đó "
             "trước khi tạo preview mới.",
+            producer_code="pending_preview_requires_decision",
         )
         await db.flush()
         return await conversation_view(db, auth, conversation_id)
@@ -3352,7 +3378,9 @@ async def send_message(
         if operation_tool == COLLECTION_TOOL
         else "Mình đã đóng băng một preview tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
     )
-    _add_assistant_message(db, conversation, run_id, dek, assistant)
+    await _add_assistant_message(
+        db, conversation, run_id, dek, assistant, producer_code="preview_prepared"
+    )
     await _append_event(
         db,
         run_id,
@@ -3625,8 +3653,13 @@ async def confirm_change_set(
         "change_set.executed",
         {"receipt_id": str(receipt.id), "task_id": str(task.id)},
     )
-    _add_assistant_message(
-        db, conversation, run.id, dek, "Đã tạo Task theo phương án bạn xác nhận."
+    await _add_assistant_message(
+        db,
+        conversation,
+        run.id,
+        dek,
+        "Đã tạo Task theo phương án bạn xác nhận.",
+        producer_code="operation_committed",
     )
     change_set.state = "executed"
     run.state = "completed"
@@ -3918,6 +3951,9 @@ async def conversation_view(
         .scalars()
         .all()
     )
+    from app.agent.message_provenance import read_message_provenance
+
+    provenance = await read_message_provenance(db, conversation, messages, dek)
     return {
         "id": conversation.id,
         "sensitivity": conversation.sensitivity,
@@ -3931,7 +3967,9 @@ async def conversation_view(
         "route_config": conversation.route_config or default_configuration(get_settings()),
         "route_config_version": conversation.route_config_version,
         "draft": current_draft.model_dump(mode="json") if current_draft else None,
-        "messages": [_message_read(row, dek) for row in messages],
+        "messages": [
+            {**_message_read(row, dek), "provenance": provenance.get(row.id)} for row in messages
+        ],
         "runs": [
             {
                 "id": row.id,
@@ -4482,7 +4520,7 @@ async def reconcile_orphaned_mimi_runs(db: AsyncSession) -> int:
                             ).scalar_one()
                             if conversation.generation == run.generation + 1:
                                 dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
-                                _add_assistant_message(
+                                await _add_assistant_message(
                                     db,
                                     conversation,
                                     run.id,
@@ -4491,6 +4529,7 @@ async def reconcile_orphaned_mimi_runs(db: AsyncSession) -> int:
                                     "hoàn tất câu trả lời hoặc preview. Chưa có thay đổi nào được "
                                     "ghi vào microSched. Bạn có thể gửi lại yêu cầu; Mimi sẽ "
                                     "không tự gọi model lần nữa.",
+                                    producer_code="process_loss_recovery",
                                 )
                     run.completed_at = datetime.now(UTC)
                     await _append_event(
@@ -4613,13 +4652,14 @@ async def _confirm_collection(
             },
         )
     )
-    _add_assistant_message(
+    await _add_assistant_message(
         db,
         conversation,
         run.id,
         dek,
         f"Đã áp dụng thay đổi cho {len(plan.entries)} Task. "
         "Bạn có thể xem receipt và chuẩn bị hoàn tác.",
+        producer_code="collection_committed",
     )
     change_set.state = "executed"
     run.state = "completed"
@@ -4768,12 +4808,13 @@ async def prepare_receipt_undo(db, auth, receipt_id):
         ),
     )
     db.add(change)
-    _add_assistant_message(
+    await _add_assistant_message(
         db,
         conversation,
         rid,
         dek,
         "Đã chuẩn bị phương án hoàn tác có kiểm tra phiên bản. Chưa áp dụng.",
+        producer_code="undo_prepared",
     )
     await _append_event(
         db,

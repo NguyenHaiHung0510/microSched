@@ -393,8 +393,13 @@ def test_old_answer_feedback_exports_exact_causal_parts_after_newer_run(pg_dsn, 
                 conv.generation += 1
                 db.add(later)
                 await db.flush()
-                service._add_assistant_message(
-                    db, conv, later.id, dek, "LATER_RUN_MUST_BE_EXCLUDED"
+                await service._add_assistant_message(
+                    db,
+                    conv,
+                    later.id,
+                    dek,
+                    "LATER_RUN_MUST_BE_EXCLUDED",
+                    producer_code="preview_prepared",
                 )
                 db.add(
                     MimiProviderCall(

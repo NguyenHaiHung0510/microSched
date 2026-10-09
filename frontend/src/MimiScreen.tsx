@@ -16,6 +16,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MimiAvatar, type MimiState } from '@/components/brand'
 import { MimiConfiguration } from '@/MimiConfiguration'
 import { MimiMessageText } from '@/MimiMessageText'
+import { MimiSystemNotice } from '@/MimiSystemNotice'
+import { isVerifiedServerNotice } from '@/mimi-message-provenance'
 import { ApiError, TimeoutError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -187,6 +189,8 @@ export function MimiScreen({
   settingsOpen,
   onSettingsOpenChange,
   technicalOpen,
+  onTechnicalOpenChange,
+  onTechnicalCloseFocus,
   onOpenConfiguration,
 }: {
   onOpenTasks: () => void
@@ -196,6 +200,8 @@ export function MimiScreen({
   onSettingsOpenChange?: (open: boolean) => void
   onOpenConfiguration?: () => void
   technicalOpen?: boolean
+  onTechnicalOpenChange?: (open: boolean) => void
+  onTechnicalCloseFocus?: () => void
   onConversationCreated?: (conversationId: string) => void
 }) {
   const queryClient = useQueryClient()
@@ -735,7 +741,7 @@ export function MimiScreen({
       <MimiBackdrop active={current.messages.length > 0} />
       <div className={`mimi-chat-heading ${variant === 'dock' ? 'mimi-chat-heading-dock' : ''}`}>
         <div className="flex min-w-0 items-center gap-2"><MimiAvatar size="xs" state={mimiState} /><h3 id={`mimi-title-${variant}`} className="truncate text-xs font-semibold">{current.title ?? 'Mimi'}</h3></div>
-      <details open={technicalOpen} className="mimi-context-chip text-xs" data-testid="mimi-run-context-inspector">
+      <details className="mimi-context-chip text-xs" data-testid="mimi-run-context-inspector">
         <summary className="cursor-pointer font-semibold"><span>Ngữ cảnh</span><ChevronDown className="size-3" /></summary><div className="mimi-context-popover">
         <p className="mt-2 text-xs text-muted-foreground">Đây là receipt server của lượt gần nhất, khác với dữ liệu chỉ được mở trong rail. Số upper bound dùng byte UTF-8 làm ước lượng bảo thủ, không phải token do provider báo. Nội dung reasoning ẩn không được hiển thị.</p>
         {latestContext ? (
@@ -858,7 +864,9 @@ export function MimiScreen({
       <div ref={transcriptRef} onScroll={(event) => { const el = event.currentTarget; followLatest.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48 }} className={`mimi-transcript flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain ${current.messages.length === 0 ? 'mimi-transcript-empty' : ''}`} data-testid="mimi-messages">
         {current.messages.length === 0 ? (
           <div className="mimi-welcome" data-testid="mimi-welcome"><MimiAvatar size="xl" className="mimi-welcome-avatar" /><h2>Chào bạn,<br className="mimi-dock-linebreak" /> vào việc thôi</h2><div className="mimi-welcome-suggestions"><Button type="button" variant="outline" onClick={() => { setDraft('Mimi có thể làm gì?'); messageInputRef.current?.focus() }}><Sparkles className="size-4" />Mimi có thể làm gì?</Button><Button type="button" variant="outline" onClick={() => { setDraft('Tư vấn mình xếp lại lịch'); messageInputRef.current?.focus() }}><CalendarDays className="size-4" />Tư vấn mình xếp lại lịch</Button></div></div>
-        ) : current.messages.map((message) => (
+        ) : current.messages.map((message) => isVerifiedServerNotice(message) ? (
+          <MimiSystemNotice key={message.id} message={message} />
+        ) : (
           <article
             key={message.id}
             className={message.role === 'user'
@@ -1109,16 +1117,15 @@ export function MimiScreen({
         {send.isError ? <p role="alert" className="mt-1 text-xs text-bad">{errorMessage(send.error)}</p> : null}
       </form>
 
-      {variant === 'dock' && current.events.length ? (
-        <details className="rounded-lg border p-3 text-sm">
-          <summary className="cursor-pointer font-semibold">Chi tiết kỹ thuật ({current.events.length})</summary>
-          <ol className="mt-3 space-y-1 text-xs text-muted-foreground">
-            {current.events.slice(-30).map((event) => (
-              <li key={event.id}>{event.kind}</li>
-            ))}
-          </ol>
-        </details>
-      ) : null}
+      <Dialog open={technicalOpen ?? false} onOpenChange={onTechnicalOpenChange}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto" data-testid="mimi-technical-dialog" onCloseAutoFocus={(event) => { if (onTechnicalCloseFocus) { event.preventDefault(); onTechnicalCloseFocus() } }}>
+          <DialogHeader><DialogTitle>Chi tiết kỹ thuật</DialogTitle><DialogDescription>Receipt đã được server cho phép đọc của hội thoại đang chọn. Không hiển thị reasoning ẩn.</DialogDescription></DialogHeader>
+          <MimiRunObservations observation={latestRun ? current.run_observations?.[latestRun.id] : undefined} calls={(current.provider_calls ?? []).filter((call) => call.run_id === latestRun?.id)} />
+          <MimiCheckpointViewer key={current.id} conversationId={current.id} frontier={Number(latestCheckpoint?.payload.frontier ?? 0)} generation={current.generation} />
+          <p className="text-xs font-semibold">Event đang hiển thị ({current.events.length}) · 30 event cuối trong view</p>
+          <ol className="space-y-1 text-xs text-muted-foreground">{current.events.slice(-30).map((event) => <li key={event.id}>{event.kind}</li>)}</ol>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }
