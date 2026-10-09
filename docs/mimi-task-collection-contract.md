@@ -210,3 +210,17 @@ Disable new capabilities/dispatcher while keeping additive schema and receipts;
 old app is read-only rollback once child tombstones/collection recovery are active.
 No live downgrade. Live Neon exact DDL/backup/rollforward activation, new A merge/
 deploy and device permission remain Owner-only; no local work is blocked by them.
+
+## Bound collection preview revision
+
+An explicit `revise_pending_preview` request remains bound to the current pending
+change-set ID and digest. Its leased model loop may perform authorized STANDARD
+reads and freeze a fresh selection from current-run versioned read receipts before
+returning `task.collection_candidate.v1`. The included selection must equal the
+collection targets exactly. These intermediate tools do not write Task data.
+Only a validated typed collection terminal can supersede the old preview; text,
+clarification, failure, incomplete reads or a single-create terminal retain its
+operation, digest, nonce and persisted expiry. Retention does not rebase an old
+preview's generation authority: existing frontier/CAS, source-version, PRIVATE,
+lease, expiry and atomic confirmation gates still apply. A valid replacement gets
+its own preview clock; a retained preview's existing expiry is never extended.

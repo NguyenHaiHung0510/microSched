@@ -2824,6 +2824,12 @@ async def send_message(
             ):
                 raise RouteContractError("provider_revision_must_return_task_tool")
             if (
+                force_task_tool
+                and settings.mimi_revision_collection
+                and completion.kind == "task"
+            ):
+                raise RouteContractError("provider_revision_must_return_collection_tool")
+            if (
                 completion.kind == "task"
                 and completion.task is not None
                 and completion.task.id is not None

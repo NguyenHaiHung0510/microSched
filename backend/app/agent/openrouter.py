@@ -305,9 +305,9 @@ def build_request(
     request: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        # Ordinary turns implement Mimi's terminal union. An explicit revision
-        # of an existing preview is different: text claiming that a preview was
-        # changed is not a state transition, so require the typed replacement.
+        # Collection revisions may read before returning their typed replacement;
+        # the service owns the terminal gate. Single-create revisions still use
+        # the qualified forced tool choice.
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the
         # terminal parser independently enforces at most one tool call.
@@ -470,6 +470,10 @@ def _tool_choice(settings: Settings, *, force_task_tool: bool, agent_contract: b
     capability = settings.mimi_route_forced_tool_choice
     if capability == "none":
         raise RouteContractError("route_forced_tool_choice_not_qualified")
+    if agent_contract and settings.mimi_collection_enabled and settings.mimi_revision_collection:
+        # A changed subset needs current-run reads and a fresh selection before
+        # the typed replacement. The service still rejects non-candidate terminals.
+        return "auto"
     if capability == "required":
         # Mimi exposes exactly one tool in this request.
         return "required"

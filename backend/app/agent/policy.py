@@ -27,7 +27,7 @@ def load_standard_policy(*, collection_enabled: bool | None = None) -> MimiPolic
         collection_enabled = get_settings().mimi_collection_enabled
     path = _POLICY_PATH.with_name("mimi-standard-v3.md") if collection_enabled else _POLICY_PATH
     expected_sha256 = (
-        "8cf35b4fdbb223410f9cfa6f22d8aa57a667e096d99a0444d0a73415d6b8afef"
+        "c600fcceb4b7b66a13a0986bb5e41271c11c2d8e45e2967c0ef2dace8127ec02"
         if collection_enabled
         else POLICY_SHA256
     )

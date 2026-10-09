@@ -344,7 +344,7 @@ def test_catalog_singleflight_ttl_cooldown_size_timeout_and_fail_closed(monkeypa
     asyncio.run(scenario())
 
 
-def test_feature_off_and_forced_collection_revision_preserve_exact_tool():
+def test_feature_off_and_collection_revision_preserve_tool_boundaries():
     off = build_request([], settings=settings(mimi_collection_enabled=False), agent_contract=True)
     assert "task.collection_candidate.v1" not in {t["function"]["name"] for t in off["tools"]}
     on = build_request(
@@ -353,7 +353,12 @@ def test_feature_off_and_forced_collection_revision_preserve_exact_tool():
         agent_contract=True,
         force_task_tool=True,
     )
-    assert on["tool_choice"]["function"]["name"] == "task.collection_candidate.v1"
+    assert on["tool_choice"] == "auto"
+    assert {
+        "task.inspect_batch.v1",
+        "task.freeze_selection.v1",
+        "task.collection_candidate.v1",
+    } <= {t["function"]["name"] for t in on["tools"]}
     configured = bind_configuration(
         settings(),
         {
