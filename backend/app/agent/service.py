@@ -2724,6 +2724,22 @@ async def send_message(
                         ids = [entry.id for entry in candidate.entries if entry.id is not None]
                         bound = {}
                         if ids:
+                            if force_task_tool and settings.mimi_revision_collection:
+                                # A prior selection is context, not current-run read authority.
+                                # persist_selection already binds a new event to this run's
+                                # authenticated versioned read receipts; keep that seam intact.
+                                current_selection = await db.scalar(
+                                    select(MimiEvent.id).where(
+                                        MimiEvent.run_id == run_id,
+                                        MimiEvent.kind == "selection.frozen",
+                                        MimiEvent.payload["selection_id"].astext
+                                        == str(candidate.selection_id),
+                                    )
+                                )
+                                if current_selection is None:
+                                    raise RouteContractError(
+                                        "provider_revision_requires_current_run_selection"
+                                    )
                             selection = await load_selection(
                                 db, conversation.id, candidate.selection_id, dek
                             )
@@ -2829,6 +2845,12 @@ async def send_message(
                 and completion.kind == "task"
             ):
                 raise RouteContractError("provider_revision_must_return_collection_tool")
+            if (
+                force_task_tool
+                and not settings.mimi_revision_collection
+                and completion.kind == "collection"
+            ):
+                raise RouteContractError("provider_revision_must_return_task_tool")
             if (
                 completion.kind == "task"
                 and completion.task is not None

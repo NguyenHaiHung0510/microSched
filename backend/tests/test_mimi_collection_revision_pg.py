@@ -22,6 +22,7 @@ from app.agent.context import (
 )
 from app.agent.models import MimiChangeSet, MimiConversation, MimiEvent
 from app.agent.openrouter import AgentCompletion, ProviderDispatchError, build_request
+from app.agent.tools.registry import CREATE_CANDIDATE_TOOL
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
 from app.domain.models import Task
@@ -98,7 +99,7 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
                 outcome = terminals[mode]
             elif mode == "single_create":
                 outcome = PreviewCandidate(
-                    tool="task.create_candidate.v1", arguments={"title": "Synthetic wrong terminal"}
+                    tool=CREATE_CANDIDATE_TOOL, arguments={"title": "Synthetic wrong terminal"}
                 )
             elif mode == "missing_current_read":
                 outcome = ToolRequests(
@@ -296,6 +297,10 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
                         await db.rollback()
                     else:
                         assert len(changes) == 1 and old.state == "pending"
+                        if mode == "single_create":
+                            assert view["runs"][-1]["error_code"] == (
+                                "provider_contract_provider_revision_must_return_collection_tool"
+                            )
                         assert view["runs"][-1]["state"] != "waiting_confirmation"
                         # Retained bytes do not rebase the old generation/nonce authority.
                         with pytest.raises(HTTPException):

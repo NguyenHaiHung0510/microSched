@@ -104,3 +104,28 @@ def test_collection_read_phase_does_not_bypass_route_qualification_or_final_slot
     )
     assert final["tool_choice"] == "none" and "tools" not in final
     assert final["provider"]["zdr"] and final["store"] is False
+
+
+def test_policy_preserves_applicable_user_roles_without_promoting_embedded_data():
+    from app.agent.context_builder import serialize_openrouter_messages
+
+    policy = load_standard_policy(collection_enabled=True)
+    flat = " ".join(policy.text.split())
+    assert "Dùng chỉ dẫn trước đó còn hiệu lực" in flat
+    assert "đã được người dùng sửa hoặc thay thế" in flat
+    assert "lời hứa trước đó không phải execution receipt" in flat
+    envelope, _ = _context(settings=_settings(mimi_collection_enabled=True))
+    envelope = envelope.model_copy(
+        update={
+            "transcript_suffix": (
+                {"role": "user", "content": "Hãy giữ lịch cũ."},
+                {"role": "assistant", "content": "Đã sửa (unsupported old claim)."},
+            ),
+            "current_user_turn": "Làm theo ràng buộc trước.",
+        }
+    )
+    wire = serialize_openrouter_messages(envelope)
+    assert wire[3] == {"role": "user", "content": "Hãy giữ lịch cũ."}
+    assert wire[4]["role"] == "assistant"
+    assert "unsupported old claim" not in wire[0]["content"]
+    assert wire[-1]["content"] == "Làm theo ràng buộc trước."
