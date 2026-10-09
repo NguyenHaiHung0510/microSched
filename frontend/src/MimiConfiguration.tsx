@@ -11,6 +11,8 @@ import { availableInputPresets, effortOptions } from '@/mimi-configuration'
 import {
   fetchMimiConfiguration,
   type MimiCapabilities,
+  type MimiConversation,
+  type MimiProviderPool,
   type MimiConversationConfiguration,
   type MimiModelProfile,
   type MimiRouteConfig,
@@ -64,8 +66,14 @@ export function MimiConfiguration({
   runtimeActive,
   open,
   onOpenChange,
+  surface = 'quick',
+  onOpenHub,
+  conversation,
 }: {
   conversationId: string
+  surface?: 'quick' | 'hub'
+  onOpenHub?: () => void
+  conversation?: MimiConversation
   capabilities: MimiCapabilities | undefined
   runtimeActive: boolean
   open?: boolean
@@ -81,8 +89,16 @@ export function MimiConfiguration({
     ...NO_POLLING_QUERY_OPTIONS,
   })
   const previousRuntimeActive = useRef(runtimeActive)
-  const [localSelection, setSelection] = useState<MimiRouteConfig | null>(null)
-  const [dirty, setDirty] = useState(false)
+  const draftKey = ['mimi', 'configuration-draft', conversationId]
+  const poolKey = ['mimi', 'provider-pool', conversationId]
+  // The same ephemeral staged selection is observed by the chip and Hub.
+  // No prose/credential is persisted and no request runs for this local query.
+  const staged = useQuery<{ config: MimiRouteConfig; expectedVersion: number } | null>({ queryKey: draftKey, queryFn: async () => null, enabled: false, ...NO_POLLING_QUERY_OPTIONS })
+  const localSelection = staged.data?.config ?? null
+  const setSelection = (next: MimiRouteConfig | null) => queryClient.setQueryData(draftKey, next ? { config: next, expectedVersion: staged.data?.expectedVersion ?? configuration.data?.version ?? 1 } : null)
+  const dirty = localSelection !== null
+  const [internalOpen, setInternalOpen] = useState(false)
+  const handleOpenChange = (next: boolean) => { setInternalOpen(next); onOpenChange?.(next) }
   const selection = localSelection ?? configuration.data?.config ?? null
   const refetchConfiguration = configuration.refetch
 
@@ -107,24 +123,26 @@ export function MimiConfiguration({
     onSuccess: (saved) => {
       queryClient.setQueryData<MimiConversationConfiguration>(queryKey, saved)
       setSelection(null)
-      setDirty(false)
+      queryClient.removeQueries({ queryKey: poolKey, exact: true })
+      refreshPool.reset()
     },
   })
 
   function updateSelection(next: MimiRouteConfig) {
     setSelection(next)
-    setDirty(true)
     save.reset()
   }
 
-  const refreshPool = useMutation({ mutationFn: () => refreshMimiProviderPool(conversationId) })
+  const refreshPool = useMutation({ mutationFn: () => refreshMimiProviderPool(conversationId), onSuccess: (data) => queryClient.setQueryData<MimiProviderPool>(poolKey, data) })
+  const pool = refreshPool.data ?? queryClient.getQueryData<MimiProviderPool>(poolKey)
+  const lastCall = conversation?.provider_calls?.filter((call) => (call.purpose ?? 'main') === 'main').at(-1)
   const activeRunId = configuration.data?.active_run_id
   const profiles = configuration.data?.profiles.length
     ? configuration.data.profiles
     : capabilities?.model_profiles ?? []
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}><DialogTrigger asChild><Button type="button" size="sm" variant="ghost" className="mimi-model-chip mb-1 max-w-full justify-start gap-1.5 text-xs" data-testid="mimi-route-settings" aria-label="Cấu hình model và effort"><SlidersHorizontal className="size-3.5" /><span className="truncate">{selectedProfile?.label ?? 'Model theo server'} · {selection?.effort ?? capabilities?.requested_effort ?? 'chưa rõ'}</span><ChevronDown className="size-3" /></Button></DialogTrigger><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>Cấu hình Mimi</DialogTitle><DialogDescription>Áp dụng cho lượt chạy tiếp theo; giữ đúng model và effort đã chọn.</DialogDescription></DialogHeader>{enabled && (activeRunId || runtimeActive) ? <p role="status" className="text-xs" data-testid="mimi-next-run-notice">Run đang hoạt động · cấu hình mới áp dụng từ lượt sau</p> : null}
+    <Dialog open={open ?? internalOpen} onOpenChange={handleOpenChange}>{surface === 'quick' ? <DialogTrigger asChild><Button type="button" size="sm" variant="ghost" className="mimi-model-chip mb-1 max-w-full justify-start gap-1.5 text-xs" data-testid="mimi-route-settings" aria-label="Cấu hình model và effort"><SlidersHorizontal className="size-3.5" /><span className="truncate">{selectedProfile?.label ?? 'Model theo server'} · {selection?.effort ?? capabilities?.requested_effort ?? 'chưa rõ'}</span><ChevronDown className="size-3" /></Button></DialogTrigger> : null}<DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>{surface === 'hub' ? 'Cấu hình Mimi · Workspace' : 'Model và mức suy luận'}</DialogTitle><DialogDescription>Áp dụng cho lượt chạy tiếp theo; giữ đúng model và effort đã chọn.</DialogDescription></DialogHeader>{surface === 'hub' ? <p className="text-sm font-semibold">{conversation?.title ?? 'Hội thoại đang chọn'}</p> : null}{enabled && (activeRunId || runtimeActive) ? <p role="status" className="text-xs" data-testid="mimi-next-run-notice">Run đang hoạt động · cấu hình mới áp dụng từ lượt sau</p> : null}
 
       {!enabled ? (
         <div className="space-y-3 pb-2 pt-1">
@@ -194,7 +212,7 @@ export function MimiConfiguration({
               </Select>
             </div>
 
-            <div className="min-w-0 space-y-1.5">
+            {surface === 'hub' ? <><div className="min-w-0 space-y-1.5">
               <label htmlFor={`mimi-context-${conversationId}`} className="text-sm font-semibold">Ngưỡng compact quan sát</label>
               <Select
                 value={String(selection.input_tokens)}
@@ -209,21 +227,29 @@ export function MimiConfiguration({
                 </SelectContent>
               </Select>
             </div>
-            <div className="min-w-0 space-y-1.5"><label htmlFor={`mimi-window-budget-${conversationId}`} className="text-sm font-semibold">Cửa sổ ngữ cảnh / ngân sách input</label><Select value="profile" disabled><SelectTrigger id={`mimi-window-budget-${conversationId}`} className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="profile">{selectedProfile ? `${(selectedProfile.context_limit - selectedProfile.output_reserve).toLocaleString('vi-VN')} token input` : 'Theo profile server'}</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Tổng cửa sổ {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token, dành {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token output. Profile hiện tại chốt cửa sổ; chưa hỗ trợ đổi riêng ngân sách input.</p></div>
+            <div className="min-w-0 space-y-1.5"><label htmlFor={`mimi-window-budget-${conversationId}`} className="text-sm font-semibold">Cửa sổ ngữ cảnh / ngân sách input</label><Select value="profile" disabled><SelectTrigger id={`mimi-window-budget-${conversationId}`} className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="profile">{selectedProfile ? `${(selectedProfile.context_limit - selectedProfile.output_reserve).toLocaleString('vi-VN')} token input` : 'Theo profile server'}</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Tổng cửa sổ {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token, dành {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token output. Profile hiện tại chốt cửa sổ; chưa hỗ trợ đổi riêng ngân sách input.</p></div></> : null}
           </div>
 
-          <fieldset className="space-y-3 rounded-lg border p-3"><legend className="px-1 text-xs font-semibold">Provider của đúng model / effort đã chọn</legend><div className="grid gap-3 sm:grid-cols-3"><div><label className="text-xs font-semibold" htmlFor={`mimi-routing-${conversationId}`}>Chính sách</label><Select value={selection.routing_mode ?? 'adaptive'} onValueChange={(value) => updateSelection({ ...selection, routing_mode: value as 'exact' | 'adaptive' })}><SelectTrigger id={`mimi-routing-${conversationId}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="adaptive">Provider thích ứng</SelectItem><SelectItem value="exact">Provider đã cấu hình</SelectItem></SelectContent></Select></div><div><label className="text-xs font-semibold" htmlFor={`mimi-uptime-${conversationId}`}>Uptime phải lớn hơn (%)</label><Input id={`mimi-uptime-${conversationId}`} type="number" min={0} max={99.999} step={0.1} value={selection.min_uptime_percent ?? 95} onChange={(event) => updateSelection({ ...selection, min_uptime_percent: event.target.value === '' ? Number.NaN : Number(event.target.value) })} /></div><div><label className="text-xs font-semibold" htmlFor={`mimi-window-${conversationId}`}>Cửa sổ uptime</label><Select value={selection.uptime_window ?? '1d'} onValueChange={(value) => updateSelection({ ...selection, uptime_window: value as '1d' | '30m' })}><SelectTrigger id={`mimi-window-${conversationId}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1d">1 ngày</SelectItem><SelectItem value="30m">30 phút</SelectItem></SelectContent></Select></div></div><p className="text-xs text-muted-foreground">Chỉ đổi provider đủ điều kiện về privacy, giá và uptime; giữ nguyên DeepSeek V4.1 Flash cùng effort. Không hạ privacy hoặc đổi model khi không có endpoint phù hợp.</p><Button type="button" size="sm" variant="outline" disabled={refreshPool.isPending || save.isPending || dirty} onClick={() => refreshPool.mutate()}>{refreshPool.isPending ? 'Đang đọc metadata…' : 'Làm mới pool đã lưu'}</Button>{refreshPool.isError ? <p role="alert" className="text-xs text-bad">Chưa đọc được pool đủ điều kiện. Không tự đổi model.</p> : null}{refreshPool.data ? <p className="break-words text-xs">{refreshPool.data.model} · {refreshPool.data.effort} · {refreshPool.data.tags.join(', ') || 'Không có endpoint'} · uptime &gt; {refreshPool.data.min_uptime_percent}% / {refreshPool.data.window} · lúc {new Date(refreshPool.data.checked_at * 1000).toLocaleString('vi-VN')}</p> : null}</fieldset>
+          {surface === 'hub' ? <>
+          <fieldset className="space-y-3 rounded-lg border p-3"><legend className="px-1 text-xs font-semibold">Provider của đúng model / effort đã chọn</legend><div className="grid gap-3 sm:grid-cols-3"><div><label className="text-xs font-semibold" htmlFor={`mimi-routing-${conversationId}`}>Chính sách</label><Select value={selection.routing_mode ?? 'adaptive'} onValueChange={(value) => updateSelection({ ...selection, routing_mode: value as 'exact' | 'adaptive' })}><SelectTrigger id={`mimi-routing-${conversationId}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="adaptive">Provider thích ứng</SelectItem><SelectItem value="exact">Provider đã cấu hình</SelectItem></SelectContent></Select></div><div><label className="text-xs font-semibold" htmlFor={`mimi-uptime-${conversationId}`}>Uptime phải lớn hơn (%)</label><Input id={`mimi-uptime-${conversationId}`} type="number" min={0} max={99.999} step={0.1} value={selection.min_uptime_percent ?? 95} onChange={(event) => updateSelection({ ...selection, min_uptime_percent: event.target.value === '' ? Number.NaN : Number(event.target.value) })} /></div><div><label className="text-xs font-semibold" htmlFor={`mimi-window-${conversationId}`}>Cửa sổ uptime</label><Select value={selection.uptime_window ?? '1d'} onValueChange={(value) => updateSelection({ ...selection, uptime_window: value as '1d' | '30m' })}><SelectTrigger id={`mimi-window-${conversationId}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1d">1 ngày</SelectItem><SelectItem value="30m">30 phút</SelectItem></SelectContent></Select></div></div><p className="text-xs text-muted-foreground">Chỉ đổi provider đủ điều kiện về privacy, giá và uptime; giữ nguyên DeepSeek V4.1 Flash cùng effort. Không hạ privacy hoặc đổi model khi không có endpoint phù hợp.</p><Button type="button" size="sm" variant="outline" disabled={refreshPool.isPending || save.isPending || dirty} onClick={() => refreshPool.mutate()}>{refreshPool.isPending ? 'Đang đọc metadata…' : 'Làm mới pool đã lưu'}</Button>{refreshPool.isError ? <p role="alert" className="text-xs text-bad">Chưa đọc được pool đủ điều kiện. Không tự đổi model.</p> : null}<section className="space-y-2 rounded-lg bg-muted/50 p-3 text-xs" aria-label="Minh bạch provider pool" data-testid="mimi-provider-pool">
+            <p className="font-semibold">Pool của cấu hình đã lưu · chỉ đọc metadata</p>
+            {pool ? <><p>{pool.model} · effort {pool.effort}</p><p>Đọc lúc {new Date(pool.checked_at * 1000).toLocaleString('vi-VN')} · cache tối đa5phút, không polling.</p><p>Chính sách snapshot: uptime &gt; {pool.min_uptime_percent}% / {pool.window}</p><p>Provider đủ điều kiện: {pool.tags.length ? pool.tags.join(', ') : 'Không có endpoint'}</p><details><summary className="cursor-pointer">Lý do loại ({pool.exclusions.length}) và nguồn snapshot</summary><ul className="mt-1 space-y-1">{pool.exclusions.map((reason,index) => <li key={index}>{reason}</li>)}</ul><p className="break-all">Hash {pool.snapshot_sha256}</p><p>{pool.qualification} · lý do hiện chưa gắn từng endpoint.</p></details></> : <p>Chưa đọc được snapshot pool trong phiên này; không dùng danh sách provider tĩnh thay thế.</p>}
+            <p>Giá từng endpoint, trần giá và uptime từng provider: API hiện chưa trả, chưa xác định trong view này.</p>
+            <p>Pool là kết quả lọc server, không phải chứng nhận ZDR. API chưa kèm attestation privacy/data_collection; thiếu metadata không được hiểu là bảo đảm.</p>
+            {lastCall ? <div className="rounded-lg border p-2"><p>Lượt main gần nhất · {lastCall.state}</p><p>Yêu cầu: {lastCall.requested_model ?? 'chưa báo'} · {lastCall.requested_effort ?? 'chưa báo'}</p><p>Thực tế: {lastCall.actual_model ?? 'model chưa báo'} · {lastCall.actual_provider ?? 'provider chưa báo'} · effort thực tế chưa được API báo riêng.</p></div> : <p>Chưa có receipt provider của lượt main; không suy ra endpoint thực tế.</p>}
+          </section></fieldset>
           <p className="text-xs text-muted-foreground">
             Mimi compact ở lượt sau khi provider báo input main đạt {selection.input_tokens.toLocaleString('vi-VN')} token. Request có thể vượt ngưỡng này; giới hạn endpoint là {selectedProfile?.context_limit.toLocaleString('vi-VN') ?? '—'} token, output tối đa {selectedProfile?.output_reserve.toLocaleString('vi-VN') ?? '—'} token. Lưu cấu hình chỉ áp dụng từ lượt chạy tiếp theo
             {activeRunId || runtimeActive ? '; lượt đang chạy giữ nguyên lựa chọn đã chốt.' : '.'}
           </p>
+          </> : onOpenHub ? <Button type="button" variant="outline" onClick={() => { handleOpenChange(false); onOpenHub() }}>Mở Cấu hình Mimi trong Workspace</Button> : null}
           {!hasCurrentPreset ? <p role="alert" className="text-sm text-bad">Mức ngữ cảnh hiện tại không còn hợp lệ cho model này. Chọn mức được hỗ trợ để lưu.</p> : null}
           {!hasCurrentEffort ? <p role="alert" className="text-sm text-bad">Effort hiện tại không nằm trong các mức server quảng bá. Chọn mức khả dụng trước khi lưu.</p> : null}
           {save.isError ? (
             <div className="space-y-2" role="alert">
               <p className="text-sm text-bad">{configurationError(save.error)}</p>
               {save.error instanceof ApiError && save.error.status === 409 ? (
-                <Button type="button" size="lg" variant="outline" disabled={configuration.isFetching} onClick={() => void configuration.refetch()}>
+                <Button type="button" size="lg" variant="outline" disabled={configuration.isFetching} onClick={() => { void configuration.refetch().then((result) => { if (result.data && staged.data) queryClient.setQueryData(draftKey, { ...staged.data, expectedVersion: result.data.version }) }) }}>
                   {configuration.isFetching ? 'Đang tải…' : 'Tải cấu hình mới'}
                 </Button>
               ) : null}
@@ -235,7 +261,7 @@ export function MimiConfiguration({
             type="button"
             size="lg"
             disabled={!Number.isFinite(selection.min_uptime_percent ?? 95) || (selection.min_uptime_percent ?? 95) < 0 || (selection.min_uptime_percent ?? 95) >= 100 || !dirty || save.isPending || !selectedProfile?.available || !efforts.includes(selection.effort) || !presets.includes(selection.input_tokens)}
-            onClick={() => configuration.data && save.mutate({ next: selection, expectedVersion: configuration.data.version })}
+            onClick={() => configuration.data && save.mutate({ next: selection, expectedVersion: staged.data?.expectedVersion ?? configuration.data.version })}
           >
             {save.isPending ? 'Đang lưu…' : 'Lưu lựa chọn'}
           </Button>

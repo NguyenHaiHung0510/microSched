@@ -73,6 +73,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
   >(() => (isTrackersRoute ? 'tracker' : 'tasks'))
   const [mimiDockOpen, setMimiDockOpen] = useState(false)
   const [mimiDockWidth, setMimiDockWidth] = useState(400)
+  const [mimiConfigurationOpen, setMimiConfigurationOpen] = useState(false)
 
   const isMimiRoute = location.split('?')[0] === '/mimi'
   const attentionLocator = isMimiRoute ? queryParams(location).get('attention') : null
@@ -253,7 +254,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}
           {currentTab === 'mimi' && session.mimi_available ? (
-            <MimiControlCenter onOpenDomain={(domain) => selectTab(domain)} />
+            <MimiControlCenter onOpenDomain={(domain) => selectTab(domain)} configurationOpen={mimiConfigurationOpen} onConfigurationOpenChange={setMimiConfigurationOpen} />
           ) : null}
         </div>
           </>
@@ -264,7 +265,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </div>
     </div>
     {session.mimi_available ? (
-      <MimiDock open={mimiDockOpen && currentTab !== 'mimi'} onOpenChange={setMimiDockOpen} onOpenTasks={() => selectTab('tasks')} onOpenWorkspace={() => { setMimiDockOpen(false); selectTab('mimi') }} width={mimiDockWidth} onWidthChange={setMimiDockWidth} />
+      <MimiDock open={mimiDockOpen && currentTab !== 'mimi'} onOpenChange={setMimiDockOpen} onOpenTasks={() => selectTab('tasks')} onOpenWorkspace={() => { setMimiDockOpen(false); selectTab('mimi') }} onOpenConfiguration={() => { setMimiDockOpen(false); selectTab('mimi'); setMimiConfigurationOpen(true) }} width={mimiDockWidth} onWidthChange={setMimiDockWidth} />
     ) : null}
     </div>
   )

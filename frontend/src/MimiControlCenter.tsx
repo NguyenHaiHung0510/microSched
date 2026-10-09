@@ -1,24 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Archive, ArchiveRestore, LoaderCircle, MoreVertical, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Pin, PinOff, Plus, Search } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Archive, ArchiveRestore, LoaderCircle, MoreVertical, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Pin, PinOff, Plus, Search, SlidersHorizontal } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { DropdownMenu } from 'radix-ui'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { createMimiConversation, fetchMimiConversation, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
+import { createMimiConversation, fetchMimiCapabilities, fetchMimiConversation, renameMimiConversation, setMimiConversationArchived, type MimiConversationSummary } from '@/mimi-api'
 import { useMimiConversationList } from '@/mimi-conversation-list'
 import { selectCreatedMimiConversation, useMimiSelection } from '@/mimi-selection'
 import { mimiRunLabel } from '@/mimi-presentation'
 import { MimiContextRail } from '@/MimiContextRail'
+import { MimiConfiguration } from '@/MimiConfiguration'
 import { MimiScreen } from '@/MimiScreen'
 import { MimiNotifications } from '@/MimiNotifications'
 import { MimiRailResize } from '@/MimiRailResize'
-import { rememberedMimiWidth, rememberMimiWidth, useWideMimi } from '@/mimi-layout'
+import { rememberedMimiWidth, rememberMimiWidth, useWideMimi, fitMimiRails, mimiRailMaximum } from '@/mimi-layout'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import './mimi.css'
 type WorkspaceDomain = 'tasks' | 'notes' | 'calendar' | 'tracker'
-function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: WorkspaceDomain) => void }) {
+function ConversationWorkspace({ onOpenDomain, configurationOpen, onConfigurationOpenChange }: { onOpenDomain: (domain: WorkspaceDomain) => void; configurationOpen: boolean; onConfigurationOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient()
   const [listState, setListState] = useState<'active' | 'archived'>('active')
   const [selectedId, setSelectedId] = useMimiSelection()
@@ -29,6 +30,16 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
   const [leftWidth, setLeftWidth] = useState(() => rememberedMimiWidth('left', 200))
   const [rightWidth, setRightWidth] = useState(() => rememberedMimiWidth('right', 220))
   const [searchQuery, setSearchQuery] = useState('')
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(() => window.innerWidth - 80)
+  useEffect(() => {
+    if (!workspaceRef.current) return
+    const observer = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width))
+    observer.observe(workspaceRef.current)
+    return () => observer.disconnect()
+  }, [])
+  const fitted = fitMimiRails(leftWidth, rightWidth, containerWidth, leftOpen, rightOpen)
+  const capabilities = useQuery({ queryKey: ['mimi', 'capabilities'], queryFn: fetchMimiCapabilities, enabled: configurationOpen, ...NO_POLLING_QUERY_OPTIONS })
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('mimi_pinned_conversations')
@@ -180,6 +191,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        <Button type="button" variant="ghost" size="sm" className="min-h-11 gap-1.5 text-xs" data-testid="mimi-configuration-hub-toggle" disabled={!effectiveSelectedId} onClick={() => onConfigurationOpenChange(true)}><SlidersHorizontal className="size-4" /><span className="hidden sm:inline">Cấu hình Mimi</span><span className="sr-only sm:hidden">Cấu hình Mimi</span></Button>
         <Button
           variant={rightOpen ? 'selected' : 'outline'}
           size="sm"
@@ -192,7 +204,7 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
         </Button>
       </div>
     </div>
-    <div className="mimi-workspace" data-testid="mimi-workspace" style={{ '--mimi-left': `${leftOpen ? leftWidth : 44}px`, '--mimi-right': `${rightOpen ? rightWidth : 44}px` } as import('react').CSSProperties}>
+    <div ref={workspaceRef} className="mimi-workspace" data-testid="mimi-workspace" style={{ '--mimi-left': `${fitted.left}px`, '--mimi-right': `${fitted.right}px` } as import('react').CSSProperties}>
       <aside className="mimi-workspace-rail" aria-label="Rail hội thoại" data-testid="mimi-left-rail">{leftOpen ?         <Card className="mimi-left-rail min-w-0 h-full flex flex-col overflow-hidden border-0 rounded-none shadow-none">
           <CardHeader className="p-3.5 pb-2">
             <div className="flex items-center justify-between">
@@ -257,11 +269,11 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
             </div>
           </CardContent>
         </Card> : <Button size="icon" variant="ghost" aria-label="Mở rail hội thoại" onClick={() => setLeftOpen(true)}><PanelLeftOpen /></Button>}</aside>
-      <MimiRailResize side="left" width={leftWidth} onResize={(width) => { setLeftWidth(width); rememberMimiWidth('left', width) }} disabled={!leftOpen} />
+      <MimiRailResize side="left" width={fitted.left} maximum={mimiRailMaximum(containerWidth, fitted.right)} otherWidth={fitted.right} onResize={(width) => { setLeftWidth(width); rememberMimiWidth('left', width) }} disabled={!leftOpen} />
       <main className="mimi-center min-h-0 min-w-0 overflow-hidden rounded-xl p-3" data-testid="mimi-workspace-center">
-        <MimiScreen key={effectiveSelectedId} onOpenTasks={() => onOpenDomain('tasks')} conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} />
+        <MimiScreen key={effectiveSelectedId} onOpenTasks={() => onOpenDomain('tasks')} conversationId={effectiveSelectedId} onConversationCreated={setSelectedId} onOpenConfiguration={() => onConfigurationOpenChange(true)} />
       </main>
-      <MimiRailResize side="right" width={rightWidth} onResize={(width) => { setRightWidth(width); rememberMimiWidth('right', width) }} disabled={!rightOpen} />
+      <MimiRailResize side="right" width={fitted.right} maximum={mimiRailMaximum(containerWidth, fitted.left)} otherWidth={fitted.left} onResize={(width) => { setRightWidth(width); rememberMimiWidth('right', width) }} disabled={!rightOpen} />
       <aside className="mimi-workspace-rail mimi-right-rail" aria-label="Rail dữ liệu" data-testid="mimi-right-rail">{rightOpen ? rail : <Button size="icon" variant="ghost" aria-label="Mở rail dữ liệu" onClick={() => setRightOpen(true)}><PanelRightOpen /></Button>}</aside>
     </div>
     <Dialog open={!wide && mobileRail !== null} onOpenChange={(open) => { if (!open) setMobileRail(null) }}><DialogContent className="max-h-[85dvh] overflow-y-auto"><DialogHeader><DialogTitle>{mobileRail === 'left' ? 'Hội thoại' : 'Dữ liệu và thông báo'}</DialogTitle><DialogDescription>Mở riêng rail để giữ chỗ cho cuộc trò chuyện trên màn hình nhỏ.</DialogDescription></DialogHeader>{mobileRail === 'left' ?         <Card className="mimi-left-rail min-w-0 h-full flex flex-col overflow-hidden border-0 rounded-none shadow-none">
@@ -329,8 +341,9 @@ function ConversationWorkspace({ onOpenDomain }: { onOpenDomain: (domain: Worksp
           </CardContent>
         </Card> : rail}</DialogContent></Dialog>
 
+    {effectiveSelectedId ? <MimiConfiguration key={effectiveSelectedId} conversationId={effectiveSelectedId} conversation={selected.data} capabilities={capabilities.data} runtimeActive={selected.data?.runs.some((run) => ['accepted', 'building', 'running', 'executing'].includes(run.state)) ?? false} surface="hub" open={configurationOpen} onOpenChange={onConfigurationOpenChange} /> : null}
     <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open) setRenameTarget(null) }}><DialogContent><DialogHeader><DialogTitle>Đổi tên hội thoại</DialogTitle><DialogDescription>Tên bạn đặt sẽ không bị auto-title ghi đè.</DialogDescription></DialogHeader><div className="space-y-2"><label htmlFor="mimi-conversation-title" className="text-sm font-semibold">Tên hội thoại</label><Input id="mimi-conversation-title" value={renameDraft} maxLength={80} onChange={(event) => setRenameDraft(event.target.value)} /><p className="text-right text-xs text-muted-foreground">{renameDraft.length}/80</p></div><DialogFooter><DialogClose asChild><Button variant="outline">Huỷ</Button></DialogClose><Button disabled={!renameDraft.trim() || rename.isPending || !renameTarget} onClick={() => { if (renameTarget) rename.mutate({ item: renameTarget, title: renameDraft }) }}>{rename.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : null}Lưu tên</Button></DialogFooter></DialogContent></Dialog>
   </div>
 }
 
-export function MimiControlCenter({ onOpenDomain }: { onOpenDomain: (domain: WorkspaceDomain) => void }) { return <ConversationWorkspace onOpenDomain={onOpenDomain} /> }
+export function MimiControlCenter({ onOpenDomain, configurationOpen, onConfigurationOpenChange }: { onOpenDomain: (domain: WorkspaceDomain) => void; configurationOpen: boolean; onConfigurationOpenChange: (open: boolean) => void }) { return <ConversationWorkspace onOpenDomain={onOpenDomain} configurationOpen={configurationOpen} onConfigurationOpenChange={onConfigurationOpenChange} /> }

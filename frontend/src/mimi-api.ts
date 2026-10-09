@@ -629,6 +629,17 @@ export function readMimiDevicePreference(proof: MimiDeviceProof): Promise<MimiDe
 export function saveMimiDevicePreference(proof: MimiDeviceProof, enabled: boolean, expectedRevision: number | null): Promise<MimiDevicePreference> {
   return apiRequest('/api/mimi/devices/preference', { method: 'POST', headers: MIMI_WRITE_HEADERS, body: JSON.stringify({ ...proof, enabled, expected_revision: expectedRevision }) })
 }
-export function refreshMimiProviderPool(conversationId: string): Promise<{ model: string; effort: string; tags: string[]; checked_at: number; min_uptime_percent: number; window: string; exclusions: Record<string, unknown> }> {
+export type MimiProviderPool = {
+  model: string
+  effort: string
+  tags: string[]
+  checked_at: number
+  snapshot_sha256: string
+  min_uptime_percent: number
+  window: string
+  exclusions: string[]
+  qualification: string
+}
+export function refreshMimiProviderPool(conversationId: string): Promise<MimiProviderPool> {
   return apiRequest(`/api/mimi/conversations/${conversationId}/provider-pool/refresh`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}', timeoutMs: 15_000 })
 }

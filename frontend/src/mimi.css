@@ -134,3 +134,12 @@
 /* The app grid has32px outer padding: keep the complete sidechat inside the viewport. */
 @media (min-width: 1280px) { .mimi-side-chat { position: sticky; top: 16px; height: calc(100dvh - 4rem); } }
 .mimi-chat:has(.mimi-backdrop[data-paused=true]) .mimi-thinking-dots i { animation-play-state: paused; }
+
+/* Owner62 context overlay is local to the chat; dialogs retain their own layer. */
+.mimi-chat > .mimi-chat-heading { position: relative; z-index: 4; }
+.mimi-context-chip { position: static; }
+.mimi-context-popover { width: min(480px, 100%); background: var(--popover); isolation: isolate; }
+.mimi-answer-column { display: flex; flex-direction: column; gap: 4px; }
+.mimi-answer-actions { justify-content: flex-start; margin-top: 0; gap: 8px; }
+.mimi-answer-actions button { width: 32px; min-height: 32px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+@media (pointer: coarse) { .mimi-answer-actions button { width: 44px; min-height: 44px; } }

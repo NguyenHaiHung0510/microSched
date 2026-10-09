@@ -1,3 +1,5 @@
+import { toast } from 'sonner'
+import { feedbackComment } from '@/mimi-owner-feedback'
 import { MimiBackdrop } from '@/MimiBackdrop'
 import { MimiCollectionReview } from '@/MimiCollectionReview'
 import { MimiFeedbackEvidence } from '@/MimiFeedbackEvidence'
@@ -8,7 +10,7 @@ import { usePreviewExpired } from './mimi-preview-expiry'
 import { MimiRunObservations } from '@/MimiRunObservations'
 import { MimiCheckpointViewer } from './MimiCheckpointViewer'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Check, Copy, ChevronDown, LoaderCircle, MessageSquareWarning, RotateCcw, Send, Sparkles, Square, X } from 'lucide-react'
+import { CalendarDays, Check, Copy, ChevronDown, LoaderCircle, MessageSquareWarning, RotateCcw, Send, Sparkles, Square, X, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
@@ -185,12 +187,14 @@ export function MimiScreen({
   settingsOpen,
   onSettingsOpenChange,
   technicalOpen,
+  onOpenConfiguration,
 }: {
   onOpenTasks: () => void
   variant?: 'workspace' | 'dock'
   conversationId?: string | null
   settingsOpen?: boolean
   onSettingsOpenChange?: (open: boolean) => void
+  onOpenConfiguration?: () => void
   technicalOpen?: boolean
   onConversationCreated?: (conversationId: string) => void
 }) {
@@ -199,7 +203,8 @@ export function MimiScreen({
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
   const [online, setOnline] = useState(() => navigator.onLine)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
-  const [copyNotice, setCopyNotice] = useState<string | null>(null)
+  const [feedbackMood, setFeedbackMood] = useState<'positive' | 'negative'>('negative')
+  const [feedbackReasons, setFeedbackReasons] = useState<string[]>([])
   const [localDecisionIntent, setDecisionIntent] = useState<MimiDecisionIntent | null>(null)
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
   const [feedbackDraft, setFeedbackDraft] = useState('')
@@ -213,6 +218,7 @@ export function MimiScreen({
   const [feedbackAcknowledgment, setFeedbackAcknowledgment] = useState<{
     conversationId: string
     targetKey: string
+    mood: 'positive' | 'negative'
   } | null>(null)
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null)
   const feedbackDraftRevision = useRef(0)
@@ -430,10 +436,12 @@ export function MimiScreen({
       expected: string
       clientId: string
       draftRevision: number
+      mood: 'positive' | 'negative'
     }) => saveMimiFeedback(current.id, target, comment, expected, clientId),
     onSuccess: (_saved, variables) => {
       const targetKey = `${variables.target.target_type}:${variables.target.target_id}`
-      setFeedbackAcknowledgment({ conversationId: variables.current.id, targetKey })
+      setFeedbackAcknowledgment({ conversationId: variables.current.id, targetKey, mood: variables.mood })
+      if (variables.mood === 'positive') queryClient.setQueryData(['mimi', 'positive-feedback-intent', variables.current.id, variables.target.target_id], { clientId: variables.clientId, saved: true })
       if (current?.id === variables.current.id && feedbackDraftRevision.current === variables.draftRevision) {
         setFeedbackDraft('')
         setFeedbackExpected('')
@@ -635,11 +643,44 @@ export function MimiScreen({
     feedback.mutate({
       current,
       target: selectedFeedbackTarget,
-      comment: feedbackDraft,
+      comment: feedbackComment(feedbackMood, feedbackReasons, feedbackDraft),
       expected: feedbackExpected,
+      mood: feedbackMood,
       clientId,
       draftRevision: feedbackDraftRevision.current,
     })
+  }
+
+  function toggleFeedbackReason(reason: string) {
+    setFeedbackReasons((old) => old.includes(reason) ? old.filter((item) => item !== reason) : [...old, reason])
+    if (feedbackMood === 'negative') {
+      feedbackDraftRevision.current += 1
+      setFeedbackClientId(null)
+      setFeedbackAcknowledgment(null)
+      feedback.reset()
+    }
+  }
+
+  function openMessageFeedback(messageId: string, mood: 'positive' | 'negative') {
+    if (!current || feedback.isPending) return
+    const targetKey = `turn:${messageId}`
+    setFeedbackMood(mood)
+    setFeedbackReasons([])
+    setFeedbackTargetKey(targetKey)
+    setFeedbackOpen(true)
+    setFeedbackBinding({ conversationId: current.id, targetKey })
+    setFeedbackAcknowledgment(null)
+    setFeedbackNotice(null)
+    feedback.reset()
+    feedbackDraftRevision.current += 1
+    if (mood === 'negative') { setFeedbackClientId(null); return }
+    const intentKey = ['mimi', 'positive-feedback-intent', current.id, messageId]
+    const intent = queryClient.getQueryData<{ clientId: string; saved: boolean }>(intentKey)
+    const clientId = intent?.clientId ?? `mimi-positive:${current.id}:${messageId}`
+    queryClient.setQueryData(intentKey, { clientId, saved: intent?.saved ?? false })
+    setFeedbackClientId(clientId)
+    if (intent?.saved) { setFeedbackAcknowledgment({ conversationId: current.id, targetKey, mood }); return }
+    feedback.mutate({ current, target: { target_type: 'turn', target_id: messageId }, comment: feedbackComment('positive', [], ''), expected: '', clientId, draftRevision: -1, mood })
   }
 
   if (conversation.isPending) {
@@ -825,17 +866,15 @@ export function MimiScreen({
               : 'mimi-message mimi-message-assistant'}
           >
             {message.role === 'assistant' ? <MimiAvatar className="mimi-answer-avatar" /> : null}
-            <div className="mimi-message-body">{message.role === 'user'
-              ? <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
-              : <><MimiMessageText text={message.content} /><div className="mimi-answer-actions"><Button type="button" size="icon" variant="ghost" aria-label={`Sao chép câu trả lời ${message.sequence}`} onClick={() => { void navigator.clipboard.writeText(message.content).then(() => setCopyNotice('Đã sao chép câu trả lời.')).catch(() => setCopyNotice('Chưa sao chép được; bạn có thể chọn nội dung để sao chép.')) }}><Copy className="size-4" /></Button><Button type="button" size="icon" variant="ghost" className="mt-1" aria-label={`Góp ý câu trả lời ${message.sequence}`} onClick={() => {
-                feedbackDraftRevision.current += 1
-                setFeedbackTargetKey(`turn:${message.id}`)
-                setFeedbackOpen(true)
-                setFeedbackClientId(null)
-                setFeedbackAcknowledgment(null)
-                setFeedbackBinding(feedbackDraft.trim() || feedbackExpected.trim() ? { conversationId: current.id, targetKey: `turn:${message.id}` } : null)
-                feedback.reset()
-              }}><MessageSquareWarning className="size-4" /></Button></div><time className="mimi-message-time">{new Date(message.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</time></>}
+            <div className={message.role === 'assistant' ? 'mimi-answer-column min-w-0' : 'min-w-0'}>
+              <div className="mimi-message-body">{message.role === 'user' ? <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p> : <MimiMessageText text={message.content} />}
+                <time className="mimi-message-time">{new Date(message.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</time>
+              </div>
+              {message.role === 'assistant' ? <div className="mimi-answer-actions" aria-label={`Hành động câu trả lời ${message.sequence}`}>
+                <Button type="button" size="icon" variant="ghost" aria-label={`Sao chép câu trả lời ${message.sequence}`} onClick={() => { void navigator.clipboard.writeText(message.content).then(() => toast.success('Đã sao chép', { duration: 2000 })).catch(() => toast.error('Chưa sao chép được', { duration: 2000 })) }}><Copy className="size-4" /></Button>
+                <Button type="button" size="icon" variant="ghost" disabled={feedback.isPending} aria-label={`Hữu ích · câu trả lời ${message.sequence}`} onClick={() => openMessageFeedback(message.id, 'positive')}><ThumbsUp className="size-4" /></Button>
+                <Button type="button" size="icon" variant="ghost" disabled={feedback.isPending} aria-label={`Chưa tốt · câu trả lời ${message.sequence}`} onClick={() => openMessageFeedback(message.id, 'negative')}><ThumbsDown className="size-4" /></Button>
+              </div> : null}
             </div>
           </article>
         ))}
@@ -845,7 +884,6 @@ export function MimiScreen({
         ) : null}
       </div>
 
-      {copyNotice ? <p role="status" className="text-xs text-muted-foreground">{copyNotice}</p> : null}
       {pendingChangeSet ? (
         <ChangeSetPreview
           changeSet={pendingChangeSet}
@@ -861,10 +899,20 @@ export function MimiScreen({
       {latestReceipt ? <details className="max-h-40 overflow-auto rounded-lg border bg-card p-2 text-xs" data-testid="mimi-receipt"><summary className="cursor-pointer font-semibold">Đã lưu thay đổi · {typeof latestReceipt.result.count === 'number' ? latestReceipt.result.count : 1} Task</summary><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" onClick={onOpenTasks}>Mở Task</Button>{latestReceipt.result.undo_available === true ? <Button variant="outline" disabled={undo.isPending || runtimeActive || !!pendingChangeSet || !!decisionIntent} onClick={() => undo.mutate(latestReceipt.id)}>Chuẩn bị hoàn tác</Button> : null}</div><p className="mt-2 break-all text-xs">Receipt {latestReceipt.id}</p><p className="text-xs">Hoàn tác tạo preview mới có kiểm tra phiên bản; cần xác nhận riêng.</p>{undo.isError ? <p role="alert" className="text-bad">{errorMessage(undo.error)}</p> : null}</details> : null}
 
       {feedbackTargets.length ? (
-        <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}><DialogContent className="max-h-[90dvh] overflow-y-auto" data-testid="mimi-feedback"><DialogHeader><DialogTitle>Góp ý câu trả lời</DialogTitle><DialogDescription>Giữ đúng mục và bằng chứng nhân quả trên server.</DialogDescription></DialogHeader>
-          <Card className="border-0 shadow-none">
+        <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}><DialogContent className="max-h-[90dvh] overflow-y-auto" data-testid="mimi-feedback"><DialogHeader><DialogTitle>Góp ý câu trả lời</DialogTitle><DialogDescription>Feedback được gắn với đúng câu trả lời, run, lần gọi hoặc receipt bạn chọn.</DialogDescription></DialogHeader>
+          {feedbackMood === 'positive' ? <div className="space-y-3" data-testid="mimi-positive-feedback">
+            <ThumbsUp className="mx-auto size-8 text-primary" />
+            <p role="status" className="text-center font-semibold">{feedback.isPending ? 'Đang lưu phản hồi tích cực…' : feedbackAcknowledgment?.conversationId === current.id && feedbackAcknowledgment.targetKey === resolvedFeedbackTargetKey && feedbackAcknowledgment.mood === 'positive' ? 'Đã ghi nhận phản hồi tích cực' : 'Chưa xác nhận phản hồi tích cực đã lưu'}</p>
+            <p className="rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap break-words">{current.messages.find((message) => message.id === selectedFeedbackTarget?.target_id)?.content.slice(0, 180) ?? selectedFeedbackTarget?.label ?? 'Mục đang chọn'}</p>
+            {feedback.isError ? <p role="alert" className="text-sm text-bad">Chưa xác định kết quả lưu. Khi bấm Hữu ích lại sẽ giữ cùng khóa, không tạo bản ghi mới ngầm.</p> : null}
+            <p className="text-sm font-semibold">Bạn có thể chia sẻ thêm (không bắt buộc)</p>
+            <div className="grid grid-cols-2 gap-2">{['Rõ ràng', 'Đúng ý', 'Hữu ích', 'Nhanh', 'Dễ hiểu', 'Khác'].map((reason) => <Button type="button" key={reason} variant={feedbackReasons.includes(reason) ? 'selected' : 'outline'} size="sm" aria-pressed={feedbackReasons.includes(reason)} onClick={() => toggleFeedbackReason(reason)}>{reason}</Button>)}</div>
+            <Textarea aria-label="Ghi chú phản hồi tích cực" value={feedbackDraft} maxLength={500} onChange={(event) => setFeedbackDraft(event.target.value)} placeholder="Muốn ghi chú thêm? (không bắt buộc)" /><p className="text-right text-xs text-muted-foreground">{feedbackDraft.length}/500</p>
+            <p role="status" className="text-xs text-muted-foreground">API hiện chưa sửa/bổ sung phản hồi đã lưu. Chi tiết này là bản nháp; chưa gửi và không tự tạo feedback thứ hai.</p>
+            <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setFeedbackOpen(false)}>Để sau</Button><Button type="button" disabled>Gửi bổ sung · chưa hỗ trợ</Button></div>
+          </div> : <Card className="border-0 shadow-none">
           <CardHeader>
-            <CardTitle>Gửi feedback</CardTitle>
+            <CardTitle>Luồng phản hồi chưa tốt</CardTitle>
             <CardDescription>Feedback được gắn với đúng câu trả lời, run, lần gọi hoặc receipt bạn chọn.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -901,12 +949,15 @@ export function MimiScreen({
                   </SelectContent>
                 </Select>
               </div>
+              <p className="rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap break-words" data-testid="mimi-feedback-target-snippet">{current.messages.find((message) => message.id === selectedFeedbackTarget?.target_id)?.content.slice(0, 180) ?? selectedFeedbackTarget?.label ?? 'Chọn mục cần góp ý'}</p>
+              <fieldset className="space-y-2"><legend className="text-sm font-semibold">Vấn đề gặp phải</legend><div className="grid grid-cols-2 gap-2">{['Thiếu chính xác', 'Thiếu ngữ cảnh', 'Khó hiểu', 'Chưa làm đúng yêu cầu', 'Khác'].map((reason) => <Button type="button" key={reason} variant={feedbackReasons.includes(reason) ? 'selected' : 'outline'} size="sm" aria-pressed={feedbackReasons.includes(reason)} onClick={() => toggleFeedbackReason(reason)}>{reason}</Button>)}</div></fieldset>
               <div className="space-y-1.5">
                 <label htmlFor="mimi-feedback" className="text-sm font-semibold">Điều gì cần sửa hoặc làm rõ?</label>
                 <Textarea
                   id="mimi-feedback"
+                  required
                   value={feedbackDraft}
-                  maxLength={10_000}
+                  maxLength={500}
                   aria-describedby="mimi-feedback-help"
                   disabled={feedback.isPending}
                   placeholder="Mô tả kết quả chưa đúng hoặc thiếu điều gì."
@@ -927,14 +978,14 @@ export function MimiScreen({
                     feedback.reset()
                   }}
                 />
-                <p id="mimi-feedback-help" className="text-xs text-muted-foreground">Nội dung được mã hoá khi lưu.</p>
+                <p id="mimi-feedback-help" className="flex justify-between text-xs text-muted-foreground"><span>Nội dung được mã hoá khi lưu.</span><span>{feedbackDraft.length}/500</span></p>
               </div>
               <div className="space-y-1.5">
                 <label htmlFor="mimi-feedback-expected" className="text-sm font-semibold">Kết quả bạn mong đợi (không bắt buộc)</label>
                 <Textarea
                   id="mimi-feedback-expected"
                   value={feedbackExpected}
-                  maxLength={10_000}
+                  maxLength={500}
                   disabled={feedback.isPending}
                   placeholder="Ví dụ: cần hỏi lại ngày trước khi tạo Task."
                   onChange={(event) => {
@@ -955,6 +1006,7 @@ export function MimiScreen({
                   }}
                 />
               </div>
+              <p className="text-right text-xs text-muted-foreground">{feedbackExpected.length}/500</p>
               {feedback.isError ? (
                 <p role="alert" className="flex items-center gap-2 text-sm text-bad">
                   <MessageSquareWarning className="size-4" />
@@ -990,7 +1042,7 @@ export function MimiScreen({
               </Button>
             </form>
           </CardContent>
-          </Card>
+          </Card>}
           <MimiFeedbackEvidence conversation={current} target={selectedFeedbackTarget} />
         </DialogContent></Dialog>
       ) : null}
@@ -1009,7 +1061,7 @@ export function MimiScreen({
           </div>
         ) : null}
         <div className="mimi-composer-surface relative flex flex-col rounded-2xl border border-input focus-within:ring-2 focus-within:ring-ring p-2">
-      <MimiConfiguration conversationId={current.id} capabilities={capabilities.data} runtimeActive={runtimeActive} open={settingsOpen} onOpenChange={onSettingsOpenChange} />
+      <MimiConfiguration conversationId={current.id} capabilities={capabilities.data} runtimeActive={runtimeActive} open={settingsOpen} onOpenChange={onSettingsOpenChange} onOpenHub={onOpenConfiguration} />
           <Textarea
             rows={1}
             id="mimi-message"
