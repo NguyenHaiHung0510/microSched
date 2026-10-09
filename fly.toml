@@ -34,7 +34,7 @@ swap_size_mb = 512
   MIMI_RUN_MAX_TURNS = '32'
   MIMI_RUN_MAX_TOOL_CALLS = '64'
   MIMI_RUN_DEADLINE_SECONDS = '1800'
-  MIMI_PREVIEW_TTL_MINUTES = '15'
+  MIMI_PREVIEW_TTL_MINUTES = '180'
 
 [deploy]
   strategy = 'immediate'
