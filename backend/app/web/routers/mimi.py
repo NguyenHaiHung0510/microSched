@@ -291,7 +291,23 @@ async def post_message(
     await ensure_message_admissible(db, session, conversation_id, payload)
     run_id = uuid7()
     async with hold_run_guard_if_enabled(run_id):
-        return await send_message(db, session, conversation_id, payload, reserved_run_id=run_id)
+        try:
+            return await send_message(db, session, conversation_id, payload, reserved_run_id=run_id)
+        except (Exception, asyncio.CancelledError) as error:
+            # Accepted runs/provider terminals may already be committed. Request
+            # rollback must not leave them active or erase the separate finalizer.
+            await db.rollback()
+            factory = get_sessionmaker()
+            if factory is not None:
+                async with factory() as terminal_db:
+                    await finish_interrupted_run(
+                        terminal_db,
+                        session,
+                        run_id,
+                        cancelled=isinstance(error, asyncio.CancelledError),
+                    )
+                    await terminal_db.commit()
+            raise
 
 
 @router.post(

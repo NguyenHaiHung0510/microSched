@@ -117,7 +117,8 @@ async def read_task_content(db: AsyncSession, request: TaskContentRead) -> dict[
             "due_at": r.due_at.isoformat() if r.due_at else None,
             "offset_minutes": r.offset_minutes,
             "anchor_time": r.anchor_time.isoformat() if r.anchor_time else None,
-            "source_updated_at": r.source_updated_at.isoformat(),
+            # The source is the live parent Task; occurrence freshness uses id/revision.
+            "source_updated_at": version,
         }
         for r in reminders[:10]
     ]

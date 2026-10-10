@@ -13,10 +13,66 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.agent.tools.registry import execute_read_tool
 from app.agent.tools.task_content import TaskContentRead, read_task_content
 from app.core.database_urls import async_postgres_url
-from app.domain.models import AuthSession, Task, TaskItem
+from app.domain.models import AuthSession, OneShotReminder, Task, TaskItem
 from app.domain.tasks import TaskItemCreate, TaskItemUpdate, TaskStore
 
 pytestmark = pytest.mark.pg
+
+
+def test_reminder_read_uses_parent_source_version(pg_dsn):
+    """The source timestamp is the Task version, not the reminder occurrence clock."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        task_id = None
+        try:
+            async with maker() as db:
+                task = Task(title="Synthetic reminder source-version", body_md="Nguồn hiện tại")
+                db.add(task)
+                await db.flush()
+                task_id = task.id
+                reminder = OneShotReminder(
+                    task_id=task.id,
+                    mode="absolute",
+                    due_at=datetime.now(UTC) + timedelta(days=2),
+                    revision=3,
+                )
+                db.add(reminder)
+                await db.flush()
+                reminder.updated_at = datetime(2026, 1, 1, tzinfo=UTC)
+                await db.commit()
+            async with maker() as db:
+                task = await db.get(Task, task_id)
+                source_version = task.updated_at.isoformat()
+                result = await read_task_content(db, TaskContentRead(id=task_id))
+                row = result["rows"][0]
+                assert row["source_version"] == source_version
+                assert row["reminders"][0]["source_updated_at"] == source_version
+                assert row["reminders"][0]["revision"] == 3
+                assert row["reminders"][0]["source_updated_at"] != reminder.updated_at.isoformat()
+                assert row["reminder_history_omitted"] is False
+            async with maker() as db:
+                task = await db.get(Task, task_id)
+                task.body_md = "Nguồn đã cập nhật"
+                await db.commit()
+            async with maker() as db:
+                with pytest.raises(ValueError, match="task_content_source_changed"):
+                    await read_task_content(
+                        db, TaskContentRead(id=task_id, expected_version=source_version)
+                    )
+                current = (await read_task_content(db, TaskContentRead(id=task_id)))["rows"][0]
+                assert current["source_version"] != source_version
+                assert current["reminders"][0]["source_updated_at"] == current["source_version"]
+                assert current["reminders"][0]["revision"] == 3
+        finally:
+            if task_id:
+                async with maker() as db:
+                    await db.execute(delete(Task).where(Task.id == task_id))
+                    await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
 
 
 def test_checklist_mutations_advance_parent_source_version(pg_dsn):

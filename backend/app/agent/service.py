@@ -4459,6 +4459,9 @@ async def finish_interrupted_run(
         # A local materialization failure after the durable provider terminal
         # must not rewrite a known provider success into a provider failure.
         run.provider_outcome = "succeeded"
+    elif call is not None and call.state in {"failed", "unknown"}:
+        # A known durable outcome/result remains evidence, even when local work fails.
+        run.provider_outcome = "unknown" if call.state == "unknown" else "failed"
     elif provider_may_have_received_request:
         run.provider_outcome = "unknown"
         call.state = "unknown"
@@ -4468,6 +4471,7 @@ async def finish_interrupted_run(
             "response_id": (call.result or {}).get("response_id"),
         }
     elif call is not None:
+        run.provider_outcome = "failed"
         call.state = "failed"
         call.result = {"terminal": "failed", "reason": run.error_code}
     await _append_event(
