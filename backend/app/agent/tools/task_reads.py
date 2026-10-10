@@ -20,13 +20,25 @@ from app.domain.models import Task
 
 MAX_PAGE = 50
 MAX_BATCH = 50
-_FIELDS = ("id", "title", "status", "priority", "due_precision", "due_on", "due_at")
+_FIELDS = (
+    "id",
+    "title",
+    "status",
+    "priority",
+    "due_precision",
+    "due_on",
+    "due_at",
+    "pinned",
+    "completed_at",
+    "deleted_at",
+)
 _OWNER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 class TaskFilter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    lifecycle: Literal["active", "deleted", "all"] = "active"
     status: Literal["open", "completed"] | None = None
     priority: Literal["p1", "p2", "p3"] | None = None
     due_from: date | None = None
@@ -79,7 +91,13 @@ class TaskInspectBatch(BaseModel):
 
 
 def _filter_query(query: Any, filters: TaskFilter) -> Any:
-    query = query.where(Task.deleted_at.is_(None), Task.is_private == false())
+    query = query.where(Task.is_private == false())
+    if filters.lifecycle != "all":
+        query = query.where(
+            Task.deleted_at.is_(None)
+            if filters.lifecycle == "active"
+            else Task.deleted_at.is_not(None)
+        )
     if filters.status is not None:
         query = query.where(Task.status == filters.status)
     if filters.priority is not None:
@@ -172,6 +190,7 @@ def _project(row: Task, projection: tuple[str, ...]) -> dict[str, Any]:
             else value
         )
     data["source_version"] = row.updated_at.isoformat() if row.updated_at else "unavailable"
+    data["collection_version"] = row.collection_version
     return data
 
 

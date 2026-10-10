@@ -90,7 +90,13 @@ def test_first_time_draft_reject_binds_immutable_revision_without_task_write(pg_
         before_tasks = 0
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             assert agent_contract and not force_task_tool
             return _completion(Draft(text="Rà soát deadline trước khi sắp xếp."), "draft-1")
@@ -205,7 +211,13 @@ def test_preview_revision_requires_exact_pending_digest_and_supersedes_old_previ
         title_prefix = f"p1c-preview-revision-{uuid4().hex}"
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             nonlocal calls
             calls += 1
@@ -310,7 +322,13 @@ def test_mismatched_confirmation_and_stale_source_fail_before_task_write(pg_dsn,
         monkeypatch.setattr(mimi_service, "get_sessionmaker", lambda: maker)
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             assert agent_contract and not force_task_tool
             if not any(m.get("role") == "tool" for m in messages):
@@ -458,7 +476,13 @@ def test_iterative_query_source_outside_prefetch_is_bound_and_stale_confirmation
         monkeypatch.setattr(mimi_service, "get_sessionmaker", lambda: maker)
 
         async def fake_completion(
-            messages, *, settings, session_id, force_task_tool, agent_contract
+            messages,
+            *,
+            settings,
+            session_id,
+            force_task_tool,
+            agent_contract,
+            final_answer_only=False,
         ):
             nonlocal calls
             calls += 1

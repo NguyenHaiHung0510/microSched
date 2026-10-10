@@ -43,7 +43,7 @@ PROFILES = {
         "model": "deepseek/deepseek-v4.1-flash",
         "provider": "deepinfra",
         "quantization": "fp8",
-        "supported_efforts": ["low", "high"],
+        "supported_efforts": ["low", "high", "max"],
         "context_limit": 1_048_576,
         "max_output_tokens": 131_072,
         "output_reserve": 8192,
@@ -72,6 +72,9 @@ class RouteConfiguration(BaseModel):
     profile_id: str
     effort: str
     input_tokens: int = Field(ge=32000, le=200000)
+    routing_mode: str = "adaptive"
+    min_uptime_percent: float = Field(default=95.0, ge=0, lt=100, allow_inf_nan=False)
+    uptime_window: str = "1d"
 
 
 class ConfigurationChange(RouteConfiguration):
@@ -111,6 +114,11 @@ def profiles_for_ui(settings: Settings) -> list[dict[str, Any]]:
 
 def validate_configuration(value: dict[str, Any], *, alpha: bool = False) -> RouteConfiguration:
     config = RouteConfiguration.model_validate(value)
+    if config.routing_mode not in {"exact", "adaptive"} or config.uptime_window not in {
+        "1d",
+        "30m",
+    }:
+        raise HTTPException(status_code=422, detail="mimi_route_policy_invalid")
     profile = PROFILES.get(config.profile_id)
     if profile is None or config.effort not in profile["supported_efforts"]:
         raise HTTPException(status_code=422, detail="mimi_route_selection_not_supported")
@@ -125,11 +133,21 @@ def validate_configuration(value: dict[str, Any], *, alpha: bool = False) -> Rou
 
 def default_configuration(settings: Settings) -> dict[str, Any]:
     profile_id = next(
-        (key for key, p in PROFILES.items() if p["model"] == settings.mimi_route_model), "mimo"
+        (key for key, p in PROFILES.items() if p["model"] == settings.mimi_route_model), None
     )
+    if profile_id is None:
+        if (
+            settings.mimi_route_model
+            and settings.mimi_live_provider_enabled
+            and settings.mimi_collection_enabled
+        ):
+            raise HTTPException(409, "selected_model_not_admitted")
+        profile_id = "deepseek" if settings.mimi_collection_enabled else "mimo"
     efforts = PROFILES[profile_id]["supported_efforts"]
     effort = settings.mimi_route_reasoning_effort
     if effort not in efforts:
+        if settings.mimi_live_provider_enabled and settings.mimi_collection_enabled:
+            raise HTTPException(409, "selected_effort_not_supported")
         effort = "medium" if "medium" in efforts else efforts[0]
     return {"profile_id": profile_id, "effort": effort, "input_tokens": 100000}
 
@@ -146,7 +164,11 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
     profile = PROFILES[config.profile_id]
     return settings.model_copy(
         update={
-            "mimi_route_mode": "exact",
+            "mimi_route_mode": config.routing_mode if settings.mimi_collection_enabled else "exact",
+            "mimi_route_min_uptime_percent": config.min_uptime_percent,
+            "mimi_route_uptime_window": config.uptime_window,
+            "mimi_route_allowed_providers": "",
+            "mimi_route_allowed_quantizations": "fp8",
             "mimi_route_model": profile["model"],
             "mimi_route_provider": profile["provider"],
             "mimi_route_quantization": profile["quantization"],

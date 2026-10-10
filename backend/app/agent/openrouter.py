@@ -20,6 +20,7 @@ from app.agent.context import (
     ToolRequests,
     parse_terminal_wire,
 )
+from app.agent.task_collection import COLLECTION_CANDIDATE_TOOL, CollectionCandidate
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, TOOLS
 from app.core.settings import Settings, get_settings
 from app.domain.tasks import TaskCreate
@@ -64,13 +65,14 @@ class ProviderDispatchError(RuntimeError):
 
 @dataclass(frozen=True)
 class ProviderCompletion:
-    kind: Literal["text", "task"]
+    kind: Literal["text", "task", "collection"]
     task: TaskCreate | None
     text: str | None
     response_id: str
     usage: dict[str, Any]
     provider: str | None
     model: str | None
+    collection: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -276,13 +278,22 @@ def build_request(
     force_task_tool: bool = False,
     agent_contract: bool = False,
     summary_mode: bool = False,
+    final_answer_only: bool = False,
 ) -> dict[str, Any]:
     """Build either the attributable exact lane or bounded adaptive dogfood lane."""
     route = settings or get_settings()
     _, model = _route_identity(route)
+    if final_answer_only and summary_mode:
+        raise RouteContractError("final_answer_conflicts_with_summary")
     if summary_mode and agent_contract:
         raise RouteContractError("summary_mode_conflicts_with_agent_contract")
     active_tools = [] if summary_mode else (list(TOOLS) if agent_contract else [TASK_CREATE_TOOL])
+    if agent_contract and not route.mimi_collection_enabled:
+        active_tools = [
+            t
+            for t in active_tools
+            if t["function"]["name"] not in {"task.freeze_selection.v1", COLLECTION_CANDIDATE_TOOL}
+        ]
     # Payload resource bound is independent of provider tokens and 100k trigger.
     if (
         serialized_input_bytes(messages, agent_contract=agent_contract, summary_mode=summary_mode)
@@ -294,9 +305,9 @@ def build_request(
     request: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        # Ordinary turns implement Mimi's terminal union. An explicit revision
-        # of an existing preview is different: text claiming that a preview was
-        # changed is not a state transition, so require the typed replacement.
+        # Collection revisions may read before returning their typed replacement;
+        # the service owns the terminal gate. Single-create revisions still use
+        # the qualified forced tool choice.
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the
         # terminal parser independently enforces at most one tool call.
@@ -314,7 +325,9 @@ def build_request(
         "usage": {"include": True},
         "provider": _provider_policy(route),
     }
-    if not summary_mode:
+    if final_answer_only:
+        request["tool_choice"] = "none"
+    elif not summary_mode:
         request["tools"] = active_tools
         request["tool_choice"] = _tool_choice(
             route, force_task_tool=force_task_tool, agent_contract=agent_contract
@@ -344,13 +357,13 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
         raw_content = message.get("content")
         content = raw_content.strip() if isinstance(raw_content, str) else ""
         if calls:
-            if not isinstance(calls, list) or len(calls) > 3:
+            if not isinstance(calls, list) or len(calls) > 8:
                 raise RouteContractError("provider_tool_call_count_invalid")
             requests: list[ToolRequest] = []
             for index, call in enumerate(calls):
                 function = call["function"]
                 name = function["name"]
-                if name not in READ_TOOLS | {CREATE_CANDIDATE_TOOL}:
+                if name not in READ_TOOLS | {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}:
                     raise RouteContractError("provider_tool_not_allowed")
                 arguments = function["arguments"]
                 decoded = json.loads(arguments) if isinstance(arguments, str) else arguments
@@ -363,7 +376,14 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
                         arguments=decoded,
                     )
                 )
-            if any(item.name == CREATE_CANDIDATE_TOOL for item in requests):
+            if any(item.name == COLLECTION_CANDIDATE_TOOL for item in requests):
+                if len(requests) != 1:
+                    raise RouteContractError("candidate_cannot_share_tool_turn")
+                candidate = CollectionCandidate.model_validate(requests[0].arguments)
+                outcome = PreviewCandidate(
+                    tool=COLLECTION_CANDIDATE_TOOL, arguments=candidate.model_dump(mode="json")
+                )
+            elif any(item.name == CREATE_CANDIDATE_TOOL for item in requests):
                 if len(requests) != 1:
                     raise RouteContractError("candidate_cannot_share_tool_turn")
                 request = requests[0]
@@ -450,10 +470,22 @@ def _tool_choice(settings: Settings, *, force_task_tool: bool, agent_contract: b
     capability = settings.mimi_route_forced_tool_choice
     if capability == "none":
         raise RouteContractError("route_forced_tool_choice_not_qualified")
+    if agent_contract and settings.mimi_collection_enabled and settings.mimi_revision_collection:
+        # A changed subset needs current-run reads and a fresh selection before
+        # the typed replacement. The service still rejects non-candidate terminals.
+        return "auto"
     if capability == "required":
         # Mimi exposes exactly one tool in this request.
         return "required"
-    name = CREATE_CANDIDATE_TOOL if agent_contract else "task.create.v1"
+    name = (
+        (
+            COLLECTION_CANDIDATE_TOOL
+            if settings.mimi_revision_collection and settings.mimi_collection_enabled
+            else CREATE_CANDIDATE_TOOL
+        )
+        if agent_contract
+        else "task.create.v1"
+    )
     return {"type": "function", "function": {"name": name}}
 
 
@@ -575,6 +607,7 @@ async def complete(
     force_task_tool: bool = False,
     agent_contract: bool = False,
     summary_mode: bool = False,
+    final_answer_only: bool = False,
 ) -> ProviderCompletion | AgentCompletion:
     """Dispatch once. Retry authority belongs to persisted run state."""
     route = settings or get_settings()
@@ -589,6 +622,7 @@ async def complete(
             force_task_tool=force_task_tool,
             agent_contract=agent_contract,
             summary_mode=summary_mode,
+            final_answer_only=final_answer_only,
         )
     api_key, _ = _route_identity(route)
     request = build_request(
@@ -598,6 +632,7 @@ async def complete(
         force_task_tool=force_task_tool,
         agent_contract=agent_contract,
         summary_mode=summary_mode,
+        final_answer_only=final_answer_only,
     )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
@@ -642,6 +677,7 @@ async def complete_stream(
     force_task_tool: bool = False,
     agent_contract: bool = False,
     summary_mode: bool = False,
+    final_answer_only: bool = False,
 ) -> ProviderCompletion | AgentCompletion:
     """Normalize OpenRouter SSE without exposing raw chunks or partial tool JSON."""
     route = settings or get_settings()
@@ -657,6 +693,7 @@ async def complete_stream(
             force_task_tool=force_task_tool,
             agent_contract=agent_contract,
             summary_mode=summary_mode,
+            final_answer_only=final_answer_only,
         )
     api_key, _ = _route_identity(route)
     request = build_request(
@@ -667,6 +704,7 @@ async def complete_stream(
         force_task_tool=force_task_tool,
         agent_contract=agent_contract,
         summary_mode=summary_mode,
+        final_answer_only=final_answer_only,
     )
     owns_client = client is None
     active_client = client or httpx.AsyncClient(

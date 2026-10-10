@@ -10,6 +10,7 @@ from app.domain.models import (
     CalendarSource,
     Entry,
     Gate,
+    OneShotReminder,
     Task,
     TaskItem,
 )
@@ -61,13 +62,17 @@ def test_via_parent_privacy_gate_names_the_parent_and_action() -> None:
 def test_via_parent_delete_gate_names_the_parent_and_action() -> None:
     """Soft deletion inherited from a parent also requires an explicit parent join."""
     with pytest.raises(ReadingGateError) as caught:
-        not_deleted(select(TaskItem), TaskItem)
+        not_deleted(select(OneShotReminder), OneShotReminder)
 
     message = str(caught.value)
-    assert "task_item" in message
+    assert "one_shot_reminder" in message
     assert "Task" in message
-    assert "JOIN Task" in message
-    assert "not_deleted(stmt, Task)" in message
+    assert "JOIN" in message
+    assert "not_deleted(stmt," in message
+    child = not_deleted(select(TaskItem).join(Task), TaskItem)
+    combined = not_deleted(child, Task)
+    assert "task_item.deleted_at IS NULL" in str(combined)
+    assert "task.deleted_at IS NULL" in str(combined)
 
 
 def test_missing_declaration_raises_with_flag_and_action() -> None:

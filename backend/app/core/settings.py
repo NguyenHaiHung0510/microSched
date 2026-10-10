@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     mimi_runner: Literal["current", "langgraph"] = "current"
     mimi_workflow_pilot_enabled: bool = False
     mimi_public_origin: str | None = None
-    mimi_preview_ttl_minutes: int = 15
+    mimi_preview_ttl_minutes: int = 180
     mimi_run_deadline_seconds: int = 1_800
     # Provisional emergency bounds, not a per-run dollar budget.
     # Issued leases freeze these values; changing config does not alter old runs.
@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     # Explicit alpha transport selection; no automatic fallback on route failure.
     mimi_transport: Literal["httpx", "openai_sdk"] = "httpx"
     mimi_text_response_format: Literal["structured", "natural"] = "structured"
+    mimi_route_min_uptime_percent: float = 95.0
+    mimi_route_uptime_window: Literal["1d", "30m"] = "1d"
+    mimi_route_catalog_checked_at: float | None = None
+    mimi_route_catalog_sha256: str | None = None
+    mimi_collection_enabled: bool = False
+    mimi_revision_collection: bool = False
+    mimi_notifications_enabled: bool = False
     mimi_route_mode: Literal["exact", "adaptive"] = "exact"
     mimi_route_model: str | None = None
     mimi_route_provider: str | None = None
@@ -109,9 +116,9 @@ class Settings(BaseSettings):
     mimi_route_allowed_providers: str = ""
     mimi_route_allowed_quantizations: str = ""
     mimi_route_forced_tool_choice: Literal["none", "required", "function"] = "none"
-    mimi_route_reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high"] = (
-        "low"
-    )
+    mimi_route_reasoning_effort: Literal[
+        "default", "none", "minimal", "low", "medium", "high", "max"
+    ] = "low"
     # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
     mimi_route_context_tokens: int = 1_048_576
     mimi_compaction_trigger_tokens: Literal[100_000] = 100_000
@@ -290,8 +297,8 @@ class Settings(BaseSettings):
             price = getattr(self, field_name)
             if price is not None and price < 0:
                 raise ValueError(f"{field_name.upper()} cannot be negative")
-        if not 1 <= self.mimi_preview_ttl_minutes <= 60:
-            raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 60")
+        if not 1 <= self.mimi_preview_ttl_minutes <= 180:
+            raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 180")
         if not 1 <= self.mimi_run_max_turns <= 128:
             raise ValueError("MIMI_RUN_MAX_TURNS must be between 1 and 128")
         if not 1 <= self.mimi_run_max_tool_calls <= 256:
@@ -299,6 +306,15 @@ class Settings(BaseSettings):
         if not 30 <= self.mimi_run_deadline_seconds <= 7_200:
             raise ValueError("MIMI_RUN_DEADLINE_SECONDS must be between 30 and 7200")
         return self
+
+    @field_validator("mimi_route_min_uptime_percent")
+    @classmethod
+    def finite_uptime_threshold(cls, value):
+        import math
+
+        if not math.isfinite(value) or not 0 <= value < 100:
+            raise ValueError("uptime threshold must be finite and0<=value<100")
+        return value
 
     @property
     def mimi_allowed_provider_list(self) -> tuple[str, ...]:

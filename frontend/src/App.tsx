@@ -8,9 +8,10 @@ import {
   BookOpen,
   LogOut,
   NotebookPen,
+  MoreVertical,
   RefreshCw,
 } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ import { ReminderCenter } from '@/ReminderCenter'
 import { MimiControlCenter } from '@/MimiControlCenter'
 import { MimiDock, MimiDockButton } from '@/MimiDock'
 import { isHomepage, type PublicAuthState } from '@/public-navigation'
+import { resolveMimiAttention } from '@/mimi-api'
 import { selectMimiConversation } from '@/mimi-selection'
 
 type SessionResponse = PrivateSessionState & {
@@ -70,8 +72,14 @@ function SignedIn({ session }: { session: SessionResponse }) {
     'tasks' | 'notes' | 'calendar' | 'tracker' | 'mimi'
   >(() => (isTrackersRoute ? 'tracker' : 'tasks'))
   const [mimiDockOpen, setMimiDockOpen] = useState(false)
+  const [mimiDockWidth, setMimiDockWidth] = useState(400)
+  const [mimiConfigurationOpen, setMimiConfigurationOpen] = useState(false)
 
-  const currentTab = isTrackersRoute ? 'tracker' : activeScreen
+  const isMimiRoute = location.split('?')[0] === '/mimi'
+  const attentionLocator = isMimiRoute ? queryParams(location).get('attention') : null
+  const attentionLink = useQuery({ queryKey: ['mimi', 'attention-link', attentionLocator], queryFn: () => resolveMimiAttention(attentionLocator!), enabled: !!attentionLocator, retry: false, ...NO_POLLING_QUERY_OPTIONS })
+  useEffect(() => { if (attentionLink.data) selectMimiConversation(attentionLink.data.conversation_id) }, [attentionLink.data])
+  const currentTab = isMimiRoute ? 'mimi' : isTrackersRoute ? 'tracker' : activeScreen
 
   const goToDefaultScreen = useCallback(() => {
     if (location !== '/') {
@@ -81,7 +89,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
   }, [location])
 
   function selectTab(tab: 'tasks' | 'notes' | 'calendar' | 'tracker' | 'mimi') {
-    if (isTrackersRoute) {
+    if (isTrackersRoute || isMimiRoute) {
       navigate('/')
     }
     setActiveScreen(tab)
@@ -103,66 +111,8 @@ function SignedIn({ session }: { session: SessionResponse }) {
     onSuccess: () => { selectMimiConversation(null); window.location.assign('/') },
   })
 
-  return (
-    <div className={cn(
-      'mx-auto grid w-full items-start gap-4',
-      mimiDockOpen ? 'max-w-[1920px] xl:grid-cols-[minmax(0,1fr)_minmax(24rem,28rem)]' : currentTab === 'mimi' ? 'max-w-[1920px]' : currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl',
-    )}>
-    <div className="min-w-0 overflow-hidden rounded-xl bg-background shadow-3">
-      <header className="flex items-center justify-between gap-4 px-5 pt-5 pb-2 sm:px-6">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1>
-          <Button asChild
-            data-testid="app-logo-button"
-            variant="ghost"
-            size="lg"
-            className="min-h-11 px-0 text-xl font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary text-left focus-visible:ring-2 focus-visible:ring-primary"
-            aria-label="Về trang Task mặc định"
-          >
-            <a href="/" onClick={(event) => {
-              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-              event.preventDefault()
-              goToDefaultScreen()
-            }}>
-              microSched
-            </a>
-          </Button>
-          </h1>
-          <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p>
-          {currentTab !== 'calendar' && currentTab !== 'mimi' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
-            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} /></div>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {session.mimi_available ? (
-            <MimiDockButton open={mimiDockOpen} onToggle={() => setMimiDockOpen((open) => !open)} />
-          ) : null}
-          <ReminderCenter key={`reminders-${privateScopeVersion}`} />
-            <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
-          <Button
-            variant="secondary"
-            size="icon-lg"
-            className="size-11"
-            aria-label="Đăng xuất"
-            disabled={logout.isPending}
-            onClick={() => logout.mutate()}
-          >
-            <LogOut />
-          </Button>
-        </div>
-      </header>
-
-      <div className="px-5 pt-3 pb-6 sm:px-6">
-        <Button asChild variant="link" size="lg" className="mb-2 px-0 text-xs">
-          <a href="/home" data-testid="app-homepage-link"><BookOpen aria-hidden="true" />Giới thiệu microSched</a>
-        </Button>
-        {location.startsWith('/subscription') ? (
-          <SubscriptionScreen />
-        ) : location.startsWith('/reminder-confirm') ? (
-          <ReminderConfirmScreen key={reminderDispatchKey} />
-        ) : (
-          <>
-        <div className="mb-4 grid grid-cols-3 gap-1 sm:flex sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs [&>button]:transition-colors sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
+  const navigation = (
+<div className="mimi-app-tabs mb-2 flex flex-nowrap gap-1 overflow-x-auto sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs [&>button]:transition-colors sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
           <Button
             role="tab"
             size="lg"
@@ -216,6 +166,86 @@ function SignedIn({ session }: { session: SessionResponse }) {
             </Button>
           ) : null}
         </div>
+  )
+
+  return (
+    <div className={cn(
+      'mimi-app-layout mx-auto grid w-full items-start gap-4',
+      mimiDockOpen && currentTab !== 'mimi' ? 'mimi-app-with-dock max-w-[1920px]' : currentTab === 'mimi' ? 'max-w-[1920px]' : currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl',
+    )} style={{ '--mimi-dock-width': `${mimiDockWidth}px` } as import('react').CSSProperties}>
+    <div className={cn("min-w-0 overflow-hidden rounded-xl bg-background shadow-3", currentTab === 'mimi' && 'mimi-app-workspace')}>
+      {attentionLocator && attentionLink.isError ? <p role="alert" className="m-3 rounded-lg bg-warn-bg p-3 text-sm">Không mở được thông báo. Liên kết có thể không thuộc phiên này; chưa thực hiện thay đổi nào.</p> : null}
+      {attentionLink.data?.expired ? <p role="status" className="m-3 text-sm text-muted-foreground">Thông báo đã hết hạn; đang mở đúng hội thoại để đọc trạng thái hiện tại.</p> : null}
+      <header className={cn("flex items-center justify-between gap-4 px-5 pb-2 sm:px-6", currentTab === 'mimi' ? 'mimi-app-header pt-2' : 'pt-5')}>
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1>
+          <Button asChild
+            data-testid="app-logo-button"
+            variant="ghost"
+            size="lg"
+            className="min-h-11 px-0 text-xl font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary text-left focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label="Về trang Task mặc định"
+          >
+            <a href="/" onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+              event.preventDefault()
+              goToDefaultScreen()
+            }}>
+              microSched
+            </a>
+          </Button>
+          </h1>
+          {currentTab !== 'mimi' ? <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p> : null}
+          {currentTab !== 'calendar' && currentTab !== 'mimi' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
+            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} /></div>
+          ) : null}
+        </div>
+        {currentTab === 'mimi' ? navigation : null}
+        {currentTab === 'mimi' ? <details className="relative shrink-0"><summary aria-label="Tùy chọn microSched" className="flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:outline-ring"><MoreVertical className="size-4" /></summary><div className="absolute right-0 top-full z-40 max-w-[calc(100vw-3rem)] rounded-xl border bg-popover p-3 shadow-md">        <div className="flex flex-wrap items-center justify-end gap-2">
+
+          <ReminderCenter key={`reminders-${privateScopeVersion}`} />
+            <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
+          <Button
+            variant="secondary"
+            size="icon-lg"
+            className="size-11"
+            aria-label="Đăng xuất"
+            disabled={logout.isPending}
+            onClick={() => logout.mutate()}
+          >
+            <LogOut />
+          </Button>
+        </div><Button asChild size="lg" variant="link"><a href="/home">Giới thiệu microSched</a></Button></div></details> :         <div className="flex flex-wrap items-center justify-end gap-2">
+          {session.mimi_available ? (
+            <MimiDockButton open={mimiDockOpen} onToggle={() => setMimiDockOpen((open) => !open)} />
+          ) : null}
+          <ReminderCenter key={`reminders-${privateScopeVersion}`} />
+            <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
+          <Button
+            variant="secondary"
+            size="icon-lg"
+            className="size-11"
+            aria-label="Đăng xuất"
+            disabled={logout.isPending}
+            onClick={() => logout.mutate()}
+          >
+            <LogOut />
+          </Button>
+        </div>}
+
+      </header>
+
+      <div className={cn('px-5 sm:px-6', currentTab === 'mimi' ? 'pt-0 pb-3' : 'pt-3 pb-6')}>
+        {currentTab !== 'mimi' ? <Button asChild variant="link" size="lg" className="mb-2 px-0 text-xs">
+          <a href="/home" data-testid="app-homepage-link"><BookOpen aria-hidden="true" />Giới thiệu microSched</a>
+        </Button> : null}
+        {location.startsWith('/subscription') ? (
+          <SubscriptionScreen />
+        ) : location.startsWith('/reminder-confirm') ? (
+          <ReminderConfirmScreen key={reminderDispatchKey} />
+        ) : (
+          <>
+        {currentTab !== 'mimi' ? navigation : null}
         <div role="tabpanel">
           {currentTab === 'tasks' ? <TasksScreen key={`tasks-${privateScopeVersion}`} /> : null}
           {currentTab === 'notes' ? <NotesScreen /> : null}
@@ -224,7 +254,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
           ) : null}
           {currentTab === 'mimi' && session.mimi_available ? (
-            <MimiControlCenter onOpenDomain={(domain) => selectTab(domain)} />
+            <MimiControlCenter onOpenDomain={(domain) => selectTab(domain)} configurationOpen={mimiConfigurationOpen} onConfigurationOpenChange={setMimiConfigurationOpen} />
           ) : null}
         </div>
           </>
@@ -235,7 +265,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
       </div>
     </div>
     {session.mimi_available ? (
-      <MimiDock open={mimiDockOpen} onOpenChange={setMimiDockOpen} onOpenTasks={() => selectTab('tasks')} />
+      <MimiDock open={mimiDockOpen && currentTab !== 'mimi'} onOpenChange={setMimiDockOpen} onOpenTasks={() => selectTab('tasks')} onOpenWorkspace={() => { setMimiDockOpen(false); selectTab('mimi') }} onOpenConfiguration={() => { setMimiDockOpen(false); selectTab('mimi'); setMimiConfigurationOpen(true) }} width={mimiDockWidth} onWidthChange={setMimiDockWidth} />
     ) : null}
     </div>
   )

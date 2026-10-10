@@ -2,10 +2,12 @@
 
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
 
+from app.agent import local_budget
 from app.agent.local_budget import account, reserve
 from app.agent.openrouter import RouteContractError
 from app.agent.route_config import bind_configuration, validate_configuration
@@ -40,7 +42,9 @@ def test_controls_preserve_inflight_snapshot_and_reject_route_escape():
 def test_budget_preserves_unknown_holds_and_blocks_next_dispatch(tmp_path, monkeypatch):
     path = tmp_path / "ledger.json"
     monkeypatch.setenv("MIMI_LOCAL_BUDGET_LEDGER", str(path))
+    monkeypatch.setattr(local_budget, "key_meter", lambda _: (Decimal(".53"), Decimal("1")))
     ledger = {
+        "baseline_key_usage": ".53",
         "grant_key_name": "MIMI_DEMO_1",
         "cap_usd": "0.01",
         "historical_accounted_usd": "0.009",
@@ -58,7 +62,8 @@ def test_budget_preserves_unknown_holds_and_blocks_next_dispatch(tmp_path, monke
     path.write_text(json.dumps(ledger), encoding="utf-8")
     token = reserve(selected, [{"role": "user", "content": "hi"}], agent_contract=True)
     assert token
-    account(selected, token, {}, "synthetic-generation")
+    with pytest.raises(RouteContractError, match="current_spend_unknown"):
+        account(selected, token, {}, "synthetic-generation")
     call = json.loads(path.read_text())["calls"][0]
     assert call["state"] == "reserved_unknown"
     assert call["charged_or_reserved_usd"] == call["reservation_usd"]

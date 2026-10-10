@@ -579,8 +579,29 @@ def test_entry_idempotent_create(pg_dsn: str):
     asyncio.run(scenario())
 
 
-def test_dashboard_period_boundaries_and_corrupt_amount(pg_dsn: str):
+@pytest.mark.parametrize(
+    "fixture_now",
+    [None, datetime(2026, 10, 9, 18, 23, tzinfo=UTC)],
+    ids=["wall-clock", "utc-vn-month-seam"],
+)
+def test_dashboard_period_boundaries_and_corrupt_amount(pg_dsn: str, monkeypatch, fixture_now):
     """?month= quá khứ → F1 cả tháng; ?month= tương lai → 0; dòng amount hỏng → dashboard 200."""
+
+    if fixture_now is not None:
+
+        class FixtureClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return (
+                    fixture_now.astimezone(tz)
+                    if tz is not None
+                    else fixture_now.replace(tzinfo=None)
+                )
+
+        monkeypatch.setattr(f"{__name__}.datetime", FixtureClock)
+        monkeypatch.setattr(
+            "app.domain.dashboard._relative_now", lambda: fixture_now.astimezone(VN_TZ)
+        )
 
     async def scenario():
         auth_state = {"value": _auth()}
@@ -598,14 +619,15 @@ def test_dashboard_period_boundaries_and_corrupt_amount(pg_dsn: str):
             assert resp.status_code == 201, resp.text
             entry_ids.append(UUID(resp.json()["id"]))
 
-            past_month = f"{past.year:04d}-{past.month:02d}"
+            past_vn = past.astimezone(VN_TZ)
+            past_month = f"{past_vn.year:04d}-{past_vn.month:02d}"
             dash = (await client.get(f"/api/tracker/dashboard?month={past_month}")).json()
             assert dash["f1_total"] == 40000
             # period_end is the end of the past month, not "now".
             end = datetime.fromisoformat(dash["period_end"])
-            assert end.day == 1 or end.month != past.month
+            assert end.day == 1 or end.month != past_vn.month
 
-            future = (datetime.now(UTC) + timedelta(days=45)).strftime("%Y-%m")
+            future = (datetime.now(UTC) + timedelta(days=45)).astimezone(VN_TZ).strftime("%Y-%m")
             dash = (await client.get(f"/api/tracker/dashboard?month={future}")).json()
             assert dash["f1_total"] == 0
 

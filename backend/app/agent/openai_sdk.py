@@ -108,6 +108,7 @@ async def complete(
     force_task_tool: bool = False,
     agent_contract: bool = False,
     summary_mode: bool = False,
+    final_answer_only: bool = False,
 ) -> ProviderCompletion | AgentCompletion:
     """Send one non-streaming chat request with SDK retries disabled."""
     route = settings or get_settings()
@@ -119,6 +120,7 @@ async def complete(
         force_task_tool=force_task_tool,
         agent_contract=agent_contract,
         summary_mode=summary_mode,
+        final_answer_only=final_answer_only,
     )
     sdk = _client(route, api_key=api_key, client=client)
     try:
@@ -147,6 +149,7 @@ async def complete_stream(
     force_task_tool: bool = False,
     agent_contract: bool = False,
     summary_mode: bool = False,
+    final_answer_only: bool = False,
 ) -> ProviderCompletion | AgentCompletion:
     """Consume typed SDK chunks, buffer the terminal union, then expose text only."""
     route = settings or get_settings()
@@ -159,6 +162,7 @@ async def complete_stream(
         force_task_tool=force_task_tool,
         agent_contract=agent_contract,
         summary_mode=summary_mode,
+        final_answer_only=final_answer_only,
     )
     sdk = _client(route, api_key=api_key, client=client)
     content_parts: list[str] = []

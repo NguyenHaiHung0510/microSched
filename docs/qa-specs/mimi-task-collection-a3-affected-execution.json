@@ -1,0 +1,132 @@
+{
+  "schema": "mimi086.a3-affected-execution.v1",
+  "pass": 2,
+  "grouped_repair": 1,
+  "max_passes": 3,
+  "original_gate_denominator": 34,
+  "original_assertion_denominator": 86,
+  "original_execution_sha256": "ef867250f07f92acdcdea01032d378f84ee2e88df513faa739400b9f5b927222",
+  "required_case_ids": [
+    "A0-12",
+    "A0-13",
+    "A0-14",
+    "A0-23",
+    "A0-24",
+    "A0-25",
+    "A0-26",
+    "A0-27",
+    "A0-28",
+    "A0-29",
+    "A0-30",
+    "A0-31",
+    "A0-32",
+    "A0-34"
+  ],
+  "unchanged_case_ids": [
+    "A0-01",
+    "A0-02",
+    "A0-03",
+    "A0-04",
+    "A0-05",
+    "A0-06",
+    "A0-07",
+    "A0-08",
+    "A0-09",
+    "A0-10",
+    "A0-11",
+    "A0-15",
+    "A0-16",
+    "A0-17",
+    "A0-18",
+    "A0-19",
+    "A0-20",
+    "A0-21",
+    "A0-22",
+    "A0-33"
+  ],
+  "oracle_changes": false,
+  "original_case_receipts_preserved": true,
+  "groups": [
+    {
+      "id": "runner-capability",
+      "cases": [
+        "A0-23"
+      ],
+      "commands": [
+        "python -m scripts.run_mimi_collection_case A0-23 --output <owned-report-folder>"
+      ],
+      "timeout_seconds": 180
+    },
+    {
+      "id": "migration-ordered",
+      "cases": [
+        "A0-31",
+        "A0-32",
+        "A0-34"
+      ],
+      "commands": [
+        "python -m scripts.run_mimi_collection_case A0-31 --output <owned-report-folder>",
+        "python -m scripts.run_mimi_collection_case A0-32 --output <owned-report-folder>",
+        "python -m pytest tests/test_mimi_collection_fallback_pg.py -q -p no:cacheprovider --basetemp <unique-OS-temp-child>",
+        "python -m scripts.run_mimi_collection_case A0-34 --output <owned-report-folder>"
+      ],
+      "invariant": "Retain preexisting fixed synthetic endpoint. Preserve every existing QA row; unique own fixture cleanup only. Guard tests create/drop only their own UUID disposable DBs.",
+      "timeout_seconds_per_command": 180
+    },
+    {
+      "id": "related-read-recovery",
+      "cases": [
+        "A0-12",
+        "A0-13",
+        "A0-14",
+        "A0-24",
+        "A0-25",
+        "A0-26",
+        "A0-27",
+        "A0-28",
+        "A0-29",
+        "A0-30"
+      ],
+      "selectors": [
+        "tests/test_mimi_collection_read_seams_pg.py",
+        "tests/test_mimi_collection_service_pg.py",
+        "tests/test_mimi_collection_safety_pg.py",
+        "tests/test_mimi_collection_evidence_pg.py",
+        "tests/test_mimi_notifications_pg.py"
+      ],
+      "execution": "Run deduplicated suite once, bind exact original per-case assertions to canonical shared transcript and new read seam assertions; no duplicate mechanical matrix.",
+      "timeout_seconds": 180
+    }
+  ],
+  "new_read_assertions": [
+    "device proof/defaultoff/no insertion/reload exact revision/foreign owner rejection/CSRF",
+    "feedback original-answer bundle IDs survive reload/cross-conversation scope/completeness",
+    "exact receipt key/digest/nonce/owner/private binding outside snapshot window; count/version/intent zero replay",
+    "feature-off real legacy Task/checklist+Mimi reads on0017; encrypted receipt/evidence and pending notification-tree downgrade refusal",
+    "OS temp finite runner; sequential31→34 with retained fixed residue"
+  ],
+  "guard_negative_recipes": [
+    {
+      "test": "tests/test_mimi_collection_read_seams_pg.py::test_device_preference_read_proof_default_off_reload_and_zero_writes",
+      "env": "MIMI086_NEGATIVE_BYPASS_DEVICE_PROOF=1",
+      "expected": "FAIL device proof guard was bypassed, restore unset→PASS"
+    },
+    {
+      "test": "tests/test_mimi_collection_read_seams_pg.py::test_receipt_lookup_exact_owner_binding_outside_snapshot_window_zero_replay",
+      "env": "MIMI086_NEGATIVE_BYPASS_READ_OWNER=1",
+      "expected": "FAIL receipt owner read guard was bypassed, restore unset→PASS"
+    },
+    {
+      "test": "tests/test_mimi_collection_fallback_pg.py::test_0017_downgrade_retains_encrypted_recovery_and_pending_notification_data[receipt]",
+      "env": "MIMI086_NEGATIVE_BYPASS_DOWNGRADE_GUARD=1",
+      "expected": "FAIL DID NOT RAISE RuntimeError inside test-only revision context; restore unset→PASS"
+    }
+  ],
+  "guard_negative_scope": "Test context only; production source has no bypass. Disposable author or independently assigned local QA only; never live downgrade.",
+  "independent_layers": [
+    "Luna/max affected execution",
+    "Gemini3.8Flash/high affected code/oracle/migration/receipt challenge"
+  ],
+  "acceptance": "Both whole affected handbacks then coherent T1 signoff; parent retains acceptance. Author logs do not close gate.",
+  "no_A4_until_backend_accepted": true
+}

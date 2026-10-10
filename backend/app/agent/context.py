@@ -147,7 +147,7 @@ class ToolRequest(StrictModel):
 
 class ToolRequests(StrictModel):
     kind: Literal["tool_requests"] = "tool_requests"
-    requests: tuple[ToolRequest, ...] = Field(min_length=1, max_length=3)
+    requests: tuple[ToolRequest, ...] = Field(min_length=1, max_length=8)
 
 
 class AssistantText(StrictModel):

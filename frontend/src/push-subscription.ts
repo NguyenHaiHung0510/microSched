@@ -1,4 +1,5 @@
 import { apiRequest } from '@/api'
+import type { MimiDeviceProof } from '@/mimi-api'
 
 type PushSubscriptionBody = {
   endpoint: string
@@ -31,7 +32,7 @@ export function urlBase64ToUint8Array(value: string): Uint8Array<ArrayBuffer> {
  * This ordering avoids the silent "has a time but no push device" state when
  * an existing reminder is edited from a newly used device.
  */
-export async function ensurePushSubscription(): Promise<void> {
+export async function ensurePushSubscription(): Promise<MimiDeviceProof> {
   if (!('Notification' in window) || !('serviceWorker' in navigator)) {
     throw new Error('Trình duyệt này không hỗ trợ thông báo đẩy.')
   }
@@ -47,14 +48,14 @@ export async function ensurePushSubscription(): Promise<void> {
     throw new Error('Hãy mở quyền Thông báo cho microSched trong Cài đặt rồi thử lại.')
   }
 
-  const registration = await navigator.serviceWorker.ready
+  const registration = await boundedPushStep(navigator.serviceWorker.ready)
   const { public_key: publicKey } = await apiRequest<{ public_key: string }>(
     '/api/push/vapid-public-key',
   )
-  const subscription = await registration.pushManager.subscribe({
+  const subscription = await boundedPushStep(registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(publicKey),
-  })
+  }))
   const serialized = subscription.toJSON()
   const keys = serialized.keys
   if (!subscription.endpoint || !keys?.p256dh || !keys.auth) {
@@ -67,8 +68,32 @@ export async function ensurePushSubscription(): Promise<void> {
     auth: keys.auth,
     user_agent: navigator.userAgent,
   }
-  await apiRequest('/api/push/subscribe', {
+  const registered = await apiRequest<{ id: string }>('/api/push/subscribe', {
     method: 'POST',
     body: JSON.stringify(body),
   })
+  const proof = { subscription_id: registered.id, endpoint: body.endpoint, p256dh: body.p256dh, auth: body.auth }
+  localStorage.setItem(await subscriptionIdKey(body.endpoint), registered.id)
+  return proof
+}
+
+async function subscriptionIdKey(endpoint: string) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint))
+  return 'mimi-push-registration:' + Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+async function boundedPushStep<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try { return await Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Chưa xác định kết quả đăng ký thiết bị. Không tự đăng ký lại.')), 20_000) })]) } finally { clearTimeout(timer) }
+}
+// Read only: no requestPermission, subscription creation, or registration POST.
+export async function readExistingPushProof(): Promise<MimiDeviceProof | null> {
+  if (!('serviceWorker' in navigator)) return null
+  const registration = await navigator.serviceWorker.getRegistration()
+  if (!registration) return null
+  const subscription = await boundedPushStep(registration.pushManager.getSubscription())
+  if (!subscription) return null
+  const serialized = subscription.toJSON()
+  const id = localStorage.getItem(await subscriptionIdKey(subscription.endpoint))
+  if (!id || !serialized.keys?.p256dh || !serialized.keys.auth) return null
+  return { subscription_id: id, endpoint: subscription.endpoint, p256dh: serialized.keys.p256dh, auth: serialized.keys.auth }
 }

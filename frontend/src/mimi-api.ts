@@ -1,6 +1,15 @@
 import { ApiError, apiRequest } from '@/api'
 
+export type MimiMessageProvenance = {
+  origin: 'model_answer' | 'server_notice' | 'unknown'
+  producer_code: string | null
+  version: 1 | null
+  event_sequence: number | null
+  source: 'server_verified' | 'absent_or_unverified'
+}
+
 export type MimiMessage = {
+  provenance?: MimiMessageProvenance
   id: string
   run_id: string | null
   client_id: string | null
@@ -22,7 +31,11 @@ export type MimiRun = {
   completed_at: string | null
 }
 
+export type MimiConfirmationPreflight = { status: 'eligible' | 'blocked'; reason: string | null }
+
 export type MimiChangeSet = {
+  // Snapshot eligibility only; POST still validates the frozen binding and source CAS.
+  confirmation_preflight?: MimiConfirmationPreflight
   id: string
   run_id: string
   state: string
@@ -30,7 +43,7 @@ export type MimiChangeSet = {
   nonce: string
   expires_at: string
   policy_version: string
-  operation: {
+  operation: ({
     operation_id: string
     tool: 'task.create.v1'
     args: {
@@ -45,14 +58,14 @@ export type MimiChangeSet = {
       is_private: false
       items: string[]
     }
-  }
+  } | { operation_id: string; tool: 'task.collection.v1'; args: MimiCollectionPlan })
 }
 
 export type MimiReceipt = {
   id: string
   change_set_id: string
   operation_id: string
-  task_id: string
+  task_id: string | null
   digest: string
   result: Record<string, unknown>
   executed_at: string
@@ -66,6 +79,7 @@ export type MimiFeedback = {
   state: string
   unresolved: boolean
   created_at: string
+  evidence_bundle_ids?: string[]
 }
 
 export type MimiFeedbackTarget = {
@@ -138,6 +152,8 @@ export type MimiRunObservation = {
 }
 
 export type MimiCapabilities = {
+  collection_enabled?: boolean
+  notifications_enabled?: boolean
   context_v1_enabled: boolean
   workflow_pilot_enabled: boolean
   live_provider_enabled: boolean
@@ -176,6 +192,9 @@ export type MimiRouteConfig = {
   profile_id: string
   effort: string
   input_tokens: number
+  routing_mode?: 'exact' | 'adaptive'
+  min_uptime_percent?: number
+  uptime_window?: '1d' | '30m'
 }
 
 export type MimiConversationConfiguration = {
@@ -248,6 +267,9 @@ export function saveMimiConfiguration(
       profile_id: config.profile_id,
       effort: config.effort,
       input_tokens: config.input_tokens,
+      routing_mode: config.routing_mode ?? 'adaptive',
+      min_uptime_percent: config.min_uptime_percent ?? 95,
+      uptime_window: config.uptime_window ?? '1d',
     }),
   })
 }
@@ -370,7 +392,7 @@ export async function streamMimiMessage(
   revision: { id: string; digest: string } | null,
   onEvent: (envelope: MimiStreamEnvelope) => void,
 ): Promise<MimiConversation> {
-  const response = await fetch(`/api/mimi/conversations/${conversationId}/messages/stream`, {
+  return boundedMimiStream(`/api/mimi/conversations/${conversationId}/messages/stream`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { ...MIMI_WRITE_HEADERS, 'Content-Type': 'application/json' },
@@ -384,8 +406,28 @@ export async function streamMimiMessage(
         expected_change_set_digest: revision.digest,
       } : {}),
     }),
-  })
-  return consumeMimiStream(response, onEvent)
+  }, onEvent)
+}
+
+// Admission is bounded20s; observation may last the existing server maximum2h.
+// Disconnect only stops observing: never cancels, replays or infers provider failure.
+async function boundedMimiStream(path: string, init: RequestInit, onEvent: (envelope: MimiStreamEnvelope) => void): Promise<MimiConversation> {
+  const controller = new AbortController()
+  const caller = init.signal
+  const abort = () => controller.abort(caller?.reason)
+  if (caller?.aborted) abort()
+  else caller?.addEventListener('abort', abort, { once: true })
+  const admission = setTimeout(() => controller.abort(new DOMException('Mimi admission timed out', 'TimeoutError')), 20_000)
+  const observation = setTimeout(() => controller.abort(new DOMException('Mimi observation limit reached', 'TimeoutError')), 7_220_000)
+  try {
+    const response = await fetch(path, { ...init, signal: controller.signal })
+    clearTimeout(admission)
+    return await consumeMimiStream(response, onEvent)
+  } finally {
+    clearTimeout(admission)
+    clearTimeout(observation)
+    caller?.removeEventListener('abort', abort)
+  }
 }
 
 async function consumeMimiStream(
@@ -424,6 +466,7 @@ async function consumeMimiStream(
     if (event === 'conversation.snapshot') finalSnapshot = data as unknown as MimiConversation
   }
 
+  try {
   while (true) {
     const { done, value } = await reader.read()
     buffer += decoder.decode(value, { stream: !done }).replaceAll('\r\n', '\n')
@@ -438,6 +481,7 @@ async function consumeMimiStream(
   if (buffer.trim()) consume(buffer)
   if (!finalSnapshot) throw new Error('Mimi stream kết thúc trước terminal snapshot.')
   return finalSnapshot
+  } finally { reader.releaseLock() }
 }
 
 export async function observeMimiRun(
@@ -445,12 +489,11 @@ export async function observeMimiRun(
   onEvent: (envelope: MimiStreamEnvelope) => void,
   signal?: AbortSignal,
 ): Promise<MimiConversation> {
-  const response = await fetch(`/api/mimi/runs/${runId}/events/stream?after=0`, {
+  return boundedMimiStream(`/api/mimi/runs/${runId}/events/stream?after=0`, {
     method: 'GET',
     credentials: 'same-origin',
     signal,
-  })
-  return consumeMimiStream(response, onEvent)
+  }, onEvent)
 }
 
 export function cancelMimiRun(runId: string): Promise<{ run_id: string; state: string }> {
@@ -492,13 +535,12 @@ export async function resumeMimiRun(
   runId: string,
   onEvent: (envelope: MimiStreamEnvelope) => void,
 ): Promise<MimiConversation> {
-  const response = await fetch(`/api/mimi/runs/${runId}/resume`, {
+  return boundedMimiStream(`/api/mimi/runs/${runId}/resume`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { ...MIMI_WRITE_HEADERS, 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
-  })
-  return consumeMimiStream(response, onEvent)
+  }, onEvent)
 }
 
 export function decideMimiChangeSet(
@@ -536,4 +578,81 @@ export function saveMimiFeedback(
       evidence_bundle_ids: [],
     }),
   })
+}
+
+
+export type MimiTaskSnapshot = {
+  fields: Record<string, unknown>
+  children: Array<{ id: string; content: string; is_completed: boolean; position: number; deleted_at?: string | null }>
+  deleted_at?: string | null
+  collection_version?: number
+  reminder?: Record<string, unknown> | null
+}
+export type MimiCollectionEntry = {
+  id: string
+  command: { action: 'create' | 'edit' | 'soft_delete' | 'restore'; expected_collection_version: number | null; fields: Record<string, unknown>; children: Array<Record<string, unknown>>; reminder: Record<string, unknown> }
+  before: MimiTaskSnapshot | null
+  after: MimiTaskSnapshot
+  reminder_effect: Record<string, unknown>
+}
+export type MimiCollectionPlan = {
+  schema_version: 'mimi.task-collection.v1'
+  selection_id: string | null
+  entries: MimiCollectionEntry[]
+  undo_receipt_id?: string | null
+}
+export type MimiSelection = {
+  selection_id: string
+  intent: string
+  variants_considered: string[]
+  variants_pending: string[]
+  unproved_variants: string[]
+  members: Array<{ id: string; classification: 'included' | 'excluded' | 'uncertain'; reason: string; collection_version: number }>
+  query_complete: boolean
+  semantic_complete: boolean
+  explicitly_named_subset: boolean
+  as_of: string
+}
+export function fetchMimiSelection(conversationId: string, selectionId: string): Promise<MimiSelection> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/selections/${selectionId}`)
+}
+export function recoverMimiReceipt(conversationId: string, change: MimiChangeSet, key: string): Promise<MimiReceipt> {
+  const params = new URLSearchParams({ digest: change.digest, nonce: change.nonce })
+  return apiRequest(`/api/mimi/conversations/${conversationId}/change-sets/${change.id}/receipt?${params}`, { headers: { 'Idempotency-Key': key } })
+}
+export function prepareMimiUndo(receiptId: string): Promise<MimiConversation> {
+  return apiRequest(`/api/mimi/receipts/${receiptId}/undo-preview`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}' })
+}
+export function fetchMimiEvidence(conversationId: string, bundleId: string): Promise<Record<string, unknown>> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/evidence/${bundleId}`)
+}
+export type MimiAttention = { id: string; conversation_id: string; run_id: string; title: string; body: string; kind: string; unread: boolean; expires_at: string }
+export function fetchMimiAttention(): Promise<MimiAttention[]> { return apiRequest('/api/mimi/attention') }
+export function acknowledgeMimiAttention(id: string): Promise<{ id: string; unread: false }> {
+  return apiRequest(`/api/mimi/attention/${id}/read`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}' })
+}
+export function resolveMimiAttention(locator: string): Promise<{ conversation_id: string; run_id: string; expired: boolean }> {
+  return apiRequest(`/api/mimi/attention/resolve/${encodeURIComponent(locator)}`)
+}
+export type MimiDeviceProof = { subscription_id: string; endpoint: string; p256dh: string; auth: string }
+export type MimiDevicePreference = { subscription_id: string; enabled: boolean; revision: number | null; registered?: boolean }
+export function readMimiDevicePreference(proof: MimiDeviceProof): Promise<MimiDevicePreference> {
+  return apiRequest('/api/mimi/devices/preference/read', { method: 'POST', headers: MIMI_WRITE_HEADERS, body: JSON.stringify(proof) })
+}
+export function saveMimiDevicePreference(proof: MimiDeviceProof, enabled: boolean, expectedRevision: number | null): Promise<MimiDevicePreference> {
+  return apiRequest('/api/mimi/devices/preference', { method: 'POST', headers: MIMI_WRITE_HEADERS, body: JSON.stringify({ ...proof, enabled, expected_revision: expectedRevision }) })
+}
+export type MimiProviderPool = {
+  model: string
+  effort: string
+  tags: string[]
+  checked_at: number
+  snapshot_sha256: string
+  min_uptime_percent: number
+  window: string
+  exclusions: string[]
+  qualification: string
+}
+export function refreshMimiProviderPool(conversationId: string): Promise<MimiProviderPool> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/provider-pool/refresh`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}', timeoutMs: 15_000 })
 }

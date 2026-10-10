@@ -53,7 +53,14 @@ def test_p1c_stream_readonly_then_frozen_preview_without_duplicate_dispatch(
     calls = 0
 
     async def fake_stream(
-        messages, *, settings, session_id, on_event, force_task_tool, agent_contract
+        messages,
+        *,
+        settings,
+        session_id,
+        on_event,
+        force_task_tool,
+        agent_contract,
+        final_answer_only=False,
     ):
         nonlocal calls
         assert agent_contract and not force_task_tool

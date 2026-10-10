@@ -1,6 +1,7 @@
 """Regression tests for one-way physical-schema decisions."""
 
 import asyncio
+from uuid import uuid4
 
 import asyncpg
 import pytest
@@ -43,6 +44,9 @@ EXPECTED_TABLES = {
     "mimi_refresh_marker",
     "mimi_feedback",
     "mimi_evidence",
+    "mimi_device_preference",
+    "mimi_notification_intent",
+    "mimi_notification_delivery",
 }
 
 GATE_AXES = {
@@ -463,14 +467,18 @@ def test_0008_tables_have_updated_at_triggers(pg_dsn: str) -> None:
 
     async def scenario() -> None:
         conn = await asyncpg.connect(pg_dsn)
+        sub_id = dispatch_id = None
         try:
+            # Every invocation owns fresh IDs; historical shared-store rows remain.
+            endpoint = f"https://example.com/push/{uuid4()}"
             # 1. Test push_subscription trigger
             res = await conn.fetchrow(
                 """
                 INSERT INTO microsched.push_subscription (endpoint, p256dh, auth)
-                VALUES ('https://example.com/push/1', 'p256key', 'authkey')
+                VALUES ($1, 'p256key', 'authkey')
                 RETURNING id, created_at, updated_at;
-                """
+                """,
+                endpoint,
             )
             sub_id, created_at, updated_at1 = res["id"], res["created_at"], res["updated_at"]
             assert created_at is not None
@@ -524,6 +532,16 @@ def test_0008_tables_have_updated_at_triggers(pg_dsn: str) -> None:
             assert d_updated_at2 > d_updated_at1
 
         finally:
-            await conn.close()
+            try:
+                if dispatch_id is not None:
+                    await conn.execute(
+                        "DELETE FROM microsched.reminder_dispatch WHERE id = $1", dispatch_id
+                    )
+                if sub_id is not None:
+                    await conn.execute(
+                        "DELETE FROM microsched.push_subscription WHERE id = $1", sub_id
+                    )
+            finally:
+                await conn.close()
 
     asyncio.run(scenario())

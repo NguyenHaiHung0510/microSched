@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="mimi-title mimi-desc">
+  <title id="mimi-title">Mimi — Zen Origami Blossom</title>
+  <desc id="mimi-desc">One ivory folded-paper blossom spirit: a pointed crown, two small gently smiling berry eyes and no mouth, fine champagne-gold creases, and open sakura shoulder petals above a compact folded base.</desc>
+  <defs>
+    <linearGradient id="paper" x1="182" y1="153" x2="320" y2="343" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFEF9"/><stop offset=".56" stop-color="#FFF6ED"/><stop offset="1" stop-color="#F7DDCF"/>
+    </linearGradient>
+    <linearGradient id="paper-light" x1="216" y1="94" x2="299" y2="328" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFEFA"/><stop offset="1" stop-color="#FFF1E7"/>
+    </linearGradient>
+    <linearGradient id="crown-left" x1="244" y1="39" x2="173" y2="217" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF7EF"/><stop offset=".5" stop-color="#FFE4DB"/><stop offset="1" stop-color="#EDB4AB"/>
+    </linearGradient>
+    <linearGradient id="crown-rose" x1="233" y1="40" x2="235" y2="170" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF6EF"/><stop offset="1" stop-color="#F3C2B8"/>
+    </linearGradient>
+    <linearGradient id="crown-right" x1="269" y1="34" x2="342" y2="230" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFCF3"/><stop offset=".55" stop-color="#FFE3C9"/><stop offset="1" stop-color="#F4C4A1"/>
+    </linearGradient>
+    <linearGradient id="petal-left" x1="89" y1="239" x2="234" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE7E4"/><stop offset=".5" stop-color="#FAC2C8"/><stop offset="1" stop-color="#EBA4AE"/>
+    </linearGradient>
+    <linearGradient id="petal-right" x1="435" y1="244" x2="293" y2="426" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF0E3"/><stop offset=".5" stop-color="#FFD8C9"/><stop offset="1" stop-color="#F4B4B6"/>
+    </linearGradient>
+    <linearGradient id="pink-fold" x1="150" y1="211" x2="246" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD9D7"/><stop offset="1" stop-color="#EA9EAF"/>
+    </linearGradient>
+    <linearGradient id="base-ivory" x1="181" y1="359" x2="301" y2="462" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFCF2"/><stop offset=".54" stop-color="#FFE9D8"/><stop offset="1" stop-color="#F1C5AD"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="177" y1="154" x2="321" y2="410" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D8B570"/><stop offset=".26" stop-color="#F1D99A"/><stop offset=".47" stop-color="#BE9452"/><stop offset=".67" stop-color="#EDD092"/><stop offset="1" stop-color="#C49B61"/>
+    </linearGradient>
+    <linearGradient id="berry" x1="220" y1="266" x2="230" y2="300" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#803249"/><stop offset="1" stop-color="#67243A"/>
+    </linearGradient>
+    <clipPath id="face-clip">
+      <path d="M256 155 286 181 323 224 338 246 335 283 320 307 291 331 256 340 222 331 193 306 177 279 174 244 194 222 228 183Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Open shoulder petals: angular folds, with the flower below the face. -->
+  <g stroke-linejoin="round">
+    <path d="M151 149 191 249 204 344 143 316 129 246Z" fill="url(#pink-fold)"/>
+    <path d="m151 149-22 97 14 70 12-78Z" fill="#F4B4C0"/>
+    <path d="m151 149 40 100-36-11Z" fill="#FFE9E3"/>
+    <path d="m129 246 26-8 49 106-61-28Z" fill="#EEAABB"/>
+    <path d="m151 151 4 87-12 78" stroke="#FFF0E4" stroke-width="1.5"/>
+
+    <path d="m360 148 24 96-19 79-63 26 21-100Z" fill="url(#petal-right)"/>
+    <path d="m360 148-15 99-43 102 21-100Z" fill="#F5B9BE"/>
+    <path d="m360 148 24 96-39 3Z" fill="#FFF4E9"/>
+    <path d="m384 244-19 79-63 26 43-102Z" fill="#FFD3CC"/>
+    <path d="m360 151-15 96 20 76" stroke="#FFF3E9" stroke-width="1.5"/>
+
+    <g transform="translate(30.72 0) scale(.88 1)">
+    <path d="M48 246 142 273 218 352 165 381 112 343Z" fill="url(#petal-left)"/>
+    <path d="m48 246 64 97 53 38-33-65Z" fill="#F5B8C0"/>
+    <path d="m48 246 84 70 86 36-76-79Z" fill="#FFE3D8"/>
+    <path d="m132 316 86 36-53 29Z" fill="#EEA7B6"/>
+    <path d="m51 249 81 67 84 37" stroke="url(#gold)" stroke-width="1.8"/>
+    <path d="m49 247 93 26" stroke="#FFF0E7" stroke-width="1.5"/>
+
+    <path d="m464 246-97 28-75 79 54 28 53-38Z" fill="url(#petal-right)"/>
+    <path d="m464 246-65 97-53 38 33-64Z" fill="#F7BFC3"/>
+    <path d="m464 246-85 71-87 36 75-79Z" fill="#FFF5E8"/>
+    <path d="m379 317-87 36 54 28Z" fill="#F2B3B9"/>
+    <path d="m461 249-82 68-85 37" stroke="url(#gold)" stroke-width="1.8"/>
+
+    </g>
+    <!-- Lower flower is a folded cradle, not a second oversized head. -->
+    <path d="m110 343 86 22 43 86-82-17Z" fill="url(#petal-left)"/>
+    <path d="m110 343 47 91 15-65Z" fill="#FFE4D8"/>
+    <path d="m172 369 24-4 43 86-82-17Z" fill="#FFF0E3"/>
+    <path d="m110 344 62 25 66 81" stroke="#FAE9DC" stroke-width="1.7"/>
+    <path d="m402 343-87 22-43 86 83-17Z" fill="url(#petal-right)"/>
+    <path d="m402 343-47 91-16-65Z" fill="#F5C6B8"/>
+    <path d="m339 369-24-4-43 86 83-17Z" fill="#FFE5D7"/>
+    <path d="m401 344-62 25-66 81" stroke="#FFF0E1" stroke-width="1.7"/>
+
+    <!-- An ivory neck connects the head to its small folded flower cradle. -->
+    <path d="m219 326 73 0-1 22-35 17-36-17Z" fill="#FFDECE"/>
+    <path d="m219 326 37 12 0 27-36-17Z" fill="#FFF7EB"/>
+    <path d="m256 338 36-12-1 22-35 17Z" fill="#F0BEA5"/>
+    <!-- Compact base and neck clearly separated from the face. -->
+    <path d="m220 347 36 18 35-18 22 43-57 70-55-71Z" fill="url(#base-ivory)"/>
+    <path d="m220 347-19 42 55 71-22-70Z" fill="#FFDDCE"/>
+    <path d="m291 347 22 43-57 70 16-70Z" fill="#F5C5AE"/>
+    <path d="m234 390 22-25 16 25-16 70Z" fill="#FFF8EB"/>
+    <path d="m220 347 36 18 35-18-19 43-16-25-22 25Z" fill="#FFFDF5"/>
+    <path d="m220 348 36 17 34-17m-34 17-22 25 22 68 16-68-16-25" stroke="url(#gold)" stroke-width="2"/>
+    <path d="m201 389 33 1m38 0 40 0" stroke="#E6BD8F" stroke-width="1.3"/>
+
+    <!-- Short double-fold crown, 18% shorter above its face/shoulder join. -->
+    <g transform="translate(0 41.76) scale(1 .82)">
+    <path d="m254 57-51 47-32 82-7 48 92 104 92-104-19-88-54-85-9 29Z" fill="url(#crown-left)"/>
+    <path d="m254 57-25 72-58 57 32-82Z" fill="url(#crown-rose)"/>
+    <path d="m254 57 2 82-27-10Z" fill="#FFF0E7"/>
+    <path d="m266 59 9 31 54 56 19 88-92-95Z" fill="url(#crown-right)"/>
+    <path d="m266 59-10 80 35 28-16-77Z" fill="#FFF9EB"/>
+    <path d="m275 90 54 56-38 21Z" fill="#FFE5CD"/>
+    <path d="m329 146 19 88-57-67Z" fill="#F8D1B3"/>
+    <path d="m203 104-6 58 32-33 25-72Z" fill="#FFFBF3" fill-opacity=".63"/>
+    <path d="m171 186 58-57-39 82-26 23Z" fill="#F1BCB0"/>
+    <path d="m254 59 2 79m10-77 9 29 16 76" stroke="#FFF9F0" stroke-width="1.7"/>
+    <path d="m256 79 0 60" stroke="url(#gold)" stroke-width="2.1"/>
+
+    </g>
+    <!-- Ivory face: broad upper plane, shorter chin, small matte berry eyes. -->
+    <path d="M256 155 286 181 323 224 338 246 335 283 320 307 291 331 256 340 222 331 193 306 177 279 174 244 194 222 228 183Z" fill="url(#paper)"/>
+    <g clip-path="url(#face-clip)">
+    <path d="m256 138-37 72 4 116 32 21 8-124Z" fill="url(#paper-light)"/>
+    <path d="m165 232 54-22 4 116-44-23Z" fill="#F5DED1" fill-opacity=".46"/>
+    <path d="m256 138 91 94-14 70-70 21Z" fill="#FFFEF7" fill-opacity=".44"/>
+    <path d="m263 223 70 79-41 36-37 9Z" fill="#F4D6C5" fill-opacity=".4"/>
+    <path d="m179 303 44 23 32 21-36-9Z" fill="#FBE2D1"/>
+    </g>
+    <path d="m174 244 20-22 34-39 28-28 30 26 37 43 15 22m-161 33 16 27 29 25 34 9 35-9 29-24 15-24" stroke="url(#gold)" stroke-width="2.35"/>
+    <path d="m179 241 49-53 28-27 31 27 46 55" stroke="#FFF2CD" stroke-width=".85" opacity=".8"/>
+    <path d="m219 211 4 113m40-101-8 114" stroke="#F7DDCF" stroke-width=".9" opacity=".55"/>
+  </g>
+  <!-- Symmetrical small berry eye folds: quiet joy, with no mouth or brows. -->
+  <path d="M211 277 Q212 265 218 265 Q224 265 225 277" stroke="#783048" stroke-width="5.8" stroke-linecap="round"/>
+  <path d="M287 277 Q288 265 294 265 Q300 265 301 277" stroke="#783048" stroke-width="5.8" stroke-linecap="round"/>
+</svg>

@@ -34,8 +34,8 @@ def app_database_url(monkeypatch):
     url = make_url(value)
     if (
         url.host not in {"127.0.0.1", "localhost", "::1"}
-        or url.port != 55478
-        or url.database != "microsched_mimi078"
+        or (url.port, url.database)
+        not in {(55478, "microsched_mimi078"), (21886, "microsched_mimi086"), (21887, "mimi086_qa")}
         or url.username != "microsched_app"
     ):
         pytest.fail("refusing LangGraph persistence proof outside the authorized local QA database")
@@ -111,7 +111,7 @@ def test_postgres_checkpoint_survives_reopen_and_unknown_cannot_redispatch(app_d
                     limits=LoopLimits(
                         max_turns=3,
                         max_tool_calls=2,
-                        max_serialized_bytes=10_000,
+                        max_serialized_bytes=200_000,
                         deadline=datetime.now(UTC) + timedelta(seconds=5),
                     ),
                     invoke_model=unknown_model,

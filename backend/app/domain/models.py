@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -105,6 +106,7 @@ class Task(UUIDTimestampModel, table=True):
     __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
         CheckConstraint("status IN ('open', 'completed')", name="status_values"),
+        CheckConstraint("collection_version >= 1", name="collection_version"),
         CheckConstraint(
             "priority IS NULL OR priority IN ('p1', 'p2', 'p3')",
             name="priority_values",
@@ -118,6 +120,9 @@ class Task(UUIDTimestampModel, table=True):
         {"schema": SCHEMA},
     )
 
+    collection_version: int = Field(
+        default=1, sa_column=Column(BigInteger, nullable=False, server_default=text("1"))
+    )
     title: str = Field(sa_column=Column(Text, nullable=False))
     body_md: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     status: str = Field(
@@ -153,11 +158,20 @@ class TaskItem(UUIDTimestampModel, table=True):
 
     __tablename__ = "task_item"
     __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
-    __delete_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
+        Index(
+            "ix_task_item_active_position",
+            "task_id",
+            "position",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
         CheckConstraint("position >= 0", name="position_nonnegative"),
         {"schema": SCHEMA},
     )
+
+    deleted_at: datetime | None = deleted_timestamp()
 
     task_id: UUID = Field(
         sa_column=Column(
