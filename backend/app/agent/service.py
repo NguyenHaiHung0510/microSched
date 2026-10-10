@@ -4302,7 +4302,7 @@ async def reconcile_unknown_run(
 ) -> dict[str, Any]:
     def needs_reconciliation(candidate: MimiRun) -> bool:
         return candidate.state == "outcome_unknown" or (
-            candidate.state in {"cancelled", "deadline_exceeded"}
+            candidate.state in {"cancelled", "deadline_exceeded", "halted"}
             and candidate.provider_outcome == "unknown"
         )
 
@@ -4474,6 +4474,9 @@ async def finish_interrupted_run(
         run.provider_outcome = "failed"
         call.state = "failed"
         call.result = {"terminal": "failed", "reason": run.error_code}
+    if not cancelled and run.provider_outcome == "unknown":
+        # Expose the existing Reconcile state/UI, never a safe Resume/redispatch.
+        run.state = "outcome_unknown"
     await _append_event(
         db,
         run.id,
