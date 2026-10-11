@@ -121,7 +121,7 @@ def test_observed_main_triggers_next_turn_once_and_preserves_canonical_authority
             return AgentCompletion(
                 outcome=AssistantText(text=json.dumps(candidate, ensure_ascii=False)),
                 response_id=f"synthetic-helper-{calls}",
-                usage={"prompt_tokens": 190_000, "cost": 0.05},
+                usage={"prompt_tokens": 300_000, "cost": 0.05},
                 provider="DeepInfra",
                 model=settings.mimi_route_model,
             )
@@ -165,7 +165,7 @@ def test_observed_main_triggers_next_turn_once_and_preserves_canonical_authority
                     attempt=1,
                     state="succeeded",
                     request_fingerprint="a" * 64,
-                    usage={"prompt_tokens": 100_001, "cost": 0.3},
+                    usage={"prompt_tokens": 272_001, "cost": 0.3},
                     result={"response_id": "synthetic-main"},
                     route={
                         "kind": "openrouter",
@@ -418,7 +418,7 @@ def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
             return AgentCompletion(
                 outcome=AssistantText(text="Mình đã hiểu yêu cầu."),
                 response_id="synthetic-first-main",
-                usage={"prompt_tokens": 100_001, "cost": 0.03},
+                usage={"prompt_tokens": 272_001, "cost": 0.03},
                 model="deepseek/deepseek-v4.1-flash",
                 provider="DeepInfra",
             )
@@ -636,7 +636,7 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
                 outcome=outcome,
                 response_id=f"synthetic-main-{main_calls}",
                 usage={
-                    "prompt_tokens": 100_001 + main_calls if main_calls <= 5 else 30,
+                    "prompt_tokens": 272_001 + main_calls if main_calls <= 5 else 30,
                     "cost": 0.03,
                 },
                 model="deepseek/deepseek-v4.1-flash",
@@ -675,7 +675,7 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
                 latest_main = view["provider_calls"][-1]
                 assert (
                     latest_main["state"] == "succeeded"
-                    and latest_main["usage"]["prompt_tokens"] > 100_000
+                    and latest_main["usage"]["prompt_tokens"] > 272_000
                 )
                 assert not view["receipts"] and not view["change_sets"]
                 continued = await service.send_message(

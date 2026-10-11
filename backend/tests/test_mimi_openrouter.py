@@ -86,6 +86,9 @@ def test_default_reasoning_effort_omits_effort_but_keeps_reasoning_excluded() ->
 def test_adaptive_request_has_bounded_pool_without_manual_order() -> None:
     settings = _settings(
         mimi_route_mode="adaptive",
+        mimi_route_catalog_checked_at=__import__("time").time(),
+        mimi_route_qualification_expires_at=__import__("time").time() + 3600,
+        mimi_route_qualification_sha256="a" * 64,
         mimi_route_provider=None,
         mimi_route_quantization=None,
         mimi_route_allowed_providers="provider-a, provider-b",

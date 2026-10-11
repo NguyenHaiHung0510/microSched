@@ -805,7 +805,7 @@ export function MimiScreen({
       {latestRun && (
         latestRunCanResume
         || ['retryable', 'deadline_exceeded', 'outcome_unknown'].includes(latestRun.state)
-        || (latestRun.state === 'cancelled' && latestRun.provider_outcome === 'unknown')
+        || (['cancelled', 'halted'].includes(latestRun.state) && latestRun.provider_outcome === 'unknown')
       ) ? (
         <div className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">{latestRunCanResume ? 'Run có thể tiếp tục theo trạng thái server.' : 'Run đã dừng tại checkpoint provider.'}</p>

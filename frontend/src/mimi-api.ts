@@ -134,6 +134,10 @@ export type MimiContextObservation = {
 }
 
 export type MimiRunObservation = {
+  provider_cached_tokens?: number | null
+  cache_observed_calls?: number
+  cache_unknown_calls?: number
+  cache_token_ratio?: number | null
   known_cost_usd: number
   main_known_cost_usd: number
   helper_known_cost_usd: number

@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     mimi_route_uptime_window: Literal["1d", "30m"] = "1d"
     mimi_route_catalog_checked_at: float | None = None
     mimi_route_catalog_sha256: str | None = None
+    mimi_route_qualification_expires_at: float | None = None
+    mimi_route_qualification_sha256: str | None = None
+    mimi_route_qualified_provider_names: tuple[str, ...] = ()
+    # Trusted deployment qualification receipts, never supplied by model/UI.
+    # Empty means no adaptive endpoint is certified. No provider roster.
+    mimi_route_qualifications_json: str = "[]"
     mimi_collection_enabled: bool = False
     mimi_revision_collection: bool = False
     mimi_notifications_enabled: bool = False
@@ -121,7 +127,7 @@ class Settings(BaseSettings):
     ] = "low"
     # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
     mimi_route_context_tokens: int = 1_048_576
-    mimi_compaction_trigger_tokens: Literal[100_000] = 100_000
+    mimi_compaction_trigger_tokens: Literal[100_000, 272_000] = 272_000
     mimi_max_payload_bytes: int = 2_097_152
     # At most four runs: guard + worker + observer <=12 of the existing15
     # ORM pool connections; auth returns its checkout before SSE. LangGraph adds
@@ -151,7 +157,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_compaction_trigger_environment(cls, value: object) -> object:
         """Allow the approved integer preset through environment string input."""
-        return 100_000 if value == "100000" else value
+        return int(value) if value in {"100000", "272000"} else value
 
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
@@ -276,11 +282,19 @@ class Settings(BaseSettings):
             else:
                 required_route.update(
                     {
-                        "MIMI_ROUTE_ALLOWED_PROVIDERS": self.mimi_route_allowed_providers.strip(),
                         "MIMI_ROUTE_ALLOWED_QUANTIZATIONS": (
                             self.mimi_route_allowed_quantizations.strip()
                         ),
                     }
+                )
+            # Discovery replaces a static allowlist only in the admitted
+            # collection/model seam; arbitrary adaptive routes remain bounded.
+            if self.mimi_route_mode == "adaptive" and not (
+                self.mimi_collection_enabled
+                and self.mimi_route_model == "deepseek/deepseek-v4.1-flash"
+            ):
+                required_route["MIMI_ROUTE_ALLOWED_PROVIDERS"] = (
+                    self.mimi_route_allowed_providers.strip()
                 )
             missing = [
                 name

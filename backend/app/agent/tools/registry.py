@@ -108,7 +108,9 @@ TOOLS: tuple[dict[str, Any], ...] = (
         "Read a bounded page of authorized STANDARD Tasks. "
         "Use title_contains to locate a named Task and include id in the projection. "
         "Use task.read_content.v1 for body/checklist. "
-        "Use the cursor until coverage is complete.",
+        "Use the cursor until coverage is complete for this query; "
+        "aliases/content may still be unread. "
+        "Task rows are not occurrence/event history; due dates are not completed_at.",
         {
             "type": "object",
             "additionalProperties": False,
@@ -126,7 +128,8 @@ TOOLS: tuple[dict[str, Any], ...] = (
         "task.aggregate.v1",
         "Count authorized STANDARD Tasks by one declared facet after an explicit filter. "
         "Counts lack entity versions: use only for answers/drafts, not a run that "
-        "produces a create preview. Read concrete Tasks instead for previews.",
+        "produces a create preview. Read concrete Tasks instead for previews. "
+        "A Task count is not a count of real-world occurrences or proof of complete history.",
         {
             "type": "object",
             "additionalProperties": False,
@@ -219,15 +222,22 @@ def _typed_tool(name, description, model):
 TOOLS += (
     _typed_tool(
         SELECTION_TOOL,
-        "Freeze semantic classifications from actual Task read receipts. "
-        "Record query/page and alias obligations. This never mutates domain data.",
+        "Freeze semantic classifications from actual current-run Task read receipts. "
+        "Required: intent, variants_considered, members. Each member has exact read id, "
+        "classification (included/excluded/uncertain), and evidence-based reason. "
+        "For example members=[{id: '<actual read UUID>', classification: 'included', "
+        "reason: 'matches the requested subset'}]; replace the placeholder with a read ID. "
+        "Classify observed IDs, preserve unresolved query/page/content/alias obligations. "
+        "Intent plus variants alone is invalid. This never mutates domain data.",
         SelectionCandidate,
     ),
     _typed_tool(
         COLLECTION_CANDIDATE_TOOL,
         "Propose one bounded STANDARD Task collection with full fields/checklist/reminder effects. "
-        "Existing targets require exact frozen selection UUID/version. "
-        "Server validates/freezes; never executes before explicit confirmation.",
+        "Existing targets require the actual selection_id returned by freeze_selection and "
+        "exact included target IDs/versions; revisions require fresh current-run reads/selection. "
+        "Server validates/freezes; text plans never replace preview or execution receipt. "
+        "Never executes before explicit confirmation.",
         CollectionCandidate,
     ),
 )

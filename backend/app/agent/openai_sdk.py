@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 import time
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from openai import (
@@ -99,6 +102,83 @@ def _raise_for_sdk_error(error: Exception, *, response_id: str | None = None) ->
     raise error
 
 
+def _rejected_terminal_metadata(response_id, provider, model, usage, finish_reason):
+    """Allowlisted terminal facts only; provider prose/partial output is never a receipt."""
+
+    def identity(value):
+        return (
+            value
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", value)
+            else None
+        )
+
+    def amount(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return None
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            return None
+        return value if number.is_finite() and number >= 0 else None
+
+    safe_usage = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            safe_usage[key] = value
+    cost = amount(usage.get("cost"))
+    if cost is not None:
+        safe_usage["cost"] = cost
+    for key, fields in {
+        "prompt_tokens_details": (
+            "cached_tokens",
+            "cache_write_tokens",
+            "audio_tokens",
+            "video_tokens",
+        ),
+        "completion_tokens_details": ("reasoning_tokens", "audio_tokens", "image_tokens"),
+    }.items():
+        details = usage.get(key)
+        if isinstance(details, dict):
+            safe_usage[key] = {
+                name: value
+                for name in fields
+                if isinstance(value := details.get(name), int)
+                and not isinstance(value, bool)
+                and value >= 0
+            }
+    for key, fields in {
+        "cost_details": (
+            "upstream_inference_cost",
+            "upstream_inference_prompt_cost",
+            "upstream_inference_completions_cost",
+        ),
+        "mimi_timing": ("duration_ms", "connect_ms", "ttft_ms", "output_tokens_per_second"),
+    }.items():
+        details = usage.get(key)
+        if isinstance(details, dict):
+            safe_usage[key] = {
+                name: value for name in fields if (value := amount(details.get(name))) is not None
+            }
+    reason = (
+        finish_reason
+        if finish_reason
+        in {None, "stop", "tool_calls", "length", "content_filter", "function_call", "error"}
+        else "other"
+    )
+    receipt = {
+        "id": identity(response_id),
+        "provider": identity(provider),
+        "model": identity(model),
+        "usage": safe_usage,
+        "finish_reason": reason,
+        "cost_available": cost is not None,
+    }
+    if reason == "other":
+        receipt["finish_reason_sha256"] = hashlib.sha256(finish_reason.encode()).hexdigest()
+    return receipt
+
+
 async def complete(
     messages: list[dict[str, Any]],
     *,
@@ -131,9 +211,37 @@ async def complete(
         except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
             _raise_for_sdk_error(error)
         payload = _completion_payload(result)
-        if summary_mode:
-            return parse_compaction_completion(payload)
-        return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
+        choices = payload.get("choices")
+        finish = (
+            choices[0].get("finish_reason")
+            if isinstance(choices, list) and len(choices) == 1 and isinstance(choices[0], dict)
+            else None
+        )
+        receipt = _rejected_terminal_metadata(
+            payload.get("id"),
+            payload.get("provider"),
+            payload.get("model"),
+            payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            finish,
+        )
+        try:
+            if finish is None:
+                raise ProviderDispatchError("unknown", None, response_id=receipt["id"])
+            if finish not in {"stop", "tool_calls"}:
+                raise RouteContractError("provider_json_finish_reason_not_usable")
+            if summary_mode:
+                return parse_compaction_completion(payload)
+            return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
+        except (RouteContractError, ProviderDispatchError) as error:
+            error.terminal_receipt = receipt
+            error.response_id = receipt["id"]
+            if isinstance(error, RouteContractError):
+                error.usage, error.model, error.provider = (
+                    receipt["usage"],
+                    receipt["model"],
+                    receipt["provider"],
+                )
+            raise
     finally:
         if client is None:
             await sdk.close()
@@ -247,10 +355,6 @@ async def complete_stream(
                                 target["name"] += function["name"]
                             if isinstance(function.get("arguments"), str):
                                 target["arguments"] += function["arguments"]
-        if not saw_finish_reason:
-            raise ProviderDispatchError("unknown", None, response_id=response_id or None)
-        if finish_reason not in {None, "stop", "tool_calls"}:
-            raise RouteContractError("provider_stream_finish_reason_not_usable")
     except asyncio.CancelledError as error:
         raise ProviderDispatchError("unknown", None, response_id=response_id or None) from error
     except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
@@ -277,6 +381,15 @@ async def complete_stream(
             completion_tokens / (completed_at - started_at), 3
         )
     usage = {**usage, "mimi_timing": timing}
+    if not saw_finish_reason or finish_reason not in {None, "stop", "tool_calls"}:
+        receipt = _rejected_terminal_metadata(response_id, provider, model, usage, finish_reason)
+        error = (
+            ProviderDispatchError("unknown", None, response_id=receipt["id"])
+            if not saw_finish_reason
+            else RouteContractError("provider_stream_finish_reason_not_usable")
+        )
+        error.terminal_receipt = receipt
+        raise error
     terminal_calls = [
         {
             "id": item["id"],

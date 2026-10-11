@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 POLICY_ID = "mimi-standard-v2"
-POLICY_SHA256 = "1ffc135a42c8cf04f3d6d17a2a987f399037d00fce48ff9b00425f318a4a44ab"
+POLICY_SHA256 = "158ed655d52b157a4884be7ed46d16ecc9efd80370a93ee42fdae5513d24c670"
 _POLICY_PATH = Path(__file__).with_name("policy") / "mimi-standard-v2.md"
 
 
@@ -27,7 +27,7 @@ def load_standard_policy(*, collection_enabled: bool | None = None) -> MimiPolic
         collection_enabled = get_settings().mimi_collection_enabled
     path = _POLICY_PATH.with_name("mimi-standard-v3.md") if collection_enabled else _POLICY_PATH
     expected_sha256 = (
-        "642e13054d25e81cb53bd9488a6ffbf56f2aeb28646721091bd5d01007eb8c52"
+        "8001b26409b52ca991458c9a5f44c71c87032e930e286f0550930357d856e3a9"
         if collection_enabled
         else POLICY_SHA256
     )
@@ -40,3 +40,13 @@ def load_standard_policy(*, collection_enabled: bool | None = None) -> MimiPolic
     if digest != expected_sha256:
         raise ValueError("mimi_policy_digest_mismatch")
     return MimiPolicy(policy_id=policy_id, sha256=digest, text=text)
+
+
+def checkpoint_policy_compatible(value: str, *, collection_enabled: bool) -> bool:
+    """Only known semantic predecessors; frontier/content/source checks still apply."""
+    original = (
+        "642e13054d25e81cb53bd9488a6ffbf56f2aeb28646721091bd5d01007eb8c52"
+        if collection_enabled
+        else "1ffc135a42c8cf04f3d6d17a2a987f399037d00fce48ff9b00425f318a4a44ab"
+    )
+    return value in {original, load_standard_policy(collection_enabled=collection_enabled).sha256}

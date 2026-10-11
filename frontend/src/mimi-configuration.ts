@@ -1,11 +1,9 @@
 import type { MimiModelProfile } from './mimi-api'
 
-const INPUT_PRESETS = [100_000]
-
 export function availableInputPresets(profile: MimiModelProfile | undefined) {
   if (!profile) return []
-  const maximum = profile.context_limit
-  return INPUT_PRESETS.filter((tokens) => tokens <= maximum)
+  const trigger = profile.compaction_trigger_tokens ?? 272_000
+  return trigger + profile.output_reserve <= profile.context_limit ? [trigger] : []
 }
 
 export function effortOptions(profile: MimiModelProfile | undefined) {

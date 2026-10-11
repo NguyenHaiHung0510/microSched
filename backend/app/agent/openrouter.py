@@ -240,6 +240,16 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
         if settings.mimi_route_quantization != "unknown":
             policy["quantizations"] = [settings.mimi_route_quantization]
         return policy
+    expires = settings.mimi_route_qualification_expires_at
+    checked = settings.mimi_route_catalog_checked_at
+    if (
+        expires is None
+        or checked is None
+        or not time.time() < expires
+        or not 0 <= time.time() - checked < 300
+        or not settings.mimi_route_qualification_sha256
+    ):
+        raise RouteContractError("adaptive_endpoint_qualification_stale_or_missing")
     providers = list(settings.mimi_allowed_provider_list)
     quantizations = list(settings.mimi_allowed_quantization_list)
     if not providers or not quantizations:

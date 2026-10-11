@@ -77,7 +77,14 @@ def test_saved_effort_roundtrips_and_next_run_cannot_mutate_prior_snapshot(effor
             exclude={"mimi_route_reasoning_effort"}
         )
         for helper in (False, True):
-            admitted = selected.model_copy(update={"mimi_route_allowed_providers": "deepinfra/fp8"})
+            admitted = selected.model_copy(
+                update={
+                    "mimi_route_allowed_providers": "deepinfra/fp8",
+                    "mimi_route_catalog_checked_at": __import__("time").time(),
+                    "mimi_route_qualification_expires_at": __import__("time").time() + 3600,
+                    "mimi_route_qualification_sha256": "a" * 64,
+                }
+            )
             wire = build_request([], admitted, agent_contract=not helper, summary_mode=helper)
             assert wire["reasoning"] == {"effort": effort, "exclude": True}
             assert wire["model"] == ADMITTED_MODEL and wire["max_tokens"] == 8192
@@ -114,7 +121,7 @@ def test_max_does_not_admit_other_families(profile):
 def test_defaults_limits_and_profile_availability_are_unchanged():
     base = settings()
     assert default_configuration(base) == dict(
-        profile_id="deepseek", effort="low", input_tokens=100_000
+        profile_id="deepseek", effort="low", input_tokens=272_000, routing_mode="exact"
     )
     assert Settings.model_fields["mimi_route_reasoning_effort"].default == "low"
     assert base.mimi_route_max_output_tokens == 4096
@@ -122,7 +129,7 @@ def test_defaults_limits_and_profile_availability_are_unchanged():
         base, dict(profile_id="deepseek", effort="max", input_tokens=100_000)
     )
     assert selected.mimi_route_context_tokens == 1_048_576
-    assert selected.mimi_compaction_trigger_tokens == 100_000
+    assert selected.mimi_compaction_trigger_tokens == 272_000
     assert selected.mimi_route_max_output_tokens == 8192
     assert (selected.mimi_run_max_turns, selected.mimi_run_max_tool_calls) == (32, 64)
     assert selected.mimi_run_deadline_seconds == base.mimi_run_deadline_seconds == 1800
