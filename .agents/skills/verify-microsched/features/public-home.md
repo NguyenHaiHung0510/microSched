@@ -20,6 +20,6 @@ Observable oracle: Hero visibly changes and restores; relative login link reacha
 
 ## Gotchas
 
-Only this case has an automated initial recipe. Source mapping is NOT_RUN; viewport ≠ physical device.
+Only this case has an automated initial recipe. Vite bootstrap requires read access to `/node_modules/vite/dist/client/env.mjs` at the bound local frontend origin; blocking this module can leave the page blank before `login-link` renders. The first actual attempt failed at that harness boundary; preserve its private receipt and replay after the reviewed policy correction. Viewport ≠ physical device.
 
-Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+Status: source-mapped; first runtime case FAIL (harness module admission), affected replay NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.

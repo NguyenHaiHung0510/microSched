@@ -17,7 +17,7 @@ export function requestAllowed(rawUrl,method,lane,source){
  const assets=/^\/(?:brand|fonts)\/[a-zA-Z0-9_./-]+\.(?:svg|png|webp|woff2?)$/.test(path);
  const fsRoot='/@fs/'+resolve(source,'frontend','node_modules').replaceAll('\\','/')+'/';
  const fsModule=path.startsWith(fsRoot)&&/\.(?:jsx?|css|woff2?|svg)$/.test(path);
- if(read&&(modules||assets||fsModule||['/@vite/client','/@react-refresh','/microsched.svg','/favicon.ico','/manifest.webmanifest','/registerSW.js','/showcase/source-preview.png','/showcase/creator-preview.png'].includes(path)))return true;
+ if(read&&(modules||assets||fsModule||['/@vite/client','/node_modules/vite/dist/client/env.mjs','/@react-refresh','/microsched.svg','/favicon.ico','/manifest.webmanifest','/registerSW.js','/showcase/source-preview.png','/showcase/creator-preview.png'].includes(path)))return true;
  if(lane==='microsched')return read&&(path==='/home'||path==='/api/me');
  if(lane!=='mimi')return false;
  if(read&&['/','/auth/dev-session','/api/me','/api/tasks/timeline','/api/tasks','/api/notes','/api/calendar/events','/api/tracker/trackers','/api/reminders','/api/mimi/conversations','/api/mimi/conversations/current','/api/mimi/capabilities'].includes(path))return true;

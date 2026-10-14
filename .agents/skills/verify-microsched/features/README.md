@@ -1,10 +1,10 @@
 # Feature map — verify-microsched
 
-Broad observed top-level source map for exact candidate `aa9d7251cdb506e968a6ffddfbae6767b6987327` at `harness-b-verification/microsched`. This is verification navigation, not product authority or whole-product acceptance. Every row is source-mapped and **NOT_RUN**; no runtime receipt exists in R3. The initial runtime batch still proves only public-home and conversation-metadata respectively. Read each feature for real prerequisites/oracle/gotchas before extending QA.
+Broad observed top-level source map for exact candidate `aa9d7251cdb506e968a6ffddfbae6767b6987327` at `harness-b-verification/microsched`. This is verification navigation, not product authority or whole-product acceptance. R3 initially source-mapped every row as **NOT_RUN**. The later public-home attempt failed at Vite module admission; its affected replay is **NOT_RUN**. Other rows remain source-mapped **NOT_RUN**. The initial runtime batch covers only public-home and conversation-metadata respectively. Read each feature for real prerequisites/oracle/gotchas before extending QA.
 
 | Entrypoint / feature | Exact source navigation | Status |
 |---|---|---|
-| [Public homepage language and login link](public-home.md) | `frontend/src/HomePage.tsx:144` | NOT_RUN |
+| [Public homepage language and login link](public-home.md) | `frontend/src/HomePage.tsx:144` | FAIL (harness module admission); replay NOT_RUN |
 | [Task tab and task lifecycle](task-calendar.md) | `frontend/src/App.tsx:168` | NOT_RUN |
 | [Calendar navigation and event sources](calendar.md) | `frontend/src/App.tsx:108` | NOT_RUN |
 | [Notes and reflections](notes.md) | `frontend/src/App.tsx:178` | NOT_RUN |
