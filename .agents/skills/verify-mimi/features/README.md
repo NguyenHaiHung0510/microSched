@@ -1,10 +1,10 @@
 # Feature map — verify-mimi
 
-Broad observed top-level source map for exact candidate `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37` at `harness-b-mimi-qa/microsched`. This is verification navigation, not product authority or whole-product acceptance. Every row is source-mapped and **NOT_RUN**; no runtime receipt exists in R3. The initial runtime batch still proves only public-home and conversation-metadata respectively. Read each feature for real prerequisites/oracle/gotchas before extending QA.
+Broad source map for exact candidate `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37` at `harness-b-mimi-qa/microsched`. T1 technical acceptance 2026-10-15 covers only conversation-metadata attempt2: 4/4 assertions, zero blocked and completed owned cleanup. This map has **1/12 OBSERVED_ACCEPTED**, **11/12 NOT_RUN**; combined maps **2/24 (8.3%) OBSERVED_ACCEPTED**, **22/24 (91.7%) NOT_RUN**. Original failures remain in private H14-N1/R9 evidence. No latest-product/whole-app/device/provider-quality/CI/production acceptance. Evidence locator: final-grouped-retest-handback, the named case receipt/pixels, final-runtime-cleanup and R6 final-technical-signoff.
 
 | Entrypoint / feature | Exact source navigation | Status |
 |---|---|---|
-| [Conversation creation and rename](conversation-metadata.md) | `frontend/src/MimiControlCenter.tsx:9` | NOT_RUN |
+| [Conversation creation and rename](conversation-metadata.md) | `frontend/src/MimiControlCenter.tsx:9` | OBSERVED_ACCEPTED — attempt2, 4/4 metadata assertions |
 | [Responsive side-chat and pop-out](dock.md) | `frontend/src/MimiDock.tsx:21` | NOT_RUN |
 | [Workspace rails and conversation history](history-workspace.md) | `frontend/src/MimiControlCenter.tsx:208` | NOT_RUN |
 | [Model/effort configuration entrypoints](configuration.md) | `frontend/src/MimiConfiguration.tsx:145` | NOT_RUN |

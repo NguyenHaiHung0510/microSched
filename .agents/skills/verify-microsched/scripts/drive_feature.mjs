@@ -6,6 +6,18 @@ import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ORIGIN='http://127.0.0.1:5173';
+const SHOWCASE_DESKTOP_ASSETS=new Set([
+ "/showcase/vi/tasks-desktop.png",
+ "/showcase/vi/notes-desktop.png",
+ "/showcase/vi/calendar-desktop.png",
+ "/showcase/vi/trackers-desktop.png",
+ "/showcase/vi/spending-desktop.png",
+ "/showcase/en/tasks-desktop.png",
+ "/showcase/en/notes-desktop.png",
+ "/showcase/en/calendar-desktop.png",
+ "/showcase/en/trackers-desktop.png",
+ "/showcase/en/spending-desktop.png",
+]);
 const ID='[0-9a-fA-F-]{36}';
 export function requestAllowed(rawUrl,method,lane,source){
  let u,path;try{u=new URL(rawUrl);path=decodeURIComponent(u.pathname)}catch{return false}
@@ -15,9 +27,10 @@ export function requestAllowed(rawUrl,method,lane,source){
  // Read-only Vite modules/assets for this checkout; no general /@fs local-file permission.
  const modules=/^\/(?:src\/|node_modules\/\.vite\/deps\/).+\.(?:tsx?|jsx?|css|svg|png|webp|woff2?|map)$/.test(path);
  const assets=/^\/(?:brand|fonts)\/[a-zA-Z0-9_./-]+\.(?:svg|png|webp|woff2?)$/.test(path);
+ const fonts=/^\/node_modules\/@fontsource-variable\/nunito\/files\/nunito-(?:latin|latin-ext|vietnamese)-wght-normal\.woff2$/.test(path);
  const fsRoot='/@fs/'+resolve(source,'frontend','node_modules').replaceAll('\\','/')+'/';
  const fsModule=path.startsWith(fsRoot)&&/\.(?:jsx?|css|woff2?|svg)$/.test(path);
- if(read&&(modules||assets||fsModule||['/@vite/client','/node_modules/vite/dist/client/env.mjs','/@react-refresh','/microsched.svg','/favicon.ico','/manifest.webmanifest','/registerSW.js','/showcase/source-preview.png','/showcase/creator-preview.png'].includes(path)))return true;
+ if(read&&(modules||assets||fonts||fsModule||(lane==='microsched'&&SHOWCASE_DESKTOP_ASSETS.has(path))||['/@vite/client','/node_modules/vite/dist/client/env.mjs','/@react-refresh','/microsched.svg','/favicon.ico','/manifest.webmanifest','/registerSW.js','/showcase/source-preview.png','/showcase/creator-preview.png'].includes(path)))return true;
  if(lane==='microsched')return read&&(path==='/home'||path==='/api/me');
  if(lane!=='mimi')return false;
  if(read&&['/','/auth/dev-session','/api/me','/api/tasks/timeline','/api/tasks','/api/notes','/api/calendar/events','/api/tracker/trackers','/api/reminders','/api/mimi/conversations','/api/mimi/conversations/current','/api/mimi/capabilities'].includes(path))return true;
@@ -80,28 +93,55 @@ async function drive(receipt){
    receipt.requests.push(entry);await route.continue();
   });
   page=await context.newPage();
+  const ensureConversationListOpen=async()=>{
+   const toggle=page.getByRole('button',{name:/^(?:Thu gọn hội thoại|Hội thoại \(\d+\))$/});
+   await expect(toggle).toBeVisible();
+   const create=page.getByTestId('mimi-left-rail').getByRole('button',{name:'Cuộc trò chuyện mới',exact:true});
+   if(await create.isVisible())record('Conversation list already open; preserve current rail state');
+   else{
+    record('Open closed conversation list');await page.getByRole('button',{name:/^Hội thoại \(\d+\)$/}).click();
+    await expect(create).toBeVisible();
+   }
+   return create;
+  };
   if(receipt.lane==='microsched'){
+   const observeShowcase=async language=>{
+    const paths=[...SHOWCASE_DESKTOP_ASSETS].filter(path=>path.startsWith('/showcase/'+language+'/'));
+    await page.waitForFunction(expected=>expected.every(path=>[...document.images].some(img=>new URL(img.currentSrc||img.src).pathname===path&&img.complete&&img.naturalWidth>0)),paths);
+    const images=await page.locator('.public-showcase-stage img').evaluateAll(nodes=>nodes.map(img=>({path:new URL(img.currentSrc||img.src).pathname,complete:img.complete,width:img.naturalWidth,height:img.naturalHeight})));
+    if(images.length!==paths.length||images.some(img=>!paths.includes(img.path)||!img.complete||img.width===0||img.height===0))throw Error('Showcase image decode incomplete: '+language);
+    (receipt.showcase_assets??=[]).push({language,images});record('Showcase '+language+' desktop images decoded: '+images.length);
+   };
    record('Open public Vietnamese homepage');await page.goto(ORIGIN+'/home?lang=vi');
    await assert('guest login link visible',()=>expect(page.getByTestId('login-link')).toBeVisible());
+   await observeShowcase('vi');
    const initial=await page.locator('#public-title').innerText();await screenshot(page,receipt,'before.png');
    record('Select English');await page.getByRole('button',{name:'English',exact:true}).click();
    await assert('English changed hero text',()=>expect(page.locator('#public-title')).not.toHaveText(initial));
+   await observeShowcase('en');
    await assert('Vietnamese switch reachable',()=>expect(page.getByRole('button',{name:'Tiếng Việt',exact:true})).toBeVisible());
    record('Select Tiếng Việt');await page.getByRole('button',{name:'Tiếng Việt',exact:true}).click();
    await assert('Vietnamese hero restored',()=>expect(page.locator('#public-title')).toHaveText(initial));
+   await observeShowcase('vi');
    const href=await page.getByTestId('login-link').getAttribute('href');if(!href?.startsWith('/auth/'))throw Error('Unexpected login href');
    receipt.assertions.push({name:'relative login destination',result:'PASS',href});
    await assert('guest sees no application tabs',()=>expect(page.getByRole('tab')).toHaveCount(0));
   }else{
    record('Synthetic local login');await page.goto(ORIGIN+'/auth/dev-session');
-   record('Open Mimi and conversation list');await page.getByRole('tab',{name:'Mimi',exact:true}).click();await page.getByRole('button',{name:'Hội thoại',exact:true}).click();
-   record('Create STANDARD conversation');await page.getByRole('button',{name:'Cuộc trò chuyện mới',exact:true}).click();
+   record('Open Mimi and ensure conversation list');await page.getByRole('tab',{name:'Mimi',exact:true}).click();
+   const create=await ensureConversationListOpen();
+   const creation=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/mimi/conversations');
+   record('Create STANDARD conversation');await create.click();
+   const createdResponse=await creation;if(!createdResponse.ok())throw Error('Conversation creation failed');
+   const created=await createdResponse.json();if(created.sensitivity!=='standard'||typeof created.title!=='string')throw Error('Expected new STANDARD conversation metadata');
+   const title='H14 synthetic conversation '+created.id;
+   receipt.created_conversation={id:created.id,sensitivity:created.sensitivity,title};
    await assert('new conversation composer visible',()=>expect(page.getByTestId('mimi-input')).toBeVisible());await screenshot(page,receipt,'before.png');
-   record('Rename from actual menu');await page.getByRole('button',{name:/^Tùy chọn /}).first().click();await page.getByRole('menuitem',{name:'Đổi tên',exact:true}).click();
-   await page.getByRole('textbox',{name:'Tên hội thoại',exact:true}).fill('H14 synthetic conversation');await page.getByRole('button',{name:'Lưu tên',exact:true}).click();
-   await assert('renamed title visible',()=>expect(page.getByText('H14 synthetic conversation',{exact:true}).first()).toBeVisible());
-   record('Reload and reopen conversation history');await page.reload();await page.getByRole('tab',{name:'Mimi',exact:true}).click();await page.getByRole('button',{name:'Hội thoại',exact:true}).click();
-   await assert('metadata persisted through reload',()=>expect(page.getByText('H14 synthetic conversation',{exact:true}).first()).toBeVisible());await page.getByText('H14 synthetic conversation',{exact:true}).first().click();
+   record('Rename newly created conversation from its actual menu');await page.getByTestId('mimi-left-rail').getByRole('button',{name:'Tùy chọn '+created.title,exact:true}).click();await page.getByRole('menuitem',{name:'Đổi tên',exact:true}).click();
+   await page.getByRole('textbox',{name:'Tên hội thoại',exact:true}).fill(title);await page.getByRole('button',{name:'Lưu tên',exact:true}).click();
+   await assert('renamed title visible',()=>expect(page.getByTestId('mimi-left-rail').getByText(title,{exact:true})).toBeVisible());
+   record('Reload and ensure conversation history open');await page.reload();await page.getByRole('tab',{name:'Mimi',exact:true}).click();await ensureConversationListOpen();
+   await assert('metadata persisted through reload',()=>expect(page.getByTestId('mimi-left-rail').getByText(title,{exact:true})).toBeVisible());await page.getByTestId('mimi-left-rail').getByText(title,{exact:true}).click();
    await assert('conversation reopens',()=>expect(page.getByTestId('mimi-input')).toBeVisible());
   }
   if(receipt.blocked.length)throw Error('Forbidden request attempted; inspect canonical receipt');

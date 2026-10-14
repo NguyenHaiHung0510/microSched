@@ -4,7 +4,9 @@ description: "Verify microSched public homepage and mapped user features on the 
 ---
 # microSched verification
 
-Status: DRAFT/source-mapped, NOT_RUN until its own instructions are observed. Project docs/helper branch codex/harness-b-20261015, base aa9d7251cdb506e968a6ffddfbae6767b6987327; source files and untracked candidate docs bound by frozen manifest.
+Status: ACTIVE for the observed H14 public-home flow, T1 technical acceptance 2026-10-15: independent attempt4 PASS 6/6 UI assertions,15/15 decoded desktop image observations, zero blocked. Runtime source exact aa9d7251cdb506e968a6ffddfbae6767b6987327. This map proves 1/12 entrypoints,11/12 NOT_RUN; combined maps 2/24 proved, 22/24 NOT_RUN. Harness delivery commit/CI is separate from runtime source; no whole-product/device/provider/production acceptance.
+
+Evidence locator: private H14-N1/R9 final-grouped-retest-handback, microsched-attempt4/receipt.json, original before/after pixels, final-runtime-cleanup and R6 final-technical-signoff. This status update does not rewrite the executed freeze.
 
 ## Launch
 
@@ -14,7 +16,7 @@ H14 isolated runtime only, Main process owner. Read [resource/runner contract](.
 & backend/.venv/Scripts/python.exe .local/h14-night/runner/h14_sandbox.py --source . --binding .local/h14-night/binding.json --lane microsched start
 ```
 
-Main first copies the two frozen helpers to `.local/h14-night/runner` and this lane's reviewed binding to `.local/h14-night/binding.json` in the exact QA checkout. Verify copied helper hashes against the review manifest. This ignored scaffolding is setup, not a product source change. Run the concrete commands from that exact root. The live Mimi snapshot need not receive project source writes. It reuses the inspected `scripts.mimi_sandbox` with isolated H14 identity, labeled volume and new .local/h14-night state; refused ownership never triggers reset/delete. Bootstrap migrations/seeds touch only the newly owned DB. Live provider false; no app paid calls. Wait for exact readyz.commit + db=up, frontend usable, fixture verification and owned PID/container status. No automatic startup in this skill; DRAFT until observed. Health/readiness waits inside the established driver are technical operation bounds, not a task termination deadline.
+Main first copies the two frozen helpers to `.local/h14-night/runner` and this lane's reviewed binding to `.local/h14-night/binding.json` in the exact QA checkout. Verify copied helper hashes against the review manifest. This ignored scaffolding is setup, not a product source change. Run the concrete commands from that exact root. The live Mimi snapshot need not receive project source writes. It reuses the inspected `scripts.mimi_sandbox` with isolated H14 identity, labeled volume and new .local/h14-night state; refused ownership never triggers reset/delete. Bootstrap migrations/seeds touch only the newly owned DB. Live provider false; no app paid calls. Wait for exact readyz.commit + db=up, frontend usable, fixture verification and owned PID/container status. No automatic startup in this skill; the named historical flow is observed, while a changed/new candidate needs its own reviewed binding and lifecycle proof. Health/readiness waits inside the established driver are technical operation bounds, not a task termination deadline.
 
 ## Doctor
 
@@ -26,7 +28,7 @@ Read mapped feature; first approved end-to-end proof is public homepage language
 
 ## Evidence
 
-One canonical receipt per case: frozen source/binding/lane, ordered real user actions, actual viewport, complete assertion outputs, required sanitized screenshots, visible and durable result, request/call counts, cost/timing and unknowns. T3 claim and T1 acceptance separate. Source-map NOT_RUN for other features; no whole-app/device/live-provider claim. Check evidence survives cleanup. No private identities/profile screenshots or .env/runtime secrets.
+One canonical receipt per case: frozen source/binding/lane, ordered real user actions, actual viewport, complete assertion outputs, required sanitized screenshots, visible and durable result, request/call counts, cost/timing and unknowns. T3 claim and T1 acceptance remain separate; the named final R9 flow is T1-accepted, unrun mapped flows are not. Source-map NOT_RUN for other features; no whole-app/device/live-provider claim. Main cleanup is observed for this run and evidence survived; recheck survival in each new run. No private identities/profile screenshots or .env/runtime secrets.
 
 ## Cleanup
 
@@ -42,4 +44,4 @@ node .local/h14-night/runner/drive_feature.mjs --source . --binding .local/h14-n
 
 Do not run before the runtime-plan freeze/independent runner review and Main startup. Each call reserves a new, nonexistent private receipt directory; retry uses a new directory and references the preceding attempt. Preflight failure writes a canonical BLOCKED receipt before exit. The script requires an already-ready exact owned runtime and allows only HTTP 127.0.0.1:5173 and the documented per-lane methods/routes; all other ports/protocols/routes and WebSocket connections are denied. Existing browser CLI can drive other mapped features manually by actual role/testid selectors under the same ownership/freeze. No NPX network required; Main has observed cached CLI0.1.22 and Chromium151 capability. Capability handshake is not project proof.
 
-Read [feature map](features/README.md); generation/maintenance never grants product repairs or paid live-provider calls. Preserve independent QA and project approval/data boundaries.
+For a new authorized candidate follow owner-pstack maintenance: select current source/head/files, new binding/task namespace/allowlisted wrapper and affected recipes; never weaken the dated H14 guards. Read [feature map](features/README.md); generation/maintenance never grants product repairs or paid live-provider calls. Preserve independent QA and project approval/data boundaries.

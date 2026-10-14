@@ -59,7 +59,7 @@ def configure(source,lane,binding):
     original_env=d._runtime_env
     def synthetic_env(state):
         e=original_env(state)
-        e.update({'MIMI_REAL_CHAT_ENABLED':'true','MIMI_LIVE_PROVIDER_ENABLED':'false','MIMI_CONTEXT_V1_ENABLED':'false','MIMI_WORKFLOW_PILOT_ENABLED':'false','MIMI_COLLECTION_ENABLED':'false','MIMI_NOTIFICATIONS_ENABLED':'false'})
+        e.update({'MIMI_PUBLIC_ORIGIN':'http://127.0.0.1:5173','MIMI_REAL_CHAT_ENABLED':'true','MIMI_LIVE_PROVIDER_ENABLED':'false','MIMI_CONTEXT_V1_ENABLED':'false','MIMI_WORKFLOW_PILOT_ENABLED':'false','MIMI_COLLECTION_ENABLED':'false','MIMI_NOTIFICATIONS_ENABLED':'false'})
         return e
     d._runtime_env=synthetic_env
     original_ensure=d._ensure_postgres

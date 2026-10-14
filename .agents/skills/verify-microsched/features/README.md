@@ -1,10 +1,10 @@
 # Feature map — verify-microsched
 
-Broad observed top-level source map for exact candidate `aa9d7251cdb506e968a6ffddfbae6767b6987327` at `harness-b-verification/microsched`. This is verification navigation, not product authority or whole-product acceptance. R3 initially source-mapped every row as **NOT_RUN**. The later public-home attempt failed at Vite module admission; its affected replay is **NOT_RUN**. Other rows remain source-mapped **NOT_RUN**. The initial runtime batch covers only public-home and conversation-metadata respectively. Read each feature for real prerequisites/oracle/gotchas before extending QA.
+Broad source map for exact candidate `aa9d7251cdb506e968a6ffddfbae6767b6987327` at `harness-b-verification/microsched`. T1 technical acceptance 2026-10-15 covers only public-home attempt4: 6/6 UI +15/15 decoded images, zero blocked and completed owned cleanup. This map has **1/12 OBSERVED_ACCEPTED**, **11/12 NOT_RUN**; combined maps **2/24 (8.3%) OBSERVED_ACCEPTED**, **22/24 (91.7%) NOT_RUN**. Original failures remain in private H14-N1/R9 evidence. No latest-product/whole-app/device/provider-quality/CI/production acceptance. Evidence locator: final-grouped-retest-handback, the named case receipt/pixels, final-runtime-cleanup and R6 final-technical-signoff.
 
 | Entrypoint / feature | Exact source navigation | Status |
 |---|---|---|
-| [Public homepage language and login link](public-home.md) | `frontend/src/HomePage.tsx:144` | FAIL (harness module admission); replay NOT_RUN |
+| [Public homepage language and login link](public-home.md) | `frontend/src/HomePage.tsx:144` | OBSERVED_ACCEPTED — attempt4, 6/6 UI +15/15 image observations |
 | [Task tab and task lifecycle](task-calendar.md) | `frontend/src/App.tsx:168` | NOT_RUN |
 | [Calendar navigation and event sources](calendar.md) | `frontend/src/App.tsx:108` | NOT_RUN |
 | [Notes and reflections](notes.md) | `frontend/src/App.tsx:178` | NOT_RUN |
