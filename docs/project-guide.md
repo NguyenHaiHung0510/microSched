@@ -41,3 +41,7 @@ The parent strategy workspace is `../../hoc_he_2026` relative to repository root
 Status belongs in task index/receipts, domain decisions in briefs, history in session logs. Do not copy everything into AGENTS/CLAUDE. Memory locates sources; verify drifting facts from current code/config/runtime. Locked meaning changes need Owner approval; dated observations should not coexist as contradictory current truths.
 
 Public contributors do not need private harness-core: mandatory project rules are available in this repository.
+
+## B verification and explanation navigation
+
+For ordinary inquiry/design/diagnosis/how/why/teach, use the Owner B workflow when available; project briefs and batch grants remain authoritative. [Project B verification](harness-b-verification.md) links actual source-mapped commands/selectors and isolated resource/runner contract. Source mapping is NOT_RUN until executed; no app paid-model or production proof is inferred.
