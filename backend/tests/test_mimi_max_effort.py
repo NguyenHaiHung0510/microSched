@@ -91,7 +91,9 @@ def test_saved_effort_roundtrips_and_next_run_cannot_mutate_prior_snapshot(effor
             assert wire["provider"]["zdr"] is True
             assert wire["provider"]["data_collection"] == "deny"
             assert wire["provider"]["require_parameters"] is True
-            assert wire["provider"]["max_price"] == {"prompt": 0.2, "completion": 0.6}
+            # The approved manual bootstrap caps supersede the old env guard;
+            # keep exact effort/privacy and saved-snapshot assertions above.
+            assert wire["provider"]["max_price"] == {"prompt": 0.36, "completion": 1.44}
             if helper:
                 assert "tools" not in wire and "tool_choice" not in wire
         with pytest.raises(HTTPException, match="mimi_route_config_stale"):
@@ -118,7 +120,7 @@ def test_max_does_not_admit_other_families(profile):
         eligible_pool({}, model=PROFILES[profile]["model"], effort="max")
 
 
-def test_defaults_limits_and_profile_availability_are_unchanged():
+def test_approved_common_envelope_preserves_effort_and_profile_availability():
     base = settings()
     assert default_configuration(base) == dict(
         profile_id="deepseek", effort="low", input_tokens=272_000, routing_mode="exact"
@@ -128,7 +130,7 @@ def test_defaults_limits_and_profile_availability_are_unchanged():
     selected = bind_configuration(
         base, dict(profile_id="deepseek", effort="max", input_tokens=100_000)
     )
-    assert selected.mimi_route_context_tokens == 1_048_576
+    assert selected.mimi_route_context_tokens == PROFILES["deepseek"]["context_limit"]
     assert selected.mimi_compaction_trigger_tokens == 272_000
     assert selected.mimi_route_max_output_tokens == 8192
     assert (selected.mimi_run_max_turns, selected.mimi_run_max_tool_calls) == (32, 64)
@@ -157,8 +159,11 @@ def test_actual_compaction_helper_dispatch_and_journal_keep_selected_effort(effo
         id=uuid7(), route_config_version=2, context_frontier_sequence=0, generation=1
     )
     db = SimpleNamespace(
-        execute=AsyncMock(return_value=SimpleNamespace(scalar_one=lambda: 0)),
+        execute=AsyncMock(
+            return_value=SimpleNamespace(scalar_one=lambda: 0, scalar_one_or_none=lambda: None)
+        ),
         add=Mock(),
+        flush=AsyncMock(),
         commit=AsyncMock(),
     )
     monkeypatch.setattr(local_budget, "reserve", lambda *args, **kwargs: None)
@@ -179,7 +184,87 @@ def test_actual_compaction_helper_dispatch_and_journal_keep_selected_effort(effo
     assert wire["reasoning"] == {"effort": effort, "exclude": True}
     assert wire["model"] == ADMITTED_MODEL and wire["max_tokens"] == 8192
     assert "tools" not in wire and "tool_choice" not in wire
-    call = db.add.call_args.args[0]
+    from app.agent.models import MimiProviderCall
+
+    # New durable policy admission seeds AppSetting as well; inspect the
+    # actual provider journal rather than whichever object was added last.
+    call = next(
+        args.args[0] for args in db.add.call_args_list if isinstance(args.args[0], MimiProviderCall)
+    )
     assert call.route["reasoning_effort"] == effort and call.route["purpose"] == "compaction"
-    assert call.route["context_limit"] == 1_048_576 and call.route["output_reserve"] == 8192
+    assert (
+        call.route["context_limit"] == PROFILES["deepseek"]["context_limit"]
+        and call.route["output_reserve"] == 8192
+    )
+    assert call.route["price_policy_revision"] == 0
+    assert call.route["price_caps"] == {"prompt": "0.36", "completion": "1.44"}
+    assert any("pg_advisory_xact_lock" in str(item.args[0]) for item in db.execute.call_args_list)
     assert call.state == "dispatched" and db.commit.await_count == 2
+
+
+def test_compaction_reuses_summary_family_scope_for_adaptive_natural_main(monkeypatch):
+    from time import time
+
+    from app.agent import route_pool
+    from app.agent.route_pool import qualification_scope
+
+    selected = bind_configuration(
+        settings(mimi_text_response_format="natural"),
+        dict(profile_id="deepseek", effort="high", input_tokens=272000, routing_mode="adaptive"),
+    )
+    # The actual helper caller already holds an admitted main-route snapshot;
+    # retain that proof at preflight instead of bypassing admission in this test.
+    selected = selected.model_copy(
+        update={
+            "mimi_route_allowed_providers": "deepinfra/fp8",
+            "mimi_route_catalog_checked_at": time(),
+            "mimi_route_qualification_expires_at": time() + 3600,
+            "mimi_route_qualification_sha256": "a" * 64,
+        }
+    )
+    expected = qualification_scope(selected)
+    assert (
+        qualification_scope(selected.model_copy(update={"mimi_text_response_format": "structured"}))
+        != expected
+    )
+    seen = []
+
+    async def bind(value):
+        assert qualification_scope(value) == expected
+        seen.append(value)
+        return value.model_copy(
+            update={
+                "mimi_route_allowed_providers": "deepinfra/fp8",
+                "mimi_route_catalog_checked_at": time(),
+                "mimi_route_qualification_expires_at": time() + 3600,
+                "mimi_route_qualification_sha256": "a" * 64,
+            }
+        ), None
+
+    monkeypatch.setattr(route_pool, "bind_pool", bind)
+    monkeypatch.setattr(local_budget, "reserve", lambda *args, **kwargs: None)
+
+    class CapturedSummary(RuntimeError):
+        pass
+
+    async def invoke(messages, **kwargs):
+        wire = build_request(messages, kwargs["settings"], summary_mode=True)
+        assert wire["response_format"]["type"] == "json_schema"
+        assert "tools" not in wire
+        raise CapturedSummary()
+
+    monkeypatch.setattr(service, "openrouter_complete", invoke)
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(scalar_one=lambda: 0, scalar_one_or_none=lambda: None)
+        ),
+        add=Mock(),
+        flush=AsyncMock(),
+        commit=AsyncMock(),
+    )
+    conv = SimpleNamespace(
+        id=uuid7(), route_config_version=2, context_frontier_sequence=0, generation=1
+    )
+    with pytest.raises(CapturedSummary):
+        asyncio.run(service._semantic_checkpoint(db, conv, uuid7(), [], None, None, None, selected))
+    assert len(seen) == 1

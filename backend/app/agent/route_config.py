@@ -48,8 +48,8 @@ PROFILES = {
         "max_output_tokens": 131_072,
         "output_reserve": 8192,
         # Conservative undiscounted ceiling, not dependence on 30% promotion.
-        "input_price": 0.20,
-        "output_price": 0.60,
+        "input_price": 0.36,
+        "output_price": 1.44,
     },
     "glm": {
         "label": "GLM 5.3 Flash",
@@ -167,6 +167,17 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
         if not availability[config.profile_id]["available"]:
             raise HTTPException(status_code=409, detail="mimi_route_not_alpha_qualified")
     profile = PROFILES[config.profile_id]
+    import json
+
+    from app.agent.config_policy import ModelPrice
+
+    saved_prices = json.loads(settings.mimi_model_price_caps_json)
+    price = ModelPrice.model_validate(
+        saved_prices.get(
+            profile["model"],
+            {"prompt": profile["input_price"], "completion": profile["output_price"]},
+        )
+    )
     return settings.model_copy(
         update={
             "mimi_route_mode": config.routing_mode if settings.mimi_collection_enabled else "exact",
@@ -181,8 +192,10 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
             "mimi_route_context_tokens": profile["context_limit"],
             "mimi_compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
             "mimi_route_max_output_tokens": profile["output_reserve"],
-            "mimi_route_max_input_price": profile["input_price"],
-            "mimi_route_max_output_price": profile["output_price"],
+            "mimi_route_billing_prompt_ceiling": None,
+            "mimi_route_capacity_source": None,
+            "mimi_route_max_input_price": price.prompt,
+            "mimi_route_max_output_price": price.completion,
             # Adaptive endpoint receipts must prove named function choice.
             # Revisions still require a typed replacement before server activation.
             "mimi_route_forced_tool_choice": "function",

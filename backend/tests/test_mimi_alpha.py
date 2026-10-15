@@ -63,12 +63,18 @@ def test_payload_guard_is_independent_of_token_threshold():
         build_request([{"role": "user", "content": "x" * 70_000}], settings)
     roomy = alpha_settings()
     for old_limit in (32_000, 100_000, 131_072):
-        wire = build_request(
-            [{"role": "user", "content": "x" * 180_000}],
-            roomy.model_copy(update={"mimi_route_context_tokens": old_limit}),
-            agent_contract=True,
-        )
-        assert len(wire["messages"][0]["content"]) == 180_000
+        with pytest.raises(RouteContractError, match="route_capacity"):
+            build_request(
+                [{"role": "user", "content": "x" * 180_000}],
+                roomy.model_copy(update={"mimi_route_context_tokens": old_limit}),
+                agent_contract=True,
+            )
+    wire = build_request(
+        [{"role": "user", "content": "x" * 180_000}],
+        roomy.model_copy(update={"mimi_route_context_tokens": 408192}),
+        agent_contract=True,
+    )
+    assert len(wire["messages"][0]["content"]) == 180_000
 
 
 def test_production_alpha_keeps_origin_egress_and_resource_guards():

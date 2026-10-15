@@ -2,10 +2,11 @@
 
 import ipaddress
 import os
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -127,15 +128,22 @@ class Settings(BaseSettings):
     ] = "low"
     # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
     mimi_route_context_tokens: int = 1_048_576
+    # Financial upper bound from the admitted native capacity snapshot, not bytes.
+    mimi_route_billing_prompt_ceiling: int | None = Field(default=None, ge=1, le=16_777_216)
+    mimi_route_capacity_source: str | None = None
     mimi_compaction_trigger_tokens: Literal[100_000, 272_000] = 272_000
     mimi_max_payload_bytes: int = 2_097_152
+    mimi_input_codepoints: int = Field(default=50_000, ge=1_000, le=100_000)
+    mimi_operating_policy_revision: int = 0
+    mimi_model_price_caps_json: str = "{}"
+    mimi_route_identity_aliases_json: str = "{}"
     # At most four runs: guard + worker + observer <=12 of the existing15
     # ORM pool connections; auth returns its checkout before SSE. LangGraph adds
     # one direct checkpoint connection/run. Default two leaves ample Task room.
     mimi_max_active_runs: int = 2
     mimi_route_max_output_tokens: int = 4_096
-    mimi_route_max_input_price: float | None = None
-    mimi_route_max_output_price: float | None = None
+    mimi_route_max_input_price: float | Decimal | None = None
+    mimi_route_max_output_price: float | Decimal | None = None
     mimi_route_require_zdr: bool = True
 
     # auth-brief §2 allows 60-90 days; 90 chosen because the window is rolling, so it
@@ -309,8 +317,10 @@ class Settings(BaseSettings):
             raise ValueError("MIMI_ROUTE_MAX_OUTPUT_TOKENS must be between 256 and 32768")
         for field_name in ("mimi_route_max_input_price", "mimi_route_max_output_price"):
             price = getattr(self, field_name)
-            if price is not None and price < 0:
-                raise ValueError(f"{field_name.upper()} cannot be negative")
+            if price is not None:
+                from app.agent.config_policy import finite_price
+
+                finite_price(price)
         if not 1 <= self.mimi_preview_ttl_minutes <= 180:
             raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 180")
         if not 1 <= self.mimi_run_max_turns <= 128:

@@ -120,6 +120,38 @@ export type MimiProviderCall = {
   response_id?: string | null
   cost_state?: 'reported' | 'unknown'
   created_at?: string
+  context_composition?: MimiContextComposition | null
+  usage_provenance?: { source: string; precision: string; component_tokens: string }
+}
+
+export type MimiContextComposition = {
+  state: 'measured_bytes' | 'estimated' | 'unknown'
+  method?: string
+  unit?: 'bytes'
+  provider_framing_tokens?: number | null
+  for?: string
+  total?: number
+  categories?: { id: string; value: number; state: 'measured_bytes' | 'estimated' | 'unknown' }[]
+  input_envelope?: number
+  output_reserve?: number
+  compact_trigger?: number
+}
+
+export type MimiOperatingPolicy = {
+  revision: number
+  input_codepoints: number
+  prices: Record<string, { prompt: string; completion: string }>
+}
+export type MimiOperatingPolicyView = { policy: MimiOperatingPolicy; applies_to: 'next_unsent_wire' }
+export function fetchMimiOperatingPolicy(): Promise<MimiOperatingPolicyView> {
+  return apiRequest('/api/mimi/operating-policy')
+}
+export function saveMimiOperatingPolicy(policy: MimiOperatingPolicy): Promise<MimiOperatingPolicyView> {
+  return apiRequest('/api/mimi/operating-policy', { method: 'PUT', headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({ expected_revision: policy.revision, input_codepoints: policy.input_codepoints, prices: policy.prices }) })
+}
+export function warmMimiMetadata(): Promise<{ status: string; paid_calls: number }> {
+  return apiRequest('/api/mimi/metadata-warmup', { method: 'POST', headers: MIMI_WRITE_HEADERS })
 }
 
 export type MimiContextObservation = {

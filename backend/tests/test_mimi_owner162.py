@@ -95,7 +95,7 @@ def test_native_policy_fences_stale_certificate_and_catalog():
     assert "order" not in wire["provider"] and "sort" not in wire["provider"]
     for bad in [
         base.model_copy(update={"mimi_route_qualification_expires_at": 0}),
-        base.model_copy(update={"mimi_route_catalog_checked_at": time.time() - 301}),
+        base.model_copy(update={"mimi_route_catalog_checked_at": time.time() - 7201}),
     ]:
         with pytest.raises(RouteContractError, match="qualification_stale_or_missing"):
             build_request([], bad, agent_contract=True)

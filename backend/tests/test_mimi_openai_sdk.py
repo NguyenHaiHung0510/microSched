@@ -33,6 +33,9 @@ def _settings(**overrides: Any) -> Settings:
         "mimi_standard_api_key": "synthetic-no-egress",
         "mimi_route_model": "vendor/model",
         "mimi_route_provider": "provider-a",
+        "mimi_route_identity_aliases_json": json.dumps(
+            {"providers": {"provider-a": ["provider-a-actual"]}}
+        ),
         "mimi_route_quantization": "fp8",
         "mimi_route_forced_tool_choice": "required",
         "mimi_route_reasoning_effort": "high",
@@ -319,6 +322,7 @@ async def test_sdk_summary_dispatch_omits_tools_and_tool_choice(effort) -> None:
                 "object": "chat.completion",
                 "created": 1,
                 "model": "vendor/model",
+                "provider": "provider-a",
                 "choices": [
                     {
                         "index": 0,

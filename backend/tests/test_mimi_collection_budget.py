@@ -39,6 +39,8 @@ def test_meter_refresh_reservation_account_and_unknown_spend_stop(tmp_path, monk
         app_env="local",
         mimi_route_max_input_price=0.2,
         mimi_route_max_output_price=0.6,
+        mimi_route_billing_prompt_ceiling=1_048_576,
+        mimi_route_capacity_source="synthetic-native-capacity-receipt",
     )
     rid = b.reserve(settings, [], agent_contract=True)
     assert rid and len(meters) == 1
@@ -75,6 +77,8 @@ def test_actual_remaining_or_unknown_meter_blocks_before_call(tmp_path, monkeypa
         app_env="local",
         mimi_route_max_input_price=0.2,
         mimi_route_max_output_price=0.6,
+        mimi_route_billing_prompt_ceiling=1_048_576,
+        mimi_route_capacity_source="synthetic-native-capacity-receipt",
     )
     monkeypatch.setattr(b, "key_meter", lambda _: (Decimal("1.49"), Decimal(".00001")))
     with pytest.raises(RouteContractError, match="exhausted"):
@@ -115,6 +119,8 @@ def test_finite_dispatch_cap_includes_accounted_main_and_helper_calls(tmp_path, 
         app_env="local",
         mimi_route_max_input_price=0.2,
         mimi_route_max_output_price=0.6,
+        mimi_route_billing_prompt_ceiling=1_048_576,
+        mimi_route_capacity_source="synthetic-native-capacity-receipt",
     )
     with pytest.raises(RouteContractError, match="dispatch_cap_exhausted"):
         b.reserve(settings, [], agent_contract=True)

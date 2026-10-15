@@ -37,6 +37,7 @@ def context_revision(settings: Settings, config_version: int, checkpoint_id: Any
         "text_response_format": settings.mimi_text_response_format,
         "quantizations": settings.mimi_allowed_quantization_list,
         "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
+        # Price/future-input policy revision binds each unsent wire, not past usage.
     }
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -70,6 +71,15 @@ def prompt_observation(
         result["reason"] = "reused_receipt"
     elif route.get("context_revision") != revision:
         result["reason"] = "stale_context_revision"
+    elif call.state == "failed" and route.get("input_overflow_refusal") is True:
+        exhausted = consumed or route.get("overflow_recovery_attempt", 0) >= 1
+        result.update(
+            should_compact=not exhausted,
+            compaction_blocked=exhausted,
+            reason="input_overflow_recovery_exhausted"
+            if exhausted
+            else "typed_input_overflow_refusal",
+        )
     elif (
         call.state != "succeeded"
         or not route.get("actual_provider")

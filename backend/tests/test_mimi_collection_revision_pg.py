@@ -304,20 +304,21 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
                         assert len(changes) == 1 and old.state == "pending"
                         kept = next(c for c in view["change_sets"] if c["id"] == old.id)
                         assert kept["confirmation_preflight"] == {
-                            "status": "blocked",
-                            "reason": "change_set_frontier_stale",
+                            "status": "eligible",
+                            "reason": None,
                         }
                         if mode == "single_create":
                             assert view["runs"][-1]["error_code"] == (
                                 "provider_contract_provider_revision_must_return_collection_tool"
                             )
                         assert view["runs"][-1]["state"] != "waiting_confirmation"
-                        # Retained bytes do not rebase the old generation/nonce authority.
-                        with pytest.raises(HTTPException):
-                            await service.confirm_change_set(
-                                db, actor, old_id, old_decision, f"retained-old-frontier-{cid}"
-                            )
-                        await db.rollback()
+                        # Clarification or a rejected revision leaves the exact
+                        # original frozen preview confirmable, with its old nonce.
+                        result = await service.confirm_change_set(
+                            db, actor, old_id, old_decision, f"retained-old-preview-{cid}"
+                        )
+                        assert result["result"]["task_ids"]
+                        await db.commit()
             assert len(wires) == (
                 6 if mode == "full_subset_full" else 3 if mode == "selection_mismatch" else 1
             )

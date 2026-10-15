@@ -143,3 +143,20 @@
 .mimi-answer-actions { justify-content: flex-start; margin-top: 0; gap: 8px; }
 .mimi-answer-actions button { width: 32px; min-height: 32px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 @media (pointer: coarse) { .mimi-answer-actions button { width: 44px; min-height: 44px; } }
+
+/* Owner176 selected context chip; portal stays outside the clipped chat. */
+.mimi-context-meter { border-radius: 999px; background: var(--mimi-glass); color: var(--foreground); padding: 6px 10px; }
+.mimi-context-ring { width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%; background: conic-gradient(var(--rose-500) var(--context-percent), var(--rose-100) 0); position: relative; }
+.mimi-context-ring::after { content: ''; position: absolute; inset: 4px; background: var(--popover); border-radius: 50%; }
+.mimi-context-progress { display: block; height: 4px; border-radius: 999px; overflow: hidden; background: var(--rose-100); margin-top: 4px; }
+.mimi-context-progress > span { display: block; height: 100%; background: var(--rose-500); }
+.mimi-context-composition-title { font-family: Georgia, serif; font-size: 18px; font-weight: 600; color: var(--foreground); }
+.mimi-context-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-right: 8px; }
+.mimi-context-bucket-0 { background: var(--mimi-context-pink); }
+.mimi-context-bucket-1 { background: var(--mimi-context-soft-pink); }
+.mimi-context-bucket-2 { background: var(--mimi-context-peach); }
+.mimi-context-bucket-3 { background: var(--mimi-context-yellow); }
+.mimi-context-bucket-4 { background: var(--mimi-context-mint); }
+.mimi-context-bucket-5 { background: var(--mimi-context-blue); }
+.mimi-context-bucket-6 { background: var(--mimi-context-purple); }
+.mimi-context-bucket-7 { background: var(--mimi-context-gray); }

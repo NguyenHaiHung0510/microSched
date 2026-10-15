@@ -26,7 +26,8 @@ pytestmark = pytest.mark.pg
 
 
 @pytest.mark.parametrize(
-    "boundary", ["nonce", "digest", "expiry", "frontier", "owner", "lease", "privacy", "disabled"]
+    "boundary",
+    ["nonce", "digest", "expiry", "source_version", "owner", "lease", "privacy", "disabled"],
 )
 def test_confirmation_binding_adversaries_write_zero(pg_dsn, monkeypatch, boundary):
     async def scenario():
@@ -49,8 +50,10 @@ def test_confirmation_binding_adversaries_write_zero(pg_dsn, monkeypatch, bounda
                         (await db.get(MimiChangeSet, ch)).expires_at = datetime.now(
                             UTC
                         ) - timedelta(seconds=1)
-                    elif boundary == "frontier":
-                        (await db.get(MimiConversation, cid)).generation += 1
+                    elif boundary == "source_version":
+                        target = await db.get(Task, ids[0])
+                        target.title = target.title + " changed"
+                        target.collection_version += 1
                     elif boundary == "lease":
                         (await db.get(MimiRun, rid)).execution_lease = {"capabilities": []}
                     elif boundary == "privacy":

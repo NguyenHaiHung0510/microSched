@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.config_policy import PolicyChange, read_policy, save_policy
 from app.agent.notifications import (
     DevicePreferenceChange,
     DevicePreferenceProof,
@@ -62,6 +63,7 @@ from app.web.deps import get_session, require_session
 from app.web.mimi_csrf import require_mimi_csrf
 
 router = APIRouter(prefix="/mimi", tags=["mimi"])
+_metadata_warm_tasks: dict[str, asyncio.Task] = {}
 logger = logging.getLogger(__name__)
 Database = Annotated[AsyncSession, Depends(get_session)]
 CurrentSession = Annotated[AuthSession, Depends(require_session)]
@@ -173,6 +175,63 @@ async def start_conversation(
     payload: ConversationCreate, db: Database, session: CurrentSession
 ) -> dict:
     return await create_conversation(db, session, payload)
+
+
+@router.get("/operating-policy", dependencies=[Depends(require_mimi_available)])
+async def read_operating_policy(db: Database, session: CurrentSession) -> dict:
+    del session
+    policy = await read_policy(db, get_settings())
+    return {
+        "policy": policy.model_dump(mode="json"),
+        "applies_to": "next_unsent_wire",
+        "input_unit": "unicode_codepoints",
+        "price_unit": "USD_per_million_tokens",
+    }
+
+
+@router.put(
+    "/operating-policy", dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)]
+)
+async def update_operating_policy(
+    payload: PolicyChange, db: Database, session: CurrentSession
+) -> dict:
+    del session
+    policy = await save_policy(db, get_settings(), payload)
+    return {"policy": policy.model_dump(mode="json"), "applies_to": "next_unsent_wire"}
+
+
+@router.post(
+    "/metadata-warmup", dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)]
+)
+async def warm_chat_metadata(db: Database, session: CurrentSession) -> dict:
+    """Explicit chat-open hook; background metadata only, no startup/idle work."""
+    from app.agent.config_policy import bind_policy
+    from app.agent.route_pool import NoEligibleEndpoint, catalog
+
+    del session
+    settings = get_settings()
+    # Raw model metadata is reusable across efforts and routing modes. Warming
+    # an exact chat also prevents a later adaptive selection from starting cold.
+    if not settings.mimi_live_provider_enabled:
+        return {"status": "not_applicable", "paid_calls": 0}
+    selected = bind_policy(settings, await read_policy(db, settings))
+
+    async def warm():
+        try:
+            await catalog.refresh(selected)
+        except NoEligibleEndpoint:
+            return
+
+    key = selected.mimi_route_model
+    prior = _metadata_warm_tasks.get(key)
+    if prior is not None and not prior.done():
+        return {"status": "already_scheduled", "paid_calls": 0}
+    if len(_metadata_warm_tasks) >= 4:
+        return {"status": "busy", "paid_calls": 0}
+    task = asyncio.create_task(warm())
+    _metadata_warm_tasks[key] = task
+    task.add_done_callback(lambda _: _metadata_warm_tasks.pop(key, None))
+    return {"status": "scheduled", "paid_calls": 0}
 
 
 @router.get(
@@ -765,6 +824,9 @@ async def refresh_mimi_provider_pool(conversation_id: UUID, db: Database, sessio
     selected = bind_configuration(
         settings, conversation.route_config or default_configuration(settings)
     )
+    from app.agent.config_policy import bind_policy, read_policy
+
+    selected = bind_policy(selected, await read_policy(db, selected))
     try:
         _, pool = await bind_pool(selected, manual=True)
     except NoEligibleEndpoint as error:

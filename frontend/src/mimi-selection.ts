@@ -65,7 +65,7 @@ export function readMimiComposerDraft(id: string): string {
 }
 
 export function setMimiComposerDraft(id: string, text: string): void {
-  if (text) drafts.set(id, text.slice(0, 12_000))
+  if (text) drafts.set(id, text)
   else drafts.delete(id)
   window.dispatchEvent(new Event(draftChanged))
 }

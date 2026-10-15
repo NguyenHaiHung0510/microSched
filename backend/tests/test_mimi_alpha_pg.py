@@ -30,6 +30,7 @@ pytestmark = pytest.mark.pg
 def synthetic_crypto(monkeypatch):
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "phase1-disposable-only")
+    monkeypatch.setenv("MIMI_STANDARD_API_KEY", "synthetic-never-sent")
     monkeypatch.setenv("ENCRYPTION_MASTER_KEY", base64.urlsafe_b64encode(b"s" * 32).decode())
     get_settings.cache_clear()
     crypto._cipher.cache_clear()

@@ -12,7 +12,7 @@ from app.agent import service
     "boundary,reason",
     [
         ("fresh", None),
-        ("frontier", "change_set_frontier_stale"),
+        ("frontier", None),
         ("privacy", "task_collection_conversation_not_standard"),
         ("lease", "change_set_collection_lease_not_authorized"),
         ("revoked", "change_set_collection_lease_not_authorized"),

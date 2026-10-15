@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import re
 import time
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from openai import (
@@ -26,11 +23,14 @@ from app.agent.openrouter import (
     ProviderEventSink,
     RouteContractError,
     _raise_for_status,
+    _rejected_terminal_metadata,
     _route_identity,
     build_request,
+    merge_stream_identity,
     parse_agent_completion,
     parse_compaction_completion,
     parse_completion,
+    validate_response_identity,
 )
 from app.core.settings import Settings, get_settings
 
@@ -78,6 +78,25 @@ def _completion_payload(result: Any) -> dict[str, Any]:
 
 def _raise_for_sdk_error(error: Exception, *, response_id: str | None = None) -> None:
     if isinstance(error, APIStatusError):
+        if not response_id:
+            from app.agent.openrouter import _input_overflow_error
+
+            body = getattr(error, "body", None)
+            # SDK versions can expose either the outer error envelope or its
+            # inner machine-typed error object. No message substring heuristic.
+            if (
+                isinstance(body, dict)
+                and "error" not in body
+                and body.get("code")
+                in {
+                    "context_length_exceeded",
+                    "max_context_length_exceeded",
+                }
+            ):
+                body = {"error": body}
+            overflow = _input_overflow_error(error.status_code, body)
+            if overflow is not None:
+                raise overflow from error
         try:
             _raise_for_status(error.status_code)
         except ProviderDispatchError as classified:
@@ -100,83 +119,6 @@ def _raise_for_sdk_error(error: Exception, *, response_id: str | None = None) ->
         # The SDK exception does not prove whether OpenRouter began generation.
         raise ProviderDispatchError("unknown", None, response_id=response_id) from error
     raise error
-
-
-def _rejected_terminal_metadata(response_id, provider, model, usage, finish_reason):
-    """Allowlisted terminal facts only; provider prose/partial output is never a receipt."""
-
-    def identity(value):
-        return (
-            value
-            if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", value)
-            else None
-        )
-
-    def amount(value):
-        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-            return None
-        try:
-            number = Decimal(str(value))
-        except InvalidOperation:
-            return None
-        return value if number.is_finite() and number >= 0 else None
-
-    safe_usage = {}
-    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-        value = usage.get(key)
-        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-            safe_usage[key] = value
-    cost = amount(usage.get("cost"))
-    if cost is not None:
-        safe_usage["cost"] = cost
-    for key, fields in {
-        "prompt_tokens_details": (
-            "cached_tokens",
-            "cache_write_tokens",
-            "audio_tokens",
-            "video_tokens",
-        ),
-        "completion_tokens_details": ("reasoning_tokens", "audio_tokens", "image_tokens"),
-    }.items():
-        details = usage.get(key)
-        if isinstance(details, dict):
-            safe_usage[key] = {
-                name: value
-                for name in fields
-                if isinstance(value := details.get(name), int)
-                and not isinstance(value, bool)
-                and value >= 0
-            }
-    for key, fields in {
-        "cost_details": (
-            "upstream_inference_cost",
-            "upstream_inference_prompt_cost",
-            "upstream_inference_completions_cost",
-        ),
-        "mimi_timing": ("duration_ms", "connect_ms", "ttft_ms", "output_tokens_per_second"),
-    }.items():
-        details = usage.get(key)
-        if isinstance(details, dict):
-            safe_usage[key] = {
-                name: value for name in fields if (value := amount(details.get(name))) is not None
-            }
-    reason = (
-        finish_reason
-        if finish_reason
-        in {None, "stop", "tool_calls", "length", "content_filter", "function_call", "error"}
-        else "other"
-    )
-    receipt = {
-        "id": identity(response_id),
-        "provider": identity(provider),
-        "model": identity(model),
-        "usage": safe_usage,
-        "finish_reason": reason,
-        "cost_available": cost is not None,
-    }
-    if reason == "other":
-        receipt["finish_reason_sha256"] = hashlib.sha256(finish_reason.encode()).hexdigest()
-    return receipt
 
 
 async def complete(
@@ -229,6 +171,7 @@ async def complete(
                 raise ProviderDispatchError("unknown", None, response_id=receipt["id"])
             if finish not in {"stop", "tool_calls"}:
                 raise RouteContractError("provider_json_finish_reason_not_usable")
+            validate_response_identity(payload, route)
             if summary_mode:
                 return parse_compaction_completion(payload)
             return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
@@ -312,10 +255,8 @@ async def complete_stream(
                             await on_event(
                                 "provider.response_identity", {"response_id": response_id}
                             )
-                if isinstance(chunk.get("provider"), str):
-                    provider = chunk["provider"]
-                if isinstance(chunk.get("model"), str):
-                    model = chunk["model"]
+                provider = merge_stream_identity(provider, chunk.get("provider"), field="provider")
+                model = merge_stream_identity(model, chunk.get("model"), field="model")
                 if isinstance(chunk.get("usage"), dict):
                     usage = chunk["usage"]
                 choices = chunk.get("choices")
@@ -355,6 +296,15 @@ async def complete_stream(
                                 target["name"] += function["name"]
                             if isinstance(function.get("arguments"), str):
                                 target["arguments"] += function["arguments"]
+    except RouteContractError as error:
+        error.terminal_receipt = _rejected_terminal_metadata(
+            response_id, provider, model, usage, finish_reason
+        )
+        error.response_id = error.terminal_receipt["id"]
+        error.usage = error.terminal_receipt["usage"]
+        error.provider = error.terminal_receipt["provider"]
+        error.model = error.terminal_receipt["model"]
+        raise
     except asyncio.CancelledError as error:
         raise ProviderDispatchError("unknown", None, response_id=response_id or None) from error
     except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
@@ -417,6 +367,7 @@ async def complete_stream(
         ],
     }
     try:
+        validate_response_identity(terminal_payload, route)
         completion = parser(terminal_payload)
     except RouteContractError as error:
         # No request/headers/reasoning: only the buffered public terminal wire.
