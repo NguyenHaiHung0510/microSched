@@ -16,7 +16,8 @@ microSched is a single-user personal task/note/calendar/tracker web app and lear
 | Frontend/PWA/offline | [frontend](frontend-brief.md) |
 | UI/interaction/components/QA | [UI](ui-brief.md), [QA](qa-framework.md) |
 | Auth/private/AI R1–R7 | [authentication](auth-brief.md) |
-| Threat model/repo/CI/release/costs | [DevOps](devops-brief.md), [costs](cost-brief.md) |
+| Security/threat model/external input | [security baseline](security-brief.md), [authentication](auth-brief.md) |
+| Repo/CI/release/operations/costs | [DevOps](devops-brief.md), [costs](cost-brief.md) |
 | Predecessor data/domain behavior | [migration mapping](migration-mapping-brief.md), [v1 reference](v1-reference.md) |
 | Historical rationale/receipts | [session log](session-log.md), [learnings](learnings-applied.md); not current authority |
 
@@ -41,3 +42,7 @@ The parent strategy workspace is `../../hoc_he_2026` relative to repository root
 Status belongs in task index/receipts, domain decisions in briefs, history in session logs. Do not copy everything into AGENTS/CLAUDE. Memory locates sources; verify drifting facts from current code/config/runtime. Locked meaning changes need Owner approval; dated observations should not coexist as contradictory current truths.
 
 Public contributors do not need private harness-core: mandatory project rules are available in this repository.
+
+## B verification and explanation navigation
+
+For ordinary inquiry/design/diagnosis/how/why/teach, use the Owner B workflow when available; project briefs and batch grants remain authoritative. [Project B verification](harness-b-verification.md) links actual source-mapped commands/selectors and isolated resource/runner contract. Source mapping is NOT_RUN until executed; no app paid-model or production proof is inferred.
