@@ -9,7 +9,7 @@ from uuid import uuid7
 import httpx2
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_mimi_collection_service_pg import auth, local_contract  # noqa: F401
 
@@ -17,6 +17,7 @@ from app.agent import config_policy, crypto, openai_sdk, service
 from app.agent.models import MimiConversation, MimiEvent, MimiMessage, MimiProviderCall, MimiRun
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
+from app.domain.models import AppSetting
 
 pytestmark = pytest.mark.pg
 
@@ -36,13 +37,15 @@ def test_ordinary_resume_first_typed_overflow_retains_recovery_and_user_source(p
         "MIMI_ROUTE_MAX_OUTPUT_PRICE": "1.44",
     }.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(config_policy, "POLICY_KEY", "mimi.owner192." + uuid7().hex)
+    policy_key = "mimi.owner192." + uuid7().hex
+    monkeypatch.setattr(config_policy, "POLICY_KEY", policy_key)
     get_settings.cache_clear()
 
     async def scenario():
         engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         actor, original_id = auth(), uuid7()
+        cid = None
         try:
             async with maker() as db:
                 view = await service.create_conversation(db, actor, service.ConversationCreate())
@@ -274,6 +277,13 @@ def test_ordinary_resume_first_typed_overflow_retains_recovery_and_user_source(p
                 for client in clients:
                     await client.aclose()
         finally:
-            await engine.dispose()
+            try:
+                async with maker() as db:
+                    if cid is not None:
+                        await db.execute(delete(MimiConversation).where(MimiConversation.id == cid))
+                    await db.execute(delete(AppSetting).where(AppSetting.key == policy_key))
+                    await db.commit()
+            finally:
+                await engine.dispose()
 
     asyncio.run(scenario())

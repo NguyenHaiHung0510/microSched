@@ -100,6 +100,25 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
   await page.route('**/api/mimi/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    if (request.method() === 'GET' && path === '/api/mimi/operating-policy') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        policy: {
+          revision: 0,
+          input_codepoints: 50_000,
+          // Synthetic fixture caps, not a live price/catalog observation.
+          prices: {
+            'openai/gpt-6-luna': { prompt: '0.10', completion: '0.50' },
+            'xiaomi/mimo-v2.6-pro': { prompt: '0.43', completion: '0.87' },
+            'deepseek/deepseek-v4.1-flash': { prompt: '0.36', completion: '1.44' },
+            'z-ai/glm-5.3-flash': { prompt: '0.15', completion: '0.50' },
+          },
+        },
+        applies_to: 'next_unsent_wire',
+        input_unit: 'unicode_codepoints',
+        price_unit: 'USD_per_million_tokens',
+      }) })
+      return
+    }
     if (request.method() === 'GET' && path.endsWith('/capabilities')) {
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
         context_v1_enabled: false,
@@ -134,6 +153,13 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
       return
     }
     expect(request.headers()['x-mimi-csrf']).toBe('1')
+    if (request.method() === 'POST' && path === '/api/mimi/metadata-warmup') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        status: 'not_applicable',
+        paid_calls: 0,
+      }) })
+      return
+    }
     if (request.method() === 'POST' && path.endsWith('/conversations')) {
       conversation = emptyConversation()
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(summary(conversation)) })

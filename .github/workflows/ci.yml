@@ -160,6 +160,7 @@ jobs:
           POSTGRES_DB: microsched_ci
         ports:
           - 5432:5432
+          - 21887:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d microsched_ci"
           --health-interval 5s
@@ -169,12 +170,16 @@ jobs:
       run:
         working-directory: backend
     env:
-      CI_PG_BOOTSTRAP_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
-      NEON_MIGRATOR_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
-      CI_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+      # Retain the service bootstrap DB; all test app/migrator connections use
+      # the same existing authorized local Mimi tuple, never a production URL.
+      CI_PG_SERVICE_URL: postgresql://postgres:postgres@127.0.0.1:21887/microsched_ci
+      CI_PG_BOOTSTRAP_URL: postgresql://postgres:postgres@127.0.0.1:21887/mimi086_qa
+      NEON_MIGRATOR_URL: postgresql://postgres:postgres@127.0.0.1:21887/mimi086_qa
+      CI_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       CI_MIGRATOR_PASSWORD: synthetic-migrator
       CI_APP_PASSWORD: synthetic-app
-      CI_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@localhost:5432/microsched_ci
+      CI_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@127.0.0.1:21887/mimi086_qa
+      MIMI_LANGGRAPH_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@127.0.0.1:21887/mimi086_qa
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -188,23 +193,57 @@ jobs:
         with:
           python-version: "3.14"
       - run: uv sync --frozen
+      - name: Prepare named disposable Mimi database
+        run: |
+          uv run python - <<'PY'
+          import os
+          import psycopg
+
+          with psycopg.connect(os.environ["CI_PG_SERVICE_URL"], autocommit=True) as connection:
+              connection.execute("CREATE DATABASE mimi086_qa")
+          PY
       - run: uv run python -m scripts.prepare_ci_database --bootstrap-url "$CI_PG_BOOTSTRAP_URL"
       - run: uv run python -m scripts.check_migration_drops
       - run: uv run alembic upgrade head
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       - run: uv run python -m scripts.check_migration_drift
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       - run: uv run alembic downgrade base
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       - run: uv run alembic upgrade head
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       - run: uv run python -m scripts.check_migration_drift
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
+      - name: Prepare real LangGraph saver for the disposable app role
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import os
+          from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+          from psycopg import AsyncConnection
+
+          async def prepare():
+              owner_url = os.environ["CI_PG_BOOTSTRAP_URL"]
+              async with AsyncPostgresSaver.from_conn_string(owner_url) as saver:
+                  await saver.setup()
+              async with await AsyncConnection.connect(owner_url, autocommit=True) as connection:
+                  await connection.execute("GRANT USAGE ON SCHEMA public TO microsched_app")
+                  await connection.execute(
+                      "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "
+                      "public.checkpoints, public.checkpoint_blobs, public.checkpoint_writes "
+                      "TO microsched_app"
+                  )
+                  await connection.execute(
+                      "GRANT SELECT ON TABLE public.checkpoint_migrations TO microsched_app"
+                  )
+
+          asyncio.run(prepare())
+          PY
       # DB-backed tests run here, reusing this job's migrated pgvector service instead
       # of standing up a second Postgres in the backend job (spec §0.4, least
       # duplication). The schema is at head from the step above.
