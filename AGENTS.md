@@ -5,10 +5,9 @@ Canonical entry point for every actor, including T1. Owner-approved migration: 2
 ## Read what applies
 
 - [docs/harness-b-verification.md](docs/harness-b-verification.md): normal-language B routing and isolated project verification/map candidates. Use the task grant; source mapping is not runtime acceptance.
-
-
 - [docs/harness-policy.md](docs/harness-policy.md): read for authority, delegation, review, merge/release or harness changes. T1 has bounded inherited authority to work/delegate/merge; no routine coordination-record prerequisite. Elevation needs a holder-issued grant; Owner-only boundaries remain.
 - [docs/project-guide.md](docs/project-guide.md): project discovery and domain reading map. Read the relevant brief and task contract, not every linked file/history.
+- For security/auth/import/external-input or Mimi tool-boundary assessments, read [docs/security-brief.md](docs/security-brief.md): one intended Owner user; external calendars/files/URLs/model content remain untrusted.
 - [agent-tasks/README.md](agent-tasks/README.md): navigation/status, not approval. Re-query GitHub/runtime and task headers before current-state decisions.
 - AI agent/live-model work: read [docs/qa-agent-framework.md](docs/qa-agent-framework.md) with the slice QA spec; route probes, deterministic contracts, synthetic UI and live dogfood are separate evidence layers.
 - Approved specs/briefs control product meaning. Material requirement gaps or conflicting decisions: present both sides to Owner. Explicit approved migration supersedes the named old rules; history does not reactivate them.
