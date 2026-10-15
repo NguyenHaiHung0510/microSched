@@ -6,6 +6,12 @@ on:
     branches:
       - develop
 
+# Replace superseded PR checks only. Push runs have distinct groups, and the
+# workflow name isolates CI, CodeQL and deployment from each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   security-events: write
   contents: read
@@ -22,9 +28,9 @@ jobs:
           - python
           - javascript-typescript
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@v4
+      - uses: github/codeql-action/analyze@v4

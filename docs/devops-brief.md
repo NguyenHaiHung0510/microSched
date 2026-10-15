@@ -1,5 +1,13 @@
 # DevOps / repo & CI — microSched
 
+> **Hiện hành — 2026-10-15:** [Security baseline](security-brief.md) xác định microSched/Mimi hiện chỉ có một người dùng là Owner; lịch/ICS, file, URL, nội dung ngoài và đầu ra model vẫn không đáng tin cậy. Dùng baseline này cho đánh giá user/input. Các đoạn vendor/model/giá/trạng thái cũ bên dưới là quyết định hoặc quan sát có ngày, không phải bằng chứng hiện hành; đối chiếu source và cấu hình thực tế trước khi áp dụng.
+
+**CI/CD hiện hành:** kiểm tra PR bình thường trước merge. Push hợp lệ vào `develop`, kể cả hotfix trực tiếp được Owner cho phép, kích hoạt CD ngay; không đợi toàn bộ CI chạy lại sau push/merge. `main` là nhãn release. Giữ nguyên mọi job/check đã cam kết; Migration QA vẫn dùng Postgres cô lập và deploy không tự chạy migration production.
+
+[CI](../.github/workflows/ci.yml) và [CodeQL](../.github/workflows/codeql.yml) chỉ thay thế run trong cùng PR/workflow; mỗi push run có group riêng. Cách này tránh chạy thừa khi cập nhật PR mà giữ checks của các PR khác và push độc lập. [Deploy](../.github/workflows/deploy.yml) giữ group `deploy-production` với `cancel-in-progress: false`: rollout đang chạy được giữ, pending run cùng group có thể bị thay thế; không bảo đảm mọi commit trung gian được deploy hay thứ tự latest desired commit. Smoke sau deploy yêu cầu `status=ok`, `db=up` và đúng SHA đã resolve, với retry hữu hạn chỉ theo deploy event.
+
+**Action runtime — 2026-10-15:** `checkout`, `setup-python`, `setup-node` dùng major `v7`; `setup-uv` dùng `v10`; CodeQL dùng `v4`, đều khai báo Node 24. Giữ Python 3.14/Node 24 của app, npm cache đã chỉ định và `prune-cache: true` của uv để không đổi hành vi cache vì default mới. `download-from-astral-mirror: false` giữ nguồn GitHub Releases cũ thay vì mirror mới; metadata phiên bản vẫn theo action upstream. Đây là cập nhật runtime của CI, không nâng model, dependency sản phẩm hay Codex. Major refs tiếp tục nhận bản vá upstream; khi có thay đổi gây lỗi cần đối chiếu release notes và receipt của revision chạy thật.
+
 > **Trạng thái:** ✅ CHỐT phần nền (2026-07-19). Phần auto-review PR = ⏸ DEFER tới khi có code.
 > **Tra cứu giá/chính sách: 2026-07-19** — mục §4 phụ thuộc chính sách vendor, **soi lại ~3 tháng** (giống `cost-brief.md`; không để pricing drift làm hỏng quyết định).
 > **2026-07-20:** thêm **§7 — harness 3 tầng + công cụ AI cá nhân** (✅ CHỐT, tra giá live cùng ngày; soi lại ~10/2026 cùng `cost-brief.md` §6).

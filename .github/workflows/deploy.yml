@@ -23,7 +23,7 @@ jobs:
     name: Deploy production
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
@@ -40,8 +40,8 @@ jobs:
         env:
           EXPECTED_SHA: ${{ steps.revision.outputs.sha }}
         shell: python
-        # This intentionally calls readyz (and spends a DB query) only on the sparse
-        # deploy event. It is not a probe or poll; one wake costs about 0.02 CU-hr.
+        # Bounded retries only after deployment, never a recurring health probe.
+        # readyz spends a DB query; keep routine Fly probes on healthz instead.
         run: |
           import json
           import os
@@ -62,6 +62,8 @@ jobs:
                       payload = json.load(response)
                   if payload.get("status") != "ok":
                       raise RuntimeError(f"readiness status is {payload.get('status')!r}")
+                  if payload.get("db") != "up":
+                      raise RuntimeError(f"database readiness is {payload.get('db')!r}")
                   if payload.get("commit") != expected:
                       raise RuntimeError(
                           f"expected commit {expected}, got {payload.get('commit')!r}"
@@ -79,7 +81,11 @@ jobs:
           else:
               raise SystemExit(f"Smoke test timed out: {last_error}")
 
-          if payload.get("status") != "ok" or payload.get("commit") != expected:
+          if (
+              payload.get("status") != "ok"
+              or payload.get("db") != "up"
+              or payload.get("commit") != expected
+          ):
               raise SystemExit(f"Smoke test timed out: {last_error}")
       - name: Report release lag
         shell: bash

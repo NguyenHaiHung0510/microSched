@@ -6,6 +6,12 @@ on:
     branches:
       - develop
 
+# Replace superseded PR checks only. Push runs have distinct groups, and the
+# workflow name isolates CI, CodeQL and deployment from each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   backend:
     name: Backend checks
@@ -14,11 +20,15 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+          # Preserve v6 cache pruning; v10 defaults to retaining the full cache.
+          prune-cache: true
+          # Preserve direct GitHub Releases downloads rather than the new mirror default.
+          download-from-astral-mirror: false
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: uv sync --frozen
@@ -44,11 +54,15 @@ jobs:
       # it, create_app() correctly refuses to start.
       OAUTH_STATE_SECRET: ci-only-not-a-production-secret
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+          # Preserve v6 cache pruning; v10 defaults to retaining the full cache.
+          prune-cache: true
+          # Preserve direct GitHub Releases downloads rather than the new mirror default.
+          download-from-astral-mirror: false
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: uv sync --frozen --no-dev
@@ -59,18 +73,20 @@ jobs:
     name: Repository hooks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: pip install pre-commit
+      # PyYAML is already installed with pre-commit.
+      - run: python -m unittest discover -s .github/tests -v
       - run: pre-commit run --all-files
 
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -104,8 +120,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -122,8 +138,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -160,11 +176,15 @@ jobs:
       CI_APP_PASSWORD: synthetic-app
       CI_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@localhost:5432/microsched_ci
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+          # Preserve v6 cache pruning; v10 defaults to retaining the full cache.
+          prune-cache: true
+          # Preserve direct GitHub Releases downloads rather than the new mirror default.
+          download-from-astral-mirror: false
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: uv sync --frozen

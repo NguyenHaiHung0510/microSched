@@ -16,7 +16,8 @@ microSched is a single-user personal task/note/calendar/tracker web app and lear
 | Frontend/PWA/offline | [frontend](frontend-brief.md) |
 | UI/interaction/components/QA | [UI](ui-brief.md), [QA](qa-framework.md) |
 | Auth/private/AI R1–R7 | [authentication](auth-brief.md) |
-| Threat model/repo/CI/release/costs | [DevOps](devops-brief.md), [costs](cost-brief.md) |
+| Security/threat model/external input | [security baseline](security-brief.md), [authentication](auth-brief.md) |
+| Repo/CI/release/operations/costs | [DevOps](devops-brief.md), [costs](cost-brief.md) |
 | Predecessor data/domain behavior | [migration mapping](migration-mapping-brief.md), [v1 reference](v1-reference.md) |
 | Historical rationale/receipts | [session log](session-log.md), [learnings](learnings-applied.md); not current authority |
 
