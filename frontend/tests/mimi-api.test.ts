@@ -10,12 +10,35 @@ import {
   saveMimiConfiguration,
   sendMimiMessage,
   streamMimiMessage,
+  warmMimiMetadata,
   type MimiChangeSet,
 } from '../src/mimi-api.ts'
 
 const realFetch = globalThis.fetch
 afterEach(() => {
   globalThis.fetch = realFetch
+})
+
+test('chat-open metadata warmup supplies the JSON contract required by native CSRF', async () => {
+  let captured: { path: RequestInfo | URL; init?: RequestInit } | undefined
+  globalThis.fetch = async (path, init) => {
+    captured = { path, init }
+    const isJson = new Headers(init?.headers).get('Content-Type') === 'application/json'
+    return new Response(JSON.stringify(isJson
+      ? { status: 'scheduled', paid_calls: 0 }
+      : { detail: 'mimi_json_required' }), {
+      status: isJson ? 200 : 415,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  assert.deepEqual(await warmMimiMetadata(), { status: 'scheduled', paid_calls: 0 })
+  assert.ok(captured)
+  assert.equal(captured.path, '/api/mimi/metadata-warmup')
+  assert.equal(captured.init?.method, 'POST')
+  assert.equal(captured.init?.credentials, 'same-origin')
+  assert.equal(new Headers(captured.init?.headers).get('X-Mimi-CSRF'), '1')
+  assert.deepEqual(JSON.parse(String(captured.init?.body)), {})
 })
 
 test('conversation history passes the opaque cursor unchanged in a bounded next-page request', async () => {

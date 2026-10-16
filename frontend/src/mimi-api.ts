@@ -151,7 +151,7 @@ export function saveMimiOperatingPolicy(policy: MimiOperatingPolicy): Promise<Mi
     body: JSON.stringify({ expected_revision: policy.revision, input_codepoints: policy.input_codepoints, prices: policy.prices }) })
 }
 export function warmMimiMetadata(): Promise<{ status: string; paid_calls: number }> {
-  return apiRequest('/api/mimi/metadata-warmup', { method: 'POST', headers: MIMI_WRITE_HEADERS })
+  return apiRequest('/api/mimi/metadata-warmup', { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}' })
 }
 
 export type MimiContextObservation = {
