@@ -43,7 +43,7 @@ def receipt(**updates):
         id=uuid7(),
         state="succeeded",
         result={"response_id": str(uuid7())},
-        usage={"prompt_tokens": 100_001, "total_tokens": 190_000, "cost": 0.2},
+        usage={"prompt_tokens": 272_001, "total_tokens": 190_000, "cost": 0.2},
         route={
             "kind": "openrouter",
             "purpose": "main",
@@ -63,12 +63,18 @@ def test_payload_guard_is_independent_of_token_threshold():
         build_request([{"role": "user", "content": "x" * 70_000}], settings)
     roomy = alpha_settings()
     for old_limit in (32_000, 100_000, 131_072):
-        wire = build_request(
-            [{"role": "user", "content": "x" * 180_000}],
-            roomy.model_copy(update={"mimi_route_context_tokens": old_limit}),
-            agent_contract=True,
-        )
-        assert len(wire["messages"][0]["content"]) == 180_000
+        with pytest.raises(RouteContractError, match="route_capacity"):
+            build_request(
+                [{"role": "user", "content": "x" * 180_000}],
+                roomy.model_copy(update={"mimi_route_context_tokens": old_limit}),
+                agent_contract=True,
+            )
+    wire = build_request(
+        [{"role": "user", "content": "x" * 180_000}],
+        roomy.model_copy(update={"mimi_route_context_tokens": 408192}),
+        agent_contract=True,
+    )
+    assert len(wire["messages"][0]["content"]) == 180_000
 
 
 def test_production_alpha_keeps_origin_egress_and_resource_guards():
@@ -93,11 +99,11 @@ def test_alpha_has_one_trigger_separate_from_hard_route_limit():
     bound = bind_configuration(
         settings, {"profile_id": "deepseek", "effort": "high", "input_tokens": 100_000}
     )
-    assert bound.mimi_compaction_trigger_tokens == 100_000
+    assert bound.mimi_compaction_trigger_tokens == 272_000
     assert bound.mimi_route_context_tokens == 1_048_576
     assert bound.mimi_route_max_output_tokens == 8192
     for legacy in (32_000, 200_000):
-        with pytest.raises(HTTPException, match="mimi_alpha_trigger_requires_100k"):
+        with pytest.raises(HTTPException, match="mimi_alpha_trigger_preset_invalid"):
             validate_configuration(
                 {"profile_id": "deepseek", "effort": "high", "input_tokens": legacy}, alpha=True
             )
@@ -106,7 +112,7 @@ def test_alpha_has_one_trigger_separate_from_hard_route_limit():
             bind_configuration(
                 settings, {"profile_id": "deepseek", "effort": "high", "input_tokens": legacy}
             ).mimi_compaction_trigger_tokens
-            == 100_000
+            == 272_000
         )
 
 
@@ -131,7 +137,7 @@ def test_delayed_main_prompt_triggers_once_without_request_hash_binding():
     # New suffix/request fingerprint has no bearing on stable active epoch.
     call.route["request_fingerprint"] = "previous-request"
     first = prompt_observation(call, context_revision(settings, 1, None))
-    assert first["should_compact"] and first["prompt_tokens"] == 100_001
+    assert first["should_compact"] and first["prompt_tokens"] == 272_001
     consumed = prompt_observation(call, revision, consumed=True)
     assert not consumed["should_compact"] and consumed["compaction_blocked"]
     for changed in (
@@ -158,7 +164,7 @@ def test_only_bound_main_prompt_usage_can_trigger(violation):
             else {
                 "total_tokens": 200_000,
                 "completion_tokens": 180_000,
-                "completion_tokens_details": {"reasoning_tokens": 100_001},
+                "completion_tokens_details": {"reasoning_tokens": 272_001},
             }
         )
     elif violation == "reused":

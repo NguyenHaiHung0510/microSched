@@ -23,11 +23,14 @@ from app.agent.openrouter import (
     ProviderEventSink,
     RouteContractError,
     _raise_for_status,
+    _rejected_terminal_metadata,
     _route_identity,
     build_request,
+    merge_stream_identity,
     parse_agent_completion,
     parse_compaction_completion,
     parse_completion,
+    validate_response_identity,
 )
 from app.core.settings import Settings, get_settings
 
@@ -75,6 +78,25 @@ def _completion_payload(result: Any) -> dict[str, Any]:
 
 def _raise_for_sdk_error(error: Exception, *, response_id: str | None = None) -> None:
     if isinstance(error, APIStatusError):
+        if not response_id:
+            from app.agent.openrouter import _input_overflow_error
+
+            body = getattr(error, "body", None)
+            # SDK versions can expose either the outer error envelope or its
+            # inner machine-typed error object. No message substring heuristic.
+            if (
+                isinstance(body, dict)
+                and "error" not in body
+                and body.get("code")
+                in {
+                    "context_length_exceeded",
+                    "max_context_length_exceeded",
+                }
+            ):
+                body = {"error": body}
+            overflow = _input_overflow_error(error.status_code, body)
+            if overflow is not None:
+                raise overflow from error
         try:
             _raise_for_status(error.status_code)
         except ProviderDispatchError as classified:
@@ -131,9 +153,38 @@ async def complete(
         except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
             _raise_for_sdk_error(error)
         payload = _completion_payload(result)
-        if summary_mode:
-            return parse_compaction_completion(payload)
-        return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
+        choices = payload.get("choices")
+        finish = (
+            choices[0].get("finish_reason")
+            if isinstance(choices, list) and len(choices) == 1 and isinstance(choices[0], dict)
+            else None
+        )
+        receipt = _rejected_terminal_metadata(
+            payload.get("id"),
+            payload.get("provider"),
+            payload.get("model"),
+            payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            finish,
+        )
+        try:
+            if finish is None:
+                raise ProviderDispatchError("unknown", None, response_id=receipt["id"])
+            if finish not in {"stop", "tool_calls"}:
+                raise RouteContractError("provider_json_finish_reason_not_usable")
+            validate_response_identity(payload, route)
+            if summary_mode:
+                return parse_compaction_completion(payload)
+            return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
+        except (RouteContractError, ProviderDispatchError) as error:
+            error.terminal_receipt = receipt
+            error.response_id = receipt["id"]
+            if isinstance(error, RouteContractError):
+                error.usage, error.model, error.provider = (
+                    receipt["usage"],
+                    receipt["model"],
+                    receipt["provider"],
+                )
+            raise
     finally:
         if client is None:
             await sdk.close()
@@ -204,10 +255,8 @@ async def complete_stream(
                             await on_event(
                                 "provider.response_identity", {"response_id": response_id}
                             )
-                if isinstance(chunk.get("provider"), str):
-                    provider = chunk["provider"]
-                if isinstance(chunk.get("model"), str):
-                    model = chunk["model"]
+                provider = merge_stream_identity(provider, chunk.get("provider"), field="provider")
+                model = merge_stream_identity(model, chunk.get("model"), field="model")
                 if isinstance(chunk.get("usage"), dict):
                     usage = chunk["usage"]
                 choices = chunk.get("choices")
@@ -247,10 +296,15 @@ async def complete_stream(
                                 target["name"] += function["name"]
                             if isinstance(function.get("arguments"), str):
                                 target["arguments"] += function["arguments"]
-        if not saw_finish_reason:
-            raise ProviderDispatchError("unknown", None, response_id=response_id or None)
-        if finish_reason not in {None, "stop", "tool_calls"}:
-            raise RouteContractError("provider_stream_finish_reason_not_usable")
+    except RouteContractError as error:
+        error.terminal_receipt = _rejected_terminal_metadata(
+            response_id, provider, model, usage, finish_reason
+        )
+        error.response_id = error.terminal_receipt["id"]
+        error.usage = error.terminal_receipt["usage"]
+        error.provider = error.terminal_receipt["provider"]
+        error.model = error.terminal_receipt["model"]
+        raise
     except asyncio.CancelledError as error:
         raise ProviderDispatchError("unknown", None, response_id=response_id or None) from error
     except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
@@ -277,6 +331,15 @@ async def complete_stream(
             completion_tokens / (completed_at - started_at), 3
         )
     usage = {**usage, "mimi_timing": timing}
+    if not saw_finish_reason or finish_reason not in {None, "stop", "tool_calls"}:
+        receipt = _rejected_terminal_metadata(response_id, provider, model, usage, finish_reason)
+        error = (
+            ProviderDispatchError("unknown", None, response_id=receipt["id"])
+            if not saw_finish_reason
+            else RouteContractError("provider_stream_finish_reason_not_usable")
+        )
+        error.terminal_receipt = receipt
+        raise error
     terminal_calls = [
         {
             "id": item["id"],
@@ -304,6 +367,7 @@ async def complete_stream(
         ],
     }
     try:
+        validate_response_identity(terminal_payload, route)
         completion = parser(terminal_payload)
     except RouteContractError as error:
         # No request/headers/reasoning: only the buffered public terminal wire.

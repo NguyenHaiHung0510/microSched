@@ -1,25 +1,21 @@
 # Technical detail dialog
 
-Source: `frontend/src/MimiScreen.tsx:1121` (`mimi-technical-dialog`) in exact `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37`; source root `harness-b-mimi-qa/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:1144`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
-Technical menu/dialog, source/context/provider/run evidence and close focus.
+Manifest/context/checkpoint/run/provider diagnostics and disclosed uncertainty.
 
 ## How to get to it (user POV)
 
-Side-chat menu → Chi tiết kỹ thuật; workspace chat uses its actual technical trigger.
+Open Chi tiết kỹ thuật for the current owned run and compare the corresponding receipt.
 
-Real prerequisites: Synthetic selected conversation; optional frozen run/provider receipts for deeper panes.
+## Driving it with the current scoped harness
 
-## Driving it with H14 isolated browser/CLI
+Journey `J2/J4`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-technical-dialog` (observed in current source). Sanitized actual app diagnostics, never keys/cookies/hidden reasoning/private prose. Core actions share native/live/device QA receipts, not a second matrix.
 
-mimi-technical-dialog; Tùy chọn side-chat; inspect source-provided details and onTechnicalCloseFocus.
-
-Observable oracle: Dialog opens correct selected run/conversation, states unknown honestly, and restores trigger focus on close.
+Oracle: Displayed source/unit/requested-versus-actual identity matches durable/wire evidence.
 
 ## Gotchas
 
-No secret/provider headers/runtime credentials in receipts; run evidence stays NOT_RUN without a fixture.
-
-Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.

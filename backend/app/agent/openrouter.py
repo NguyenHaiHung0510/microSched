@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 import httpx
@@ -213,10 +216,139 @@ def _route_identity(settings: Settings) -> tuple[str, str]:
 def _price_policy(settings: Settings) -> dict[str, float]:
     if settings.mimi_route_max_input_price is None or settings.mimi_route_max_output_price is None:
         raise RouteContractError("Mimi route price caps are not configured")
+    from app.agent.config_policy import finite_price
+
     return {
-        "prompt": settings.mimi_route_max_input_price,
-        "completion": settings.mimi_route_max_output_price,
+        "prompt": float(finite_price(settings.mimi_route_max_input_price)),
+        "completion": float(finite_price(settings.mimi_route_max_output_price)),
     }
+
+
+def _rejected_terminal_metadata(response_id, provider, model, usage, finish_reason):
+    """Allowlisted terminal facts only; provider prose/partial output is never a receipt."""
+
+    def identity(value):
+        return (
+            value
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", value)
+            else None
+        )
+
+    def amount(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return None
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            return None
+        return value if number.is_finite() and number >= 0 else None
+
+    safe_usage = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            safe_usage[key] = value
+    cost = amount(usage.get("cost"))
+    if cost is not None:
+        safe_usage["cost"] = cost
+    for key, fields in {
+        "prompt_tokens_details": (
+            "cached_tokens",
+            "cache_write_tokens",
+            "audio_tokens",
+            "video_tokens",
+        ),
+        "completion_tokens_details": ("reasoning_tokens", "audio_tokens", "image_tokens"),
+    }.items():
+        details = usage.get(key)
+        if isinstance(details, dict):
+            safe_usage[key] = {
+                name: value
+                for name in fields
+                if isinstance(value := details.get(name), int)
+                and not isinstance(value, bool)
+                and value >= 0
+            }
+    for key, fields in {
+        "cost_details": (
+            "upstream_inference_cost",
+            "upstream_inference_prompt_cost",
+            "upstream_inference_completions_cost",
+        ),
+        "mimi_timing": ("duration_ms", "connect_ms", "ttft_ms", "output_tokens_per_second"),
+    }.items():
+        details = usage.get(key)
+        if isinstance(details, dict):
+            safe_usage[key] = {
+                name: value for name in fields if (value := amount(details.get(name))) is not None
+            }
+    reason = (
+        finish_reason
+        if finish_reason
+        in {None, "stop", "tool_calls", "length", "content_filter", "function_call", "error"}
+        else "other"
+    )
+    receipt = {
+        "id": identity(response_id),
+        "provider": identity(provider),
+        "model": identity(model),
+        "usage": safe_usage,
+        "finish_reason": reason,
+        "cost_available": cost is not None,
+    }
+    if reason == "other":
+        receipt["finish_reason_sha256"] = hashlib.sha256(finish_reason.encode()).hexdigest()
+    return receipt
+
+
+def validate_response_identity(payload: dict, settings: Settings) -> None:
+    """Actual identity must match the requested model and admitted provider names.
+
+    A routing variant slug is not a response-provider alias. Explicit aliases
+    are trusted qualification configuration, never taken from response prose.
+    """
+    model, provider = payload.get("model"), payload.get("provider")
+    allowed = settings.mimi_route_qualified_provider_names or (
+        (settings.mimi_route_provider,) if settings.mimi_route_mode == "exact" else ()
+    )
+    aliases = json.loads(settings.mimi_route_identity_aliases_json)
+    models = {
+        settings.mimi_route_model,
+        *aliases.get("models", {}).get(settings.mimi_route_model, []),
+    }
+    providers = {str(p).casefold() for p in allowed if isinstance(p, str)}
+    for qualified in allowed:
+        providers.update(str(p).casefold() for p in aliases.get("providers", {}).get(qualified, []))
+    if (
+        not isinstance(model, str)
+        or model not in models
+        or (not isinstance(provider, str) or provider.casefold() not in providers)
+    ):
+        receipt = _rejected_terminal_metadata(
+            payload.get("id"), provider, model, payload.get("usage") or {}, None
+        )
+        error = RouteContractError(
+            "provider_actual_identity_not_qualified",
+            response_id=receipt["id"],
+            usage=receipt["usage"],
+            provider=receipt["provider"],
+            model=receipt["model"],
+        )
+        error.terminal_receipt = receipt
+        raise error
+
+
+def merge_stream_identity(current: str | None, value: Any, *, field: str) -> str | None:
+    if value is None:
+        return current
+    if not isinstance(value, str) or not value.strip():
+        raise RouteContractError("provider_stream_identity_invalid")
+    matches = current is None or (
+        current.casefold() == value.casefold() if field == "provider" else current == value
+    )
+    if not matches:
+        raise RouteContractError("provider_stream_identity_changed")
+    return value
 
 
 def _provider_policy(settings: Settings) -> dict[str, Any]:
@@ -240,6 +372,16 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
         if settings.mimi_route_quantization != "unknown":
             policy["quantizations"] = [settings.mimi_route_quantization]
         return policy
+    expires = settings.mimi_route_qualification_expires_at
+    checked = settings.mimi_route_catalog_checked_at
+    if (
+        expires is None
+        or checked is None
+        or not time.time() < expires
+        or not 0 <= time.time() - checked < 7200
+        or not settings.mimi_route_qualification_sha256
+    ):
+        raise RouteContractError("adaptive_endpoint_qualification_stale_or_missing")
     providers = list(settings.mimi_allowed_provider_list)
     quantizations = list(settings.mimi_allowed_quantization_list)
     if not providers or not quantizations:
@@ -300,6 +442,8 @@ def build_request(
         > route.mimi_max_payload_bytes
     ):
         raise RouteContractError("payload_bytes_exceeded")
+    if route.mimi_route_context_tokens < 408_192:
+        raise RouteContractError("context_overflow_preflight_route_capacity")
     if route.mimi_route_max_output_tokens > route.mimi_route_context_tokens:
         raise RouteContractError("output_reserve_exceeds_route_limit")
     request: dict[str, Any] = {
@@ -340,6 +484,9 @@ def build_request(
         request["response_format"] = AGENT_RESPONSE_FORMAT
     if session_id:
         request["session_id"] = session_id
+    # Owner184: 400K is an operating target, not a universal byte/token gate.
+    # Native capacity/output controls and the explicit payload byte resource cap
+    # remain enforced. Provider input overflow is a distinct finite recovery path.
     return request
 
 
@@ -585,6 +732,32 @@ def parse_completion(payload: dict[str, Any]) -> ProviderCompletion:
     return ProviderCompletion(kind="task", task=task, text=None, **common)
 
 
+def _input_overflow_error(status_code: int, body: Any) -> ProviderDispatchError | None:
+    """Only a machine-typed pre-generation refusal, never echoed message matching."""
+    if status_code not in {400, 422} or not isinstance(body, dict) or body.get("id"):
+        return None
+    usage = body.get("usage")
+    if isinstance(usage, dict) and (
+        usage.get("completion_tokens", 0) or usage.get("total_tokens", 0)
+    ):
+        return None
+    error = body.get("error")
+    if not isinstance(error, dict) or error.get("code") not in {
+        "context_length_exceeded",
+        "max_context_length_exceeded",
+    }:
+        return None
+    selected = ProviderDispatchError(
+        "failed",
+        status_code,
+        diagnostic={"category": "input_context_overflow", "definite_refusal": True},
+    )
+    selected.terminal_receipt = _rejected_terminal_metadata(
+        None, None, None, body.get("usage") if isinstance(body.get("usage"), dict) else {}, None
+    )
+    return selected
+
+
 def _raise_for_status(status_code: int) -> None:
     if status_code in {408, 409}:
         raise ProviderDispatchError("unknown", status_code)
@@ -652,6 +825,13 @@ async def complete(
             raise ProviderDispatchError("retryable", None) from error
         except (httpx.TimeoutException, httpx.TransportError) as error:
             raise ProviderDispatchError("unknown", None) from error
+        if response.status_code in {400, 422}:
+            try:
+                overflow = _input_overflow_error(response.status_code, response.json())
+            except ValueError:
+                overflow = None
+            if overflow is not None:
+                raise overflow
         _raise_for_status(response.status_code)
         try:
             payload = response.json()
@@ -659,6 +839,7 @@ async def complete(
             raise RouteContractError("provider_terminal_payload_is_not_json") from error
         if not isinstance(payload, dict):
             raise RouteContractError("provider_terminal_payload_is_not_an_object")
+        validate_response_identity(payload, route)
         if summary_mode:
             return parse_compaction_completion(payload)
         return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
@@ -733,6 +914,14 @@ async def complete_stream(
                 },
                 json=request,
             ) as response:
+                if response.status_code in {400, 422}:
+                    await response.aread()
+                    try:
+                        overflow = _input_overflow_error(response.status_code, response.json())
+                    except ValueError:
+                        overflow = None
+                    if overflow is not None:
+                        raise overflow
                 _raise_for_status(response.status_code)
                 connected_at = time.perf_counter()
                 if on_event:
@@ -767,10 +956,10 @@ async def complete_stream(
                                 await on_event(
                                     "provider.response_identity", {"response_id": response_id}
                                 )
-                    if isinstance(chunk.get("provider"), str):
-                        provider = chunk["provider"]
-                    if isinstance(chunk.get("model"), str):
-                        model = chunk["model"]
+                    provider = merge_stream_identity(
+                        provider, chunk.get("provider"), field="provider"
+                    )
+                    model = merge_stream_identity(model, chunk.get("model"), field="model")
                     if isinstance(chunk.get("usage"), dict):
                         usage = chunk["usage"]
                     choices = chunk.get("choices")
@@ -818,6 +1007,14 @@ async def complete_stream(
                     raise ProviderDispatchError("unknown", None, response_id=response_id or None)
                 if finish_reason not in {None, "stop", "tool_calls"}:
                     raise RouteContractError("provider_stream_finish_reason_not_usable")
+        except RouteContractError as error:
+            receipt = _rejected_terminal_metadata(
+                response_id, provider, model, usage, finish_reason
+            )
+            error.terminal_receipt = receipt
+            error.response_id, error.usage = receipt["id"], receipt["usage"]
+            error.provider, error.model = receipt["provider"], receipt["model"]
+            raise
         except httpx.ConnectError as error:
             raise ProviderDispatchError("retryable", None) from error
         except (httpx.TimeoutException, httpx.TransportError) as error:
@@ -852,22 +1049,22 @@ async def complete_stream(
             if summary_mode
             else (parse_agent_completion if agent_contract else parse_completion)
         )
-        completion = parser(
-            {
-                "id": response_id,
-                "provider": provider,
-                "model": model,
-                "usage": usage,
-                "choices": [
-                    {
-                        "message": {
-                            "content": "".join(content_parts),
-                            "tool_calls": terminal_calls,
-                        }
+        terminal_payload = {
+            "id": response_id,
+            "provider": provider,
+            "model": model,
+            "usage": usage,
+            "choices": [
+                {
+                    "message": {
+                        "content": "".join(content_parts),
+                        "tool_calls": terminal_calls,
                     }
-                ],
-            }
-        )
+                }
+            ],
+        }
+        validate_response_identity(terminal_payload, route)
+        completion = parser(terminal_payload)
         is_text = (
             isinstance(completion, AgentCompletion)
             and isinstance(completion.outcome, AssistantText)

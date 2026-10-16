@@ -2,10 +2,11 @@
 
 import ipaddress
 import os
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -106,6 +107,12 @@ class Settings(BaseSettings):
     mimi_route_uptime_window: Literal["1d", "30m"] = "1d"
     mimi_route_catalog_checked_at: float | None = None
     mimi_route_catalog_sha256: str | None = None
+    mimi_route_qualification_expires_at: float | None = None
+    mimi_route_qualification_sha256: str | None = None
+    mimi_route_qualified_provider_names: tuple[str, ...] = ()
+    # Trusted deployment qualification receipts, never supplied by model/UI.
+    # Empty means no adaptive endpoint is certified. No provider roster.
+    mimi_route_qualifications_json: str = "[]"
     mimi_collection_enabled: bool = False
     mimi_revision_collection: bool = False
     mimi_notifications_enabled: bool = False
@@ -121,15 +128,22 @@ class Settings(BaseSettings):
     ] = "low"
     # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
     mimi_route_context_tokens: int = 1_048_576
-    mimi_compaction_trigger_tokens: Literal[100_000] = 100_000
+    # Financial upper bound from the admitted native capacity snapshot, not bytes.
+    mimi_route_billing_prompt_ceiling: int | None = Field(default=None, ge=1, le=16_777_216)
+    mimi_route_capacity_source: str | None = None
+    mimi_compaction_trigger_tokens: Literal[100_000, 272_000] = 272_000
     mimi_max_payload_bytes: int = 2_097_152
+    mimi_input_codepoints: int = Field(default=50_000, ge=1_000, le=100_000)
+    mimi_operating_policy_revision: int = 0
+    mimi_model_price_caps_json: str = "{}"
+    mimi_route_identity_aliases_json: str = "{}"
     # At most four runs: guard + worker + observer <=12 of the existing15
     # ORM pool connections; auth returns its checkout before SSE. LangGraph adds
     # one direct checkpoint connection/run. Default two leaves ample Task room.
     mimi_max_active_runs: int = 2
     mimi_route_max_output_tokens: int = 4_096
-    mimi_route_max_input_price: float | None = None
-    mimi_route_max_output_price: float | None = None
+    mimi_route_max_input_price: float | Decimal | None = None
+    mimi_route_max_output_price: float | Decimal | None = None
     mimi_route_require_zdr: bool = True
 
     # auth-brief §2 allows 60-90 days; 90 chosen because the window is rolling, so it
@@ -151,7 +165,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_compaction_trigger_environment(cls, value: object) -> object:
         """Allow the approved integer preset through environment string input."""
-        return 100_000 if value == "100000" else value
+        return int(value) if value in {"100000", "272000"} else value
 
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
@@ -276,11 +290,19 @@ class Settings(BaseSettings):
             else:
                 required_route.update(
                     {
-                        "MIMI_ROUTE_ALLOWED_PROVIDERS": self.mimi_route_allowed_providers.strip(),
                         "MIMI_ROUTE_ALLOWED_QUANTIZATIONS": (
                             self.mimi_route_allowed_quantizations.strip()
                         ),
                     }
+                )
+            # Discovery replaces a static allowlist only in the admitted
+            # collection/model seam; arbitrary adaptive routes remain bounded.
+            if self.mimi_route_mode == "adaptive" and not (
+                self.mimi_collection_enabled
+                and self.mimi_route_model == "deepseek/deepseek-v4.1-flash"
+            ):
+                required_route["MIMI_ROUTE_ALLOWED_PROVIDERS"] = (
+                    self.mimi_route_allowed_providers.strip()
                 )
             missing = [
                 name
@@ -295,8 +317,10 @@ class Settings(BaseSettings):
             raise ValueError("MIMI_ROUTE_MAX_OUTPUT_TOKENS must be between 256 and 32768")
         for field_name in ("mimi_route_max_input_price", "mimi_route_max_output_price"):
             price = getattr(self, field_name)
-            if price is not None and price < 0:
-                raise ValueError(f"{field_name.upper()} cannot be negative")
+            if price is not None:
+                from app.agent.config_policy import finite_price
+
+                finite_price(price)
         if not 1 <= self.mimi_preview_ttl_minutes <= 180:
             raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 180")
         if not 1 <= self.mimi_run_max_turns <= 128:

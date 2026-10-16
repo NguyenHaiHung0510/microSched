@@ -46,14 +46,22 @@ def test_budget_preserves_unknown_holds_and_blocks_next_dispatch(tmp_path, monke
     ledger = {
         "baseline_key_usage": ".53",
         "grant_key_name": "MIMI_DEMO_1",
-        "cap_usd": "0.01",
-        "historical_accounted_usd": "0.009",
+        "cap_usd": "0.12",
+        "historical_accounted_usd": "0.119",
         "expires_at_utc": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
         "calls": [],
     }
     path.write_text(json.dumps(ledger), encoding="utf-8")
     selected = bind_configuration(
         settings(), {"profile_id": "luna", "effort": "medium", "input_tokens": 32000}
+    )
+    # Synthetic native-capacity receipt for this local money test only. Static
+    # profile binding cannot supply a fresh production financial snapshot.
+    selected = selected.model_copy(
+        update={
+            "mimi_route_billing_prompt_ceiling": 1_050_000,
+            "mimi_route_capacity_source": "synthetic-native-capacity-receipt",
+        }
     )
     with pytest.raises(RouteContractError, match="local_budget_exhausted"):
         reserve(selected, [{"role": "user", "content": "hi"}], agent_contract=True)
@@ -84,6 +92,14 @@ def test_budget_expiry_blocks_dispatch_without_changing_ledger(tmp_path, monkeyp
     path.write_text(json.dumps(ledger), encoding="utf-8")
     selected = bind_configuration(
         settings(), {"profile_id": "luna", "effort": "medium", "input_tokens": 32000}
+    )
+    # Synthetic native-capacity receipt for this local money test only. Static
+    # profile binding cannot supply a fresh production financial snapshot.
+    selected = selected.model_copy(
+        update={
+            "mimi_route_billing_prompt_ceiling": 1_050_000,
+            "mimi_route_capacity_source": "synthetic-native-capacity-receipt",
+        }
     )
     with pytest.raises(RouteContractError, match="local_budget_grant_expired"):
         reserve(selected, [], agent_contract=True)

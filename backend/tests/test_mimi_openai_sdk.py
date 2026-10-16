@@ -1,6 +1,7 @@
 """Synthetic HTTP contract tests for the local OpenAI SDK candidate transport."""
 
 import asyncio
+import hashlib
 import json
 from typing import Any
 
@@ -13,6 +14,7 @@ from app.agent.openai_sdk import _timeout
 from app.agent.openrouter import (
     AgentCompletion,
     ProviderDispatchError,
+    RouteContractError,
     build_request,
     complete,
     complete_stream,
@@ -31,6 +33,9 @@ def _settings(**overrides: Any) -> Settings:
         "mimi_standard_api_key": "synthetic-no-egress",
         "mimi_route_model": "vendor/model",
         "mimi_route_provider": "provider-a",
+        "mimi_route_identity_aliases_json": json.dumps(
+            {"providers": {"provider-a": ["provider-a-actual"]}}
+        ),
         "mimi_route_quantization": "fp8",
         "mimi_route_forced_tool_choice": "required",
         "mimi_route_reasoning_effort": "high",
@@ -317,6 +322,7 @@ async def test_sdk_summary_dispatch_omits_tools_and_tool_choice(effort) -> None:
                 "object": "chat.completion",
                 "created": 1,
                 "model": "vendor/model",
+                "provider": "provider-a",
                 "choices": [
                     {
                         "index": 0,
@@ -427,7 +433,7 @@ async def test_sdk_stream_cancellation_is_unknown_single_dispatch_and_closes_str
 
 
 def test_sdk_transport_is_supported_in_production() -> None:
-    assert Settings(_env_file=None, mimi_transport="openai_sdk").is_production
+    assert Settings(_env_file=None, app_env="production", mimi_transport="openai_sdk").is_production
 
 
 @pytest.mark.anyio
@@ -549,3 +555,95 @@ async def test_agent_text_waits_for_app_delivery_and_rejected_wire_keeps_safe_re
     assert receipt["id"] == "known-terminal"
     assert set(receipt) == {"id", "provider", "model", "usage", "choices"}
     assert "reasoning" not in receipt["choices"][0]["message"]
+
+
+@pytest.mark.parametrize("finish", ["length", "content_filter", "untrusted-finish-prose", None])
+@pytest.mark.parametrize("cost", [0.002, None])
+def test_early_terminal_rejection_keeps_metadata_without_content_or_reasoning(finish, cost):
+    async def scenario():
+        calls, events = [], []
+        usage = {
+            "prompt_tokens": 8,
+            "completion_tokens": 4,
+            "total_tokens": 12,
+            "untrusted": "SYNTHETIC_SECRET_MUST_NOT_PERSIST",
+            "cost": cost,
+            "completion_tokens_details": {"reasoning_tokens": 3, "text": "HIDDEN_MUST_NOT_PERSIST"},
+        }
+        chunk = {
+            "id": "synthetic-rejected",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "vendor/model",
+            "provider": "provider-a",
+            "usage": usage,
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": finish,
+                    "delta": {
+                        "content": "PARTIAL_MUST_NOT_DELIVER",
+                        "reasoning": "HIDDEN_MUST_NOT_PERSIST",
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "partial-tool",
+                                "function": {"name": "task.create_candidate.v2", "arguments": "{"},
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+
+        def handler(request):
+            calls.append(json.loads(request.content))
+            return httpx2.Response(
+                200,
+                text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            )
+
+        async def sink(kind, payload):
+            events.append((kind, payload))
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+            expected = ProviderDispatchError if finish is None else RouteContractError
+            with pytest.raises(expected) as rejected:
+                await complete_stream(
+                    [{"role": "user", "content": "synthetic"}],
+                    settings=_settings(),
+                    client=client,
+                    agent_contract=True,
+                    on_event=sink,
+                )
+        error = rejected.value
+        if finish is None:
+            assert error.outcome == "unknown"
+        else:
+            assert str(error) == "provider_stream_finish_reason_not_usable"
+        receipt = error.terminal_receipt
+        assert receipt["id"] == "synthetic-rejected"
+        assert receipt["model"] == "vendor/model" and receipt["provider"] == "provider-a"
+        assert receipt["finish_reason"] == (
+            "other" if finish == "untrusted-finish-prose" else finish
+        )
+        if finish == "untrusted-finish-prose":
+            assert receipt["finish_reason_sha256"] == hashlib.sha256(finish.encode()).hexdigest()
+        assert receipt["cost_available"] is (cost is not None)
+        assert receipt["usage"]["prompt_tokens"] == 8
+        assert receipt["usage"]["completion_tokens_details"] == {"reasoning_tokens": 3}
+        assert ("cost" in receipt["usage"]) is (cost is not None)
+        assert "choices" not in receipt
+        flat = json.dumps(receipt)
+        for forbidden in (
+            "PARTIAL_MUST_NOT_DELIVER",
+            "HIDDEN_MUST_NOT_PERSIST",
+            "SYNTHETIC_SECRET_MUST_NOT_PERSIST",
+            "untrusted-finish-prose",
+            "tool_calls",
+        ):
+            assert forbidden not in flat
+        assert len(calls) == 1 and not any(kind == "assistant.delta" for kind, _ in events)
+
+    asyncio.run(scenario())

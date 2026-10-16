@@ -32,6 +32,7 @@ pytestmark = pytest.mark.pg
 def local_crypto(monkeypatch):
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "mimi-checkpoint-pg-test")
+    monkeypatch.setenv("MIMI_STANDARD_API_KEY", "synthetic-never-sent")
     monkeypatch.setenv(
         "ENCRYPTION_MASTER_KEY", base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
     )
@@ -244,7 +245,7 @@ async def _seed_observed_trigger(db, conversation, run_id, settings):
             attempt=1,
             state="succeeded",
             request_fingerprint="c" * 64,
-            usage={"prompt_tokens": 100_001},
+            usage={"prompt_tokens": settings.mimi_compaction_trigger_tokens + 1},
             result={"response_id": str(uuid7())},
             route={
                 "kind": "openrouter",
@@ -630,7 +631,17 @@ def test_compaction_preflight_or_reservation_failure_halts_without_dispatch_or_h
                     .all()
                 )
                 assert len(rows) == 18
-                assert provider_calls == []
+                if failure_mode == "reservation":
+                    # The durable current-policy intent precedes the final
+                    # reservation check. Fenced/nonbillable is not a dispatch.
+                    assert len(provider_calls) == 1
+                    refused = provider_calls[0]
+                    assert refused.run_id == rid and refused.state == "fenced"
+                    assert refused.route["purpose"] == "compaction"
+                    assert refused.route["paid_dispatch"] is False
+                    assert refused.usage is None
+                else:
+                    assert provider_calls == []
                 assert calls == 0
         finally:
             async with maker() as db:

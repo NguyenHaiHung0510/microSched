@@ -41,6 +41,15 @@
   --mimi-user-bg: var(--rose-100);
   --mimi-petal-light: var(--rose-100);
   --mimi-petal-deep: var(--rose-300);
+  /* Owner176 approved composition legend; decorative, never the sole label. */
+  --mimi-context-pink: #ff6398;
+  --mimi-context-soft-pink: #ffc0d5;
+  --mimi-context-peach: #ffcea1;
+  --mimi-context-yellow: #ffda87;
+  --mimi-context-mint: #98e3cf;
+  --mimi-context-blue: #8bd2ff;
+  --mimi-context-purple: #c4a5ff;
+  --mimi-context-gray: #dcd8df;
   --mimi-floral-corner: url("/brand/sakura-corner.webp");
 
   /* --- trung tính ngả ấm: xám lạnh đặt cạnh hồng ấm sẽ trông bẩn --- */

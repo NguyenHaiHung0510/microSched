@@ -1,25 +1,23 @@
-# Model/effort configuration entrypoints
+# Model/effort and durable operating policy
 
-Source: `frontend/src/MimiConfiguration.tsx:145` (`mimi-route-settings`) in exact `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37`; source root `harness-b-mimi-qa/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiConfiguration.tsx:146`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
-Quick model chip, workspace hub, profile/details and next-run notice.
+Supported model/effort; manual per-model price revision;50K Unicode input; CAS/draft.
 
 ## How to get to it (user POV)
 
-Selected synthetic conversation → mimi-route-settings or workspace mimi-configuration-hub-toggle; side-chat menu Cấu hình Mimi.
+Open Cấu hình Mimi and approved inline operating-policy panel; review/apply a permitted change.
 
-Real prerequisites: Capabilities/configuration fixture and exact candidate model settings; config writes/provider-pool network not authorized by first metadata proof.
+## Driving it with the current scoped harness
 
-## Driving it with H14 isolated browser/CLI
+Journey `J5`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-route-settings` (observed in current source). Exact config/policy GET/PUT grant and synthetic policy key; no live catalog or price lookup. Core actions share native/live/device QA receipts, not a second matrix.
 
-mimi-route-settings, mimi-profile-details, mimi-next-run-notice; read-only opening in separately frozen fixture.
-
-Observable oracle: Displayed requested model/effort and supported capability are accurate; active run remains fixed and changes apply only to next run under a separate grant.
+Oracle: Saved revision/CAS and next-unsent wire agree; current dispatched snapshot unchanged; full draft retained.
 
 ## Gotchas
 
-Harness T1 model is not Mimi app configuration authority. No credential/auth/provider changes or live pool refresh.
+Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
 
-Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+A price/future-input policy save preserves the past measured-usage anchor; next unsent wire still uses the latest admitted caps. Owner192 author proof covers this cheap R1 correction; native/browser acceptance remains separate.

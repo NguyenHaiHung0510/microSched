@@ -11,7 +11,7 @@ function profile(overrides: Partial<MimiModelProfile> = {}): MimiModelProfile {
     provider: 'local',
     quantization: 'Q4',
     supported_efforts: ['low', 'high'],
-    context_limit: 232_000,
+    context_limit: 1_048_576,
     output_reserve: 32_000,
     available: true,
     unavailable_reason: null,
@@ -20,8 +20,9 @@ function profile(overrides: Partial<MimiModelProfile> = {}): MimiModelProfile {
 }
 
 test('context presets include the output reserve and stay within the model context', () => {
-  expect(availableInputPresets(profile())).toEqual([100_000])
-  expect(availableInputPresets(profile({ context_limit: 132_000 }))).toEqual([100_000])
+  expect(availableInputPresets(profile())).toEqual([272_000])
+  expect(availableInputPresets(profile({ context_limit: 132_000 }))).toEqual([])
+  expect(availableInputPresets(profile({ compaction_trigger_tokens: 100_000 }))).toEqual([100_000])
   expect(availableInputPresets(profile({ context_limit: 31_999 }))).toEqual([])
 })
 

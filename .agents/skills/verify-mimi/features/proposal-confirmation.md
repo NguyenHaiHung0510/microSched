@@ -1,25 +1,21 @@
 # Preview, revision and frozen confirmation
 
-Source: `frontend/src/MimiScreen.tsx:112` (`mimi-change-set`) in exact `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37`; source root `harness-b-mimi-qa/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:120`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
-Preview/reject/confirm, revision, receipt/undo and unknown recovery.
+Review/revise/reject/Confirm; digest/nonce/source CAS, receipt and reload.
 
 ## How to get to it (user POV)
 
-Selected deterministic synthetic run → preview → inspect changes → permitted decision.
+From a genuine owned proposal inspect frozen fields; decision only with exact parent permit.
 
-Real prerequisites: Frozen deterministic provider, authenticated synthetic role, source versions, change-set expiry/idempotency and domain baseline; separately approved confirmation writes.
+## Driving it with the current scoped harness
 
-## Driving it with H14 isolated browser/CLI
+Journey `J3`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-change-set` (observed in current source). Synthetic preview/revision/ordinary chat with unchanged frozen payload needs no gold LIVE04 or mutation permit. Confirm0 stays enforced; actual mutation requires canonical source/selection before-state and Main exclusive one-use authorization. Core actions share native/live/device QA receipts, not a second matrix.
 
-mimi-change-set, mimi-preview-actions, mimi-receipt, mimi-unknown-recovery; source backend/app/web/routers/mimi.py.
-
-Observable oracle: No write before confirmation; server-frozen preview matches authorized durable delta and idempotent receipt; rejection/expiry preserve data.
+Oracle: Zero domain changes before Confirm; actual permitted before!=after exactly once and receipt/readback after.
 
 ## Gotchas
 
-First metadata driver denies these routes. Stand-in lifecycle evidence does not prove natural conversation quality.
-
-Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.

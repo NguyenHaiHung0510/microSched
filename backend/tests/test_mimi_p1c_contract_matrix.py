@@ -275,7 +275,9 @@ def test_model_timeout_after_dispatch_is_unknown_and_not_retried():
         async def invoke(messages, turn):
             nonlocal dispatches
             dispatches += 1
-            await asyncio.sleep(1)
+            # The contract starts after dispatch. A 30ms wall-clock deadline
+            # may expire in preflight on a loaded host, legitimately before wire.
+            raise TimeoutError("synthetic timeout after dispatch")
 
         async def execute(name, arguments):
             pytest.fail("no read may run after model timeout")
@@ -286,8 +288,8 @@ def test_model_timeout_after_dispatch_is_unknown_and_not_retried():
                 limits=LoopLimits(
                     max_turns=3,
                     max_tool_calls=3,
-                    max_serialized_bytes=10_000,
-                    deadline=datetime.now(UTC) + timedelta(milliseconds=30),
+                    max_serialized_bytes=2_097_152,
+                    deadline=datetime.now(UTC) + timedelta(seconds=30),
                 ),
                 invoke_model=invoke,
                 execute_read=execute,

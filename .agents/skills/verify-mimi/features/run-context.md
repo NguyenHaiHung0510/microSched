@@ -1,25 +1,21 @@
 # Run observations, context and recovery
 
-Source: `frontend/src/MimiScreen.tsx:744` (`mimi-run-context-inspector`) in exact `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37`; source root `harness-b-mimi-qa/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiRunObservations.tsx:13`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
-Pending/running/terminal, cancel/pause/resume/reconcile, context checkpoint and runtime usage.
+Pause/Resume/Reconcile; typed overflow source lineage; truthful terminal/cost.
 
 ## How to get to it (user POV)
 
-Fixture conversation → Run rail or context chip/Chi tiết kỹ thuật; only authorized deterministic controls.
+Inspect an owned run; ordinary Resume then definite typed overflow and user-initiated recovery.
 
-Real prerequisites: Frozen run/call/event/checkpoint/oracle with exact terminal/recovery states; deterministic local lane separately prepared.
+## Driving it with the current scoped harness
 
-## Driving it with H14 isolated browser/CLI
+Journey `J4`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-run-observations` (observed in current source). Frozen controlled SDK responses and durable owned user source; UNKNOWN must reconcile first. Core actions share native/live/device QA receipts, not a second matrix.
 
-mimi-run-context-inspector, mimi-run-observations, mimi-progress, MimiRunObservations.tsx and MimiContextRail.tsx.
-
-Observable oracle: UI/wire/durable run identity converge; pending control ack is not terminal; requested vs actual route/cost preserves UNKNOWN where unreported.
+Oracle: One successor/user message; no recovery spent for ordinary parent alone; actual overflow recovery remains finite.
 
 ## Gotchas
 
-Closing browser/SSE does not mean run unsent/cancelled. Do not silently substitute model or activate paid routes.
-
-Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.

@@ -48,8 +48,8 @@ PROFILES = {
         "max_output_tokens": 131_072,
         "output_reserve": 8192,
         # Conservative undiscounted ceiling, not dependence on 30% promotion.
-        "input_price": 0.20,
-        "output_price": 0.60,
+        "input_price": 0.36,
+        "output_price": 1.44,
     },
     "glm": {
         "label": "GLM 5.3 Flash",
@@ -71,9 +71,9 @@ class RouteConfiguration(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     profile_id: str
     effort: str
-    input_tokens: int = Field(ge=32000, le=200000)
+    input_tokens: int = Field(ge=32000, le=272000)
     routing_mode: str = "adaptive"
-    min_uptime_percent: float = Field(default=95.0, ge=0, lt=100, allow_inf_nan=False)
+    min_uptime_percent: float = Field(default=95.0, ge=95, lt=100, allow_inf_nan=False)
     uptime_window: str = "1d"
 
 
@@ -99,7 +99,7 @@ def profiles_for_ui(settings: Settings) -> list[dict[str, Any]]:
             "id": key,
             "available": enabled and evidence[key][0],
             "evidence": evidence[key][1],
-            "compaction_trigger_tokens": 100_000,
+            "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
             "unavailable_reason": (
                 None
                 if enabled and evidence[key][0]
@@ -122,10 +122,10 @@ def validate_configuration(value: dict[str, Any], *, alpha: bool = False) -> Rou
     profile = PROFILES.get(config.profile_id)
     if profile is None or config.effort not in profile["supported_efforts"]:
         raise HTTPException(status_code=422, detail="mimi_route_selection_not_supported")
-    if config.input_tokens not in {32000, 100000, 200000}:
+    if config.input_tokens not in {32000, 100000, 200000, 272000}:
         raise HTTPException(status_code=422, detail="mimi_context_preset_not_supported")
-    if alpha and config.input_tokens != 100_000:
-        raise HTTPException(status_code=422, detail="mimi_alpha_trigger_requires_100k")
+    if alpha and config.input_tokens not in {100_000, 272_000}:
+        raise HTTPException(status_code=422, detail="mimi_alpha_trigger_preset_invalid")
     if config.input_tokens > profile["context_limit"]:
         raise HTTPException(status_code=422, detail="mimi_context_exceeds_model_limit")
     return config
@@ -149,19 +149,35 @@ def default_configuration(settings: Settings) -> dict[str, Any]:
         if settings.mimi_live_provider_enabled and settings.mimi_collection_enabled:
             raise HTTPException(409, "selected_effort_not_supported")
         effort = "medium" if "medium" in efforts else efforts[0]
-    return {"profile_id": profile_id, "effort": effort, "input_tokens": 100000}
+    return {
+        "profile_id": profile_id,
+        "effort": effort,
+        "input_tokens": settings.mimi_compaction_trigger_tokens,
+        "routing_mode": settings.mimi_route_mode,
+    }
 
 
 def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
     """Copy settings at run admission; later UI changes cannot mutate this copy."""
-    # Old saved32k/200k configuration remains history. Every new alpha run
-    # observes100k; do not rewrite old receipts or silently reroute a saved model.
-    config = validate_configuration(value)
+    # Saved configurations remain history; new runs bind the deployment trigger.
+    # Keep the selected model/effort and do not rewrite old run receipts.
+    config = validate_configuration({"routing_mode": settings.mimi_route_mode, **value})
     if settings.mimi_live_provider_enabled:
         availability = {p["id"]: p for p in profiles_for_ui(settings)}
         if not availability[config.profile_id]["available"]:
             raise HTTPException(status_code=409, detail="mimi_route_not_alpha_qualified")
     profile = PROFILES[config.profile_id]
+    import json
+
+    from app.agent.config_policy import ModelPrice
+
+    saved_prices = json.loads(settings.mimi_model_price_caps_json)
+    price = ModelPrice.model_validate(
+        saved_prices.get(
+            profile["model"],
+            {"prompt": profile["input_price"], "completion": profile["output_price"]},
+        )
+    )
     return settings.model_copy(
         update={
             "mimi_route_mode": config.routing_mode if settings.mimi_collection_enabled else "exact",
@@ -174,11 +190,13 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
             "mimi_route_quantization": profile["quantization"],
             "mimi_route_reasoning_effort": config.effort,
             "mimi_route_context_tokens": profile["context_limit"],
-            "mimi_compaction_trigger_tokens": 100_000,
+            "mimi_compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
             "mimi_route_max_output_tokens": profile["output_reserve"],
-            "mimi_route_max_input_price": profile["input_price"],
-            "mimi_route_max_output_price": profile["output_price"],
-            # All four frozen exact endpoints advertise named function choice.
+            "mimi_route_billing_prompt_ceiling": None,
+            "mimi_route_capacity_source": None,
+            "mimi_route_max_input_price": price.prompt,
+            "mimi_route_max_output_price": price.completion,
+            # Adaptive endpoint receipts must prove named function choice.
             # Revisions still require a typed replacement before server activation.
             "mimi_route_forced_tool_choice": "function",
         }

@@ -30,8 +30,11 @@ class SourceManifest(StrictModel):
 
 
 class ContextBudget(StrictModel):
+    compaction_trigger_tokens: Literal[100_000, 272_000] = 272_000
     context_limit: int = Field(ge=1)
     output_reserve: int = Field(ge=1)
+    operating_input_tokens: int = Field(default=400_000, ge=1, le=400_000)
+    operating_policy_revision: int = Field(default=0, ge=0)
     serialized_input_upper_bound: int = Field(ge=0)
     remaining_turns: int = Field(ge=0)
     remaining_tool_calls: int = Field(ge=0)

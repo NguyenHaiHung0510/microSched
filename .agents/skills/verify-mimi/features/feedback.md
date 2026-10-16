@@ -1,25 +1,21 @@
 # Response feedback and target binding
 
-Source: `frontend/src/MimiScreen.tsx:929` (`mimi-feedback-target`) in exact `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37`; source root `harness-b-mimi-qa/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:931`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
-Helpful/not-good actions, reasons/draft/expected result, acknowledgment and evidence.
+Feedback target/client identity, persistence and unresolved status.
 
 ## How to get to it (user POV)
 
-Synthetic assistant message → Hữu ích / Chưa tốt action → Mục cần góp ý; select exact message/run/call/receipt.
+Open feedback on an actual synthetic response; submit only if that target/write grant exists.
 
-Real prerequisites: Existing synthetic assistant message/target receipt and version; approved feedback write/oracle; encryption/ack fixture.
+## Driving it with the current scoped harness
 
-## Driving it with H14 isolated browser/CLI
+Journey `EDGE_DEFERRED`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-feedback` (observed in current source). Owned response fixture and explicit feedback write capability; otherwise BLOCKED/NOT_RUN. Core actions share native/live/device QA receipts, not a second matrix.
 
-mimi-feedback-target, mimi-feedback-target-snippet, mimi-feedback, mimi-feedback-expected; MimiFeedbackEvidence.tsx.
-
-Observable oracle: Submitted feedback binds the chosen target, persists acknowledgment and prevents draft/target confusion; unsupported supplement remains an unsent draft.
+Oracle: Feedback belongs to exact response/conversation and is not inferred as model-quality acceptance.
 
 ## Gotchas
 
-No real complaint/chat payloads. Positive click can be a write; first metadata case does not exercise feedback.
-
-Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.

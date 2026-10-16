@@ -15,7 +15,14 @@ from app.agent.context import AssistantText, ToolRequest, ToolRequests
 from app.agent.loop import LoopLimits, messages_final_only, run_read_loop
 from app.agent.openrouter import AgentCompletion, RouteContractError, build_request
 from app.agent.route_config import bind_configuration, default_configuration, profiles_for_ui
-from app.agent.route_pool import ADMITTED_MODEL, CatalogCache, NoEligibleEndpoint, eligible_pool
+from app.agent.route_pool import (
+    ADMITTED_MODEL,
+    CatalogCache,
+    NoEligibleEndpoint,
+    eligible_pool,
+    endpoint_fingerprint,
+    qualification_scope,
+)
 from app.agent.selection import SelectionCandidate, bind_selection, covered_versions
 from app.agent.task_collection import CollectionCandidate, TaskCommand
 from app.core.settings import Settings
@@ -48,6 +55,8 @@ def catalog(*rows):
         uptime_last_1d=99.7,
         uptime_last_30m=99.1,
         quantization="fp8",
+        context_length=1_048_576,
+        max_completion_tokens=8192,
         supported_parameters=["tools", "tool_choice", "reasoning"],
         pricing={"prompt": "0.0000002", "completion": "0.0000006"},
     )
@@ -254,6 +263,9 @@ def test_pool_native_exact_model_effort_privacy_price_and_variant_boundary(effor
             mimi_route_mode="adaptive",
             mimi_route_reasoning_effort=effort,
             mimi_route_allowed_providers=",".join(pool.tags),
+            mimi_route_catalog_checked_at=__import__("time").time(),
+            mimi_route_qualification_expires_at=__import__("time").time() + 3600,
+            mimi_route_qualification_sha256="a" * 64,
         ),
         agent_contract=True,
     )
@@ -308,6 +320,42 @@ def test_strict_uptime_missing_and_nonfinite_excluded(uptime):
 
 
 def test_catalog_singleflight_ttl_cooldown_size_timeout_and_fail_closed(monkeypatch):
+    import time
+
+    def qualified_settings():
+        selected = settings()
+        certificate = {
+            "catalog_tag": "deepinfra/fp8",
+            "routing_slug": "deepinfra/fp8",
+            "provider_name": "DeepInfra",
+            "model": ADMITTED_MODEL,
+            "effort": "high",
+            "quantization": "fp8",
+            "scope_sha256": qualification_scope(selected),
+            "endpoint_sha256": endpoint_fingerprint(catalog()["data"]["endpoints"][0]),
+            "zdr": True,
+            "data_collection": "deny",
+            "named_function": True,
+            "request_families": ["main", "summary", "forced_function"],
+            "expires_at": time.time() + 3600,
+            "evidence_sha256": {
+                axis: "a" * 64
+                for axis in (
+                    "routing_slug",
+                    "privacy",
+                    "effort",
+                    "main",
+                    "summary",
+                    "forced_function",
+                )
+            },
+        }
+        return selected.model_copy(
+            update={"mimi_route_qualifications_json": json.dumps([certificate])}
+        )
+
+    frozen = qualified_settings()
+
     async def scenario():
         cache = CatalogCache()
         requests = []
@@ -319,27 +367,27 @@ def test_catalog_singleflight_ttl_cooldown_size_timeout_and_fail_closed(monkeypa
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             a, b = await asyncio.gather(
-                cache.refresh(settings(), client=client), cache.refresh(settings(), client=client)
+                cache.refresh(frozen, client=client), cache.refresh(frozen, client=client)
             )
             assert a == b and len(requests) == 1
-            await cache.refresh(settings(), client=client, manual=True)
+            await cache.refresh(frozen, client=client, manual=True)
             assert len(requests) == 2
             with pytest.raises(NoEligibleEndpoint, match="cooldown"):
-                await cache.refresh(settings(), client=client, manual=True)
+                await cache.refresh(frozen, client=client, manual=True)
 
         async def unavailable(request):
             raise httpx.ReadTimeout("synthetic catalog timeout")
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(unavailable)) as client:
             with pytest.raises(NoEligibleEndpoint):
-                await CatalogCache().refresh(settings(), client=client)
+                await CatalogCache().refresh(frozen, client=client)
 
         async def huge(request):
             return httpx.Response(200, content=b"x" * 2097153)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(huge)) as client:
             with pytest.raises(NoEligibleEndpoint):
-                await CatalogCache().refresh(settings(), client=client)
+                await CatalogCache().refresh(frozen, client=client)
 
     asyncio.run(scenario())
 
@@ -369,6 +417,4 @@ def test_feature_off_and_collection_revision_preserve_tool_boundaries():
             "uptime_window": "30m",
         },
     )
-    assert (
-        configured.mimi_route_mode == "adaptive" and configured.mimi_route_min_uptime_percent == 96
-    )
+    assert configured.mimi_route_mode == "exact" and configured.mimi_route_min_uptime_percent == 96

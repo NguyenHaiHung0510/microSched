@@ -10,14 +10,14 @@ from typing import Any
 
 from app.core.settings import Settings
 
-COMPACTION_TRIGGER = 100_000
+COMPACTION_TRIGGER = 272_000
 
 
 def context_revision(settings: Settings, config_version: int, checkpoint_id: Any) -> str:
     # Message append and per-request hashes deliberately do not change this epoch.
     from app.agent.context import OUTPUT_SCHEMA_SHA256
-    from app.agent.policy import POLICY_SHA256
-    from app.agent.tools.registry import REGISTRY_SHA256
+    from app.agent.policy import load_standard_policy
+    from app.agent.tools.registry import registry_hash, tools_for_settings
 
     value = {
         "version": 1,
@@ -29,11 +29,15 @@ def context_revision(settings: Settings, config_version: int, checkpoint_id: Any
         "mode": settings.mimi_route_mode,
         "providers": settings.mimi_allowed_provider_list,
         "effort": settings.mimi_route_reasoning_effort,
-        "policy_sha256": POLICY_SHA256,
-        "tool_registry_sha256": REGISTRY_SHA256,
+        "policy_sha256": load_standard_policy(
+            collection_enabled=settings.mimi_collection_enabled
+        ).sha256,
+        "tool_registry_sha256": registry_hash(tools_for_settings(settings)),
         "output_schema_sha256": OUTPUT_SCHEMA_SHA256,
         "text_response_format": settings.mimi_text_response_format,
         "quantizations": settings.mimi_allowed_quantization_list,
+        "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
+        # Price/future-input policy revision binds each unsent wire, not past usage.
     }
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -45,10 +49,12 @@ def reported_number(value: Any) -> int | float | None:
     return None
 
 
-def prompt_observation(call: Any, revision: str, *, consumed: bool = False) -> dict[str, Any]:
+def prompt_observation(
+    call: Any, revision: str, *, consumed: bool = False, trigger_tokens: int = COMPACTION_TRIGGER
+) -> dict[str, Any]:
     result = {
         "context_revision": revision,
-        "trigger_tokens": COMPACTION_TRIGGER,
+        "trigger_tokens": trigger_tokens,
         "source_call_id": str(call.id) if call else None,
         "prompt_tokens": None,
         "eligible": False,
@@ -65,12 +71,24 @@ def prompt_observation(call: Any, revision: str, *, consumed: bool = False) -> d
         result["reason"] = "reused_receipt"
     elif route.get("context_revision") != revision:
         result["reason"] = "stale_context_revision"
+    elif call.state == "failed" and route.get("input_overflow_refusal") is True:
+        exhausted = consumed or route.get("overflow_recovery_attempt", 0) >= 1
+        result.update(
+            should_compact=not exhausted,
+            compaction_blocked=exhausted,
+            reason="input_overflow_recovery_exhausted"
+            if exhausted
+            else "typed_input_overflow_refusal",
+        )
     elif (
         call.state != "succeeded"
         or not route.get("actual_provider")
         or route.get("actual_model") != route.get("model")
         or route.get("actual_provider", "").lower()
-        not in [str(p).lower() for p in (route.get("providers") or [])]
+        not in [
+            str(p).lower()
+            for p in (route.get("qualified_provider_names") or route.get("providers") or [])
+        ]
     ):
         result["reason"] = "unverified_main_route"
     else:
@@ -81,8 +99,8 @@ def prompt_observation(call: Any, revision: str, *, consumed: bool = False) -> d
             result.update(
                 prompt_tokens=value,
                 eligible=True,
-                should_compact=value >= COMPACTION_TRIGGER and not consumed,
-                compaction_blocked=value >= COMPACTION_TRIGGER and consumed,
+                should_compact=value >= trigger_tokens and not consumed,
+                compaction_blocked=value >= trigger_tokens and consumed,
                 reason="compaction_required_unactivated" if consumed else "provider_prompt_usage",
             )
     return result
@@ -95,6 +113,8 @@ def run_costs(calls: list[Any]) -> dict[str, Any]:
     unknown = {"main": 0, "helper": 0}
     seen = set()
     reused = 0
+    cache_observed = cache_unknown = 0
+    cached_total = sampled_prompt_total = 0
     for call in calls:
         route = call.route or {}
         if route.get("paid_dispatch") is False:
@@ -108,12 +128,27 @@ def run_costs(calls: list[Any]) -> dict[str, Any]:
         seen.add(identity)
         purpose = "helper" if route.get("purpose") == "compaction" else "main"
         counts[purpose] += 1
+        usage = call.usage or {}
+        details = usage.get("prompt_tokens_details") or {}
+        cached = reported_number(usage.get("cached_tokens", details.get("cached_tokens")))
+        prompt = reported_number(usage.get("prompt_tokens"))
+        if cached is not None and prompt is not None and cached <= prompt:
+            cache_observed += 1
+            cached_total += cached
+            sampled_prompt_total += prompt
+        else:
+            cache_unknown += 1
         cost = reported_number((call.usage or {}).get("cost"))
         if cost is None:
             unknown[purpose] += 1
         else:
             totals[purpose] += Decimal(str(cost))
     return {
+        "cache_observed_calls": cache_observed,
+        "cache_unknown_calls": cache_unknown,
+        "provider_cached_tokens": cached_total if cache_observed else None,
+        "cache_sample_prompt_tokens": sampled_prompt_total if cache_observed else None,
+        "cache_token_ratio": cached_total / sampled_prompt_total if sampled_prompt_total else None,
         "known_cost_usd": float(sum(totals.values())),
         "main_known_cost_usd": float(totals["main"]),
         "helper_known_cost_usd": float(totals["helper"]),

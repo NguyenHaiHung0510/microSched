@@ -29,10 +29,11 @@ def main() -> None:
         mimi_route_provider="deepinfra",
         mimi_route_quantization="fp8",
         mimi_route_reasoning_effort="high",
-        mimi_route_max_input_price=0.2,
-        mimi_route_max_output_price=0.6,
+        mimi_route_max_input_price=0.36,
+        mimi_route_max_output_price=1.44,
     )
-    assert config.is_production and config.mimi_compaction_trigger_tokens == 100_000
+    assert config.is_production and config.mimi_compaction_trigger_tokens == 272_000
+    assert config.mimi_input_codepoints == 50_000
     print("Mimi alpha production config and no-dev framework imports PASS; no egress")
 
 

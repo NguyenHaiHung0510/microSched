@@ -10,11 +10,13 @@ import { usePreviewExpired } from './mimi-preview-expiry'
 import { MimiRunObservations } from '@/MimiRunObservations'
 import { MimiCheckpointViewer } from './MimiCheckpointViewer'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Check, Copy, ChevronDown, LoaderCircle, MessageSquareWarning, RotateCcw, Send, Sparkles, Square, X, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { CalendarDays, Check, Copy, LoaderCircle, MessageSquareWarning, RotateCcw, Send, Sparkles, Square, X, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
 import { MimiConfiguration } from '@/MimiConfiguration'
+import { MimiContextComposition } from '@/MimiContextComposition'
+import { unicodeCodepoints } from '@/mimi-operating-policy'
 import { MimiMessageText } from '@/MimiMessageText'
 import { MimiSystemNotice } from '@/MimiSystemNotice'
 import { isVerifiedServerNotice } from '@/mimi-message-provenance'
@@ -31,6 +33,8 @@ import {
   cancelMimiRun,
   decideMimiChangeSet,
   fetchMimiCapabilities,
+  fetchMimiOperatingPolicy,
+  warmMimiMetadata,
   fetchMimiConversation,
   fetchCurrentMimiConversation,
   observeMimiRun,
@@ -56,6 +60,10 @@ import { selectCreatedMimiConversation, setMimiComposerDraft, useMimiComposerDra
 function errorMessage(error: unknown): string {
   if (error instanceof TimeoutError) return error.message
   if (error instanceof ApiError) {
+    if (error.status === 422 && typeof error.body === 'object' && error.body && 'detail' in error.body) {
+      const detail = error.body.detail as { code?: string; count?: number; limit?: number }
+      if (detail?.code === 'mimi_input_codepoints_exceeded' && typeof detail.count === 'number' && typeof detail.limit === 'number') return `Giới hạn đã đổi: ${detail.count.toLocaleString('vi-VN')} / ${detail.limit.toLocaleString('vi-VN')} Unicode codepoints. Bản nháp được giữ nguyên.`
+    }
     if (error.status === 503 && error.message === 'mimi_busy_try_later') return 'Mimi đang bận. Nội dung bạn nhập vẫn được giữ; thử lại sau. Task vẫn dùng bình thường.'
     if (error.status === 409) return 'Preview hoặc conversation đã thay đổi. Tải lại trước khi thử tiếp.'
     if (error.status === 410) return 'Preview đã hết hạn. Gửi lại yêu cầu để Mimi tạo preview mới.'
@@ -305,6 +313,21 @@ export function MimiScreen({
     queryFn: fetchMimiCapabilities,
     ...NO_POLLING_QUERY_OPTIONS,
   })
+  const operatingPolicy = useQuery({
+    queryKey: ['mimi', 'operating-policy'], queryFn: fetchMimiOperatingPolicy,
+    retry: false, ...NO_POLLING_QUERY_OPTIONS,
+  })
+  const inputLimit = operatingPolicy.data?.policy.input_codepoints ?? 50000
+  const inputCount = unicodeCodepoints(draft)
+  const inputOverflow = inputCount > inputLimit
+  const warmed = useRef(false)
+  useEffect(() => {
+    if (warmed.current) return
+    warmed.current = true
+    // One metadata-only event per mounted chat. Server coalesces concurrent
+    // openings; this never waits for or dispatches a model call.
+    void warmMimiMetadata().catch(() => { /* Next send retains authoritative admission. */ })
+  }, [])
 
   const createConversation = useMutation({
     mutationFn: () => createMimiConversation(),
@@ -645,7 +668,7 @@ export function MimiScreen({
 
   function submitMessage(event?: React.SyntheticEvent) {
     event?.preventDefault()
-    if (!current || decisionIntent || !draft.trim() || runtimeActive || !online || (revisionTarget && !activeRevision)) return
+    if (!current || decisionIntent || !draft.trim() || inputOverflow || runtimeActive || !online || (revisionTarget && !activeRevision)) return
     send.mutate({ current, content: draft, clientId: crypto.randomUUID(), revision: activeRevision, startedAt: Date.now() })
   }
 
@@ -754,22 +777,7 @@ export function MimiScreen({
       <MimiBackdrop active={current.messages.length > 0} />
       <div className={`mimi-chat-heading ${variant === 'dock' ? 'mimi-chat-heading-dock' : ''}`}>
         <div className="flex min-w-0 items-center gap-2"><MimiAvatar size="xs" state={mimiState} /><h3 id={`mimi-title-${variant}`} className="truncate text-xs font-semibold">{current.title ?? 'Mimi'}</h3></div>
-      <details className="mimi-context-chip text-xs" data-testid="mimi-run-context-inspector">
-        <summary className="cursor-pointer font-semibold"><span>Ngữ cảnh</span><ChevronDown className="size-3" /></summary><div className="mimi-context-popover">
-        <p className="mt-2 text-xs text-muted-foreground">Đây là receipt server của lượt gần nhất, khác với dữ liệu chỉ được mở trong rail. Số upper bound dùng byte UTF-8 làm ước lượng bảo thủ, không phải token do provider báo. Nội dung reasoning ẩn không được hiển thị.</p>
-        {latestContext ? (
-          <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-            <div><dt>Model / effort yêu cầu</dt><dd>{String((latestContext.payload.route as Record<string, unknown> | undefined)?.requested_model ?? 'Chưa có')} / {String((latestContext.payload.route as Record<string, unknown> | undefined)?.requested_effort ?? 'Chưa có')}</dd></div>
-            <div><dt>Input upper bound / context limit / output reserve</dt><dd>{String((latestContext.payload.budget as Record<string, unknown> | undefined)?.serialized_input_upper_bound ?? 'Chưa có')} / {String((latestContext.payload.budget as Record<string, unknown> | undefined)?.context_limit ?? 'Chưa có')} / {String((latestContext.payload.budget as Record<string, unknown> | undefined)?.output_reserve ?? 'Chưa có')}</dd></div>
-            <div><dt>Transcript range / checkpoint frontier</dt><dd>{JSON.stringify(latestContext.payload.transcript_range)} / {String(latestContext.payload.checkpoint_frontier ?? 0)}</dd></div>
-            <div className="min-w-0"><dt>Manifest hash</dt><dd className="break-all">{String(latestContext.payload.manifest_sha256 ?? 'Chưa có')}</dd></div>
-          </dl>
-        ) : <p className="mt-2 text-xs">Lượt này chưa có manifest được ghi nhận; không suy ra đã dispatch.</p>}
-        {latestCheckpoint ? <p className="mt-2 text-xs">Checkpoint đã activate tới message {String(latestCheckpoint.payload.frontier ?? '?')}, gồm {String(latestCheckpoint.payload.source_count ?? '?')} nguồn. Metadata của receipt; bản tóm tắt hiện hành có thể mở bên dưới.</p> : <p className="mt-2 text-xs">Chưa có checkpoint activate trong các receipt đang hiển thị.</p>}
-        <MimiRunObservations observation={latestRun ? current.run_observations?.[latestRun.id] : undefined} calls={(current.provider_calls ?? []).filter((call) => call.run_id === latestRun?.id)} />
-        <MimiCheckpointViewer key={current.id} conversationId={current.id} frontier={Number(latestCheckpoint?.payload.frontier ?? 0)} generation={current.generation} />
-        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(latestContext?.payload.sources ?? [], null, 2)}</pre>
-      </div></details>
+        <MimiContextComposition conversation={current} capabilities={capabilities.data} />
         {latestRun?.state === 'waiting_confirmation' ? <Badge variant="outline">{pendingPreviewExpired ? 'Preview đã hết hạn' : 'Chờ xác nhận'}</Badge> : null}
         {!online ? <Badge variant="destructive">Mất mạng</Badge> : null}
       </div>
@@ -805,7 +813,7 @@ export function MimiScreen({
       {latestRun && (
         latestRunCanResume
         || ['retryable', 'deadline_exceeded', 'outcome_unknown'].includes(latestRun.state)
-        || (latestRun.state === 'cancelled' && latestRun.provider_outcome === 'unknown')
+        || (['cancelled', 'halted'].includes(latestRun.state) && latestRun.provider_outcome === 'unknown')
       ) ? (
         <div className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">{latestRunCanResume ? 'Run có thể tiếp tục theo trạng thái server.' : 'Run đã dừng tại checkpoint provider.'}</p>
@@ -1090,7 +1098,8 @@ export function MimiScreen({
             data-testid="mimi-input"
             aria-label="Nhắn Mimi"
             value={draft}
-            maxLength={12_000}
+            aria-describedby="mimi-message-count"
+            aria-invalid={inputOverflow}
             placeholder={activeRevision
               ? 'Mô tả cách bạn muốn sửa phương án…'
               : 'Nhắn Mimi…'}
@@ -1120,13 +1129,14 @@ export function MimiScreen({
               type="submit"
               size="sm"
               className="mimi-send min-h-11 min-w-11 rounded-full shrink-0"
-              disabled={!!decisionIntent || !!current.archived_at || !draft.trim() || runtimeActive || !online || (revisionTarget !== null && !activeRevision)}
+              disabled={!!decisionIntent || !!current.archived_at || !draft.trim() || inputOverflow || runtimeActive || !online || (revisionTarget !== null && !activeRevision)}
             >
               {runtimeActive ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Send className="size-3.5" />}
               <span className="sr-only">Gửi</span>
             </Button>
           </div>
         </div>
+        <p id="mimi-message-count" className={`mt-1 text-xs ${inputOverflow ? 'text-bad' : 'text-muted-foreground'}`} role={inputOverflow ? 'alert' : undefined}>{inputCount.toLocaleString('vi-VN')} / {inputLimit.toLocaleString('vi-VN')} Unicode codepoints{inputOverflow ? ` · Vượt ${(inputCount - inputLimit).toLocaleString('vi-VN')}. Bản nháp được giữ nguyên; chỉnh nội dung trước khi gửi.` : ''}{!operatingPolicy.data ? ' · Giới hạn mặc định; server kiểm lại cấu hình khi gửi.' : ''}</p>
         {send.isError ? <p role="alert" className="mt-1 text-xs text-bad">{errorMessage(send.error)}</p> : null}
       </form>
 
@@ -1135,6 +1145,20 @@ export function MimiScreen({
           <DialogHeader><DialogTitle>Chi tiết kỹ thuật</DialogTitle><DialogDescription>Receipt đã được server cho phép đọc của hội thoại đang chọn. Không hiển thị reasoning ẩn.</DialogDescription></DialogHeader>
           <MimiRunObservations observation={latestRun ? current.run_observations?.[latestRun.id] : undefined} calls={(current.provider_calls ?? []).filter((call) => call.run_id === latestRun?.id)} />
           <MimiCheckpointViewer key={current.id} conversationId={current.id} frontier={Number(latestCheckpoint?.payload.frontier ?? 0)} generation={current.generation} />
+          <details><summary className="cursor-pointer text-sm font-semibold">Manifest và checkpoint của receipt</summary>
+        <p className="mt-2 text-xs text-muted-foreground">Đây là receipt server của lượt gần nhất, khác với dữ liệu chỉ được mở trong rail. Số upper bound dùng byte UTF-8 làm ước lượng bảo thủ, không phải token do provider báo. Nội dung reasoning ẩn không được hiển thị.</p>
+        {latestContext ? (
+          <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+            <div><dt>Model / effort yêu cầu</dt><dd>{String((latestContext.payload.route as Record<string, unknown> | undefined)?.requested_model ?? 'Chưa có')} / {String((latestContext.payload.route as Record<string, unknown> | undefined)?.requested_effort ?? 'Chưa có')}</dd></div>
+            <div><dt>Input upper bound / context limit / output reserve</dt><dd>{String((latestContext.payload.budget as Record<string, unknown> | undefined)?.serialized_input_upper_bound ?? 'Chưa có')} / {String((latestContext.payload.budget as Record<string, unknown> | undefined)?.context_limit ?? 'Chưa có')} / {String((latestContext.payload.budget as Record<string, unknown> | undefined)?.output_reserve ?? 'Chưa có')}</dd></div>
+            <div><dt>Transcript range / checkpoint frontier</dt><dd>{JSON.stringify(latestContext.payload.transcript_range)} / {String(latestContext.payload.checkpoint_frontier ?? 0)}</dd></div>
+            <div className="min-w-0"><dt>Manifest hash</dt><dd className="break-all">{String(latestContext.payload.manifest_sha256 ?? 'Chưa có')}</dd></div>
+          </dl>
+        ) : <p className="mt-2 text-xs">Lượt này chưa có manifest được ghi nhận; không suy ra đã dispatch.</p>}
+        {latestCheckpoint ? <p className="mt-2 text-xs">Checkpoint đã activate tới message {String(latestCheckpoint.payload.frontier ?? '?')}, gồm {String(latestCheckpoint.payload.source_count ?? '?')} nguồn. Metadata của receipt; bản tóm tắt hiện hành có thể mở bên dưới.</p> : <p className="mt-2 text-xs">Chưa có checkpoint activate trong các receipt đang hiển thị.</p>}
+        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(latestContext?.payload.sources ?? [], null, 2)}</pre>
+
+          </details>
           <p className="text-xs font-semibold">Event đang hiển thị ({current.events.length}) · 30 event cuối trong view</p>
           <ol className="space-y-1 text-xs text-muted-foreground">{current.events.slice(-30).map((event) => <li key={event.id}>{event.kind}</li>)}</ol>
         </DialogContent>

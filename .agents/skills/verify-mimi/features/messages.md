@@ -1,25 +1,21 @@
 # Messages, provenance and composer
 
-Source: `frontend/src/MimiScreen.tsx:1077` (`mimi-input`) in exact `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37`; source root `harness-b-mimi-qa/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:1098`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
-Composer/history, response content/provenance, streaming, copy and send.
+Full Unicode draft/history, stream, terminal and provenance.
 
 ## How to get to it (user POV)
 
-Selected synthetic conversation → composer/history → actual assistant message action.
+Submit only frozen synthetic text through the real composer; inspect stream and reload.
 
-Real prerequisites: Deterministic provider/history/system-policy/language/provenance fixture and separate write/call grant; none installed for first metadata proof.
+## Driving it with the current scoped harness
 
-## Driving it with H14 isolated browser/CLI
+Journey `J2`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-input` (observed in current source). Native no-egress SDK double or separate approved live permit; frozen language/policy/history. Core actions share native/live/device QA receipts, not a second matrix.
 
-mimi-input, message action labels in MimiScreen.tsx; inspect mimi-message-provenance.ts.
-
-Observable oracle: Literal authorized input/output and provenance agree with wire/durable history; no duplicate dispatch; UI stream converges with terminal state.
+Oracle: Literal input, actual SDK request, durable history and UI terminal converge; no silent truncation/duplicate.
 
 ## Gotchas
 
-Composer visibility does not prove model conversation. No paid provider, real PRIVATE prompt or clipboard action in initial recipe.
-
-Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.

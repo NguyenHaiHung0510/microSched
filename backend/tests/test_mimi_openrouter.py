@@ -86,6 +86,9 @@ def test_default_reasoning_effort_omits_effort_but_keeps_reasoning_excluded() ->
 def test_adaptive_request_has_bounded_pool_without_manual_order() -> None:
     settings = _settings(
         mimi_route_mode="adaptive",
+        mimi_route_catalog_checked_at=__import__("time").time(),
+        mimi_route_qualification_expires_at=__import__("time").time() + 3600,
+        mimi_route_qualification_sha256="a" * 64,
         mimi_route_provider=None,
         mimi_route_quantization=None,
         mimi_route_allowed_providers="provider-a, provider-b",
@@ -149,8 +152,10 @@ def test_preflight_refuses_overflow_instead_of_truncating() -> None:
         mimi_route_context_tokens=16_384,
         mimi_route_max_output_tokens=4_096,
     )
-    request = build_request([{"role": "user", "content": "x" * 13_000}], settings)
-    assert len(request["messages"][0]["content"]) == 13_000
+    content = "x" * 13_000
+    with pytest.raises(RouteContractError, match="route_capacity"):
+        build_request([{"role": "user", "content": content}], settings)
+    assert len(content) == 13_000
 
 
 def test_selected_32k_request_checks_policy_tools_current_pending_checkpoint_suffix_and_reserve():
@@ -160,24 +165,30 @@ def test_selected_32k_request_checks_policy_tools_current_pending_checkpoint_suf
         {"role": "user", "content": "OLD_HISTORY " + "h" * 12_000},
         {"role": "assistant", "content": "OLD_REPLY " + "r" * 8_000},
     ]
-    request = build_request(oversized, settings, agent_contract=True)
-    assert request["messages"] == oversized
+    with pytest.raises(RouteContractError, match="route_capacity"):
+        build_request(oversized, settings, agent_contract=True)
 
     compacted = [
-        {"role": "system", "content": "FIXED_POLICY_AND_CAPABILITIES " + "p" * 6_000},
-        {"role": "system", "content": "checkpoint + active constraint citations " + "c" * 2_000},
-        {"role": "assistant", "content": "retained transcript suffix " + "s" * 1_500},
-        {"role": "system", "content": "exact server pending preview object " + "d" * 1_000},
-        {"role": "user", "content": "current user input " + "u" * 1_000},
+        {"role": "system", "content": "FIXED_POLICY_AND_CAPABILITIES " + "p" * 1_000},
+        {"role": "system", "content": "checkpoint + active constraint citations " + "c" * 300},
+        {"role": "assistant", "content": "retained transcript suffix " + "s" * 500},
+        {"role": "system", "content": "exact server pending preview object " + "d" * 200},
+        {"role": "user", "content": "current user input " + "u" * 200},
     ]
-    request = build_request(compacted, settings, agent_contract=True)
-    serialized = serialized_input_bytes(compacted, agent_contract=True)
-    assert serialized + request["max_tokens"] <= 32_000
+    # A 32K native route remains refused even after compaction; the operating
+    # target is distinct from native admission and bytes are not token counts.
+    with pytest.raises(RouteContractError, match="route_capacity"):
+        build_request(compacted, settings, agent_contract=True)
+    admitted = settings.model_copy(update={"mimi_route_context_tokens": 1_048_576})
+    request = build_request(compacted, admitted, agent_contract=True)
+    assert request["messages"] == compacted
+    assert serialized_input_bytes(compacted, agent_contract=True) > 0
+    assert request["max_tokens"] == 8_192
     assert request["tools"] and request["response_format"]
 
 
 def test_summary_mode_has_strict_summary_schema_and_no_function_tools_or_choice():
-    settings = _settings(mimi_route_context_tokens=32_000, mimi_route_max_output_tokens=2_048)
+    settings = _settings(mimi_route_context_tokens=1_048_576, mimi_route_max_output_tokens=2_048)
     messages = [
         {"role": "system", "content": "compact safely"},
         {"role": "user", "content": "synthetic source"},
@@ -187,9 +198,8 @@ def test_summary_mode_has_strict_summary_schema_and_no_function_tools_or_choice(
     assert "tool_choice" not in request
     assert request["response_format"]["json_schema"]["strict"] is True
     assert request["max_tokens"] == 2_048
-    assert (
-        serialized_input_bytes(messages, agent_contract=False, summary_mode=True) + 2_048 <= 32_000
-    )
+    assert request["messages"] == messages
+    assert serialized_input_bytes(messages, agent_contract=False, summary_mode=True) > 0
 
 
 def test_terminal_tool_args_are_independently_validated() -> None:
@@ -501,4 +511,6 @@ def test_native_chat_keeps_tool_and_privacy_contract_without_forcing_text_json()
 
 
 def test_native_chat_option_is_supported_in_production():
-    assert Settings(_env_file=None, mimi_text_response_format="natural").is_production
+    assert Settings(
+        _env_file=None, app_env="production", mimi_text_response_format="natural"
+    ).is_production

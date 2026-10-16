@@ -1,25 +1,21 @@
 # Workspace Context / Preview / Run tabs
 
-Source: `frontend/src/MimiContextRail.tsx:16` (`type RailTab`) in exact `680b7f9b0dc18e3fc04141fbdcd18c86ffb22b37`; source root `harness-b-mimi-qa/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiContextRail.tsx:88`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
-Context domain summaries, Preview plan, Run state/context/usage, Mở đầy đủ navigation.
+Context ring/popover, eight measured-byte buckets and separately reported usage/cache.
 
 ## How to get to it (user POV)
 
-Workspace rail → Context / Preview / Run; choose Mở đầy đủ for synthetic task/note/calendar/tracker.
+Select Context/Preview/Run on the actual workspace; inspect context details via click/focus/touch.
 
-Real prerequisites: Synthetic domain rows and explicit private visibility; selected conversation with frozen preview/run if those panes are to be proven.
+## Driving it with the current scoped harness
 
-## Driving it with H14 isolated browser/CLI
+Journey `J2/J4`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-context-inspector` (observed in current source). Attributable current run/call receipt; absent provider usage remains UNKNOWN. Core actions share native/live/device QA receipts, not a second matrix.
 
-mimi-context-rail buttons Context/Preview/Run, mimi-context-inspector; refs in proposal-confirmation and run-context.
-
-Observable oracle: Context shows only available authorized fixture data; opening panes sends no data to model; empty run/preview explains state rather than claiming execution.
+Oracle: Byte projection matches actual request mode; cache is a prompt subset;272K/400K/8192 labels remain separate.
 
 ## Gotchas
 
-Context UI reads are distinct from context-v1 provider injection. Provider/context flags stay false in initial namespace.
-
-Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.

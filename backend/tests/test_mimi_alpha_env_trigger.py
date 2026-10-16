@@ -6,10 +6,11 @@ from pydantic import ValidationError
 from app.core.settings import Settings
 
 
-def test_approved_compaction_trigger_parses_from_environment(monkeypatch):
-    monkeypatch.setenv("MIMI_COMPACTION_TRIGGER_TOKENS", "100000")
+@pytest.mark.parametrize("trigger", [100000, 272000])
+def test_approved_compaction_trigger_parses_from_environment(monkeypatch, trigger):
+    monkeypatch.setenv("MIMI_COMPACTION_TRIGGER_TOKENS", str(trigger))
     settings = Settings(_env_file=None, app_env="local")
-    assert settings.mimi_compaction_trigger_tokens == 100_000
+    assert settings.mimi_compaction_trigger_tokens == trigger
 
 
 @pytest.mark.parametrize("value", ["32000", "131072", "garbage"])
