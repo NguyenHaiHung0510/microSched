@@ -127,7 +127,10 @@ def eligible_pool(
             parameters
         ):
             reason = reason or "required_parameter_unknown"
-        if row.get("supports_tool_choice_function") is False:
+        tool_choice = row.get("supports_tool_choice")
+        if row.get("supports_tool_choice_function") is False or (
+            isinstance(tool_choice, dict) and tool_choice.get("function") is False
+        ):
             reason = reason or "named_function_explicitly_unsupported"
         # Profile-supported effort + native require_parameters enforce the wire
         # parameter; an explicitly narrower endpoint effort declaration wins.
@@ -310,6 +313,7 @@ def endpoint_fingerprint(row):
                 "supported_parameters",
                 "supported_reasoning_efforts",
                 "supports_tool_choice_function",
+                "supports_tool_choice",
                 "context_length",
                 "max_completion_tokens",
                 "max_prompt_tokens",
