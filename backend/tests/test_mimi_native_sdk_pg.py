@@ -31,7 +31,7 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
     monkeypatch.setenv("MIMI_ROUTE_QUANTIZATION", "fp8")
     monkeypatch.setenv("MIMI_ROUTE_MAX_INPUT_PRICE", "0.2")
     monkeypatch.setenv("MIMI_ROUTE_MAX_OUTPUT_PRICE", "0.6")
-    monkeypatch.setenv("MIMI_ROUTE_MODE", "exact")
+    monkeypatch.setenv("MIMI_ROUTE_MODE", "native")
     import os
 
     from sqlalchemy.engine import make_url
@@ -169,7 +169,8 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
         async def handler(request):
             wire = json.loads(request.content)
             wires.append(wire)
-            assert wire["provider"]["only"] == ["deepinfra"]
+            assert not {"only", "order", "sort"} & wire["provider"].keys()
+            assert wire["provider"]["allow_fallbacks"] is True
             assert wire["provider"]["zdr"] and wire["provider"]["data_collection"] == "deny"
             assert wire["store"] is False
             assert wire["session_id"] == service._provider_session_id(cid)

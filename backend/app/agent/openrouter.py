@@ -925,7 +925,7 @@ async def _complete_once(
                 },
                 json=request,
             )
-        except httpx.ConnectError as error:
+        except (httpx.ConnectError, httpx.ConnectTimeout) as error:
             raise ProviderDispatchError("retryable", None) from error
         except (httpx.TimeoutException, httpx.TransportError) as error:
             raise ProviderDispatchError("unknown", None) from error
@@ -1082,7 +1082,11 @@ async def _complete_stream_once(
                             provider_error.get("code") if isinstance(provider_error, dict) else None
                         )
                         if isinstance(code, int) and code >= 400:
-                            _raise_for_status(code)
+                            _raise_for_status(
+                                code,
+                                body=chunk,
+                                retry_after=response.headers.get("retry-after"),
+                            )
                         raise RouteContractError("provider_stream_error_envelope")
                     choices = chunk.get("choices")
                     if not isinstance(choices, list):
@@ -1130,7 +1134,7 @@ async def _complete_stream_once(
                 if finish_reason not in {None, "stop", "tool_calls"}:
                     raise RouteContractError("provider_stream_finish_reason_not_usable")
         except ProviderDispatchError as error:
-            if response_id or content_parts or tool_calls:
+            if response_id or content_parts or tool_calls or usage:
                 error.outcome = "unknown"
             error.response_id = response_id or error.response_id
             error.terminal_receipt = _rejected_terminal_metadata(
@@ -1145,7 +1149,7 @@ async def _complete_stream_once(
             error.response_id, error.usage = receipt["id"], receipt["usage"]
             error.provider, error.model = receipt["provider"], receipt["model"]
             raise
-        except httpx.ConnectError as error:
+        except (httpx.ConnectError, httpx.ConnectTimeout) as error:
             raise ProviderDispatchError("retryable", None) from error
         except (httpx.TimeoutException, httpx.TransportError) as error:
             raise ProviderDispatchError("unknown", None, response_id=response_id or None) from error

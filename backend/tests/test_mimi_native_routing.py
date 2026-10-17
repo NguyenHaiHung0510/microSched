@@ -213,6 +213,161 @@ def test_partial_sse_error_is_unknown_and_never_replayed(monkeypatch, partial):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_httpx_connect_timeout_uses_same_finite_recovery(monkeypatch, stream):
+    import httpx
+
+    calls = 0
+
+    async def sleep(delay):
+        pass
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectTimeout("synthetic connect phase", request=request)
+
+    monkeypatch.delenv("MIMI_LOCAL_BUDGET_LEDGER", raising=False)
+    monkeypatch.setattr("app.agent.gateway_retry.asyncio.sleep", sleep)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ProviderDispatchError) as caught:
+                await (complete_stream if stream else complete)(
+                    [{"role": "user", "content": "Chào"}],
+                    settings=settings(mimi_transport="httpx"),
+                    client=client,
+                )
+            assert caught.value.outcome == "retryable"
+            assert len(caught.value.dispatch_attempts) == 3
+        assert calls == 3
+
+    asyncio.run(run())
+
+
+def test_httpx_sse_usage_without_identity_prevents_replay(monkeypatch):
+    import httpx
+
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        frames = [
+            {"choices": [], "usage": {"prompt_tokens": 8, "cost": 0.001}},
+            {"error": {"code": 429}},
+        ]
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream", "retry-after": "7"},
+            content="".join("data: " + json.dumps(frame) + "\n\n" for frame in frames),
+        )
+
+    monkeypatch.delenv("MIMI_LOCAL_BUDGET_LEDGER", raising=False)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(ProviderDispatchError) as caught:
+                await complete_stream(
+                    [{"role": "user", "content": "Chào"}],
+                    settings=settings(mimi_transport="httpx"),
+                    client=client,
+                )
+            error = caught.value
+            assert error.outcome == "unknown"
+            assert error.terminal_receipt["usage"]["cost"] == 0.001
+            assert error.diagnostic["retry_after_seconds"] == 7
+        assert calls == 1
+
+    asyncio.run(run())
+
+
+def test_sdk_cancellation_keeps_previously_observed_usage(monkeypatch):
+    async def run():
+        observed = asyncio.Event()
+        blocked = asyncio.Event()
+
+        class Stream(httpx2.AsyncByteStream):
+            async def __aiter__(self):
+                yield b'data: {"choices":[],"usage":{"cost":0.002}}\n\n'
+                observed.set()
+                await blocked.wait()
+
+        async def handler(request):
+            return httpx2.Response(
+                200, headers={"content-type": "text/event-stream"}, stream=Stream()
+            )
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+            task = asyncio.create_task(
+                complete_stream(
+                    [{"role": "user", "content": "Chào"}], settings=settings(), client=client
+                )
+            )
+            await observed.wait()
+            task.cancel()
+            with pytest.raises(ProviderDispatchError) as caught:
+                await task
+            assert caught.value.outcome == "unknown"
+            assert caught.value.terminal_receipt["usage"]["cost"] == 0.002
+            assert caught.value.dispatch_attempts[0]["usage"]["cost"] == 0.002
+
+    monkeypatch.delenv("MIMI_LOCAL_BUDGET_LEDGER", raising=False)
+    asyncio.run(run())
+
+
+def test_native_usage_compacts_without_a_provider_whitelist():
+    from types import SimpleNamespace
+
+    from app.agent.observations import prompt_observation
+
+    call = SimpleNamespace(
+        id="synthetic",
+        state="succeeded",
+        usage={"prompt_tokens": 272001},
+        route={
+            "purpose": "main",
+            "kind": "openrouter",
+            "mode": "native",
+            "context_revision": "current",
+            "model": "selected",
+            "actual_model": "selected",
+            "actual_provider": None,
+            "providers": [],
+            "qualified_provider_names": [],
+        },
+    )
+    assert prompt_observation(call, "current")["should_compact"] is True
+    assert prompt_observation(call, "stale")["should_compact"] is False
+    call.route["actual_model"] = "other"
+    assert prompt_observation(call, "current")["eligible"] is False
+
+
+def test_retry_costs_count_each_observed_attempt_and_keep_unknown_fee():
+    from types import SimpleNamespace
+
+    from app.agent.observations import run_costs
+
+    call = SimpleNamespace(
+        id="logical",
+        state="succeeded",
+        result={"response_id": "gen-final"},
+        usage={"cost": 0.01},
+        route={
+            "kind": "openrouter",
+            "purpose": "main",
+            "dispatch_attempts": [
+                {"attempt": 1, "usage": {}, "outcome": "retryable"},
+                {"attempt": 2, "usage": {"cost": 0.01}, "response_id": "gen-final"},
+            ],
+        },
+    )
+    totals = run_costs([call, call])
+    assert totals["main_calls"] == 2
+    assert totals["known_cost_usd"] == 0.01
+    assert totals["unknown_cost_calls"] == 1 and totals["cost_complete"] is False
+
+
 def test_retry_after_beyond_deadline_does_not_delay_or_dispatch(monkeypatch):
     calls = 0
 

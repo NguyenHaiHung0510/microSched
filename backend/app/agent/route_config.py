@@ -138,13 +138,18 @@ def default_configuration(settings: Settings) -> dict[str, Any]:
         (key for key, p in PROFILES.items() if p["model"] == settings.mimi_route_model), None
     )
     if profile_id is None:
-        if settings.mimi_route_model and settings.mimi_live_provider_enabled:
+        if (
+            settings.mimi_route_model
+            and settings.mimi_live_provider_enabled
+            and settings.mimi_collection_enabled
+        ):
             raise HTTPException(409, "selected_model_not_admitted")
-        profile_id = "deepseek"
+        # Existing UI/profile fallback is separate from the actual routing wire.
+        profile_id = "deepseek" if settings.mimi_collection_enabled else "mimo"
     efforts = PROFILES[profile_id]["supported_efforts"]
     effort = settings.mimi_route_reasoning_effort
     if effort not in efforts:
-        if settings.mimi_live_provider_enabled:
+        if settings.mimi_live_provider_enabled and settings.mimi_collection_enabled:
             raise HTTPException(409, "selected_effort_not_supported")
         effort = "medium" if "medium" in efforts else efforts[0]
     return {

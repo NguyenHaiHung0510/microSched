@@ -319,7 +319,11 @@ async def complete_stream(
         error.model = error.terminal_receipt["model"]
         raise
     except asyncio.CancelledError as error:
-        raise ProviderDispatchError("unknown", None, response_id=response_id or None) from error
+        cancelled = ProviderDispatchError("unknown", None, response_id=response_id or None)
+        cancelled.terminal_receipt = _rejected_terminal_metadata(
+            response_id, provider, model, usage, finish_reason
+        )
+        raise cancelled from error
     except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
         try:
             _raise_for_sdk_error(error, response_id=response_id or None)
