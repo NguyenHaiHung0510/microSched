@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.agent import local_budget, service
+from app.agent.models import MimiProviderCall
 from app.agent.openrouter import build_request
 from app.agent.route_config import (
     PROFILES,
@@ -168,8 +169,29 @@ def test_actual_compaction_helper_dispatch_and_journal_keep_selected_effort(effo
     )
     monkeypatch.setattr(local_budget, "reserve", lambda *args, **kwargs: None)
     captured = []
+    committed_calls = []
+
+    async def record_commit():
+        for added in db.add.call_args_list:
+            call = added.args[0]
+            if isinstance(call, MimiProviderCall):
+                committed_calls.append((call.state, json.loads(json.dumps(call.route))))
+
+    db.commit.side_effect = record_commit
 
     async def invoke(messages, **kwargs):
+        # Snapshot at each commit, then inspect BEFORE entering transport.
+        # Extra policy commits are harmless; missing durable dispatch fences are not.
+        states = [(state, route["dispatch_not_started"]) for state, route in committed_calls]
+        assert ("intent", True) in states
+        assert ("dispatched", True) in states
+        assert states.index(("intent", True)) < states.index(("dispatched", True))
+        assert states[-1] == ("dispatched", False), (
+            "transport entered before durable dispatch marker"
+        )
+        assert committed_calls[-1][1]["reasoning_effort"] == effort
+        assert committed_calls[-1][1]["price_policy_revision"] == 0
+        assert committed_calls[-1][1]["price_caps"] == {"prompt": "0.36", "completion": "1.44"}
         captured.append(
             build_request(messages, kwargs["settings"], summary_mode=kwargs["summary_mode"])
         )
@@ -184,8 +206,6 @@ def test_actual_compaction_helper_dispatch_and_journal_keep_selected_effort(effo
     assert wire["reasoning"] == {"effort": effort, "exclude": True}
     assert wire["model"] == ADMITTED_MODEL and wire["max_tokens"] == 8192
     assert "tools" not in wire and "tool_choice" not in wire
-    from app.agent.models import MimiProviderCall
-
     # New durable policy admission seeds AppSetting as well; inspect the
     # actual provider journal rather than whichever object was added last.
     call = next(
@@ -199,7 +219,7 @@ def test_actual_compaction_helper_dispatch_and_journal_keep_selected_effort(effo
     assert call.route["price_policy_revision"] == 0
     assert call.route["price_caps"] == {"prompt": "0.36", "completion": "1.44"}
     assert any("pg_advisory_xact_lock" in str(item.args[0]) for item in db.execute.call_args_list)
-    assert call.state == "dispatched" and db.commit.await_count == 2
+    assert call.state == "dispatched" and call.route["dispatch_not_started"] is False
 
 
 def test_compaction_native_summary_does_not_fetch_or_certify_provider(monkeypatch):

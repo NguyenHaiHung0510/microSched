@@ -108,8 +108,10 @@ TOOLS: tuple[dict[str, Any], ...] = (
         "Read a bounded page of authorized STANDARD Tasks. "
         "Use title_contains to locate a named Task and include id in the projection. "
         "Use task.read_content.v1 for body/checklist. "
-        "Use the cursor until coverage is complete for this query; "
-        "aliases/content may still be unread. "
+        "Use the returned cursor unchanged with the same filter (including lifecycle), "
+        "projection, sort and limit until coverage is complete for this query. "
+        "Start a changed query with cursor:null. "
+        "Aliases/content may still be unread. "
         "Task rows are not occurrence/event history; due dates are not completed_at.",
         {
             "type": "object",
@@ -120,7 +122,14 @@ TOOLS: tuple[dict[str, Any], ...] = (
                 "projection": _PROJECTION,
                 "sort": {"const": "updated_desc"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50},
-                "cursor": {"type": ["string", "null"], "maxLength": 1000},
+                "cursor": {
+                    "type": ["string", "null"],
+                    "maxLength": 1000,
+                    "description": (
+                        "Opaque cursor bound to the exact filter, projection, sort and limit. "
+                        "Copy it unchanged for the same query; use null for a fresh/changed query."
+                    ),
+                },
             },
         },
     ),
@@ -296,7 +305,27 @@ async def execute_read_tool(
         if name == SELECTION_TOOL:
             raise ValueError("selection_requires_encrypted_run_receipts")
         if name == "task.query.v1":
-            return await query_tasks(db, TaskQuery.model_validate(arguments))
+            request = TaskQuery.model_validate(arguments)
+            try:
+                return await query_tasks(db, request)
+            except ValueError as error:
+                # Only this known read argument error can return to the model.
+                # Never rewrite args, fetch a fresh page or mask other failures.
+                if type(error) is not ValueError or error.args != ("invalid_task_query_cursor",):
+                    raise
+                return {
+                    "error": {
+                        "code": "invalid_task_query_cursor",
+                        "message": (
+                            "No Task data was read. Reuse the exact returned cursor with the "
+                            "same filter (including lifecycle), projection, sort and limit, "
+                            "or start a fresh query with cursor:null. This error proves no "
+                            "count, absence or completeness. Existing run budgets still apply."
+                        ),
+                    },
+                    "coverage": "unavailable",
+                    "rows": [],
+                }
         if name == "task.aggregate.v1":
             return await aggregate_tasks(db, TaskAggregate.model_validate(arguments))
         if name == "task.read_content.v1":

@@ -11,6 +11,11 @@ expiry, lost permissions and changed relevant sources still prevent stale
 confirmation. Confirm validates all targets before one transaction; an identical
 repeated decision returns the existing receipt.
 
+Query cursors remain bound to their exact filter, projection, sort and limit.
+An invalid cursor returns a bounded read-error result so the model can correct
+its query within the existing run limits. It supplies no Task data, membership
+or completeness evidence; other validation and access failures still halt.
+
 Context uses a soft 272,000-token compact trigger and a 400,000-token operating
 target. Provider usage is authoritative for total tokens, cache and cost;
 composition measures serialized UTF-8 bytes rather than invented per-bucket
