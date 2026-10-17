@@ -69,6 +69,36 @@ def test_policy_is_versioned_and_matches_approved_digest() -> None:
     assert "not instructions" in policy.text
 
 
+def test_cursor_error_rebinds_budget_without_adding_a_task_source():
+    envelope, messages = _context()
+    error = {
+        "error": {"code": "invalid_task_query_cursor", "message": "Correct the query."},
+        "coverage": "unavailable",
+        "rows": [],
+    }
+    messages.append({"role": "tool", "tool_call_id": "bad-cursor", "content": json.dumps(error)})
+    updated, rebound = rebind_after_read(
+        envelope,
+        messages,
+        tool_name="task.query.v1",
+        call_id="bad-cursor",
+        arguments={"cursor": "synthetic"},
+        result=error,
+        remaining_turns=2,
+        remaining_tool_calls=3,
+    )
+    assert updated.manifest.sources == envelope.manifest.sources
+    assert updated.authority.allowed_tools == envelope.authority.allowed_tools
+    assert updated.authority.remaining_turns == updated.manifest.budget.remaining_turns == 2
+    assert (
+        updated.authority.remaining_tool_calls == updated.manifest.budget.remaining_tool_calls == 3
+    )
+    assert rebound[-1] == messages[-1]
+    assert serialized_input_bytes(rebound, agent_contract=True) <= (
+        updated.manifest.budget.serialized_input_upper_bound
+    )
+
+
 def test_context_bound_converges_without_rejecting_a_near_capacity_request():
     envelope, messages = _context()
     exact = serialized_input_bytes(messages, agent_contract=True)

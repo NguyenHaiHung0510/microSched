@@ -85,6 +85,30 @@ def key_meter(settings):
         raise RouteContractError("local_budget_key_meter_unknown") from None
 
 
+def _historical_baseline(ledger: dict) -> tuple[Decimal, int, int]:
+    """Settled cost plus full unresolved holds; no invented historical receipts."""
+    from app.agent.config_policy import finite_price
+
+    try:
+        total = finite_price(ledger["historical_accounted_usd"]) + finite_price(
+            ledger.get("historical_reserved_usd", 0)
+        )
+        if total > finite_price(ledger["cap_usd"]):
+            raise ValueError("history_exceeds_cap")
+    except ValueError:
+        raise RouteContractError("local_budget_history_invalid") from None
+    dispatches = ledger.get("historical_dispatch_count", 0)
+    max_dispatches = ledger.get("historical_max_dispatch_count", 0)
+    if (
+        type(dispatches) is not int
+        or not 0 <= dispatches <= 92
+        or type(max_dispatches) is not int
+        or not 0 <= max_dispatches <= min(dispatches, 8)
+    ):
+        raise RouteContractError("local_budget_history_invalid")
+    return total, dispatches, max_dispatches
+
+
 def reserve(
     settings: Settings, messages: list[dict], *, agent_contract: bool, summary_mode: bool = False
 ) -> str | None:
@@ -114,6 +138,7 @@ def reserve(
             raise RouteContractError("local_budget_grant_invalid")
         if datetime.now(UTC) >= datetime.fromisoformat(ledger["expires_at_utc"]):
             raise RouteContractError("local_budget_grant_expired")
+        historical_total, historical_calls, historical_max_calls = _historical_baseline(ledger)
         if any(c.get("reservation_exceeded") is True for c in ledger["calls"]):
             raise RouteContractError("local_budget_prior_reservation_exceeded")
         if any(c["state"] != "accounted" for c in ledger["calls"]):
@@ -125,17 +150,22 @@ def reserve(
             or not 1 <= max_calls <= 92
         ):
             raise RouteContractError("local_budget_dispatch_grant_invalid")
-        if len(ledger["calls"]) >= max_calls:
+        if historical_calls > max_calls:
+            raise RouteContractError("local_budget_history_invalid")
+        if historical_calls + len(ledger["calls"]) >= max_calls:
             raise RouteContractError("local_budget_dispatch_cap_exhausted")
         max_effort_calls = ledger.get("max_conditional_max_dispatches", 0)
         if type(max_effort_calls) is not int or not 0 <= max_effort_calls <= 8:
             raise RouteContractError("local_budget_MAX_grant_invalid")
+        if historical_max_calls > max_effort_calls:
+            raise RouteContractError("local_budget_history_invalid")
         if (
             settings.mimi_route_reasoning_effort == "max"
-            and sum(c.get("effort") == "max" for c in ledger["calls"]) >= max_effort_calls
+            and historical_max_calls + sum(c.get("effort") == "max" for c in ledger["calls"])
+            >= max_effort_calls
         ):
             raise RouteContractError("local_budget_MAX_cap_exhausted")
-        total = finite_price(ledger["historical_accounted_usd"]) + sum(
+        total = historical_total + sum(
             (finite_price(c["charged_or_reserved_usd"]) for c in ledger["calls"]), Decimal(0)
         )
         usage, remaining = key_meter(settings)
@@ -185,6 +215,7 @@ def account(settings: Settings, call_id: str | None, usage: dict, response_id: s
         return
     with _locked(path):
         ledger = json.loads(path.read_text(encoding="utf-8"))
+        historical_total, _, _ = _historical_baseline(ledger)
         call = next(c for c in ledger["calls"] if c["id"] == call_id)
         call["response_id"] = response_id
         call["usage"] = usage
@@ -206,6 +237,6 @@ def account(settings: Settings, call_id: str | None, usage: dict, response_id: s
             raise RouteContractError("local_budget_current_spend_unknown")
         if sum(
             (Decimal(c["charged_or_reserved_usd"]) for c in ledger["calls"]),
-            Decimal(ledger["historical_accounted_usd"]),
+            historical_total,
         ) > Decimal(ledger["cap_usd"]):
             raise RouteContractError("local_budget_provider_cost_exceeded_reservation")

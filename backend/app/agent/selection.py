@@ -96,6 +96,9 @@ def bind_selection(candidate: SelectionCandidate, receipts: list[dict]) -> dict[
     version_conflicts = set()
     for receipt in receipts:
         result = receipt["result"]
+        if "error" in result:
+            # A rejected page read neither supplies members nor closes a cursor.
+            continue
         for row in result.get("rows", []):
             if not isinstance(row, dict) or "collection_version" not in row:
                 continue

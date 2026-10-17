@@ -122,6 +122,8 @@ def run_costs(calls: list[Any]) -> dict[str, Any]:
     cached_total = sampled_prompt_total = 0
     for call in calls:
         route = call.route or {}
+        if route.get("dispatch_not_started") is True:
+            continue  # Local intent/preflight failure is neither paid nor reused.
         if route.get("paid_dispatch") is False:
             reused += 1
             continue

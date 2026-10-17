@@ -17,7 +17,7 @@ from app.agent import crypto as mimi_crypto
 from app.agent import service as mimi_service
 from app.agent.context import AssistantText
 from app.agent.models import MimiConversation, MimiEvent, MimiMessage, MimiProviderCall, MimiRun
-from app.agent.observations import context_revision
+from app.agent.observations import context_revision, run_costs
 from app.agent.openrouter import AgentCompletion, RouteContractError
 from app.agent.route_config import bind_configuration
 from app.core import crypto
@@ -641,6 +641,9 @@ def test_compaction_preflight_or_reservation_failure_halts_without_dispatch_or_h
                     assert refused.route["purpose"] == "compaction"
                     assert refused.route["paid_dispatch"] is False
                     assert refused.usage is None
+                    costs = run_costs(provider_calls)
+                    assert costs["helper_calls"] == costs["unknown_cost_calls"] == 0
+                    assert costs["reused_calls"] == 0
                 else:
                     assert provider_calls == []
                 assert calls == 0

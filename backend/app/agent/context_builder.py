@@ -369,21 +369,26 @@ def rebind_after_read(
             count = len(groups)
         else:
             count = 0
-    source = SourceManifest(
-        source_id=f"{tool_name}:{_source_hash(call_id)[:12]}",
-        source_type="microsched.task.standard",
-        query={"tool": tool_name, "arguments_sha256": _source_hash(arguments)},
-        projection=tuple(arguments.get("projection") or result.get("projection") or ()),
-        version=_source_hash([row.get("source_version") for row in rows])
-        if isinstance(rows, list)
-        else _source_hash(result),
-        content_sha256=_source_hash(result),
-        count=count,
-        coverage=result.get("coverage", "unavailable"),
-        omitted_fields=tuple(result.get("omitted_fields") or ()),
-        next_cursor=result.get("next_cursor"),
-        data_as_of=datetime.fromisoformat(result["data_as_of"]),
-    )
+    sources = envelope.manifest.sources
+    # A server read error is feedback, not a Task source or an empty completed page.
+    # Keep it in tool history while still rebinding the consumed run budgets.
+    if "error" not in result:
+        source = SourceManifest(
+            source_id=f"{tool_name}:{_source_hash(call_id)[:12]}",
+            source_type="microsched.task.standard",
+            query={"tool": tool_name, "arguments_sha256": _source_hash(arguments)},
+            projection=tuple(arguments.get("projection") or result.get("projection") or ()),
+            version=_source_hash([row.get("source_version") for row in rows])
+            if isinstance(rows, list)
+            else _source_hash(result),
+            content_sha256=_source_hash(result),
+            count=count,
+            coverage=result.get("coverage", "unavailable"),
+            omitted_fields=tuple(result.get("omitted_fields") or ()),
+            next_cursor=result.get("next_cursor"),
+            data_as_of=datetime.fromisoformat(result["data_as_of"]),
+        )
+        sources = (*sources, source)
     authority = envelope.authority.model_copy(
         update={
             "remaining_turns": remaining_turns,
@@ -397,9 +402,7 @@ def rebind_after_read(
             "serialized_input_upper_bound": 0,
         }
     )
-    manifest = envelope.manifest.model_copy(
-        update={"sources": (*envelope.manifest.sources, source), "budget": budget}
-    )
+    manifest = envelope.manifest.model_copy(update={"sources": sources, "budget": budget})
     updated = envelope.model_copy(update={"authority": authority, "manifest": manifest})
     for _ in range(4):
         rebound = list(messages)

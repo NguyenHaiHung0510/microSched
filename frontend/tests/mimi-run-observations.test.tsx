@@ -34,3 +34,18 @@ test('run totals explicitly remain incomplete with unknown cost and reused recei
   expect(html).toContain('không cộng như dispatch trả phí mới')
   expect(html).toContain('provider_refused')
 })
+
+test('a refused intent stays visible as not sent without claiming a reused or zero-cost receipt', () => {
+  const html = renderToStaticMarkup(<MimiRunObservations calls={[{
+    ...helper, purpose: 'main', state: 'failed', usage: {}, actual_provider: null,
+    paid_dispatch: false, dispatch_not_started: true,
+  }]} observation={{
+    ...observation, main_calls: 0, helper_calls: 0, reused_calls: 0,
+    main_known_cost_usd: 0, helper_known_cost_usd: 0, known_cost_usd: 0,
+    unknown_cost_calls: 0, main_unknown_cost_calls: 0, cost_complete: true,
+  }} />)
+  expect(html).toContain('Chưa gửi provider; chưa có usage hoặc receipt chi phí.')
+  expect(html).not.toContain('receipt dùng lại')
+  expect(html).not.toContain('cost: chưa rõ')
+  expect(html).not.toContain('cost: $0.000000')
+})
