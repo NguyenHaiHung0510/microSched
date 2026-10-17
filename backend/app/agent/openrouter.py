@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -951,10 +952,29 @@ async def _complete_once(
         if not isinstance(payload, dict):
             raise RouteContractError("provider_terminal_payload_is_not_an_object")
         _raise_generation_error(payload)
-        validate_response_identity(payload, route)
-        if summary_mode:
-            return parse_compaction_completion(payload)
-        return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
+        try:
+            validate_response_identity(payload, route)
+            if summary_mode:
+                return parse_compaction_completion(payload)
+            return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
+        except RouteContractError as error:
+            choices = payload.get("choices")
+            finish = (
+                choices[0].get("finish_reason")
+                if isinstance(choices, list) and len(choices) == 1 and isinstance(choices[0], dict)
+                else None
+            )
+            receipt = _rejected_terminal_metadata(
+                payload.get("id"),
+                payload.get("provider"),
+                payload.get("model"),
+                payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+                finish,
+            )
+            error.terminal_receipt = receipt
+            error.response_id, error.usage = receipt["id"], receipt["usage"]
+            error.provider, error.model = receipt["provider"], receipt["model"]
+            raise
     finally:
         if owns_client:
             await active_client.aclose()
@@ -1137,9 +1157,10 @@ async def _complete_stream_once(
             if response_id or content_parts or tool_calls or usage:
                 error.outcome = "unknown"
             error.response_id = response_id or error.response_id
-            error.terminal_receipt = _rejected_terminal_metadata(
-                response_id, provider, model, usage, finish_reason
-            )
+            if response_id or provider or model or usage or not hasattr(error, "terminal_receipt"):
+                error.terminal_receipt = _rejected_terminal_metadata(
+                    response_id, provider, model, usage, finish_reason
+                )
             raise
         except RouteContractError as error:
             receipt = _rejected_terminal_metadata(
@@ -1149,10 +1170,21 @@ async def _complete_stream_once(
             error.response_id, error.usage = receipt["id"], receipt["usage"]
             error.provider, error.model = receipt["provider"], receipt["model"]
             raise
-        except (httpx.ConnectError, httpx.ConnectTimeout) as error:
-            raise ProviderDispatchError("retryable", None) from error
-        except (httpx.TimeoutException, httpx.TransportError) as error:
-            raise ProviderDispatchError("unknown", None, response_id=response_id or None) from error
+        except (asyncio.CancelledError, httpx.TransportError) as error:
+            safe_connect = (
+                isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
+                and connected_at is None
+                and not (response_id or usage or content_parts or tool_calls)
+            )
+            interrupted = ProviderDispatchError(
+                "retryable" if safe_connect else "unknown",
+                None,
+                response_id=response_id or None,
+            )
+            interrupted.terminal_receipt = _rejected_terminal_metadata(
+                response_id, provider, model, usage, finish_reason
+            )
+            raise interrupted from error
         completed_at = time.perf_counter()
         timing = {
             "duration_ms": round((completed_at - started_at) * 1000, 3),
@@ -1197,8 +1229,17 @@ async def _complete_stream_once(
                 }
             ],
         }
-        validate_response_identity(terminal_payload, route)
-        completion = parser(terminal_payload)
+        try:
+            validate_response_identity(terminal_payload, route)
+            completion = parser(terminal_payload)
+        except RouteContractError as error:
+            receipt = _rejected_terminal_metadata(
+                response_id, provider, model, usage, finish_reason
+            )
+            error.terminal_receipt = receipt
+            error.response_id, error.usage = receipt["id"], receipt["usage"]
+            error.provider, error.model = receipt["provider"], receipt["model"]
+            raise
         is_text = (
             isinstance(completion, AgentCompletion)
             and isinstance(completion.outcome, AssistantText)
