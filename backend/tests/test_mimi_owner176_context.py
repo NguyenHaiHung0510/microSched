@@ -21,7 +21,7 @@ def test_production_import_guard_tracks_approved_defaults_and_runtime_frameworks
     assert "framework imports PASS; no egress" in capsys.readouterr().out
 
 
-def test_chat_open_warms_metadata_even_before_adaptive_selection_without_model_call(monkeypatch):
+def test_chat_open_native_routing_needs_no_catalog_or_model_call(monkeypatch):
     import asyncio
 
     from app.agent import config_policy, route_pool
@@ -42,10 +42,8 @@ def test_chat_open_warms_metadata_even_before_adaptive_selection_without_model_c
 
     async def scenario():
         result = await mimi.warm_chat_metadata(None, None)
-        assert result == {"status": "scheduled", "paid_calls": 0}
-        await asyncio.gather(*mimi._metadata_warm_tasks.values())
-        assert len(seen) == 1 and seen[0].mimi_route_model == selected.mimi_route_model
-        assert not mimi._metadata_warm_tasks
+        assert result == {"status": "not_required_native_routing", "paid_calls": 0}
+        assert seen == []
 
     asyncio.run(scenario())
 

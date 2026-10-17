@@ -27,6 +27,7 @@ def _settings(**overrides) -> Settings:
         "mimi_live_provider_enabled": True,
         "mimi_standard_api_key": "test-not-a-real-key",
         "mimi_route_model": "vendor/model",
+        "mimi_route_mode": "exact",  # explicit legacy lane; native recovery has separate tests
         "mimi_route_provider": "provider-a",
         "mimi_route_quantization": "fp8",
         "mimi_route_forced_tool_choice": "required",

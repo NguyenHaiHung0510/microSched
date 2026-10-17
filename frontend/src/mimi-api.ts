@@ -228,7 +228,7 @@ export type MimiRouteConfig = {
   profile_id: string
   effort: string
   input_tokens: number
-  routing_mode?: 'exact' | 'adaptive'
+  routing_mode?: 'native' | 'exact' | 'adaptive'
   min_uptime_percent?: number
   uptime_window?: '1d' | '30m'
 }
@@ -303,7 +303,7 @@ export function saveMimiConfiguration(
       profile_id: config.profile_id,
       effort: config.effort,
       input_tokens: config.input_tokens,
-      routing_mode: config.routing_mode ?? 'adaptive',
+      routing_mode: 'native',
       min_uptime_percent: config.min_uptime_percent ?? 95,
       uptime_window: config.uptime_window ?? '1d',
     }),
@@ -681,13 +681,11 @@ export function saveMimiDevicePreference(proof: MimiDeviceProof, enabled: boolea
 export type MimiProviderPool = {
   model: string
   effort: string
-  tags: string[]
-  checked_at: number
-  snapshot_sha256: string
-  min_uptime_percent: number
-  window: string
-  exclusions: string[]
+  routing_mode: 'native'
+  provider_policy: Record<string, unknown>
+  selection: 'openrouter_default'
   qualification: string
+  paid_calls: number
 }
 export function refreshMimiProviderPool(conversationId: string): Promise<MimiProviderPool> {
   return apiRequest(`/api/mimi/conversations/${conversationId}/provider-pool/refresh`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}', timeoutMs: 15_000 })

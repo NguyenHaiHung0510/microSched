@@ -98,25 +98,27 @@ def _raise_for_sdk_error(error: Exception, *, response_id: str | None = None) ->
             if overflow is not None:
                 raise overflow from error
         try:
-            _raise_for_status(error.status_code)
+            _raise_for_status(
+                error.status_code,
+                body=getattr(error, "body", None),
+                retry_after=error.response.headers.get("retry-after"),
+            )
         except ProviderDispatchError as classified:
             if response_id:
                 classified.response_id = response_id
             # The response body is provider-controlled and may echo prompts,
             # identities or credentials. Persist only a locally selected,
             # bounded category derived from the HTTP status.
-            classified.diagnostic = {
-                "category": (
-                    "rate_limited"
-                    if error.status_code == 429
-                    else "provider_rejected"
-                    if 400 <= error.status_code < 500
-                    else "provider_unavailable"
-                )
-            }
             raise classified from error
     if isinstance(error, (APITimeoutError, APIConnectionError, APIError)):
-        # The SDK exception does not prove whether OpenRouter began generation.
+        import httpx2
+
+        # Only the connect phase proves the POST was not sent. Read/write/pool
+        # failures and cancellation stay ambiguous, including partial streams.
+        if not response_id and isinstance(
+            error.__cause__, (httpx2.ConnectError, httpx2.ConnectTimeout)
+        ):
+            raise ProviderDispatchError("retryable", None) from error
         raise ProviderDispatchError("unknown", None, response_id=response_id) from error
     raise error
 
@@ -153,6 +155,9 @@ async def complete(
         except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
             _raise_for_sdk_error(error)
         payload = _completion_payload(result)
+        from app.agent.openrouter import _raise_generation_error
+
+        _raise_generation_error(payload)
         choices = payload.get("choices")
         finish = (
             choices[0].get("finish_reason")
@@ -242,12 +247,6 @@ async def complete_stream(
         async with stream:
             async for sdk_chunk in stream:
                 chunk = _completion_payload(sdk_chunk)
-                provider_error = chunk.get("error")
-                if provider_error is not None:
-                    code = provider_error.get("code") if isinstance(provider_error, dict) else None
-                    if isinstance(code, int) and code >= 400:
-                        _raise_for_status(code)
-                    raise RouteContractError("provider_stream_error_envelope")
                 if isinstance(chunk.get("id"), str) and chunk["id"]:
                     if chunk["id"] != response_id:
                         response_id = chunk["id"]
@@ -259,6 +258,12 @@ async def complete_stream(
                 model = merge_stream_identity(model, chunk.get("model"), field="model")
                 if isinstance(chunk.get("usage"), dict):
                     usage = chunk["usage"]
+                provider_error = chunk.get("error")
+                if provider_error is not None:
+                    code = provider_error.get("code") if isinstance(provider_error, dict) else None
+                    if isinstance(code, int) and code >= 400:
+                        _raise_for_status(code)
+                    raise RouteContractError("provider_stream_error_envelope")
                 choices = chunk.get("choices")
                 if not isinstance(choices, list):
                     raise RouteContractError("provider_stream_choices_invalid")
@@ -296,6 +301,14 @@ async def complete_stream(
                                 target["name"] += function["name"]
                             if isinstance(function.get("arguments"), str):
                                 target["arguments"] += function["arguments"]
+    except ProviderDispatchError as error:
+        if response_id or content_parts or tool_calls:
+            error.outcome = "unknown"
+        error.response_id = response_id or error.response_id
+        error.terminal_receipt = _rejected_terminal_metadata(
+            response_id, provider, model, usage, finish_reason
+        )
+        raise
     except RouteContractError as error:
         error.terminal_receipt = _rejected_terminal_metadata(
             response_id, provider, model, usage, finish_reason
@@ -306,9 +319,23 @@ async def complete_stream(
         error.model = error.terminal_receipt["model"]
         raise
     except asyncio.CancelledError as error:
-        raise ProviderDispatchError("unknown", None, response_id=response_id or None) from error
+        cancelled = ProviderDispatchError("unknown", None, response_id=response_id or None)
+        cancelled.terminal_receipt = _rejected_terminal_metadata(
+            response_id, provider, model, usage, finish_reason
+        )
+        raise cancelled from error
     except (APIStatusError, APITimeoutError, APIConnectionError, APIError) as error:
-        _raise_for_sdk_error(error, response_id=response_id or None)
+        try:
+            _raise_for_sdk_error(error, response_id=response_id or None)
+        except ProviderDispatchError as classified:
+            # The SDK strips the outer SSE error envelope. Preserve facts from
+            # frames actually observed; absent ID/cost stays unknown.
+            if response_id or content_parts or tool_calls:
+                classified.outcome = "unknown"
+            classified.terminal_receipt = _rejected_terminal_metadata(
+                response_id, provider, model, usage, finish_reason
+            )
+            raise
     finally:
         # Always close SDK-owned connections; cancellation is converted to an
         # unknown dispatch above so the durable receipt is committed for reconcile.

@@ -250,6 +250,7 @@ async def _seed_observed_trigger(db, conversation, run_id, settings):
             route={
                 "kind": "openrouter",
                 "purpose": "main",
+                "mode": settings.mimi_route_mode,
                 "context_revision": context_revision(
                     settings, conversation.route_config_version, None
                 ),

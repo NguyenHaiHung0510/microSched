@@ -116,7 +116,9 @@ class Settings(BaseSettings):
     mimi_collection_enabled: bool = False
     mimi_revision_collection: bool = False
     mimi_notifications_enabled: bool = False
-    mimi_route_mode: Literal["exact", "adaptive"] = "exact"
+    # Legacy values remain readable for old receipts and explicit rollback tests.
+    # New conversation runs always bind the native gateway policy.
+    mimi_route_mode: Literal["native", "exact", "adaptive"] = "native"
     mimi_route_model: str | None = None
     mimi_route_provider: str | None = None
     mimi_route_quantization: str | None = None
@@ -287,7 +289,7 @@ class Settings(BaseSettings):
                         "MIMI_ROUTE_QUANTIZATION": self.mimi_route_quantization,
                     }
                 )
-            else:
+            elif self.mimi_route_mode == "adaptive":
                 required_route.update(
                     {
                         "MIMI_ROUTE_ALLOWED_QUANTIZATIONS": (

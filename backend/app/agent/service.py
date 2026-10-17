@@ -916,6 +916,10 @@ async def _semantic_checkpoint(
                 session_id=_provider_session_id(conversation.id),
             )
         except (RouteContractError, ProviderDispatchError) as error:
+            call.route = {
+                **call.route,
+                "dispatch_attempts": getattr(error, "dispatch_attempts", []),
+            }
             receipt = getattr(error, "terminal_receipt", None)
             if isinstance(receipt, dict):
                 call.usage = receipt.get("usage", {})
@@ -943,6 +947,7 @@ async def _semantic_checkpoint(
         call.usage = result.usage
         call.route = {
             **call.route,
+            "dispatch_attempts": result.dispatch_attempts,
             "actual_model": result.model,
             "actual_provider": result.provider,
         }
@@ -1706,6 +1711,7 @@ async def conversation_configuration(
     return {
         "config": {
             **(row.route_config or default_configuration(settings)),
+            "routing_mode": "native",
             "input_tokens": settings.mimi_compaction_trigger_tokens,
         },
         "stored_config": row.route_config or default_configuration(settings),
@@ -1876,15 +1882,6 @@ async def send_message(
         settings = bind_configuration(
             settings, conversation.route_config or default_configuration(settings)
         )
-    route_pool = None
-    if settings.mimi_live_provider_enabled and settings.mimi_route_mode == "adaptive":
-        from app.agent.route_pool import NoEligibleEndpoint, bind_pool
-
-        try:
-            settings, route_pool = await bind_pool(settings)
-        except NoEligibleEndpoint as error:
-            raise HTTPException(409, str(error)) from error
-
     user_bytes = payload.content.encode("utf-8")
     resumed_current_message_id = None
     resumed_source = None
@@ -2705,6 +2702,10 @@ async def send_message(
                                 final_answer_only=messages_final_only(messages),
                             )
                         except (RouteContractError, ProviderDispatchError) as error:
+                            call.route = {
+                                **call.route,
+                                "dispatch_attempts": getattr(error, "dispatch_attempts", []),
+                            }
                             if (
                                 isinstance(error, ProviderDispatchError)
                                 and error.diagnostic.get("category") == "input_context_overflow"
@@ -2784,6 +2785,7 @@ async def send_message(
                     call.usage = result.usage
                     call.route = {
                         **call.route,
+                        "dispatch_attempts": result.dispatch_attempts,
                         "actual_provider": result.provider,
                         "actual_model": result.model,
                     }
@@ -3206,6 +3208,10 @@ async def send_message(
             await db.commit()
             return await conversation_view(db, auth, conversation_id)
         except (ProviderDispatchError, RouteContractError) as error:
+            call.route = {
+                **call.route,
+                "dispatch_attempts": getattr(error, "dispatch_attempts", []),
+            }
             if context_envelope is None:
                 rejected_receipt = getattr(error, "terminal_receipt", None)
                 if isinstance(rejected_receipt, dict):
@@ -3454,6 +3460,7 @@ async def send_message(
         call.usage = completion.usage
         call.route = {
             **call.route,
+            "dispatch_attempts": completion.dispatch_attempts,
             "actual_provider": completion.provider,
             "actual_model": completion.model,
         }

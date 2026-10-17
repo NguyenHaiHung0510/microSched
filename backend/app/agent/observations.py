@@ -82,13 +82,18 @@ def prompt_observation(
         )
     elif (
         call.state != "succeeded"
-        or not route.get("actual_provider")
         or route.get("actual_model") != route.get("model")
-        or route.get("actual_provider", "").lower()
-        not in [
-            str(p).lower()
-            for p in (route.get("qualified_provider_names") or route.get("providers") or [])
-        ]
+        or (
+            route.get("mode") != "native"
+            and (
+                not route.get("actual_provider")
+                or route.get("actual_provider", "").lower()
+                not in [
+                    str(p).lower()
+                    for p in (route.get("qualified_provider_names") or route.get("providers") or [])
+                ]
+            )
+        )
     ):
         result["reason"] = "unverified_main_route"
     else:
@@ -122,27 +127,35 @@ def run_costs(calls: list[Any]) -> dict[str, Any]:
             continue
         if route.get("kind") != "openrouter" or call.state in {"intent", "fenced"}:
             continue
-        identity = (call.result or {}).get("response_id") or str(call.id)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        purpose = "helper" if route.get("purpose") == "compaction" else "main"
-        counts[purpose] += 1
-        usage = call.usage or {}
-        details = usage.get("prompt_tokens_details") or {}
-        cached = reported_number(usage.get("cached_tokens", details.get("cached_tokens")))
-        prompt = reported_number(usage.get("prompt_tokens"))
-        if cached is not None and prompt is not None and cached <= prompt:
-            cache_observed += 1
-            cached_total += cached
-            sampled_prompt_total += prompt
-        else:
-            cache_unknown += 1
-        cost = reported_number((call.usage or {}).get("cost"))
-        if cost is None:
-            unknown[purpose] += 1
-        else:
-            totals[purpose] += Decimal(str(cost))
+        dispatches = route.get("dispatch_attempts")
+        if not isinstance(dispatches, list) or not dispatches:
+            dispatches = [
+                {"response_id": (call.result or {}).get("response_id"), "usage": call.usage or {}}
+            ]
+        # Network attempts are separate cost observations, even when their
+        # logical tool-loop turn eventually succeeds. Missing fees stay unknown.
+        for index, dispatch in enumerate(dispatches, 1):
+            identity = dispatch.get("response_id") or f"{call.id}:{index}"
+            if identity in seen:
+                continue
+            seen.add(identity)
+            purpose = "helper" if route.get("purpose") == "compaction" else "main"
+            counts[purpose] += 1
+            usage = dispatch.get("usage") or {}
+            details = usage.get("prompt_tokens_details") or {}
+            cached = reported_number(usage.get("cached_tokens", details.get("cached_tokens")))
+            prompt = reported_number(usage.get("prompt_tokens"))
+            if cached is not None and prompt is not None and cached <= prompt:
+                cache_observed += 1
+                cached_total += cached
+                sampled_prompt_total += prompt
+            else:
+                cache_unknown += 1
+            cost = reported_number(usage.get("cost"))
+            if cost is None:
+                unknown[purpose] += 1
+            else:
+                totals[purpose] += Decimal(str(cost))
     return {
         "cache_observed_calls": cache_observed,
         "cache_unknown_calls": cache_unknown,
