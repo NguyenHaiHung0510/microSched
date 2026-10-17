@@ -875,6 +875,7 @@ async def _semantic_checkpoint(
         route={
             "kind": "openrouter",
             "purpose": "compaction",
+            "dispatch_not_started": True,
             "run_guard_version": 1,
             "context_revision": context_revision(settings, conversation.route_config_version, None),
             "context_limit": helper.mimi_route_context_tokens,
@@ -908,6 +909,8 @@ async def _semantic_checkpoint(
             "qualified_provider_names": list(helper.mimi_route_qualified_provider_names),
         }
         try:
+            call.route = {**call.route, "dispatch_not_started": False}
+            await db.commit()
             provider_started = True
             result = await openrouter_complete(
                 messages,
@@ -2439,6 +2442,7 @@ async def send_message(
             {
                 "kind": "openrouter",
                 "purpose": "main",
+                "dispatch_not_started": True,
                 "context_revision": context_revision(settings, run_config_version, checkpoint_id),
                 "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
                 "overflow_recovery_attempt": overflow_recovery_attempt,
@@ -2576,6 +2580,9 @@ async def send_message(
                             route={
                                 **call.route,
                                 "agent_turn": turn,
+                                "dispatch_not_started": True,
+                                "paid_dispatch": True,
+                                "dispatch_attempts": [],
                                 "checkpoint": "provider_dispatch",
                             },
                         )
@@ -2624,6 +2631,7 @@ async def send_message(
                             **call.route,
                             "reused_from_run": str(parent_run_id),
                             "paid_dispatch": False,
+                            "dispatch_not_started": False,
                         }
                     else:
                         from app.agent.local_budget import account, reserve
@@ -2683,6 +2691,10 @@ async def send_message(
                             final_answer_only=messages_final_only(messages),
                         )
                         reservation = reserve(settings, messages, agent_contract=True)
+                        # Persist the may-have-sent boundary only after local
+                        # preflight/reservation, before handing off to transport.
+                        call.route = {**call.route, "dispatch_not_started": False}
+                        await db.commit()
                         try:
                             transport = (
                                 openrouter_complete_stream
@@ -3140,6 +3152,8 @@ async def send_message(
                         await _append_event(db, run_id, kind, event_payload)
                         await db.commit()
 
+                call.route = {**call.route, "dispatch_not_started": False}
+                await db.commit()
                 completion = await openrouter_complete_stream(
                     live_messages,
                     settings=settings,
@@ -3153,6 +3167,8 @@ async def send_message(
                 settings = await bind_wire_policy(db, settings)
                 build_request(live_messages, settings=settings)
                 reservation = reserve(settings, live_messages, agent_contract=False)
+                call.route = {**call.route, "dispatch_not_started": False}
+                await db.commit()
                 completion = await openrouter_complete(
                     live_messages,
                     settings=settings,
@@ -4470,7 +4486,9 @@ async def conversation_view(
                 "purpose": row.route.get("purpose", "main"),
                 "context_revision": row.route.get("context_revision"),
                 "context_composition": row.route.get("context_composition"),
-                "paid_dispatch": row.route.get("paid_dispatch") is not False,
+                "dispatch_not_started": row.route.get("dispatch_not_started") is True,
+                "paid_dispatch": row.route.get("paid_dispatch") is not False
+                and row.route.get("dispatch_not_started") is not True,
                 "response_id": (row.result or {}).get("response_id"),
                 "cost_state": "reported"
                 if reported_number((row.usage or {}).get("cost")) is not None

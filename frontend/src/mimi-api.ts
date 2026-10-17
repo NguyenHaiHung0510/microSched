@@ -117,6 +117,7 @@ export type MimiProviderCall = {
   purpose?: 'main' | 'compaction'
   context_revision?: string | null
   paid_dispatch?: boolean
+  dispatch_not_started?: boolean
   response_id?: string | null
   cost_state?: 'reported' | 'unknown'
   created_at?: string

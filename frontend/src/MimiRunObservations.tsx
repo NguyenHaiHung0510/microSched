@@ -29,7 +29,7 @@ export function MimiRunObservations({ observation, calls }: {
       <ol className="mt-2 space-y-2">{calls.map((call) => <li key={call.id} className="break-words rounded-lg border p-2">
         <p className="font-semibold">{call.purpose === 'compaction' ? 'Helper compact' : 'Main hội thoại'} · {call.state}</p>
         <p>{call.actual_model ?? call.requested_model ?? 'Model chưa được báo'} · {call.actual_provider ?? 'provider chưa được báo'}</p>
-        <p>Input: {typeof call.usage.prompt_tokens === 'number' ? `${call.usage.prompt_tokens.toLocaleString('vi-VN')} token` : 'chưa báo'} · cache: {typeof call.usage.cached_tokens === 'number' ? `${call.usage.cached_tokens.toLocaleString('vi-VN')} token` : 'chưa báo'} · cost: {typeof call.usage.cost === 'number' ? `$${call.usage.cost.toFixed(6)}` : 'chưa rõ'}{call.paid_dispatch === false ? ' · receipt dùng lại' : ''}</p>
+        {call.dispatch_not_started ? <p>Chưa gửi provider; chưa có usage hoặc receipt chi phí.</p> : <p>Input: {typeof call.usage.prompt_tokens === 'number' ? `${call.usage.prompt_tokens.toLocaleString('vi-VN')} token` : 'chưa báo'} · cache: {typeof call.usage.cached_tokens === 'number' ? `${call.usage.cached_tokens.toLocaleString('vi-VN')} token` : 'chưa báo'} · cost: {typeof call.usage.cost === 'number' ? `$${call.usage.cost.toFixed(6)}` : 'chưa rõ'}{call.paid_dispatch === false ? ' · receipt dùng lại' : ''}</p>}
       </li>)}</ol>
     </details>
   </section>
