@@ -63,7 +63,6 @@ from app.web.deps import get_session, require_session
 from app.web.mimi_csrf import require_mimi_csrf
 
 router = APIRouter(prefix="/mimi", tags=["mimi"])
-_metadata_warm_tasks: dict[str, asyncio.Task] = {}
 logger = logging.getLogger(__name__)
 Database = Annotated[AsyncSession, Depends(get_session)]
 CurrentSession = Annotated[AuthSession, Depends(require_session)]
@@ -204,34 +203,9 @@ async def update_operating_policy(
     "/metadata-warmup", dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)]
 )
 async def warm_chat_metadata(db: Database, session: CurrentSession) -> dict:
-    """Explicit chat-open hook; background metadata only, no startup/idle work."""
-    from app.agent.config_policy import bind_policy
-    from app.agent.route_pool import NoEligibleEndpoint, catalog
-
-    del session
-    settings = get_settings()
-    # Raw model metadata is reusable across efforts and routing modes. Warming
-    # an exact chat also prevents a later adaptive selection from starting cold.
-    if not settings.mimi_live_provider_enabled:
-        return {"status": "not_applicable", "paid_calls": 0}
-    selected = bind_policy(settings, await read_policy(db, settings))
-
-    async def warm():
-        try:
-            await catalog.refresh(selected)
-        except NoEligibleEndpoint:
-            return
-
-    key = selected.mimi_route_model
-    prior = _metadata_warm_tasks.get(key)
-    if prior is not None and not prior.done():
-        return {"status": "already_scheduled", "paid_calls": 0}
-    if len(_metadata_warm_tasks) >= 4:
-        return {"status": "busy", "paid_calls": 0}
-    task = asyncio.create_task(warm())
-    _metadata_warm_tasks[key] = task
-    task.add_done_callback(lambda _: _metadata_warm_tasks.pop(key, None))
-    return {"status": "scheduled", "paid_calls": 0}
+    """Compatibility chat-open hook; native routing has no local catalog to warm."""
+    del db, session
+    return {"status": "not_required_native_routing", "paid_calls": 0}
 
 
 @router.get(
@@ -811,34 +785,27 @@ async def read_mimi_selection(
     dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
 )
 async def refresh_mimi_provider_pool(conversation_id: UUID, db: Database, session: CurrentSession):
+    from app.agent.config_policy import bind_policy, read_policy
+    from app.agent.openrouter import _provider_policy
     from app.agent.route_config import bind_configuration, default_configuration
-    from app.agent.route_pool import NoEligibleEndpoint, bind_pool
     from app.agent.service import _conversation
 
     settings = get_settings()
-    if not settings.mimi_collection_enabled or not settings.mimi_live_provider_enabled:
-        raise HTTPException(404, "Mimi endpoint pool is disabled")
+    if not settings.mimi_live_provider_enabled:
+        raise HTTPException(404, "Mimi routing is disabled")
     conversation = await _conversation(db, session, conversation_id)
     if conversation.is_private or conversation.sensitivity != "standard":
-        raise HTTPException(404, "Mimi endpoint pool not found")
+        raise HTTPException(404, "Mimi route not found")
     selected = bind_configuration(
         settings, conversation.route_config or default_configuration(settings)
     )
-    from app.agent.config_policy import bind_policy, read_policy
-
     selected = bind_policy(selected, await read_policy(db, selected))
-    try:
-        _, pool = await bind_pool(selected, manual=True)
-    except NoEligibleEndpoint as error:
-        raise HTTPException(409, str(error)) from error
     return {
-        "model": pool.model,
-        "effort": pool.effort,
-        "tags": pool.tags,
-        "checked_at": pool.checked_at,
-        "snapshot_sha256": pool.snapshot_sha256,
-        "min_uptime_percent": pool.threshold,
-        "window": pool.window,
-        "exclusions": pool.exclusions,
-        "qualification": "METADATA_ONLY_NO_MODEL_CALL",
+        "model": selected.mimi_route_model,
+        "effort": selected.mimi_route_reasoning_effort,
+        "routing_mode": "native",
+        "provider_policy": _provider_policy(selected),
+        "selection": "openrouter_default",
+        "qualification": "NO_LOCAL_PROVIDER_CERTIFICATION",
+        "paid_calls": 0,
     }

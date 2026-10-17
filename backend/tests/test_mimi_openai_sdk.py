@@ -32,6 +32,7 @@ def _settings(**overrides: Any) -> Settings:
         "mimi_transport": "openai_sdk",
         "mimi_standard_api_key": "synthetic-no-egress",
         "mimi_route_model": "vendor/model",
+        "mimi_route_mode": "exact",  # explicit legacy lane; native recovery has separate tests
         "mimi_route_provider": "provider-a",
         "mimi_route_identity_aliases_json": json.dumps(
             {"providers": {"provider-a": ["provider-a-actual"]}}

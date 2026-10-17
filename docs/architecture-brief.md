@@ -61,6 +61,8 @@ Yêu cầu cứng đã nêu: xem task hôm nay / ghi ý tưởng ngay **không �
 - 📝 **2026-07-20 — ĐÃ CHỐT stack UI (phiên frontend):** React 19 + TypeScript + Vite 8 + Tailwind v4/shadcn-ui + TanStack Query v5; offline = **Dexie + outbox tự viết** (không sync-engine — bài toán multi-user conflict không tồn tại, tránh thêm mảnh rời). Chi tiết + lý do + phần còn mở có chủ đích (router/chart/web-push implementation — lúc scaffold/build) + hệ quả thiết bị chủ là iPhone: **`frontend-brief.md`**.
 
 ## 5. Hosting — ✅ Fly.io, always-on, region `sin`
+
+**2026-10-17 — Owner230 source update:** Mimi routing uses native OpenRouter policy/default provider selection; `fly.toml` prepares `MIMI_ROUTE_MODE=native` and removes the provider pin. Model, effort, prices, ZDR, topology and unrelated feature flags retain their values. See [routing contract](mimi-native-routing.md). This records an approved source change, not deployment/live acceptance.
 **Điều kiện ràng buộc thật (do chính chủ nêu):** có thẻ quốc tế, chịu được vài \$/tháng, nhưng **cold-start là dealbreaker** cho read-path tương tác. → loại thẳng mọi phương án scale-to-zero (Render free, Fly-autostop) cho host chính; chuyển hẳn sang **always-on**.
 
 **Đã loại và lý do (khách quan, xem chi tiết `cost-brief.md` §3):**

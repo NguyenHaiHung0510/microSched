@@ -72,7 +72,7 @@ class RouteConfiguration(BaseModel):
     profile_id: str
     effort: str
     input_tokens: int = Field(ge=32000, le=272000)
-    routing_mode: str = "adaptive"
+    routing_mode: str = "native"
     min_uptime_percent: float = Field(default=95.0, ge=95, lt=100, allow_inf_nan=False)
     uptime_window: str = "1d"
 
@@ -114,7 +114,7 @@ def profiles_for_ui(settings: Settings) -> list[dict[str, Any]]:
 
 def validate_configuration(value: dict[str, Any], *, alpha: bool = False) -> RouteConfiguration:
     config = RouteConfiguration.model_validate(value)
-    if config.routing_mode not in {"exact", "adaptive"} or config.uptime_window not in {
+    if config.routing_mode not in {"native", "exact", "adaptive"} or config.uptime_window not in {
         "1d",
         "30m",
     }:
@@ -128,7 +128,9 @@ def validate_configuration(value: dict[str, Any], *, alpha: bool = False) -> Rou
         raise HTTPException(status_code=422, detail="mimi_alpha_trigger_preset_invalid")
     if config.input_tokens > profile["context_limit"]:
         raise HTTPException(status_code=422, detail="mimi_context_exceeds_model_limit")
-    return config
+    # Migrate legacy saved preferences at the read/bind boundary, preserving old
+    # run receipts. Uptime/certification/provider pins are no longer admission gates.
+    return config.model_copy(update={"routing_mode": "native"})
 
 
 def default_configuration(settings: Settings) -> dict[str, Any]:
@@ -136,24 +138,20 @@ def default_configuration(settings: Settings) -> dict[str, Any]:
         (key for key, p in PROFILES.items() if p["model"] == settings.mimi_route_model), None
     )
     if profile_id is None:
-        if (
-            settings.mimi_route_model
-            and settings.mimi_live_provider_enabled
-            and settings.mimi_collection_enabled
-        ):
+        if settings.mimi_route_model and settings.mimi_live_provider_enabled:
             raise HTTPException(409, "selected_model_not_admitted")
-        profile_id = "deepseek" if settings.mimi_collection_enabled else "mimo"
+        profile_id = "deepseek"
     efforts = PROFILES[profile_id]["supported_efforts"]
     effort = settings.mimi_route_reasoning_effort
     if effort not in efforts:
-        if settings.mimi_live_provider_enabled and settings.mimi_collection_enabled:
+        if settings.mimi_live_provider_enabled:
             raise HTTPException(409, "selected_effort_not_supported")
         effort = "medium" if "medium" in efforts else efforts[0]
     return {
         "profile_id": profile_id,
         "effort": effort,
         "input_tokens": settings.mimi_compaction_trigger_tokens,
-        "routing_mode": settings.mimi_route_mode,
+        "routing_mode": "native",
     }
 
 
@@ -180,24 +178,30 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
     )
     return settings.model_copy(
         update={
-            "mimi_route_mode": config.routing_mode if settings.mimi_collection_enabled else "exact",
+            "mimi_route_mode": "native",
             "mimi_route_min_uptime_percent": config.min_uptime_percent,
             "mimi_route_uptime_window": config.uptime_window,
             "mimi_route_allowed_providers": "",
             "mimi_route_allowed_quantizations": "fp8",
             "mimi_route_model": profile["model"],
-            "mimi_route_provider": profile["provider"],
+            "mimi_route_provider": None,
             "mimi_route_quantization": profile["quantization"],
             "mimi_route_reasoning_effort": config.effort,
             "mimi_route_context_tokens": profile["context_limit"],
             "mimi_compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
             "mimi_route_max_output_tokens": profile["output_reserve"],
-            "mimi_route_billing_prompt_ceiling": None,
-            "mimi_route_capacity_source": None,
+            # Financial reservation is separate from a provider capacity filter.
+            "mimi_route_billing_prompt_ceiling": profile["context_limit"],
+            "mimi_route_capacity_source": "configured_model_profile",
+            "mimi_route_qualified_provider_names": (),
+            "mimi_route_catalog_checked_at": None,
+            "mimi_route_catalog_sha256": None,
+            "mimi_route_qualification_expires_at": None,
+            "mimi_route_qualification_sha256": None,
             "mimi_route_max_input_price": price.prompt,
             "mimi_route_max_output_price": price.completion,
-            # Adaptive endpoint receipts must prove named function choice.
-            # Revisions still require a typed replacement before server activation.
+            # Native require_parameters enforces support, while Mimi still
+            # validates a typed replacement before server activation.
             "mimi_route_forced_tool_choice": "function",
         }
     )

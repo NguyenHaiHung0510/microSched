@@ -169,16 +169,8 @@ def bind_policy(settings: Settings, policy: OperatingPolicy) -> Settings:
 
 
 async def bind_wire_policy(db, settings: Settings) -> Settings:
-    selected = bind_policy(settings, await read_policy(db, settings, dispatch=True))
-    if selected.mimi_route_mode == "adaptive":
-        from app.agent.openrouter import RouteContractError
-        from app.agent.route_pool import NoEligibleEndpoint, bind_pool
-
-        try:
-            selected, _ = await bind_pool(selected)
-        except NoEligibleEndpoint as error:
-            raise RouteContractError("mimi_no_eligible_endpoint_for_current_policy") from error
-    return selected
+    # The gateway evaluates its inventory; this boundary binds only Owner policy.
+    return bind_policy(settings, await read_policy(db, settings, dispatch=True))
 
 
 def validate_input(text: str, policy: OperatingPolicy) -> None:

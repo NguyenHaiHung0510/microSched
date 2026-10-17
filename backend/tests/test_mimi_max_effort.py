@@ -123,7 +123,7 @@ def test_max_does_not_admit_other_families(profile):
 def test_approved_common_envelope_preserves_effort_and_profile_availability():
     base = settings()
     assert default_configuration(base) == dict(
-        profile_id="deepseek", effort="low", input_tokens=272_000, routing_mode="exact"
+        profile_id="deepseek", effort="low", input_tokens=272_000, routing_mode="native"
     )
     assert Settings.model_fields["mimi_route_reasoning_effort"].default == "low"
     assert base.mimi_route_max_output_tokens == 4096
@@ -202,7 +202,7 @@ def test_actual_compaction_helper_dispatch_and_journal_keep_selected_effort(effo
     assert call.state == "dispatched" and db.commit.await_count == 2
 
 
-def test_compaction_reuses_summary_family_scope_for_adaptive_natural_main(monkeypatch):
+def test_compaction_native_summary_does_not_fetch_or_certify_provider(monkeypatch):
     from time import time
 
     from app.agent import route_pool
@@ -267,4 +267,4 @@ def test_compaction_reuses_summary_family_scope_for_adaptive_natural_main(monkey
     )
     with pytest.raises(CapturedSummary):
         asyncio.run(service._semantic_checkpoint(db, conv, uuid7(), [], None, None, None, selected))
-    assert len(seen) == 1
+    assert seen == []

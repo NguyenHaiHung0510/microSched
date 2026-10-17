@@ -382,7 +382,7 @@ def test_metadata_hard_expiry_and_cold_timeout_are_finite(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_current_policy_empty_pool_is_a_classified_no_egress_contract_failure(monkeypatch):
+def test_current_policy_does_not_call_local_provider_admission(monkeypatch):
     from app.agent import config_policy, route_pool
 
     async def scenario():
@@ -396,7 +396,10 @@ def test_current_policy_empty_pool_is_a_classified_no_egress_contract_failure(mo
 
         monkeypatch.setattr(config_policy, "read_policy", read)
         monkeypatch.setattr(route_pool, "bind_pool", empty)
-        with pytest.raises(RouteContractError, match="no_eligible_endpoint_for_current_policy"):
-            await config_policy.bind_wire_policy(None, selected)
+        result = await config_policy.bind_wire_policy(None, selected)
+        assert (
+            result.mimi_route_max_input_price
+            == bootstrap_policy(selected).prices[selected.mimi_route_model].prompt
+        )
 
     asyncio.run(scenario())

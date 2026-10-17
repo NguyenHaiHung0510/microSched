@@ -37,6 +37,7 @@ def settings(**extra):
         mimi_standard_api_key="synthetic-not-sent",
         mimi_context_v1_enabled=True,
         mimi_live_provider_enabled=True,
+        mimi_route_mode="exact",  # historical certificate/exact-lane regressions
         mimi_route_model=ADMITTED_MODEL,
         mimi_route_provider="deepinfra",
         mimi_route_quantization="fp8",
@@ -417,4 +418,4 @@ def test_feature_off_and_collection_revision_preserve_tool_boundaries():
             "uptime_window": "30m",
         },
     )
-    assert configured.mimi_route_mode == "exact" and configured.mimi_route_min_uptime_percent == 96
+    assert configured.mimi_route_mode == "native" and configured.mimi_route_min_uptime_percent == 96

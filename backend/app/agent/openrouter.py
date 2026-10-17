@@ -7,7 +7,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
@@ -76,6 +76,7 @@ class ProviderCompletion:
     provider: str | None
     model: str | None
     collection: dict[str, Any] | None = None
+    dispatch_attempts: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ class AgentCompletion:
     usage: dict[str, Any]
     provider: str | None
     model: str | None
+    dispatch_attempts: list[dict[str, Any]] = field(default_factory=list)
 
 
 ProviderEventSink = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -322,7 +324,15 @@ def validate_response_identity(payload: dict, settings: Settings) -> None:
     if (
         not isinstance(model, str)
         or model not in models
-        or (not isinstance(provider, str) or provider.casefold() not in providers)
+        or (
+            settings.mimi_route_mode == "native"
+            and provider is not None
+            and (not isinstance(provider, str) or not provider.strip() or len(provider) > 200)
+        )
+        or (
+            settings.mimi_route_mode != "native"
+            and (not isinstance(provider, str) or provider.casefold() not in providers)
+        )
     ):
         receipt = _rejected_terminal_metadata(
             payload.get("id"), provider, model, payload.get("usage") or {}, None
@@ -358,6 +368,15 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
         "zdr": settings.mimi_route_require_zdr,
         "max_price": _price_policy(settings),
     }
+    if settings.mimi_route_mode == "native":
+        quantizations = list(settings.mimi_allowed_quantization_list)
+        if not quantizations and settings.mimi_route_quantization not in {None, "unknown"}:
+            quantizations = [settings.mimi_route_quantization]
+        return {
+            **shared,
+            "allow_fallbacks": True,
+            **({"quantizations": quantizations} if quantizations else {}),
+        }
     if settings.mimi_route_mode == "exact":
         if settings.mimi_route_provider is None or settings.mimi_route_quantization is None:
             raise RouteContractError("exact Mimi route is not configured")
@@ -442,7 +461,7 @@ def build_request(
         > route.mimi_max_payload_bytes
     ):
         raise RouteContractError("payload_bytes_exceeded")
-    if route.mimi_route_context_tokens < 408_192:
+    if route.mimi_route_mode != "native" and route.mimi_route_context_tokens < 408_192:
         raise RouteContractError("context_overflow_preflight_route_capacity")
     if route.mimi_route_max_output_tokens > route.mimi_route_context_tokens:
         raise RouteContractError("output_reserve_exceeds_route_limit")
@@ -758,20 +777,105 @@ def _input_overflow_error(status_code: int, body: Any) -> ProviderDispatchError 
     return selected
 
 
-def _raise_for_status(status_code: int) -> None:
-    if status_code in {408, 409}:
-        raise ProviderDispatchError("unknown", status_code)
-    if status_code >= 500:
-        # A gateway failure does not prove its upstream generation was never
-        # started. Reconcile before any Owner-triggered successor dispatch.
-        raise ProviderDispatchError("unknown", status_code)
+def _raise_for_status(status_code: int, *, body=None, retry_after: str | None = None) -> None:
+    if status_code < 400:
+        return
+    from app.agent.gateway_retry import retry_after_seconds
+
+    diagnostic = {"category": "provider_unavailable"}
+    seconds = retry_after_seconds(retry_after)
+    if seconds is not None:
+        diagnostic["retry_after_seconds"] = seconds
+    envelope = body.get("error", body) if isinstance(body, dict) else {}
+    metadata = envelope.get("metadata") if isinstance(envelope, dict) else None
+    error_type = metadata.get("error_type") if isinstance(metadata, dict) else None
+    outcome = "failed"
+    if status_code in {408, 409} or status_code >= 500:
+        outcome = "unknown"
     if status_code == 429:
-        raise ProviderDispatchError("retryable", status_code)
-    if status_code >= 400:
-        raise ProviderDispatchError("failed", status_code)
+        outcome = "retryable"
+        diagnostic["category"] = "rate_limited"
+    elif status_code in {429, 502, 503} and error_type == "provider_overloaded":
+        outcome = "retryable"
+        diagnostic["category"] = error_type
+    elif (
+        status_code == 402
+        and seconds is not None
+        and isinstance(metadata, dict)
+        and metadata.get("limit_source") == "openrouter_in_flight_budget"
+        and metadata.get("reason") == "in_flight_budget_exhausted"
+    ):
+        outcome = "retryable"
+        diagnostic["category"] = "in_flight_budget_exhausted"
+    elif status_code < 500 and status_code not in {408, 409}:
+        diagnostic["category"] = "provider_rejected"
+    error = ProviderDispatchError(outcome, status_code, diagnostic=diagnostic)
+    if isinstance(body, dict):
+        error.terminal_receipt = _rejected_terminal_metadata(
+            body.get("id"),
+            body.get("provider"),
+            body.get("model"),
+            body.get("usage") if isinstance(body.get("usage"), dict) else {},
+            None,
+        )
+        error.response_id = error.terminal_receipt["id"]
+        # A generation identity or token usage defeats a pre-generation retry.
+        usage = error.terminal_receipt["usage"]
+        if outcome == "retryable" and (error.response_id or usage):
+            error.outcome = "unknown"
+    raise error
 
 
-async def complete(
+def _raise_generation_error(payload: dict) -> None:
+    """A JSON error after HTTP200 may already represent a billed generation."""
+    envelope = payload.get("error")
+    if envelope is None:
+        return
+    code = envelope.get("code") if isinstance(envelope, dict) else None
+    error = ProviderDispatchError(
+        "unknown",
+        code if type(code) is int and 400 <= code <= 599 else None,
+        response_id=payload.get("id"),
+        diagnostic={"category": "generation_error"},
+    )
+    error.terminal_receipt = _rejected_terminal_metadata(
+        payload.get("id"),
+        payload.get("provider"),
+        payload.get("model"),
+        payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+        None,
+    )
+    error.response_id = error.terminal_receipt["id"]
+    raise error
+
+
+async def complete(messages, *, settings=None, **kwargs):
+    route = settings or get_settings()
+
+    async def operation():
+        return await _complete_once(messages, settings=route, **kwargs)
+
+    if route.mimi_route_mode != "native":
+        return await operation()
+    from app.agent.gateway_retry import dispatch
+
+    return await dispatch(operation, settings=route)
+
+
+async def complete_stream(messages, *, settings=None, **kwargs):
+    route = settings or get_settings()
+
+    async def operation():
+        return await _complete_stream_once(messages, settings=route, **kwargs)
+
+    if route.mimi_route_mode != "native":
+        return await operation()
+    from app.agent.gateway_retry import dispatch
+
+    return await dispatch(operation, settings=route)
+
+
+async def _complete_once(
     messages: list[dict[str, Any]],
     *,
     settings: Settings | None = None,
@@ -832,13 +936,21 @@ async def complete(
                 overflow = None
             if overflow is not None:
                 raise overflow
-        _raise_for_status(response.status_code)
+        if response.status_code >= 400:
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            _raise_for_status(
+                response.status_code, body=body, retry_after=response.headers.get("retry-after")
+            )
         try:
             payload = response.json()
         except ValueError as error:
             raise RouteContractError("provider_terminal_payload_is_not_json") from error
         if not isinstance(payload, dict):
             raise RouteContractError("provider_terminal_payload_is_not_an_object")
+        _raise_generation_error(payload)
         validate_response_identity(payload, route)
         if summary_mode:
             return parse_compaction_completion(payload)
@@ -848,7 +960,7 @@ async def complete(
             await active_client.aclose()
 
 
-async def complete_stream(
+async def _complete_stream_once(
     messages: list[dict[str, Any]],
     *,
     settings: Settings | None = None,
@@ -922,7 +1034,17 @@ async def complete_stream(
                         overflow = None
                     if overflow is not None:
                         raise overflow
-                _raise_for_status(response.status_code)
+                if response.status_code >= 400:
+                    await response.aread()
+                    try:
+                        body = response.json()
+                    except ValueError:
+                        body = None
+                    _raise_for_status(
+                        response.status_code,
+                        body=body,
+                        retry_after=response.headers.get("retry-after"),
+                    )
                 connected_at = time.perf_counter()
                 if on_event:
                     await on_event("provider.connected", {"status": response.status_code})
@@ -941,14 +1063,6 @@ async def complete_stream(
                         raise RouteContractError("provider_stream_chunk_is_not_json") from error
                     if not isinstance(chunk, dict):
                         raise RouteContractError("provider_stream_chunk_is_not_an_object")
-                    provider_error = chunk.get("error")
-                    if provider_error is not None:
-                        code = (
-                            provider_error.get("code") if isinstance(provider_error, dict) else None
-                        )
-                        if isinstance(code, int) and code >= 400:
-                            _raise_for_status(code)
-                        raise RouteContractError("provider_stream_error_envelope")
                     if isinstance(chunk.get("id"), str) and chunk["id"]:
                         if chunk["id"] != response_id:
                             response_id = chunk["id"]
@@ -962,6 +1076,14 @@ async def complete_stream(
                     model = merge_stream_identity(model, chunk.get("model"), field="model")
                     if isinstance(chunk.get("usage"), dict):
                         usage = chunk["usage"]
+                    provider_error = chunk.get("error")
+                    if provider_error is not None:
+                        code = (
+                            provider_error.get("code") if isinstance(provider_error, dict) else None
+                        )
+                        if isinstance(code, int) and code >= 400:
+                            _raise_for_status(code)
+                        raise RouteContractError("provider_stream_error_envelope")
                     choices = chunk.get("choices")
                     if not isinstance(choices, list):
                         raise RouteContractError("provider_stream_choices_invalid")
@@ -1007,6 +1129,14 @@ async def complete_stream(
                     raise ProviderDispatchError("unknown", None, response_id=response_id or None)
                 if finish_reason not in {None, "stop", "tool_calls"}:
                     raise RouteContractError("provider_stream_finish_reason_not_usable")
+        except ProviderDispatchError as error:
+            if response_id or content_parts or tool_calls:
+                error.outcome = "unknown"
+            error.response_id = response_id or error.response_id
+            error.terminal_receipt = _rejected_terminal_metadata(
+                response_id, provider, model, usage, finish_reason
+            )
+            raise
         except RouteContractError as error:
             receipt = _rejected_terminal_metadata(
                 response_id, provider, model, usage, finish_reason
