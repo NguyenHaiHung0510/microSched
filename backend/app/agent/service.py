@@ -2909,13 +2909,13 @@ async def send_message(
                     nonlocal context_envelope, aggregate_read_seen
                     if context_envelope is None:
                         raise ValueError("mimi_context_envelope_missing")
-                    if tool_name == "task.aggregate.v1":
+                    if tool_name == "task.aggregate.v1" and "error" not in result:
                         # Counts do not carry per-Task versions. They can guide
                         # an answer or draft, but cannot safely ground a frozen
                         # write preview in this P1C-A contract.
                         aggregate_read_seen = True
                     bound_versions: dict[str, str] = {}
-                    for row in result.get("rows", []):
+                    for row in () if "error" in result else result.get("rows", []):
                         if not isinstance(row, dict):
                             raise RouteContractError("task_read_row_invalid")
                         try:

@@ -167,7 +167,18 @@ def test_whole_fanout_validates_before_first_read(bad):
             arguments={} if bad == "unknown_tool" else {"limit": 51},
         )
 
-        async def invoke(*_):
+        async def invoke(messages, turn):
+            if turn > 1:
+                assert json.loads(messages[-1]["content"])["error"]["code"] == (
+                    "invalid_read_arguments"
+                )
+                return AgentCompletion(
+                    outcome=AssistantText(text="Chưa đọc dữ liệu do tham số không hợp lệ."),
+                    response_id="synthetic-correction",
+                    usage={},
+                    model=ADMITTED_MODEL,
+                    provider="synthetic",
+                )
             return AgentCompletion(
                 outcome=ToolRequests(requests=tuple(reqs)),
                 response_id="synthetic",
@@ -179,13 +190,22 @@ def test_whole_fanout_validates_before_first_read(bad):
         async def execute(*args):
             reads.append(args)
 
-        with pytest.raises(RouteContractError):
-            await run_read_loop(
+        if bad == "unknown_tool":
+            with pytest.raises(RouteContractError, match="non_read_tool"):
+                await run_read_loop(
+                    [],
+                    limits=LoopLimits(32, 64, 200000, datetime.now(UTC) + timedelta(seconds=5)),
+                    invoke_model=invoke,
+                    execute_read=execute,
+                )
+        else:
+            result = await run_read_loop(
                 [],
                 limits=LoopLimits(32, 64, 200000, datetime.now(UTC) + timedelta(seconds=5)),
                 invoke_model=invoke,
                 execute_read=execute,
             )
+            assert result.turns == 2 and result.tool_calls == 0
         assert reads == []
 
     asyncio.run(scenario())

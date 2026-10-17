@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from pydantic import ValidationError
+
 from app.agent.context import Blocked, TerminalOutcome, ToolRequests
 from app.agent.openrouter import (
     AgentCompletion,
@@ -83,14 +85,41 @@ def finalization_messages(messages, reason, not_run=()):
     ]
 
 
-def validate_fanout(outcome):
+def validate_fanout(outcome: ToolRequests) -> dict[str, Any] | None:
+    """Reject names fatally; return bounded feedback for a wholly unexecuted bad batch."""
+    # Check every name first: a bad schema cannot mask an unauthorized sibling.
+    if any(request.name not in READ_TOOLS for request in outcome.requests):
+        raise RouteContractError("model_requested_non_read_tool_in_loop")
+    invalid = set()
     for request in outcome.requests:
-        if request.name not in READ_TOOLS:
-            raise RouteContractError("model_requested_non_read_tool_in_loop")
         try:
             validate_read_arguments(request.name, request.arguments)
-        except ValueError as error:
-            raise RouteContractError("model_read_batch_arguments_invalid") from error
+        except ValidationError:
+            invalid.add(request.name)
+    if invalid:
+        # Never echo input, validator messages or arbitrary field names. These
+        # tool names come only from the fixed read allowlist, not model strings.
+        return {
+            "role": "system",
+            "content": _canonical_json(
+                {
+                    "error": {
+                        "code": "invalid_read_arguments",
+                        "message": (
+                            "The entire read batch was rejected before execution. No reads or "
+                            "selections ran; this supplies no data, IDs, versions, membership or "
+                            "coverage. Correct arguments for the listed tools using their leased "
+                            "schemas and actual prior read receipts, then resubmit the needed "
+                            "batch. Do not invent missing values. Each correction uses a normal "
+                            "model turn within the existing run limits."
+                        ),
+                    },
+                    "invalid_tools": sorted(invalid),
+                    "coverage": "unavailable",
+                }
+            ),
+        }
+    return None
 
 
 def _canonical_json(value: Any) -> str:
@@ -162,7 +191,10 @@ async def run_read_loop(
             return LoopResult(outcome, completion, turn, total_calls, tuple(messages))
         if messages_final_only(messages):
             raise RouteContractError("model_violated_final_no_tools")
-        validate_fanout(outcome)
+        feedback = validate_fanout(outcome)
+        if feedback is not None:
+            messages.append(feedback)
+            continue
         allowance = max(0, limits.max_tool_calls - total_calls)
         not_run = outcome.requests[allowance:]
         if not_run:

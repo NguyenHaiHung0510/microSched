@@ -370,9 +370,9 @@ def rebind_after_read(
         else:
             count = 0
     sources = envelope.manifest.sources
-    # A cursor error is feedback, not a Task source or an empty completed page.
+    # A server read error is feedback, not a Task source or an empty completed page.
     # Keep it in tool history while still rebinding the consumed run budgets.
-    if result.get("error", {}).get("code") != "invalid_task_query_cursor":
+    if "error" not in result:
         source = SourceManifest(
             source_id=f"{tool_name}:{_source_hash(call_id)[:12]}",
             source_type="microsched.task.standard",
