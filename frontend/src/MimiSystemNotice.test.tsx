@@ -33,3 +33,13 @@ test('approved notice has Info, collapsed details and full safe prose; no avatar
   expect(html).toContain('provider_terminal')
   expect(renderToStaticMarkup(<MimiSystemNotice message={{ ...message, provenance: undefined }} />)).toBe('')
 })
+
+
+test('server loop stop offers explicit system feedback on the same verified message', () => {
+  const stopped = { ...message, provenance: { ...message.provenance!, producer_code: 'agent_loop_stop' } }
+  expect(isVerifiedServerNotice(stopped)).toBe(true)
+  const html = renderToStaticMarkup(<MimiSystemNotice message={stopped} onFeedback={() => {}} />)
+  expect(html).toContain('Góp ý trạng thái hệ thống 4')
+  expect(html).toContain('Góp ý trạng thái này')
+  expect(html).not.toContain('Hữu ích')
+})

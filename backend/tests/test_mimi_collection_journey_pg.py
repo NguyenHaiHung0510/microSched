@@ -335,11 +335,15 @@ def test_old_answer_feedback_exports_exact_causal_parts_after_newer_run(pg_dsn, 
                     )
                 ).all()
                 old_answer = next(m for m in reversed(messages) if m.role == "assistant")
+                from app.agent.message_provenance import read_message_provenance
+
+                producers = await read_message_provenance(db, conv, messages, dek)
                 expected_messages = [
                     {
                         "id": str(m.id),
                         "role": m.role,
                         "sequence": m.sequence,
+                        "provenance": producers[m.id],
                         "content": crypto.open_content(
                             dek,
                             m.content_ciphertext,

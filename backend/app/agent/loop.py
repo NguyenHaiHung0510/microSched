@@ -51,6 +51,10 @@ class LoopResult:
     messages: tuple[dict[str, Any], ...]
     stop_code: Literal["deadline_exceeded", "budget_exceeded", "no_progress"] | None = None
 
+    @property
+    def producer_code(self):
+        return "agent_loop_stop" if self.stop_code else "provider_text"
+
 
 FINAL_MARKER = "MIMI_SERVER_FINAL_ANSWER_ONLY_V1"
 
@@ -126,6 +130,58 @@ def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
+class ReadProgress:
+    """Same-run reads refresh evidence; repeated unchanged results remain bounded.
+
+    A duplicate gets actionable feedback before it can contribute to a stop. We
+    evaluate the entire batch so a duplicate never masks a useful sibling read.
+    Freeze is executed normally, never memoized; errors supply no authority.
+    """
+
+    def __init__(self, messages=()):
+        self.results = {}
+        self.unchanged_batch = False
+        pending = {}
+        for message in messages:
+            for call in message.get("tool_calls", ()):
+                pending[call["id"]] = call["function"]
+            if message.get("role") == "tool" and message.get("tool_call_id") in pending:
+                call = pending.pop(message["tool_call_id"])
+                self.observe(
+                    call["name"], json.loads(call["arguments"]), json.loads(message["content"])
+                )
+
+    def observe(self, name, arguments, result):
+        fingerprint = _canonical_json({"name": name, "arguments": arguments})
+        # Timestamp-only changes are not progress. Rows/versions/cursors/errors
+        # remain part of the comparison; no snapshot or write authority is reused.
+        evidence = _canonical_json({k: v for k, v in result.items() if k != "data_as_of"})
+        digest = hashlib.sha256(evidence.encode()).hexdigest()
+        duplicate = self.results.get(fingerprint) == digest
+        self.results[fingerprint] = digest
+        return duplicate
+
+
+def duplicate_read_feedback():
+    return {
+        "role": "system",
+        "content": _canonical_json(
+            {
+                "code": "duplicate_read_refreshed",
+                "instruction": (
+                    "The duplicate read ran again against current sources and consumed the normal "
+                    "read allowance. Use actual result, IDs, versions and coverage; no older-run "
+                    "receipt was promoted. An unchanged repeat is not progress. Continue useful "
+                    "siblings, read missing IDs/pages or correct selection obligations; otherwise "
+                    "give an honest partial answer and next step. Never narrow an all-scope "
+                    "request "
+                    "silently. Further unchanged batches may stop with no_progress."
+                ),
+            }
+        ),
+    }
+
+
 async def run_read_loop(
     initial_messages: list[dict[str, Any]],
     *,
@@ -138,7 +194,7 @@ async def run_read_loop(
     """Execute validated reads only; return one terminal outcome or a truthful bound stop."""
 
     messages = list(initial_messages)
-    seen_calls: set[str] = set()
+    progress = ReadProgress(messages)
     total_calls = 0
     last_completion: AgentCompletion | None = None
     final_reason = None
@@ -190,6 +246,18 @@ async def run_read_loop(
         if not isinstance(outcome, ToolRequests):
             return LoopResult(outcome, completion, turn, total_calls, tuple(messages))
         if messages_final_only(messages):
+            if progress.unchanged_batch:
+                return LoopResult(
+                    Blocked(
+                        reason="Đã chạm giới hạn lượt chạy mà các lần đọc vẫn không có "
+                        "tiến triển. Chưa ghi thay đổi; cần sửa ID, trang hoặc phạm vi còn thiếu."
+                    ),
+                    completion,
+                    turn,
+                    total_calls,
+                    tuple(messages),
+                    "no_progress",
+                )
             raise RouteContractError("model_violated_final_no_tools")
         feedback = validate_fanout(outcome)
         if feedback is not None:
@@ -212,6 +280,8 @@ async def run_read_loop(
             )
         if on_stage:
             await on_stage("executing_read_tools", {"turn": turn, "count": len(outcome.requests)})
+        stalled_batch = []
+        duplicate_seen = False
         for request in outcome.requests[:allowance]:
             if datetime.now(UTC) >= limits.deadline:
                 return LoopResult(
@@ -224,19 +294,6 @@ async def run_read_loop(
                 )
             if request.name not in READ_TOOLS:
                 raise RouteContractError("model_requested_non_read_tool_in_loop")
-            fingerprint = hashlib.sha256(
-                _canonical_json({"name": request.name, "arguments": request.arguments}).encode()
-            ).hexdigest()
-            if fingerprint in seen_calls:
-                return LoopResult(
-                    Blocked(reason="Công cụ đọc lặp lại cùng truy vấn mà không có tiến triển."),
-                    completion,
-                    turn,
-                    total_calls,
-                    tuple(messages),
-                    "no_progress",
-                )
-            seen_calls.add(fingerprint)
             remaining = (limits.deadline - datetime.now(UTC)).total_seconds()
             try:
                 async with asyncio.timeout(max(0, remaining)):
@@ -250,6 +307,9 @@ async def run_read_loop(
                     tuple(messages),
                     "deadline_exceeded",
                 )
+            duplicate = progress.observe(request.name, request.arguments, result)
+            duplicate_seen |= duplicate
+            stalled_batch.append(duplicate)
             total_calls += 1
             messages.append(
                 {
@@ -296,6 +356,21 @@ async def run_read_loop(
                         tuple(messages),
                         "budget_exceeded",
                     )
+        progress.unchanged_batch = bool(stalled_batch) and all(stalled_batch)
+        if duplicate_seen:
+            messages.append(duplicate_read_feedback())
+        if stalled_batch and all(stalled_batch) and total_calls >= limits.max_tool_calls:
+            return LoopResult(
+                Blocked(
+                    reason="Công cụ đọc lặp lại cùng truy vấn mà không có tiến triển. "
+                    "Chưa có thay đổi nào được ghi; cần sửa phạm vi, ID hoặc trang còn thiếu."
+                ),
+                completion,
+                turn,
+                total_calls,
+                tuple(messages),
+                "no_progress",
+            )
     return LoopResult(
         Blocked(reason="Mimi đã dùng hết số vòng suy luận được cấp cho lượt này."),
         last_completion,

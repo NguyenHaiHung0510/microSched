@@ -142,8 +142,8 @@ def test_repeated_bad_cursor_is_bounded_by_existing_fingerprint(cursor_arguments
             ),
             loop_factory=selector_loop_factory,
         )
-    assert result.stop_code == "no_progress" and result.tool_calls == 1
-    assert turns == [1, 2]
+    assert result.stop_code == "no_progress" and result.tool_calls == 3
+    assert turns == [1, 2, 3]
     db.execute.assert_not_awaited()
 
 

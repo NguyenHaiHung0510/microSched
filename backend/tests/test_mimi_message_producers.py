@@ -30,4 +30,4 @@ def test_all_assistant_message_producers_are_explicit_and_awaited():
             assert code in PRODUCERS
             assert ("provider_call_id" in metadata) == (PRODUCERS[code] == "model_answer")
             codes.append(code)
-    assert set(codes) == set(PRODUCERS) and len(codes) == 15
+    assert set(codes) == set(PRODUCERS) and len(codes) == 16
