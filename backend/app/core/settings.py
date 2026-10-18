@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     mimi_real_chat_enabled: bool = False
     mimi_live_provider_enabled: bool = False
     mimi_context_v1_enabled: bool = False
+    # Code rollback ignores the versioned events; existing retention is unchanged.
+    mimi_working_projection_enabled: bool = True
     # Alpha can explicitly select LangGraph; feature flags remain dark by default.
     mimi_runner: Literal["current", "langgraph"] = "current"
     mimi_workflow_pilot_enabled: bool = False

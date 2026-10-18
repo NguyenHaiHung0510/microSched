@@ -9,7 +9,8 @@ export function MimiMetricsTable({ conversation }: { conversation: MimiConversat
   const metrics = conversation.metrics
   const context = lastMeasuredInput(conversation)
   const rows = [
-    ['Context đã đo', `${formatMetric(context)} / 400k`, 'Lần đo gần nhất · context hiện tại chưa đo lại'],
+    ['Context đã đo', `${formatMetric(context)} / 400k`, `Lần đo gần nhất · context hiện tại chưa đo lại${metrics?.last_measured_input ? ` · ${new Date(metrics.last_measured_input.as_of).toLocaleString('vi-VN')}` : ''}`],
+    ['Ngưỡng compact mềm', metrics?.context_policy ? formatMetric(metrics.context_policy.compaction_trigger_tokens) : '—', 'Tách biệt mốc vận hành 400k · dùng input native đủ điều kiện'],
     ['USD đã ghi nhận', metrics ? money(metrics.usd.known) : '—', metrics ? coverage(metrics.usd.observed, metrics.usd.missing) : 'Chưa có tổng hợp từ server'],
     ['Input tích lũy', formatMetric(metrics?.input.known), metrics ? coverage(metrics.input.observed, metrics.input.missing) : ''],
     ['Output tổng (gồm reasoning)', formatMetric(metrics?.output.known), metrics ? coverage(metrics.output.observed, metrics.output.missing) : ''],

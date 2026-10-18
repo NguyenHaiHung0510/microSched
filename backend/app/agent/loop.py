@@ -142,7 +142,11 @@ class ReadProgress:
         self.results = {}
         self.unchanged_batch = False
         pending = {}
-        for message in messages:
+        # Earlier finalized turns are historical data, not reads made by this run.
+        current_turn = max(
+            (i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1
+        )
+        for message in messages[current_turn + 1 :]:
             for call in message.get("tool_calls", ()):
                 pending[call["id"]] = call["function"]
             if message.get("role") == "tool" and message.get("tool_call_id") in pending:

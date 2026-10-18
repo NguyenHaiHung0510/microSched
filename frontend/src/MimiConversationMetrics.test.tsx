@@ -10,6 +10,7 @@ const metrics: Metrics = {
   as_of: '2026-10-18T10:00:00Z', scope_start: '2026-10-18T09:00:00Z',
   provenance: 'server_receipts', retention: 'existing', reused_calls: 1,
   last_measured_input: { tokens: 64000, as_of: '2026-10-18T09:00:00Z', state: 'last_measured_current_projection_pending' },
+  context_policy: { operating_input_tokens: 400000, compaction_trigger_tokens: 272000, current_projection_measurement: 'pending' },
   eligible_dispatches: 2, input: value(320000), output: value(48000), reasoning: value(36000),
   usd: { known: '0.042700001', observed: 1, missing: 1, complete: false },
   cache: { cached: 96000, sample_input: 320000, ratio: 0.3, observed: 1, missing: 1, complete: false },
@@ -23,7 +24,7 @@ describe('P2 shared server snapshot', () => {
     const table = renderToStaticMarkup(<MimiMetricsTable conversation={conversation} />)
     const pane = renderToStaticMarkup(<MimiConversationMetrics conversation={conversation} />)
     expect(pane).toContain(table)
-    for (const expected of ['64.000 / 400k', '$0.042700001', '320.000', '48.000', '36.000', '30%', '96.000 / 320.000', '1 chưa có số liệu', 'nằm trong output', 'context hiện tại chưa đo lại']) expect(table).toContain(expected)
+    for (const expected of ['64.000 / 400k', '$0.042700001', '320.000', '48.000', '36.000', '30%', '96.000 / 320.000', '1 chưa có số liệu', 'nằm trong output', 'context hiện tại chưa đo lại', 'Ngưỡng compact mềm', '272.000']) expect(table).toContain(expected)
     expect(table).not.toContain('84.000')
     expect(table).not.toContain('Bytes')
     expect(pane).not.toContain('<details open')

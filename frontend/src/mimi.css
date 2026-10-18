@@ -163,3 +163,6 @@
 
 /* Keep the measured-context circle beside the existing model chip on compact screens. */
 .mimi-composer-meta > [data-testid=mimi-route-settings] { min-width: 0; flex: 1; }
+
+.mimi-context-soft-marker { position: absolute; inset: 0; z-index: 1; }
+.mimi-context-soft-marker::before { content: ""; position: absolute; top: -2px; left: calc(50% - 1px); width: 2px; height: 6px; background: var(--foreground); border-radius: 1px; }

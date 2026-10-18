@@ -260,7 +260,8 @@ export type MimiAccountingSummary = {
 export type MimiConversationMetrics = MimiAccountingSummary & {
   version: number; scope: string; scope_complete: boolean; as_of: string; scope_start: string
   provenance: string; retention: string; reused_calls: number
-  last_measured_input: { tokens: number; as_of: string; state: string } | null
+  last_measured_input: { tokens: number; as_of: string; state: string; request_fingerprint?: string | null; projection_fingerprint?: string | null; message_frontier?: number | null; working_frontier?: string | null; model?: string | null } | null
+  context_policy?: { operating_input_tokens: number; compaction_trigger_tokens: number; current_projection_measurement: string }
   responses: (MimiAccountingSummary & { run_id: string | null; assistant_message_id: string | null; state: string })[]
 }
 export type MimiToolActivityView = {
