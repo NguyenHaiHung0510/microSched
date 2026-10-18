@@ -109,6 +109,9 @@ async def mimi_capabilities(_session: CurrentSession) -> dict:
         "runner": settings.mimi_runner,
         "context_limit": settings.mimi_route_context_tokens,
         "output_reserve": settings.mimi_route_max_output_tokens,
+        "output_policy": "provider_default"
+        if settings.mimi_route_mode == "native"
+        else "explicit_cap",
         "collection_enabled": settings.mimi_collection_enabled,
         "notifications_enabled": settings.mimi_notifications_enabled,
         "policy_id": load_standard_policy().policy_id if settings.mimi_context_v1_enabled else None,

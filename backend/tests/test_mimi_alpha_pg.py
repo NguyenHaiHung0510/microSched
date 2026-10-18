@@ -372,7 +372,7 @@ def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
         "MIMI_LIVE_PROVIDER_ENABLED": "true",
         "MIMI_CONTEXT_V1_ENABLED": "true",
         "MIMI_STANDARD_API_KEY": "synthetic-never-sent",
-        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash",
+        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash-1017",
         "MIMI_ROUTE_PROVIDER": "deepinfra",
         "MIMI_ROUTE_QUANTIZATION": "fp8",
         "MIMI_ROUTE_REASONING_EFFORT": "high",
@@ -412,7 +412,7 @@ def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
                     ),
                     response_id="synthetic-invalid-helper",
                     usage={"cost": 0.02},
-                    model="deepseek/deepseek-v4.1-flash",
+                    model="deepseek/deepseek-v4.1-flash-1017",
                     provider="DeepInfra",
                 )
             main_calls += 1
@@ -420,7 +420,7 @@ def test_failed_helper_cannot_silently_continue_main_in_same_epoch(
                 outcome=AssistantText(text="Mình đã hiểu yêu cầu."),
                 response_id="synthetic-first-main",
                 usage={"prompt_tokens": 272_001, "cost": 0.03},
-                model="deepseek/deepseek-v4.1-flash",
+                model="deepseek/deepseek-v4.1-flash-1017",
                 provider="DeepInfra",
             )
 
@@ -570,7 +570,7 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
         "MIMI_LIVE_PROVIDER_ENABLED": "true",
         "MIMI_CONTEXT_V1_ENABLED": "true",
         "MIMI_STANDARD_API_KEY": "synthetic-never-sent",
-        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash",
+        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash-1017",
         "MIMI_ROUTE_PROVIDER": "deepinfra",
         "MIMI_ROUTE_QUANTIZATION": "fp8",
         "MIMI_ROUTE_REASONING_EFFORT": "high",
@@ -614,7 +614,7 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
                     outcome=outcome,
                     response_id="synthetic-safe-turn-helper",
                     usage={"prompt_tokens": 140_000, "cost": 0.02},
-                    model="deepseek/deepseek-v4.1-flash",
+                    model="deepseek/deepseek-v4.1-flash-1017",
                     provider="DeepInfra",
                 )
             main_calls += 1
@@ -640,7 +640,7 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
                     "prompt_tokens": 272_001 + main_calls if main_calls <= 5 else 30,
                     "cost": 0.03,
                 },
-                model="deepseek/deepseek-v4.1-flash",
+                model="deepseek/deepseek-v4.1-flash-1017",
                 provider="DeepInfra",
             )
 

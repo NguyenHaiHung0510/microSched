@@ -85,3 +85,14 @@ test('config A renders actual loaded revision/manual caps and rejects nonfinite 
   expect(html).toContain('Kiểm tra thay đổi')
   client.clear()
 })
+
+
+test('provider default output is distinguished from planning reserve and historical receipts', () => {
+  const current = { ...composition(), output_policy: 'provider_default' as const }
+  const html = renderToStaticMarkup(<ContextMetrics calls={[call({ context_composition: current })]} />)
+  expect(html).toContain('Output theo mặc định provider')
+  expect(html).toContain('không phải generation cap')
+  const historical = renderToStaticMarkup(<ContextMetrics calls={[call({ context_composition: composition() })]} />)
+  expect(historical).toContain('Receipt cũ chưa ghi chính sách output')
+  expect(historical).not.toContain('Output theo mặc định provider')
+})

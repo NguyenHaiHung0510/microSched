@@ -244,7 +244,10 @@ async def run_langgraph(
             return {"phase": "terminal", "turn": turn, "step": state["step"] + 1}
         if messages_final_only(frame["messages"]):
             raise RouteContractError("model_violated_final_no_tools")
-        validate_fanout(completion.outcome)
+        feedback = validate_fanout(completion.outcome)
+        if feedback is not None:
+            frame["messages"].append(feedback)
+            return {"phase": "model", "turn": turn, "step": state["step"] + 1}
         allowance = max(0, limits.max_tool_calls - state["tool_calls"])
         if len(completion.outcome.requests) > allowance:
             frame["final_reason"] = "read_budget_exhausted"

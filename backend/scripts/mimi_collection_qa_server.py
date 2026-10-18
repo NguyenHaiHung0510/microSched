@@ -52,7 +52,7 @@ os.environ.update(
         "MIMI_NOTIFICATIONS_ENABLED": "true",
         "MIMI_STANDARD_API_KEY": "synthetic-never-sent",
         "MIMI_ROUTE_MODE": "exact",
-        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash",
+        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash-1017",
         "MIMI_ROUTE_PROVIDER": "deepinfra",
         "MIMI_ROUTE_QUANTIZATION": "fp8",
         "MIMI_ROUTE_MAX_INPUT_PRICE": "0.2",
@@ -280,7 +280,7 @@ async def fake_completion(messages, **kwargs):
         response_id=response,
         usage={"cost": 0},
         provider="Synthetic",
-        model="deepseek/deepseek-v4.1-flash",
+        model="deepseek/deepseek-v4.1-flash-1017",
     )
 
 

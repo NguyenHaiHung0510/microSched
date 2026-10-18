@@ -823,15 +823,16 @@ async def _semantic_checkpoint(
     from app.agent.local_budget import account, reserve
 
     settings = bind_policy(settings, await read_policy(db, settings))
-    helper = settings.model_copy(
-        update={
-            "mimi_route_max_output_tokens": min(8192, settings.mimi_route_max_output_tokens),
-            # summary_mode sends its own strict JSON schema. Preserve the
-            # saved main text-wire setting so already-qualified summary-family
-            # evidence remains in the same material compatibility scope.
-            # Preserve the selected total cap and exact route; only output
-            # reserve is reduced for this bounded summary call.
-        }
+    # Summary keeps the selected route/output policy. Native helpers use provider
+    # defaults too; only legacy transports retain their historical helper cap.
+    helper = (
+        settings
+        if settings.mimi_route_mode == "native"
+        else settings.model_copy(
+            update={
+                "mimi_route_max_output_tokens": min(8192, settings.mimi_route_max_output_tokens)
+            }
+        )
     )
     messages = _compaction_messages(prior, sources, current_user_source)
     try:
@@ -875,10 +876,14 @@ async def _semantic_checkpoint(
         route={
             "kind": "openrouter",
             "purpose": "compaction",
+            "dispatch_not_started": True,
             "run_guard_version": 1,
             "context_revision": context_revision(settings, conversation.route_config_version, None),
             "context_limit": helper.mimi_route_context_tokens,
             "output_reserve": helper.mimi_route_max_output_tokens,
+            "output_policy": "provider_default"
+            if helper.mimi_route_mode == "native"
+            else "explicit_cap",
             "model": helper.mimi_route_model,
             "reasoning_effort": helper.mimi_route_reasoning_effort,
             "compaction_prompt_sha256": hashlib.sha256(
@@ -908,6 +913,8 @@ async def _semantic_checkpoint(
             "qualified_provider_names": list(helper.mimi_route_qualified_provider_names),
         }
         try:
+            call.route = {**call.route, "dispatch_not_started": False}
+            await db.commit()
             provider_started = True
             result = await openrouter_complete(
                 messages,
@@ -2439,6 +2446,7 @@ async def send_message(
             {
                 "kind": "openrouter",
                 "purpose": "main",
+                "dispatch_not_started": True,
                 "context_revision": context_revision(settings, run_config_version, checkpoint_id),
                 "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
                 "overflow_recovery_attempt": overflow_recovery_attempt,
@@ -2462,6 +2470,9 @@ async def send_message(
                 "reasoning_effort": settings.mimi_route_reasoning_effort,
                 "context_limit": settings.mimi_route_context_tokens,
                 "output_reserve": settings.mimi_route_max_output_tokens,
+                "output_policy": "provider_default"
+                if settings.mimi_route_mode == "native"
+                else "explicit_cap",
                 "route_config_version": run_config_version,
                 "parent_run_id": str(parent_run_id) if parent_run_id else None,
                 "checkpoint": "provider_dispatch",
@@ -2576,6 +2587,9 @@ async def send_message(
                             route={
                                 **call.route,
                                 "agent_turn": turn,
+                                "dispatch_not_started": True,
+                                "paid_dispatch": True,
+                                "dispatch_attempts": [],
                                 "checkpoint": "provider_dispatch",
                             },
                         )
@@ -2624,6 +2638,7 @@ async def send_message(
                             **call.route,
                             "reused_from_run": str(parent_run_id),
                             "paid_dispatch": False,
+                            "dispatch_not_started": False,
                         }
                     else:
                         from app.agent.local_budget import account, reserve
@@ -2683,6 +2698,10 @@ async def send_message(
                             final_answer_only=messages_final_only(messages),
                         )
                         reservation = reserve(settings, messages, agent_contract=True)
+                        # Persist the may-have-sent boundary only after local
+                        # preflight/reservation, before handing off to transport.
+                        call.route = {**call.route, "dispatch_not_started": False}
+                        await db.commit()
                         try:
                             transport = (
                                 openrouter_complete_stream
@@ -2897,13 +2916,13 @@ async def send_message(
                     nonlocal context_envelope, aggregate_read_seen
                     if context_envelope is None:
                         raise ValueError("mimi_context_envelope_missing")
-                    if tool_name == "task.aggregate.v1":
+                    if tool_name == "task.aggregate.v1" and "error" not in result:
                         # Counts do not carry per-Task versions. They can guide
                         # an answer or draft, but cannot safely ground a frozen
                         # write preview in this P1C-A contract.
                         aggregate_read_seen = True
                     bound_versions: dict[str, str] = {}
-                    for row in result.get("rows", []):
+                    for row in () if "error" in result else result.get("rows", []):
                         if not isinstance(row, dict):
                             raise RouteContractError("task_read_row_invalid")
                         try:
@@ -3140,6 +3159,8 @@ async def send_message(
                         await _append_event(db, run_id, kind, event_payload)
                         await db.commit()
 
+                call.route = {**call.route, "dispatch_not_started": False}
+                await db.commit()
                 completion = await openrouter_complete_stream(
                     live_messages,
                     settings=settings,
@@ -3153,6 +3174,8 @@ async def send_message(
                 settings = await bind_wire_policy(db, settings)
                 build_request(live_messages, settings=settings)
                 reservation = reserve(settings, live_messages, agent_contract=False)
+                call.route = {**call.route, "dispatch_not_started": False}
+                await db.commit()
                 completion = await openrouter_complete(
                     live_messages,
                     settings=settings,
@@ -4470,7 +4493,9 @@ async def conversation_view(
                 "purpose": row.route.get("purpose", "main"),
                 "context_revision": row.route.get("context_revision"),
                 "context_composition": row.route.get("context_composition"),
-                "paid_dispatch": row.route.get("paid_dispatch") is not False,
+                "dispatch_not_started": row.route.get("dispatch_not_started") is True,
+                "paid_dispatch": row.route.get("paid_dispatch") is not False
+                and row.route.get("dispatch_not_started") is not True,
                 "response_id": (row.result or {}).get("response_id"),
                 "cost_state": "reported"
                 if reported_number((row.usage or {}).get("cost")) is not None

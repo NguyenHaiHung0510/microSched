@@ -52,7 +52,7 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
         "MIMI_LIVE_PROVIDER_ENABLED": "1",
         "MIMI_CONTEXT_V1_ENABLED": "1",
         "MIMI_STANDARD_API_KEY": "synthetic-never-sent",
-        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash",
+        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash-1017",
         "MIMI_ROUTE_PROVIDER": "deepinfra",
         "MIMI_ROUTE_QUANTIZATION": "fp8",
         "MIMI_ROUTE_MAX_INPUT_PRICE": "0.2",
@@ -186,7 +186,7 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
                 response_id=f"synthetic-revision-{step}",
                 usage={},
                 provider="Synthetic",
-                model="deepseek/deepseek-v4.1-flash",
+                model="deepseek/deepseek-v4.1-flash-1017",
             )
 
         monkeypatch.setattr(service, "openrouter_complete", fake)

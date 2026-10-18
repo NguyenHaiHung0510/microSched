@@ -39,6 +39,18 @@ def finite_price(value) -> Decimal:
     return result
 
 
+def normalize_model_prices(value):
+    """Read old saved keys without mutating historical settings or run receipts."""
+    from app.agent.route_config import DEEPSEEK_MODEL, LEGACY_DEEPSEEK_MODEL
+
+    if not isinstance(value, dict):
+        return value
+    prices = dict(value)
+    if LEGACY_DEEPSEEK_MODEL in prices:
+        prices.setdefault(DEEPSEEK_MODEL, prices.pop(LEGACY_DEEPSEEK_MODEL))
+    return prices
+
+
 class ModelPrice(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     prompt: Annotated[
@@ -63,6 +75,11 @@ class OperatingPolicy(BaseModel):
         default=50_000, ge=1_000, le=INPUT_CODEPOINT_RESOURCE_MAX, strict=True
     )
     prices: dict[str, ModelPrice]
+
+    @field_validator("prices", mode="before")
+    @classmethod
+    def migrate_saved_model_key(cls, value):
+        return normalize_model_prices(value)
 
     @field_validator("prices")
     @classmethod
@@ -100,6 +117,15 @@ def bootstrap_policy(settings: Settings) -> OperatingPolicy:
     )
 
 
+def policy_storage_value(policy: OperatingPolicy) -> dict:
+    """Retain the old durable price key so reverting the binary can read it."""
+    from app.agent.route_config import DEEPSEEK_MODEL, LEGACY_DEEPSEEK_MODEL
+
+    value = policy.model_dump(mode="json")
+    value["prices"][LEGACY_DEEPSEEK_MODEL] = value["prices"].pop(DEEPSEEK_MODEL)
+    return value
+
+
 def revised_policy(current: OperatingPolicy, change: PolicyChange) -> OperatingPolicy:
     if change.expected_revision != current.revision:
         raise HTTPException(409, "mimi_operating_policy_stale")
@@ -127,7 +153,7 @@ async def read_policy(db, settings: Settings, *, dispatch=False) -> OperatingPol
         return OperatingPolicy.model_validate(row.value)
     initial = bootstrap_policy(settings)
     if dispatch:
-        db.add(AppSetting(key=POLICY_KEY, value=initial.model_dump(mode="json")))
+        db.add(AppSetting(key=POLICY_KEY, value=policy_storage_value(initial)))
         await db.flush()
     return initial
 
@@ -145,15 +171,18 @@ async def save_policy(db, settings: Settings, change: PolicyChange) -> Operating
     current = OperatingPolicy.model_validate(row.value) if row else bootstrap_policy(settings)
     result = revised_policy(current, change)
     if row is None:
-        db.add(AppSetting(key=POLICY_KEY, value=result.model_dump(mode="json")))
+        db.add(AppSetting(key=POLICY_KEY, value=policy_storage_value(result)))
     else:
-        row.value = result.model_dump(mode="json")
+        row.value = policy_storage_value(result)
     await db.flush()
     return result
 
 
 def bind_policy(settings: Settings, policy: OperatingPolicy) -> Settings:
-    price = policy.prices.get(settings.mimi_route_model)
+    from app.agent.route_config import DEEPSEEK_MODEL, LEGACY_DEEPSEEK_MODEL
+
+    model = settings.mimi_route_model
+    price = policy.prices.get(DEEPSEEK_MODEL if model == LEGACY_DEEPSEEK_MODEL else model)
     update = {
         "mimi_operating_policy_revision": policy.revision,
         "mimi_input_codepoints": policy.input_codepoints,

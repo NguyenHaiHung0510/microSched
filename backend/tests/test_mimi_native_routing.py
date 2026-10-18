@@ -368,6 +368,27 @@ def test_retry_costs_count_each_observed_attempt_and_keep_unknown_fee():
     assert totals["unknown_cost_calls"] == 1 and totals["cost_complete"] is False
 
 
+@pytest.mark.parametrize("not_started", [None, False, True])
+@pytest.mark.parametrize("purpose", ["main", "compaction"])
+def test_unknown_cost_requires_dispatch_marker_not_just_missing_usage(not_started, purpose):
+    from types import SimpleNamespace
+
+    from app.agent.observations import run_costs
+
+    route = {"kind": "openrouter", "purpose": purpose}
+    if not_started is not None:
+        route["dispatch_not_started"] = not_started
+    call = SimpleNamespace(
+        id="synthetic-unknown", state="unknown", result={}, usage=None, route=route
+    )
+    totals = run_costs([call])
+    counted = int(not_started is not True)
+    assert totals["main_calls"] + totals["helper_calls"] == counted
+    assert totals["unknown_cost_calls"] == counted
+    assert totals["reused_calls"] == 0
+    assert call.usage is None
+
+
 def test_retry_after_beyond_deadline_does_not_delay_or_dispatch(monkeypatch):
     calls = 0
 

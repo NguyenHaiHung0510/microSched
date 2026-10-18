@@ -32,7 +32,7 @@ def test_controls_preserve_inflight_snapshot_and_reject_route_escape():
     assert first.mimi_route_reasoning_effort == "high"
     assert first.mimi_route_forced_tool_choice == "function"
     assert second.mimi_route_model == "xiaomi/mimo-v2.6-pro"
-    assert base.mimi_route_reasoning_effort == "low"
+    assert base.mimi_route_reasoning_effort == "high"
     with pytest.raises(HTTPException, match="mimi_route_selection_not_supported"):
         validate_configuration({"profile_id": "arbitrary", "effort": "high", "input_tokens": 32000})
     with pytest.raises(HTTPException, match="mimi_route_selection_not_supported"):
@@ -63,7 +63,7 @@ def test_budget_preserves_unknown_holds_and_blocks_next_dispatch(tmp_path, monke
             "mimi_route_capacity_source": "synthetic-native-capacity-receipt",
         }
     )
-    with pytest.raises(RouteContractError, match="local_budget_exhausted"):
+    with pytest.raises(RouteContractError, match="local_budget_(key_meter_)?exhausted"):
         reserve(selected, [{"role": "user", "content": "hi"}], agent_contract=True)
     assert json.loads(path.read_text())["calls"] == []
     ledger["cap_usd"] = "1.0"

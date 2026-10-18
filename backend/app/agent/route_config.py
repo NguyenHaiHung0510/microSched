@@ -1,6 +1,7 @@
 """Allowlisted alpha model profiles and immutable per-run configuration.
 
-Endpoint metadata snapshot: 2026-10-06. Route evidence is separate from metadata;
+Endpoint metadata: historical profiles2026-10-06; DeepSeek1017 snapshot2026-10-18.
+Route evidence is separate from metadata;
 only the default with the strongest existing app receipts is alpha-admitted.
 """
 
@@ -12,6 +13,9 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.settings import Settings
+
+LEGACY_DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash"
+DEEPSEEK_MODEL = "deepseek/deepseek-v4.1-flash-1017"
 
 PROFILES = {
     "luna": {
@@ -39,13 +43,13 @@ PROFILES = {
         "output_price": 0.87,
     },
     "deepseek": {
-        "label": "DeepSeek V4.1 Flash",
-        "model": "deepseek/deepseek-v4.1-flash",
+        "label": "DeepSeek V4.1 Flash 1017",
+        "model": DEEPSEEK_MODEL,
         "provider": "deepinfra",
         "quantization": "fp8",
-        "supported_efforts": ["low", "high", "max"],
+        "supported_efforts": ["none", "low", "high", "max"],
         "context_limit": 1_048_576,
-        "max_output_tokens": 131_072,
+        # Native1017 output defaults vary by provider; no universal output cap.
         "output_reserve": 8192,
         # Conservative undiscounted ceiling, not dependence on 30% promotion.
         "input_price": 0.36,
@@ -87,7 +91,7 @@ def profiles_for_ui(settings: Settings) -> list[dict[str, Any]]:
         "deepseek": (
             True,
             "Task078 app read/create and checkpoint receipts, 2026-10-03; "
-            "alpha100k live retake pending",
+            "historical app receipts; 1017 effort probes 2026-10-18; integrated QA separate",
         ),
         "mimo": (False, "Route smoke exists; alpha tools/compaction continuity not qualified"),
         "glm": (False, "Route smoke exists; alpha tools/compaction continuity not qualified"),
@@ -97,6 +101,7 @@ def profiles_for_ui(settings: Settings) -> list[dict[str, Any]]:
         {
             **{k: v for k, v in p.items() if k not in {"input_price", "output_price"}},
             "id": key,
+            "output_policy": "provider_default",
             "available": enabled and evidence[key][0],
             "evidence": evidence[key][1],
             "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
@@ -134,9 +139,10 @@ def validate_configuration(value: dict[str, Any], *, alpha: bool = False) -> Rou
 
 
 def default_configuration(settings: Settings) -> dict[str, Any]:
-    profile_id = next(
-        (key for key, p in PROFILES.items() if p["model"] == settings.mimi_route_model), None
-    )
+    model = settings.mimi_route_model
+    if model == LEGACY_DEEPSEEK_MODEL:
+        model = DEEPSEEK_MODEL
+    profile_id = next((key for key, p in PROFILES.items() if p["model"] == model), None)
     if profile_id is None:
         if (
             settings.mimi_route_model
@@ -172,9 +178,9 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
     profile = PROFILES[config.profile_id]
     import json
 
-    from app.agent.config_policy import ModelPrice
+    from app.agent.config_policy import ModelPrice, normalize_model_prices
 
-    saved_prices = json.loads(settings.mimi_model_price_caps_json)
+    saved_prices = normalize_model_prices(json.loads(settings.mimi_model_price_caps_json))
     price = ModelPrice.model_validate(
         saved_prices.get(
             profile["model"],
@@ -194,6 +200,7 @@ def bind_configuration(settings: Settings, value: dict[str, Any]) -> Settings:
             "mimi_route_reasoning_effort": config.effort,
             "mimi_route_context_tokens": profile["context_limit"],
             "mimi_compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
+            # Context planning reserve only; native requests omit generation caps.
             "mimi_route_max_output_tokens": profile["output_reserve"],
             # Financial reservation is separate from a provider capacity filter.
             "mimi_route_billing_prompt_ceiling": profile["context_limit"],

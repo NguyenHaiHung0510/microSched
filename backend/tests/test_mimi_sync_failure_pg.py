@@ -2,6 +2,8 @@
 
 import asyncio
 import base64
+import copy
+import json
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4, uuid7
@@ -9,16 +11,19 @@ from uuid import UUID, uuid4, uuid7
 import httpx
 import pytest
 from fastapi import HTTPException
+from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.agent import service
-from app.agent.context import ToolRequest, ToolRequests
+from app.agent import langgraph_runner, service
+from app.agent.context import AssistantText, ToolRequest, ToolRequests
 from app.agent.models import MimiChangeSet, MimiConversation, MimiEvent, MimiProviderCall, MimiRun
-from app.agent.openrouter import AgentCompletion
+from app.agent.openrouter import AgentCompletion, build_request
+from app.agent.tools.task_reads import TaskFilter, TaskQuery
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.db import get_engine, get_sessionmaker
+from app.core.qa_event_loop import selector_loop_factory
 from app.core.settings import get_settings
 from app.domain.models import AuthSession, Task
 from app.main import create_app
@@ -26,6 +31,183 @@ from app.web.deps import get_session, require_session
 
 pytestmark = pytest.mark.pg
 HEADERS = {"Origin": "http://test", "Sec-Fetch-Site": "same-origin", "X-Mimi-CSRF": "1"}
+
+
+@pytest.mark.parametrize("correction", ["same_query", "fresh_query"])
+@pytest.mark.parametrize("runner", ["current", "langgraph"])
+def test_cursor_error_then_corrected_query_reaches_next_model_turn(
+    pg_dsn, monkeypatch, local_sync_contract, correction, runner
+):
+    # Use the real app read/context/journal seams and request builder; only
+    # provider completion is synthetic. No key or network transport is used.
+    monkeypatch.setenv("MIMI_RUNNER", runner)
+    if runner == "langgraph":
+        real_graph = langgraph_runner.run_langgraph
+
+        async def graph(*args, **kwargs):
+            # Real progression; checkpoint storage uses its existing test seam
+            # so the same test also runs on CI's differently named Postgres.
+            return await real_graph(*args, **kwargs, checkpointer_for_test=InMemorySaver())
+
+        monkeypatch.setattr(langgraph_runner, "run_langgraph", graph)
+    get_settings.cache_clear()
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        auth = AuthSession(
+            token_hash=uuid4().hex,
+            user_email="cursor@example.test",
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+        prefix = f"synthetic-cursor-{uuid4().hex}"
+        query = TaskQuery(filter=TaskFilter(title_contains=prefix), limit=1).model_dump(mode="json")
+        wires, issued, snapshots = [], [], []
+        task_ids, conversation_id = [], None
+        baseline = None
+
+        async def provider(messages, **kwargs):
+            wire = build_request(messages, kwargs["settings"], agent_contract=True)
+            wires.append(wire)
+            turn = len(wires)
+            authority = next(
+                json.loads(m["content"])
+                for m in wire["messages"]
+                if m.get("role") == "system" and '"authority_envelope"' in m.get("content", "")
+            )
+            snapshots.append(authority["context_manifest"])
+            if turn == 1:
+                arguments = copy.deepcopy(query)
+            elif turn == 2:
+                first = json.loads(wire["messages"][-1]["content"])
+                assert first["coverage"] == "partial" and first["next_cursor"]
+                arguments = copy.deepcopy(query)
+                arguments["cursor"] = first["next_cursor"]
+                arguments["filter"]["lifecycle"] = "all"
+            elif turn == 3:
+                error = json.loads(wire["messages"][-1]["content"])
+                assert set(error) == {"error", "rows", "coverage"}
+                assert error["error"]["code"] == "invalid_task_query_cursor"
+                assert error["coverage"] == "unavailable" and error["rows"] == []
+                assert snapshots[2]["sources"] == snapshots[1]["sources"]
+                assert snapshots[2]["budget"]["remaining_tool_calls"] == (
+                    snapshots[1]["budget"]["remaining_tool_calls"] - 1
+                )
+                arguments = copy.deepcopy(query)
+                if correction == "same_query":
+                    arguments["cursor"] = issued[-1]["cursor"]
+                else:
+                    arguments["filter"]["lifecycle"] = "all"
+                assert arguments != issued[-1]
+            else:
+                assert turn == 4
+                page = json.loads(wire["messages"][-1]["content"])
+                assert page["coverage"] == ("complete" if correction == "same_query" else "partial")
+                assert len(page["rows"]) == 1 and "error" not in page
+                assert len(snapshots[3]["sources"]) == len(snapshots[2]["sources"]) + 1
+                return AgentCompletion(
+                    outcome=AssistantText(text="Đã đọc trang synthetic."),
+                    response_id="synthetic-final",
+                    usage={"cost": 0},
+                    provider="Synthetic",
+                    model="synthetic/model",
+                )
+            issued.append(copy.deepcopy(arguments))
+            return AgentCompletion(
+                outcome=ToolRequests(
+                    requests=(
+                        ToolRequest(
+                            call_id=f"cursor-{turn}", name="task.query.v1", arguments=arguments
+                        ),
+                    )
+                ),
+                response_id=f"synthetic-{turn}",
+                usage={"cost": 0},
+                provider="Synthetic",
+                model="synthetic/model",
+            )
+
+        monkeypatch.setattr(service, "openrouter_complete", provider)
+        try:
+            async with maker() as db:
+                tasks = [Task(title=f"{prefix}-{i}") for i in range(2)]
+                db.add_all(tasks)
+                await db.flush()
+                for task in tasks:
+                    await db.refresh(task)
+                task_ids = [task.id for task in tasks]
+                baseline = [task.model_dump() for task in tasks]
+                view = await service.create_conversation(db, auth, service.ConversationCreate())
+                conversation_id = UUID(str(view["id"]))
+                await db.commit()
+            async with maker() as db:
+                await service.send_message(
+                    db,
+                    auth,
+                    conversation_id,
+                    service.MessageCreate(
+                        client_id="synthetic-cursor", content="Đọc trang synthetic"
+                    ),
+                )
+                await db.commit()
+            async with maker() as db:
+                run = (
+                    await db.scalars(
+                        select(MimiRun).where(MimiRun.conversation_id == conversation_id)
+                    )
+                ).one()
+                assert run.state == "completed" and run.error_code is None, (
+                    run.state,
+                    run.error_code,
+                    len(wires),
+                )
+                assert set(run.source_versions) <= {f"task:{tid}" for tid in task_ids}
+                assert len(run.source_versions) == (2 if correction == "same_query" else 1)
+                calls = (
+                    await db.scalars(
+                        select(MimiProviderCall).where(MimiProviderCall.run_id == run.id)
+                    )
+                ).all()
+                assert len(calls) == 4 and all(call.state == "succeeded" for call in calls)
+                events = (
+                    await db.scalars(
+                        select(MimiEvent)
+                        .where(MimiEvent.run_id == run.id, MimiEvent.kind == "tool.read_result")
+                        .order_by(MimiEvent.sequence)
+                    )
+                ).all()
+                assert [event.payload["coverage"] for event in events] == [
+                    "partial",
+                    "unavailable",
+                    "complete" if correction == "same_query" else "partial",
+                ]
+                assert (
+                    await db.scalar(
+                        select(func.count())
+                        .select_from(MimiChangeSet)
+                        .where(MimiChangeSet.run_id == run.id)
+                    )
+                    == 0
+                )
+                assert [(await db.get(Task, tid)).model_dump() for tid in task_ids] == baseline
+                assert len(wires) == 4
+        finally:
+            async with maker() as db:
+                if conversation_id:
+                    conversation = await db.get(MimiConversation, conversation_id)
+                    if conversation:
+                        await db.delete(conversation)
+                for tid in task_ids:
+                    task = await db.get(Task, tid)
+                    if task:
+                        await db.delete(task)
+                await db.commit()
+            runtime_engine = get_engine()
+            if runtime_engine:
+                await runtime_engine.dispose()
+            await engine.dispose()
+
+    asyncio.run(scenario(), loop_factory=selector_loop_factory)
 
 
 @pytest.fixture

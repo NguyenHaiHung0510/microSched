@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     mimi_route_forced_tool_choice: Literal["none", "required", "function"] = "none"
     mimi_route_reasoning_effort: Literal[
         "default", "none", "minimal", "low", "medium", "high", "max"
-    ] = "low"
+    ] = "high"
     # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
     mimi_route_context_tokens: int = 1_048_576
     # Financial upper bound from the admitted native capacity snapshot, not bytes.
@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     # ORM pool connections; auth returns its checkout before SSE. LangGraph adds
     # one direct checkpoint connection/run. Default two leaves ample Task room.
     mimi_max_active_runs: int = 2
+    # Legacy wire cap; in native mode this is context planning reserve only.
     mimi_route_max_output_tokens: int = 4_096
     mimi_route_max_input_price: float | Decimal | None = None
     mimi_route_max_output_price: float | Decimal | None = None
@@ -301,7 +302,8 @@ class Settings(BaseSettings):
             # collection/model seam; arbitrary adaptive routes remain bounded.
             if self.mimi_route_mode == "adaptive" and not (
                 self.mimi_collection_enabled
-                and self.mimi_route_model == "deepseek/deepseek-v4.1-flash"
+                and self.mimi_route_model
+                in {"deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-1017"}
             ):
                 required_route["MIMI_ROUTE_ALLOWED_PROVIDERS"] = (
                     self.mimi_route_allowed_providers.strip()
