@@ -10,7 +10,7 @@ export function collectionConfirmationNotice(change: MimiChangeSet): string | nu
   return 'Server chưa cho phép xác nhận preview này. Hãy đọc lại hội thoại và yêu cầu phương án mới nếu cần.'
 }
 
-export const MIMI_REVIEW_PAGE_SIZE = 20
+export const MIMI_REVIEW_PAGE_SIZE = 100
 export function mimiChangeTitle(change: MimiChangeSet): string {
   return change.operation.tool === 'task.collection.v1'
     ? `${change.operation.args.entries.length} Task${change.operation.args.undo_receipt_id ? ' · hoàn tác' : ''}`

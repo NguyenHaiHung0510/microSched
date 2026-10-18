@@ -4,10 +4,10 @@ import type { MimiChangeSet, MimiCollectionPlan, MimiSelection } from './mimi-ap
 describe('frozen collection review', () => {
   const plan: MimiCollectionPlan = { schema_version: 'mimi.task-collection.v1', selection_id: 'selection', entries: Array.from({ length: 200 }, (_, i) => ({ id: `id-${i}`, command: { action: 'edit', expected_collection_version: 7, fields: { priority: 'p1' }, children: [], reminder: { action: 'keep' } }, before: { fields: { title: `Task ${i}`, body_md: 'ế'.repeat(12000), priority: null }, children: [] }, after: { fields: { title: `Task ${i}`, body_md: 'ế'.repeat(12000), priority: 'p1' }, children: [] }, reminder_effect: { action: 'keep' } })) }
   const selection = { members: [...plan.entries.map((e) => ({ id: e.id, classification: 'included' })), { id: 'incidental', classification: 'excluded' }, { id: 'uncertain', classification: 'uncertain' }] } as MimiSelection
-  it('200 targets stay frozen while search, filters and page transitions show at most20', () => {
+  it('200 targets stay frozen while search, filters and page transitions show at most100', () => {
     const frozen = JSON.stringify(plan)
-    expect(collectionPage(plan, '', 'all', selection, 0).entries).toHaveLength(20)
-    expect(collectionPage(plan, '', 'all', selection, 9).entries[19].id).toBe('id-199')
+    expect(collectionPage(plan, '', 'all', selection, 0).entries).toHaveLength(100)
+    expect(collectionPage(plan, '', 'all', selection, 1).entries[99].id).toBe('id-199')
     expect(collectionPage(plan, 'id-199', 'all', selection, 9)).toMatchObject({ visibleCount: 1, currentPage: 0 })
     expect(collectionPage(plan, '', 'excluded', selection, 0).entries).toHaveLength(0)
     expect(collectionCounts(plan, selection)).toEqual({ affected: 200, included: 200, excluded: 1, uncertain: 1 })

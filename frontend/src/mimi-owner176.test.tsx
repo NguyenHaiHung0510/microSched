@@ -1,7 +1,8 @@
+import { MimiMetricsTable } from './MimiConversationMetrics'
 import { afterEach, expect, test, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ContextMetrics, MimiContextComposition } from './MimiContextComposition'
+import { MimiContextComposition } from './MimiContextComposition'
 import { MimiOperatingPolicyPanel } from './MimiOperatingPolicyPanel'
 import { CONTEXT_BUCKETS, lastMeasuredMain, validContextComposition } from './mimi-context-metrics'
 import { operatingPolicyErrors, unicodeCodepoints } from './mimi-operating-policy'
@@ -20,30 +21,22 @@ const composition = (): Composition => ({ state: 'measured_bytes', total: 8,
   categories: CONTEXT_BUCKETS.map(([id]) => ({ id, value: 1, state: 'measured_bytes' })),
 })
 
-test('receipt metrics ignore helper/reuse/wrong identity and never add cache or output to prompt', () => {
+test('last main input stays separate from traffic and byte composition in the shared stats', () => {
   const main = call()
   const calls = [main, call({ purpose: 'compaction' }), call({ paid_dispatch: false }),
     call({ actual_model: 'wrong/model' }), call({ actual_provider: null })]
   expect(lastMeasuredMain(calls)).toBe(main)
-  const html = renderToStaticMarkup(<ContextMetrics calls={calls} />)
-  expect(html).toContain('75%')
-  expect(html).toContain('51%')
-  expect(html).toContain('272.000')
-  expect(html).toContain('400.000')
-  expect(html).toContain('Chưa xác định')
-  const bound = renderToStaticMarkup(<ContextMetrics calls={[call({ context_composition: composition() })]} capabilities={{ output_reserve: 4096 } as never} />)
-  expect(bound).toContain('8.192')
-  expect(bound).not.toContain('4.096')
-  expect(html).toContain('150.000')
+  const html = renderToStaticMarkup(<MimiMetricsTable conversation={{ provider_calls: calls } as MimiConversation} />)
+  expect(html).toContain('204.000')
+  expect(html).toContain('400k')
+  expect(html).toContain('context hiện tại chưa đo lại')
+  expect(html).toContain('Chưa có tổng hợp từ server')
   expect(html).not.toContain('354.000')
-  expect(html).toContain('request tiếp theo chưa gửi')
-  const badCache = renderToStaticMarkup(<ContextMetrics calls={[call({ usage: { prompt_tokens: 8, cached_tokens: 9 } })]} />)
-  expect(badCache).toContain('Chưa xác định')
+  expect(html).not.toContain('Bytes')
 })
 
 test('missing usage and malformed bucket counts remain unknown without synthetic live totals', () => {
-  const html = renderToStaticMarkup(<ContextMetrics calls={[]} />)
-  expect(html).toContain('Chưa có usage')
+  const html = renderToStaticMarkup(<MimiMetricsTable conversation={{ provider_calls: [] } as unknown as MimiConversation} />)
   expect(html).not.toContain('204.000')
   expect(validContextComposition(composition())).toBe(true)
   for (const value of [
@@ -87,12 +80,9 @@ test('config A renders actual loaded revision/manual caps and rejects nonfinite 
 })
 
 
-test('provider default output is distinguished from planning reserve and historical receipts', () => {
-  const current = { ...composition(), output_policy: 'provider_default' as const }
-  const html = renderToStaticMarkup(<ContextMetrics calls={[call({ context_composition: current })]} />)
-  expect(html).toContain('Output theo mặc định provider')
-  expect(html).toContain('không phải generation cap')
-  const historical = renderToStaticMarkup(<ContextMetrics calls={[call({ context_composition: composition() })]} />)
-  expect(historical).toContain('Receipt cũ chưa ghi chính sách output')
-  expect(historical).not.toContain('Output theo mặc định provider')
+test('old byte/output-reserve composition does not become an estimated current-context count', () => {
+  const html = renderToStaticMarkup(<MimiMetricsTable conversation={{ provider_calls: [call({ context_composition: composition() })] } as MimiConversation} />)
+  expect(html).toContain('204.000')
+  expect(html).not.toContain('8.192')
+  expect(html).not.toContain('System policy')
 })

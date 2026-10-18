@@ -175,3 +175,239 @@ def run_costs(calls: list[Any]) -> dict[str, Any]:
         "helper_calls": counts["helper"],
         "reused_calls": reused,
     }
+
+
+MAX_NATIVE_TOKEN = 2**53 - 1
+
+
+def _token(value: Any) -> int | None:
+    return value if type(value) is int and 0 <= value <= MAX_NATIVE_TOKEN else None
+
+
+def _money(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        return None
+    try:
+        number = Decimal(str(value))
+        return number if number.is_finite() and number >= 0 else None
+    except ArithmeticError:
+        return None
+
+
+def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
+    """Normalize existing receipts only. Identity aliases never create another charge.
+
+    This is a read projection, not a new ledger or a provider reconciliation call.
+    A generation received late fills missing native fields on its original dispatch.
+    Conflicting observations remain missing and explicitly anomalous.
+    """
+    records: dict[str, dict[str, Any]] = {}
+    aliases: dict[str, str] = {}
+    reused: set[str] = set()
+    for call in calls:
+        route, result = call.route or {}, call.result or {}
+        if route.get("kind") != "openrouter" or route.get("dispatch_not_started") is True:
+            continue
+        if route.get("paid_dispatch") is False:
+            reused.add(str(call.id))
+            continue
+        attempts = route.get("dispatch_attempts")
+        if not isinstance(attempts, list) or not attempts:
+            if call.state in {"intent", "fenced"}:
+                continue
+            attempts = [{"response_id": result.get("response_id"), "usage": call.usage or {}}]
+        for index, attempt in enumerate(attempts, 1):
+            if not isinstance(attempt, dict):
+                attempt = {}
+            generation = attempt.get("response_id")
+            if index == len(attempts):
+                generation = generation or result.get("response_id")
+            fallback = f"{call.id}:{index}"
+            identity = f"generation:{generation}" if generation else aliases.get(fallback, fallback)
+            aliases[fallback] = identity
+            # Same durable dispatch first seen without its generation ID.
+            if identity != fallback and fallback in records:
+                prior = records.pop(fallback)
+                if identity not in records:
+                    records[identity] = prior
+                else:
+                    target = records[identity]
+                    target["models"].update(prior["models"])
+                    target["conflicts"].update(prior["conflicts"])
+                    for field in ("input", "output", "reasoning", "cached", "usd"):
+                        old, new = target.get(field), prior.get(field)
+                        if old is not None and new is not None and old != new:
+                            target["conflicts"].add(field)
+                        elif old is None and new is not None:
+                            target[field] = new
+            usage = attempt.get("usage") or {}
+            if not isinstance(usage, dict):
+                usage = {}
+            if index == len(attempts):
+                usage = {**(call.usage or {}), **usage}
+            prompt_details = usage.get("prompt_tokens_details")
+            prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
+            output_details = usage.get("completion_tokens_details")
+            output_details = output_details if isinstance(output_details, dict) else {}
+            values = {
+                "input": _token(usage.get("prompt_tokens")),
+                "output": _token(usage.get("completion_tokens")),
+                "reasoning": _token(
+                    usage.get("reasoning_tokens", output_details.get("reasoning_tokens"))
+                ),
+                "cached": _token(usage.get("cached_tokens", prompt_details.get("cached_tokens"))),
+                "usd": _money(usage.get("cost")),
+            }
+            late = result.get("generation") or {}
+            # Reconcile's metadata is authoritative only for this exact generation.
+            if generation and isinstance(late, dict) and late.get("id") == generation:
+                for key, raw in [
+                    ("input", late.get("native_tokens_prompt")),
+                    ("output", late.get("native_tokens_completion")),
+                    ("usd", late.get("total_cost")),
+                ]:
+                    value = _money(raw) if key == "usd" else _token(raw)
+                    if values[key] is None:
+                        values[key] = value
+                    elif value is not None and values[key] != value:
+                        values[key] = None
+                        values.setdefault("conflicts", set()).add(key)
+            purpose = route.get("purpose", "main")
+            record = records.setdefault(
+                identity,
+                {
+                    "run_id": str(getattr(call, "run_id", "unassigned")),
+                    "purpose": "helper"
+                    if purpose == "compaction"
+                    else "main"
+                    if purpose == "main"
+                    else "unclassified",
+                    "conflicts": set(),
+                    "models": set(),
+                },
+            )
+            record["models"].add(str(route.get("actual_model") or route.get("model") or "unknown"))
+            record["conflicts"].update(values.pop("conflicts", set()))
+            for key, value in values.items():
+                if key in record and record[key] is not None and value is not None:
+                    if record[key] != value:
+                        record["conflicts"].add(key)
+                elif value is not None:
+                    record[key] = value
+    for record in records.values():
+        # Validate subsets after partial/late receipts have been merged.
+        for subset, whole in [("reasoning", "output"), ("cached", "input")]:
+            if record.get(subset) is not None and (
+                record.get(whole) is None or record[subset] > record[whole]
+            ):
+                record["conflicts"].add(subset)
+        for key in record["conflicts"]:
+            record[key] = None
+    return list(records.values()), len(reused)
+
+
+def accounting_summary(dispatches: list[dict[str, Any]]) -> dict[str, Any]:
+    eligible = len(dispatches)
+
+    def metric(key: str) -> dict[str, Any]:
+        values = [d[key] for d in dispatches if d.get(key) is not None]
+        total = sum(values, Decimal(0) if key == "usd" else 0) if values else None
+        return {
+            "known": str(total) if key == "usd" and total is not None else total,
+            "observed": len(values),
+            "missing": eligible - len(values),
+            "complete": len(values) == eligible,
+        }
+
+    cache = [d for d in dispatches if d.get("cached") is not None and d.get("input") is not None]
+    sample_input = sum(d["input"] for d in cache)
+    cached = sum(d["cached"] for d in cache)
+    return {
+        "eligible_dispatches": eligible,
+        "input": metric("input"),
+        "output": metric("output"),
+        "reasoning": metric("reasoning"),
+        "usd": metric("usd"),
+        "cache": {
+            "cached": cached if cache else None,
+            "sample_input": sample_input if cache else None,
+            "ratio": cached / sample_input if sample_input else None,
+            "observed": len(cache),
+            "missing": eligible - len(cache),
+            "complete": len(cache) == eligible,
+        },
+        "purpose_counts": {
+            p: sum(d["purpose"] == p for d in dispatches)
+            for p in ("main", "helper", "unclassified")
+        },
+        "anomaly_dispatches": sum(bool(d["conflicts"]) for d in dispatches),
+        "native_models": sorted({model for d in dispatches for model in d["models"]}),
+        "effective_completion_per_second": None,
+    }
+
+
+def conversation_metrics(
+    calls: list[Any], runs: list[Any], messages: list[Any], *, as_of: str, scope_start: str
+) -> dict[str, Any]:
+    dispatches, reused = accounting_dispatches(calls)
+    measured = None
+    for call in calls:
+        route, usage = call.route or {}, call.usage or {}
+        if (
+            route.get("kind") == "openrouter"
+            and route.get("purpose", "main") == "main"
+            and route.get("paid_dispatch") is not False
+            and route.get("dispatch_not_started") is not True
+            and call.state == "succeeded"
+            and route.get("model")
+            and route.get("actual_model") == route.get("model")
+            and route.get("actual_provider")
+            and _token(usage.get("prompt_tokens")) is not None
+        ):
+            measured = {
+                "tokens": usage["prompt_tokens"],
+                "as_of": str(getattr(call, "updated_at", as_of)),
+                "state": "last_measured_current_projection_pending",
+            }
+    bound = {
+        str(m.run_id): str(m.id) for m in messages if m.role == "assistant" and m.run_id is not None
+    }
+    by_run: dict[str, list[dict[str, Any]]] = {}
+    for dispatch in dispatches:
+        by_run.setdefault(dispatch["run_id"], []).append(dispatch)
+    rows = []
+    assigned = set()
+    for run in runs:
+        run_id = str(run.id)
+        assigned.add(run_id)
+        rows.append(
+            {
+                "run_id": run_id,
+                "assistant_message_id": bound.get(run_id),
+                "state": run.state,
+                **accounting_summary(by_run.get(run_id, [])),
+            }
+        )
+    unassigned = [d for d in dispatches if d["run_id"] not in assigned]
+    if unassigned:
+        rows.append(
+            {
+                "run_id": None,
+                "assistant_message_id": None,
+                "state": "unassigned",
+                **accounting_summary(unassigned),
+            }
+        )
+    return {
+        "version": 1,
+        "scope": "all_retained_conversation_receipts",
+        "scope_complete": True,
+        "scope_start": scope_start,
+        "as_of": as_of,
+        "provenance": "server_receipts_native_usage_and_matching_generation_metadata",
+        "retention": "existing_deletion_policy_no_shadow_history",
+        "last_measured_input": measured,
+        "reused_calls": reused,
+        **accounting_summary(dispatches),
+        "responses": rows,
+    }

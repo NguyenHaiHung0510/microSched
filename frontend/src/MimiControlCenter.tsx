@@ -197,10 +197,10 @@ function ConversationWorkspace({ onOpenDomain, configurationOpen, onConfiguratio
           size="sm"
           className="min-h-11 min-w-11 gap-1.5 text-xs"
           onClick={() => wide ? setRightOpen(!rightOpen) : setMobileRail(mobileRail === 'right' ? null : 'right')}
-          title={rightOpen ? 'Đóng workspace rail' : 'Mở workspace rail (Task, Lịch, Notes)'}
+          title={rightOpen ? 'Đóng workspace rail' : 'Mở thống kê hội thoại'}
         >
           {rightOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
-          <span className="hidden sm:inline">{rightOpen ? 'Đóng dữ liệu' : 'Xem dữ liệu liên quan'}</span><span className="sr-only sm:hidden">Dữ liệu và thông báo</span>
+          <span className="hidden sm:inline">{rightOpen ? 'Đóng thống kê' : 'Thống kê hội thoại'}</span><span className="sr-only sm:hidden">Thống kê và thông báo</span>
         </Button>
       </div>
     </div>
@@ -276,7 +276,7 @@ function ConversationWorkspace({ onOpenDomain, configurationOpen, onConfiguratio
       <MimiRailResize side="right" width={fitted.right} maximum={mimiRailMaximum(containerWidth, fitted.left)} otherWidth={fitted.left} onResize={(width) => { setRightWidth(width); rememberMimiWidth('right', width) }} disabled={!rightOpen} />
       <aside className="mimi-workspace-rail mimi-right-rail" aria-label="Rail dữ liệu" data-testid="mimi-right-rail">{rightOpen ? rail : <Button size="icon" variant="ghost" aria-label="Mở rail dữ liệu" onClick={() => setRightOpen(true)}><PanelRightOpen /></Button>}</aside>
     </div>
-    <Dialog open={!wide && mobileRail !== null} onOpenChange={(open) => { if (!open) setMobileRail(null) }}><DialogContent className="max-h-[85dvh] overflow-y-auto"><DialogHeader><DialogTitle>{mobileRail === 'left' ? 'Hội thoại' : 'Dữ liệu và thông báo'}</DialogTitle><DialogDescription>Mở riêng rail để giữ chỗ cho cuộc trò chuyện trên màn hình nhỏ.</DialogDescription></DialogHeader>{mobileRail === 'left' ?         <Card className="mimi-left-rail min-w-0 h-full flex flex-col overflow-hidden border-0 rounded-none shadow-none">
+    <Dialog open={!wide && mobileRail !== null} onOpenChange={(open) => { if (!open) setMobileRail(null) }}><DialogContent className="max-h-[85dvh] overflow-y-auto"><DialogHeader><DialogTitle>{mobileRail === 'left' ? 'Hội thoại' : 'Thống kê và thông báo'}</DialogTitle><DialogDescription>Mở riêng rail để giữ chỗ cho cuộc trò chuyện trên màn hình nhỏ.</DialogDescription></DialogHeader>{mobileRail === 'left' ?         <Card className="mimi-left-rail min-w-0 h-full flex flex-col overflow-hidden border-0 rounded-none shadow-none">
           <CardHeader className="p-3.5 pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-bold">Cuộc trò chuyện</CardTitle>

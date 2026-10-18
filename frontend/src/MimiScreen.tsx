@@ -1,3 +1,5 @@
+import { MimiToolActivity } from '@/MimiToolActivity'
+import type { MimiEvent } from '@/mimi-api'
 import { toast } from 'sonner'
 import { feedbackComment } from '@/mimi-owner-feedback'
 import { MimiBackdrop } from '@/MimiBackdrop'
@@ -241,7 +243,8 @@ export function MimiScreen({
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
   const [runStage, setRunStage] = useState('Sẵn sàng')
   const [cancelRequestedRunId, setCancelRequestedRunId] = useState<string | null>(null)
-  const [streamedText, setStreamedText] = useState('')
+  const [liveToolEvents, setLiveToolEvents] = useState<MimiEvent[]>([])
+  const [showJump, setShowJump] = useState(false)
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const followLatest = useRef(true)
   const runStageRunId = useRef<string | null>(null)
@@ -261,16 +264,14 @@ export function MimiScreen({
     else if (event === 'context.tasks_read') setRunStage('Đang chuẩn bị ngữ cảnh')
     else if (event === 'context.manifest') setRunStage('Đã chuẩn bị ngữ cảnh')
     else if (event === 'context.checkpoint.activated') setRunStage('Đã thu gọn ngữ cảnh')
-    else if (event === 'agent.awaiting_model') setRunStage('Mimi đang suy luận')
+    else if (event === 'agent.awaiting_model') setRunStage('Mimi đang xử lý yêu cầu')
     else if (event === 'agent.executing_read_tools') setRunStage('Mimi đang đọc dữ liệu')
     else if (event === 'draft.ready') setRunStage('Phương án đã sẵn sàng')
     else if (event === 'provider.connected') setRunStage('Đã kết nối provider')
-    else if (event === 'assistant.delta') {
-      setRunStage('Mimi đang trả lời')
-      if (typeof data.payload === 'object' && data.payload && 'text' in data.payload) {
-        const text = (data.payload as { text?: unknown }).text
-        if (typeof text === 'string') setStreamedText((currentText) => currentText + text)
-      }
+    else if (event === 'assistant.delta') setRunStage('Đang hoàn tất câu trả lời')
+    else if (event === 'tool.read_result' && typeof data.run_id === 'string' && typeof data.sequence === 'number') {
+      const receipt = data as unknown as MimiEvent
+      setLiveToolEvents(events => [...events.filter(e => !(e.run_id === receipt.run_id && e.sequence === receipt.sequence)), receipt].slice(-100))
     } else if (event === 'provider.succeeded') setRunStage('Đã nhận kết quả')
     else if (event === 'change_set.ready') setRunStage('Chờ bạn xác nhận')
     else if (event === 'run.heartbeat') { /* Observation heartbeat carries no new product phase. */ }
@@ -308,7 +309,7 @@ export function MimiScreen({
     if (!followLatest.current || !current?.messages.length) return
     const frame = requestAnimationFrame(() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'auto' }))
     return () => cancelAnimationFrame(frame)
-  }, [current?.messages.length, streamedText])
+  }, [current?.messages.length, liveToolEvents.length, runStage])
   const capabilities = useQuery({
     queryKey: ['mimi', 'capabilities'],
     queryFn: fetchMimiCapabilities,
@@ -360,7 +361,7 @@ export function MimiScreen({
       setCancelRequestedRunId(null)
       setRunStartedAt(startedAt)
       setRunStage('Đang gửi yêu cầu')
-      setStreamedText('')
+      setLiveToolEvents([])
       followLatest.current = true
     },
     onSuccess: (data, variables) => {
@@ -373,7 +374,7 @@ export function MimiScreen({
         setRunStage(mimiTerminalRunStage(terminalRun.state, terminalRun.provider_outcome))
         setActiveRunId((active) => active === terminalRun.id ? null : active)
         setCancelRequestedRunId((pending) => pending === terminalRun.id ? null : pending)
-        setStreamedText('')
+        setLiveToolEvents([])
       }
       void queryClient.invalidateQueries({ queryKey: ['mimi', 'conversations'] })
     },
@@ -390,7 +391,7 @@ export function MimiScreen({
       setCancelRequestedRunId(null)
       setRunStartedAt(startedAt)
       setRunStage('Đang tiếp tục từ checkpoint')
-      setStreamedText('')
+      setLiveToolEvents([])
     },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKey, data)
@@ -399,7 +400,7 @@ export function MimiScreen({
         const completedRunId = terminalRun.id
         runStageRunId.current = null
         setActiveRunId((active) => active === completedRunId ? null : active)
-        setStreamedText('')
+        setLiveToolEvents([])
         setRunStage(mimiTerminalRunStage(terminalRun.state, terminalRun.provider_outcome))
         setCancelRequestedRunId((pending) => pending === completedRunId ? null : pending)
       }
@@ -635,7 +636,7 @@ export function MimiScreen({
       // previous connection before appending canonical replay events.
       if (!replayStarted) {
         replayStarted = true
-        setStreamedText('')
+        setLiveToolEvents([])
       }
       handleStreamEvent(envelope)
     }, controller.signal)
@@ -650,7 +651,7 @@ export function MimiScreen({
           runStageRunId.current = null
           setActiveRunId((active) => active === observedRunId ? null : active)
           setCancelRequestedRunId((pending) => pending === observedRunId ? null : pending)
-          setStreamedText('')
+          setLiveToolEvents([])
           const terminalStates = [
             'waiting_confirmation', 'completed', 'halted', 'cancelled', 'retryable',
             'outcome_unknown', 'deadline_exceeded', 'budget_exceeded',
@@ -778,12 +779,11 @@ export function MimiScreen({
       <MimiBackdrop active={current.messages.length > 0} />
       <div className={`mimi-chat-heading ${variant === 'dock' ? 'mimi-chat-heading-dock' : ''}`}>
         <div className="flex min-w-0 items-center gap-2"><MimiAvatar size="xs" state={mimiState} /><h3 id={`mimi-title-${variant}`} className="truncate text-xs font-semibold">{current.title ?? 'Mimi'}</h3></div>
-        <MimiContextComposition conversation={current} capabilities={capabilities.data} />
         {latestRun?.state === 'waiting_confirmation' ? <Badge variant="outline">{pendingPreviewExpired ? 'Preview đã hết hạn' : 'Chờ xác nhận'}</Badge> : null}
         {!online ? <Badge variant="destructive">Mất mạng</Badge> : null}
       </div>
 
-      {runtimeActive ? <div className="mimi-progress px-3 py-2 text-accent-foreground" data-testid="mimi-progress" data-phase={streamedText ? 'streaming' : mimiState}><div className="flex items-center justify-between gap-2"><p role="status" className="min-w-0 text-xs"><span className="mimi-thinking-dots" aria-hidden="true"><i /><i /><i /></span>{streamedText ? 'Mimi đang trả lời' : runStage === 'Sẵn sàng' && durableRunActive ? 'Mimi đang làm việc trên server' : runStage} · {elapsedLabel(elapsed)}</p>{cancelRunId ? <Button size="icon" variant="ghost" aria-label="Huỷ run ngay" disabled={cancel.isPending || cancelRequestedRunId === cancelRunId} onClick={() => cancel.mutate(cancelRunId)}><Square className="size-4" /></Button> : null}</div>{cancelRequestedRunId === cancelRunId && cancelRunId ? <p role="status" className="text-xs">Đã gửi yêu cầu hủy; chờ trạng thái server.</p> : null}<details className="text-xs"><summary className="cursor-pointer">Chi tiết tiến trình</summary><p className="mt-2">Đóng chat không dừng run. Hủy gửi lệnh dừng; lời gọi đã dispatch có thể vẫn trả về.</p>{cancelRunId ? pause.data?.run_id === cancelRunId && pause.data.pause_requested ? <p role="status" className="mt-2" data-testid="mimi-pause-acknowledgment">Đã nhận yêu cầu tạm dừng sau bước hiện tại; run chưa dừng.</p> : <Button className="mt-2" size="sm" variant="outline" disabled={pause.isPending || cancel.isPending} onClick={() => pause.mutate(cancelRunId)}>Tạm dừng sau bước này</Button> : null}</details></div> : null}
+
 
       {pause.isError ? <p role="alert" className="rounded-lg bg-warn-bg p-3 text-sm">Chưa gửi được yêu cầu tạm dừng. Run vẫn đang chạy; thử lại hoặc huỷ run ngay.</p> : null}
 
@@ -875,15 +875,15 @@ export function MimiScreen({
         </p>
       ) : null}
 
-      {current.messages.length > 0 ? (
+      {showJump ? (
         <div className="flex justify-end">
-          <Button size="sm" variant="outline" onClick={() => { followLatest.current = true; transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'auto' }) }}>
+          <Button size="sm" variant="outline" onClick={() => { followLatest.current = true; setShowJump(false); transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'auto' }) }}>
             Xem lượt mới nhất
           </Button>
         </div>
       ) : null}
 
-      <div ref={transcriptRef} onScroll={(event) => { const el = event.currentTarget; followLatest.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48 }} className={`mimi-transcript flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain ${current.messages.length === 0 ? 'mimi-transcript-empty' : ''}`} data-testid="mimi-messages">
+      <div ref={transcriptRef} onScroll={(event) => { const el = event.currentTarget; followLatest.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; setShowJump(!followLatest.current) }} className={`mimi-transcript flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain ${current.messages.length === 0 ? 'mimi-transcript-empty' : ''}`} data-testid="mimi-messages">
         {current.messages.length === 0 ? (
           <div className="mimi-welcome" data-testid="mimi-welcome"><MimiAvatar size="xl" className="mimi-welcome-avatar" /><h2>Chào bạn,<br className="mimi-dock-linebreak" /> vào việc thôi</h2><div className="mimi-welcome-suggestions"><Button type="button" variant="outline" onClick={() => { setDraft('Mimi có thể làm gì?'); messageInputRef.current?.focus() }}><Sparkles className="size-4" />Mimi có thể làm gì?</Button><Button type="button" variant="outline" onClick={() => { setDraft('Tư vấn mình xếp lại lịch'); messageInputRef.current?.focus() }}><CalendarDays className="size-4" />Tư vấn mình xếp lại lịch</Button></div></div>
         ) : current.messages.map((message) => isVerifiedServerNotice(message) ? (
@@ -898,6 +898,7 @@ export function MimiScreen({
             {message.role === 'assistant' ? <MimiAvatar className="mimi-answer-avatar" /> : null}
             <div className={message.role === 'assistant' ? 'mimi-answer-column min-w-0' : 'min-w-0'}>
               <div className="mimi-message-body">{message.role === 'user' ? <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p> : <MimiMessageText text={message.content} />}
+                {message.role === 'assistant' ? <MimiToolActivity events={current.tool_activities ?? current.events} runId={message.run_id} /> : null}
                 <time className="mimi-message-time">{new Date(message.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</time>
               </div>
               {message.role === 'assistant' ? <div className="mimi-answer-actions" aria-label={`Hành động câu trả lời ${message.sequence}`}>
@@ -908,10 +909,10 @@ export function MimiScreen({
             </div>
           </article>
         ))}
-        {streamedText ? (
-          <article aria-live="polite" className="mimi-message mimi-message-assistant mimi-streaming"><MimiAvatar className="mimi-answer-avatar" /><div className="mimi-message-body"><MimiMessageText text={streamedText} /></div>
-          </article>
-        ) : null}
+        {runtimeActive ? <article className="mimi-message mimi-message-assistant" data-testid="mimi-pending-answer"><MimiAvatar className="mimi-answer-avatar" /><div className="mimi-answer-column min-w-0"><div className="mimi-message-body">
+      <div className="mimi-progress px-3 py-2 text-accent-foreground" data-testid="mimi-progress" data-phase={mimiState}><div className="flex items-center justify-between gap-2"><p role="status" className="min-w-0 text-xs"><span className="mimi-thinking-dots" aria-hidden="true"><i /><i /><i /></span>{runStage === 'Sẵn sàng' && durableRunActive ? 'Mimi đang làm việc trên server' : runStage} · {elapsedLabel(elapsed)}</p>{cancelRunId ? <Button size="icon" variant="ghost" aria-label="Huỷ run ngay" disabled={cancel.isPending || cancelRequestedRunId === cancelRunId} onClick={() => cancel.mutate(cancelRunId)}><Square className="size-4" /></Button> : null}</div>{cancelRequestedRunId === cancelRunId && cancelRunId ? <p role="status" className="text-xs">Đã gửi yêu cầu hủy; chờ trạng thái server.</p> : null}<details className="text-xs"><summary className="cursor-pointer">Chi tiết tiến trình</summary><p className="mt-2">Đóng chat không dừng run. Hủy gửi lệnh dừng; lời gọi đã dispatch có thể vẫn trả về.</p>{cancelRunId ? pause.data?.run_id === cancelRunId && pause.data.pause_requested ? <p role="status" className="mt-2" data-testid="mimi-pause-acknowledgment">Đã nhận yêu cầu tạm dừng sau bước hiện tại; run chưa dừng.</p> : <Button className="mt-2" size="sm" variant="outline" disabled={pause.isPending || cancel.isPending} onClick={() => pause.mutate(cancelRunId)}>Tạm dừng sau bước này</Button> : null}</details></div>
+          <MimiToolActivity events={[...(current.tool_activities ?? current.events), ...liveToolEvents]} runId={activeRunId ?? latestRun?.id} />
+        </div></div></article> : null}
       </div>
 
       {pendingChangeSet ? (
@@ -1088,7 +1089,7 @@ export function MimiScreen({
           </div>
         ) : null}
         <div className="mimi-composer-surface relative flex flex-col rounded-2xl border border-input focus-within:ring-2 focus-within:ring-ring p-2">
-      <MimiConfiguration conversationId={current.id} capabilities={capabilities.data} runtimeActive={runtimeActive} open={settingsOpen} onOpenChange={onSettingsOpenChange} onOpenHub={onOpenConfiguration} />
+      <div className="mimi-composer-meta flex min-w-0 items-center gap-1"><MimiConfiguration conversationId={current.id} capabilities={capabilities.data} runtimeActive={runtimeActive} open={settingsOpen} onOpenChange={onSettingsOpenChange} onOpenHub={onOpenConfiguration} /><MimiContextComposition conversation={current} capabilities={capabilities.data} /></div>
           <Textarea
             rows={1}
             id="mimi-message"
@@ -1096,7 +1097,7 @@ export function MimiScreen({
             data-testid="mimi-input"
             aria-label="Nhắn Mimi"
             value={draft}
-            aria-describedby="mimi-message-count"
+            aria-describedby={inputCount >= inputLimit * 0.8 ? 'mimi-message-count' : undefined}
             aria-invalid={inputOverflow}
             placeholder={activeRevision
               ? 'Mô tả cách bạn muốn sửa phương án…'
@@ -1134,7 +1135,7 @@ export function MimiScreen({
             </Button>
           </div>
         </div>
-        <p id="mimi-message-count" className={`mt-1 text-xs ${inputOverflow ? 'text-bad' : 'text-muted-foreground'}`} role={inputOverflow ? 'alert' : undefined}>{inputCount.toLocaleString('vi-VN')} / {inputLimit.toLocaleString('vi-VN')} Unicode codepoints{inputOverflow ? ` · Vượt ${(inputCount - inputLimit).toLocaleString('vi-VN')}. Bản nháp được giữ nguyên; chỉnh nội dung trước khi gửi.` : ''}{!operatingPolicy.data ? ' · Giới hạn mặc định; server kiểm lại cấu hình khi gửi.' : ''}</p>
+        {inputCount >= inputLimit * 0.8 ? <p id="mimi-message-count" className={`mt-1 text-xs ${inputOverflow ? 'text-bad' : 'text-muted-foreground'}`} role={inputOverflow ? 'alert' : undefined}>{inputCount.toLocaleString('vi-VN')} / {inputLimit.toLocaleString('vi-VN')} Unicode codepoints{inputOverflow ? ` · Vượt ${(inputCount - inputLimit).toLocaleString('vi-VN')}. Bản nháp được giữ nguyên; chỉnh nội dung trước khi gửi.` : ''}{!operatingPolicy.data ? ' · Giới hạn mặc định; server kiểm lại cấu hình khi gửi.' : ''}</p> : null}
         {send.isError ? <p role="alert" className="mt-1 text-xs text-bad">{errorMessage(send.error)}</p> : null}
       </form>
 
