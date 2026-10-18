@@ -101,6 +101,21 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
                 outcome = PreviewCandidate(
                     tool=CREATE_CANDIDATE_TOOL, arguments={"title": "Synthetic wrong terminal"}
                 )
+            elif mode == "missing_current_read" and step:
+                feedback = next(
+                    json.loads(message["content"])
+                    for message in reversed(messages)
+                    if message.get("role") == "tool"
+                    and message.get("tool_call_id") == "without-current-read"
+                )
+                assert feedback["error"]["code"] == (
+                    "selection_member_has_no_actual_versioned_receipt"
+                )
+                assert set(feedback["obligations"]["missing_receipt_ids"]) == {
+                    str(i) for i in target
+                }
+                assert feedback["coverage"] == "unavailable" and "selection" not in feedback
+                outcome = AssistantText(text="Chưa có bằng chứng đọc hiện tại để sửa phạm vi.")
             elif mode == "missing_current_read":
                 outcome = ToolRequests(
                     requests=(
@@ -320,7 +335,13 @@ def test_revision_read_phase_exact_selection_and_nonreplacement_retention(
                         assert result["result"]["task_ids"]
                         await db.commit()
             assert len(wires) == (
-                6 if mode == "full_subset_full" else 3 if mode == "selection_mismatch" else 1
+                6
+                if mode == "full_subset_full"
+                else 3
+                if mode == "selection_mismatch"
+                else 2
+                if mode == "missing_current_read"
+                else 1
             )
         finally:
             await cleanup(maker, cid, ids)
