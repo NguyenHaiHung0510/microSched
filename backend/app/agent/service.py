@@ -2207,6 +2207,7 @@ async def send_message(
     checkpoint_id: UUID | None = None
     working_history = WorkingHistory()
     finalized_working_messages = None
+    agent_result_kind: str | None = None
     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
 
         def probe_context(
@@ -2611,7 +2612,6 @@ async def send_message(
         # point is unknown unless the adapter returns a definitive outcome.
         call.state = "dispatched"
         await db.commit()
-        agent_result_kind: str | None = None
         agent_stop_code: str | None = None
         agent_producer = "provider_text"
         reservation = None

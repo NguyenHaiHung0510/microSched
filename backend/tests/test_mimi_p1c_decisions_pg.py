@@ -39,6 +39,7 @@ def local_live_contract(monkeypatch):
     monkeypatch.setenv("MIMI_STANDARD_API_KEY", "synthetic-not-sent")
     monkeypatch.setenv("MIMI_ROUTE_MODEL", "synthetic/model")
     monkeypatch.setenv("MIMI_ROUTE_PROVIDER", "Synthetic")
+    monkeypatch.setenv("MIMI_ROUTE_FORCED_TOOL_CHOICE", "function")
     monkeypatch.setenv("MIMI_ROUTE_QUANTIZATION", "fp16")
     monkeypatch.setenv("MIMI_ROUTE_MAX_INPUT_PRICE", "1")
     monkeypatch.setenv("MIMI_ROUTE_MAX_OUTPUT_PRICE", "1")

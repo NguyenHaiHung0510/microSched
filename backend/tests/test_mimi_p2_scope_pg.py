@@ -98,6 +98,7 @@ def test_snapshot_aggregates_beyond_public_limits_and_late_usage_replaces(pg_dsn
                                 request_fingerprint="synthetic-hash",
                                 route={
                                     "kind": "openrouter",
+                                    "mode": "native",
                                     "purpose": "compaction" if j == 0 else "main",
                                     "model": "synthetic",
                                     "actual_model": "synthetic",

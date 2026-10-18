@@ -176,6 +176,18 @@ def test_observed_main_triggers_next_turn_once_and_preserves_canonical_authority
                         "actual_model": settings.mimi_route_model,
                         "providers": ["deepinfra"],
                         "actual_provider": "DeepInfra",
+                        "input_projection": {
+                            "version": 1,
+                            "request_fingerprint": "a" * 64,
+                            "projection_fingerprint": "b" * 64,
+                            "checkpoint_id": None,
+                            "message_frontier": 0,
+                            "working_frontier": "c" * 64,
+                            "working_refs": [],
+                            "model": settings.mimi_route_model,
+                            "observed_request_at": datetime.now(UTC).isoformat(),
+                            "measurement": "provider_native_input_pending",
+                        },
                     },
                 )
                 db.add(main)
