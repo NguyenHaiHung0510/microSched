@@ -89,7 +89,13 @@ from app.agent.route_config import (
     validate_configuration,
 )
 from app.agent.runtime import OwnerPauseRequested, run_guard_key
-from app.agent.selection import SELECTION_TOOL, covered_versions, load_selection, persist_selection
+from app.agent.selection import (
+    SELECTION_TOOL,
+    SelectionCorrection,
+    covered_versions,
+    load_selection,
+    persist_selection,
+)
 from app.agent.task_collection import (
     COLLECTION_CANDIDATE_TOOL,
     COLLECTION_TOOL,
@@ -2518,6 +2524,7 @@ async def send_message(
         await db.commit()
         agent_result_kind: str | None = None
         agent_stop_code: str | None = None
+        agent_producer = "provider_text"
         reservation = None
         try:
             if context_envelope is not None:
@@ -2864,6 +2871,10 @@ async def send_message(
                         else:
                             async with read_factory() as read_db:
                                 result = await execute_read_tool(read_db, name, arguments)
+                    except SelectionCorrection as error:
+                        if name != SELECTION_TOOL:
+                            raise
+                        result = error.feedback()
                     except ValueError as error:
                         raise RouteContractError(str(error)) from error
                     sequence = await _append_event(
@@ -2966,6 +2977,7 @@ async def send_message(
                         "turns": result.turns,
                         "tool_calls": result.tool_calls,
                         "stop_code": result.stop_code,
+                        "producer_code": result.producer_code,
                         "messages_sha256": _canonical_digest(result.messages),
                     }
                     sequence = await _append_event(db, run_id, "graph.terminal_durable", {})
@@ -3044,6 +3056,9 @@ async def send_message(
                     )
                 agent_result_kind = outcome.kind
                 agent_stop_code = loop_result.stop_code
+                agent_producer = loop_result.producer_code
+                if outcome is not loop_result.outcome:
+                    agent_producer = "agent_loop_stop"
                 last = loop_result.completion
                 common = {
                     "response_id": last.response_id if last else "",
@@ -3532,15 +3547,25 @@ async def send_message(
             assert completion.text is not None
             if provider_stream and context_envelope is None:
                 await flush_stream_buffer()
-            await _add_assistant_message(
-                db,
-                conversation,
-                run_id,
-                dek,
-                completion.text,
-                producer_code="provider_text",
-                provider_call_id=call.id,
-            )
+            if agent_producer == "provider_text":
+                await _add_assistant_message(
+                    db,
+                    conversation,
+                    run_id,
+                    dek,
+                    completion.text,
+                    producer_code="provider_text",
+                    provider_call_id=call.id,
+                )
+            else:
+                await _add_assistant_message(
+                    db,
+                    conversation,
+                    run_id,
+                    dek,
+                    completion.text,
+                    producer_code="agent_loop_stop",
+                )
             if agent_result_kind == "draft" and not settings.mimi_context_v1_enabled:
                 draft_id = uuid7()
                 await _append_event(

@@ -343,3 +343,70 @@ def test_all_read_error_results_supply_no_context_source_or_selection_authority(
     assert updated.manifest.sources == envelope.manifest.sources
     assert updated.authority.allowed_tools == envelope.authority.allowed_tools
     assert updated.authority.remaining_turns == 2
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_duplicate_refresh_keeps_useful_sibling_and_current_result(run_runner, changed):
+    tid = str(uuid4())
+    executed = []
+
+    async def execute(name, arguments):
+        executed.append(name)
+        return {
+            "rows": [
+                {
+                    "id": tid,
+                    "collection_version": len(executed) if changed else 1,
+                    "source_version": "synthetic",
+                }
+            ],
+            "coverage": "complete",
+        }
+
+    async def invoke(messages, turn):
+        if turn <= 2:
+            reads = [request("task.query.v1", {}, f"q{turn}")]
+            if turn == 2:
+                reads.append(request("task.inspect_batch.v1", {"ids": [tid]}, "sibling"))
+            return completion(ToolRequests(requests=tuple(reads)))
+        results = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
+        assert len(results) == 3
+        assert results[1]["rows"][0]["collection_version"] == (2 if changed else 1)
+        if not changed:
+            assert json.loads(messages[-1]["content"])["code"] == "duplicate_read_refreshed"
+        return completion(AssistantText(text="Đã đọc đúng dữ liệu hiện tại."))
+
+    result = run_runner(invoke, execute)
+    assert result.stop_code is None and result.tool_calls == 3
+    assert executed == ["task.query.v1", "task.query.v1", "task.inspect_batch.v1"]
+
+
+def test_selection_correction_is_typed_and_unknown_code_fails_closed():
+    from app.agent.selection import SelectionCorrection
+
+    tid = str(uuid4())
+    candidate = SelectionCandidate.model_validate(
+        {
+            "intent": "Synthetic",
+            "variants_considered": ["synthetic"],
+            "members": [{"id": tid, "classification": "included", "reason": "Synthetic"}],
+        }
+    )
+    with pytest.raises(SelectionCorrection) as missing:
+        bind_selection(candidate, [])
+    feedback = missing.value.feedback()
+    assert feedback["coverage"] == "unavailable" and "selection" not in feedback
+    assert feedback["obligations"]["missing_receipt_ids"] == [tid]
+    with pytest.raises(ValueError, match="selection_correction_code_invalid"):
+        SelectionCorrection("selection_read_receipt_hash_invalid", {})
+
+
+def test_loop_producer_preserves_server_stop_and_provider_blocked_distinction():
+    from app.agent.context import Blocked
+    from app.agent.loop import LoopResult
+
+    provider = completion(Blocked(reason="Synthetic blocked"))
+    assert LoopResult(provider.outcome, provider, 1, 0, ()).producer_code == "provider_text"
+    assert LoopResult(provider.outcome, provider, 1, 0, (), "no_progress").producer_code == (
+        "agent_loop_stop"
+    )

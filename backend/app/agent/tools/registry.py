@@ -43,7 +43,12 @@ _FILTER = {
         "priority": {"type": ["string", "null"], "enum": ["p1", "p2", "p3", None]},
         "due_from": {"type": ["string", "null"], "format": "date"},
         "due_through": {"type": ["string", "null"], "format": "date"},
-        "title_contains": {"type": ["string", "null"], "minLength": 2, "maxLength": 120},
+        "title_contains": {
+            "type": ["string", "null"],
+            "minLength": 2,
+            "maxLength": 120,
+            "description": "One literal case-insensitive substring; not regex or OR.",
+        },
     },
 }
 _PROJECTION = {
@@ -237,7 +242,11 @@ TOOLS += (
         "For example members=[{id: '<actual read UUID>', classification: 'included', "
         "reason: 'matches the requested subset'}]; replace the placeholder with a read ID. "
         "Classify observed IDs, preserve unresolved query/page/content/alias obligations. "
-        "Intent plus variants alone is invalid. This never mutates domain data.",
+        "Intent plus variants alone is invalid. Expected selection obligation errors do not freeze "
+        "a selection: read missing IDs/pages or fix classifications and retry. "
+        "explicitly_named_subset requires an honest named subset compatible with user intent, "
+        "with unresolved work disclosed; never silently narrow all-scope. "
+        "This never mutates domain data.",
         SelectionCandidate,
     ),
     _typed_tool(

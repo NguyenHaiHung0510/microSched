@@ -153,11 +153,11 @@ def test_langgraph_no_progress_and_write_tool_fail_closed() -> None:
                 )
             )
         )
-        graph, calls, _ = await _run_graph([same, same], lambda name, args: _read_value())
+        graph, calls, _ = await _run_graph([same, same, same], lambda name, args: _read_value())
         assert isinstance(graph.outcome, Blocked)
         assert graph.stop_code == "no_progress"
-        assert graph.tool_calls == 1
-        assert [call[0] for call in calls] == [1, 2]
+        assert graph.tool_calls == 3
+        assert [call[0] for call in calls] == [1, 2, 3]
 
         async def forbidden_read(name, args):
             pytest.fail("write proposal must not execute through the read node")

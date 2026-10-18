@@ -19,6 +19,38 @@ from app.agent.task_collection import canonical, digest
 SELECTION_TOOL = "task.freeze_selection.v1"
 
 
+class SelectionCorrection(ValueError):
+    """Only expected selection obligations, derived from this run's receipts."""
+
+    CODES = frozenset(
+        {
+            "selection_member_has_no_actual_versioned_receipt",
+            "selection_all_scope_has_unresolved_obligations",
+        }
+    )
+
+    def __init__(self, code: str, obligations: dict):
+        if code not in self.CODES:
+            raise ValueError("selection_correction_code_invalid")
+        super().__init__(code)
+        self.code, self.obligations = code, obligations
+
+    def feedback(self):
+        return {
+            "error": {
+                "code": self.code,
+                "message": (
+                    "Selection was not frozen. Read missing IDs/pages/content in this run and "
+                    "classify actual observed IDs, then retry. title_contains is one literal "
+                    "substring, not an OR expression. A named subset must match the user's intent "
+                    "and disclose remaining obligations; never claim all-scope completion."
+                ),
+            },
+            "obligations": self.obligations,
+            "coverage": "unavailable",
+        }
+
+
 class SelectionMember(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID
@@ -184,11 +216,22 @@ def bind_selection(candidate: SelectionCandidate, receipts: list[dict]) -> dict[
             content_obligations.append(
                 {"id": tid, "event_ids": item["event_ids"], "omitted_fields": obligations}
             )
+    missing_receipts = [
+        str(m.id)
+        for m in candidate.members
+        if str(m.id) not in observed
+        or not isinstance(observed[str(m.id)]["collection_version"], int)
+    ]
+    if missing_receipts:
+        raise SelectionCorrection(
+            "selection_member_has_no_actual_versioned_receipt",
+            {
+                "missing_receipt_ids": missing_receipts,
+            },
+        )
     members = []
     for member in candidate.members:
         version = observed.get(str(member.id))
-        if version is None or not isinstance(version["collection_version"], int):
-            raise ValueError("selection_member_has_no_actual_versioned_receipt")
         members.append({**member.model_dump(mode="json"), **version})
     query_records = [{**q, "open_cursors": sorted(q["open_cursors"])} for q in queries.values()]
     query_complete = bool(query_records) and all(
@@ -220,7 +263,20 @@ def bind_selection(candidate: SelectionCandidate, receipts: list[dict]) -> dict[
         and not unproved_variants
     )
     if not semantic_complete and not candidate.explicitly_named_subset:
-        raise ValueError("selection_all_scope_has_unresolved_obligations")
+        raise SelectionCorrection(
+            "selection_all_scope_has_unresolved_obligations",
+            {
+                "missing_classification_ids": missing_members,
+                "uncertain_ids": [
+                    str(m.id) for m in candidate.members if m.classification == "uncertain"
+                ],
+                "queries": query_records,
+                "content": content_obligations,
+                "variants_pending": list(candidate.variants_pending),
+                "unproved_variants": unproved_variants,
+                "query_complete": query_complete,
+            },
+        )
     included = [m for m in members if m["classification"] == "included"]
     if not included or len(included) > 200:
         raise ValueError("selection_included_target_bound")

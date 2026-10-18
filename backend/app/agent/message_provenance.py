@@ -19,6 +19,7 @@ MAX_MESSAGES = 100
 MAX_CIPHERTEXT = 16_384
 PRODUCERS = {
     "provider_text": "model_answer",
+    "agent_loop_stop": "server_notice",
     "context_budget_stop": "server_notice",
     "checkpoint_unknown": "server_notice",
     "checkpoint_materialization_failed": "server_notice",

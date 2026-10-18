@@ -26,7 +26,9 @@ from app.agent.loop import (
     InvokeModel,
     LoopLimits,
     LoopResult,
+    ReadProgress,
     StageSink,
+    duplicate_read_feedback,
     finalization_messages,
     messages_final_only,
     validate_fanout,
@@ -166,6 +168,7 @@ async def run_langgraph(
     frame: dict[str, Any] = {
         "messages": list(initial_messages),
         "seen_calls": set(),
+        "progress": ReadProgress(),
         "last_completion": None,
         "completion": None,
         "outcome": None,
@@ -243,6 +246,14 @@ async def run_langgraph(
         if not isinstance(completion.outcome, ToolRequests):
             return {"phase": "terminal", "turn": turn, "step": state["step"] + 1}
         if messages_final_only(frame["messages"]):
+            if frame["progress"].unchanged_batch:
+                finish_blocked(
+                    "Đã chạm giới hạn lượt chạy mà các lần đọc vẫn không có "
+                    "tiến triển. Chưa ghi thay đổi; cần sửa ID, trang hoặc phạm vi còn thiếu.",
+                    "no_progress",
+                    completion,
+                )
+                return {"phase": "terminal", "turn": turn, "step": state["step"] + 1}
             raise RouteContractError("model_violated_final_no_tools")
         feedback = validate_fanout(completion.outcome)
         if feedback is not None:
@@ -272,6 +283,8 @@ async def run_langgraph(
         if completion is None or not isinstance(completion.outcome, ToolRequests):
             raise RouteContractError("langgraph_read_without_tool_requests")
         total_calls = state["tool_calls"]
+        stalled_batch = []
+        duplicate_seen = False
         for request in completion.outcome.requests[: max(0, limits.max_tool_calls - total_calls)]:
             if datetime.now(UTC) >= limits.deadline:
                 finish_blocked(
@@ -286,13 +299,6 @@ async def run_langgraph(
             cached = request.call_id in frame["replay_cached_call_ids"]
             if cached and frame["read_result_fingerprints"].get(request.call_id) != fingerprint:
                 raise RouteContractError("langgraph_cached_read_identity_mismatch")
-            if fingerprint in frame["seen_calls"] and not cached:
-                finish_blocked(
-                    "Công cụ đọc lặp lại cùng truy vấn mà không có tiến triển.",
-                    "no_progress",
-                    completion,
-                )
-                return {"phase": "terminal", "tool_calls": total_calls, "step": state["step"] + 1}
             if not cached:
                 frame["seen_calls"].add(fingerprint)
             remaining = (limits.deadline - datetime.now(UTC)).total_seconds()
@@ -316,6 +322,9 @@ async def run_langgraph(
                     }
                 frame["read_results"][request.call_id] = result
                 frame["read_result_fingerprints"][request.call_id] = fingerprint
+            duplicate = frame["progress"].observe(request.name, request.arguments, result)
+            duplicate_seen |= duplicate
+            stalled_batch.append(duplicate)
             total_calls += 1
             frame["messages"].append(
                 {
@@ -364,6 +373,17 @@ async def run_langgraph(
                         "tool_calls": total_calls,
                         "step": state["step"] + 1,
                     }
+        frame["progress"].unchanged_batch = bool(stalled_batch) and all(stalled_batch)
+        if duplicate_seen:
+            frame["messages"].append(duplicate_read_feedback())
+        if stalled_batch and all(stalled_batch) and total_calls >= limits.max_tool_calls:
+            finish_blocked(
+                "Công cụ đọc lặp lại cùng truy vấn mà không có tiến triển. "
+                "Chưa có thay đổi nào được ghi; cần sửa phạm vi, ID hoặc trang còn thiếu.",
+                "no_progress",
+                completion,
+            )
+            return {"phase": "terminal", "tool_calls": total_calls, "step": state["step"] + 1}
         return {"phase": "model", "tool_calls": total_calls, "step": state["step"] + 1}
 
     def route(state: GraphState) -> str:
@@ -448,6 +468,7 @@ async def run_langgraph(
         ):
             raise RouteContractError("mimi_langgraph_restore_frame_invalid")
         frame["messages"] = list(restored.messages)
+        frame["progress"] = ReadProgress(restored.messages)
         frame["seen_calls"] = set(restored.seen_calls)
         frame["last_completion"] = restored.last_completion
         frame["pending_completion"] = restored.pending_completion

@@ -1,7 +1,7 @@
 import type { MimiMessage } from '@/mimi-api'
 
 const SERVER_PRODUCERS = new Set([
-  'context_budget_stop', 'checkpoint_unknown', 'checkpoint_materialization_failed',
+  'agent_loop_stop', 'context_budget_stop', 'checkpoint_unknown', 'checkpoint_materialization_failed',
   'provider_output_rejected', 'provider_terminal', 'local_deterministic_result',
   'conversation_frontier_changed', 'preview_frontier_changed',
   'pending_preview_requires_decision', 'preview_prepared', 'operation_committed',

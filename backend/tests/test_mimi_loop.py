@@ -107,7 +107,7 @@ def test_read_loop_executes_one_read_then_returns_terminal_answer() -> None:
     asyncio.run(scenario())
 
 
-def test_read_loop_stops_repeated_equivalent_tool_call_without_second_read() -> None:
+def test_read_loop_stops_unchanged_repeats_at_existing_tool_bound() -> None:
     async def scenario() -> None:
         request = ToolRequests(
             requests=(
@@ -119,7 +119,7 @@ def test_read_loop_stops_repeated_equivalent_tool_call_without_second_read() -> 
         responses = [
             _completion(request),
             _completion(request),
-            _completion(AssistantText(text="wrong")),
+            _completion(request),
         ]
         reads = 0
 
@@ -132,14 +132,14 @@ def test_read_loop_stops_repeated_equivalent_tool_call_without_second_read() -> 
             return {"rows": []}
 
         result = await run_read_loop(
-            [], limits=_limits(), invoke_model=invoke, execute_read=execute
+            [], limits=_limits(calls=3), invoke_model=invoke, execute_read=execute
         )
         assert isinstance(result.outcome, Blocked)
         assert "lặp lại" in result.outcome.reason
         assert result.stop_code == "no_progress"
-        assert result.turns == 2
-        assert result.tool_calls == 1
-        assert reads == 1
+        assert result.turns == 3
+        assert result.tool_calls == 3
+        assert reads == 3
 
     asyncio.run(scenario())
 

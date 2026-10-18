@@ -27,7 +27,7 @@ def load_standard_policy(*, collection_enabled: bool | None = None) -> MimiPolic
         collection_enabled = get_settings().mimi_collection_enabled
     path = _POLICY_PATH.with_name("mimi-standard-v3.md") if collection_enabled else _POLICY_PATH
     expected_sha256 = (
-        "3c30ed9767edede301f1408614d3a8fb413d3d3e25a8e9c27c9482b1a6ee6f87"
+        "f9443f7dec59c73ef92a1feb8af5e4abb87198ab6a676603393c664d60b06c65"
         if collection_enabled
         else POLICY_SHA256
     )
@@ -49,4 +49,13 @@ def checkpoint_policy_compatible(value: str, *, collection_enabled: bool) -> boo
         if collection_enabled
         else "1ffc135a42c8cf04f3d6d17a2a987f399037d00fce48ff9b00425f318a4a44ab"
     )
-    return value in {original, load_standard_policy(collection_enabled=collection_enabled).sha256}
+    previous = (
+        {"3c30ed9767edede301f1408614d3a8fb413d3d3e25a8e9c27c9482b1a6ee6f87"}
+        if collection_enabled
+        else set()
+    )
+    return value in {
+        original,
+        *previous,
+        load_standard_policy(collection_enabled=collection_enabled).sha256,
+    }

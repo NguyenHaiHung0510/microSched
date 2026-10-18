@@ -19,6 +19,7 @@ import { MimiContextComposition } from '@/MimiContextComposition'
 import { unicodeCodepoints } from '@/mimi-operating-policy'
 import { MimiMessageText } from '@/MimiMessageText'
 import { MimiSystemNotice } from '@/MimiSystemNotice'
+import { MimiPositiveSupplement } from '@/MimiPositiveSupplement'
 import { isVerifiedServerNotice } from '@/mimi-message-provenance'
 import { ApiError, TimeoutError } from '@/api'
 import { Badge } from '@/components/ui/badge'
@@ -886,7 +887,7 @@ export function MimiScreen({
         {current.messages.length === 0 ? (
           <div className="mimi-welcome" data-testid="mimi-welcome"><MimiAvatar size="xl" className="mimi-welcome-avatar" /><h2>Chào bạn,<br className="mimi-dock-linebreak" /> vào việc thôi</h2><div className="mimi-welcome-suggestions"><Button type="button" variant="outline" onClick={() => { setDraft('Mimi có thể làm gì?'); messageInputRef.current?.focus() }}><Sparkles className="size-4" />Mimi có thể làm gì?</Button><Button type="button" variant="outline" onClick={() => { setDraft('Tư vấn mình xếp lại lịch'); messageInputRef.current?.focus() }}><CalendarDays className="size-4" />Tư vấn mình xếp lại lịch</Button></div></div>
         ) : current.messages.map((message) => isVerifiedServerNotice(message) ? (
-          <MimiSystemNotice key={message.id} message={message} />
+          <MimiSystemNotice key={message.id} message={message} feedbackPending={feedback.isPending} onFeedback={() => openMessageFeedback(message.id, 'negative')} />
         ) : (
           <article
             key={message.id}
@@ -934,11 +935,8 @@ export function MimiScreen({
             <p role="status" className="text-center font-semibold">{feedback.isPending ? 'Đang lưu phản hồi tích cực…' : feedbackAcknowledgment?.conversationId === current.id && feedbackAcknowledgment.targetKey === resolvedFeedbackTargetKey && feedbackAcknowledgment.mood === 'positive' ? 'Đã ghi nhận phản hồi tích cực' : 'Chưa xác nhận phản hồi tích cực đã lưu'}</p>
             <p className="rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap break-words">{current.messages.find((message) => message.id === selectedFeedbackTarget?.target_id)?.content.slice(0, 180) ?? selectedFeedbackTarget?.label ?? 'Mục đang chọn'}</p>
             {feedback.isError ? <p role="alert" className="text-sm text-bad">Chưa xác định kết quả lưu. Khi bấm Hữu ích lại sẽ giữ cùng khóa, không tạo bản ghi mới ngầm.</p> : null}
-            <p className="text-sm font-semibold">Bạn có thể chia sẻ thêm (không bắt buộc)</p>
-            <div className="grid grid-cols-2 gap-2">{['Rõ ràng', 'Đúng ý', 'Hữu ích', 'Nhanh', 'Dễ hiểu', 'Khác'].map((reason) => <Button type="button" key={reason} variant={feedbackReasons.includes(reason) ? 'selected' : 'outline'} size="sm" aria-pressed={feedbackReasons.includes(reason)} onClick={() => toggleFeedbackReason(reason)}>{reason}</Button>)}</div>
-            <Textarea aria-label="Ghi chú phản hồi tích cực" value={feedbackDraft} maxLength={500} onChange={(event) => setFeedbackDraft(event.target.value)} placeholder="Muốn ghi chú thêm? (không bắt buộc)" /><p className="text-right text-xs text-muted-foreground">{feedbackDraft.length}/500</p>
-            <p role="status" className="text-xs text-muted-foreground">API hiện chưa sửa/bổ sung phản hồi đã lưu. Chi tiết này là bản nháp; chưa gửi và không tự tạo feedback thứ hai.</p>
-            <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setFeedbackOpen(false)}>Để sau</Button><Button type="button" disabled>Gửi bổ sung · chưa hỗ trợ</Button></div>
+            {selectedFeedbackTarget?.target_type === 'turn' ? <MimiPositiveSupplement conversationId={current.id} targetId={selectedFeedbackTarget.target_id} /> : null}
+            <div className="flex justify-end"><Button type="button" variant="outline" onClick={() => setFeedbackOpen(false)}>Để sau</Button></div>
           </div> : <Card className="border-0 shadow-none">
           <CardHeader>
             <CardTitle>Luồng phản hồi chưa tốt</CardTitle>

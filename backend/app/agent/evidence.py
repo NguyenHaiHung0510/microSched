@@ -9,7 +9,7 @@ from uuid import UUID, uuid7
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.agent import crypto
+from app.agent import crypto, message_provenance
 from app.agent.models import (
     MimiChangeSet,
     MimiEvent,
@@ -134,12 +134,26 @@ async def capture_feedback(db, conversation, target_type, target_id, provided_id
     ).all()
     run = await db.get(MimiRun, rid)
     incomplete = len(messages) > 1000 or len(calls) > 128 or len(events) > 1000
+    producers = {}
+    for start in range(0, min(len(messages), 1000), message_provenance.MAX_MESSAGES):
+        producers.update(
+            await message_provenance.read_message_provenance(
+                db, conversation, messages[start : start + message_provenance.MAX_MESSAGES], dek
+            )
+        )
     parts = {
+        "run": {
+            "id": str(run.id),
+            "state": run.state,
+            "error_code": run.error_code,
+            "provider_outcome": run.provider_outcome,
+        },
         "messages": [
             {
                 "id": str(m.id),
                 "role": m.role,
                 "sequence": m.sequence,
+                "provenance": producers.get(m.id, message_provenance.unknown()),
                 "content": crypto.open_content(
                     dek,
                     m.content_ciphertext,
