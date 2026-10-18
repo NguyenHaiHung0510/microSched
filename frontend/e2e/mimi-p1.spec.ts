@@ -49,12 +49,15 @@ async function createWorkspaceConversation(page: Page) {
 
 async function openDataRail(page: Page) {
   const visible=page.locator('[data-testid="mimi-context-rail"]:visible')
-  if (!await visible.isVisible()) await page.getByRole('button',{name:(page.viewportSize()?.width ?? 1280)>=1024?'Xem dữ liệu liên quan':'Dữ liệu và thông báo',exact:true}).click()
+  if (!await visible.isVisible()) await page.getByRole('button',{name:(page.viewportSize()?.width ?? 1280)>=1024?'Thống kê hội thoại':'Thống kê và thông báo',exact:true}).click()
   await expect(visible).toBeVisible()
+  const diagnostics = visible.locator('details').filter({ has: page.locator('summary', { hasText: 'Dữ liệu và chẩn đoán' }) }).first()
+  if (await diagnostics.getAttribute('open') === null) await diagnostics.locator('summary').first().click()
+  await visible.getByRole('button', { name: 'Context', exact: true }).click()
   return visible
 }
 async function closeDataRail(page: Page) {
-  if ((page.viewportSize()?.width ?? 1280)>=1024) await page.getByRole('button',{name:'Đóng dữ liệu',exact:true}).click()
+  if ((page.viewportSize()?.width ?? 1280)>=1024) await page.getByRole('button',{name:'Đóng thống kê',exact:true}).click()
   else await page.keyboard.press('Escape')
   await expect(page.locator('[data-testid="mimi-context-rail"]:visible')).toHaveCount(0)
 }

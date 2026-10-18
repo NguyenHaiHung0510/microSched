@@ -160,3 +160,6 @@
 .mimi-context-bucket-5 { background: var(--mimi-context-blue); }
 .mimi-context-bucket-6 { background: var(--mimi-context-purple); }
 .mimi-context-bucket-7 { background: var(--mimi-context-gray); }
+
+/* Keep the measured-context circle beside the existing model chip on compact screens. */
+.mimi-composer-meta > [data-testid=mimi-route-settings] { min-width: 0; flex: 1; }

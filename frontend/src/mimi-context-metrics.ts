@@ -1,4 +1,4 @@
-import type { MimiContextComposition, MimiProviderCall } from '@/mimi-api'
+import type { MimiContextComposition, MimiProviderCall, MimiConversation } from '@/mimi-api'
 
 export const CONTEXT_BUCKETS = [
   ['policy', 'System policy and output instructions'],
@@ -26,3 +26,11 @@ export function validContextComposition(value?: MimiContextComposition | null): 
       && Number.isSafeInteger(x.value) && x.value >= 0)
     && value.categories.reduce((sum, x) => sum + x.value, 0) === value.total
 }
+
+
+export function lastMeasuredInput(conversation: MimiConversation): number | null {
+  if (conversation.metrics) return conversation.metrics.last_measured_input?.tokens ?? null
+  return lastMeasuredMain(conversation.provider_calls ?? [])?.usage.prompt_tokens ?? null
+}
+
+export const formatMetric = (value: number | null | undefined) => value == null ? '—' : value.toLocaleString('vi-VN')

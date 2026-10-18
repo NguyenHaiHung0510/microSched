@@ -64,7 +64,13 @@ from app.agent.models import (
     MimiRefreshMarker,
     MimiRun,
 )
-from app.agent.observations import context_revision, prompt_observation, reported_number, run_costs
+from app.agent.observations import (
+    context_revision,
+    conversation_metrics,
+    prompt_observation,
+    reported_number,
+    run_costs,
+)
 from app.agent.openrouter import (
     AgentCompletion,
     ProviderCompletion,
@@ -107,6 +113,7 @@ from app.agent.task_collection import (
 from app.agent.task_collection import (
     canonical as collection_json,
 )
+from app.agent.tool_activity import tool_activity
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, execute_read_tool
 from app.core.db import get_engine, get_sessionmaker
 from app.core.settings import Settings, get_settings
@@ -1556,8 +1563,9 @@ def _event_read(row: MimiEvent, dek: bytes) -> dict[str, Any]:
             "source_count": payload.get("source_count"),
             "content_sha256": payload.get("content_sha256"),
         }
+    elif row.kind == "tool.read_result":
+        payload = {"activity": tool_activity(row, dek)}
     elif row.kind in {
-        "tool.read_result",
         "graph.terminal_durable",
         "provider.terminal_rejected",
         "message.provenance.v1",
@@ -4315,6 +4323,61 @@ async def conversation_view(
 ) -> dict[str, Any]:
     conversation = await _conversation(db, auth, conversation_id)
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
+    accounting_runs = (
+        (
+            await db.execute(
+                select(MimiRun)
+                .where(MimiRun.conversation_id == conversation.id)
+                .order_by(MimiRun.generation)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    accounting_calls = (
+        (
+            await db.execute(
+                select(MimiProviderCall)
+                .join(MimiRun, MimiProviderCall.run_id == MimiRun.id)
+                .where(MimiRun.conversation_id == conversation.id)
+                .order_by(MimiRun.generation, MimiProviderCall.attempt, MimiProviderCall.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Only scalar assistant bindings; message bodies are not loaded for accounting.
+    accounting_messages = (
+        await db.execute(
+            select(MimiMessage.id, MimiMessage.run_id, MimiMessage.role)
+            .where(MimiMessage.conversation_id == conversation.id, MimiMessage.role == "assistant")
+            .order_by(MimiMessage.sequence)
+        )
+    ).all()
+    metrics = conversation_metrics(
+        accounting_calls,
+        accounting_runs,
+        accounting_messages,
+        as_of=datetime.now(UTC).isoformat(),
+        scope_start=conversation.created_at.isoformat(),
+    )
+    # The historical public event window is an existing P1 contract. A separate
+    # bounded receipt projection keeps recent tool details available on reload.
+    activity_rows = (
+        (
+            await db.execute(
+                select(MimiEvent)
+                .join(MimiRun, MimiEvent.run_id == MimiRun.id)
+                .where(
+                    MimiRun.conversation_id == conversation.id, MimiEvent.kind == "tool.read_result"
+                )
+                .order_by(MimiRun.generation.desc(), MimiEvent.sequence.desc())
+                .limit(MAX_EVENTS)
+            )
+        )
+        .scalars()
+        .all()
+    )
     current_draft, _ = await _latest_draft_state(db, conversation.id)
     messages = (
         (
@@ -4483,6 +4546,8 @@ async def conversation_view(
         "change_sets": [change_set_view(row) for row in change_sets],
         "receipts": [_receipt_read(row) for row in receipts],
         "events": [_event_read(row, dek) for row in events],
+        "tool_activities": [_event_read(row, dek) for row in reversed(activity_rows)],
+        "metrics": metrics,
         "run_observations": {
             str(run.id): {
                 **run_costs([call for call in provider_calls if call.run_id == run.id]),

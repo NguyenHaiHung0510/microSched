@@ -245,6 +245,33 @@ export type MimiConversationConfiguration = {
   profiles: MimiModelProfile[]
 }
 
+export type MimiMetricValue<T = number> = { known: T | null; observed: number; missing: number; complete: boolean }
+export type MimiAccountingSummary = {
+  eligible_dispatches: number
+  input: MimiMetricValue
+  output: MimiMetricValue
+  reasoning: MimiMetricValue
+  usd: MimiMetricValue<string>
+  cache: { cached: number | null; sample_input: number | null; ratio: number | null; observed: number; missing: number; complete: boolean }
+  purpose_counts: { main: number; helper: number; unclassified: number }
+  anomaly_dispatches: number
+  effective_completion_per_second: number | null
+}
+export type MimiConversationMetrics = MimiAccountingSummary & {
+  version: number; scope: string; scope_complete: boolean; as_of: string; scope_start: string
+  provenance: string; retention: string; reused_calls: number
+  last_measured_input: { tokens: number; as_of: string; state: string } | null
+  responses: (MimiAccountingSummary & { run_id: string | null; assistant_message_id: string | null; state: string })[]
+}
+export type MimiToolActivityView = {
+  label: string; state: 'recorded' | 'error' | 'unavailable'
+  query: null | {
+    filter: Record<string, string | null>; sort: string; limit: number; projection: string[]
+    cursor_present: boolean; has_next_page: boolean; count: number | null; coverage: string
+    as_of: string | null; error: string | null; intrinsic_provenance: string[]
+  }
+}
+
 export type MimiConversation = {
   id: string
   sensitivity: 'standard'
@@ -260,9 +287,11 @@ export type MimiConversation = {
   change_sets: MimiChangeSet[]
   receipts: MimiReceipt[]
   events: MimiEvent[]
+  tool_activities?: MimiEvent[]
   feedback: MimiFeedback[]
   draft?: MimiDraftDirection | null
   provider_calls?: MimiProviderCall[]
+  metrics?: MimiConversationMetrics
   run_observations?: Record<string, MimiRunObservation>
 }
 
