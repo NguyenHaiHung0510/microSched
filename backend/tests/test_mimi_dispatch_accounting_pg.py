@@ -30,7 +30,7 @@ def test_paid_statistics_follow_transport_handoff_not_dispatched_state(pg_dsn, m
         "MIMI_CONTEXT_V1_ENABLED": "1",
         "MIMI_STANDARD_API_KEY": "synthetic-never-sent",
         "MIMI_ROUTE_MODE": "native",
-        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash",
+        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash-1017",
         "MIMI_ROUTE_MAX_INPUT_PRICE": ".2",
         "MIMI_ROUTE_MAX_OUTPUT_PRICE": ".6",
         "MIMI_RUNNER": "langgraph" if mode == "langgraph_guard" else "current",
@@ -70,7 +70,7 @@ def test_paid_statistics_follow_transport_handoff_not_dispatched_state(pg_dsn, m
                 response_id="synthetic-observed-read",
                 usage={"prompt_tokens": 8, "cost": 0.001},
                 provider="Synthetic",
-                model="deepseek/deepseek-v4.1-flash",
+                model="deepseek/deepseek-v4.1-flash-1017",
             )
 
         monkeypatch.setattr(local_budget, "reserve", reserve)

@@ -19,9 +19,10 @@ from urllib.parse import quote
 
 import httpx
 
+from app.agent.route_config import DEEPSEEK_MODEL, LEGACY_DEEPSEEK_MODEL
 from app.agent.task_collection import digest
 
-ADMITTED_MODEL = "deepseek/deepseek-v4.1-flash"
+ADMITTED_MODEL = DEEPSEEK_MODEL
 POOL_TTL_SECONDS = 900
 POOL_GRACE_SECONDS = 7200
 MAX_CATALOG_BYTES = 2_097_152
@@ -75,7 +76,11 @@ def eligible_pool(
     context_tokens=408_192,
     output_tokens=8192,
 ):
-    if model != ADMITTED_MODEL or effort not in {"low", "high", "max"}:
+    if (
+        model not in {ADMITTED_MODEL, LEGACY_DEEPSEEK_MODEL}
+        or effort not in {"none", "low", "high", "max"}
+        or (model == LEGACY_DEEPSEEK_MODEL and effort == "none")
+    ):
         raise NoEligibleEndpoint("selected_model_or_effort_not_admitted")
     if not math.isfinite(threshold) or not 95 <= threshold < 100 or window not in {"1d", "30m"}:
         raise NoEligibleEndpoint("uptime_policy_invalid")
@@ -522,8 +527,12 @@ class CatalogCache:
 
     async def refresh(self, settings, *, client=None, manual=False):
         if (
-            settings.mimi_route_model != ADMITTED_MODEL
-            or settings.mimi_route_reasoning_effort not in {"low", "high", "max"}
+            settings.mimi_route_model not in {ADMITTED_MODEL, LEGACY_DEEPSEEK_MODEL}
+            or settings.mimi_route_reasoning_effort not in {"none", "low", "high", "max"}
+            or (
+                settings.mimi_route_model == LEGACY_DEEPSEEK_MODEL
+                and settings.mimi_route_reasoning_effort == "none"
+            )
         ):
             raise NoEligibleEndpoint("selected_model_or_effort_not_admitted")
         try:

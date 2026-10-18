@@ -38,7 +38,7 @@ function ModelProfileDetails({ profiles }: { profiles: MimiModelProfile[] }) {
               OpenRouter · {profile.quantization || 'Quantization không được cung cấp'} · Effort: {profile.supported_efforts.length ? profile.supported_efforts.join(', ') : 'Theo model'}
             </p>
             <p className="text-xs text-muted-foreground">
-              Tổng context model: {profile.context_limit.toLocaleString('vi-VN')} token · dành {profile.output_reserve.toLocaleString('vi-VN')} token cho câu trả lời
+              Tổng context model: {profile.context_limit.toLocaleString('vi-VN')} token · dự trù context {profile.output_reserve.toLocaleString('vi-VN')} token. {profile.output_policy === 'provider_default' ? 'Output theo mặc định provider; đây không phải generation cap.' : 'Chính sách output theo cấu hình của call.'}
             </p>
             {profile.evidence ? <p className="mt-1 text-xs text-muted-foreground">Bằng chứng route: {profile.evidence}</p> : null}
             {!profile.available && profile.unavailable_reason ? (
@@ -221,7 +221,7 @@ export function MimiConfiguration({
                 </SelectContent>
               </Select>
             </div>
-            <div className="min-w-0 space-y-1.5"><p className="text-sm font-semibold">Operating input envelope</p><p className="text-sm">400.000 input +8.192 output reserve</p><p className="text-xs text-muted-foreground">Ngưỡng compact272K là trigger riêng. Model có thể quảng bá context lớn hơn envelope chung của Mimi.</p></div></> : null}
+            <div className="min-w-0 space-y-1.5"><p className="text-sm font-semibold">Operating input envelope</p><p className="text-sm">400.000 tokens · mục tiêu input mềm</p><p className="text-xs text-muted-foreground">Ngưỡng compact là trigger riêng theo cấu hình. Output theo mặc định provider; dự trù context không giới hạn độ dài trả lời hoặc thay thế reserve tiền.</p></div></> : null}
           </div>
 
           {surface === 'hub' ? <>
@@ -232,7 +232,7 @@ export function MimiConfiguration({
             {lastCall ? <div className="rounded-lg border p-2"><p>Lượt main gần nhất · {lastCall.state}</p><p>Yêu cầu: {lastCall.requested_model ?? 'chưa báo'} · {lastCall.requested_effort ?? 'chưa báo'}</p><p>Thực tế: {lastCall.actual_model ?? 'model chưa báo'} · {lastCall.actual_provider ?? 'provider chưa báo'} · effort thực tế chưa được API báo riêng.</p></div> : <p>Chưa có receipt provider của lượt main; không suy ra endpoint thực tế.</p>}
           </section>
           <p className="text-xs text-muted-foreground">
-            Mimi compact ở lượt sau khi provider báo input main đạt {selection.input_tokens.toLocaleString('vi-VN')} token. Đây là trigger theo usage, tách khỏi envelope400.000 input +8.192 output reserve. Guard byte hiện bảo thủ và có thể từ chối sớm hơn; không tự cắt nội dung. Lưu cấu hình chỉ áp dụng từ lượt chạy tiếp theo
+            Mimi compact ở lượt sau khi provider báo input main đạt {selection.input_tokens.toLocaleString('vi-VN')} token. Đây là trigger theo usage, tách khỏi mục tiêu input mềm400.000 tokens và dự trù output. Output theo mặc định provider. Guard byte giới hạn dung lượng request; không tự cắt nội dung. Lưu cấu hình chỉ áp dụng từ lượt chạy tiếp theo
             {activeRunId || runtimeActive ? '; lượt đang chạy giữ nguyên lựa chọn đã chốt.' : '.'}
           </p>
           </> : onOpenHub ? <Button type="button" variant="outline" onClick={() => { handleOpenChange(false); onOpenHub() }}>Mở Cấu hình Mimi trong Workspace</Button> : null}

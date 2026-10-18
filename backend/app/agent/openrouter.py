@@ -477,7 +477,6 @@ def build_request(
         # terminal parser independently enforces at most one tool call.
         "stream": stream,
         "store": False,
-        "max_tokens": route.mimi_route_max_output_tokens,
         "reasoning": {
             **(
                 {"effort": route.mimi_route_reasoning_effort}
@@ -489,6 +488,8 @@ def build_request(
         "usage": {"include": True},
         "provider": _provider_policy(route),
     }
+    if route.mimi_route_mode != "native":
+        request["max_tokens"] = route.mimi_route_max_output_tokens
     if final_answer_only:
         request["tool_choice"] = "none"
     elif not summary_mode:

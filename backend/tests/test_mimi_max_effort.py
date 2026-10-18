@@ -47,7 +47,7 @@ def settings(**updates):
     )
 
 
-@pytest.mark.parametrize("effort", ["low", "high", "max"])
+@pytest.mark.parametrize("effort", ["none", "low", "high", "max"])
 def test_saved_effort_roundtrips_and_next_run_cannot_mutate_prior_snapshot(effort, monkeypatch):
     base = settings()
     active = uuid7()
@@ -73,7 +73,7 @@ def test_saved_effort_roundtrips_and_next_run_cannot_mutate_prior_snapshot(effor
         assert reread["stored_config"]["effort"] == reread["config"]["effort"] == effort
         selected = bind_configuration(base, reread["stored_config"])
         assert selected.mimi_route_reasoning_effort == effort
-        assert prior.mimi_route_reasoning_effort == base.mimi_route_reasoning_effort == "low"
+        assert prior.mimi_route_reasoning_effort == base.mimi_route_reasoning_effort == "high"
         assert selected.model_dump(exclude={"mimi_route_reasoning_effort"}) == prior.model_dump(
             exclude={"mimi_route_reasoning_effort"}
         )
@@ -88,7 +88,8 @@ def test_saved_effort_roundtrips_and_next_run_cannot_mutate_prior_snapshot(effor
             )
             wire = build_request([], admitted, agent_contract=not helper, summary_mode=helper)
             assert wire["reasoning"] == {"effort": effort, "exclude": True}
-            assert wire["model"] == ADMITTED_MODEL and wire["max_tokens"] == 8192
+            assert wire["model"] == ADMITTED_MODEL
+            assert "max_tokens" not in wire and "max_completion_tokens" not in wire
             assert wire["provider"]["zdr"] is True
             assert wire["provider"]["data_collection"] == "deny"
             assert wire["provider"]["require_parameters"] is True
@@ -105,7 +106,7 @@ def test_saved_effort_roundtrips_and_next_run_cannot_mutate_prior_snapshot(effor
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("effort", ["medium", "xhigh", "ultra", "MAX", "default", "none", ""])
+@pytest.mark.parametrize("effort", ["medium", "xhigh", "ultra", "MAX", "default", ""])
 def test_deepseek_unsupported_values_are_rejected_without_aliasing(effort):
     with pytest.raises(HTTPException, match="mimi_route_selection_not_supported"):
         validate_configuration(dict(profile_id="deepseek", effort=effort, input_tokens=100_000))
@@ -124,9 +125,9 @@ def test_max_does_not_admit_other_families(profile):
 def test_approved_common_envelope_preserves_effort_and_profile_availability():
     base = settings()
     assert default_configuration(base) == dict(
-        profile_id="deepseek", effort="low", input_tokens=272_000, routing_mode="native"
+        profile_id="deepseek", effort="high", input_tokens=272_000, routing_mode="native"
     )
-    assert Settings.model_fields["mimi_route_reasoning_effort"].default == "low"
+    assert Settings.model_fields["mimi_route_reasoning_effort"].default == "high"
     assert base.mimi_route_max_output_tokens == 4096
     selected = bind_configuration(
         base, dict(profile_id="deepseek", effort="max", input_tokens=100_000)
@@ -140,6 +141,7 @@ def test_approved_common_envelope_preserves_effort_and_profile_availability():
     profiles = profiles_for_ui(base)
     assert [p["id"] for p in profiles if p["available"]] == ["deepseek"]
     assert next(p for p in profiles if p["id"] == "deepseek")["supported_efforts"] == [
+        "none",
         "low",
         "high",
         "max",
@@ -147,7 +149,7 @@ def test_approved_common_envelope_preserves_effort_and_profile_availability():
     assert default_configuration(settings(mimi_route_reasoning_effort="max"))["effort"] == "max"
 
 
-@pytest.mark.parametrize("effort", ["low", "high", "max"])
+@pytest.mark.parametrize("effort", ["none", "low", "high", "max"])
 def test_actual_compaction_helper_dispatch_and_journal_keep_selected_effort(effort, monkeypatch):
     class CapturedDispatch(RuntimeError):
         pass
@@ -204,7 +206,8 @@ def test_actual_compaction_helper_dispatch_and_journal_keep_selected_effort(effo
         )
     wire = captured[0]
     assert wire["reasoning"] == {"effort": effort, "exclude": True}
-    assert wire["model"] == ADMITTED_MODEL and wire["max_tokens"] == 8192
+    assert wire["model"] == ADMITTED_MODEL
+    assert "max_tokens" not in wire and "max_completion_tokens" not in wire
     assert "tools" not in wire and "tool_choice" not in wire
     # New durable policy admission seeds AppSetting as well; inspect the
     # actual provider journal rather than whichever object was added last.

@@ -25,7 +25,7 @@ def main() -> None:
         mimi_transport="openai_sdk",
         mimi_text_response_format="natural",
         mimi_standard_api_key="synthetic-never-dispatched",
-        mimi_route_model="deepseek/deepseek-v4.1-flash",
+        mimi_route_model="deepseek/deepseek-v4.1-flash-1017",
         mimi_route_provider="deepinfra",
         mimi_route_quantization="fp8",
         mimi_route_reasoning_effort="high",

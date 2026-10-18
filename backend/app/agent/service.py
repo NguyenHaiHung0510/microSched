@@ -823,15 +823,16 @@ async def _semantic_checkpoint(
     from app.agent.local_budget import account, reserve
 
     settings = bind_policy(settings, await read_policy(db, settings))
-    helper = settings.model_copy(
-        update={
-            "mimi_route_max_output_tokens": min(8192, settings.mimi_route_max_output_tokens),
-            # summary_mode sends its own strict JSON schema. Preserve the
-            # saved main text-wire setting so already-qualified summary-family
-            # evidence remains in the same material compatibility scope.
-            # Preserve the selected total cap and exact route; only output
-            # reserve is reduced for this bounded summary call.
-        }
+    # Summary keeps the selected route/output policy. Native helpers use provider
+    # defaults too; only legacy transports retain their historical helper cap.
+    helper = (
+        settings
+        if settings.mimi_route_mode == "native"
+        else settings.model_copy(
+            update={
+                "mimi_route_max_output_tokens": min(8192, settings.mimi_route_max_output_tokens)
+            }
+        )
     )
     messages = _compaction_messages(prior, sources, current_user_source)
     try:
@@ -880,6 +881,9 @@ async def _semantic_checkpoint(
             "context_revision": context_revision(settings, conversation.route_config_version, None),
             "context_limit": helper.mimi_route_context_tokens,
             "output_reserve": helper.mimi_route_max_output_tokens,
+            "output_policy": "provider_default"
+            if helper.mimi_route_mode == "native"
+            else "explicit_cap",
             "model": helper.mimi_route_model,
             "reasoning_effort": helper.mimi_route_reasoning_effort,
             "compaction_prompt_sha256": hashlib.sha256(
@@ -2466,6 +2470,9 @@ async def send_message(
                 "reasoning_effort": settings.mimi_route_reasoning_effort,
                 "context_limit": settings.mimi_route_context_tokens,
                 "output_reserve": settings.mimi_route_max_output_tokens,
+                "output_policy": "provider_default"
+                if settings.mimi_route_mode == "native"
+                else "explicit_cap",
                 "route_config_version": run_config_version,
                 "parent_run_id": str(parent_run_id) if parent_run_id else None,
                 "checkpoint": "provider_dispatch",

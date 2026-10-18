@@ -30,7 +30,7 @@ def test_ordinary_resume_first_typed_overflow_retains_recovery_and_user_source(p
         "MIMI_TRANSPORT": "openai_sdk",
         "MIMI_RUNNER": "current",
         "MIMI_ROUTE_MODE": "exact",
-        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash",
+        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash-1017",
         "MIMI_ROUTE_PROVIDER": "deepinfra",
         "MIMI_ROUTE_QUANTIZATION": "fp8",
         "MIMI_ROUTE_MAX_INPUT_PRICE": ".36",

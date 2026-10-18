@@ -531,5 +531,8 @@ def input_composition_observation(
         ],
         "input_envelope": 400_000,
         "output_reserve": settings.mimi_route_max_output_tokens,
+        "output_policy": "provider_default"
+        if settings.mimi_route_mode == "native"
+        else "explicit_cap",
         "compact_trigger": settings.mimi_compaction_trigger_tokens,
     }

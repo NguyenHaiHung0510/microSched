@@ -31,11 +31,11 @@ test('profiles without advertised effort levels use the provider default', () =>
   expect(effortOptions(profile({ supported_efforts: ['medium'] }))).toEqual(['medium'])
 })
 
-test('DeepSeek exposes low, high and max exactly as advertised by the server', () => {
+test('DeepSeek exposes none, low, high and max exactly as advertised by the server', () => {
   expect(effortOptions(profile({
     id: 'deepseek',
-    model: 'deepseek/deepseek-v4.1-flash',
-    supported_efforts: ['low', 'high', 'max'],
-  }))).toEqual(['low', 'high', 'max'])
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    supported_efforts: ['none', 'low', 'high', 'max'],
+  }))).toEqual(['none', 'low', 'high', 'max'])
   expect(effortOptions(profile())).toEqual(['low', 'high'])
 })

@@ -26,7 +26,7 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
     monkeypatch.setenv("MIMI_LIVE_PROVIDER_ENABLED", "1")
     monkeypatch.setenv("MIMI_CONTEXT_V1_ENABLED", "1")
     monkeypatch.setenv("MIMI_STANDARD_API_KEY", "synthetic-never-sent")
-    monkeypatch.setenv("MIMI_ROUTE_MODEL", "deepseek/deepseek-v4.1-flash")
+    monkeypatch.setenv("MIMI_ROUTE_MODEL", "deepseek/deepseek-v4.1-flash-1017")
     monkeypatch.setenv("MIMI_ROUTE_PROVIDER", "deepinfra")
     monkeypatch.setenv("MIMI_ROUTE_QUANTIZATION", "fp8")
     monkeypatch.setenv("MIMI_ROUTE_MAX_INPUT_PRICE", "0.2")
@@ -69,7 +69,7 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
                 )
             )
             assert authority["authority_envelope"]["allowed_tools"]
-            assert kwargs["settings"].mimi_route_model == "deepseek/deepseek-v4.1-flash"
+            assert kwargs["settings"].mimi_route_model == "deepseek/deepseek-v4.1-flash-1017"
             turn = len(calls)
             if turn == 1:
                 outcome = ToolRequests(
@@ -129,7 +129,7 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
                 response_id=f"synthetic-journey-{turn}",
                 usage={},
                 provider="Synthetic",
-                model="deepseek/deepseek-v4.1-flash",
+                model="deepseek/deepseek-v4.1-flash-1017",
             )
 
         import httpx2
@@ -171,6 +171,7 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
             wires.append(wire)
             assert not {"only", "order", "sort"} & wire["provider"].keys()
             assert wire["provider"]["allow_fallbacks"] is True
+            assert "max_tokens" not in wire and "max_completion_tokens" not in wire
             assert wire["provider"]["zdr"] and wire["provider"]["data_collection"] == "deny"
             assert wire["store"] is False
             assert wire["session_id"] == service._provider_session_id(cid)

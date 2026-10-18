@@ -135,6 +135,7 @@ export type MimiContextComposition = {
   categories?: { id: string; value: number; state: 'measured_bytes' | 'estimated' | 'unknown' }[]
   input_envelope?: number
   output_reserve?: number
+  output_policy?: 'provider_default' | 'explicit_cap'
   compact_trigger?: number
 }
 
@@ -200,6 +201,7 @@ export type MimiCapabilities = {
   model_selection_enabled: boolean
   context_limit: number
   output_reserve: number
+  output_policy?: 'provider_default' | 'explicit_cap'
   policy_id: string | null
   policy_sha256: string | null
   model_profiles?: MimiModelProfile[]
@@ -219,6 +221,7 @@ export type MimiModelProfile = {
   supported_efforts: string[]
   context_limit: number
   output_reserve: number
+  output_policy?: 'provider_default' | 'explicit_cap'
   available: boolean
   unavailable_reason: string | null
   evidence?: string

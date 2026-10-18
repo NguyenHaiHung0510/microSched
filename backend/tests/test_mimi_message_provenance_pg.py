@@ -412,7 +412,7 @@ def test_actual_transport_and_restart_sources(pg_dsn, monkeypatch):
         "MIMI_LIVE_PROVIDER_ENABLED": "1",
         "MIMI_CONTEXT_V1_ENABLED": "1",
         "MIMI_STANDARD_API_KEY": "synthetic-not-sent",
-        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash",
+        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash-1017",
         "MIMI_ROUTE_PROVIDER": "deepinfra",
         "MIMI_ROUTE_QUANTIZATION": "fp8",
         "MIMI_ROUTE_REASONING_EFFORT": "low",
@@ -431,7 +431,7 @@ def test_actual_transport_and_restart_sources(pg_dsn, monkeypatch):
             response_id="synthetic75-transport",
             usage={},
             provider="Synthetic",
-            model="deepseek/deepseek-v4.1-flash",
+            model="deepseek/deepseek-v4.1-flash-1017",
         )
 
     monkeypatch.setattr(service, "openrouter_complete", completion)

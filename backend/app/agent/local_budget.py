@@ -85,6 +85,13 @@ def key_meter(settings):
         raise RouteContractError("local_budget_key_meter_unknown") from None
 
 
+def _money_only(ledger: dict) -> bool:
+    mode = ledger.get("budget_mode", "capped")
+    if mode not in {"capped", "money_only"}:
+        raise RouteContractError("local_budget_mode_invalid")
+    return mode == "money_only"
+
+
 def _historical_baseline(ledger: dict) -> tuple[Decimal, int, int]:
     """Settled cost plus full unresolved holds; no invented historical receipts."""
     from app.agent.config_policy import finite_price
@@ -97,13 +104,16 @@ def _historical_baseline(ledger: dict) -> tuple[Decimal, int, int]:
             raise ValueError("history_exceeds_cap")
     except ValueError:
         raise RouteContractError("local_budget_history_invalid") from None
+    money_only = _money_only(ledger)
     dispatches = ledger.get("historical_dispatch_count", 0)
     max_dispatches = ledger.get("historical_max_dispatch_count", 0)
     if (
         type(dispatches) is not int
-        or not 0 <= dispatches <= 92
+        or dispatches < 0
+        or (not money_only and dispatches > 92)
         or type(max_dispatches) is not int
-        or not 0 <= max_dispatches <= min(dispatches, 8)
+        or not 0 <= max_dispatches <= dispatches
+        or (not money_only and max_dispatches > 8)
     ):
         raise RouteContractError("local_budget_history_invalid")
     return total, dispatches, max_dispatches
@@ -126,13 +136,29 @@ def reserve(
         raise RouteContractError("local_budget_route_price_missing")
     from app.agent.config_policy import finite_price
 
+    prompt_price = finite_price(settings.mimi_route_max_input_price)
+    completion_price = finite_price(settings.mimi_route_max_output_price)
+    # Legacy capped ledgers retain their old reservation semantics. Money-only
+    # native admission below uses a shared input+completion window instead.
+    output_bound = settings.mimi_route_max_output_tokens
     maximum = (
-        Decimal(upper_input) * finite_price(settings.mimi_route_max_input_price)
-        + Decimal(settings.mimi_route_max_output_tokens)
-        * finite_price(settings.mimi_route_max_output_price)
+        Decimal(upper_input) * prompt_price + Decimal(output_bound) * completion_price
     ) / Decimal(1_000_000)
+    reservation_basis = "legacy_prompt_plus_output_reserve"
     with _locked(path):
         ledger = json.loads(path.read_text(encoding="utf-8"))
+        money_only = _money_only(ledger)
+        if money_only and settings.mimi_route_mode == "native":
+            window = settings.mimi_route_context_tokens
+            if type(window) is not int or not 0 < window <= 16_777_216 or window != upper_input:
+                raise RouteContractError("local_budget_native_context_bound_invalid")
+            # OpenRouter parameters contract: output <= context minus prompt;
+            # completion includes reasoning. Therefore I+O<=window and
+            # I*input_price+O*output_price<=window*max(input_price,output_price).
+            # No tokenizer, provider-max resolver,8K pseudo cap or double reserve.
+            maximum = Decimal(window) * max(prompt_price, completion_price) / Decimal(1_000_000)
+            output_bound = window
+            reservation_basis = "shared_context_window_max_price"
         cap = finite_price(ledger["cap_usd"])
         if ledger.get("grant_key_name") != "MIMI_DEMO_1" or not 0 < cap <= 3:
             raise RouteContractError("local_budget_grant_invalid")
@@ -143,28 +169,29 @@ def reserve(
             raise RouteContractError("local_budget_prior_reservation_exceeded")
         if any(c["state"] != "accounted" for c in ledger["calls"]):
             raise RouteContractError("local_budget_prior_spend_unknown")
-        max_calls = ledger.get("max_paid_dispatches", 16)
-        if (
-            not isinstance(max_calls, int)
-            or isinstance(max_calls, bool)
-            or not 1 <= max_calls <= 92
-        ):
-            raise RouteContractError("local_budget_dispatch_grant_invalid")
-        if historical_calls > max_calls:
-            raise RouteContractError("local_budget_history_invalid")
-        if historical_calls + len(ledger["calls"]) >= max_calls:
-            raise RouteContractError("local_budget_dispatch_cap_exhausted")
-        max_effort_calls = ledger.get("max_conditional_max_dispatches", 0)
-        if type(max_effort_calls) is not int or not 0 <= max_effort_calls <= 8:
-            raise RouteContractError("local_budget_MAX_grant_invalid")
-        if historical_max_calls > max_effort_calls:
-            raise RouteContractError("local_budget_history_invalid")
-        if (
-            settings.mimi_route_reasoning_effort == "max"
-            and historical_max_calls + sum(c.get("effort") == "max" for c in ledger["calls"])
-            >= max_effort_calls
-        ):
-            raise RouteContractError("local_budget_MAX_cap_exhausted")
+        if not money_only:
+            max_calls = ledger.get("max_paid_dispatches", 16)
+            if (
+                not isinstance(max_calls, int)
+                or isinstance(max_calls, bool)
+                or not 1 <= max_calls <= 92
+            ):
+                raise RouteContractError("local_budget_dispatch_grant_invalid")
+            if historical_calls > max_calls:
+                raise RouteContractError("local_budget_history_invalid")
+            if historical_calls + len(ledger["calls"]) >= max_calls:
+                raise RouteContractError("local_budget_dispatch_cap_exhausted")
+            max_effort_calls = ledger.get("max_conditional_max_dispatches", 0)
+            if type(max_effort_calls) is not int or not 0 <= max_effort_calls <= 8:
+                raise RouteContractError("local_budget_MAX_grant_invalid")
+            if historical_max_calls > max_effort_calls:
+                raise RouteContractError("local_budget_history_invalid")
+            if (
+                settings.mimi_route_reasoning_effort == "max"
+                and historical_max_calls + sum(c.get("effort") == "max" for c in ledger["calls"])
+                >= max_effort_calls
+            ):
+                raise RouteContractError("local_budget_MAX_cap_exhausted")
         total = historical_total + sum(
             (finite_price(c["charged_or_reserved_usd"]) for c in ledger["calls"]), Decimal(0)
         )
@@ -181,7 +208,11 @@ def reserve(
             "observed_at": datetime.now(UTC).isoformat(),
         }
         _write(path, ledger)
-        if measured + maximum > Decimal(ledger["cap_usd"]) or remaining < maximum:
+        # Preserve unresolved historical liabilities even when the fresh meter
+        # has advanced ahead of journaled receipts. Settled costs are not added
+        # to measured usage a second time.
+        held = finite_price(ledger.get("historical_reserved_usd", 0)) if money_only else Decimal(0)
+        if measured + held + maximum > cap or remaining < held + maximum:
             raise RouteContractError("local_budget_key_meter_exhausted")
         if total + maximum > Decimal(ledger["cap_usd"]):
             raise RouteContractError("local_budget_exhausted")
@@ -199,7 +230,16 @@ def reserve(
                     "completion": str(settings.mimi_route_max_output_price),
                 },
                 "input_upper_bound": upper_input,
-                "output_cap": settings.mimi_route_max_output_tokens,
+                "output_cap": None if settings.mimi_route_mode == "native" else output_bound,
+                "output_policy": "provider_default"
+                if settings.mimi_route_mode == "native"
+                else "explicit_cap",
+                "output_billing_upper_bound": output_bound,
+                "context_billing_upper_bound": upper_input
+                if reservation_basis == "shared_context_window_max_price"
+                else None,
+                "reservation_basis": reservation_basis,
+                "purpose": "compaction" if summary_mode else "main",
                 "reservation_usd": str(maximum),
                 "charged_or_reserved_usd": str(maximum),
                 "reserved_at": datetime.now(UTC).isoformat(),

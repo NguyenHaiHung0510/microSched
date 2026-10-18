@@ -27,7 +27,7 @@ def live_double(monkeypatch):
         "MIMI_LIVE_PROVIDER_ENABLED": "1",
         "MIMI_CONTEXT_V1_ENABLED": "1",
         "MIMI_STANDARD_API_KEY": "synthetic-never-sent",
-        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash",
+        "MIMI_ROUTE_MODEL": "deepseek/deepseek-v4.1-flash-1017",
         "MIMI_ROUTE_PROVIDER": "deepinfra",
         "MIMI_ROUTE_QUANTIZATION": "fp8",
         "MIMI_ROUTE_MAX_INPUT_PRICE": "0.2",
@@ -167,7 +167,7 @@ def test_prior_run_selection_cannot_authorize_revision_even_with_current_reads(
                 response_id=f"synthetic-{phase}-{step}",
                 usage={},
                 provider="Synthetic",
-                model="deepseek/deepseek-v4.1-flash",
+                model="deepseek/deepseek-v4.1-flash-1017",
             )
 
         monkeypatch.setattr(service, "openrouter_complete", fake)
@@ -324,7 +324,7 @@ def test_single_create_revision_rejects_collection_terminal_at_service_gate(
                 response_id=f"synthetic-single-{len(calls)}",
                 usage={},
                 provider="Synthetic",
-                model="deepseek/deepseek-v4.1-flash",
+                model="deepseek/deepseek-v4.1-flash-1017",
             )
 
         monkeypatch.setattr(service, "openrouter_complete", fake)

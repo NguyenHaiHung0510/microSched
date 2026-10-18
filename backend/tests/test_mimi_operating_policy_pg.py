@@ -25,7 +25,7 @@ def test_durable_policy_CAS_and_save_send_ordering(pg_dsn, monkeypatch):
     async def scenario():
         engine = create_async_engine(async_postgres_url(pg_dsn))
         maker = async_sessionmaker(engine, expire_on_commit=False)
-        selected = Settings(_env_file=None, mimi_route_model="deepseek/deepseek-v4.1-flash")
+        selected = Settings(_env_file=None, mimi_route_model="deepseek/deepseek-v4.1-flash-1017")
         initial = policy.bootstrap_policy(selected)
         prices = initial.model_dump(mode="json")["prices"]
         prices[selected.mimi_route_model] = {"prompt": ".05", "completion": ".10"}

@@ -42,6 +42,8 @@ _METADATA_HEADERS = {"X-OpenRouter-Metadata": "enabled"}
 
 
 def _timeout(settings: Settings) -> Timeout:
+    # HTTPX applies read timeout to each network read (idle), not total stream
+    # duration. The run/graph owns its separate finite wall-clock deadline.
     seconds = min(float(settings.mimi_run_deadline_seconds), _MAX_TIMEOUT_SECONDS)
     return Timeout(seconds, connect=_CONNECT_TIMEOUT_SECONDS)
 

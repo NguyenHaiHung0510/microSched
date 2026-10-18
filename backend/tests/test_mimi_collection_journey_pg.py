@@ -24,7 +24,7 @@ def test_current_serializer_fake_collection_journey_and_causal_request_capture(p
     monkeypatch.setenv("MIMI_LIVE_PROVIDER_ENABLED", "1")
     monkeypatch.setenv("MIMI_CONTEXT_V1_ENABLED", "1")
     monkeypatch.setenv("MIMI_STANDARD_API_KEY", "synthetic-never-sent")
-    monkeypatch.setenv("MIMI_ROUTE_MODEL", "deepseek/deepseek-v4.1-flash")
+    monkeypatch.setenv("MIMI_ROUTE_MODEL", "deepseek/deepseek-v4.1-flash-1017")
     monkeypatch.setenv("MIMI_ROUTE_PROVIDER", "deepinfra")
     monkeypatch.setenv("MIMI_ROUTE_QUANTIZATION", "fp8")
     monkeypatch.setenv("MIMI_ROUTE_MAX_INPUT_PRICE", "0.2")
@@ -51,7 +51,7 @@ def test_current_serializer_fake_collection_journey_and_causal_request_capture(p
                 )
             )
             assert authority["authority_envelope"]["allowed_tools"]
-            assert kwargs["settings"].mimi_route_model == "deepseek/deepseek-v4.1-flash"
+            assert kwargs["settings"].mimi_route_model == "deepseek/deepseek-v4.1-flash-1017"
             turn = len(calls)
             if turn == 1:
                 outcome = ToolRequests(
@@ -111,7 +111,7 @@ def test_current_serializer_fake_collection_journey_and_causal_request_capture(p
                 response_id=f"synthetic-journey-{turn}",
                 usage={},
                 provider="Synthetic",
-                model="deepseek/deepseek-v4.1-flash",
+                model="deepseek/deepseek-v4.1-flash-1017",
             )
 
         monkeypatch.setattr(service, "openrouter_complete", fake)
