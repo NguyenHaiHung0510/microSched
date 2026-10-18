@@ -15,6 +15,7 @@ export function MimiContextComposition({ conversation }: { conversation: MimiCon
   const titleId = useId()
   const actual = lastMeasuredInput(conversation)
   const compact = 400000
+  const trigger = conversation.metrics?.context_policy?.compaction_trigger_tokens
   const percent = actual == null ? 0 : Math.min(actual / compact * 100, 100)
   function clearClose() { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null } }
   function leave() { clearClose(); if (!pinned.current) closeTimer.current = setTimeout(() => setOpen(false), 240) }
@@ -26,7 +27,7 @@ export function MimiContextComposition({ conversation }: { conversation: MimiCon
       onPointerEnter={event => { if (event.pointerType === 'mouse') { clearClose(); setOpen(true) } }} onPointerLeave={leave}
       onFocus={() => { if (restoring.current) { restoring.current = false; return } if (!pointerFocus.current) setOpen(true) }}
       onClick={event => { event.preventDefault(); clearClose(); pinned.current = true; setOpen(true) }}>
-      <span className="mimi-context-ring" style={{ '--context-percent': `${percent}%` } as React.CSSProperties} aria-hidden="true" />
+      <span className="mimi-context-ring" style={{ '--context-percent': `${percent}%` } as React.CSSProperties} aria-hidden="true">{trigger != null ? <span className="mimi-context-soft-marker" style={{ transform: `rotate(${trigger / compact * 360}deg)` }} /> : null}</span>
       <span className="hidden text-xs sm:inline">{actual == null ? '— / 400k' : `${format(actual)} / 400k`}</span>
 
     </Button></PopoverTrigger>

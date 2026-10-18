@@ -254,6 +254,14 @@ async def _seed_observed_trigger(db, conversation, run_id, settings):
                 "context_revision": context_revision(
                     settings, conversation.route_config_version, None
                 ),
+                "input_projection": {
+                    "version": 1,
+                    "request_fingerprint": "c" * 64,
+                    "projection_fingerprint": "d" * 64,
+                    "checkpoint_id": None,
+                    "message_frontier": 0,
+                    "model": settings.mimi_route_model,
+                },
                 "model": settings.mimi_route_model,
                 "actual_model": settings.mimi_route_model,
                 "actual_provider": settings.mimi_route_provider,

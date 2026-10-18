@@ -20,7 +20,8 @@ def context_revision(settings: Settings, config_version: int, checkpoint_id: Any
     from app.agent.tools.registry import registry_hash, tools_for_settings
 
     value = {
-        "version": 1,
+        "version": 2,
+        "working_projection": settings.mimi_working_projection_enabled,
         "checkpoint_id": str(checkpoint_id) if checkpoint_id else None,
         "route_config_version": config_version,
         "model": settings.mimi_route_model,
@@ -50,7 +51,13 @@ def reported_number(value: Any) -> int | float | None:
 
 
 def prompt_observation(
-    call: Any, revision: str, *, consumed: bool = False, trigger_tokens: int = COMPACTION_TRIGGER
+    call: Any,
+    revision: str,
+    *,
+    consumed: bool = False,
+    trigger_tokens: int = COMPACTION_TRIGGER,
+    checkpoint_id: Any = None,
+    require_projection: bool = False,
 ) -> dict[str, Any]:
     result = {
         "context_revision": revision,
@@ -67,10 +74,12 @@ def prompt_observation(
     route = call.route or {}
     if route.get("purpose", "main") != "main" or route.get("kind") != "openrouter":
         result["reason"] = "not_main_conversation"
-    elif route.get("paid_dispatch") is False:
+    elif route.get("paid_dispatch") is False or route.get("dispatch_not_started") is True:
         result["reason"] = "reused_receipt"
     elif route.get("context_revision") != revision:
         result["reason"] = "stale_context_revision"
+    elif require_projection and not valid_input_projection(call, checkpoint_id):
+        result["reason"] = "projection_measurement_binding_missing_or_stale"
     elif call.state == "failed" and route.get("input_overflow_refusal") is True:
         exhausted = consumed or route.get("overflow_recovery_attempt", 0) >= 1
         result.update(
@@ -81,7 +90,14 @@ def prompt_observation(
             else "typed_input_overflow_refusal",
         )
     elif (
-        call.state != "succeeded"
+        (
+            call.state != "succeeded"
+            and not (
+                call.state in {"failed", "unknown", "reconciled"}
+                and valid_input_projection(call, checkpoint_id)
+            )
+        )
+        or not route.get("model")
         or route.get("actual_model") != route.get("model")
         or (
             route.get("mode") != "native"
@@ -98,7 +114,7 @@ def prompt_observation(
         result["reason"] = "unverified_main_route"
     else:
         value = (call.usage or {}).get("prompt_tokens")
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        if _token(value) is None:
             result["reason"] = "prompt_usage_missing"
         else:
             result.update(
@@ -347,27 +363,35 @@ def accounting_summary(dispatches: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def conversation_metrics(
-    calls: list[Any], runs: list[Any], messages: list[Any], *, as_of: str, scope_start: str
+    calls: list[Any],
+    runs: list[Any],
+    messages: list[Any],
+    *,
+    as_of: str,
+    scope_start: str,
+    trigger_tokens: int = COMPACTION_TRIGGER,
 ) -> dict[str, Any]:
     dispatches, reused = accounting_dispatches(calls)
     measured = None
     for call in calls:
-        route, usage = call.route or {}, call.usage or {}
-        if (
-            route.get("kind") == "openrouter"
-            and route.get("purpose", "main") == "main"
-            and route.get("paid_dispatch") is not False
-            and route.get("dispatch_not_started") is not True
-            and call.state == "succeeded"
-            and route.get("model")
-            and route.get("actual_model") == route.get("model")
-            and route.get("actual_provider")
-            and _token(usage.get("prompt_tokens")) is not None
-        ):
+        route = call.route or {}
+        observation = prompt_observation(
+            call,
+            route.get("context_revision"),
+            checkpoint_id=(route.get("input_projection") or {}).get("checkpoint_id"),
+            require_projection=bool(route.get("input_projection")),
+        )
+        if observation["eligible"]:
+            binding = route.get("input_projection") or {}
             measured = {
-                "tokens": usage["prompt_tokens"],
+                "tokens": observation["prompt_tokens"],
                 "as_of": str(getattr(call, "updated_at", as_of)),
                 "state": "last_measured_current_projection_pending",
+                "request_fingerprint": binding.get("request_fingerprint"),
+                "projection_fingerprint": binding.get("projection_fingerprint"),
+                "message_frontier": binding.get("message_frontier"),
+                "working_frontier": binding.get("working_frontier"),
+                "model": route.get("actual_model") or route.get("model"),
             }
     bound = {
         str(m.run_id): str(m.id) for m in messages if m.role == "assistant" and m.run_id is not None
@@ -407,7 +431,27 @@ def conversation_metrics(
         "provenance": "server_receipts_native_usage_and_matching_generation_metadata",
         "retention": "existing_deletion_policy_no_shadow_history",
         "last_measured_input": measured,
+        "context_policy": {
+            "operating_input_tokens": 400_000,
+            "compaction_trigger_tokens": trigger_tokens,
+            "current_projection_measurement": "pending",
+        },
         "reused_calls": reused,
         **accounting_summary(dispatches),
         "responses": rows,
     }
+
+
+def valid_input_projection(call, checkpoint_id) -> bool:
+    binding = (call.route or {}).get("input_projection")
+    return (
+        isinstance(binding, dict)
+        and binding.get("version") == 1
+        and binding.get("request_fingerprint") == call.request_fingerprint
+        and isinstance(binding.get("projection_fingerprint"), str)
+        and len(binding["projection_fingerprint"]) == 64
+        and binding.get("model") == (call.route or {}).get("model")
+        and binding.get("checkpoint_id") == (str(checkpoint_id) if checkpoint_id else None)
+        and type(binding.get("message_frontier")) is int
+        and binding["message_frontier"] >= 0
+    )

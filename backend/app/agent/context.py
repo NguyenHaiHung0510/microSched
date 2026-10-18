@@ -70,7 +70,7 @@ class PendingDraft(StrictModel):
 class PendingPreview(StrictModel):
     id: UUID
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    source_versions: dict[str, str]
+    source_versions: dict[str, Any]
     expiry: datetime
 
 
@@ -89,6 +89,7 @@ class ContextManifest(StrictModel):
     checkpoint_id: UUID | None
     checkpoint_frontier: int = Field(ge=0)
     transcript_range: tuple[int, int] | None
+    working_history: dict[str, Any] | None = None
     sources: tuple[SourceManifest, ...]
     pending_draft: PendingDraft | None
     pending_preview: PendingPreview | None
@@ -124,7 +125,7 @@ class ContextEnvelope(StrictModel):
     authority: AuthorityEnvelope
     manifest: ContextManifest
     checkpoint: str | dict[str, Any] | None
-    transcript_suffix: tuple[dict[str, str], ...]
+    transcript_suffix: tuple[dict[str, Any], ...]
     pending_state: dict[str, Any]
     domain_evidence: tuple[dict[str, Any], ...]
     current_user_turn: str

@@ -266,6 +266,7 @@ class CheckpointSource:
     role: str
     content_sha256: str
     content: str
+    working: dict[str, Any] | None = None
 
 
 def _digest(value: Any) -> str:
@@ -278,6 +279,16 @@ def _expected_summary(
 ) -> tuple[str, int]:
     excerpts = [
         f"{item.role} #{item.sequence}: {item.content[:MAX_EXCERPT_CHARS]}" for item in sources
+    ]
+    excerpts = [
+        text
+        + (
+            "\nHistorical tool progress/as-of: "
+            + json.dumps(source.working["messages"], ensure_ascii=False)[:MAX_EXCERPT_CHARS]
+            if source.working
+            else ""
+        )
+        for text, source in zip(excerpts, sources, strict=True)
     ]
     prior_summary = prior["summary"] if prior is not None else ""
     full_summary = "\n".join(([prior_summary] if prior_summary else []) + excerpts)
@@ -321,6 +332,18 @@ def make_checkpoint(
         "pending_preview": pending_preview,
         "pending_draft": pending_draft,
     }
+    working_refs = list(prior.get("working_sources", []) if prior else [])
+    for source in sources:
+        if source.working and source.working["ref"] not in working_refs:
+            working_refs.append(source.working["ref"])
+    if working_refs:
+        if len(working_refs) > 1000:
+            raise ValueError("checkpoint_working_source_bound")
+        checkpoint["working_sources"] = working_refs
+        checkpoint["working_frontier"] = {
+            "message_sequence": frontier,
+            "event_refs_sha256": _digest(working_refs),
+        }
     validate_checkpoint(checkpoint, expected_sources=sources, prior=prior)
     return checkpoint
 
@@ -347,6 +370,17 @@ def validate_checkpoint(
         "pending_preview",
         "pending_draft",
     }
+    if "working_sources" in checkpoint:
+        required.update({"working_sources", "working_frontier"})
+        expected_working = list(prior.get("working_sources", []) if prior else [])
+        for source in expected_sources:
+            if source.working and source.working["ref"] not in expected_working:
+                expected_working.append(source.working["ref"])
+        if checkpoint["working_sources"] != expected_working or checkpoint["working_frontier"] != {
+            "message_sequence": expected_sources[-1].sequence,
+            "event_refs_sha256": _digest(expected_working),
+        }:
+            raise ValueError("checkpoint_working_frontier_invalid")
     semantic = checkpoint.get("summary_kind") == "semantic_model"
     if semantic:
         required.add("constraint_ledger")

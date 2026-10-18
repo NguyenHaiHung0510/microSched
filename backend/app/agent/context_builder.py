@@ -42,7 +42,7 @@ def assemble_context(
     conversation_id: UUID,
     generation: int,
     request_id: str,
-    transcript_suffix: list[dict[str, str]],
+    transcript_suffix: list[dict[str, Any]],
     current_user_turn: str,
     task_context: list[dict[str, Any]],
     pending_preview_content: list[dict[str, Any]],
@@ -57,7 +57,8 @@ def assemble_context(
     remaining_tool_calls: int,
     pending_draft_content: str | None = None,
     selection_context: dict | None = None,
-) -> tuple[ContextEnvelope, list[dict[str, str]]]:
+    working_history: dict[str, Any] | None = None,
+) -> tuple[ContextEnvelope, list[dict[str, Any]]]:
     """Return ephemeral plaintext and provider messages; callers persist only metadata."""
 
     policy = load_standard_policy(collection_enabled=settings.mimi_collection_enabled)
@@ -168,6 +169,7 @@ def assemble_context(
         checkpoint_id=checkpoint_id,
         checkpoint_frontier=checkpoint_frontier,
         transcript_range=transcript_range,
+        working_history=working_history,
         sources=(source, preview_source, draft_source),
         pending_draft=pending_draft,
         pending_preview=pending_preview,
@@ -293,7 +295,7 @@ def assemble_context(
     return envelope, messages
 
 
-def serialize_openrouter_messages(envelope: ContextEnvelope) -> list[dict[str, str]]:
+def serialize_openrouter_messages(envelope: ContextEnvelope) -> list[dict[str, Any]]:
     """Keep reusable context ahead of fresh system authority; domain prose stays data."""
 
     stable = {"role": "system", "content": envelope.policy_text}
@@ -535,4 +537,49 @@ def input_composition_observation(
         if settings.mimi_route_mode == "native"
         else "explicit_cap",
         "compact_trigger": settings.mimi_compaction_trigger_tokens,
+    }
+
+
+def input_projection_observation(
+    envelope: ContextEnvelope,
+    messages,
+    *,
+    settings: Settings,
+    session_id: str | None = None,
+    stream: bool = False,
+    force_task_tool: bool = False,
+):
+    """Bind native input usage to this wire and history lineage, without an estimate."""
+    from app.agent.loop import messages_final_only
+    from app.agent.openrouter import build_request
+
+    request = build_request(
+        messages,
+        settings=settings,
+        agent_contract=True,
+        session_id=session_id,
+        stream=stream,
+        force_task_tool=force_task_tool,
+        final_answer_only=messages_final_only(messages),
+    )
+    original = serialize_openrouter_messages(envelope)
+    projection = {
+        "checkpoint": envelope.checkpoint,
+        "transcript": envelope.transcript_suffix,
+        "current_user": envelope.current_user_turn,
+        "loop_suffix": messages[len(original) :],
+    }
+    return {
+        "version": 1,
+        "request_fingerprint": _source_hash(request),
+        "projection_fingerprint": _source_hash(projection),
+        "checkpoint_id": str(envelope.manifest.checkpoint_id)
+        if envelope.manifest.checkpoint_id
+        else None,
+        "message_frontier": envelope.manifest.checkpoint_frontier,
+        "working_frontier": (envelope.manifest.working_history or {}).get("lineage"),
+        "working_refs": (envelope.manifest.working_history or {}).get("working_refs", []),
+        "model": settings.mimi_route_model,
+        "observed_request_at": datetime.now(UTC).isoformat(),
+        "measurement": "provider_native_input_pending",
     }

@@ -10,6 +10,7 @@ const accounting: MimiConversationMetrics = {
   version: 1, scope: 'all_retained_conversation_receipts', scope_complete: true,
   scope_start: now, as_of: now, provenance: 'synthetic_server_receipts', retention: 'existing',
   reused_calls: 1, eligible_dispatches: 2,
+  context_policy: { operating_input_tokens: 400000, compaction_trigger_tokens: 272000, current_projection_measurement: 'pending' },
   last_measured_input: { tokens: 64000, as_of: now, state: 'last_measured_current_projection_pending' },
   input: metric(320000), output: metric(48000), reasoning: metric(36000),
   usd: { known: '0.042700001', observed: 1, missing: 1, complete: false },
@@ -114,9 +115,12 @@ for (const scenario of ['stats-composer', 'activity-stop', 'review'] as const) {
         await expect(page.getByRole('button', { name: 'Xem lượt mới nhất' })).toHaveCount(0)
         const meter = page.getByTestId('mimi-run-context-inspector')
         await expect(meter.locator('xpath=..').getByTestId('mimi-route-settings')).toBeVisible()
+        await expect(meter.locator('.mimi-context-soft-marker')).toHaveCSS('transform', /matrix/)
         await meter.focus()
         const popover = page.getByRole('dialog', { name: 'Thống kê hội thoại' })
         await expect(popover).toBeVisible()
+        await expect(popover).toContainText('Ngưỡng compact mềm')
+        await expect(popover).toContainText('272.000')
         const popText = await popover.getByTestId('mimi-metrics-summary').innerHTML()
         await expect(popover.getByTestId('mimi-metrics-responses')).not.toHaveAttribute('open', '')
         await page.keyboard.press('Escape')

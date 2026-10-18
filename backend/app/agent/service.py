@@ -48,6 +48,7 @@ from app.agent.context import (
 from app.agent.context_builder import (
     assemble_context,
     input_composition_observation,
+    input_projection_observation,
     rebind_after_read,
     rebind_policy_budget,
 )
@@ -115,6 +116,17 @@ from app.agent.task_collection import (
 )
 from app.agent.tool_activity import tool_activity
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, execute_read_tool
+from app.agent.working_context import (
+    KIND as WORKING_KIND,
+)
+from app.agent.working_context import (
+    WorkingHistory,
+    checkpoint_for_egress,
+    load_history,
+    persist_confirmed,
+    persist_finalized,
+    working_refs_current,
+)
 from app.core.db import get_engine, get_sessionmaker
 from app.core.settings import Settings, get_settings
 from app.domain.models import AuditLog, AuthSession, Task
@@ -348,6 +360,7 @@ def _manifest_receipt(envelope: ContextEnvelope) -> dict[str, Any]:
         "checkpoint_id": str(manifest.checkpoint_id) if manifest.checkpoint_id else None,
         "checkpoint_frontier": manifest.checkpoint_frontier,
         "transcript_range": manifest.transcript_range,
+        "working_history": manifest.working_history,
         "input_upper_bound": manifest.budget.serialized_input_upper_bound,
         "input_measurement": "serialized_bytes",
         "compaction_trigger_tokens": manifest.budget.compaction_trigger_tokens,
@@ -756,6 +769,7 @@ def _compaction_messages(
     prior: dict[str, Any] | None,
     sources: list[CheckpointSource],
     current_user_source: CheckpointSource | None = None,
+    prior_working_allowed: bool = True,
 ):
     prompt = (
         Path(__file__)
@@ -768,7 +782,8 @@ def _compaction_messages(
     # historical receipts, inactive records or server-owned pending objects.
     wire_prior = None
     if prior is not None:
-        wire_prior = {key: prior[key] for key in ("frontier", "summary", "summary_kind")}
+        safe_prior = checkpoint_for_egress(prior, prior_working_allowed)
+        wire_prior = {key: safe_prior[key] for key in ("frontier", "summary", "summary_kind")}
         if "constraint_ledger" in prior:
             wire_prior["constraint_ledger"] = [
                 {
@@ -799,6 +814,7 @@ def _compaction_messages(
                             "role": source.role,
                             "sha256": source.content_sha256,
                             "content": source.content,
+                            "working_history": source.working,
                         }
                         for source in sources
                     ],
@@ -831,6 +847,7 @@ async def _semantic_checkpoint(
     pending_draft: dict[str, Any] | None,
     settings: Settings,
     current_user_source: CheckpointSource | None = None,
+    prior_working_allowed: bool = True,
 ) -> dict[str, Any]:
     """One journalled helper call; invalid output cannot advance the frontier."""
     from app.agent.local_budget import account, reserve
@@ -847,7 +864,7 @@ async def _semantic_checkpoint(
             }
         )
     )
-    messages = _compaction_messages(prior, sources, current_user_source)
+    messages = _compaction_messages(prior, sources, current_user_source, prior_working_allowed)
     try:
         # A placeholder satisfies route construction during offline preflight;
         # this built request is never dispatched and the placeholder is not sent.
@@ -1118,6 +1135,9 @@ async def _semantic_checkpoint(
         str(s.id): s.content_sha256 for s in sources
     }:
         await reject_activation("compaction_sources_changed_history_preserved")
+    working_refs = [source.working["ref"] for source in sources if source.working]
+    if not await working_refs_current(db, conversation.id, working_refs):
+        await reject_activation("compaction_working_sources_changed_history_preserved")
     return checkpoint
 
 
@@ -1207,7 +1227,7 @@ async def _context_prompt_observation(
             MimiRun.conversation_id == conversation.id,
             MimiProviderCall.route["purpose"].astext.is_distinct_from("compaction"),
         )
-        .order_by(MimiProviderCall.created_at.desc(), MimiProviderCall.attempt.desc())
+        .order_by(MimiRun.generation.desc(), MimiProviderCall.attempt.desc())
         .limit(1)
     )
     if ignore_run_id is not None:
@@ -1227,11 +1247,26 @@ async def _context_prompt_observation(
                 .limit(1)
             )
         ).scalar_one_or_none() is not None
+    if latest_main and settings.mimi_working_projection_enabled:
+        binding = latest_main.route.get("input_projection") or {}
+        if not await working_refs_current(
+            db,
+            conversation.id,
+            binding.get("working_refs", []),
+            mimi_crypto.unwrap_dek(conversation.dek_wrapped),
+            settings,
+        ):
+            return {
+                **prompt_observation(None, revision),
+                "reason": "working_measurement_lineage_unavailable",
+            }
     return prompt_observation(
         latest_main,
         revision,
         consumed=consumed,
         trigger_tokens=settings.mimi_compaction_trigger_tokens,
+        checkpoint_id=checkpoint_id,
+        require_projection=settings.mimi_working_projection_enabled,
     )
 
 
@@ -1289,7 +1324,8 @@ async def _prepare_context_history(
     context_probe: Callable[..., None] | None = None,
     route_config_version: int | None = None,
     current_user_message_id: UUID | None = None,
-) -> tuple[list[dict[str, str]], tuple[int, int] | None, dict[str, Any] | None, UUID | None]:
+    working_history: WorkingHistory | None = None,
+) -> tuple[list[dict[str, Any]], tuple[int, int] | None, dict[str, Any] | None, UUID | None]:
     """Use an active validated checkpoint, replacing it before any silent suffix loss."""
 
     policy = load_standard_policy()
@@ -1345,8 +1381,28 @@ async def _prepare_context_history(
             content=current_content,
         )
 
+    prior_working_allowed = not (
+        settings or get_settings()
+    ).mimi_working_projection_enabled or await working_refs_current(
+        db,
+        conversation.id,
+        prior.get("working_sources", []) if prior else [],
+        dek,
+        settings or get_settings(),
+    )
+    active_working = await load_history(db, conversation, dek, rows, settings or get_settings())
+    if not prior_working_allowed:
+        active_working.gaps.add("checkpoint_working_history_ineligible")
+    if working_history is not None:
+        working_history.by_assistant = active_working.by_assistant
+        working_history.refs = active_working.refs
+        working_history.gaps = active_working.gaps
+        working_history.outcomes = active_working.outcomes
+    else:
+        working_history = active_working
+
     def decoded(selected_rows):
-        return [
+        canonical_messages = [
             {
                 "role": row.role,
                 "content": mimi_crypto.open_content(
@@ -1357,6 +1413,7 @@ async def _prepare_context_history(
             }
             for row in selected_rows
         ]
+        return working_history.messages(selected_rows, canonical_messages)
 
     def probe(selected_rows, active_checkpoint, active_checkpoint_id):
         if context_probe is None:
@@ -1367,7 +1424,9 @@ async def _prepare_context_history(
             )
             context_probe(
                 decoded(selected_rows),
-                active_constraint_context(active_checkpoint),
+                active_constraint_context(
+                    checkpoint_for_egress(active_checkpoint, prior_working_allowed)
+                ),
                 active_checkpoint_id,
                 active_checkpoint["frontier"]
                 if active_checkpoint
@@ -1448,9 +1507,12 @@ async def _prepare_context_history(
                         row.content_ciphertext,
                         aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
                     ),
+                    working=working_history.source(row.sequence),
                 )
                 proposed = [*selected_sources, source]
-                helper_messages = _compaction_messages(prior, proposed, current_user_source)
+                helper_messages = _compaction_messages(
+                    prior, proposed, current_user_source, prior_working_allowed
+                )
                 if (
                     serialized_input_bytes(helper_messages, agent_contract=False, summary_mode=True)
                     > settings.mimi_max_payload_bytes
@@ -1487,6 +1549,7 @@ async def _prepare_context_history(
                         row.content_ciphertext,
                         aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
                     ),
+                    working=working_history.source(row.sequence),
                 )
                 for row in rows[:compact_count]
             ]
@@ -1501,6 +1564,7 @@ async def _prepare_context_history(
                 pending_draft,
                 settings,
                 current_user_source,
+                prior_working_allowed,
             )
         else:
             checkpoint = make_checkpoint(
@@ -1510,6 +1574,10 @@ async def _prepare_context_history(
                 pending_preview=pending_preview,
                 pending_draft=pending_draft,
             )
+        if not await working_refs_current(
+            db, conversation.id, checkpoint.get("working_sources", [])
+        ):
+            await halt_context("compaction_working_sources_changed_history_preserved")
         sequence = await _append_event(db, run_id, "context.checkpoint.activated", {})
         event = (
             await db.execute(
@@ -1522,6 +1590,7 @@ async def _prepare_context_history(
         event.payload = {
             "frontier": checkpoint["frontier"],
             "source_count": len(selected_sources),
+            "working_frontier": checkpoint.get("working_frontier"),
             "content_sha256": _canonical_digest(checkpoint),
             "content_ciphertext": mimi_crypto.seal_content(
                 dek,
@@ -1543,12 +1612,19 @@ async def _prepare_context_history(
         await halt_context("mimi_compaction_fixed_current_input_exceeds_context")
     messages = decoded(rows)
     transcript_range = (rows[0].sequence, rows[-1].sequence) if rows else None
-    return messages, transcript_range, prior, checkpoint_id
+    return (
+        messages,
+        transcript_range,
+        checkpoint_for_egress(prior, prior_working_allowed),
+        checkpoint_id,
+    )
 
 
 def _event_read(row: MimiEvent, dek: bytes) -> dict[str, Any]:
     payload = row.payload
-    if row.kind == "assistant.delta" and "content_ciphertext" in payload:
+    if row.kind == WORKING_KIND:
+        payload = {k: v for k, v in payload.items() if k != "body_ciphertext"}
+    elif row.kind == "assistant.delta" and "content_ciphertext" in payload:
         payload = {
             "text": mimi_crypto.open_content(
                 dek,
@@ -2129,6 +2205,9 @@ async def send_message(
 
     checkpoint: dict[str, Any] | None = None
     checkpoint_id: UUID | None = None
+    working_history = WorkingHistory()
+    finalized_working_messages = None
+    agent_result_kind: str | None = None
     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
 
         def probe_context(
@@ -2167,6 +2246,7 @@ async def send_message(
                 remaining_turns=lease.max_turns,
                 remaining_tool_calls=lease.max_tool_calls,
                 pending_draft_content=pending_draft_content,
+                working_history=working_history.metadata(checkpoint_frontier),
             )
             # Exercise the same serialized contract and selected cap as the
             # eventual provider dispatch, including tool/schema/output reserve.
@@ -2203,6 +2283,7 @@ async def send_message(
             context_probe=probe_context,
             route_config_version=run_config_version,
             current_user_message_id=resumed_current_message_id,
+            working_history=working_history,
         )
 
     live_messages = [
@@ -2270,6 +2351,7 @@ async def send_message(
                 remaining_tool_calls=lease.max_tool_calls,
                 pending_draft_content=pending_draft_content,
                 selection_context=selection_context,
+                working_history=working_history.metadata(conversation.context_frontier_sequence),
             )
         except ValueError as error:
             run.state = "budget_exceeded"
@@ -2530,7 +2612,6 @@ async def send_message(
         # point is unknown unless the adapter returns a definitive outcome.
         call.state = "dispatched"
         await db.commit()
-        agent_result_kind: str | None = None
         agent_stop_code: str | None = None
         agent_producer = "provider_text"
         reservation = None
@@ -2690,6 +2771,14 @@ async def send_message(
                             "context_revision": context_revision(
                                 settings, run_config_version, checkpoint_id
                             ),
+                            "input_projection": input_projection_observation(
+                                context_envelope,
+                                messages,
+                                settings=settings,
+                                session_id=_provider_session_id(conversation.id),
+                                stream=provider_stream,
+                                force_task_tool=force_task_tool,
+                            ),
                             "context_composition": input_composition_observation(
                                 context_envelope, messages, settings=settings
                             ),
@@ -2706,6 +2795,9 @@ async def send_message(
                                 settings.mimi_route_qualified_provider_names
                             ),
                         }
+                        call.request_fingerprint = call.route["input_projection"][
+                            "request_fingerprint"
+                        ]
                         build_request(
                             messages,
                             settings=settings,
@@ -3008,6 +3100,7 @@ async def send_message(
                     await db.commit()
                     return True
 
+                working_message_start = len(live_messages)
                 loop_result = (
                     await run_read_loop(
                         live_messages,
@@ -3046,6 +3139,7 @@ async def send_message(
                     )
                 )
                 outcome = loop_result.outcome
+                finalized_working_messages = list(loop_result.messages)[working_message_start:]
                 current_run = (
                     await db.execute(
                         select(MimiRun)
@@ -3082,7 +3176,9 @@ async def send_message(
                         ids = [entry.id for entry in candidate.entries if entry.id is not None]
                         bound = {}
                         if ids:
-                            if force_task_tool and settings.mimi_revision_collection:
+                            if (
+                                force_task_tool and settings.mimi_revision_collection
+                            ) or settings.mimi_working_projection_enabled:
                                 # A prior selection is context, not current-run read authority.
                                 # persist_selection already binds a new event to this run's
                                 # authenticated versioned read receipts; keep that seam intact.
@@ -3606,6 +3702,17 @@ async def send_message(
                 "run.terminal",
                 {"state": run.state, "result": agent_result_kind or "text"},
             )
+            await persist_finalized(
+                db,
+                conversation,
+                run,
+                dek,
+                finalized_working_messages,
+                agent_result_kind,
+                settings,
+                _append_event,
+                resumed_current_message_id,
+            )
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
         assert provider_args is not None
@@ -3824,6 +3931,17 @@ async def send_message(
         run_id,
         "change_set.ready",
         {"change_set_id": str(change_set_id), "digest": digest},
+    )
+    await persist_finalized(
+        db,
+        conversation,
+        run,
+        dek,
+        finalized_working_messages,
+        agent_result_kind,
+        settings,
+        _append_event,
+        resumed_current_message_id,
     )
     await db.flush()
     return await conversation_view(db, auth, conversation_id)
@@ -4108,6 +4226,9 @@ async def confirm_change_set(
         "run.terminal",
         {"state": "completed", "result": "change_set_executed"},
     )
+    await persist_confirmed(
+        db, conversation, run, dek, receipt, operation, get_settings(), _append_event
+    )
     db.info[CRON_TIMER_RELOAD_INFO_KEY] = "mimi_task_create"
     await db.flush()
     return _receipt_read(receipt)
@@ -4360,6 +4481,7 @@ async def conversation_view(
         accounting_messages,
         as_of=datetime.now(UTC).isoformat(),
         scope_start=conversation.created_at.isoformat(),
+        trigger_tokens=get_settings().mimi_compaction_trigger_tokens,
     )
     # The historical public event window is an existing P1 contract. A separate
     # bounded receipt projection keeps recent tool details available on reload.
@@ -5217,6 +5339,9 @@ async def _confirm_collection(
     )
     await _append_event(
         db, run.id, "run.terminal", {"state": "completed", "result": "collection_executed"}
+    )
+    await persist_confirmed(
+        db, conversation, run, dek, receipt, operation, get_settings(), _append_event
     )
     await db.flush()
     return _receipt_read(receipt)
