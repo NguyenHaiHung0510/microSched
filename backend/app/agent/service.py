@@ -74,6 +74,7 @@ from app.agent.observations import (
 )
 from app.agent.openrouter import (
     AgentCompletion,
+    CandidateContractError,
     ProviderCompletion,
     ProviderDispatchError,
     RouteContractError,
@@ -143,6 +144,10 @@ PROVIDER_HISTORY_BYTES = 65_536
 OWNER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
+class CandidateCorrectionStopped(Exception):
+    """The Owner stopped or superseded a run before candidate correction dispatch."""
+
+
 async def _run_langgraph_agent(*args: Any, **kwargs: Any):
     """Keep the optional prototype stack out of the default application import path."""
     from app.agent.langgraph_runner import run_langgraph
@@ -151,7 +156,12 @@ async def _run_langgraph_agent(*args: Any, **kwargs: Any):
         raise RouteContractError("mimi_langgraph_database_unavailable")
     try:
         return await run_langgraph(*args, **kwargs)
-    except ProviderDispatchError, RouteContractError, OwnerPauseRequested:
+    except (
+        ProviderDispatchError,
+        RouteContractError,
+        OwnerPauseRequested,
+        CandidateCorrectionStopped,
+    ):
         raise
     except Exception as error:
         raise RouteContractError("mimi_langgraph_checkpoint_runtime_failed") from error
@@ -2661,6 +2671,14 @@ async def send_message(
                             .execution_options(populate_existing=True)
                         )
                     ).scalar_one()
+                    if turn > 1 and (call.result or {}).get("candidate_correction"):
+                        current_generation = await db.scalar(
+                            select(MimiConversation.generation).where(
+                                MimiConversation.id == conversation_id
+                            )
+                        )
+                        if current_run.state != "running" or current_generation != generation + 1:
+                            raise CandidateCorrectionStopped()
                     if current_run.error_code == "pause_requested":
                         if call.state == "dispatched" and turn == 1:
                             call.state = "fenced"
@@ -2843,8 +2861,10 @@ async def send_message(
                             if isinstance(receipt, dict):
                                 usage = receipt.get("usage", {})
                                 response_id = receipt.get("id") or None
+                                accounted = False
                                 try:
                                     account(settings, reservation, usage, response_id)
+                                    accounted = True
                                 except RouteContractError as accounting_error:
                                     # Keep the original terminal/UNKNOWN classification and
                                     # the unknown-cost hold; do not mask it or redispatch.
@@ -2892,6 +2912,22 @@ async def send_message(
                                     "body_sha256": _canonical_digest(receipt),
                                     "contract_error": str(error),
                                 }
+                                if (
+                                    isinstance(error, CandidateContractError)
+                                    and accounted
+                                    and error.correction_permitted(
+                                        receipt,
+                                        context_envelope.authority.allowed_tools,
+                                        final_only=messages_final_only(messages),
+                                    )
+                                ):
+                                    call.state = "failed"
+                                    call.result = {
+                                        **call.result,
+                                        "contract_error": str(error),
+                                        "candidate_correction": True,
+                                    }
+                                    error.correction_ready = True
                                 await db.commit()
                             raise
                         account(settings, reservation, result.usage, result.response_id)
@@ -3324,6 +3360,21 @@ async def send_message(
                 and completion.task.id != task_id
             ):
                 raise RouteContractError("provider_task_id_does_not_match_reservation")
+        except CandidateCorrectionStopped:
+            run = await db.get(MimiRun, run_id, populate_existing=True)
+            if run.state == "running":
+                run.state = "halted"
+                run.error_code = "response_frontier_changed"
+                run.completed_at = datetime.now(UTC)
+                await _append_event(db, run_id, "response.frontier_changed", {})
+                await _append_event(
+                    db,
+                    run_id,
+                    "run.terminal",
+                    {"state": run.state, "error_code": run.error_code},
+                )
+            await db.commit()
+            return await conversation_view(db, auth, conversation_id)
         except OwnerPauseRequested:
             run = (
                 await db.execute(
