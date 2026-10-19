@@ -15,6 +15,7 @@ from openai import (
     Timeout,
 )
 
+from app.agent.billing_prices import enrich_generation_usage
 from app.agent.context import AssistantText
 from app.agent.openrouter import (
     AgentCompletion,
@@ -179,9 +180,20 @@ async def complete(
             if finish not in {"stop", "tool_calls"}:
                 raise RouteContractError("provider_json_finish_reason_not_usable")
             validate_response_identity(payload, route)
-            if summary_mode:
-                return parse_compaction_completion(payload)
-            return parse_agent_completion(payload) if agent_contract else parse_completion(payload)
+            completion = (
+                parse_compaction_completion(payload)
+                if summary_mode
+                else parse_agent_completion(payload)
+                if agent_contract
+                else parse_completion(payload)
+            )
+            # Supplied clients are synthetic/test transports. Only a new live
+            # SDK response may use the existing read-only metadata endpoint.
+            if client is None:
+                await enrich_generation_usage(
+                    completion.usage, completion.response_id, settings=route
+                )
+            return completion
         except (RouteContractError, ProviderDispatchError) as error:
             error.terminal_receipt = receipt
             error.response_id = receipt["id"]
@@ -410,4 +422,6 @@ async def complete_stream(
     # delivery receipt and must not bypass that boundary or create tiny DB writes.
     if is_text and on_event and not agent_contract and not summary_mode:
         await on_event("assistant.delta", {"text": completion.text})
+    if client is None:
+        await enrich_generation_usage(completion.usage, completion.response_id, settings=route)
     return completion

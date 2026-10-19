@@ -8,6 +8,7 @@ import math
 from decimal import Decimal
 from typing import Any
 
+from app.agent.billing_prices import billing_sample, summarize_prices
 from app.core.settings import Settings
 
 COMPACTION_TRIGGER = 272_000
@@ -250,7 +251,7 @@ def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
                     target = records[identity]
                     target["models"].update(prior["models"])
                     target["conflicts"].update(prior["conflicts"])
-                    for field in ("input", "output", "reasoning", "cached", "usd"):
+                    for field in ("input", "output", "reasoning", "cached", "usd", "prices"):
                         old, new = target.get(field), prior.get(field)
                         if old is not None and new is not None and old != new:
                             target["conflicts"].add(field)
@@ -275,6 +276,9 @@ def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
                 "usd": _money(usage.get("cost")),
             }
             late = result.get("generation") or {}
+            values["prices"] = billing_sample(
+                usage, late if isinstance(late, dict) else {}, generation
+            )
             # Reconcile's metadata is authoritative only for this exact generation.
             if generation and isinstance(late, dict) and late.get("id") == generation:
                 for key, raw in [
@@ -317,6 +321,8 @@ def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
                 record.get(whole) is None or record[subset] > record[whole]
             ):
                 record["conflicts"].add(subset)
+        if record["conflicts"]:
+            record["prices"] = None
         for key in record["conflicts"]:
             record[key] = None
     return list(records.values()), len(reused)
@@ -437,6 +443,7 @@ def conversation_metrics(
             "current_projection_measurement": "pending",
         },
         "reused_calls": reused,
+        "token_prices": summarize_prices(dispatches),
         **accounting_summary(dispatches),
         "responses": rows,
     }

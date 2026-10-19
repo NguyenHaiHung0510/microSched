@@ -29,6 +29,16 @@ describe('P2 shared server snapshot', () => {
     expect(table).not.toContain('Bytes')
     expect(pane).not.toContain('<details open')
   })
+  it('price disclosure uses billing projection, token weighted average and honest absent cache samples', () => {
+    const price = { min: '0.1', weighted_average: '0.19', max: '0.2', samples: 2, tokens: 1000 }
+    const html = renderToStaticMarkup(<MimiConversationMetrics conversation={{ metrics: { ...metrics, token_prices: { unit: 'USD_per_1M_tokens', source: 'matched_native_billing', matched_dispatches: 2, unknown_dispatches: 1, input_uncached: price, output: { ...price, weighted_average: '0' }, cache_read: { min: null, weighted_average: null, max: null, samples: 0, tokens: 0 } } } } as MimiConversation} />)
+    expect(html).toContain('Giá token · USD / 1M · chưa đầy đủ')
+    expect(html).toContain('$0,19')
+    expect(html).toContain('2 call đủ dữ liệu · 1 chưa xác định')
+    expect(html).toContain('$0')
+    expect(html).not.toContain('<details open')
+    expect(renderToStaticMarkup(<MimiConversationMetrics conversation={{ metrics } as MimiConversation} />)).toContain('Chưa có billing đủ điều kiện')
+  })
   it('keeps failed and unassigned attempts, and missing USD distinct from a reported zero', () => {
     const row = { ...metrics, run_id: 'failed', assistant_message_id: null, state: 'halted', usd: { ...metrics.usd, known: null } }
     const html = renderToStaticMarkup(<MimiConversationMetrics conversation={{ metrics: { ...metrics, responses: [row, { ...row, run_id: null, state: 'unassigned', usd: { ...metrics.usd, known: '0' } }] } } as unknown as MimiConversation} />)

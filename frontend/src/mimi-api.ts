@@ -263,7 +263,12 @@ export type MimiConversationMetrics = MimiAccountingSummary & {
   last_measured_input: { tokens: number; as_of: string; state: string; request_fingerprint?: string | null; projection_fingerprint?: string | null; message_frontier?: number | null; working_frontier?: string | null; model?: string | null } | null
   context_policy?: { operating_input_tokens: number; compaction_trigger_tokens: number; current_projection_measurement: string }
   responses: (MimiAccountingSummary & { run_id: string | null; assistant_message_id: string | null; state: string })[]
+  token_prices?: {
+    unit: string; source: string; matched_dispatches: number; unknown_dispatches: number
+    input_uncached: MimiTokenPrice; cache_read: MimiTokenPrice; output: MimiTokenPrice
+  }
 }
+export type MimiTokenPrice = { min: string | null; weighted_average: string | null; max: string | null; samples: number; tokens: number }
 export type MimiToolActivityView = {
   label: string; state: 'recorded' | 'error' | 'unavailable'
   query: null | {

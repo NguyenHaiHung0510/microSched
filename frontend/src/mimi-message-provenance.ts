@@ -17,3 +17,11 @@ export function isVerifiedServerNotice(message: MimiMessage): boolean {
     && SERVER_PRODUCERS.has(proof.producer_code)
     && Number.isSafeInteger(proof.event_sequence) && Number(proof.event_sequence) > 0
 }
+
+/** Preserve stored history; correct only the two known server preview templates. */
+export function systemNoticeText(message: MimiMessage): string {
+  if (!isVerifiedServerNotice(message) || message.provenance?.producer_code !== 'preview_prepared') return message.content
+  return message.content
+    .replace(/^Mình đã đóng băng phương án cho /, 'Đã chuẩn bị phương án cho ')
+    .replace(/^Mình đã đóng băng một preview tạo Task\./, 'Đã chuẩn bị bản xem trước tạo Task.')
+}
