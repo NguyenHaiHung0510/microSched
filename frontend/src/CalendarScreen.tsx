@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, ChevronLeft, ChevronRight, Edit3, Plus, Trash2 } from 'lucide-react'
 
@@ -32,6 +32,7 @@ import {
 import { FilePicker } from '@/components/ui/file-picker'
 import { CalendarScrollView } from '@/CalendarScrollView'
 import { CALENDAR_QUERY_OPTIONS } from '@/calendar-queries'
+import { subscribeCalendarTaskCommits } from '@/calendar-task-events'
 import { SourceForm } from '@/SourceForm'
 
 type SourceEnvelope = { items: CalendarSource[] }
@@ -136,6 +137,7 @@ const EventCard = memo(function EventCard({
 
 export function CalendarScreen() {
   const queryClient = useQueryClient()
+  useEffect(() => subscribeCalendarTaskCommits(queryClient), [queryClient])
   const [view, setView] = useState<'grid' | 'list'>(() => {
     try {
       return window.localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'

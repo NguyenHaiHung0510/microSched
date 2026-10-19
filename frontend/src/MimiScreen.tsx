@@ -611,6 +611,7 @@ export function MimiScreen({
   const runPending = send.isPending || resume.isPending
   const durableRunActive = !!latestRun && ['accepted', 'building', 'running', 'executing'].includes(latestRun.state)
   const runtimeActive = runPending || durableRunActive
+  const showWelcome = current?.messages.length === 0 && !runtimeActive
   const cancelRunId = durableRunActive
     ? latestRun?.id ?? null
     : runPending ? activeRunId : null
@@ -884,8 +885,8 @@ export function MimiScreen({
         </p>
       ) : null}
 
-      <div ref={transcriptRef} onScroll={(event) => { const el = event.currentTarget; followLatest.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; setShowJump(!followLatest.current) }} className={`mimi-transcript flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain ${current.messages.length === 0 ? 'mimi-transcript-empty' : ''}`} data-testid="mimi-messages">
-        {current.messages.length === 0 ? (
+      <div ref={transcriptRef} onScroll={(event) => { const el = event.currentTarget; followLatest.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; setShowJump(!followLatest.current) }} className={`mimi-transcript flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain ${showWelcome ? 'mimi-transcript-empty' : ''}`} data-testid="mimi-messages">
+        {showWelcome ? (
           <div className="mimi-welcome" data-testid="mimi-welcome"><MimiAvatar size="xl" className="mimi-welcome-avatar" /><h2>Chào bạn,<br className="mimi-dock-linebreak" /> vào việc thôi</h2><div className="mimi-welcome-suggestions"><Button type="button" variant="outline" onClick={() => { setDraft('Mimi có thể làm gì?'); messageInputRef.current?.focus() }}><Sparkles className="size-4" />Mimi có thể làm gì?</Button><Button type="button" variant="outline" onClick={() => { setDraft('Tư vấn mình xếp lại lịch'); messageInputRef.current?.focus() }}><CalendarDays className="size-4" />Tư vấn mình xếp lại lịch</Button></div></div>
         ) : current.messages.map((message) => isVerifiedServerNotice(message) ? (
           <MimiSystemNotice key={message.id} message={message} feedbackPending={feedback.isPending} onFeedback={(mood) => openMessageFeedback(message.id, mood, true)} />

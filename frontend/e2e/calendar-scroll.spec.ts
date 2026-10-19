@@ -421,6 +421,7 @@ test.describe('desktop (1280x800)', () => {
     await calendarRoutes(page, { events: [], annotations: [] })
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.getByTestId('calendar-toggle-sidebar').click()
 
     const header = page.getByTestId('calendar-month-header')
     await expect(header).toBeVisible()
@@ -538,6 +539,7 @@ test.describe('desktop (1280x800)', () => {
     await calendarRoutes(page, { events: [], annotations: [] })
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.getByTestId('calendar-toggle-sidebar').click()
     const rect = await page
       .getByTestId('calendar-mininav-day')
       .first()

@@ -28,6 +28,7 @@ from app.agent.loop import (
     LoopResult,
     ReadProgress,
     StageSink,
+    candidate_correction_feedback,
     duplicate_read_feedback,
     finalization_messages,
     messages_final_only,
@@ -35,6 +36,7 @@ from app.agent.loop import (
 )
 from app.agent.openrouter import (
     AgentCompletion,
+    CandidateContractError,
     ProviderDispatchError,
     RouteContractError,
     serialized_input_bytes,
@@ -232,6 +234,11 @@ async def run_langgraph(
             try:
                 async with asyncio.timeout(remaining):
                     completion = await invoke_model(frame["messages"], turn)
+            except CandidateContractError as error:
+                if not error.correction_ready or messages_final_only(frame["messages"]):
+                    raise
+                frame["messages"].append(candidate_correction_feedback(error))
+                return {"phase": "model", "turn": turn, "step": state["step"] + 1}
             except TimeoutError as error:
                 # The service's call journal owns reconciliation; do not retry here.
                 raise ProviderDispatchError("unknown", None) from error

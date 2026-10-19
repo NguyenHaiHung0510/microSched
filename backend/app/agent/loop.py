@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from app.agent.context import Blocked, TerminalOutcome, ToolRequests
 from app.agent.openrouter import (
     AgentCompletion,
+    CandidateContractError,
     ProviderDispatchError,
     RouteContractError,
     serialized_input_bytes,
@@ -124,6 +125,32 @@ def validate_fanout(outcome: ToolRequests) -> dict[str, Any] | None:
             ),
         }
     return None
+
+
+def candidate_correction_feedback(error: CandidateContractError):
+    """Static schema guidance only: no rejected args, IDs, evidence or authority."""
+    return {
+        "role": "system",
+        "content": _canonical_json(
+            {
+                "error": {"code": str(error)},
+                "instruction": (
+                    "The entire candidate turn was rejected before reads, selections or preview. "
+                    "No Task was written; the existing pending preview is unchanged. Correct the "
+                    "whole proposal using only leased schemas and actual prior read receipts. "
+                    "For multiple new Tasks use ONE task.collection_candidate.v1 call with one "
+                    "action=create entry per requested Task, selection_id=null and no existing IDs "
+                    "or versions. Never drop requested Tasks or split confirmation. Complete any "
+                    "needed reads/selection in a separate read-only turn before a candidate-only "
+                    "turn. Collection fields contain title/body_md/status/priority/pinned and the "
+                    "complete due_precision/due_on/due_at triad when scheduled; checklist ops "
+                    "belong in children, not fields.items. Do not invent IDs or fields. "
+                    "A correction consumes a normal model turn under the existing limits. If you "
+                    "cannot correct safely, clarify or state the limitation; never claim success."
+                ),
+            }
+        ),
+    }
 
 
 def _canonical_json(value: Any) -> str:
@@ -239,6 +266,11 @@ async def run_read_loop(
         try:
             async with asyncio.timeout(remaining):
                 completion = await invoke_model(messages, turn)
+        except CandidateContractError as error:
+            if not error.correction_ready or messages_final_only(messages):
+                raise
+            messages.append(candidate_correction_feedback(error))
+            continue
         except TimeoutError as error:
             # A dispatched request may have reached the provider. Preserve the
             # unknown-outcome recovery path instead of claiming no call occurred.
