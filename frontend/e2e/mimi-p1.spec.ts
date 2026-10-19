@@ -80,11 +80,13 @@ function summary(conversation: MimiConversation) {
 for (const expiresDuringReview of [false, true]) {
 test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable expired preview across reload' : 'keep preview-confirm-receipt usable'}`, async ({
   page,
-}) => {
+}, testInfo) => {
   const now = new Date('2026-10-02T16:00:00Z')
   await page.clock.install({ time: now })
   let decisions = 0
   let conversation: MimiConversation | null = null
+  let feedbackAckMode: 'matching' | 'wrong-client' | 'wrong-target' = 'matching'
+  const feedbackRequests: Array<{ client_id: string; target_type: string; target_id: string }> = []
   await page.route('**/api/me', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
@@ -235,10 +237,15 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
       return
     }
     if (request.method() === 'POST' && path.endsWith('/feedback')) {
-      expect(request.postDataJSON().target_type).toBe('receipt')
-      expect(request.postDataJSON().target_id).toBe(receiptId)
-      const feedback = { id: 'feedback-1', client_id: 'feedback-client', target_type: 'receipt', target_id: receiptId, state: 'new', unresolved: true, created_at: '2026-09-15T01:02:00Z' }
-      conversation = { ...conversation!, feedback: [feedback] }
+      const payload = request.postDataJSON()
+      expect(payload.client_id).toEqual(expect.any(String))
+      expect(payload.client_id).not.toBe('')
+      expect(payload.target_type).toBe('receipt')
+      expect(payload.target_id).toBe(receiptId)
+      feedbackRequests.push(payload)
+      // The acknowledgment must echo this submission's identity, as the server does.
+      const feedback = { id: 'feedback-1', client_id: feedbackAckMode === 'wrong-client' ? 'wrong-client' : payload.client_id, target_type: 'receipt', target_id: feedbackAckMode === 'wrong-target' ? 'wrong-receipt' : receiptId, state: 'new', unresolved: true, created_at: '2026-09-15T01:02:00Z' }
+      if (feedbackAckMode === 'matching') conversation = { ...conversation!, feedback: [feedback] }
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(feedback) })
       return
     }
@@ -304,9 +311,32 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
   await page.getByRole('button',{name:'Chưa tốt · câu trả lời 2',exact:true}).click()
   await page.getByRole('combobox',{name:'Mục cần góp ý'}).click()
   await page.getByRole('option',{name:/Receipt 1/}).click()
-  await page.getByLabel('Điều gì cần sửa hoặc làm rõ?').fill('Preview cần hiển thị nguồn rõ hơn')
+  const feedbackDraft = page.getByLabel('Điều gì cần sửa hoặc làm rõ?')
+  const acknowledgment = page.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.', { exact: true })
+  await feedbackDraft.fill('Preview cần hiển thị nguồn rõ hơn')
+  for (const mismatch of ['wrong-client', 'wrong-target'] as const) {
+    feedbackAckMode = mismatch
+    await page.getByRole('button', { name: 'Lưu feedback' }).click()
+    await expect(page.getByRole('alert').filter({ hasText: 'Chưa lưu feedback.' })).toBeVisible()
+    await expect(acknowledgment).toHaveCount(0)
+    await expect(feedbackDraft).toHaveValue('Preview cần hiển thị nguồn rõ hơn')
+    expect(conversation!.feedback).toEqual([])
+  }
+  feedbackAckMode = 'matching'
+  const savedResponse = page.waitForResponse((response) => response.url().endsWith(`/conversations/${conversationId}/feedback`) && response.request().method() === 'POST')
   await page.getByRole('button', { name: 'Lưu feedback' }).click()
-  await expect(page.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.')).toBeVisible()
+  const response = await savedResponse
+  expect(response.status()).toBe(201)
+  const savedFeedback = await response.json()
+  expect(feedbackRequests).toHaveLength(3)
+  expect(new Set(feedbackRequests.map((request) => request.client_id)).size).toBe(1)
+  expect(savedFeedback).toMatchObject({ client_id: feedbackRequests[0].client_id, target_type: 'receipt', target_id: receiptId })
+  expect(conversation!.feedback).toEqual([savedFeedback])
+  await expect(acknowledgment).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Mục cần góp ý' })).toContainText('Receipt 1')
+  await expect(feedbackDraft).toHaveValue('')
+  await testInfo.attach('receipt-feedback-ack', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+  await testInfo.attach('receipt-feedback-record', { body: JSON.stringify({ requests: feedbackRequests, savedFeedback, visibleText: await page.getByRole('dialog').innerText() }, null, 2), contentType: 'application/json' })
   await page.keyboard.press('Escape')
 
   await openConversationRail(page)
