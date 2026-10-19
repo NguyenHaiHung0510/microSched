@@ -15,7 +15,11 @@ from openai import (
     Timeout,
 )
 
-from app.agent.billing_prices import enrich_generation_usage
+from app.agent.billing_prices import (
+    attest_text_billing,
+    enrich_generation_usage,
+    text_response_shape,
+)
 from app.agent.context import AssistantText
 from app.agent.openrouter import (
     AgentCompletion,
@@ -187,6 +191,12 @@ async def complete(
                 if agent_contract
                 else parse_completion(payload)
             )
+            attest_text_billing(
+                completion.usage,
+                request,
+                completion.response_id,
+                response_text=text_response_shape(choices[0]["message"]),
+            )
             # Supplied clients are synthetic/test transports. Only a new live
             # SDK response may use the existing read-only metadata endpoint.
             if client is None:
@@ -246,6 +256,7 @@ async def complete_stream(
     first_output_at: float | None = None
     saw_finish_reason = False
     finish_reason: str | None = None
+    response_text_only = True
     try:
         try:
             stream = await sdk.chat.completions.create(**_request_kwargs(request, route))
@@ -291,6 +302,7 @@ async def complete_stream(
                 delta = choices[0].get("delta")
                 if not isinstance(delta, dict):
                     continue
+                response_text_only = response_text_only and text_response_shape(delta)
                 text = delta.get("content")
                 if isinstance(text, str) and text:
                     if first_output_at is None:
@@ -422,6 +434,12 @@ async def complete_stream(
     # delivery receipt and must not bypass that boundary or create tiny DB writes.
     if is_text and on_event and not agent_contract and not summary_mode:
         await on_event("assistant.delta", {"text": completion.text})
+    attest_text_billing(
+        completion.usage,
+        request,
+        completion.response_id,
+        response_text=response_text_only,
+    )
     if client is None:
         await enrich_generation_usage(completion.usage, completion.response_id, settings=route)
     return completion

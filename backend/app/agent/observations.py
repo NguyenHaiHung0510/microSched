@@ -321,8 +321,28 @@ def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
                 record.get(whole) is None or record[subset] > record[whole]
             ):
                 record["conflicts"].add(subset)
-        if record["conflicts"]:
+        if record["conflicts"] & {"usd", "prices"}:
             record["prices"] = None
+        elif record.get("prices") and record["conflicts"]:
+            prices = {**record["prices"]}
+            for field, groups in (
+                ("input", ("input_uncached", "cache_read")),
+                ("cached", ("input_uncached", "cache_read")),
+                ("output", ("output",)),
+                ("reasoning", ("output",)),
+            ):
+                if field in record["conflicts"]:
+                    for group in groups:
+                        prices[group] = None
+                        prices["not_applicable"] = [
+                            g for g in prices["not_applicable"] if g != group
+                        ]
+                        prices["unknown_groups"] = list(set([*prices["unknown_groups"], group]))
+            record["prices"] = (
+                prices
+                if any(prices[group] for group in ("input_uncached", "cache_read", "output"))
+                else None
+            )
         for key in record["conflicts"]:
             record[key] = None
     return list(records.values()), len(reused)

@@ -28,6 +28,71 @@ COST_FIELDS = (
     "upstream_inference_completions_cost",
 )
 GROUPS = ("input_uncached", "cache_read", "output")
+EXCLUSIONS = (
+    "native_tokens_completion_images",
+    "num_media_prompt",
+    "num_media_completion",
+    "num_input_audio_prompt",
+    "num_search_results",
+    "num_fetches",
+)
+
+
+def text_response_shape(message: Any) -> bool:
+    """Inspect shape only; never persist message text or tool arguments here."""
+    if not isinstance(message, dict):
+        return False
+    if any(message.get(name) is not None for name in ("images", "audio", "video", "annotations")):
+        return False
+    return message.get("content") is None or isinstance(message["content"], str)
+
+
+def attest_text_billing(
+    usage: dict, request: dict, response_id: str, *, response_text: bool
+) -> None:
+    """Server observation of the exact built wire, separate from provider counters.
+
+    The SDK supplies no preset/online model or remote plugins in this class.
+    Unknown request features or response media cannot inherit this attestation.
+    """
+    usage.pop("mimi_billing_class", None)  # Provider cannot self-issue server proof.
+    allowed = {
+        "model",
+        "messages",
+        "stream",
+        "store",
+        "reasoning",
+        "usage",
+        "provider",
+        "max_tokens",
+        "tool_choice",
+        "tools",
+        "stream_options",
+        "response_format",
+        "session_id",
+    }
+    model = request.get("model")
+    messages, tools = request.get("messages"), request.get("tools", [])
+    if (
+        not response_id
+        or not response_text
+        or not set(request) <= allowed
+        or not isinstance(model, str)
+        or model.startswith("@")
+        or ":online" in model
+        or not isinstance(messages, list)
+        or not messages
+        or any(not text_response_shape(message) for message in messages)
+        or not isinstance(tools, list)
+        or any(not isinstance(tool, dict) or tool.get("type") != "function" for tool in tools)
+    ):
+        return
+    usage["mimi_billing_class"] = {
+        "version": 1,
+        "source": "server_sdk_wire",
+        "generation_id": response_id,
+        "billing_class": "text_only_no_plugins",
+    }
 
 
 def token(value: Any) -> int | None:
@@ -59,6 +124,8 @@ def safe_generation_billing(metadata: dict, response_id: str) -> dict:
     )
     if type(metadata.get("is_byok")) is bool:
         result["is_byok"] = metadata["is_byok"]
+    if any(metadata.get(name) is not None and token(metadata[name]) is None for name in EXCLUSIONS):
+        result["invalid_exclusion_evidence"] = True
     return {"generation_id": response_id, **result}
 
 
@@ -73,7 +140,8 @@ async def enrich_generation_usage(usage: dict, response_id: str, *, settings: An
     from app.agent.openrouter import get_generation
 
     try:
-        if billing_sample(usage, {}, response_id) is not None:
+        sample = billing_sample(usage, {}, response_id)
+        if sample and not sample.get("unknown_groups"):
             return
         async with asyncio.timeout(0.8):
             metadata = await get_generation(response_id, settings=settings)
@@ -93,7 +161,11 @@ async def enrich_generation_usage(usage: dict, response_id: str, *, settings: An
 
 
 def billing_sample(usage: dict, generation: dict, response_id: str | None) -> dict | None:
-    """Derive only when native counts, exclusions and the cost split reconcile."""
+    """Common charged-cost proof, then independent native token groups.
+
+    Generation lookup upstream cost is BYOK-only accounting, not terminal billed
+    upstream cost. Retain it in safe metadata but never equate it to this split.
+    """
     if not response_id:
         return None
     metadata = usage.get("mimi_billing")
@@ -101,35 +173,23 @@ def billing_sample(usage: dict, generation: dict, response_id: str | None) -> di
         metadata = safe_generation_billing(generation, response_id)
     if metadata.get("is_byok") is not False:
         return None
-    prompt, output, cached = (
-        token(metadata.get(name))
-        for name in ("native_tokens_prompt", "native_tokens_completion", "native_tokens_cached")
-    )
-    if not prompt or not output or cached is None or cached > prompt:
+    if metadata.get("invalid_exclusion_evidence") is True:
         return None
-    if any(
-        token(metadata.get(name)) != 0
-        for name in (
-            "native_tokens_completion_images",
-            "num_media_prompt",
-            "num_media_completion",
-            "num_input_audio_prompt",
-            "num_search_results",
-            "num_fetches",
-        )
-    ):
+    classification = usage.get("mimi_billing_class")
+    attested = isinstance(classification, dict) and classification == {
+        "version": 1,
+        "source": "server_sdk_wire",
+        "generation_id": response_id,
+        "billing_class": "text_only_no_plugins",
+    }
+    # Null/missing is not zero. Server-attested actual shape is alternative proof;
+    # any explicit nonzero/invalid exclusion still defeats it.
+    if any(metadata.get(name) is not None and token(metadata[name]) != 0 for name in EXCLUSIONS):
+        return None
+    if not attested and any(token(metadata.get(name)) != 0 for name in EXCLUSIONS):
         return None
     details = usage.get("prompt_tokens_details") or {}
-    if not isinstance(details, dict) or token(details.get("cache_write_tokens")) != 0:
-        return None
-    # Native cache is a subset of prompt; reasoning is a subset of output.
-    if token(metadata.get("native_tokens_reasoning")) is not None:
-        if metadata["native_tokens_reasoning"] > output:
-            return None
-    for name, expected in (("prompt_tokens", prompt), ("completion_tokens", output)):
-        if name in usage and token(usage[name]) != expected:
-            return None
-    if "cached_tokens" in details and token(details["cached_tokens"]) != cached:
+    if not isinstance(details, dict):
         return None
     for section, fields in (
         (details, ("audio_tokens", "video_tokens", "image_tokens")),
@@ -142,48 +202,67 @@ def billing_sample(usage: dict, generation: dict, response_id: str | None) -> di
     costs = usage.get("cost_details") or {}
     if not isinstance(costs, dict):
         return None
-    for name in ("upstream_inference_prompt_cost", "upstream_inference_completions_cost"):
-        if name in metadata and name in costs:
-            native_cost, receipt_cost = money(metadata[name]), money(costs[name])
-            if (
-                native_cost is None
-                or receipt_cost is None
-                or abs(native_cost - receipt_cost) > Decimal("1e-12")
-            ):
-                return None
-    # Prefer native billing split when explicitly present, otherwise the matched
-    # terminal's upstream split. Non-BYOK + equal totals excludes an extra fee.
+    # Both split and charged total come from the same terminal endpoint. Equal
+    # matched generation total confirms that the split excludes no billed fee.
     prompt_cost, output_cost = (
-        money(metadata.get(name, costs.get(name)))
+        money(costs.get(name))
         for name in ("upstream_inference_prompt_cost", "upstream_inference_completions_cost")
     )
-    total, discount = (money(metadata.get(name)) for name in ("total_cost", "cache_discount"))
-    if any(value is None for value in (prompt_cost, output_cost, total, discount)):
+    total, terminal_total = money(metadata.get("total_cost")), money(usage.get("cost"))
+    if any(value is None for value in (prompt_cost, output_cost, total, terminal_total)):
         return None
     assert prompt_cost is not None and output_cost is not None
-    assert total is not None and discount is not None
-    if abs(prompt_cost + output_cost - total) > Decimal("1e-12"):
+    assert total is not None and terminal_total is not None
+    if abs(prompt_cost + output_cost - total) > Decimal("1e-12") or abs(
+        terminal_total - total
+    ) > Decimal("1e-12"):
         return None
-    for observed in (
-        usage.get("cost"),
-        costs.get("upstream_inference_cost"),
-        metadata.get("upstream_inference_cost"),
-    ):
-        if observed is not None and (
-            money(observed) is None or abs(money(observed) - total) > Decimal("1e-12")
-        ):
+    if "upstream_inference_cost" in costs:
+        observed = money(costs["upstream_inference_cost"])
+        if observed is None or abs(observed - total) > Decimal("1e-12"):
             return None
-    if cached == 0 and discount != 0:
+    prompt, output, cached = (
+        token(metadata.get(name))
+        for name in ("native_tokens_prompt", "native_tokens_completion", "native_tokens_cached")
+    )
+    prompt_ok = bool(prompt) and (
+        "prompt_tokens" not in usage or token(usage["prompt_tokens"]) == prompt
+    )
+    output_ok = bool(output) and (
+        "completion_tokens" not in usage or token(usage["completion_tokens"]) == output
+    )
+    reasoning = metadata.get("native_tokens_reasoning")
+    if reasoning is not None and (token(reasoning) is None or output is None or reasoning > output):
+        output_ok = False
+    cache_ok = cached is not None and prompt is not None and cached <= prompt
+    if "cached_tokens" in details and token(details["cached_tokens"]) != cached:
+        cache_ok = False
+    write_free = token(details.get("cache_write_tokens")) == 0
+    discount = money(metadata.get("cache_discount"))
+    result = {group: None for group in GROUPS}
+    not_applicable = []
+    if output_ok:
+        result["output"] = (output_cost / output, output)
+    if cache_ok and cached == 0:
+        not_applicable.append("cache_read")
+        if prompt_ok and write_free and (discount == 0 or metadata.get("cache_discount") is None):
+            result["input_uncached"] = (prompt_cost / prompt, prompt)
+    elif cache_ok and prompt_ok and write_free and discount is not None:
+        input_rate = (prompt_cost + discount) / prompt
+        cached_rate = input_rate - discount / cached
+        if cached_rate >= 0:
+            result["cache_read"] = (cached_rate, cached)
+            if prompt > cached:
+                result["input_uncached"] = (input_rate, prompt - cached)
+            else:
+                not_applicable.append("input_uncached")
+    if not any(result.values()):
         return None
-    input_rate = (prompt_cost + discount) / prompt
-    cached_rate = input_rate - discount / cached if cached else None
-    if cached_rate is not None and cached_rate < 0:
-        return None
-    return {
-        "input_uncached": (input_rate, prompt - cached) if prompt > cached else None,
-        "cache_read": (cached_rate, cached) if cached else None,
-        "output": (output_cost / output, output),
-    }
+    result["unknown_groups"] = [
+        group for group in GROUPS if result[group] is None and group not in not_applicable
+    ]
+    result["not_applicable"] = not_applicable
+    return result
 
 
 def summarize_prices(dispatches: list[dict]) -> dict:
@@ -204,7 +283,17 @@ def summarize_prices(dispatches: list[dict]) -> dict:
             "max": str(max(rates) * 1_000_000) if rates else None,
             "samples": len(samples),
             "tokens": tokens,
+            "unknown": sum(
+                not d.get("prices") or group in d["prices"].get("unknown_groups", [])
+                for d in dispatches
+            ),
+            "not_applicable": sum(
+                group in (d.get("prices") or {}).get("not_applicable", []) for d in dispatches
+            ),
         }
     result["matched_dispatches"] = sum(bool(d.get("prices")) for d in dispatches)
     result["unknown_dispatches"] = len(dispatches) - result["matched_dispatches"]
+    result["partial_dispatches"] = sum(
+        bool((d.get("prices") or {}).get("unknown_groups")) for d in dispatches
+    )
     return result

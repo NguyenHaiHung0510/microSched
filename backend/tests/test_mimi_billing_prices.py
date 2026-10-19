@@ -94,7 +94,15 @@ def test_native_rate_equations_weight_each_token_group_and_do_not_add_reasoning(
 def test_unknown_or_ineligible_metadata_cannot_become_historical_prices(field, value):
     usage, generation = evidence()
     generation[field] = value
-    assert billing_sample(usage, generation, "synthetic-gen") is None
+    sample = billing_sample(usage, generation, "synthetic-gen")
+    if field in {"native_tokens_cached", "native_tokens_prompt", "cache_discount"}:
+        assert sample is not None and sample["output"] is not None
+        assert sample["input_uncached"] is None and sample["cache_read"] is None
+    elif field in {"native_tokens_completion", "native_tokens_reasoning"}:
+        assert sample is not None and sample["output"] is None
+        assert sample["input_uncached"] is not None and sample["cache_read"] is not None
+    else:
+        assert sample is None
 
 
 def test_cache_write_missing_split_conflicting_usage_and_zero_cache_discount():
@@ -107,23 +115,29 @@ def test_cache_write_missing_split_conflicting_usage_and_zero_cache_discount():
     ]:
         usage, generation = evidence()
         change(usage)
-        assert billing_sample(usage, generation, "synthetic-gen") is None
+        sample = billing_sample(usage, generation, "synthetic-gen")
+        if "upstream_inference_prompt_cost" not in usage["cost_details"] or usage["cost"] == "0.4":
+            assert sample is None
+        else:
+            assert sample is not None and sample["output"] is not None
+            assert sample["input_uncached"] is None and sample["cache_read"] is None
     usage, generation = evidence(cached=0)
     generation["cache_discount"] = "0.000001"
-    assert billing_sample(usage, generation, "synthetic-gen") is None
+    sample = billing_sample(usage, generation, "synthetic-gen")
+    assert sample["input_uncached"] is None and sample["output"] is not None
     zero = billing_sample(*evidence(rate="0", cache_rate="0", out_rate="0"), "synthetic-gen")
     assert zero["output"][0] == 0
     all_cache = billing_sample(*evidence(cached=100), "synthetic-gen")
     assert all_cache["input_uncached"] is None and all_cache["cache_read"] is not None
     usage, generation = evidence()
-    generation["upstream_inference_prompt_cost"] = "0.001"
+    usage["cost_details"]["upstream_inference_prompt_cost"] = "0.001"
     assert billing_sample(usage, generation, "synthetic-gen") is None
     usage, generation = evidence()
     usage["prompt_tokens_details"]["audio_tokens"] = 1
     assert billing_sample(usage, generation, "synthetic-gen") is None
     usage, generation = evidence()
     usage["mimi_billing"] = safe_generation_billing(generation, "synthetic-gen")
-    usage["mimi_billing"]["upstream_inference_prompt_cost"] = "not-a-cost"
+    usage["cost_details"]["upstream_inference_prompt_cost"] = "not-a-cost"
     assert billing_sample(usage, generation, "synthetic-gen") is None
 
 
