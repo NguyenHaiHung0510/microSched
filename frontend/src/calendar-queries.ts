@@ -8,6 +8,7 @@
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 export const CALENDAR_FAMILY_KEY = ['calendar'] as const
+export const CALENDAR_TASKS_KEY = ['calendar', 'tasks'] as const
 
 export const CALENDAR_QUERY_OPTIONS = NO_POLLING_QUERY_OPTIONS
 
@@ -35,7 +36,7 @@ export const calendarTasksQuerySpec = (
   status: 'all' | 'open',
   range?: { from: string; to: string },
 ): CalendarQuerySpec => ({
-  queryKey: ['calendar', 'tasks', status, range?.from ?? null, range?.to ?? null],
+  queryKey: [...CALENDAR_TASKS_KEY, status, range?.from ?? null, range?.to ?? null],
   ...CALENDAR_QUERY_OPTIONS,
 })
 

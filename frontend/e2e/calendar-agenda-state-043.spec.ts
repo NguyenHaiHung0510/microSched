@@ -199,7 +199,9 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
 
-    // In grid mode on desktop, mini-nav is visible
+    // The mini-calendar starts collapsed; explicitly opt in on desktop.
+    const toggle = page.getByTestId('calendar-toggle-sidebar')
+    if (await toggle.isVisible()) await toggle.click()
     const miniNav = page.getByTestId('calendar-mininav')
     if (await miniNav.isVisible()) {
       // Switch to agenda
