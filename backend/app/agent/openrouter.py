@@ -49,6 +49,30 @@ class RouteContractError(ValueError):
         self.model = model
 
 
+class CandidateContractError(RouteContractError):
+    """A wholly rejected native candidate turn; never a partial proposal/read."""
+
+    def __init__(self, code: str, tool_names: tuple[str, ...]):
+        super().__init__(code)
+        self.tool_names = tool_names
+        # Only the service can enable feedback after durable accounting.
+        self.correction_ready = False
+
+    def correction_permitted(self, receipt, allowed_tools, *, final_only=False):
+        if final_only or not set(self.tool_names).issubset(allowed_tools):
+            return False
+        if not isinstance(receipt, dict) or not receipt.get("id"):
+            return False
+        cost = receipt.get("usage", {}).get("cost")
+        if isinstance(cost, bool) or not isinstance(cost, (str, int, float)):
+            return False
+        try:
+            value = Decimal(str(cost))
+        except InvalidOperation:
+            return False
+        return value.is_finite() and value >= 0
+
+
 class ProviderDispatchError(RuntimeError):
     """A provider call ended without a usable terminal result."""
 
@@ -474,7 +498,7 @@ def build_request(
         # the qualified forced tool choice.
         # OpenInference did not advertise `parallel_tool_calls`; omitting the
         # optional parameter keeps `require_parameters=true` routable while the
-        # terminal parser independently enforces at most one tool call.
+        # terminal parser independently enforces candidate-only turns and bounded read batches.
         "stream": stream,
         "store": False,
         "reasoning": {
@@ -514,6 +538,7 @@ def build_request(
 def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
     """Validate one model turn before any server-owned read or preview transition."""
 
+    native_names: tuple[str, ...] = ()
     try:
         choices = payload["choices"]
         if not isinstance(choices, list) or len(choices) != 1:
@@ -527,6 +552,16 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
         if calls:
             if not isinstance(calls, list) or len(calls) > 8:
                 raise RouteContractError("provider_tool_call_count_invalid")
+            # Validate every name before decoding any arguments. A malformed
+            # candidate must never mask an unauthorized sibling as repairable.
+            native_names = tuple(call["function"]["name"] for call in calls)
+            if any(
+                not isinstance(n, str)
+                or n not in READ_TOOLS | {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}
+                for n in native_names
+            ):
+                native_names = ()
+                raise RouteContractError("provider_tool_not_allowed")
             requests: list[ToolRequest] = []
             for index, call in enumerate(calls):
                 function = call["function"]
@@ -583,9 +618,29 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
             provider=payload.get("provider") if isinstance(payload.get("provider"), str) else None,
             model=payload.get("model") if isinstance(payload.get("model"), str) else None,
         )
-    except RouteContractError:
+    except RouteContractError as error:
+        if set(native_names) & {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL} and str(
+            error
+        ) in {
+            "candidate_cannot_share_tool_turn",
+            "candidate_arguments_invalid",
+            "provider_tool_arguments_not_object",
+        }:
+            raise CandidateContractError(str(error), native_names) from error
         raise
     except (KeyError, TypeError, ValueError, ValidationError) as error:
+        shape_error = not isinstance(error, ValidationError) or all(
+            (
+                issue["type"] in {"missing", "string_type", "dict_type", "tuple_type", "too_short"}
+                or (
+                    issue["type"] == "value_error"
+                    and str(issue.get("ctx", {}).get("error")) == "task_due_triad_must_be_complete"
+                )
+            )
+            for issue in error.errors(include_input=False)
+        )
+        if shape_error and set(native_names) & {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}:
+            raise CandidateContractError("invalid_agent_terminal_payload", native_names) from error
         raise RouteContractError("invalid_agent_terminal_payload") from error
 
 
