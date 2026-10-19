@@ -1,4 +1,5 @@
 import { ApiError, apiRequest } from '@/api'
+import { publishMimiTaskCommit } from '@/calendar-task-events'
 
 export type MimiMessageProvenance = {
   origin: 'model_answer' | 'server_notice' | 'unknown'
@@ -613,12 +614,12 @@ export async function resumeMimiRun(
   }, onEvent)
 }
 
-export function decideMimiChangeSet(
+export async function decideMimiChangeSet(
   changeSet: MimiChangeSet,
   decision: 'confirm' | 'reject',
   idempotencyKey: string,
 ): Promise<MimiReceipt | { change_set_id: string; state: 'rejected' }> {
-  return apiRequest(`/api/mimi/change-sets/${changeSet.id}/decision`, {
+  const saved = await apiRequest<MimiReceipt | { change_set_id: string; state: 'rejected' }>(`/api/mimi/change-sets/${changeSet.id}/decision`, {
     method: 'POST',
     headers: { ...MIMI_WRITE_HEADERS, 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({
@@ -627,6 +628,8 @@ export function decideMimiChangeSet(
       decision,
     }),
   })
+  if (decision === 'confirm' && 'executed_at' in saved) publishMimiTaskCommit(changeSet, saved)
+  return saved
 }
 
 export function saveMimiFeedback(
@@ -686,9 +689,11 @@ export type MimiSelection = {
 export function fetchMimiSelection(conversationId: string, selectionId: string): Promise<MimiSelection> {
   return apiRequest(`/api/mimi/conversations/${conversationId}/selections/${selectionId}`)
 }
-export function recoverMimiReceipt(conversationId: string, change: MimiChangeSet, key: string): Promise<MimiReceipt> {
+export async function recoverMimiReceipt(conversationId: string, change: MimiChangeSet, key: string): Promise<MimiReceipt> {
   const params = new URLSearchParams({ digest: change.digest, nonce: change.nonce })
-  return apiRequest(`/api/mimi/conversations/${conversationId}/change-sets/${change.id}/receipt?${params}`, { headers: { 'Idempotency-Key': key } })
+  const receipt = await apiRequest<MimiReceipt>(`/api/mimi/conversations/${conversationId}/change-sets/${change.id}/receipt?${params}`, { headers: { 'Idempotency-Key': key } })
+  publishMimiTaskCommit(change, receipt)
+  return receipt
 }
 export function prepareMimiUndo(receiptId: string): Promise<MimiConversation> {
   return apiRequest(`/api/mimi/receipts/${receiptId}/undo-preview`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}' })

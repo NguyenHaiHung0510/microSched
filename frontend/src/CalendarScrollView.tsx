@@ -210,7 +210,7 @@ export function CalendarScrollView() {
   const [headerHeight, setHeaderHeight] = useState(HEADER_HEIGHT)
   const [quickTitle, setQuickTitle] = useState('')
   const [calendarMode, setCalendarMode] = useState<'grid' | 'agenda'>(getSavedCalendarMode)
-  const [showMiniNav, setShowMiniNav] = useState(true)
+  const [showMiniNav, setShowMiniNav] = useState(false)
   const [agendaDay, setAgendaDay] = useState(today)
   const [agendaMonth, setAgendaMonth] = useState<YearMonth>(() => ({
     year: Number(today.slice(0, 4)),

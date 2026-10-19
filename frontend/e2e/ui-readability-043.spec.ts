@@ -207,6 +207,10 @@ test.describe('Area 2: Calendar month readability on desktop and mobile', () => 
     // Sidebar can be toggled on desktop to give more usable space
     const toggleSidebarBtn = page.getByTestId('calendar-toggle-sidebar')
     await expect(toggleSidebarBtn).toBeVisible()
+    await expect(toggleSidebarBtn).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByTestId('calendar-mininav')).toBeHidden()
+    await toggleSidebarBtn.click()
+    await expect(toggleSidebarBtn).toHaveAttribute('aria-expanded', 'true')
     await expect(page.getByTestId('calendar-mininav')).toBeVisible()
 
     // Collapse sidebar
