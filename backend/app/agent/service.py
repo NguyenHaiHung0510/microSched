@@ -21,6 +21,7 @@ from sqlalchemy import and_, false, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import crypto as mimi_crypto
+from app.agent.billing_prices import safe_generation_billing
 from app.agent.compaction import (
     CheckpointSource,
     active_constraint_context,
@@ -3969,10 +3970,10 @@ async def send_message(
     run.state = "waiting_confirmation"
 
     assistant = (
-        f"Mình đã đóng băng phương án cho {len(operation_args['entries'])} Task. "
+        f"Đã chuẩn bị phương án cho {len(operation_args['entries'])} Task. "
         "Chưa áp dụng; hãy kiểm tra thay đổi và xác nhận."
         if operation_tool == COLLECTION_TOOL
-        else "Mình đã đóng băng một preview tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
+        else "Đã chuẩn bị bản xem trước tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
     )
     await _add_assistant_message(
         db, conversation, run_id, dek, assistant, producer_code="preview_prepared"
@@ -5021,6 +5022,13 @@ async def reconcile_unknown_run(
         )
         if key in metadata
     }
+    safe_fields.update(
+        {
+            key: value
+            for key, value in safe_generation_billing(metadata, response_id).items()
+            if key != "generation_id"
+        }
+    )
     outcome = _generation_metadata_outcome(metadata)
     call.state = outcome
     call.result = {

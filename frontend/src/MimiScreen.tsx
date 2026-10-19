@@ -12,7 +12,7 @@ import { usePreviewExpired } from './mimi-preview-expiry'
 import { MimiRunObservations } from '@/MimiRunObservations'
 import { MimiCheckpointViewer } from './MimiCheckpointViewer'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Check, Copy, LoaderCircle, MessageSquareWarning, RotateCcw, Send, Sparkles, Square, X, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { ArrowDown, CalendarDays, Check, Copy, LoaderCircle, MessageSquareWarning, RotateCcw, Send, Sparkles, Square, X, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
@@ -481,11 +481,15 @@ export function MimiScreen({
       clientId: string
       draftRevision: number
       mood: 'positive' | 'negative'
-    }) => saveMimiFeedback(current.id, target, comment, expected, clientId),
+    }) => saveMimiFeedback(current.id, target, comment, expected, clientId).then((saved) => {
+      if (saved.client_id !== clientId || saved.target_type !== target.target_type || saved.target_id !== target.target_id) throw new Error('Feedback acknowledgment target mismatch')
+      return saved
+    }),
     onSuccess: (_saved, variables) => {
       const targetKey = `${variables.target.target_type}:${variables.target.target_id}`
       setFeedbackAcknowledgment({ conversationId: variables.current.id, targetKey, mood: variables.mood })
       if (variables.mood === 'positive') queryClient.setQueryData(['mimi', 'positive-feedback-intent', variables.current.id, variables.target.target_id], { clientId: variables.clientId, saved: true })
+      if (variables.mood === 'negative' && variables.draftRevision === -1) queryClient.setQueryData(['mimi', 'system-negative-feedback-intent', variables.current.id, variables.target.target_id], { clientId: variables.clientId, saved: true })
       if (current?.id === variables.current.id && feedbackDraftRevision.current === variables.draftRevision) {
         setFeedbackDraft('')
         setFeedbackExpected('')
@@ -600,6 +604,10 @@ export function MimiScreen({
   const resolvedFeedbackTargetKey = selectedFeedbackTarget
     ? `${selectedFeedbackTarget.target_type}:${selectedFeedbackTarget.target_id}`
     : ''
+  const selectedSystemNotice = current?.messages.find((message) => message.id === selectedFeedbackTarget?.target_id && isVerifiedServerNotice(message))
+  const systemVoteAcknowledged = (feedbackAcknowledgment?.conversationId === current?.id
+    && feedbackAcknowledgment?.targetKey === resolvedFeedbackTargetKey && feedbackAcknowledgment?.mood === feedbackMood)
+    || (feedbackMood === 'negative' && !!queryClient.getQueryData<{ saved: boolean }>(['mimi', 'system-negative-feedback-intent', current?.id, selectedSystemNotice?.id])?.saved)
   const runPending = send.isPending || resume.isPending
   const durableRunActive = !!latestRun && ['accepted', 'building', 'running', 'executing'].includes(latestRun.state)
   const runtimeActive = runPending || durableRunActive
@@ -706,7 +714,7 @@ export function MimiScreen({
     }
   }
 
-  function openMessageFeedback(messageId: string, mood: 'positive' | 'negative') {
+  function openMessageFeedback(messageId: string, mood: 'positive' | 'negative', systemNotice = false) {
     if (!current || feedback.isPending) return
     const targetKey = `turn:${messageId}`
     setFeedbackMood(mood)
@@ -718,14 +726,15 @@ export function MimiScreen({
     setFeedbackNotice(null)
     feedback.reset()
     feedbackDraftRevision.current += 1
-    if (mood === 'negative') { setFeedbackClientId(null); return }
-    const intentKey = ['mimi', 'positive-feedback-intent', current.id, messageId]
+    if (mood === 'negative' && !systemNotice) { setFeedbackClientId(null); return }
+    const intentKey = ['mimi', mood === 'positive' ? 'positive-feedback-intent' : 'system-negative-feedback-intent', current.id, messageId]
     const intent = queryClient.getQueryData<{ clientId: string; saved: boolean }>(intentKey)
-    const clientId = intent?.clientId ?? `mimi-positive:${current.id}:${messageId}`
+    const clientId = intent?.clientId ?? `mimi-${mood === 'positive' ? 'positive' : 'system-negative'}:${current.id}:${messageId}`
     queryClient.setQueryData(intentKey, { clientId, saved: intent?.saved ?? false })
-    setFeedbackClientId(clientId)
+    // Negative notice detail is a separate optional submission with a new key.
+    setFeedbackClientId(mood === 'negative' ? null : clientId)
     if (intent?.saved) { setFeedbackAcknowledgment({ conversationId: current.id, targetKey, mood }); return }
-    feedback.mutate({ current, target: { target_type: 'turn', target_id: messageId }, comment: feedbackComment('positive', [], ''), expected: '', clientId, draftRevision: -1, mood })
+    feedback.mutate({ current, target: { target_type: 'turn', target_id: messageId }, comment: feedbackComment(mood, [], mood === 'negative' ? 'Chưa tốt.' : ''), expected: '', clientId, draftRevision: -1, mood })
   }
 
   if (conversation.isPending) {
@@ -876,19 +885,11 @@ export function MimiScreen({
         </p>
       ) : null}
 
-      {showJump ? (
-        <div className="flex justify-end">
-          <Button size="sm" variant="outline" onClick={() => { followLatest.current = true; setShowJump(false); transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'auto' }) }}>
-            Xem lượt mới nhất
-          </Button>
-        </div>
-      ) : null}
-
       <div ref={transcriptRef} onScroll={(event) => { const el = event.currentTarget; followLatest.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; setShowJump(!followLatest.current) }} className={`mimi-transcript flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain ${showWelcome ? 'mimi-transcript-empty' : ''}`} data-testid="mimi-messages">
         {showWelcome ? (
           <div className="mimi-welcome" data-testid="mimi-welcome"><MimiAvatar size="xl" className="mimi-welcome-avatar" /><h2>Chào bạn,<br className="mimi-dock-linebreak" /> vào việc thôi</h2><div className="mimi-welcome-suggestions"><Button type="button" variant="outline" onClick={() => { setDraft('Mimi có thể làm gì?'); messageInputRef.current?.focus() }}><Sparkles className="size-4" />Mimi có thể làm gì?</Button><Button type="button" variant="outline" onClick={() => { setDraft('Tư vấn mình xếp lại lịch'); messageInputRef.current?.focus() }}><CalendarDays className="size-4" />Tư vấn mình xếp lại lịch</Button></div></div>
         ) : current.messages.map((message) => isVerifiedServerNotice(message) ? (
-          <MimiSystemNotice key={message.id} message={message} feedbackPending={feedback.isPending} onFeedback={() => openMessageFeedback(message.id, 'negative')} />
+          <MimiSystemNotice key={message.id} message={message} feedbackPending={feedback.isPending} onFeedback={(mood) => openMessageFeedback(message.id, mood, true)} />
         ) : (
           <article
             key={message.id}
@@ -937,7 +938,7 @@ export function MimiScreen({
             <p role="status" className="text-center font-semibold">{feedback.isPending ? 'Đang lưu phản hồi tích cực…' : feedbackAcknowledgment?.conversationId === current.id && feedbackAcknowledgment.targetKey === resolvedFeedbackTargetKey && feedbackAcknowledgment.mood === 'positive' ? 'Đã ghi nhận phản hồi tích cực' : 'Chưa xác nhận phản hồi tích cực đã lưu'}</p>
             <p className="rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap break-words">{current.messages.find((message) => message.id === selectedFeedbackTarget?.target_id)?.content.slice(0, 180) ?? selectedFeedbackTarget?.label ?? 'Mục đang chọn'}</p>
             {feedback.isError ? <p role="alert" className="text-sm text-bad">Chưa xác định kết quả lưu. Khi bấm Hữu ích lại sẽ giữ cùng khóa, không tạo bản ghi mới ngầm.</p> : null}
-            {selectedFeedbackTarget?.target_type === 'turn' ? <MimiPositiveSupplement conversationId={current.id} targetId={selectedFeedbackTarget.target_id} /> : null}
+            {selectedFeedbackTarget?.target_type === 'turn' && (!selectedSystemNotice || systemVoteAcknowledged) ? <MimiPositiveSupplement conversationId={current.id} targetId={selectedFeedbackTarget.target_id} /> : null}
             <div className="flex justify-end"><Button type="button" variant="outline" onClick={() => setFeedbackOpen(false)}>Để sau</Button></div>
           </div> : <Card className="border-0 shadow-none">
           <CardHeader>
@@ -945,7 +946,8 @@ export function MimiScreen({
             <CardDescription>Feedback được gắn với đúng câu trả lời, run, lần gọi hoặc receipt bạn chọn.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form className="space-y-3" onSubmit={submitFeedback}>
+            {selectedSystemNotice ? <div className="mb-3 space-y-2"><p role="status" className="text-sm">{feedback.isPending ? 'Đang lưu phản hồi…' : systemVoteAcknowledged ? 'Đã ghi nhận phản hồi chưa tốt' : 'Chưa xác nhận phản hồi đã lưu'}</p>{!systemVoteAcknowledged && !feedback.isPending ? <Button type="button" variant="outline" onClick={() => openMessageFeedback(selectedSystemNotice.id, 'negative', true)}>Thử lại phản hồi chưa tốt</Button> : null}{systemVoteAcknowledged ? <p className="text-xs text-muted-foreground">Có thể bổ sung chi tiết bên dưới (không bắt buộc), lưu thành phản hồi riêng.</p> : null}</div> : null}
+            {(!selectedSystemNotice || systemVoteAcknowledged) ? <form className="space-y-3" onSubmit={submitFeedback}>
               <div className="space-y-1.5">
                 <label htmlFor="mimi-feedback-target" className="text-sm font-semibold">Mục cần góp ý</label>
                 <Select
@@ -1069,7 +1071,7 @@ export function MimiScreen({
                 {feedback.isPending ? <LoaderCircle className="animate-spin motion-reduce:animate-none" /> : null}
                 Lưu feedback
               </Button>
-            </form>
+            </form> : null}
           </CardContent>
           </Card>}
           <MimiFeedbackEvidence conversation={current} target={selectedFeedbackTarget} />
@@ -1077,6 +1079,7 @@ export function MimiScreen({
       ) : null}
 
       <form onSubmit={submitMessage} className="mimi-composer shrink-0">
+        {showJump ? <Button type="button" size="icon-lg" variant="outline" className="mimi-jump-latest min-h-11 min-w-11" aria-label="Đến tin nhắn mới nhất" onClick={() => { followLatest.current = true; setShowJump(false); transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'auto' }) }}><ArrowDown className="size-5" aria-hidden="true" /></Button> : null}
         {revisionTarget && !activeRevision ? (
           <div role="alert" className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-bad-bg p-3 text-sm text-bad">
             <p>Phương án đã đổi hoặc không còn chờ xác nhận. Tin nhắn chưa được gửi; hủy chế độ sửa hoặc chọn phương án đang chờ.</p>

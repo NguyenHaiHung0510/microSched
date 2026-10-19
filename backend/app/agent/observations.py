@@ -8,6 +8,7 @@ import math
 from decimal import Decimal
 from typing import Any
 
+from app.agent.billing_prices import billing_sample, summarize_prices
 from app.core.settings import Settings
 
 COMPACTION_TRIGGER = 272_000
@@ -210,6 +211,30 @@ def _money(value: Any) -> Decimal | None:
         return None
 
 
+def _merge_prices(old: dict, new: dict) -> dict | None:
+    """Compatible missing proof can improve; differing actual rates still conflict."""
+    result = {}
+    not_applicable = []
+    for group in ("input_uncached", "cache_read", "output"):
+        left, right = old[group], new[group]
+        left_na = group in old["not_applicable"]
+        right_na = group in new["not_applicable"]
+        if (left is not None and right is not None and left != right) or (
+            (left_na and right is not None) or (right_na and left is not None)
+        ):
+            return None
+        result[group] = left if left is not None else right
+        if left_na or right_na:
+            not_applicable.append(group)
+    result["not_applicable"] = not_applicable
+    result["unknown_groups"] = [
+        group
+        for group in ("input_uncached", "cache_read", "output")
+        if result[group] is None and group not in not_applicable
+    ]
+    return result
+
+
 def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
     """Normalize existing receipts only. Identity aliases never create another charge.
 
@@ -250,10 +275,14 @@ def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
                     target = records[identity]
                     target["models"].update(prior["models"])
                     target["conflicts"].update(prior["conflicts"])
-                    for field in ("input", "output", "reasoning", "cached", "usd"):
+                    for field in ("input", "output", "reasoning", "cached", "usd", "prices"):
                         old, new = target.get(field), prior.get(field)
                         if old is not None and new is not None and old != new:
-                            target["conflicts"].add(field)
+                            merged = _merge_prices(old, new) if field == "prices" else None
+                            if merged is None:
+                                target["conflicts"].add(field)
+                            else:
+                                target[field] = merged
                         elif old is None and new is not None:
                             target[field] = new
             usage = attempt.get("usage") or {}
@@ -275,6 +304,9 @@ def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
                 "usd": _money(usage.get("cost")),
             }
             late = result.get("generation") or {}
+            values["prices"] = billing_sample(
+                usage, late if isinstance(late, dict) else {}, generation
+            )
             # Reconcile's metadata is authoritative only for this exact generation.
             if generation and isinstance(late, dict) and late.get("id") == generation:
                 for key, raw in [
@@ -307,7 +339,11 @@ def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
             for key, value in values.items():
                 if key in record and record[key] is not None and value is not None:
                     if record[key] != value:
-                        record["conflicts"].add(key)
+                        merged = _merge_prices(record[key], value) if key == "prices" else None
+                        if merged is None:
+                            record["conflicts"].add(key)
+                        else:
+                            record[key] = merged
                 elif value is not None:
                     record[key] = value
     for record in records.values():
@@ -317,6 +353,28 @@ def accounting_dispatches(calls: list[Any]) -> tuple[list[dict[str, Any]], int]:
                 record.get(whole) is None or record[subset] > record[whole]
             ):
                 record["conflicts"].add(subset)
+        if record["conflicts"] & {"usd", "prices"}:
+            record["prices"] = None
+        elif record.get("prices") and record["conflicts"]:
+            prices = {**record["prices"]}
+            for field, groups in (
+                ("input", ("input_uncached", "cache_read")),
+                ("cached", ("input_uncached", "cache_read")),
+                ("output", ("output",)),
+                ("reasoning", ("output",)),
+            ):
+                if field in record["conflicts"]:
+                    for group in groups:
+                        prices[group] = None
+                        prices["not_applicable"] = [
+                            g for g in prices["not_applicable"] if g != group
+                        ]
+                        prices["unknown_groups"] = list(set([*prices["unknown_groups"], group]))
+            record["prices"] = (
+                prices
+                if any(prices[group] for group in ("input_uncached", "cache_read", "output"))
+                else None
+            )
         for key in record["conflicts"]:
             record[key] = None
     return list(records.values()), len(reused)
@@ -428,7 +486,7 @@ def conversation_metrics(
         "scope_complete": True,
         "scope_start": scope_start,
         "as_of": as_of,
-        "provenance": "server_receipts_native_usage_and_matching_generation_metadata",
+        "provenance": "server_receipts_native_usage_and_optional_matching_generation_metadata",
         "retention": "existing_deletion_policy_no_shadow_history",
         "last_measured_input": measured,
         "context_policy": {
@@ -437,6 +495,7 @@ def conversation_metrics(
             "current_projection_measurement": "pending",
         },
         "reused_calls": reused,
+        "token_prices": summarize_prices(dispatches),
         **accounting_summary(dispatches),
         "responses": rows,
     }
