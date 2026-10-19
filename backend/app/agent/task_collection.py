@@ -14,13 +14,19 @@ from typing import Any, Literal
 from uuid import UUID, uuid7
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import AuthSession, OneShotReminder, Task, TaskItem
 from app.domain.one_shot import ACTIVE, ReminderWrite, resolve_due, save_reminder
-from app.domain.tasks import TaskCreate, TaskItemUpdate, TaskUpdate, _mark_v2_due_writer
+from app.domain.tasks import (
+    TaskCreate,
+    TaskDuePrecision,
+    TaskItemUpdate,
+    TaskUpdate,
+    _mark_v2_due_writer,
+)
 from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
 COLLECTION_TOOL = "task.collection.v1"
@@ -93,12 +99,36 @@ class ReminderCommand(BaseModel):
         return self
 
 
+def _task_fields_json_schema(schema: dict[str, Any]) -> None:
+    # Collection patches are a distinct wire contract from single-create.
+    # Keep DTO property types without defaults that imply edit assignments.
+    properties = TaskCreate.model_json_schema()["properties"]
+    schema.update(
+        additionalProperties=False,
+        properties={
+            key: {k: v for k, v in properties[key].items() if k not in {"default", "title"}}
+            for key in sorted(TASK_FIELDS - {"due_precision", "pinned"})
+        },
+    )
+    schema["properties"]["due_precision"] = TypeAdapter(TaskDuePrecision).json_schema()
+    schema["properties"]["pinned"] = {"type": "boolean"}
+
+
 class TaskCommand(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     action: Literal["create", "edit", "soft_delete", "restore"]
     id: UUID | None = None
     expected_collection_version: int | None = Field(default=None, ge=1, strict=True)
-    fields: dict[str, Any] = Field(default_factory=dict)
+    fields: dict[str, Any] = Field(
+        default_factory=dict,
+        json_schema_extra=_task_fields_json_schema,
+        description=(
+            "Only the listed collection Task fields are allowed. Omit is_private entirely, "
+            "even false: STANDARD scope is server-owned. Checklist operations belong in "
+            "children, never fields.items. Omitted fields stay unspecified; scheduling "
+            "requires the complete due_precision/due_on/due_at triad."
+        ),
+    )
     children: tuple[ChildCommand, ...] = Field(default_factory=tuple, max_length=200)
     reminder: ReminderCommand = Field(default_factory=ReminderCommand)
 

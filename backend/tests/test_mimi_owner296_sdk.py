@@ -7,7 +7,7 @@ import json
 import httpx2
 import pytest
 from test_mimi_openai_sdk import _settings
-from test_mimi_owner296 import call, collection, payload, single
+from test_mimi_owner296 import assert_collection_wire_schema, call, collection, payload, single
 
 from app.agent import openai_sdk
 from app.agent.openrouter import CandidateContractError
@@ -72,6 +72,7 @@ def test_native_sdk_full_single_or_collection_terminal(streaming, count):
         async def handler(request):
             wire = json.loads(request.content)
             wires.append(wire)
+            assert_collection_wire_schema(wire)
             assert wire["provider"]["zdr"] and wire["provider"]["data_collection"] == "deny"
             return response(wire, [call(name, expected)])
 
@@ -120,5 +121,39 @@ def test_sdk_rejection_keeps_attempt_usage_and_never_delivers_partial(streaming,
         assert len(wires) == 1 and raised.value.correction_ready is False
         assert raised.value.terminal_receipt["usage"]["cost"] == 0.001
         assert raised.value.terminal_receipt["id"] == "synthetic-native-1"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("privacy", [False, True])
+def test_sdk_collection_privacy_field_remains_fatal_and_accounted(streaming, privacy):
+    from app.agent.openrouter import RouteContractError
+
+    async def scenario():
+        args = collection(2)
+        args["entries"][1]["fields"]["is_private"] = privacy
+        wires = []
+
+        async def handler(request):
+            wire = json.loads(request.content)
+            wires.append(wire)
+            assert_collection_wire_schema(wire)
+            return response(wire, [call(COLLECTION_CANDIDATE_TOOL, args)])
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+            fn = openai_sdk.complete_stream if streaming else openai_sdk.complete
+            with pytest.raises(
+                RouteContractError, match="^invalid_agent_terminal_payload$"
+            ) as raised:
+                await fn(
+                    [{"role": "user", "content": "Synthetic observed shape"}],
+                    settings=_settings(mimi_route_mode="native"),
+                    client=client,
+                    agent_contract=True,
+                )
+        assert not isinstance(raised.value, CandidateContractError)
+        assert len(wires) == 1
+        assert raised.value.terminal_receipt["usage"]["cost"] == 0.001
 
     asyncio.run(scenario())

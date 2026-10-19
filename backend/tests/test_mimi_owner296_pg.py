@@ -14,7 +14,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_mimi_collection_service_pg import auth, cleanup, local_contract  # noqa: F401
-from test_mimi_owner296 import call, collection, single
+from test_mimi_owner296 import assert_collection_wire_schema, call, collection, single
 from test_mimi_owner296_sdk import response
 
 from app.agent import langgraph_runner, openai_sdk, service
@@ -91,6 +91,7 @@ async def runtime(pg_dsn, monkeypatch, *, streaming=False):
     async def handler(request):
         wire = json.loads(request.content)
         state.wires.append(wire)
+        assert_collection_wire_schema(wire)
         native = copy.deepcopy(state.queue.pop(0))
         for item in native:
             if item["function"]["name"] == CREATE_CANDIDATE_TOOL:
@@ -396,12 +397,13 @@ def test_corrected_collection_replaces_old_preview_only_after_complete_valid_can
     asyncio.run(scenario(), loop_factory=selector_loop_factory)
 
 
-def test_unauthorized_candidate_field_does_not_dispatch_correction(pg_dsn, monkeypatch):
+@pytest.mark.parametrize("privacy", [False, True])
+def test_unauthorized_candidate_field_does_not_dispatch_correction(pg_dsn, monkeypatch, privacy):
     async def scenario():
         async with runtime(pg_dsn, monkeypatch) as rt:
             before = await counts(rt)
             args = collection(2)
-            args["entries"][0]["fields"]["is_private"] = True
+            args["entries"][0]["fields"]["is_private"] = privacy
             rt.queue = [
                 [call(COLLECTION_CANDIDATE_TOOL, args)],
                 [call(COLLECTION_CANDIDATE_TOOL, collection(2))],
@@ -410,5 +412,16 @@ def test_unauthorized_candidate_field_does_not_dispatch_correction(pg_dsn, monke
             assert len(rt.wires) == 1 and not view["change_sets"]
             assert view["runs"][-1]["state"] == "halted"
             assert await counts(rt) == before
+            async with rt.maker() as db:
+                calls = (
+                    await db.scalars(
+                        select(MimiProviderCall).where(
+                            MimiProviderCall.run_id == UUID(str(view["runs"][-1]["id"]))
+                        )
+                    )
+                ).all()
+                assert len(calls) == 1 and calls[0].state == "failed"
+                assert calls[0].usage["cost"] == 0.001
+                assert not calls[0].result.get("candidate_correction")
 
     asyncio.run(scenario(), loop_factory=selector_loop_factory)
