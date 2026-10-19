@@ -202,7 +202,9 @@ TOOLS: tuple[dict[str, Any], ...] = (
     ),
     _tool(
         CREATE_CANDIDATE_TOOL,
-        "Propose one STANDARD Task create. This never writes; "
+        "Propose exactly one STANDARD Task create in a candidate-only turn. "
+        "For multiple new Tasks, when leased, use ONE task.collection_candidate.v1 call "
+        "with one create entry per Task, not multiple single-create calls. This never writes; "
         "the server freezes a preview for Owner confirmation.",
         {
             "type": "object",
@@ -252,6 +254,11 @@ TOOLS += (
     _typed_tool(
         COLLECTION_CANDIDATE_TOOL,
         "Propose one bounded STANDARD Task collection with full fields/checklist/reminder effects. "
+        "For N new Tasks submit ONE call with N action=create entries, selection_id=null, "
+        "no IDs/versions; server issues IDs. Include every requested Task. "
+        "Use fields for Task fields and children for checklist operations. If scheduling, "
+        "supply all due_precision/due_on/due_at fields. Finish any reads/selection first in "
+        "separate read-only turns; never combine a candidate with any other tool call. "
         "Existing targets require the actual selection_id returned by freeze_selection and "
         "exact included target IDs/versions; revisions require fresh current-run reads/selection. "
         "Server validates/freezes; text plans never replace preview or execution receipt. "
