@@ -257,3 +257,74 @@ def test_unaccounted_or_final_only_rejection_cannot_continue(run_runner, ready):
     with pytest.raises(CandidateContractError):
         run_runner(invoke, AsyncMock(), turns=1 if ready else 3)
     assert invoke.await_count == 1
+
+
+def assert_collection_wire_schema(wire):
+    tool = next(
+        t["function"] for t in wire["tools"] if t["function"]["name"] == COLLECTION_CANDIDATE_TOOL
+    )
+    fields = tool["parameters"]["properties"]["entries"]["items"]["properties"]["fields"]
+    assert fields["additionalProperties"] is False
+    assert set(fields["properties"]) == {
+        "title",
+        "body_md",
+        "status",
+        "priority",
+        "due_precision",
+        "due_on",
+        "due_at",
+        "pinned",
+    }
+    assert not fields.get("required")  # Existing-target edits can preserve omitted fields.
+    assert fields["properties"]["due_precision"]["enum"] == ["none", "date", "datetime"]
+    assert fields["properties"]["pinned"]["type"] == "boolean"
+    assert "is_private" in tool["description"] and "even false" in tool["description"]
+    single_tool = next(
+        t["function"] for t in wire["tools"] if t["function"]["name"] == CREATE_CANDIDATE_TOOL
+    )
+    assert single_tool["parameters"]["properties"]["task"]["properties"]["is_private"] == {
+        "const": False
+    }
+
+
+def test_native_collection_wire_schema_lists_only_authorized_collection_fields():
+    from test_mimi_openai_sdk import _settings
+
+    from app.agent.openrouter import build_request
+
+    wire = build_request(
+        [{"role": "user", "content": "Synthetic two-create"}],
+        _settings(mimi_route_mode="native"),
+        agent_contract=True,
+    )
+    assert_collection_wire_schema(wire)
+
+
+@pytest.mark.parametrize("privacy", [False, True, None, 0, "false"])
+def test_observed_collection_privacy_field_stays_fatal_without_normalization(privacy):
+    from app.agent.openrouter import CandidateContractError
+
+    args = collection(2)
+    args["entries"][1]["fields"]["is_private"] = privacy
+    original = json.dumps(args, sort_keys=True)
+    with pytest.raises(RouteContractError, match="^invalid_agent_terminal_payload$") as raised:
+        parse_agent_completion(payload([call(COLLECTION_CANDIDATE_TOOL, args)]))
+    assert not isinstance(raised.value, CandidateContractError)
+    issues = raised.value.__cause__.errors(include_input=False)
+    assert any(
+        str(issue.get("ctx", {}).get("error")) == "task_collection_field_not_authorized"
+        for issue in issues
+    )
+    assert json.dumps(args, sort_keys=True) == original
+
+
+def test_collection_guidance_pin_keeps_only_known_checkpoint_predecessors():
+    from app.agent.policy import checkpoint_policy_compatible, load_standard_policy
+
+    current = load_standard_policy(collection_enabled=True)
+    previous = "c44ab32f8d41643f219a85cd8dda5371fbdf254410c89f92c281e8a44ea3561e"
+    assert current.sha256 != previous and "Omit is_private entirely, even false" in current.text
+    assert checkpoint_policy_compatible(previous, collection_enabled=True)
+    assert checkpoint_policy_compatible(current.sha256, collection_enabled=True)
+    assert not checkpoint_policy_compatible(previous, collection_enabled=False)
+    assert not checkpoint_policy_compatible("0" * 64, collection_enabled=True)
