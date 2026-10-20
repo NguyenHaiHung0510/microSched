@@ -11,6 +11,17 @@ test('negative feedback retains chosen reasons and exact issue in the existing c
   expect(() => feedbackComment('negative', [], 'x'.repeat(501))).toThrow('exceeds500')
   expect(feedbackComment('negative', [], 'x'.repeat(500))).toContain('x'.repeat(500))
 })
+
+test('positive supplement allows exactly8000 Unicode codepoints with all reasons below the unchanged API limit', () => {
+  const reasons = ['Rõ ràng', 'Đúng ý', 'Hữu ích', 'Nhanh', 'Dễ hiểu', 'Khác']
+  const issue = '🌸'.repeat(7999) + 'ệ'
+  const comment = feedbackComment('positive', reasons, issue)
+  expect(comment).toContain(issue)
+  expect(Array.from(comment).length).toBeLessThanOrEqual(10000)
+  for (const reason of reasons) expect(comment).toContain(reason)
+  expect(() => feedbackComment('positive', reasons, issue + 'x')).toThrow('exceeds8000')
+  expect(() => feedbackComment('negative', [], 'x'.repeat(501))).toThrow('exceeds500')
+})
 test('normal desktop allows640px on either rail and preserves existing defaults/minimum', () => {
   expect(fitMimiRails(200, 220, 1490, true, true)).toEqual({ left: 200, right: 220 })
   expect(clampMimiRail(640, 1490, 220)).toBe(640)

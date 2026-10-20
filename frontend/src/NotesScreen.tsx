@@ -1,6 +1,7 @@
 import {
   type FormEvent,
   type MouseEvent,
+  type KeyboardEvent,
   memo,
   useMemo,
   useRef,
@@ -82,6 +83,12 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const [reflectionText, setReflectionText] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingItemContent, setEditingItemContent] = useState('')
+  const newItemRevision = useRef(0)
+  const editDraft = useRef({ id: '', revision: 0 })
+  const addInFlight = useRef(false)
+  const editInFlight = useRef(false)
+  const addComposing = useRef(false)
+  const editComposing = useRef(false)
   const [editingReflectionIdx, setEditingReflectionIdx] = useState<number | null>(null)
   const [editingReflectionText, setEditingReflectionText] = useState('')
   const parsedBody = useMemo(() => parseNoteBody(note.body_md), [note.body_md])
@@ -120,34 +127,35 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     },
   })
   const addItem = useMutation({
-    mutationFn: (content: string) =>
+    mutationFn: ({ content }: { content: string; revision: number }) =>
       apiRequest<NoteItem>(`/api/notes/${note.id}/items`, {
         method: 'POST',
         body: JSON.stringify({ content, position: note.items.length }),
       }),
     onSuccess: (_data, variables) => {
-      setNewItem((current) => (current === variables || current.trim() === variables ? '' : current))
+      if (newItemRevision.current === variables.revision) {
+        newItemRevision.current += 1
+        setNewItem('')
+      }
       refresh()
     },
+    onSettled: () => { addInFlight.current = false },
   })
   const changeItem = useMutation({
-    mutationFn: ({ item, changes }: { item: NoteItem; changes: Partial<NoteItem> }) =>
+    mutationFn: ({ item, changes }: { item: NoteItem; changes: Partial<NoteItem>; draftRevision?: number }) =>
       apiRequest<NoteItem>(`/api/notes/${note.id}/items/${item.id}`, {
         method: 'PATCH',
         body: JSON.stringify(changes),
       }),
     onSuccess: (_data, variables) => {
-      if (variables.changes.content !== undefined) {
-        setEditingItemContent((current) => {
-          if (current === variables.changes.content) {
-            setEditingItemId((currentId) => (currentId === variables.item.id ? null : currentId))
-            return ''
-          }
-          return current
-        })
+      if (variables.changes.content !== undefined && editDraft.current.id === variables.item.id && editDraft.current.revision === variables.draftRevision) {
+        editDraft.current = { id: '', revision: editDraft.current.revision + 1 }
+        setEditingItemId(null)
+        setEditingItemContent('')
       }
       refresh()
     },
+    onSettled: () => { editInFlight.current = false },
   })
   const reorderItems = useMutation({
     mutationFn: async ({ item, other }: { item: NoteItem; other: NoteItem }) => {
@@ -215,8 +223,30 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   }
 
   function startEditingItem(item: NoteItem) {
+    editDraft.current = { id: item.id, revision: editDraft.current.revision + 1 }
     setEditingItemId(item.id)
     setEditingItemContent(item.content)
+  }
+
+  function submitNewItem() {
+    const content = newItem.trim()
+    if (!content || addItem.isPending || addInFlight.current || addComposing.current) return
+    addInFlight.current = true
+    addItem.mutate({ content, revision: newItemRevision.current })
+  }
+
+  function submitEditedItem(item: NoteItem) {
+    const content = editingItemContent.trim()
+    if (!content || changeItem.isPending || editInFlight.current || editComposing.current) return
+    editInFlight.current = true
+    changeItem.mutate({ item, changes: { content }, draftRevision: editDraft.current.revision })
+  }
+
+  function checklistKey(event: KeyboardEvent<HTMLTextAreaElement>, submit: () => void) {
+    if (event.key !== 'Enter' || !event.ctrlKey) return
+    event.preventDefault()
+    if (event.repeat || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+    submit()
   }
 
   function moveItem(item: NoteItem, direction: -1 | 1) {
@@ -533,25 +563,24 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 rounded-md bg-muted/40 p-2 sm:px-2.5 sm:py-1.5">
                         {editingItemId === item.id ? (
                           <>
-                            <Textarea
-                              data-testid="note-item-edit-input"
-                              rows={2}
-                              className="min-h-20 min-w-0 flex-1 resize-y bg-card"
-                              aria-label={`Sửa mục ${item.content}`}
-                              value={editingItemContent}
-                              onChange={(event) => setEditingItemContent(event.target.value)}
-                            />
-                            <Button
-                              data-testid="note-item-edit-save"
-                              size="lg"
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <Textarea
+                                data-testid="note-item-edit-input"
+                                rows={2}
+                                className="min-h-20 min-w-0 resize-y bg-card"
+                                aria-label={`Sửa mục ${item.content}`}
+                                aria-describedby={`note-edit-hint-${note.id}`}
+                                value={editingItemContent}
+                                onChange={event => { editDraft.current.revision += 1; setEditingItemContent(event.target.value) }}
+                                onCompositionStart={() => { editComposing.current = true }}
+                                onCompositionEnd={() => { editComposing.current = false }}
+                                onKeyDown={event => checklistKey(event, () => submitEditedItem(item))}
+                              />
+                              <p id={`note-edit-hint-${note.id}`} className="text-xs text-muted-foreground">Enter xuống dòng · Ctrl+Enter lưu</p>
+                            </div>
+                            <Button data-testid="note-item-edit-save" size="lg"
                               disabled={!editingItemContent.trim() || changeItem.isPending}
-                              onClick={() =>
-                                changeItem.mutate({
-                                  item,
-                                  changes: { content: editingItemContent.trim() },
-                                })
-                              }
-                            >
+                              onClick={() => submitEditedItem(item)}>
                               Lưu
                             </Button>
                           </>
@@ -611,33 +640,26 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                  />
                 )}
 
-                <form
-                  className="flex items-start gap-2"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    const content = newItem.trim()
-                    if (content) addItem.mutate(content)
-                  }}
-                >
-                  <Textarea
-                    data-testid="note-item-add-input"
-                    rows={2}
-                    aria-label={`Thêm checklist cho ${label}`}
-                    className="min-h-20 resize-y bg-card"
-                    placeholder="Thêm checklist…"
-                    value={newItem}
-                    onChange={(event) => setNewItem(event.target.value)}
-                  />
-                  <Button
-                    data-testid="note-item-add-submit"
-                    size="lg"
-                    type="submit"
-                    variant="secondary"
-                    disabled={!newItem.trim() || addItem.isPending}
-                  >
-                    <Plus data-icon="inline-start" />
-                    Thêm
-                  </Button>
+                <form className="space-y-1" onSubmit={event => { event.preventDefault(); submitNewItem() }}>
+                  <div className="flex items-start gap-2">
+                    <Textarea
+                      data-testid="note-item-add-input"
+                      rows={2}
+                      aria-label={`Thêm checklist cho ${label}`}
+                      aria-describedby={`note-add-hint-${note.id}`}
+                      className="min-h-20 resize-y bg-card"
+                      placeholder="Thêm checklist…"
+                      value={newItem}
+                      onChange={event => { newItemRevision.current += 1; setNewItem(event.target.value) }}
+                      onCompositionStart={() => { addComposing.current = true }}
+                      onCompositionEnd={() => { addComposing.current = false }}
+                      onKeyDown={event => checklistKey(event, submitNewItem)}
+                    />
+                    <Button data-testid="note-item-add-submit" size="lg" type="submit" variant="secondary" disabled={!newItem.trim() || addItem.isPending}>
+                      <Plus data-icon="inline-start" />Thêm
+                    </Button>
+                  </div>
+                  <p id={`note-add-hint-${note.id}`} className="text-xs text-muted-foreground">Enter xuống dòng · Ctrl+Enter thêm</p>
                 </form>
               </div>
 
