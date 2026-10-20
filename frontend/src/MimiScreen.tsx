@@ -22,6 +22,7 @@ import { unicodeCodepoints } from '@/mimi-operating-policy'
 import { MimiMessageText } from '@/MimiMessageText'
 import { MimiSystemNotice } from '@/MimiSystemNotice'
 import { MimiPositiveSupplement } from '@/MimiPositiveSupplement'
+import { cn } from '@/lib/utils'
 import { isVerifiedServerNotice } from '@/mimi-message-provenance'
 import { ApiError, TimeoutError } from '@/api'
 import { Badge } from '@/components/ui/badge'
@@ -932,14 +933,13 @@ export function MimiScreen({
       {latestReceipt ? <details className="max-h-40 overflow-auto rounded-lg border bg-card p-2 text-xs" data-testid="mimi-receipt"><summary className="cursor-pointer font-semibold">Đã lưu thay đổi · {typeof latestReceipt.result.count === 'number' ? latestReceipt.result.count : 1} Task</summary><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" onClick={onOpenTasks}>Mở Task</Button>{latestReceipt.result.undo_available === true ? <Button variant="outline" disabled={undo.isPending || runtimeActive || !!pendingChangeSet || !!decisionIntent} onClick={() => undo.mutate(latestReceipt.id)}>Chuẩn bị hoàn tác</Button> : null}</div><p className="mt-2 break-all text-xs">Receipt {latestReceipt.id}</p><p className="text-xs">Hoàn tác tạo preview mới có kiểm tra phiên bản; cần xác nhận riêng.</p>{undo.isError ? <p role="alert" className="text-bad">{errorMessage(undo.error)}</p> : null}</details> : null}
 
       {feedbackTargets.length ? (
-        <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}><DialogContent className="max-h-[90dvh] overflow-y-auto" data-testid="mimi-feedback"><DialogHeader><DialogTitle>Góp ý câu trả lời</DialogTitle><DialogDescription>Feedback được gắn với đúng câu trả lời, run, lần gọi hoặc receipt bạn chọn.</DialogDescription></DialogHeader>
+        <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}><DialogContent className={cn('max-h-[90dvh] overflow-y-auto', feedbackMood === 'positive' && 'sm:max-w-xl')} data-testid="mimi-feedback"><DialogHeader><DialogTitle>Góp ý câu trả lời</DialogTitle><DialogDescription>Feedback được gắn với đúng câu trả lời, run, lần gọi hoặc receipt bạn chọn.</DialogDescription></DialogHeader>
           {feedbackMood === 'positive' ? <div className="space-y-3" data-testid="mimi-positive-feedback">
             <ThumbsUp className="mx-auto size-8 text-primary" />
             <p role="status" className="text-center font-semibold">{feedback.isPending ? 'Đang lưu phản hồi tích cực…' : feedbackAcknowledgment?.conversationId === current.id && feedbackAcknowledgment.targetKey === resolvedFeedbackTargetKey && feedbackAcknowledgment.mood === 'positive' ? 'Đã ghi nhận phản hồi tích cực' : 'Chưa xác nhận phản hồi tích cực đã lưu'}</p>
             <p className="rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap break-words">{current.messages.find((message) => message.id === selectedFeedbackTarget?.target_id)?.content.slice(0, 180) ?? selectedFeedbackTarget?.label ?? 'Mục đang chọn'}</p>
             {feedback.isError ? <p role="alert" className="text-sm text-bad">Chưa xác định kết quả lưu. Khi bấm Hữu ích lại sẽ giữ cùng khóa, không tạo bản ghi mới ngầm.</p> : null}
-            {selectedFeedbackTarget?.target_type === 'turn' && (!selectedSystemNotice || systemVoteAcknowledged) ? <MimiPositiveSupplement conversationId={current.id} targetId={selectedFeedbackTarget.target_id} /> : null}
-            <div className="flex justify-end"><Button type="button" variant="outline" onClick={() => setFeedbackOpen(false)}>Để sau</Button></div>
+            {selectedFeedbackTarget?.target_type === 'turn' && (!selectedSystemNotice || systemVoteAcknowledged) ? <MimiPositiveSupplement conversationId={current.id} targetId={selectedFeedbackTarget.target_id} onLater={() => setFeedbackOpen(false)} /> : <div className="flex justify-end"><Button type="button" variant="outline" onClick={() => setFeedbackOpen(false)}>Để sau</Button></div>}
           </div> : <Card className="border-0 shadow-none">
           <CardHeader>
             <CardTitle>Luồng phản hồi chưa tốt</CardTitle>

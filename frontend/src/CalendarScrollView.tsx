@@ -454,9 +454,10 @@ export function CalendarScrollView() {
     () => annotationsByDay(annotationsQuery.data?.items ?? []),
     [annotationsQuery.data],
   )
+  const privateLocked = !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
   const tasksByDayMap = useMemo(
-    () => tasksByDueDay(allTasksQuery.data ?? []),
-    [allTasksQuery.data],
+    () => tasksByDueDay((allTasksQuery.data ?? []).filter(task => !task.is_private || !privateLocked)),
+    [allTasksQuery.data, privateLocked],
   )
   const sourceById = useMemo(
     () => new Map((sourcesQuery.data?.items ?? []).map((source) => [source.id, source])),
@@ -492,8 +493,6 @@ export function CalendarScrollView() {
     [visibleWeekKeys, weekDaysByKey],
   )
 
-  const privateLocked =
-    !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
 
   const agendaMonthIndex = months.findIndex(
     (m) => m.year === agendaMonth.year && m.month === agendaMonth.month,
@@ -1262,6 +1261,7 @@ export function CalendarScrollView() {
                       showAnnotationLabels={isDesktop}
                       sourceColorOf={(sourceId) => sourceById.get(sourceId)?.color ?? null}
                         onSelect={setSelectedDay}
+                        previewDisabled={selectedDay !== null || agendaTaskEdit !== null}
                         onToggleTask={(taskId, status) =>
                           toggleTaskStatus.mutate({ taskId, status })
                         }

@@ -9,6 +9,7 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 Policy đang dùng: [harness-policy](../docs/harness-policy.md), entry point [AGENTS](../AGENTS.md).
 Phiên migration 2026-09-06: [042 — bounded authority](042-harness-authority-v1.md).
 UI/UX readability work: [043 — calendar, private presentation and upcoming reminders](043-ui-ux-readability.md).
+Daily UI improvements: [087 — Note/Mimi input, annual heatmap and shared Task previews](087-daily-ui-improvements.md); local candidate implemented, independent QA/CI/release tracked separately.
 Public homepage / denied and live-link delivery: [044 — Owner-approved homepage](044-homepage-preview.md).
 One-shot reminders and bounded homepage/key assessment: [047 — reminders](047-one-shot-reminders.md).
 Neon autosuspend recovery: [048 — idle recovery](048-neon-idle-recovery.md).

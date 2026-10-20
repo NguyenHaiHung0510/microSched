@@ -69,6 +69,9 @@ export type TaskSummary = {
   created_at: string | null
   pinned?: boolean
   is_private?: boolean
+  body_md?: CalendarTask['body_md']
+  priority?: CalendarTask['priority']
+  items?: CalendarTask['items']
 }
 
 export type DayChip =

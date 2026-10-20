@@ -36,14 +36,12 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { TaskPreview } from '@/TaskPreview'
 import { cn } from '@/lib/utils'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
+import { remainingSeconds } from '@/private-gate'
+import { sessionQuerySpec } from '@/calendar-queries'
 import { uuidv7 } from '@/lib/uuidv7'
 import { taskRefetchInterval } from '@/query-polling'
 import { TaskForm } from '@/TaskForm'
@@ -121,6 +119,11 @@ function sortTimelineTasks(
 
 export function TasksScreen() {
   const queryClient = useQueryClient()
+  const session = useQuery({
+    ...sessionQuerySpec,
+    queryFn: () => apiRequest<{ private_until: string | null }>('/api/me'),
+  })
+  const privateUnlocked = remainingSeconds(session.data?.private_until ?? null) > 0
   const quickInputRef = useRef<HTMLInputElement>(null)
   const overdueRef = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState<ListView>('open')
@@ -289,11 +292,12 @@ export function TasksScreen() {
   const tasks = useMemo(() => {
     const seen = new Set<string>()
     return [...(timeline.data?.items ?? []), ...extraTasks].filter((task) => {
+      if (task.is_private && !privateUnlocked) return false
       if (seen.has(task.id)) return false
       seen.add(task.id)
       return true
     })
-  }, [extraTasks, timeline.data?.items])
+  }, [extraTasks, timeline.data?.items, privateUnlocked])
 
   const dateKeys = useMemo(() => {
     const keys: string[] = []
@@ -912,8 +916,7 @@ const TaskCard = memo(function TaskCard({
                   3:1 của non-text contrast. Dùng `--primary` (rose-700, 5,29:1)
                   — vẫn là màu nhận diện, chỉ đậm hơn. */}
               {task.pinned ? <Pin className="size-4 text-primary" aria-hidden="true" /> : null}
-              <Tooltip>
-                <TooltipTrigger asChild>
+              <TaskPreview task={task} disabled={detailsOpen}>
                   <Button
                     data-testid="task-title"
                     className={[
@@ -934,40 +937,7 @@ const TaskCard = memo(function TaskCard({
                   >
                     {task.title}
                   </Button>
-                </TooltipTrigger>
-                {task.body_md || task.items.length > 0 ? (
-                  <TooltipContent>
-                    {task.items.length > 0 ? (
-                      <div>
-                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
-                          Checklist ({task.items.length})
-                        </span>
-                        <ol className="mt-1 space-y-0.5">
-                          {task.items.slice(0, 3).map((item, index) => (
-                            <li key={item.id} className="flex gap-1.5">
-                              <span className="opacity-60">{index + 1}.</span>
-                              {item.content}
-                            </li>
-                          ))}
-                        </ol>
-                        {task.items.length > 3 ? (
-                          <p className="mt-1 text-xs opacity-70 italic">
-                            … và {task.items.length - 3} mục nữa
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {task.body_md ? (
-                      <div className={task.items.length > 0 ? 'mt-2' : ''}>
-                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
-                          Ghi chú
-                        </span>
-                        {task.body_md}
-                      </div>
-                    ) : null}
-                  </TooltipContent>
-                ) : null}
-              </Tooltip>
+              </TaskPreview>
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
               {task.is_private ? (
                 <PrivateMarker />

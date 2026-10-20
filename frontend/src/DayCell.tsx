@@ -10,6 +10,7 @@ import {
 } from '@/calendar-scroll'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { TaskPreview } from '@/TaskPreview'
 
 export type DropTaskPayload =
   | { kind: 'quick-new-task'; title: string }
@@ -29,6 +30,7 @@ export function DayCell({
   isDesktop = false,
   onToggleTask,
   onDropTask,
+  previewDisabled = false,
 }: {
   day: string
   isToday: boolean
@@ -43,8 +45,10 @@ export function DayCell({
   isDesktop?: boolean
   onToggleTask?: (taskId: string, newStatus: 'open' | 'completed') => void
   onDropTask?: (day: string, payload: DropTaskPayload) => void
+  previewDisabled?: boolean
 }) {
   const [isDragOver, setIsDragOver] = useState(false)
+  const [draggingTask, setDraggingTask] = useState<string | null>(null)
   const merged = mergeDayChips(events, tasks, chipLimit)
   const visibleAnnotations = annotations.slice(0, 2)
   const hiddenAnnotations = Math.max(0, annotations.length - 2)
@@ -53,7 +57,7 @@ export function DayCell({
   function handleDragOver(e: React.DragEvent) {
     if (!isDesktop) return
     e.preventDefault()
-    e.dataTransfer.dropEffect = 'copy'
+    e.dataTransfer.dropEffect = e.dataTransfer.effectAllowed === 'move' ? 'move' : 'copy'
     if (!isDragOver) setIsDragOver(true)
   }
 
@@ -154,6 +158,7 @@ export function DayCell({
               draggable={isDesktop}
               onDragStart={(e) => {
                 if (!isDesktop) return
+                setDraggingTask(chip.task.id)
                 e.stopPropagation()
                 e.dataTransfer.setData(
                   'application/json',
@@ -165,22 +170,30 @@ export function DayCell({
                 )
                 e.dataTransfer.effectAllowed = 'move'
               }}
+              onDragEnd={() => setDraggingTask(null)}
               className={cn(
                 'group flex items-start justify-between gap-1 rounded-sm border border-dashed border-input bg-card/60 px-1 py-0.5 text-xs font-semibold text-secondary-foreground hover:border-primary',
                 chip.task.is_private && 'border-s-2 border-s-primary bg-brand-50',
                 chip.task.status === 'completed' && 'line-through',
               )}
             >
+              <TaskPreview task={chip.task} disabled={previewDisabled || draggingTask === chip.task.id}>
               <span
-                title={chip.task.title}
+                data-testid="calendar-task-title"
+                role="button" tabIndex={0} aria-label={`Mở chi tiết ${chip.task.title}`}
+                onKeyDown={event => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault(); event.stopPropagation(); onSelect(day)
+                }}
                 className={cn(
-                  'min-w-0 flex-1 line-clamp-2 whitespace-normal [overflow-wrap:anywhere] leading-4',
+                  'outline-none focus-visible:ring-2 focus-visible:ring-ring min-w-0 flex-1 line-clamp-2 whitespace-normal [overflow-wrap:anywhere] leading-4',
                   chip.task.status === 'completed' && 'line-through',
                 )}
               >
                 {chip.task.is_private ? <LockKeyhole aria-label="Riêng tư" role="img" className="mr-1 inline size-3 text-primary" /> : null}
                 {chip.task.title}
               </span>
+              </TaskPreview>
               {onToggleTask ? (
                 <span
                   role="checkbox"
