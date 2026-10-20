@@ -40,6 +40,8 @@ import { TaskPreview } from '@/TaskPreview'
 import { cn } from '@/lib/utils'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
+import { remainingSeconds } from '@/private-gate'
+import { sessionQuerySpec } from '@/calendar-queries'
 import { uuidv7 } from '@/lib/uuidv7'
 import { taskRefetchInterval } from '@/query-polling'
 import { TaskForm } from '@/TaskForm'
@@ -117,6 +119,11 @@ function sortTimelineTasks(
 
 export function TasksScreen() {
   const queryClient = useQueryClient()
+  const session = useQuery({
+    ...sessionQuerySpec,
+    queryFn: () => apiRequest<{ private_until: string | null }>('/api/me'),
+  })
+  const privateUnlocked = remainingSeconds(session.data?.private_until ?? null) > 0
   const quickInputRef = useRef<HTMLInputElement>(null)
   const overdueRef = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState<ListView>('open')
@@ -285,11 +292,12 @@ export function TasksScreen() {
   const tasks = useMemo(() => {
     const seen = new Set<string>()
     return [...(timeline.data?.items ?? []), ...extraTasks].filter((task) => {
+      if (task.is_private && !privateUnlocked) return false
       if (seen.has(task.id)) return false
       seen.add(task.id)
       return true
     })
-  }, [extraTasks, timeline.data?.items])
+  }, [extraTasks, timeline.data?.items, privateUnlocked])
 
   const dateKeys = useMemo(() => {
     const keys: string[] = []

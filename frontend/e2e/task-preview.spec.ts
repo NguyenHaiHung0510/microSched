@@ -173,6 +173,27 @@ test('calendar private preview is removed on lock, including its cached body and
   await expect(day(page).getByText('Task riêng tư synthetic')).toHaveCount(0)
 })
 
+test('locked Task projection rejects cached private rows and keeps public previews usable', async ({ page, previewApi }, info) => {
+  test.skip(info.project.name !== 'desktop', 'Cached-row privacy and hover regression.')
+  await page.route('**/api/tasks/timeline?*', route => route.fulfill({ json: {
+    items: previewApi.tasks, next_cursor: null,
+    bucket_cursors: { dated: null, overdue: null, undated: null },
+    has_previous: false, has_next: false,
+    loaded_range_start: '2026-10-17', loaded_range_end: '2026-10-23',
+  } }))
+  await page.goto('/')
+  await card(page, 'preview-private').getByTestId('task-title').hover()
+  await expect(preview(page)).toContainText('Nội dung private synthetic')
+  await page.getByTestId('private-lock-now').click()
+  await expect(card(page, 'preview-private')).toHaveCount(0)
+  await expect(preview(page)).toHaveCount(0)
+  await card(page).getByTestId('task-title').hover()
+  await expect(preview(page)).toContainText('Mô tả tổng hợp')
+  await page.reload()
+  await expect(card(page)).toBeVisible()
+  await expect(card(page, 'preview-private')).toHaveCount(0)
+})
+
 test('mobile title/chip keeps full-detail/edit path and no horizontal overflow', async ({ page }, info) => {
   test.skip(info.project.name !== 'mobile', 'Touch route.')
   await page.goto('/')
