@@ -125,3 +125,68 @@ test('date-only relative reminder requires an explicit anchor clock', async ({ p
   await editor.getByRole('button', { name: '1 giờ trước', exact: true }).click()
   await expect(editor.getByTestId('reminder-preview')).toContainText('08:00')
 })
+
+test('reopening an annotation source waits for fresh dates and preserves start on an end-only edit', async ({ page }) => {
+  let annotation = { id: 'annotation-088', label: 'Mốc ngày 088', starts_on: '2030-01-25', ends_on: '2030-01-26',
+    note_md: null, color: null, is_private: false, created_at: null, updated_at: null }
+  const writes: Array<Record<string, unknown>> = []
+  let holdDetail = false
+  let detailBlocked = false
+  let inaccessible = false
+  let releaseDetail: () => void = () => {}
+  let detailGate = Promise.resolve()
+  await page.route('**/api/calendar/annotations/annotation-088', async (route) => {
+    const payload = route.request().postDataJSON()
+    writes.push(payload)
+    annotation = { ...annotation, ...payload }
+    await route.fulfill({ json: annotation })
+  })
+  await page.route('**/api/reminders**', async (route) => {
+    if (route.request().url().includes('/annotation-detail/')) {
+      if (holdDetail) { detailBlocked = true; await detailGate }
+      return inaccessible ? route.fulfill({ status: 404, json: { detail: 'Không tìm thấy.' } })
+        : route.fulfill({ json: annotation })
+    }
+    return route.fulfill({ json: { items: [{ id: 'reminder-088', source_kind: 'annotation', source_id: annotation.id,
+      source_title: annotation.label, is_private: false, source_open: true, mode: 'relative', status: 'pending',
+      revision: 1, due_at: '2030-01-24T02:00:00Z' }], has_more: false } })
+  })
+  await page.goto('/')
+  await page.getByTestId('reminder-center-open').click()
+  const openSource = page.getByRole('button', { name: 'Mở đối tượng', exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Đối tượng được nhắc' })
+  const form = dialog.getByTestId('calendar-annotation-form')
+  await openSource.click()
+  await expect(form.getByLabel('Bắt đầu')).toHaveValue('2030-01-25')
+  await form.getByLabel('Bắt đầu').fill('2030-01-26')
+  await form.getByRole('button', { name: 'Lưu dấu ngày' }).click()
+  await expect(dialog).toBeHidden()
+
+  // Hold the re-open GET: the cached snapshot must never become an editable form.
+  holdDetail = true
+  detailGate = new Promise<void>((resolve) => { releaseDetail = resolve })
+  await openSource.click()
+  try {
+    await expect.poll(() => detailBlocked).toBe(true)
+    await expect(form).toHaveCount(0)
+  } finally { holdDetail = false; releaseDetail() }
+  await expect(form.getByLabel('Bắt đầu')).toHaveValue('2030-01-26')
+  await form.getByLabel('Kết thúc').fill('2030-01-27')
+  await form.getByRole('button', { name: 'Lưu dấu ngày' }).click()
+  await expect(dialog).toBeHidden()
+  expect(writes).toHaveLength(2)
+  expect(writes[1]).toMatchObject({ starts_on: '2030-01-26', ends_on: '2030-01-27' })
+
+  // A change made elsewhere must also be read before initializing a new draft.
+  annotation = { ...annotation, starts_on: '2030-01-27' }
+  await openSource.click()
+  await expect(form.getByLabel('Bắt đầu')).toHaveValue('2030-01-27')
+  await form.getByRole('button', { name: 'Huỷ' }).click()
+  await expect(dialog).toBeHidden()
+
+  // Revoked visibility must not reopen a cached, editable source.
+  inaccessible = true
+  await openSource.click()
+  await expect(form).toHaveCount(0)
+  await expect(dialog.getByRole('alert')).toContainText('không còn hiển thị', { timeout: 10_000 })
+})

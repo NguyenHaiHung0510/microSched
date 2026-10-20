@@ -21,7 +21,8 @@ export function ReminderSourceDialog({ kind, sourceId, onClose }: { kind: Remind
     ? `/api/tracker/trackers/${sourceId}` : kind === 'annotation'
       ? `/api/reminders/annotation-detail/${sourceId}` : `/api/reminders/event-detail/${sourceId}`
   const source = useQuery({ queryKey: [...reminderKey, 'detail', kind, sourceId],
-    queryFn: ({ signal }) => apiRequest<Task | Tracker | CalendarEvent | DayAnnotation>(path, { signal }), ...NO_POLLING_QUERY_OPTIONS })
+    queryFn: ({ signal }) => apiRequest<Task | Tracker | CalendarEvent | DayAnnotation>(path, { signal }),
+    ...NO_POLLING_QUERY_OPTIONS, refetchOnMount: 'always' })
   const groups = useQuery({ queryKey: [...reminderKey, 'groups'], enabled: kind === 'tracker',
     queryFn: ({ signal }) => apiRequest<{ items: TrackerGroup[] }>('/api/tracker/groups', { signal }), ...NO_POLLING_QUERY_OPTIONS })
   const save = useMutation({ mutationFn: async (body: object) => {
@@ -38,7 +39,9 @@ export function ReminderSourceDialog({ kind, sourceId, onClose }: { kind: Remind
     <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl"><DialogHeader>
       <DialogTitle>Đối tượng được nhắc</DialogTitle><DialogDescription>Thay đổi mốc thời gian sẽ cập nhật lời nhắc đang chờ.</DialogDescription>
     </DialogHeader>
-      {source.isPending ? <p role="status">Đang tải…</p> : source.isError ? <p role="alert">Đối tượng không còn hiển thị hoặc chưa tải được.</p> : <>
+      {/* Forms initialize a draft once. On each opening, fetch the current source before
+          mounting them; later background refetches must not replace an unsaved draft. */}
+      {source.isPending || !source.isFetchedAfterMount ? <p role="status">Đang tải…</p> : source.isError ? <p role="alert">Đối tượng không còn hiển thị hoặc chưa tải được.</p> : <>
         {save.isError && <p role="alert" className="text-bad">{save.error.message}</p>}
         {kind === 'task' && <TaskForm initial={source.data as Task} submitLabel="Lưu task" pending={save.isPending} onSubmit={(v) => save.mutate(v)} onCancel={onClose} />}
         {kind === 'event' && <EventForm initial={source.data as CalendarEvent} manualSources={[]} pending={save.isPending} onSubmit={(v) => save.mutate(v)} onCancel={onClose} />}
