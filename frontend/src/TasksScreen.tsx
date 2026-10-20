@@ -36,11 +36,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { TaskPreview } from '@/TaskPreview'
 import { cn } from '@/lib/utils'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
@@ -912,8 +908,7 @@ const TaskCard = memo(function TaskCard({
                   3:1 của non-text contrast. Dùng `--primary` (rose-700, 5,29:1)
                   — vẫn là màu nhận diện, chỉ đậm hơn. */}
               {task.pinned ? <Pin className="size-4 text-primary" aria-hidden="true" /> : null}
-              <Tooltip>
-                <TooltipTrigger asChild>
+              <TaskPreview task={task} disabled={detailsOpen}>
                   <Button
                     data-testid="task-title"
                     className={[
@@ -934,40 +929,7 @@ const TaskCard = memo(function TaskCard({
                   >
                     {task.title}
                   </Button>
-                </TooltipTrigger>
-                {task.body_md || task.items.length > 0 ? (
-                  <TooltipContent>
-                    {task.items.length > 0 ? (
-                      <div>
-                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
-                          Checklist ({task.items.length})
-                        </span>
-                        <ol className="mt-1 space-y-0.5">
-                          {task.items.slice(0, 3).map((item, index) => (
-                            <li key={item.id} className="flex gap-1.5">
-                              <span className="opacity-60">{index + 1}.</span>
-                              {item.content}
-                            </li>
-                          ))}
-                        </ol>
-                        {task.items.length > 3 ? (
-                          <p className="mt-1 text-xs opacity-70 italic">
-                            … và {task.items.length - 3} mục nữa
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {task.body_md ? (
-                      <div className={task.items.length > 0 ? 'mt-2' : ''}>
-                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
-                          Ghi chú
-                        </span>
-                        {task.body_md}
-                      </div>
-                    ) : null}
-                  </TooltipContent>
-                ) : null}
-              </Tooltip>
+              </TaskPreview>
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
               {task.is_private ? (
                 <PrivateMarker />

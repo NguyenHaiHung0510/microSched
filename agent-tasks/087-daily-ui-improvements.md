@@ -1,6 +1,6 @@
 # Task 087 — Daily UI improvements
 
-Status 2026-10-20: B1 and annual heatmap implementation approved. Annual heatmap is locally frozen at `89a45b93c2506571d9df33de9eec176ced09fe38`; B1 local builder verification passed (278 frontend tests and 15 applicable synthetic browser cases). Independent QA, CI, physical-device and production acceptance are separate. All B1/B2 visuals are approved; Task preview implementation remains pending its successor handoff.
+Status 2026-10-20: B1/B2 implemented in the local candidate, including shared Task previews. Annual heatmap frozen at `89a45b93c2506571d9df33de9eec176ced09fe38`; B1 frozen at `82435864070ec8659e056bc0f6619a79bf991765` with builder checks passed and Owner manual Vietnamese input acceptance reported. All B1/B2 visuals approved. Task-preview builder checks passed (281 frontend tests, 7 applicable synthetic browser cases); native reschedule and quick-create drag paths verified. Consolidated independent QA/CI/release acceptance remains with the release coordinator; no production result is claimed here. B3 held; day-annotation reminders require a separate packet.
 
 ## B1 — Note checklist and positive supplemental feedback
 
@@ -17,14 +17,14 @@ Status 2026-10-20: B1 and annual heatmap implementation approved. Annual heatmap
 - Load only an active day's details; no 365 eager detail requests. Large days use explicit bounded paging and visible partial totals until all entries are loaded.
 - Preserve month/touch details, click/keyboard access to full records, private gating and loading/error/empty/future states. Annual keyboard navigation uses one tab stop plus directional navigation; no essential information is hover-only. Long text wraps at readable sizes using existing components/tokens/Nunito/light theme.
 
-## Approved visuals, pending successor implementation — Task previews
+## Shared Task previews — local implemented candidate
 
-The compact light shared preview for Task and month calendar is visually approved. Keep the actual title on its card/chip; the preview includes content/checklist and useful date/priority metadata, without a duplicate Task title heading or instructional click footer. Implementation is **pending the separate successor handoff**. No Task preview product changes are included in the B1/annual-heatmap candidate. Existing task editing, completion, drag and privacy behavior must remain intact in the successor.
+The compact light preview is shared by Task titles and month-calendar task chips. Keep the actual title on its card/chip; the preview includes content/checklist and useful Vietnam date/priority metadata, without a duplicate Task title heading or instructional click footer. All checklist rows are read-only, with completed/total counts; full body/list content scrolls without stored-text truncation. Empty sections are omitted. Desktop hover/focus and existing touch/full-detail/edit paths remain available. Calendar summaries retain existing body/items/priority data from every cursor page; no preview API requests or polling are added. Existing completion and drag actions remain independent; the drop target respects move/copy compatibility for task rescheduling versus quick-create drags.
 
 ## Evidence and delivery
 
-Use the actual frontend build and isolated synthetic APIs. A baseline browser receipt observed `abcd`, caret 2, insert X → `abXcd` with Note caret 3 and positive-feedback caret 5. Builder verification must demonstrate positive caret 3 after the fix and cover related editing, composition, 8,000-codepoint, keyboard and draft/ACK lifecycle behavior. Chromium composition is not proof of physical UniKey; physical input and iPhone/Safari stay NOT_RUN until observed.
+Use the actual frontend build and isolated synthetic APIs. The B1 browser receipt changed positive feedback caret5 to caret3 for the same middle-insert action, with editing/composition/8,000-codepoint/draft-ACK checks. Owner separately reported normal manual UniKey typing and middle edits on the frozen B1 preview; this is Owner-observed acceptance, not synthetic proof. Physical iPhone/Safari remains NOT_RUN until observed. Task-preview builder checks cover both surfaces, keyboard/full-detail paths, checkbox/drag independence, privacy, empty/long content, paged history, Vietnam dates and mobile layout.
 
-Keep builder evidence separate from consolidated independent QA. Run applicable frontend tests/lint/build and repository hooks; preserve required CI/release gates. This bounded handoff permits local commits, without push/PR/merge/deploy or cleanup. Any later release follows branch → PR into develop, fresh exact head/base/gates and CAS merge; production proof requires matching readiness commit and db=up.
+Keep builder evidence separate from consolidated independent QA. Run applicable frontend tests/lint/build and repository hooks; preserve required CI/release gates. The technical-writer handoff permits local commits, without push/PR/merge/deploy or cleanup. The separately authorized release coordinator owns delivery through branch → PR into develop, fresh exact head/base/gates, CAS merge/deploy and readiness verification; production proof requires matching readiness commit and db=up.
 
 No outbox, reminder/day-annotation backend, schema/auth/provider/policy changes, production data, credentials, new dependencies or unrelated harness work.
