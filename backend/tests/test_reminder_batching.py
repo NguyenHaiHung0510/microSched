@@ -223,18 +223,24 @@ def test_batch_payload_public_private_multi_and_decrypt_fallback(monkeypatch, ca
     payload = dispatcher._build_payload(_batch(), [public])
     assert payload == {
         "title": "Hi, it's microSched 🌸",
-        "body": "Tên tracker công khai",
+        "body": "Nhắc: Tên tracker công khai\nĐã tới hạn: Tên tracker công khai",
         "url": f"/reminder-confirm?dispatch={public.dispatch.id}",
         "tag": "msb-" + dispatcher._notification_tag(_batch().id).removeprefix("msb-"),
     }
     assert decrypt_calls == [public.tracker.name]
 
     decrypt_calls.clear()
-    assert dispatcher._build_payload(_batch(), [private])["body"] == ("Bạn có 1 thông báo từ app")
-    multi = dispatcher._build_payload(_batch(), [public, private])
-    assert multi["body"] == "Bạn có 2 thông báo từ app"
-    assert multi["url"] == "/trackers"
+    assert dispatcher._build_payload(_batch(), [private])["body"] == (
+        "Có lời nhắc bạn đã đặt. Mở microSched để xem."
+    )
     assert decrypt_calls == []
+    multi = dispatcher._build_payload(_batch(), [public, private])
+    assert multi["body"] == (
+        "Nhắc: Tên tracker công khai\nĐã tới hạn: Tên tracker công khai\n\n"
+        "Có lời nhắc riêng tư. Mở microSched để xem."
+    )
+    assert multi["url"] == "/trackers"
+    assert decrypt_calls == [public.tracker.name]
 
     corrupt = "enc:v1:CORRUPT-SENTINEL-CIPHERTEXT"
     public.tracker.name = corrupt
@@ -245,7 +251,7 @@ def test_batch_payload_public_private_multi_and_decrypt_fallback(monkeypatch, ca
     monkeypatch.setattr(reminder_module.crypto, "decrypt", decrypt_fail)
     with caplog.at_level(logging.WARNING):
         fallback = dispatcher._build_payload(_batch(), [public])
-    assert fallback["body"] == "Bạn có 1 thông báo từ app"
+    assert fallback["body"] == "Đã tới hạn ghi nhận."
     assert fallback["url"].endswith(str(public.dispatch.id))
     combined_log = " ".join(record.getMessage() for record in caplog.records)
     assert "public_name_decrypt_fallback" in combined_log
@@ -305,7 +311,10 @@ def test_same_key_two_trackers_two_current_endpoints_is_one_batch_two_calls(
 
         async def fake_send_push(_db, subscription, payload, **_kwargs):
             provider_calls.append(subscription.endpoint)
-            assert payload["body"] == "Bạn có 2 thông báo từ app"
+            assert payload["title"] == "Hi, it's microSched 🌸"
+            assert payload["body"] == (
+                "Đã tới hạn ghi nhận.\n\nCó lời nhắc riêng tư. Mở microSched để xem."
+            )
             assert payload["url"] == "/trackers"
             return PushResult.SENT
 
@@ -777,7 +786,7 @@ def test_presend_revalidation_cancels_changed_member_and_uses_current_privacy(
                 assert payloads == [
                     {
                         "title": "Hi, it's microSched 🌸",
-                        "body": "Bạn có 1 thông báo từ app",
+                        "body": "Có lời nhắc bạn đã đặt. Mở microSched để xem.",
                         "url": "/trackers",
                         "tag": dispatcher._notification_tag(batch_id),
                     }

@@ -24,6 +24,7 @@ from app.domain.models import (
     TrackerReminderBatch,
     TrackerReminderBatchItem,
 )
+from app.domain.notification_content import PRIVATE_BODY, PRIVATE_TITLE, public_text
 from app.domain.push import ProviderWorkTracker, PushResult, send_push
 from app.domain.tracker import EntryCreate, TrackerStore
 
@@ -77,6 +78,7 @@ class _ActiveBatchMember:
     item: TrackerReminderBatchItem
     dispatch: ReminderDispatch
     tracker: Tracker
+    last_entry_date: date | None = None
 
 
 def build_tracker_reminder_payload(
@@ -94,21 +96,20 @@ def build_tracker_reminder_payload(
     ``last_entry_date`` is scheduling metadata only. It is never included for a
     private tracker and is deliberately not inferred from dispatch history.
     """
-    title = "Nhắc nhở microSched"
-
-    # Privacy rule: if reminder_text is provided by user, use it directly (public surface).
-    # Otherwise, if tracker is private, MUST NOT reveal tracker name or ciphertext.
-    if tracker.reminder_text and tracker.reminder_text.strip():
-        body = tracker.reminder_text.strip()
-    elif tracker.is_private:
-        body = "Đã tới hạn ghi nhận."
+    title = PRIVATE_TITLE
+    if tracker.is_private:
+        body = PRIVATE_BODY
     else:
         name = _public_name(tracker.name)
+        title = f"Nhắc: {name}" if name else PRIVATE_TITLE
+        details = []
+        custom = public_text(tracker.reminder_text)
+        if custom:
+            details.append(custom)
         if reminder_mode == "after_entry" and last_entry_date is not None and name:
             days_overdue = max(reminder_interval_days, (today_vn - last_entry_date).days)
-            body = f"Đã {days_overdue} ngày chưa ghi nhận: {name}"
-        else:
-            body = f"Đã tới hạn: {name}" if name else "Đã tới hạn ghi nhận."
+            details.append(f"Đã {days_overdue} ngày chưa ghi nhận: {name}")
+        body = "\n".join(details) or (f"Đã tới hạn: {name}" if name else "Đã tới hạn ghi nhận.")
 
     url = (
         f"/reminder-confirm?dispatch={dispatch_id}"
@@ -147,17 +148,30 @@ def build_subscription_expiry_payload(
     today = today or datetime.now(VN_TZ).date()
     days_left = max(0, (subscription.expires_on - today).days)
 
-    is_private = parent_tracker is not None and parent_tracker.is_private
+    # Unknown parent visibility is not permission to publish the subscription.
+    is_private = parent_tracker is None or parent_tracker.is_private
 
     if is_private:
-        body = f"Một đăng ký sắp hết hạn trong {days_left} ngày"
+        body = "Một đăng ký sắp hết hạn. Mở microSched để xem."
     else:
         name = _public_name(subscription.name)
-        body = (
+        title = f"Hạn đăng ký: {name}" if name else title
+        summary = (
             f"Đăng ký {name} sắp hết hạn trong {days_left} ngày"
             if name
             else f"Một đăng ký sắp hết hạn trong {days_left} ngày"
         )
+        details = [summary, f"Hết hạn: {subscription.expires_on:%d/%m/%Y}"]
+        amount = public_text(subscription.amount)
+        if amount:
+            unit = {"day": "ngày", "week": "tuần", "month": "tháng", "year": "năm"}.get(
+                subscription.period_unit, subscription.period_unit
+            )
+            details.append(f"Giá: {amount} đ / {subscription.period_count} {unit}")
+        note = public_text(subscription.note_md)
+        if note:
+            details.append(note)
+        body = "\n".join(details)
 
     url = f"/subscription?highlight={subscription.id}"
     return {"title": title, "body": body, "url": url}
@@ -627,25 +641,42 @@ class TrackerBatchDispatcher:
         active: list[_ActiveBatchMember],
     ) -> dict:
         title = "Hi, it's microSched 🌸"
-        if len(active) > 1:
-            body = f"Bạn có {len(active)} thông báo từ app"
-            url = "/trackers"
-        else:
-            member = active[0]
+        details = []
+        private_present = False
+        for member in active:
             if member.tracker.is_private:
-                body = "Bạn có 1 thông báo từ app"
+                private_present = True
+                continue
+            payload = build_tracker_reminder_payload(
+                member.tracker,
+                member.dispatch.id,
+                reminder_mode=member.item.reminder_mode,
+                reminder_interval_days=member.item.reminder_interval_days,
+                reminder_action=member.item.reminder_action,
+                today_vn=batch.occurrence_on,
+                last_entry_date=member.last_entry_date,
+            )
+            if payload["title"] == PRIVATE_TITLE:
+                logger.warning(
+                    "tracker_reminder_batch_receipt batch_ref=%s occurrence_on=%s "
+                    "reminder_time=%s outcome=public_name_decrypt_fallback",
+                    self._batch_ref(batch.id),
+                    batch.occurrence_on,
+                    batch.reminder_time.isoformat(),
+                )
+                details.append(payload["body"])
             else:
-                try:
-                    body = crypto.decrypt(member.tracker.name)
-                except Exception:
-                    body = "Bạn có 1 thông báo từ app"
-                    logger.warning(
-                        "tracker_reminder_batch_receipt batch_ref=%s occurrence_on=%s "
-                        "reminder_time=%s outcome=public_name_decrypt_fallback",
-                        self._batch_ref(batch.id),
-                        batch.occurrence_on,
-                        batch.reminder_time.isoformat(),
-                    )
+                details.append(payload["title"] + "\n" + payload["body"])
+        if private_present:
+            details.append(
+                "Có lời nhắc riêng tư. Mở microSched để xem."
+                if details
+                else "Có lời nhắc bạn đã đặt. Mở microSched để xem."
+            )
+        body = "\n\n".join(details) or "Có lời nhắc bạn đã đặt. Mở microSched để xem."
+        url = "/trackers"
+        if len(active) == 1:
+            member = active[0]
             url = (
                 f"/reminder-confirm?dispatch={member.dispatch.id}"
                 if member.item.reminder_action == "confirm_event"
@@ -736,7 +767,14 @@ class TrackerBatchDispatcher:
                 item.state = "cancelled"
                 dispatch.status = "cancelled"
             elif item.state == "pending" and dispatch.status == "pending":
-                active.append(_ActiveBatchMember(item=item, dispatch=dispatch, tracker=tracker))
+                active.append(
+                    _ActiveBatchMember(
+                        item=item,
+                        dispatch=dispatch,
+                        tracker=tracker,
+                        last_entry_date=latest_dates.get(tracker.id),
+                    )
+                )
         return batch, active
 
     async def _lock_terminal_rows(

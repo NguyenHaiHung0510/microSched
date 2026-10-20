@@ -205,7 +205,7 @@ def test_provider_retry_ttl_and_stale_revision(pg_dsn, monkeypatch):
             await db.refresh(row)
             assert row.status == "sent" and row.attempt_count == 2
             assert [ttl for _, ttl in calls] == [2700, 2670]
-            assert all(task.title not in str(payload) for payload, _ in calls)
+            assert all(payload["title"] == f"Nhắc: {task.title}" for payload, _ in calls)
             await dispatcher.dispatch(db, row.id, 1, now=now + timedelta(seconds=60))
             assert len(calls) == 2
         finally:

@@ -6,8 +6,8 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.domain.models import CalendarEvent, Task, Tracker
-from app.domain.one_shot import LATE_WINDOW, ReminderWrite, resolve_due
+from app.domain.models import CalendarEvent, DayAnnotation, Task, Tracker
+from app.domain.one_shot import LATE_WINDOW, ReminderWrite, resolve_due, source_open, source_title
 
 NOW = datetime(2030, 1, 2, 10, tzinfo=UTC)
 
@@ -66,3 +66,18 @@ def test_existing_recurring_grace_is_unchanged():
 
     assert GRACE_WINDOW == timedelta(minutes=15)
     assert LATE_WINDOW == timedelta(minutes=45)
+
+
+def test_day_annotation_uses_start_date_and_requires_explicit_clock():
+    source = DayAnnotation(
+        label="Ngày kỷ niệm", starts_on=date(2030, 1, 3), ends_on=date(2030, 1, 8)
+    )
+    with pytest.raises(HTTPException) as error:
+        resolve_due(source, ReminderWrite(mode="relative", offset_minutes=-1440))
+    assert error.value.status_code == 422
+    assert resolve_due(
+        source, ReminderWrite(mode="relative", offset_minutes=-1440, anchor_time=time(9))
+    ) == datetime(2030, 1, 2, 2, tzinfo=UTC)
+    assert resolve_due(source, ReminderWrite(mode="absolute", due_at=NOW)) == NOW
+    assert source_title(source) == "Ngày kỷ niệm"
+    assert source_open(source)

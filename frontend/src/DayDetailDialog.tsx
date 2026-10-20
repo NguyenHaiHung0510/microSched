@@ -20,6 +20,7 @@ import {
   type DayAnnotation,
 } from '@/calendar-scroll'
 import { AnnotationForm, type AnnotationFormValue } from '@/AnnotationForm'
+import { ReminderButton } from '@/ReminderEditor'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -618,6 +619,7 @@ export function DayDetailDialog({
                         ) : null}
                       </div>
                       <div className="flex shrink-0 gap-1">
+                        <ReminderButton kind="annotation" sourceId={annotation.id} compact />
                         <Button
                           size="icon-sm"
                           variant="ghost"

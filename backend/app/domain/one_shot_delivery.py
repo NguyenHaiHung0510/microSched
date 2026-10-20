@@ -6,11 +6,61 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.models import OneShotReminder, PushSubscription
-from app.domain.one_shot import LATE_WINDOW, get_source, identity, source_open
+from app.domain.models import (
+    CalendarEvent,
+    DayAnnotation,
+    OneShotReminder,
+    PushSubscription,
+    Task,
+    TaskItem,
+    Tracker,
+)
+from app.domain.notification_content import PRIVATE_BODY, PRIVATE_TITLE, public_text
+from app.domain.one_shot import LATE_WINDOW, VN, get_source, identity, source_open, source_title
 from app.domain.push import ProviderWorkTracker, PushResult, send_push
 
 BACKOFF = (30, 120, 600)
+
+
+def build_one_shot_payload(row, source, checklist=()) -> dict:
+    payload = {
+        "title": PRIVATE_TITLE,
+        "body": PRIVATE_BODY,
+        "url": f"/?reminders=1&reminder={row.id}",
+        "tag": f"one-shot-{row.id}",
+    }
+    if getattr(source, "is_private", False):
+        return payload
+    label = source_title(source)
+    payload["title"] = (
+        f"Mốc ngày: {label}" if isinstance(source, DayAnnotation) else f"Nhắc: {label}"
+    )
+    details = [f"Giờ nhắc: {row.due_at.astimezone(VN):%H:%M %d/%m/%Y}"]
+    if isinstance(source, Task):
+        details.append(public_text(source.body_md))
+        if source.due_precision == "date" and source.due_on:
+            details.append(f"Hạn: {source.due_on:%d/%m/%Y}")
+        elif source.due_at:
+            details.append(f"Hạn: {source.due_at.astimezone(VN):%H:%M %d/%m/%Y}")
+        details.extend(checklist)
+    elif isinstance(source, CalendarEvent):
+        if source.all_day:
+            details.append(f"Cả ngày: {source.starts_at.astimezone(VN):%d/%m/%Y}")
+        else:
+            details.append(
+                f"{source.starts_at.astimezone(VN):%H:%M %d/%m/%Y}"
+                f" – {source.ends_at.astimezone(VN):%H:%M %d/%m/%Y}"
+            )
+        details.extend([public_text(source.location), public_text(source.description_md)])
+    elif isinstance(source, Tracker):
+        details.append(public_text(source.reminder_text))
+    elif isinstance(source, DayAnnotation):
+        period = f"{source.starts_on:%d/%m/%Y}"
+        if source.ends_on != source.starts_on:
+            period += f" – {source.ends_on:%d/%m/%Y}"
+        details.extend([period, public_text(source.note_md)])
+    payload["body"] = "\n".join(detail for detail in details if detail)
+    return payload
 
 
 class OneShotDispatcher:
@@ -88,25 +138,35 @@ class OneShotDispatcher:
         )
         await db.commit()
 
-        # Generic even for public sources: a concurrent public -> private change
-        # can never leak previously assembled prose onto the lock screen.
-        payload = {
-            "title": "Nhắc nhở microSched",
-            "body": "Đã đến giờ nhắc bạn đã đặt.",
-            "url": f"/?reminders=1&reminder={reminder_id}",
-            "tag": f"one-shot-{reminder_id}",
-        }
         sent, temporary = False, False
         for subscription in subscriptions:
+            if ownership_guard:
+                await ownership_guard()
             current = await self._current(db, reminder_id, revision)
             if current is None:
                 await db.commit()
                 return
             if clock() > deadline:
                 break
+            kind, source_id = identity(current)
+            source = await get_source(db, kind, source_id, lock=True)
+            checklist = []
+            if isinstance(source, Task) and not source.is_private:
+                items = (
+                    await db.scalars(
+                        select(TaskItem)
+                        .where(TaskItem.task_id == source.id, TaskItem.deleted_at.is_(None))
+                        .order_by(TaskItem.position, TaskItem.created_at, TaskItem.id)
+                    )
+                ).all()
+                checklist = [
+                    ("☑ " if item.is_completed else "☐ ") + public_text(item.content)
+                    for item in items
+                ]
+            # Rebuild from the current classification for each provider handoff.
+            # Already handed-off public content cannot be recalled by a later privacy edit.
+            payload = build_one_shot_payload(current, source, checklist)
             await db.commit()
-            if ownership_guard:
-                await ownership_guard()
             result = await send_push(
                 db,
                 subscription,

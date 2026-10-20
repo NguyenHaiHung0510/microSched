@@ -36,11 +36,11 @@ WAKE = "mimi_attention_wake"
 _dispatcher = None
 
 
-def visible_text(value: str, limit: int) -> str:
+def visible_text(value: str, limit: int | None = None) -> str:
     value = re.sub(r"[\x00-\x1f\x7f]", " ", value)
     value = re.sub(r"[`*_>#]", "", value)
     value = " ".join(value.split())
-    return value[:limit]
+    return value[:limit] if limit is not None else value
 
 
 def copy_aad(intent):
@@ -117,7 +117,7 @@ async def queue_completion(db: AsyncSession, run_id: UUID, sequence: int, kind: 
     intent.copy_ciphertext = crypto.seal_content(
         dek,
         json.dumps(
-            {"title": visible_text("Mimi · " + title, 80), "body": visible_text(answer, 240)},
+            {"title": visible_text("Mimi · " + title), "body": visible_text(answer)},
             ensure_ascii=False,
         ),
         aad=copy_aad(intent),

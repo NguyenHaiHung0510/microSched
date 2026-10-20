@@ -5,6 +5,36 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/tracker/trackers**', (route) => route.fulfill({ json: { items: [] } }))
 })
 
+test('a notification link opens its source even when the reminder is in history', async ({ page, taskApi }) => {
+  const task = taskApi.tasks[0]
+  const id = '019d0000-0000-7000-8000-000000000088'
+  await page.route(`**/api/tasks/${task.id}`, (route) => route.fulfill({ json: task }))
+  await page.route('**/api/reminders**', async (route) => {
+    if (route.request().url().includes('/detail/')) return route.fulfill({ json: {
+      id, source_kind: 'task', source_id: task.id, source_title: task.title,
+      is_private: false, source_open: true, status: 'sent', revision: 1,
+    } })
+    return route.fulfill({ json: { items: [], has_more: false, registered_devices: 0 } })
+  })
+  await page.goto(`/?reminders=1&reminder=${id}`)
+  const dialog = page.getByRole('dialog', { name: 'Đối tượng được nhắc' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByLabel('Tiêu đề', { exact: true })).toHaveValue(task.title)
+  await dialog.getByRole('button', { name: 'Đóng', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(new URL(page.url()).searchParams.has('reminder')).toBe(false)
+})
+
+test('an inaccessible notification target stays generic', async ({ page }) => {
+  await page.route('**/api/reminders**', async (route) => {
+    if (route.request().url().includes('/detail/')) return route.fulfill({ status: 404, json: { detail: 'Không tìm thấy lời nhắc.' } })
+    return route.fulfill({ json: { items: [], has_more: false, registered_devices: 0 } })
+  })
+  await page.goto('/?reminders=1&reminder=019d0000-0000-7000-8000-000000000088')
+  await expect(page.getByTestId('reminder-center').getByRole('alert')).toContainText('không còn hiển thị')
+  await expect(page.getByRole('dialog', { name: 'Đối tượng được nhắc' })).toHaveCount(0)
+})
+
 test('custom and relative editing previews the resolved instant and only submits one occurrence', async ({ page, taskApi }) => {
   const task = taskApi.tasks[0]
   const source: ReminderSourceInfo = { title: task.title, is_private: false, open: true,

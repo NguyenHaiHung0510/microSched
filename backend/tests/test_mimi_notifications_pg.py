@@ -17,6 +17,7 @@ from app.agent.models import (
     MimiConversation,
     MimiDevicePreference,
     MimiEvent,
+    MimiMessage,
     MimiNotificationDelivery,
     MimiNotificationIntent,
 )
@@ -76,7 +77,20 @@ def test_notification_intent_atomic_copy_dedup_ack_and_opaque_owner_resolver(pg_
                     )
                 )
                 assert "Chờ bạn duyệt" in content["body"] and "Chưa áp dụng" in content["body"]
-                assert len(content["title"]) <= 80 and len(content["body"]) <= 240
+                message = (
+                    await db.scalars(
+                        select(MimiMessage)
+                        .where(MimiMessage.run_id == rid, MimiMessage.role == "assistant")
+                        .order_by(MimiMessage.sequence.desc())
+                        .limit(1)
+                    )
+                ).one()
+                answer = crypto.open_content(
+                    crypto.unwrap_dek(conv.dek_wrapped),
+                    message.content_ciphertext,
+                    aad=crypto.message_aad(cid, message.sequence, message.role),
+                )
+                assert content["body"] == n.visible_text("Chờ bạn duyệt, chưa áp dụng. " + answer)
                 event = await db.get(MimiEvent, intent.event_id)
                 await n.queue_completion(db, rid, event.sequence, "change_set.ready")
                 assert (

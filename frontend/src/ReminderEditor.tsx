@@ -11,10 +11,10 @@ import { ReminderDevices } from '@/ReminderDevices'
 import { activeReminder, reminderKey, reminderPreview, reminderTime, reminderStatus, vnInput,
   type Reminder, type ReminderSource, type ReminderSourceInfo } from '@/reminder-ui'
 
-export function ReminderButton({ kind, sourceId }: { kind: ReminderSource; sourceId: string }) {
+export function ReminderButton({ kind, sourceId, compact = false }: { kind: ReminderSource; sourceId: string; compact?: boolean }) {
   const [open, setOpen] = useState(false)
   return <>
-    <Button type="button" size="lg" variant="outline" data-testid="source-reminder" onClick={() => setOpen(true)}>
+    <Button type="button" size={compact ? 'sm' : 'lg'} className={compact ? 'min-h-11' : undefined} variant="outline" data-testid="source-reminder" onClick={() => setOpen(true)}>
       <Bell aria-hidden="true" />Nhắc tôi
     </Button>
     {open && <ReminderEditor kind={kind} sourceId={sourceId} onClose={() => setOpen(false)} />}
