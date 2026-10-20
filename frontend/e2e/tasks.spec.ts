@@ -313,7 +313,7 @@ test('last card tooltip is portalled and fully inside the desktop viewport', asy
   await page.screenshot({ path: 'output/playwright/tooltip-last-card.png', fullPage: true })
 })
 
-test('task-012 tooltip shows three static numbered items and the remaining count', async ({ page }, testInfo) => {
+test('task-012 tooltip shows every checklist item with read-only completion status', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Radix tooltip is a desktop shortcut')
   await openTasksScreen(page)
   const title = page.locator('[data-task-id="task-012"]').getByTestId('task-title')
@@ -321,17 +321,15 @@ test('task-012 tooltip shows three static numbered items and the remaining count
 
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toBeVisible()
-  await expect(tooltip.getByText('Checklist (4)')).toBeVisible()
+  const expectedItems = fixtureTasks.find(task => task.id === 'task-012')!.items
+  await expect(tooltip.getByText(`Checklist · ${expectedItems.filter(item => item.is_completed).length}/4 đã xong`)).toBeVisible()
   const items = tooltip.getByRole('listitem')
-  await expect(items).toHaveCount(3)
-  await expect(items.nth(0)).toContainText('1.')
-  await expect(items.nth(0)).toContainText('Mục đầu tiên')
-  await expect(items.nth(1)).toContainText('2.')
-  await expect(items.nth(1)).toContainText('Mục thứ hai')
-  await expect(items.nth(2)).toContainText('3.')
-  await expect(items.nth(2)).toContainText('Mục thứ ba')
-  await expect(tooltip.getByText(/và 1 mục nữa/)).toBeVisible()
-  await expect(tooltip.locator('button, [role="button"]')).toHaveCount(0)
+  await expect(items).toHaveCount(expectedItems.length)
+  for (const [index, item] of expectedItems.entries()) {
+    await expect(items.nth(index)).toContainText(item.content)
+    await expect(items.nth(index)).toContainText(item.is_completed ? 'Đã xong:' : 'Chưa xong:')
+  }
+  await expect(tooltip.locator('button, input, [role="button"], [role="checkbox"]')).toHaveCount(0)
   await page.screenshot({ path: 'output/playwright/tooltip-task-012-desktop.png', fullPage: true })
 })
 

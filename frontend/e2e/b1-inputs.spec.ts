@@ -131,7 +131,7 @@ test('same baseline caret action passes; middle insert/delete/selection and mult
   await el.press('X')
   expect(await position(el)).toEqual({ value: 'aX', start: 2, end: 2 })
   await el.evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(1, 1))
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4187' })
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(page.url()).origin })
   await page.evaluate(() => navigator.clipboard.writeText('tiếng Việt\n🌸'))
   await el.press('Control+V')
   expect(await position(el)).toEqual({ value: 'atiếng Việt\n🌸X', start: 14, end: 14 })
