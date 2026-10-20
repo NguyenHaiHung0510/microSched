@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import inspect
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, timezone
@@ -256,7 +257,7 @@ class ReminderDispatcher:
         subject_type: str,
         subject_id: UUID,
         dispatched_on: date,
-        payload_builder: Callable[[UUID], dict],
+        payload_builder: Callable[[UUID], dict | Awaitable[dict]],
         *,
         telemetry: Callable[[DispatchTelemetry], None] | None = None,
         ownership_guard: Callable[[], Awaitable[None]] | None = None,
@@ -294,9 +295,6 @@ class ReminderDispatcher:
             if telemetry is not None:
                 telemetry(DispatchTelemetry(attempt_count=dispatch.attempt_count))
 
-            # Build payload with stable dispatch ID
-            payload = payload_builder(dispatch.id)
-
             # Query all active push subscriptions
             sub_stmt = select(PushSubscription)
             sub_result = await db.execute(sub_stmt)
@@ -331,6 +329,14 @@ class ReminderDispatcher:
             temp_fail_count = 0
 
             for sub in subscriptions:
+                if ownership_guard is not None:
+                    await ownership_guard()
+                # Reclassify at every device handoff, after any preceding network
+                # call. Async builders read only currently public source text.
+                payload = payload_builder(dispatch.id)
+                if inspect.isawaitable(payload):
+                    payload = await payload
+                await db.commit()
                 if ownership_guard is not None:
                     await ownership_guard()
                 res = await send_push(
@@ -605,7 +611,7 @@ class TrackerBatchDispatcher:
         db: AsyncSession,
         *,
         batch_status: str,
-        payload: dict,
+        payload: dict | Callable[[], Awaitable[dict]],
         ownership_guard: Callable[[], Awaitable[None]] | None = None,
     ) -> BatchFanout:
         """Send once per current row; terminal batches perform zero selector/network work."""
@@ -616,10 +622,13 @@ class TrackerBatchDispatcher:
         for subscription in subscriptions:
             if ownership_guard is not None:
                 await ownership_guard()
+            current_payload = await payload() if callable(payload) else payload
+            if ownership_guard is not None:
+                await ownership_guard()
             outcome = await send_push(
                 db,
                 subscription,
-                payload,
+                current_payload,
                 provider_work_tracker=self._provider_work,
             )
             if outcome == PushResult.SENT:
@@ -688,6 +697,37 @@ class TrackerBatchDispatcher:
             "url": url,
             "tag": self._notification_tag(batch.id),
         }
+
+    async def _current_payload(
+        self, db: AsyncSession, batch: TrackerReminderBatch, active: list[_ActiveBatchMember]
+    ) -> dict:
+        # Filter privacy in SQL before fetching text. Missing/newly private
+        # sources contribute only the existing generic line; immutable batch
+        # membership, routing, attempts and one-call-per-device stay unchanged.
+        rows = await db.execute(
+            select(Tracker)
+            .where(
+                Tracker.id.in_([member.tracker.id for member in active]),
+                Tracker.is_private.is_(False),
+                Tracker.deleted_at.is_(None),
+            )
+            .execution_options(populate_existing=True)
+        )
+        public = {tracker.id: tracker for tracker in rows.scalars().all()}
+        payload = self._build_payload(
+            batch,
+            [
+                _ActiveBatchMember(
+                    item=member.item,
+                    dispatch=member.dispatch,
+                    tracker=public.get(member.tracker.id) or Tracker(is_private=True),
+                    last_entry_date=member.last_entry_date,
+                )
+                for member in active
+            ],
+        )
+        await db.commit()
+        return payload
 
     async def _lock_members_for_send(
         self, db: AsyncSession, batch_id: UUID
@@ -950,7 +990,6 @@ class TrackerBatchDispatcher:
                 )
                 return DispatchOutcome.EXHAUSTED
 
-            payload = self._build_payload(batch, active)
             tracker_ids = [member.tracker.id for member in active]
             batch.attempt_count += 1
             batch.last_attempt_at = datetime.now(UTC)
@@ -961,10 +1000,13 @@ class TrackerBatchDispatcher:
             if ownership_guard is not None:
                 await ownership_guard()
 
+            async def current_payload() -> dict:
+                return await self._current_payload(db, batch, active)
+
             fanout = await self.fanout_current_subscriptions(
                 db,
                 batch_status="pending",
-                payload=payload,
+                payload=current_payload,
                 ownership_guard=ownership_guard,
             )
             if fanout.sent_count:

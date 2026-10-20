@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.cron_timer import VN_TZ, CronTimer
+from app.core.cron_timer import VN_TZ, CronTimer, ScheduleKind, TimerItem
 from app.core.database_urls import async_postgres_url
 from app.domain import reminder as reminder_module
 from app.domain.models import (
@@ -18,6 +18,7 @@ from app.domain.models import (
     Entry,
     PushSubscription,
     ReminderDispatch,
+    Subscription,
     Tracker,
     TrackerReminderBatch,
     TrackerReminderBatchItem,
@@ -422,6 +423,169 @@ def test_same_key_two_trackers_two_current_endpoints_is_one_batch_two_calls(
                 )
                 await db.execute(Tracker.__table__.delete().where(Tracker.id.in_(tracker_ids)))
                 await db.commit()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
+@pytest.mark.parametrize("kind", ["batch", "mixed_batch", "tracker", "subscription"])
+def test_recurring_fanout_reclassifies_before_each_device(pg_dsn, monkeypatch, kind):
+    """A committed visibility change during device one must govern device two."""
+
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        tracker_ids = [uuid4() for _ in range(2 if kind == "mixed_batch" else 1)]
+        device_ids = sorted([uuid4(), uuid4()])
+        subscription_id = uuid4()
+        now = datetime.now(VN_TZ)
+        occurrence = now.date()
+        clock = now.time().replace(tzinfo=None, microsecond=0)
+        payloads = []
+        guards = []
+        hidden = "enc:v1:fanout-sensitive-label"
+
+        def decrypt(value):
+            if value == "enc:v1:amount":
+                assert not payloads, "newly private amount must not be decrypted"
+                return "12345"
+            if value == hidden:
+                assert not payloads, "newly private text must not be decrypted for device two"
+                return "SENSITIVE_TRACKER_LABEL"
+            return "SURVIVING_PUBLIC_LABEL"
+
+        async def sent(db, _device, payload, **_kwargs):
+            assert not db.in_transaction(), "provider I/O must not retain a DB transaction"
+            payloads.append(dict(payload))
+            if len(payloads) == 1:
+                async with maker() as writer:
+                    # A separate connection must be able to commit while provider one is active.
+                    await writer.execute(reminder_module.text("SET LOCAL lock_timeout = '1s'"))
+                    tracker = await writer.get(Tracker, tracker_ids[0])
+                    tracker.is_private = True
+                    await writer.commit()
+            return PushResult.SENT
+
+        async def guard(*_args):
+            guards.append(len(payloads))
+
+        monkeypatch.setattr(reminder_module.crypto, "decrypt", decrypt)
+        monkeypatch.setattr(reminder_module, "send_push", sent)
+        try:
+            async with maker() as db:
+                for index, tid in enumerate(tracker_ids):
+                    db.add(
+                        Tracker(
+                            id=tid,
+                            name=hidden if index == 0 else "enc:v1:surviving-label",
+                            kind="general",
+                            input_mode="event",
+                            reminder_time=clock,
+                            reminder_mode="fixed",
+                            reminder_interval_days=1,
+                            reminder_action="open_tracker",
+                            reminder_text="SENSITIVE_CUSTOM_COPY"
+                            if index == 0
+                            else "SURVIVING_PUBLIC_COPY",
+                        )
+                    )
+                for did in device_ids:
+                    db.add(
+                        PushSubscription(
+                            id=did,
+                            endpoint=f"https://push.example/privacy-{did}",
+                            p256dh="fixture",
+                            auth="fixture",
+                        )
+                    )
+                await db.commit()
+                if kind == "subscription":
+                    db.add(
+                        Subscription(
+                            id=subscription_id,
+                            tracker_id=tracker_ids[0],
+                            name=hidden,
+                            started_on=occurrence,
+                            expires_on=occurrence + timedelta(days=2),
+                            amount="enc:v1:amount",
+                            period_count=1,
+                            period_unit="month",
+                            note_md="SENSITIVE_SUBSCRIPTION_NOTE",
+                        )
+                    )
+                    await db.commit()
+
+                if "batch" in kind:
+                    dispatcher = TrackerBatchDispatcher()
+                    batch_id = await dispatcher.claim_batch(
+                        db,
+                        [
+                            TrackerBatchCandidate(
+                                tracker_id=tid,
+                                occurrence_on=occurrence,
+                                reminder_time=clock,
+                                reminder_mode="fixed",
+                                reminder_interval_days=1,
+                                reminder_action="open_tracker",
+                            )
+                            for tid in tracker_ids
+                        ],
+                    )
+                    assert batch_id is not None
+                    outcome = await dispatcher.dispatch_batch(db, batch_id, ownership_guard=guard)
+                    assert outcome.value == "sent"
+                    batch = await db.get(TrackerReminderBatch, batch_id, populate_existing=True)
+                    assert batch.attempt_count == 1 and batch.status == "sent"
+                else:
+                    timer = CronTimer(maker)
+                    timer._guard_provider_attempt = guard
+                    timer._assert_owner = guard
+                    timer._ownership_active = True
+                    await timer._process_due_item(
+                        TimerItem(
+                            due_at=now,
+                            occurrence_on=occurrence,
+                            kind=ScheduleKind.SUBSCRIPTION
+                            if kind == "subscription"
+                            else ScheduleKind.TRACKER,
+                            subject_id=subscription_id
+                            if kind == "subscription"
+                            else tracker_ids[0],
+                            reminder_time=clock,
+                        ),
+                        now=now,
+                    )
+                    dispatch = await db.scalar(
+                        select(ReminderDispatch).where(
+                            ReminderDispatch.subject_id
+                            == (subscription_id if kind == "subscription" else tracker_ids[0]),
+                        )
+                    )
+                    assert dispatch.status == "sent" and dispatch.attempt_count == 1
+                assert len(payloads) == 2
+                assert "SENSITIVE_" in str(payloads[0])
+                assert "SENSITIVE_" not in str(payloads[1])
+                assert "enc:v1:" not in str(payloads)
+                assert payloads[0]["url"] == payloads[1]["url"]
+                assert 0 in guards and 1 in guards
+                if kind == "mixed_batch":
+                    assert "SURVIVING_PUBLIC_COPY" in payloads[1]["body"]
+                    assert payloads[1]["body"].count("Có lời nhắc riêng tư.") == 1
+                elif kind == "batch":
+                    assert payloads[1]["body"] == "Có lời nhắc bạn đã đặt. Mở microSched để xem."
+        finally:
+            async with maker() as db:
+                await db.execute(
+                    ReminderDispatch.__table__.delete().where(
+                        ReminderDispatch.subject_id == subscription_id,
+                    )
+                )
+                await db.execute(
+                    Subscription.__table__.delete().where(Subscription.id == subscription_id)
+                )
+                await db.commit()
+            await _cleanup_batch_domain(maker, tracker_ids, device_ids)
             await engine.dispose()
 
     asyncio.run(scenario())
