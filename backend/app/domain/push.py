@@ -2,7 +2,6 @@
 
 import asyncio
 import ipaddress
-import json
 import logging
 import socket
 from contextlib import suppress
@@ -155,7 +154,9 @@ async def send_push(
         logger.error("VAPID keys not configured; cannot send Web Push notification")
         return PushResult.TEMPORARY_FAILURE
 
-    payload_str = json.dumps(payload, ensure_ascii=False)
+    from app.domain.notification_content import encode_push_payload
+
+    payload_str = encode_push_payload(payload)
 
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -234,6 +235,8 @@ async def send_push_detailed(
     subscription, payload, *, timeout_seconds=20.0, provider_work_tracker=None, ttl_seconds=None
 ):
     """Mimi seam: no DB commit, distinguish unknown send from safe pre-dispatch failure."""
+    from app.domain.notification_content import encode_push_payload
+
     settings = get_settings()
     if not settings.vapid_private_key or not settings.vapid_claims_sub:
         return "retryable"
@@ -248,7 +251,7 @@ async def send_push_detailed(
                     subscription.endpoint,
                     subscription.p256dh,
                     subscription.auth,
-                    json.dumps(payload, ensure_ascii=False),
+                    encode_push_payload(payload),
                     settings.vapid_private_key,
                     settings.vapid_claims_sub,
                     timeout_seconds,

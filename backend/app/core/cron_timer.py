@@ -1150,9 +1150,18 @@ class CronTimer:
                     # an old occurrence under a newly edited action or cadence.
                     return
 
-                def payload_builder(d_id: UUID) -> dict:
+                async def payload_builder(d_id: UUID) -> dict:
+                    current = await db.scalar(
+                        select(Tracker)
+                        .where(
+                            Tracker.id == item.subject_id,
+                            Tracker.deleted_at.is_(None),
+                            Tracker.is_private.is_(False),
+                        )
+                        .execution_options(populate_existing=True)
+                    )
                     return build_tracker_reminder_payload(
-                        tracker,
+                        current or Tracker(is_private=True),
                         d_id,
                         reminder_mode=mode,
                         reminder_interval_days=interval_days,
@@ -1237,8 +1246,27 @@ class CronTimer:
                 sub, tr = sub_tuple
                 lead_days = await expiry_lead_days(db)
 
-                def sub_payload_builder(d_id: UUID) -> dict:
-                    return build_subscription_expiry_payload(sub, tr, lead_days, today=today_vn)
+                async def sub_payload_builder(d_id: UUID) -> dict:
+                    current = (
+                        await db.execute(
+                            select(Subscription, Tracker)
+                            .join(Tracker, Subscription.tracker_id == Tracker.id)
+                            .where(
+                                Subscription.id == item.subject_id,
+                                Subscription.deleted_at.is_(None),
+                                Subscription.canceled_at.is_(None),
+                                Tracker.deleted_at.is_(None),
+                                Tracker.is_private.is_(False),
+                            )
+                            .execution_options(populate_existing=True)
+                        )
+                    ).first()
+                    # The missing/private path reads scheduling metadata only;
+                    # the builder never accesses its name/amount/note.
+                    current_sub, current_parent = current if current else (sub, None)
+                    return build_subscription_expiry_payload(
+                        current_sub, current_parent, lead_days, today=today_vn
+                    )
 
                 outcome = await self._dispatcher.dispatch_item(
                     db,

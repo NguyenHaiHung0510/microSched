@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.domain.models import AuthSession, OneShotReminder, Task, TaskItem
 from app.domain.one_shot import ACTIVE, ReminderWrite, resolve_due, save_reminder
@@ -275,6 +276,22 @@ async def locked_state(db: AsyncSession, ids: list[UUID]) -> dict[UUID, tuple]:
         (
             await db.scalars(
                 select(OneShotReminder)
+                # A Task snapshot owns only these reminder fields. Avoid
+                # coupling retained 0017 recovery readers to other source
+                # columns introduced by later additive migrations.
+                .options(
+                    load_only(
+                        OneShotReminder.id,
+                        OneShotReminder.task_id,
+                        OneShotReminder.revision,
+                        OneShotReminder.status,
+                        OneShotReminder.mode,
+                        OneShotReminder.due_at,
+                        OneShotReminder.offset_minutes,
+                        OneShotReminder.anchor_time,
+                        raiseload=True,
+                    )
+                )
                 .where(OneShotReminder.task_id.in_(ids), OneShotReminder.status.in_(ACTIVE))
                 .order_by(OneShotReminder.task_id, OneShotReminder.id)
                 .with_for_update()

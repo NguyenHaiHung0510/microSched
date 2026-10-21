@@ -225,6 +225,47 @@ test.describe('mobile (390x844, touch)', () => {
     ).toHaveCount(1)
   })
 
+  test('a day annotation offers reminder action A and requires a relative anchor clock', async ({ page }) => {
+    await calendarRoutes(page, { events: [], annotations: [] })
+    const writes: Record<string, unknown>[] = []
+    await page.route('**/api/reminders**', async (route) => {
+      if (route.request().url().includes('/source/annotation/')) return route.fulfill({ json: {
+        title: 'Dấu ngày synthetic 088', is_private: false, open: true,
+        anchor_at: null, anchor_day: vnDay(0), date_only: true,
+      } })
+      if (route.request().method() === 'PUT') {
+        writes.push(route.request().postDataJSON())
+        expect(route.request().url()).toContain('/reminders/annotation/')
+        return route.fulfill({ json: { id: 'synthetic-088', ...writes[0] } })
+      }
+      return route.fulfill({ json: { items: [], has_more: false, registered_devices: 0 } })
+    })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
+    await page.getByTestId('calendar-day-add-annotation').tap()
+    await page.getByLabel('Nhãn').fill('Dấu ngày synthetic 088')
+    await page.getByRole('button', { name: 'Thêm dấu ngày' }).tap()
+    const action = page.getByTestId('calendar-annotation-detail').getByTestId('source-reminder')
+    await expect(action).toHaveText('Nhắc tôi')
+    expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await action.tap()
+    const editor = page.getByTestId('reminder-editor')
+    await editor.getByRole('button', { name: 'Bật nhắc nhở', exact: true }).tap()
+    await editor.getByRole('combobox', { name: 'Cách đặt' }).click()
+    await page.getByRole('option', { name: 'Trước / sau mốc đã lưu' }).click()
+    await expect(editor.getByTestId('reminder-save')).toBeDisabled()
+    await editor.getByLabel('Giờ mốc trong ngày').fill('09:00')
+    await editor.getByRole('combobox', { name: 'Trước hay sau' }).click()
+    await page.getByRole('option', { name: 'Sau', exact: true }).click()
+    await editor.getByLabel('Khoảng thời gian').fill('1440')
+    await expect(editor.getByTestId('reminder-preview')).toContainText('09:00')
+    await editor.getByTestId('reminder-save').tap()
+    await expect(editor).toBeHidden()
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toMatchObject({ mode: 'relative', offset_minutes: 1440, anchor_time: '09:00' })
+  })
+
   test('moves a task from the dialog and undoes it back to the old deadline', async ({
     page,
     taskApi,

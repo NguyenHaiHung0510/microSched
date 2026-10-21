@@ -715,7 +715,9 @@ class OneShotReminder(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
     __delete_gate__: ClassVar[Gate] = Gate.VIA_PARENT
     __table_args__ = (
-        CheckConstraint("num_nonnulls(task_id, event_id, tracker_id) = 1", name="one_source"),
+        CheckConstraint(
+            "num_nonnulls(task_id, event_id, tracker_id, annotation_id) = 1", name="one_source"
+        ),
         CheckConstraint("mode IN ('absolute', 'relative')", name="mode"),
         CheckConstraint(
             "(mode = 'absolute' AND offset_minutes IS NULL AND anchor_time IS NULL) OR "
@@ -752,6 +754,12 @@ class OneShotReminder(UUIDTimestampModel, table=True):
             PGUUID, ForeignKey(f"{SCHEMA}.tracker.id", ondelete="CASCADE"), nullable=True
         ),
     )
+    annotation_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID, ForeignKey(f"{SCHEMA}.day_annotation.id", ondelete="CASCADE"), nullable=True
+        ),
+    )
     mode: str = Field(sa_column=Column(Text, nullable=False))
     offset_minutes: int | None = Field(default=None, sa_column=Column(Integer))
     anchor_time: time | None = Field(default=None, sa_column=Column(Time))
@@ -774,7 +782,7 @@ class OneShotReminder(UUIDTimestampModel, table=True):
     sent_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
 
 
-for _source_column in ("task_id", "event_id", "tracker_id"):
+for _source_column in ("task_id", "event_id", "tracker_id", "annotation_id"):
     Index(
         f"uq_one_shot_reminder_active_{_source_column}",
         OneShotReminder.__table__.c[_source_column],
