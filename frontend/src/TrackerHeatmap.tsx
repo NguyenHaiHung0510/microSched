@@ -283,7 +283,7 @@ export function TrackerHeatmap({ trackers, groups, initialMonth, onDay, privateU
     <div><h3 className="text-base font-bold">Heatmap số lần ghi</h3><p className="mt-1 text-xs text-muted-foreground">Mỗi ô là một ngày theo giờ Việt Nam. Màu đậm hơn là nhiều lần ghi hơn.</p></div>
     <div role="group" aria-label="Phạm vi heatmap" className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1 sm:w-fit">
       {([['all', 'Tất cả'], ['group', 'Nhóm'], ['tracker', 'Tracker']] as const).map(([value, label]) =>
-        <Button key={value} data-testid={`heatmap-scope-${value}`} aria-pressed={scope === value} variant={scope === value ? 'secondary' : 'ghost'} className="min-h-11 min-w-0 sm:min-w-24" onClick={() => {
+        <Button key={value} data-testid={`heatmap-scope-${value}`} aria-pressed={scope === value} variant={scope === value ? 'selected' : 'ghost'} className="min-h-11 min-w-0 sm:min-w-24" onClick={() => {
           setTouchDetailDay(null)
           setScope(value)
           if (value === 'group' && !groups.some(group => group.id === selectedGroup)) setSelectedGroup(groups[0]?.id ?? '')

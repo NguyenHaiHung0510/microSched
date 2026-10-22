@@ -31,6 +31,8 @@ From granted checkout and installed backend Python, replace CURRENT_BINDING with
 # Cleanup: same command ending stop; retain volume/data and evidence
 ```
 
+Doctor caveat: inherited _load_state may backfill a missing legacy volume field in runtime.json, including during status. Doctor is an owner-operated, write-capable action; strict read-only reviewers use direct read-only resource/PID and /api/readyz probes or request the actual owner. No guard/helper behavior is changed by this caveat.
+
 start-db prepares only owned DB and baseline fixture. Tests use separate empty DB to preserve preview fixture/encryption. On first image initialization, inherited pg_isready can precede final postmaster restart: if connection lost, inspect exact container/log/state and resume same healthy namespace; no reinstall/recreate/reset.
 
 Baseline fixture is not H2 oracle. Private R1 seed manifest supplies groups, two public members, excluded other-group/private members, VN boundary entries, notes/values and paging IDs. Inspect exact source/resources before adoption; new inputs need new binding. Compare shared freeze at batch boundaries. Do not edit source/helpers/fixtures during independent QA.

@@ -14,6 +14,8 @@ Only the granted resource owner may start the source-bound R1 runner. Follow the
 
 Run current R1 runner status and verify with its freeze binding. Require exact readyz commit, DB up, frontend usable, owned PIDs/container/volume/loopback ports and fixture checks. R1 seed oracle supplements inherited baseline checks. Source MATCH alone proves neither closure nor health. Never print runtime credentials.
 
+Doctor is owner-operated and may write metadata: inherited _load_state can backfill a missing legacy volume field in runtime.json, even for status. A strict read-only actor should use direct read-only Docker/container/volume/PID and /api/readyz probes, or ask the recorded runtime owner to run Doctor. Do not infer pure-read behavior from the action name; preserve source/state guards and never print credentials.
+
 ## Drive
 
 Use [tracker heatmap recipe](features/tracker-form.md) for modes, membership, year/month, details, paging and visibility. Independent QA needs PM's frozen batch grant; no source/helper/fixture changes during it. Use disposable cached Chromium and local origins; provider calls zero. Other mapped features remain unrun unless assigned.
