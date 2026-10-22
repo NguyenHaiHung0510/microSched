@@ -34,6 +34,7 @@ async function open(page: Page) {
 }
 
 async function selectTracker(page: Page, name: string) {
+  await page.getByTestId('heatmap-scope-tracker').click()
   await page.getByTestId('heatmap-tracker').click()
   await page.getByRole('option', { name, exact: true }).click()
 }
@@ -108,6 +109,52 @@ test('single tracker respects actual event or quantity configuration', async ({ 
   await screenshot(page, 'single-quantity-desktop')
   await annualDay(page).press('Enter')
   await expect(page.getByTestId('records-tracker')).toContainText('Đi bộ')
+})
+
+test('H2 group scope matches counts, details and record drilldown; empty group stays empty', async ({ page, trackerApi }, info) => {
+  trackerApi.groups = [
+    {id:'scope-a',name:'Nhóm học tập',kind:'general',tracker_count:2},
+    {id:'empty',name:'Nhóm trống',kind:'general',tracker_count:0},
+  ]
+  Object.assign(trackerApi.trackers[0], {group_id:'scope-a'})
+  Object.assign(trackerApi.trackers[1], {group_id:'scope-a'})
+  await open(page)
+  await page.getByTestId('heatmap-scope-group').click()
+  await expect(page.getByTestId('heatmap-group')).toContainText('Nhóm học tập')
+  await expect(page.getByTestId('heatmap-summary')).toContainText('4 lần ghi')
+  if (info.project.name === 'desktop') {
+    await annualDay(page).hover()
+    await expect(preview(page).getByTestId('heatmap-detail-entry')).toHaveCount(4)
+    await expect(preview(page)).not.toContainText('Đi bộ')
+    await preview(page).getByTestId('heatmap-detail-jump').click()
+  } else {
+    await page.locator(`[data-testid="heatmap-day"][data-day="${DAY}"]`).tap()
+    await expect(page.getByTestId('heatmap-touch-detail').getByTestId('heatmap-detail-entry')).toHaveCount(4)
+    await page.getByTestId('heatmap-touch-detail').getByTestId('heatmap-detail-jump').click()
+  }
+  await expect(page.getByTestId('records-group-scope')).toContainText('Nhóm học tập')
+  await expect(page.getByTestId('records-list').getByTestId('entry-row')).toHaveCount(4)
+  await page.getByTestId('heatmap-group').click()
+  await page.getByRole('option', {name:'Nhóm trống · 0 tracker',exact:true}).click()
+  await expect(page.getByTestId('heatmap-summary')).toContainText('0 lần ghi')
+  await page.getByTestId('heatmap-scope-all').click()
+  await expect(page.getByTestId('heatmap-summary')).toContainText('5 lần ghi')
+  await expect(page.getByTestId('heatmap-group')).toHaveCount(0)
+  await expect(page.getByTestId('heatmap-month')).toHaveValue('2026-10')
+})
+
+test('H2 empty group inventory provides a safe selector state and operable keyboard modes', async ({ page, trackerApi }) => {
+  trackerApi.groups = []
+  await open(page)
+  await page.getByTestId('heatmap-scope-group').focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByTestId('heatmap-scope-group')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('heatmap-group')).toBeDisabled()
+  await expect(page.getByTestId('tracker-heatmap')).toContainText('Chọn một nhóm hiện có')
+  await expect(page.getByTestId('heatmap-summary')).toHaveCount(0)
+  await page.getByTestId('heatmap-scope-all').focus()
+  await page.keyboard.press('Space')
+  await expect(page.getByTestId('heatmap-summary')).toContainText('5 lần ghi')
 })
 
 test('one annual tab stop, arrow navigation, content focus and Escape', async ({ page }, info) => {
@@ -214,7 +261,7 @@ test('locking privacy removes the open preview and pending private payload', asy
   await page.getByTestId('private-lock-now').click()
   release()
   await expect(preview(page)).toHaveCount(0)
-  await expect(page.getByTestId('heatmap-tracker')).toContainText('Tất cả tracker')
+  await expect(page.getByTestId('heatmap-scope-all')).toHaveAttribute('aria-pressed', 'true')
   await annualDay(page).focus()
   await expect(preview(page).getByTestId('heatmap-detail-group')).toHaveCount(2)
   await expect(preview(page)).not.toContainText('GPT')

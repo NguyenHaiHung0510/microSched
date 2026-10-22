@@ -6,12 +6,12 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { standardRefetchInterval } from '@/query-polling'
-import { formatQuantity, formatVnd, trackerQueryKey, type Entry, type Tracker } from '@/tracker-ui'
+import { formatQuantity, formatVnd, trackerQueryKey, type Entry, type Tracker, type TrackerGroup } from '@/tracker-ui'
 import { recordsUrl, type RecordMode, type RecordsSelection } from '@/tracker-records'
 
 const MODE_LABELS: Record<RecordMode, string> = { recent:'20 bản ghi gần nhất', day:'Theo ngày', month:'Theo tháng', quarter:'Theo quý', year:'Theo năm' }
-export function TrackerRecords({ trackers, selection, onChange, onEdit, onRemove, showListPrice, privateUnlocked }: {
-  trackers: Tracker[]; selection: RecordsSelection; onChange: (value: RecordsSelection) => void
+export function TrackerRecords({ trackers, groups, selection, onChange, onEdit, onRemove, showListPrice, privateUnlocked }: {
+  trackers: Tracker[]; groups: TrackerGroup[]; selection: RecordsSelection; onChange: (value: RecordsSelection) => void
   onEdit: (entry: Entry) => void; onRemove: (entry: Entry) => void; showListPrice: boolean; privateUnlocked: boolean
 }) {
   const url = recordsUrl(selection)
@@ -32,12 +32,16 @@ export function TrackerRecords({ trackers, selection, onChange, onEdit, onRemove
       {selection.expanded ? <ChevronUp className="size-4 shrink-0" /> : <ChevronDown className="size-4 shrink-0" />}
     </Button>
     {selection.expanded ? <div id="tracker-recent-entries" className="space-y-4">
+      {selection.groupId ? <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-sm" data-testid="records-group-scope">
+        <p className="min-w-0 [overflow-wrap:anywhere]">Nhóm: <strong>{groups.find(group => group.id === selection.groupId)?.name ?? 'Nhóm không còn tồn tại'}</strong></p>
+        <Button variant="outline" className="min-h-11" onClick={() => change({ groupId: undefined, trackerId: 'all' })}>Xem tất cả nhóm</Button>
+      </div> : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Cách xem</span>
           <Select value={selection.mode} onValueChange={value => change({mode:value as RecordMode,order:value === 'recent' ? 'desc' : selection.order})}><SelectTrigger data-testid="records-mode" className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(MODE_LABELS).map(([value,label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
         </label>
         <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Tracker</span>
-          <Select value={selection.trackerId} onValueChange={trackerId => change({trackerId})}><SelectTrigger data-testid="records-tracker" className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả tracker</SelectItem>{trackers.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select>
+          <Select value={selection.trackerId} onValueChange={trackerId => change({trackerId})}><SelectTrigger data-testid="records-tracker" className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{selection.groupId ? 'Tất cả tracker trong nhóm' : 'Tất cả tracker'}</SelectItem>{trackers.filter(t => !selection.groupId || t.group_id === selection.groupId).map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select>
         </label>
         {selection.mode !== 'recent' ? <>
           <label className="min-w-0 space-y-1 text-sm font-semibold"><span>{selection.mode === 'quarter' ? 'Tháng trong quý' : selection.mode === 'year' ? 'Năm' : selection.mode === 'month' ? 'Tháng' : 'Ngày'}</span>

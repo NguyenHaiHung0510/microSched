@@ -1,3 +1,9 @@
+# Current readiness — no new Mimi activation in Task090
+
+The current heatmap task inspects shared entrypoints only; no Mimi runtime matrix, paid calls or acceptance is granted. The map below is the preserved Owner192 source map, not an automatically selected current candidate. Read the current SKILL entrypoint and applicable future task before using its archived native source doctor/activation.
+
+## Historical Owner192 map
+
 # Feature map — verify-mimi / Owner192
 
 Owner192 G2 candidate: exact source identity in CURRENT_BINDING; reconcile merged259 maps and develop8ad5 workflows without discarding approved WIP. **12/12 source/prerequisite recipes maintained;0/12 current runtime-accepted**, not full product acceptance. Dated H14 metadata1/12 on680b7 remains historical.

@@ -221,6 +221,7 @@ async def list_entries(
     db: Database,
     session: CurrentSession,
     tracker_id: UUID | None = Query(default=None),
+    group_id: UUID | None = Query(default=None),
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
@@ -237,6 +238,7 @@ async def list_entries(
             db,
             session,
             tracker_id=tracker_id,
+            group_id=group_id,
             from_=from_,
             to=to,
             limit=limit,
@@ -320,9 +322,14 @@ async def tracker_activity(
     session: CurrentSession,
     year: int = Query(ge=1, le=9998),
     tracker_id: UUID | None = Query(default=None),
+    group_id: UUID | None = Query(default=None),
 ) -> dict[str, list[ActivityDayRead]]:
     """Sparse positive daily counts for one Vietnam calendar year."""
-    return {"items": await store.activity_days(db, session, year=year, tracker_id=tracker_id)}
+    return {
+        "items": await store.activity_days(
+            db, session, year=year, tracker_id=tracker_id, group_id=group_id
+        )
+    }
 
 
 @router.get("/tracker/dashboard", response_model=DashboardResponse)

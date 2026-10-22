@@ -208,6 +208,7 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
           const to = params.get('to')
           const items = state.entries.filter(item =>
             (!trackerId || item.tracker_id === trackerId) &&
+            (!params.has('group_id') || state.trackers.find(t => t.id === item.tracker_id)?.group_id === params.get('group_id')) &&
             (!from || (item.occurred_at != null && new Date(item.occurred_at) >= new Date(from))) &&
             (!to || (item.occurred_at != null && new Date(item.occurred_at) < new Date(to)))
           ).sort((a,b) => {
@@ -223,6 +224,7 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
           const counts = new Map<string,number>()
           for (const item of state.entries) {
             if (!item.occurred_at || (params.has('tracker_id') && params.get('tracker_id') !== item.tracker_id)) continue
+            if (params.has('group_id') && state.trackers.find(t => t.id === item.tracker_id)?.group_id !== params.get('group_id')) continue
             const parts = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(item.occurred_at))
             const part = (type:string) => parts.find(p=>p.type===type)?.value
             const day = `${part('year')}-${part('month')}-${part('day')}`
