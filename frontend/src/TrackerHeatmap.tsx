@@ -29,6 +29,11 @@ import { trackerQueryKey, type Entry, type Tracker, type TrackerGroup } from '@/
 type Activity = { day: string; count: number }
 const WEEKDAYS = ['T2','T3','T4','T5','T6','T7','CN']
 const LEVELS = ['0','1','2','≥3']
+// Scope labels stay readable without changing the shared Select defaults.
+const scopeSelectTriggerClass = 'min-h-11 w-full min-w-0 [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]>span]:truncate'
+const scopeSelectContentClass = 'w-(--radix-select-trigger-width) min-w-0 max-w-(--radix-select-content-available-width) data-[side=bottom]:translate-y-0 data-[side=top]:translate-y-0 [&_[data-radix-select-viewport]]:min-w-0'
+const scopeSelectItemClass = 'min-h-11 whitespace-normal [&>span:last-child]:min-w-0 [&>span:last-child]:block'
+
 function daysInYear(year: number): string[] {
   if (year < 1 || year > 9998) return []
   const day = new Date(`${String(year).padStart(4,'0')}-01-01T00:00:00Z`)
@@ -292,9 +297,9 @@ export function TrackerHeatmap({ trackers, groups, initialMonth, onDay, privateU
     </div>
     <div className="grid gap-3 sm:grid-cols-2">
       {scope === 'group' ? <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Nhóm</span>
-        <Select value={scopeReady ? selectedGroup : ''} onValueChange={value => { setTouchDetailDay(null); setSelectedGroup(value) }} disabled={!groups.length}><SelectTrigger data-testid="heatmap-group" className="min-h-11 w-full"><SelectValue placeholder="Chọn nhóm" /></SelectTrigger><SelectContent>{groups.map(group => <SelectItem key={group.id} value={group.id}>{group.name} · {visibleTrackers.filter(tracker => tracker.group_id === group.id).length} tracker</SelectItem>)}</SelectContent></Select>
+        <Select value={scopeReady ? selectedGroup : ''} onValueChange={value => { setTouchDetailDay(null); setSelectedGroup(value) }} disabled={!groups.length}><SelectTrigger data-testid="heatmap-group" className={scopeSelectTriggerClass}><SelectValue placeholder="Chọn nhóm" /></SelectTrigger><SelectContent position="popper" align="start" sideOffset={4} collisionPadding={8} className={scopeSelectContentClass}>{groups.map(group => <SelectItem key={group.id} value={group.id} className={scopeSelectItemClass}><span className="block [overflow-wrap:anywhere]">{group.name} · {visibleTrackers.filter(tracker => tracker.group_id === group.id).length} tracker</span></SelectItem>)}</SelectContent></Select>
       </label> : scope === 'tracker' ? <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Tracker</span>
-        <Select value={scopeReady ? selectedTracker : ''} onValueChange={value => { setTouchDetailDay(null); setSelectedTracker(value) }} disabled={!visibleTrackers.length}><SelectTrigger data-testid="heatmap-tracker" className="min-h-11 w-full"><SelectValue placeholder="Chọn tracker" /></SelectTrigger><SelectContent>{visibleTrackers.map(t=><SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select>
+        <Select value={scopeReady ? selectedTracker : ''} onValueChange={value => { setTouchDetailDay(null); setSelectedTracker(value) }} disabled={!visibleTrackers.length}><SelectTrigger data-testid="heatmap-tracker" className={scopeSelectTriggerClass}><SelectValue placeholder="Chọn tracker" /></SelectTrigger><SelectContent position="popper" align="start" sideOffset={4} collisionPadding={8} className={scopeSelectContentClass}>{visibleTrackers.map(t=><SelectItem key={t.id} value={t.id} className={scopeSelectItemClass}><span className="block [overflow-wrap:anywhere]">{t.name}</span></SelectItem>)}</SelectContent></Select>
       </label> : null}
       <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Năm</span><Input data-testid="heatmap-year" type="number" min={1} max={9998} className="min-h-11 text-base" value={yearText} onChange={e=>{
         const value=e.target.value;setTouchDetailDay(null);setYearText(value)
