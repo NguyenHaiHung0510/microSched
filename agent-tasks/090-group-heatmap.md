@@ -31,7 +31,7 @@ From granted checkout and installed backend Python, replace CURRENT_BINDING with
 # Cleanup: same command ending stop; retain volume/data and evidence
 ```
 
-Doctor caveat: inherited _load_state may backfill a missing legacy volume field in runtime.json, including during status. Doctor is an owner-operated, write-capable action; strict read-only reviewers use direct read-only resource/PID and /api/readyz probes or request the actual owner. No guard/helper behavior is changed by this caveat.
+Doctor caveat: inherited _load_state may backfill legacy volume metadata in runtime.json during status; verify calls _activate_synthetic_settings, replacing process settings/environment and clearing the settings cache. Doctor is owner-operated and not universally side-effect-free. Strict read-only reviewers use direct read-only resource/PID and /api/readyz probes, or request the actual owner before write-capable Doctor actions. No guard/helper behavior changes.
 
 start-db prepares only owned DB and baseline fixture. Tests use separate empty DB to preserve preview fixture/encryption. On first image initialization, inherited pg_isready can precede final postmaster restart: if connection lost, inspect exact container/log/state and resume same healthy namespace; no reinstall/recreate/reset.
 
