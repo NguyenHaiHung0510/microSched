@@ -47,8 +47,10 @@ FOR EACH ROW EXECUTE FUNCTION microsched.set_updated_at()
     op.execute("""
 REVOKE ALL ON TABLE microsched.reminder_occurrence_handled FROM PUBLIC
 """)
+    # Default privileges grant broad DML to future tables; reset this table only.
+    op.execute("REVOKE ALL ON TABLE microsched.reminder_occurrence_handled FROM microsched_app")
     op.execute("""
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE microsched.reminder_occurrence_handled TO
+GRANT SELECT, INSERT ON TABLE microsched.reminder_occurrence_handled TO
 microsched_app
 """)
     op.execute("""
@@ -92,8 +94,9 @@ EACH ROW EXECUTE FUNCTION microsched.set_updated_at()
     op.execute("""
 REVOKE ALL ON TABLE microsched.reminder_handled_batch FROM PUBLIC
 """)
+    op.execute("REVOKE ALL ON TABLE microsched.reminder_handled_batch FROM microsched_app")
     op.execute("""
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE microsched.reminder_handled_batch TO
+GRANT SELECT, INSERT, UPDATE ON TABLE microsched.reminder_handled_batch TO
 microsched_app
 """)
 

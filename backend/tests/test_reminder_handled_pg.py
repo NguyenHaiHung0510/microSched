@@ -1,6 +1,7 @@
 """Actual disposable PG transactions for independent ACK and exact confirmed bulk."""
 
 import asyncio
+import os
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid7
 
@@ -8,7 +9,8 @@ import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import delete, func, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_reminder_history_pg import NOW, actor, database, intent, shot, task, tracker
 from test_reminder_history_pg import settings as settings
@@ -302,5 +304,60 @@ def test_two_actual_connections_commit_same_manifest_once(pg_dsn):
                     await db.execute(delete(Task).where(Task.id == tid))
                 await db.commit()
             await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_minimal_actual_app_role_valid_ack_batch_and_write_refusals(pg_dsn):
+    async def scenario():
+        owner_engine = create_async_engine(async_postgres_url(pg_dsn))
+        app_url = (
+            make_url(pg_dsn)
+            .set(username="microsched_app", password=os.environ["CI_APP_PASSWORD"])
+            .render_as_string(hide_password=False)
+        )
+        app_engine = create_async_engine(async_postgres_url(app_url))
+        tid, batch_id = None, None
+        try:
+            async with async_sessionmaker(owner_engine, expire_on_commit=False)() as db:
+                t = await task(db)
+                tid = t.id
+                first, second = await shot(db, t), await shot(db, t)
+                await db.commit()
+            async with async_sessionmaker(app_engine, expire_on_commit=False)() as db:
+                assert await db.scalar(text("SELECT current_user")) == "microsched_app"
+                auth = actor()
+                result = await ack.mark_handled(db, auth, "one_shot", first.id)
+                assert await ack.mark_handled(db, auth, "one_shot", first.id) == result
+                payload = prepared(
+                    selected_refs=[ack.OccurrenceRef(origin="one_shot", id=second.id)]
+                )
+                batch_id = payload.batch_id
+                assert (await ack.prepare_batch(db, auth, payload))["selected_count"] == 1
+                assert (await ack.commit_batch(db, auth, batch_id))["result"]["new_count"] == 1
+                for query in [
+                    "UPDATE microsched.reminder_occurrence_handled "
+                    "SET handled_at=handled_at WHERE false",
+                    "DELETE FROM microsched.reminder_occurrence_handled WHERE false",
+                    "DELETE FROM microsched.reminder_handled_batch WHERE false",
+                    "CREATE TABLE microsched.r3_forbidden_app_ddl(id integer)",
+                ]:
+                    with pytest.raises(DBAPIError) as failure:
+                        async with db.begin_nested():
+                            await db.execute(text(query))
+                    assert getattr(failure.value.orig, "sqlstate", None) == "42501"
+                assert (await ack.commit_batch(db, auth, batch_id))["result"]["selected_count"] == 1
+                await db.rollback()
+        finally:
+            async with async_sessionmaker(owner_engine)() as db:
+                if batch_id:
+                    await db.execute(
+                        delete(ReminderHandledBatch).where(ReminderHandledBatch.id == batch_id)
+                    )
+                if tid:
+                    await db.execute(delete(Task).where(Task.id == tid))
+                await db.commit()
+            await app_engine.dispose()
+            await owner_engine.dispose()
 
     asyncio.run(scenario())

@@ -81,3 +81,25 @@ The unfinished public-draft step passed separately. Receipts, fixture correction
 schema-role/restore/nonempty rollback proof and exact candidate binding are in the
 versioned R3 night handback/freeze. This is author evidence; independent runtime,
 required CI, device and production acceptance remain separate/NOT_RUN here.
+
+## DEV328 grouped repair — F01/F02/F03
+
+The shared PG fixture now owns its public synthetic32-byte key and settings/cipher
+caches, independent from caller configuration. Unreleased0019 resets only its two
+newtable ACLs after inherited defaults:association SELECT/INSERT,manifest
+SELECT/INSERT/UPDATE; associationUPDATE/DELETE,manifestDELETE and appDDL are refused.
+No existing receipt/source/default-role privileges change.
+
+The focused driver treats both private/draft cases as sensitive:failure stores only
+`PRIVATE_CASE_FAILED_DETAILS_SUPPRESSED`,never raw exception or a failure screenshot.
+Successful private screenshots require verified purge. Diagnostic
+`--case private --prove-private-failure` deliberately fails while private content is
+visible,before preparation; expected receipt has no pixels/rawcanary. It is not a
+product PASS. Follow with `--case public-preview` to inspect all four origins,paging
+and existing handled state without new ACKs or fixtures. Unique output folders and
+original failed receipts remain. Guard mutation/restore unit proof uses memory only.
+
+DEV328 author evidence:34affected testsPASS with caller key absent,3helper guard
+testsPASS,actual deliberate private safeFAIL + restored public previewPASS. Existing
+bf7 business/runtime proof is inherited only where bytes unchanged. Current CI and
+independent affected source/runtime closure belong to PM after the new freeze.

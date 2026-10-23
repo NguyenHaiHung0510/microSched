@@ -1,6 +1,7 @@
 """Real isolated PG projection/HTTP oracles; no dispatcher/provider or source ACKs."""
 
 import asyncio
+import base64
 import json
 import os
 from contextlib import asynccontextmanager
@@ -55,6 +56,8 @@ NOW = datetime(2026, 10, 23, 10, tzinfo=UTC)
 def settings(monkeypatch):
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("MIMI_NOTIFICATIONS_ENABLED", "true")
+    # Public deterministic test key, scoped to these synthetic fixtures only.
+    monkeypatch.setenv("ENCRYPTION_MASTER_KEY", base64.urlsafe_b64encode(bytes(range(32))).decode())
     get_settings.cache_clear()
     crypto._cipher.cache_clear()
     yield

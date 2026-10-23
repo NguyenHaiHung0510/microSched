@@ -57,3 +57,10 @@ intent fixture's initial owner-derivation error and corrected exact IDs are reta
 in the R3 night receipt/manifest. Actual own UI shows all origins, not physical
 delivery. Reuse `verify-microsched/scripts/r3_history.mjs` and its shared freeze;
 independent runtime/provider/device/production statuses are not promoted by author QA.
+
+DEV328 affected correction:shared synthetic history test key/cache is test-scoped;
+new0019 association app rights are SELECT/INSERT,manifest SELECT/INSERT/UPDATE after
+table-specific default-grant reset. Mimi eligibility/read/delivery logic is unchanged.
+Private/draft driver failures now retain constant metadata and omit failure pixels;
+use the shared repaired M1 history helper and current freeze. No new Mimi/provider
+runtime acceptance follows from these author role/helper checks.

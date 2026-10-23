@@ -23,7 +23,9 @@ are excluded; already handled members count separately. Same-ID different scope 
 replay remains stable, returning only coarse success if current disclosure is lost.
 
 Migration0019 adds only `reminder_occurrence_handled` and `reminder_handled_batch`.
-The app role has DML, the migrator owns DDL. Empty disposable downgrade is supported;
+The app role has SELECT/INSERT on occurrence associations and SELECT/INSERT/UPDATE
+on manifests; table-specific resets remove broader inherited default grants.
+The migrator owns DDL. Empty disposable downgrade is supported;
 nonempty downgrade refuses, preserving records. Production requires explicit migration
 and backup/rehearsal/release gates; deploy never auto-migrates. Immutable919 old backend
 was exercised against0019 using the app role and rolled-back synthetic CRUD.
@@ -39,3 +41,10 @@ existing-stack focused own preview driver and versioned R3 night freeze/handback
 Author evidence is separate from independent QA, CI, physical devices and production.
 Base919 is the locally frozen R2 dependency; release base must be refreshed after
 PM accepts/merges R2. No release acceptance is asserted by this source branch.
+
+DEV328 F01/F02/F03 repairs keep history product behavior unchanged:shared test fixture
+provides synthetic key/cache,unreleased0019 grants only the rights above,and sensitive
+M1 failures omit raw errors/pixels before verified purge. Focused caller-key-absent
+PG/crypto tests and actual app-role positive/refusal checks run on a separate owned
+rehearsal; existing60occurrences/59handled/2manifests are retained. Production backup
+remains blocked by automatic review; no productionDDL/deploy follows from this repair.

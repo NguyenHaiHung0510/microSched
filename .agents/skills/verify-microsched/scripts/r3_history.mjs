@@ -6,12 +6,15 @@ import {fileURLToPath} from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import {execFileSync} from 'node:child_process'
+import {captureHistoryEvidence,recordHistoryFailure} from './r3_history_evidence.mjs'
 const source=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../../..')
 const require=createRequire(path.join(source,'frontend/package.json'))
 const {chromium,expect}=require('@playwright/test')
 const args=process.argv.slice(2), value=name=>args[args.indexOf(name)+1]
 const root=value('--output'), mode=args.includes('--case')?value('--case'):'common'
-if(!root||!path.isAbsolute(root)||!['common','private','draft','bulk'].includes(mode))throw Error('Explicit absolute output and common/private/bulk case required')
+if(!root||!path.isAbsolute(root)||!['common','private','draft','bulk','public-preview'].includes(mode))throw Error('Explicit absolute output and supported case required')
+const sensitive=mode==='private'||mode==='draft',provePrivateFailure=args.includes('--prove-private-failure')
+if(provePrivateFailure&&mode!=='private')throw Error('Failure proof requires the synthetic private case')
 const local=path.resolve(source,'.local/r3-092'), report=path.resolve(source,'../../harness-reports/mimi-qa-2026-oct-19-owner296/dev-2026-oct-22')
 if(![local,report].some(r=>path.resolve(root).startsWith(r+path.sep)))throw Error('Output must be inside owned092/local or approved report root')
 const output=path.join(root,new Date().toISOString().replace(/[:.]/g,'-')+'-'+mode)
@@ -31,7 +34,8 @@ await context.route('**/*',route=>{
  receipt.requests.push({method,path:p});return route.continue()
 })
 const page=await context.newPage()
-const screenshot=async(name)=>{await page.screenshot({path:path.join(output,name),fullPage:false});receipt.screenshots.push(name)}
+let privatePurged=!sensitive
+const screenshot=async(name)=>captureHistoryEvidence({sensitive,privatePurged,capture:async()=>{await page.screenshot({path:path.join(output,name),fullPage:false});receipt.screenshots.push(name)}})
 const check=(name)=>receipt.assertions.push({name,status:'PASS'})
 async function history(){await page.getByTestId('reminder-center-open').click();await page.getByRole('button',{name:'Lịch sử',exact:true}).click();await expect(page.getByTestId('history-row').first()).toBeVisible()}
 async function get(p){const r=await context.request.get(origin+p);expect(r.status()).toBe(200);return r.json()}
@@ -42,6 +46,7 @@ try{
  if(mode==='private'||mode==='draft'){
   const unlocked=await context.request.post(origin+'/api/private/unlock',{data:{pin:secrets.pin}});expect(unlocked.status()).toBe(200)
   await page.reload();await history();const second=await context.newPage();await second.goto(origin+'/');if(mode==='private'){await expect(page.getByText('R3 PRIVATE synthetic',{exact:true})).toBeVisible()
+  if(provePrivateFailure){receipt.deliberate_failure='BEFORE_VERIFIED_PRIVATE_PURGE';throw new Error('SYNTHETIC_PRIVATE_FAILURE_CANARY')}
   await page.getByTestId('history-prepare-all').click();await expect(page.getByTestId('history-bulk-confirm')).toBeVisible()
   const confirmRequest=receipt.requests.filter(r=>r.path.endsWith('/prepare')).length;expect(confirmRequest).toBe(1)
   await second.getByRole('button',{name:'Khoá lại ngay',exact:true}).click()
@@ -49,6 +54,7 @@ try{
   await expect(page.getByText('R3 PRIVATE synthetic',{exact:true})).toHaveCount(0)
   await expect(page.getByRole('button',{name:'Xử lý 0 đã chọn',exact:true})).toBeVisible()
   check('Cross-page real private lock purges private rows and prepared selection without commit')
+  privatePurged=true
   await screenshot('private-lock-purge.png')}
   // A mounted public editor keeps its dirty draft through another actual lock.
   const publicRow=page.locator('[data-occurrence="one_shot:'+fixture.one_shots[1]+'"]')
@@ -56,13 +62,22 @@ try{
   const editor=page.getByRole('dialog',{name:'Đối tượng được nhắc'}),content=editor.locator('textarea')
   await content.fill('R3 unsaved public draft')
   await context.request.post(origin+'/api/private/unlock',{data:{pin:secrets.pin}})
+  privatePurged=false
   await second.reload();await second.getByRole('button',{name:'Khoá lại ngay',exact:true}).click()
   await expect(content).toHaveValue('R3 unsaved public draft');check('Public source draft remains mounted and unsaved on cross-page lock')
+  await expect(page.getByText('R3 PRIVATE synthetic',{exact:true})).toHaveCount(0);privatePurged=true
   await screenshot('public-dirty-draft-retained.png');await editor.getByRole('button',{name:'Huỷ',exact:true}).click()
   await second.close()
  }else{
   await history();await expect(page.getByTestId('history-row')).toHaveCount(50)
-  if(mode==='common'){
+  if(mode==='public-preview'){
+   await page.getByTestId('history-more').click();await expect(page.getByTestId('history-row')).toHaveCount(fixture.public_occurrences)
+   const origins=await page.getByTestId('history-row').evaluateAll(rows=>[...new Set(rows.map(r=>r.getAttribute('data-occurrence').split(':')[0]))])
+   expect(origins.sort()).toEqual(['mimi_intent','one_shot','subscription_dispatch','tracker_dispatch'])
+   await expect(page.getByTestId('history-handle').first()).toHaveText('Đã xử lý')
+   check('Restored public preview: all four origins, paging and prior durable handled state unchanged')
+   await screenshot('public-preview.png')
+  }else if(mode==='common'){
    await screenshot('history-desktop-day-groups.png');check('Latest-first server day groups and first page50')
    await page.getByTestId('history-more').click();await expect(page.getByTestId('history-row')).toHaveCount(fixture.public_occurrences)
    const origins=await page.getByTestId('history-row').evaluateAll(rows=>[...new Set(rows.map(r=>r.getAttribute('data-occurrence').split(':')[0]))])
@@ -89,6 +104,6 @@ try{
   }
  }
  receipt.status='AUTHOR_PASS'
-}catch(error){receipt.status='FAIL';receipt.error=String(error);await screenshot('failure.png').catch(()=>{})}
+}catch(error){await recordHistoryFailure({sensitive,receipt,error,capture:()=>screenshot('failure.png')})}
 finally{await context.request.post(origin+'/auth/logout').catch(()=>{});receipt.finished=new Date().toISOString();await context.close();await browser.close();await fs.writeFile(path.join(output,'receipt.json'),JSON.stringify(receipt,null,2),{flag:'wx'});console.log(JSON.stringify({status:receipt.status,output,assertions:receipt.assertions,error:receipt.error}));}
 if(receipt.status!=='AUTHOR_PASS')process.exitCode=1
