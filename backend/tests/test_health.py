@@ -64,6 +64,7 @@ def test_readyz_reports_database_reachability(monkeypatch) -> None:
         "version": "0.1.0",
         "db": "up",
         "commit": "0123456789abcdef",
+        "outbox_protocols": [1],
     }
     database_check.assert_awaited_once_with()
 

@@ -52,6 +52,9 @@ import { ensurePushSubscription } from '@/push-subscription'
 import { standardRefetchInterval } from '@/query-polling'
 import {
   backdateOptions,
+  canSubmitAmount,
+  decimalInput,
+  digitsOnly,
   capturePayload,
   currentVietnamMonth,
   formatReminderSummary,
@@ -98,7 +101,11 @@ function reportMonthLabel(month: string, months: 1 | 3 | 6 | 12): string {
   return `${monthLabel(shiftMonth(month, 1 - months))} – ${monthLabel(month)}`
 }
 
+import { DerivedPendingNotice } from '@/OutboxPanel'
+import { useDerivedPending } from '@/outbox/view'
+
 export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean }) {
+  const derivedPending = useDerivedPending()
   const queryClient = useQueryClient()
   const [records, setRecords] = useState(initialRecordsSelection)
   const refresh = () => {
@@ -169,6 +176,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [backdateFor, setBackdateFor] = useState<Tracker | null>(null)
   const [backdateChoice, setBackdateChoice] = useState<BackdateChoice>('yesterday')
   const [backdateCustom, setBackdateCustom] = useState('')
+  const [backdateInput, setBackdateInput] = useState('')
   const [archiveFor, setArchiveFor] = useState<Tracker | null>(null)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [lockedIds, setLockedIds] = useState<ReadonlySet<string>>(new Set())
@@ -196,6 +204,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       setBackdateFor(null)
       setBackdateChoice('yesterday')
       setBackdateCustom('')
+      setBackdateInput('')
       setArchiveFor(null)
       setEditingEntry(null)
       setRecords(initialRecordsSelection())
@@ -241,14 +250,14 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   }
 
   function capture(tracker: Tracker, input?: string, occurredAt?: string) {
-    if (lockedIds.has(tracker.id)) return
+    if (lockedIds.has(tracker.id)) return Promise.resolve(false)
     lock(tracker.id)
     setCapturingIds((previous) => {
       const next = new Set(previous)
       next.add(tracker.id)
       return next
     })
-    writes.createEntry.mutate(
+    return writes.createEntry.mutateAsync(
       capturePayload(tracker, input ?? '', occurredAt),
       {
         onSuccess: (entry) => {
@@ -280,10 +289,10 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         },
         onSettled: () => unlockLater(tracker.id),
       },
-    )
+    ).then(() => true, () => false)
   }
 
-  function submitBackdate() {
+  async function submitBackdate() {
     if (!backdateFor) return
     const option =
       backdateChoice === 'custom'
@@ -293,8 +302,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         : backdateOptions().find(({ label }) =>
             backdateChoice === 'yesterday' ? label === 'Hôm qua' : label === '2 giờ trước',
           )?.value
-    capture(backdateFor, undefined, option)
-    setBackdateFor(null)
+    if (await capture(backdateFor, backdateInput, option)) setBackdateFor(null)
   }
 
   function submitTracker(payload: TrackerWritePayload) {
@@ -534,6 +542,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       ) : null}
 
       {/* 1. Tài chính tháng X năm Y lên đầu */}
+      <DerivedPendingNotice />
       <Card data-testid="tracker-finance-overview" className="gap-3 p-4 shadow-1 ring-0 bg-gradient-to-br from-brand-50/60 to-card border-brand-200">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 basis-full space-y-1 sm:basis-0 sm:flex-1">
@@ -548,7 +557,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
               <div className="space-y-1">
                 <div className="flex items-baseline gap-2">
                   <span data-testid="tracker-finance-total" className="text-2xl font-extrabold text-foreground tabular-nums">
-                    {formatVnd(dashboardQuery.data.f1_total)}
+                    {derivedPending ? 'Đang chờ cập nhật' : formatVnd(dashboardQuery.data.f1_total)}
                   </span>
                   <span className="text-xs text-muted-foreground">đã chi</span>
                 </div>
@@ -614,6 +623,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         onBackdate={(tracker) => {
           setBackdateChoice('yesterday')
           setBackdateCustom('')
+          setBackdateInput('')
           setBackdateFor(tracker)
         }}
       />
@@ -1064,6 +1074,12 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+              {backdateFor && backdateFor.input_mode !== 'event' ? (
+                <label className="block space-y-1.5 text-sm font-semibold">
+                  <span>{backdateFor.input_mode === 'money' ? 'Số tiền' : `Số lượng (${backdateFor.unit ?? 'đơn vị'})`}</span>
+                  <Input data-testid="tracker-backdate-amount" className="min-h-11 text-base" inputMode="decimal" value={backdateInput} onChange={event => setBackdateInput(backdateFor.input_mode === 'money' ? digitsOnly(event.target.value) : decimalInput(event.target.value))} disabled={writes.createEntry.isPending} />
+                </label>
+              ) : null}
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant={backdateChoice === 'yesterday' ? 'secondary' : 'ghost'}
@@ -1092,8 +1108,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                 }}
               />
             </label>
-            <Button size="lg" className="min-h-11 w-full" onClick={submitBackdate}>
-              Ghi
+            <Button size="lg" className="min-h-11 w-full" onClick={() => void submitBackdate()} disabled={writes.createEntry.isPending || !!backdateFor && (lockedIds.has(backdateFor.id) || backdateFor.input_mode !== 'event' && !canSubmitAmount(backdateInput))}>
+              {writes.createEntry.isPending ? 'Đang ghi…' : 'Ghi'}
             </Button>
           </div>
         </DialogContent>

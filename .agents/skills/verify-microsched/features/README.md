@@ -24,3 +24,6 @@ Broad source map for exact candidate `aa9d7251cdb506e968a6ffddfbae6767b6987327` 
 | [PWA and visible data freshness](pwa-freshness.md) | `frontend/src/LiveStatus.tsx:43` | NOT_RUN |
 
 Enumeration boundary: observed top-level app routes/tabs/global controls and reachable Mimi workspace/dock entrypoints in the named source. This is a broad inventory, not exhaustive per-field/state QA. Later or hidden/provider-dependent behaviors remain described by prerequisite, not silently accepted. On source changes re-inventory entrypoints and affected recipes; do not treat this old snapshot as current production truth.
+
+## Current Task091 source phase
+[Offline outbox recipe](offline-outbox.md): approved Task/checklist+Entry only, direct parameterized1.62.1 driver/unique receipts and nine independent cases. Actual acceptance remains in current frozen handback; historical rows retain original limits.

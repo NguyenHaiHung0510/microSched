@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
+import { startOutbox } from './outbox/core'
 import { APP_QUERY_DEFAULTS } from './query-polling.ts'
 
 const queryClient = new QueryClient({
@@ -13,10 +14,10 @@ const queryClient = new QueryClient({
   },
 })
 
-createRoot(document.getElementById('root')!).render(
+void startOutbox(queryClient).finally(() => createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <App />
     </QueryClientProvider>
   </StrictMode>,
-)
+))

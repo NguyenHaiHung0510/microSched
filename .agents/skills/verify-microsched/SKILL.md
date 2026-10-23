@@ -1,29 +1,29 @@
 ---
 name: verify-microsched
-description: "Verify microSched using the currently granted source, synthetic runtime and affected feature recipes; select the task before launching, never production or a real profile by default."
+description: "Verify the currently granted synthetic microSched candidate with its source/resource freeze and parameterized direct browser primitives; no implicit real profile or production."
 ---
-# microSched verification
+# microSched verification — Task091
 
-Read the current grant and [feature map](features/README.md). Current implementation candidate: [Task090 group heatmap H2](../../../agent-tasks/090-group-heatmap.md). Its private freeze supplies exact HEAD, complete source/build/config/fixture/oracle manifest, resources and receipts. Author smoke is separate from independent acceptance; R1 activates no Mimi or provider.
+Read current grant, [Task091](../../../agent-tasks/091-offline-outbox-core.md), [offline recipe](features/offline-outbox.md) and [feature map](features/README.md). R2 implements Task/checklist and existing-tracker Entry only. Other domains remain online. Author confidence is not independent Q1–Q9 acceptance.
 
 ## Launch
 
-Only the granted resource owner may start the source-bound R1 runner. Follow the task contract's source/ports/commands. Binding enumerates complete reviewed tracked closure plus new candidate inputs; the runner checks supplied members, not completeness. Inspect ports, labels, cached image and installed dependencies first. No implicit pull/install, old volume, Neon, real .env or profile. Archived H14 startup is not the current command.
+Only recorded runtime owner uses scripts/r2_sandbox.py with exact091 source/current binding. Before launch inspect own ports/labels, cachedPG18 and installed091 dependencies. No pull/install, real.env/profile/Neon/production, old089setup or090resource reuse. guard is pure source admission. init-db was the one-time historical setup; retained091 recovery forbids init-db/reseed/migration. Only an explicitly granted runtime owner may start the exact retained container after ownership/image/volume/port checks. start-app only starts cached API8001/production4174; it never bootstraps/reseeds. Source/config changes need a new meaningful binding. Retain interrupted effects before retry.
 
 ## Doctor
 
-Run current R1 runner status and verify with its freeze binding. Require exact readyz commit, DB up, frontend usable, owned PIDs/container/volume/loopback ports and fixture checks. R1 seed oracle supplements inherited baseline checks. Source MATCH alone proves neither closure nor health. Never print runtime credentials.
-
-Doctor is owner-operated and not universally side-effect-free: inherited _load_state can backfill legacy volume metadata in runtime.json even during status; verify calls _activate_synthetic_settings to replace process settings/environment and clear the settings cache. Strict read-only actors use direct read-only resource/PID and /api/readyz probes, or request the recorded runtime owner before write-capable Doctor actions. Preserve guards and never print credentials.
+Independent strict-read-only actors use direct readyz/PID/Docker readonly probes and scripts/r2_browser.mjs collectors. Owner status may load/backfill runtime metadata inherited from the reviewed primitive; it is not universal read-only. Never expose runtime.json/local-only generated secrets or any backend/frontend.env. Require exact candidate commit/db=up, current complete source/build/config/fixture/oracle/resources and controlling production SW; MATCH alone is not health/closure.
 
 ## Drive
 
-Use [tracker heatmap recipe](features/tracker-form.md) for modes, membership, year/month, details, paging and visibility. Independent QA needs PM's frozen batch grant; no source/helper/fixture changes during it. Use disposable cached Chromium and local origins; provider calls zero. Other mapped features remain unrun unless assigned.
+Parameterized direct Playwright1.62.1 API, cached Chromium, fresh context/serviceWorkers allow. Import createOwnedContext, loginSynthetic, waitForController, collectQueue, collectPwa, nativeTouchDrag, uniqueAttempt, saveState, waitForQueueCount, readCanonical, captureWire and closeOwned from scripts/r2_browser.mjs. Output root must be explicitly granted own local/report folder; each attempt has timestamp+UUID and each state screenshot/JSON a unique suffix. No CLI metadata/cache-repair loop or real profile. Post-login role is synthetic-owner, never print address/token/PIN/key. Collectors omit pending payload contents.
+
+Nine finite outcomes and independent source challenge are in PM R2-QA-PLAN.md. Actual API commit then dropped response differs from mocked success. Real IDB abort differs from physical quota. Isolated PWA update must retain pending/unknown V1 and unsaved draft without forced reload/site clear/unregister. No test-only production globals.
 
 ## Evidence
 
-Retain per-case actions, actual viewport, UI/HTTP/durable results and sanitized screenshots in current private run folder. Separate attempted, author, worker PASS and T1 accepted with denominators; calls/tokens/USD unknowns stay explicit. Viewport does not prove physical iPhone. [Original H14 lifecycle/acceptance](H14-ARCHIVE.md), including 1/12 accepted, remains tied to its original run/source and is not transferred to Task090.
+Freeze once at meaningful boundaries, reuse unchanged evidence. Author/runtime/CI/independent/device/production are distinct. Retain canonical actions, shared source/build/SW/config/resources, concrete fixture IDs/time/oracles, screenshots/index, queue/wire/PG metadata and honest calls/time/USD unknowns. Independent cases return one consolidated batch, no per-case repair. Current release gates live in Task091/private handback, not this map.
 
 ## Cleanup
 
-Only exact current resource owner stops recorded PIDs and labelled container via the same frozen runner. Logout/close owned contexts and retain evidence, DB/volume and counters for QA or authorized disposal. Never kill by process name or delete unrelated work. Inspect state after timeout before retry. This skill grants no merge/deploy.
+Close/log out settled owned isolated contexts. Only owner stops exact recorded own listener PIDs after port checks; retain DB/container/volume/WIP/evidence. No kill-by-name, reset/delete or merge/deploy grant. [R1 Task090 map snapshot](R1-090-ARCHIVE.md), [H14 archive](H14-ARCHIVE.md) retain their original evidence/limits.

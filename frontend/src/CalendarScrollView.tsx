@@ -1,3 +1,6 @@
+import { unlocked } from '@/outbox/core'
+import { taskRequest } from '@/outbox/adapters'
+import { useTaskProjection } from '@/outbox/view'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, GripVertical, MapPin, Plus } from 'lucide-react'
@@ -183,7 +186,7 @@ type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
 async function fetchOpenTaskPage(cursor: string | null = null): Promise<OpenTaskPage> {
   const params = new URLSearchParams({ status: 'open', bucket: 'open_picker', limit: '50' })
   if (cursor) params.set('cursor', cursor)
-  return apiRequest<OpenTaskPage>(`/api/tasks?${params.toString()}`)
+  return taskRequest<OpenTaskPage>(`/api/tasks?${params.toString()}`)
 }
 
 function useIsDesktop(): boolean {
@@ -283,8 +286,9 @@ export function CalendarScrollView() {
   }
 
   const createQuickTask = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { title: string; due_on: string }) =>
-      apiRequest<CalendarTask>('/api/tasks', {
+      taskRequest<CalendarTask>('/api/tasks', {
         method: 'POST',
         body: JSON.stringify({
           title: variables.title,
@@ -307,8 +311,9 @@ export function CalendarScrollView() {
   })
 
   const toggleTaskStatus = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: variables.status }),
       }),
@@ -318,8 +323,9 @@ export function CalendarScrollView() {
   })
 
   const editAgendaTask = useMutation({
+    networkMode: 'always',
     mutationFn: ({ taskId, payload }: { taskId: string; payload: TaskWritePayload }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${taskId}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
@@ -330,12 +336,13 @@ export function CalendarScrollView() {
   })
 
   const rescheduleTask = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: {
       taskId: string
       due_on: string
       previousDueOn?: string
     }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           due_precision: 'date',
@@ -380,8 +387,9 @@ export function CalendarScrollView() {
   }
 
   const createAgendaTask = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { title: string; due_on: string }) =>
-      apiRequest<CalendarTask>('/api/tasks', {
+      taskRequest<CalendarTask>('/api/tasks', {
         method: 'POST',
         body: JSON.stringify({
           title: variables.title,
@@ -454,10 +462,11 @@ export function CalendarScrollView() {
     () => annotationsByDay(annotationsQuery.data?.items ?? []),
     [annotationsQuery.data],
   )
-  const privateLocked = !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
+  const privateLocked = !unlocked() || !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
+  const projectedCalendarTasks = useTaskProjection(allTasksQuery.data ?? [])
   const tasksByDayMap = useMemo(
-    () => tasksByDueDay((allTasksQuery.data ?? []).filter(task => !task.is_private || !privateLocked)),
-    [allTasksQuery.data, privateLocked],
+    () => tasksByDueDay(projectedCalendarTasks.filter(task => !task.is_private || !privateLocked)),
+    [projectedCalendarTasks, privateLocked],
   )
   const sourceById = useMemo(
     () => new Map((sourcesQuery.data?.items ?? []).map((source) => [source.id, source])),

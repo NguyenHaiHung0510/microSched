@@ -1,3 +1,7 @@
+import { OutboxPanel, OfflineCoverage, DerivedPendingNotice } from '@/OutboxPanel'
+import { useOutbox } from '@/outbox/view'
+import { PwaUpdates } from '@/PwaUpdates'
+import { sessionRequest, logoutBoundary } from '@/outbox/core'
 import { ReminderConfirmScreen } from '@/ReminderConfirmScreen'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
@@ -45,10 +49,11 @@ type SessionResponse = PrivateSessionState & {
 }
 
 async function fetchSession(): Promise<SessionResponse> {
-  return apiRequest<SessionResponse>('/api/me')
+  return sessionRequest()
 }
 
 async function postLogout(): Promise<void> {
+  await logoutBoundary()
   await apiRequest<void>('/auth/logout', {
     method: 'POST',
   })
@@ -63,6 +68,7 @@ function todayLabel(): string {
 }
 
 function SignedIn({ session }: { session: SessionResponse }) {
+  const outboxState = useOutbox()
   // 011c §5.1: exactly one deep-linked screen besides the tab block; every tab
   // keeps the URL "/" and activeScreen stays a useState (tabs do NOT own URLs).
   const location = useLocation()
@@ -174,6 +180,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
       mimiDockOpen && currentTab !== 'mimi' ? 'mimi-app-with-dock max-w-[1920px]' : currentTab === 'mimi' ? 'max-w-[1920px]' : currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl',
     )} style={{ '--mimi-dock-width': `${mimiDockWidth}px` } as import('react').CSSProperties}>
     <div className={cn("min-w-0 overflow-hidden rounded-xl bg-background shadow-3", currentTab === 'mimi' && 'mimi-app-workspace')}>
+      <OfflineCoverage /><PwaUpdates /><DerivedPendingNotice />
       {attentionLocator && attentionLink.isError ? <p role="alert" className="m-3 rounded-lg bg-warn-bg p-3 text-sm">Không mở được thông báo. Liên kết có thể không thuộc phiên này; chưa thực hiện thay đổi nào.</p> : null}
       {attentionLink.data?.expired ? <p role="status" className="m-3 text-sm text-muted-foreground">Thông báo đã hết hạn; đang mở đúng hội thoại để đọc trạng thái hiện tại.</p> : null}
       <header className={cn("flex items-center justify-between gap-4 px-5 pb-2 sm:px-6", currentTab === 'mimi' ? 'mimi-app-header pt-2' : 'pt-5')}>
@@ -204,6 +211,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
         {currentTab === 'mimi' ? <details className="relative shrink-0"><summary aria-label="Tùy chọn microSched" className="flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:outline-ring"><MoreVertical className="size-4" /></summary><div className="absolute right-0 top-full z-40 max-w-[calc(100vw-3rem)] rounded-xl border bg-popover p-3 shadow-md">        <div className="flex flex-wrap items-center justify-end gap-2">
 
           <ReminderCenter key={`reminders-${privateScopeVersion}`} />
+            <OutboxPanel />
             <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
           <Button
             variant="secondary"
@@ -220,6 +228,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
             <MimiDockButton open={mimiDockOpen} onToggle={() => setMimiDockOpen((open) => !open)} />
           ) : null}
           <ReminderCenter key={`reminders-${privateScopeVersion}`} />
+            <OutboxPanel />
             <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
           <Button
             variant="secondary"
@@ -251,7 +260,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
           {currentTab === 'notes' ? <NotesScreen /> : null}
           {currentTab === 'calendar' ? <CalendarScreen key={`calendar-${privateScopeVersion}`} /> : null}
           {currentTab === 'tracker' ? (
-            <TrackerScreen privateUnlocked={Boolean(session.private_until)} />
+            <TrackerScreen privateUnlocked={outboxState.context.privateUntil > 0} />
           ) : null}
           {currentTab === 'mimi' && session.mimi_available ? (
             <MimiControlCenter onOpenDomain={(domain) => selectTab(domain)} configurationOpen={mimiConfigurationOpen} onConfigurationOpenChange={setMimiConfigurationOpen} />
@@ -276,6 +285,7 @@ function App() {
   const session = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
+    networkMode: 'always',
     // The session has a long TTL. Window focus checks it when returning to the
     // tab; keeping no-poll explicit prevents future defaults from changing it.
     ...NO_POLLING_QUERY_OPTIONS,
@@ -338,7 +348,7 @@ function App() {
           ) : null}
 
           {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
-          {session.data && !loggedOut ? <SignedIn session={session.data} /> : null}
+          {session.data && !loggedOut && !session.isError ? <SignedIn session={session.data} /> : null}
         </div>
         <Toaster />
       </main>

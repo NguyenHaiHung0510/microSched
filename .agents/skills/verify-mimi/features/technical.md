@@ -19,3 +19,6 @@ Oracle: Displayed source/unit/requested-versus-actual identity matches durable/w
 ## Gotchas
 
 Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+
+### Task091 shared shell readiness
+R2 Task/Entry outbox uses separate canonical snapshots/pending projection and current private/principal epochs. Mimi remains online, no queued arbitrary URL/provider/confirmation. Verify a deterministic canonical invalidation does not erase pending Task/Entry state through the current R2 synthetic shell. Actual Mimi activation/provider acceptance NOT_RUN. Current commands live in verify-microsched Task091 recipe; archived doctor is not repointed.

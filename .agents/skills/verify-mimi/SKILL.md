@@ -25,3 +25,6 @@ Bind new receipts to actual source/config/input/oracle/capabilities and activati
 ## Cleanup
 
 Only the recorded owner stops exact current PIDs. Preserve data/counters/receipts; inspect effects before retry. No old-runtime reset, key/provider use, production action or cleanup follows from map upkeep.
+
+## Current Task091 shared-entrypoint readiness supersession
+R1 Task090 is accepted/merged per PM. Task091 changes shared App/auth/private/query invalidation seams for bounded offline Task/Entry; Mimi remains online, disabled in091synthetic runtime. No Mimi/model/provider call or activation follows. Use current verify-microsched Task091 owner/readonly driver for shared shell/queue/privacy/PWA observations. Legacy Owner192doctor and historical provider matrices remain archived, not current launch commands. Deterministic invalidation can be observed without provider. Current actual Mimi runtime/acceptance NOT_RUN; no full Mimi matrix required by this slice.

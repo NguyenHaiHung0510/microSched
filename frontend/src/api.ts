@@ -5,11 +5,13 @@ export class UnauthenticatedError extends Error {}
 export class ApiError extends Error {
   status: number
   body: unknown
+  headers: Headers
 
-  constructor(status: number, message: string, body?: unknown) {
+  constructor(status: number, message: string, body?: unknown, headers?: HeadersInit) {
     super(message)
     this.status = status
     this.body = body
+    this.headers = new Headers(headers)
   }
 }
 
@@ -56,6 +58,8 @@ function requestSignal(
 
 export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
   let response: Response
+  const visibility = privateVisibilityEpoch
+  if (path === '/api/private/lock' && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('microsched:private-lock',{detail:{requested:true}}))
   const { timeoutMs = REQUEST_TIMEOUT_MS, ...requestInit } = init ?? {}
   try {
     response = await fetch(path, {
@@ -98,6 +102,7 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
     response.status === 401 &&
     (body === undefined || detail === 'Not authenticated')
   ) {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('microsched:auth-lost'))
     throw new UnauthenticatedError('No active session')
   }
 
@@ -106,9 +111,26 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
       typeof detail === 'string'
         ? detail
         : `API request failed with status ${response.status}`
-    throw new ApiError(response.status, message, body)
+    const headers = new Headers()
+    for (const name of ['Retry-After','X-MicroSched-Error-Code']) {
+      const value = response.headers.get(name)
+      if (value !== null) headers.set(name,value)
+    }
+    if (headers.get('X-MicroSched-Error-Code') === 'PRIVATE_UNLOCK_REQUIRED' && typeof window !== 'undefined')
+      window.dispatchEvent(new CustomEvent('microsched:private-lock',{detail:{requested:true}}))
+    if (headers.get('X-MicroSched-Error-Code') === 'OUTBOX_PRINCIPAL_MISMATCH' && typeof window !== 'undefined')
+      window.dispatchEvent(new Event('microsched:auth-lost'))
+    throw new ApiError(response.status, message, body, headers)
   }
 
+  if ((init?.method ?? 'GET') === 'GET' && visibility !== privateVisibilityEpoch &&
+      /^\/api\/(tasks|tracker|calendar|notes|reminders)/.test(path))
+    throw new ApiError(409,'Phạm vi hiển thị đã đổi; tải lại dữ liệu.')
+  if (typeof window !== 'undefined')
+    window.dispatchEvent(new CustomEvent('microsched:api',{detail:{path,body}}))
   if (response.status === 204) return undefined as T
   return body as T
 }
+
+let privateVisibilityEpoch = 0
+if (typeof window !== 'undefined') window.addEventListener('microsched:visibility',() => { privateVisibilityEpoch++ })

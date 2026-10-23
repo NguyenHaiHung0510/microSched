@@ -1,3 +1,5 @@
+import { useTaskProjection } from '@/outbox/view'
+import { taskRequest as apiRequest } from '@/outbox/adapters'
 import {
   type FormEvent,
   type MouseEvent,
@@ -21,7 +23,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
+import { ApiError, UnauthenticatedError } from '@/api'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -243,7 +245,7 @@ export function TasksScreen() {
     }
     if (pinnedIds.length === 0) return
     try {
-      window.localStorage.setItem(PINNED_MIGRATED_KEY, '1')
+      // Completion is recorded after durable admissions below.
     } catch {
       return
     }
@@ -260,7 +262,7 @@ export function TasksScreen() {
         result.status === 'rejected' ? [pinnedIds[index]] : [],
       )
       try {
-        if (retryIds.length === 0) window.localStorage.removeItem(LEGACY_PIN_IDS_KEY)
+        if (retryIds.length === 0) { window.localStorage.removeItem(LEGACY_PIN_IDS_KEY); window.localStorage.setItem(PINNED_MIGRATED_KEY, '1') }
         else window.localStorage.setItem(LEGACY_PIN_IDS_KEY, JSON.stringify(retryIds))
         if (retryIds.length > 0) window.localStorage.removeItem(PINNED_MIGRATED_KEY)
       } catch {
@@ -272,6 +274,7 @@ export function TasksScreen() {
   }, [queryClient, timeline.isSuccess])
 
   const create = useMutation({
+    networkMode: 'always',
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       apiRequest<Task>('/api/tasks', {
         method: 'POST',
@@ -289,7 +292,7 @@ export function TasksScreen() {
     },
   })
 
-  const tasks = useMemo(() => {
+  const confirmedTasks = useMemo(() => {
     const seen = new Set<string>()
     return [...(timeline.data?.items ?? []), ...extraTasks].filter((task) => {
       if (task.is_private && !privateUnlocked) return false
@@ -298,6 +301,8 @@ export function TasksScreen() {
       return true
     })
   }, [extraTasks, timeline.data?.items, privateUnlocked])
+
+  const tasks = useTaskProjection(confirmedTasks, filter)
 
   const dateKeys = useMemo(() => {
     const keys: string[] = []
@@ -735,6 +740,7 @@ const TaskCard = memo(function TaskCard({
     void queryClient.invalidateQueries({ queryKey: ['calendar'] })
   }
   const reschedule = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { next: TaskSchedule; previous: TaskSchedule }) =>
       apiRequest<Task>(`/api/tasks/${task.id}`, {
         method: 'PATCH',
@@ -759,6 +765,7 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const update = useMutation({
+    networkMode: 'always',
     mutationFn: (
       payload: Partial<TaskPayload> & { status?: TaskStatus; pinned?: boolean },
     ) =>
@@ -773,6 +780,7 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const remove = useMutation({
+    networkMode: 'always',
     mutationFn: () => apiRequest<void>(`/api/tasks/${task.id}`, { method: 'DELETE' }),
     onSuccess: () => {
       setDetailsOpen(false)
@@ -792,6 +800,7 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const addItem = useMutation({
+    networkMode: 'always',
     mutationFn: (content: string) =>
       apiRequest<TaskItem>(`/api/tasks/${task.id}/items`, {
         method: 'POST',
@@ -803,6 +812,7 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const changeItem = useMutation({
+    networkMode: 'always',
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
       apiRequest<TaskItem>(`/api/tasks/${task.id}/items/${item.id}`, {
         method: 'PATCH',
@@ -811,6 +821,7 @@ const TaskCard = memo(function TaskCard({
     onSuccess: refresh,
   })
   const removeItem = useMutation({
+    networkMode: 'always',
     mutationFn: (item: TaskItem) =>
       apiRequest<void>(`/api/tasks/${task.id}/items/${item.id}`, { method: 'DELETE' }),
     onSuccess: refresh,
@@ -1274,6 +1285,8 @@ export function LegacyTasksScreen() {
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
 
+  const projectedLegacyTasks = useTaskProjection(tasks.data?.items ?? [])
+
   useEffect(() => {
     if (!tasks.isSuccess || !navigator.onLine) return
 
@@ -1292,7 +1305,7 @@ export function LegacyTasksScreen() {
 
     try {
       // This synchronous marker closes the two-tab race before the first PATCH starts.
-      window.localStorage.setItem(PINNED_MIGRATED_KEY, '1')
+      // Completion is recorded after durable admissions below.
     } catch (error) {
       console.warn('Could not claim legacy pin migration; migration will retry later.', error)
       return
@@ -1351,6 +1364,7 @@ export function LegacyTasksScreen() {
   }, [queryClient, tasks.isSuccess])
 
   const create = useMutation({
+    networkMode: 'always',
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       apiRequest<Task>('/api/tasks', {
         method: 'POST',
@@ -1373,8 +1387,8 @@ export function LegacyTasksScreen() {
   })
 
   const overdueCount = useMemo(
-    () => tasks.data?.items.filter(isOverdue).length ?? 0,
-    [tasks.data?.items],
+    () => projectedLegacyTasks.filter(isOverdue).length ?? 0,
+    [projectedLegacyTasks],
   )
 
   // Completing the final overdue task closes that derived view immediately;
@@ -1383,7 +1397,7 @@ export function LegacyTasksScreen() {
     filter === 'overdue' && overdueCount === 0 ? 'open' : filter
 
   const visibleTasks = useMemo(() => {
-    const items = tasks.data?.items ?? []
+    const items = projectedLegacyTasks ?? []
 
     return items
       .filter((task) =>
@@ -1391,7 +1405,7 @@ export function LegacyTasksScreen() {
           ? isOverdue(task)
           : activeFilter === 'all' || task.status === activeFilter,
       )
-  }, [activeFilter, tasks.data?.items])
+  }, [activeFilter, projectedLegacyTasks])
 
   function quickAdd(event: FormEvent) {
     event.preventDefault()

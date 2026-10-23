@@ -1,9 +1,10 @@
+import { useTaskProjection } from '@/outbox/view'
+import { taskRequest as apiRequest } from '@/outbox/adapters'
 import { type FormEvent, useState } from 'react'
 import { ReminderButton } from '@/ReminderEditor'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
 
-import { apiRequest } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -88,6 +89,8 @@ function PersistedChecklistSection({
 }) {
   const queryClient = useQueryClient()
   const [items, setItems] = useState<TaskItem[]>(initialItems)
+  const projectedParent = useTaskProjection([{id:taskId,items}])[0]
+  const visibleItems = (projectedParent?.items ?? items) as TaskItem[]
   const [newContent, setNewContent] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
@@ -98,6 +101,7 @@ function PersistedChecklistSection({
   }
 
   const addItemMutation = useMutation({
+    networkMode: 'always',
     mutationFn: (content: string) =>
       apiRequest<TaskItem>(`/api/tasks/${taskId}/items`, {
         method: 'POST',
@@ -113,6 +117,7 @@ function PersistedChecklistSection({
   })
 
   const updateContentMutation = useMutation({
+    networkMode: 'always',
     mutationFn: ({ itemId, content }: { itemId: string; content: string }) =>
       apiRequest<TaskItem>(`/api/tasks/${taskId}/items/${itemId}`, {
         method: 'PATCH',
@@ -131,6 +136,7 @@ function PersistedChecklistSection({
   })
 
   const toggleCompletedMutation = useMutation({
+    networkMode: 'always',
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
       apiRequest<TaskItem>(`/api/tasks/${taskId}/items/${item.id}`, {
         method: 'PATCH',
@@ -147,6 +153,7 @@ function PersistedChecklistSection({
   })
 
   const removeItemMutation = useMutation({
+    networkMode: 'always',
     mutationFn: (item: TaskItem) =>
       apiRequest<void>(`/api/tasks/${taskId}/items/${item.id}`, {
         method: 'DELETE',
@@ -209,7 +216,7 @@ function PersistedChecklistSection({
       </div>
 
       <div className="space-y-2">
-        {items.map((item) =>
+        {visibleItems.map((item) =>
           editingItemId === item.id ? (
             <div
               key={item.id}

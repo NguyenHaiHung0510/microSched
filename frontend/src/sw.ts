@@ -32,3 +32,9 @@ self.addEventListener('notificationclick', (event: NotificationEvent) => {
   event.notification.close()
   event.waitUntil(openNotificationTarget(self.clients, event.notification.data?.url ?? '/', self.location.origin))
 })
+
+// Activation is requested only by the visible, draft-safe update control.
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') void self.skipWaiting()
+})
+self.addEventListener('activate', event => { event.waitUntil(self.clients.claim()) })

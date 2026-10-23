@@ -1,6 +1,7 @@
+import { taskRequest as apiRequest } from '@/outbox/adapters'
 import { toast } from 'sonner'
 
-import { ApiError, apiRequest, TimeoutError, UnauthenticatedError } from '@/api'
+import { ApiError, TimeoutError, UnauthenticatedError } from '@/api'
 
 type RefreshTasks = () => void
 
