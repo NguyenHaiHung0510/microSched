@@ -47,7 +47,7 @@ test('bucket continuation keeps its cursor range after date navigation', async (
     if (new URL(response.url()).pathname === '/api/tasks' && response.request().method() === 'GET') statuses.push(response.status())
   })
   await page.getByTestId('task-load-more-undated').click()
-  await expect(page.locator('[data-task-id="undated-119"]')).toBeVisible()
+  await expect(page.locator('[data-task-id="019a0e2e-0000-7000-8001-000000009119"]')).toBeVisible()
   expect(statuses).toContain(200)
   expect(statuses).not.toContain(422)
 })
@@ -130,13 +130,13 @@ test('independent undated cursors reach open and completed rows beyond page size
   await openTasksScreen(page)
   await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
   await page.getByTestId('task-load-more-undated').click()
-  await expect(page.locator('[data-task-id="undated-119"]')).toBeVisible()
+  await expect(page.locator('[data-task-id="019a0e2e-0000-7000-8001-000000009119"]')).toBeVisible()
 
   await page.getByTestId('filter-completed').click()
   await expect(page.getByTestId('task-load-more-undated')).toBeVisible()
   await page.getByTestId('task-load-more-undated').click()
   await page.getByTestId('task-undated-group').getByTestId('task-day-completed-toggle').click()
-  await expect(page.locator('[data-task-id="undated-120"]')).toBeVisible()
+  await expect(page.locator('[data-task-id="019a0e2e-0000-7000-8001-000000009120"]')).toBeVisible()
 })
 
 test('clicking card whitespace opens the detail dialog', async ({ page }) => {

@@ -274,6 +274,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
 }
 
 function App() {
+  const outboxState = useOutbox()
   const location = useLocation()
   const session = useQuery({
     queryKey: ['session'],
@@ -287,7 +288,7 @@ function App() {
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
 
-  const loggedOut = session.isError && session.error instanceof UnauthenticatedError
+  const loggedOut = outboxState.authRequired || session.isError && session.error instanceof UnauthenticatedError
   const publicAuth: PublicAuthState = session.isPending ? 'checking'
     : loggedOut ? 'guest'
       : session.isError ? 'unknown'

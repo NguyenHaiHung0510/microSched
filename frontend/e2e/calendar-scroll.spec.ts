@@ -296,7 +296,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByRole('button', { name: /Việc trễ hạn thứ nhất/ }).tap()
 
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved).toMatchObject({
+    await expect.poll(() => moved).toMatchObject({
       due_precision: 'datetime',
       due_on: null,
       due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
@@ -345,7 +345,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByTestId('calendar-day-move-task').tap()
     await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
 
-    const target = page.locator('[data-testid="calendar-move-task"][data-task-id="undated-001"]')
+    const target = page.locator('[data-testid="calendar-move-task"][data-task-id="019a0e2e-0000-7000-8001-000000009001"]')
     for (let attempt = 0; attempt < 8 && !(await target.isVisible()); attempt += 1) {
       const more = page.getByTestId('calendar-move-load-more')
       await expect(more).toBeVisible()
@@ -353,14 +353,14 @@ test.describe('mobile (390x844, touch)', () => {
     }
     await expect(target).toBeVisible()
     await target.click()
-    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === 'undated-001')).toMatchObject({
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000009001')).toMatchObject({
       due_precision: 'date',
       due_on: vnDay(0),
       due_at: null,
     })
   })
 
-  test('private lock remounts calendar and closes a detail dialog', async ({ page, taskApi }) => {
+  test('private lock masks private calendar content while retaining the public day view', async ({ page, taskApi }) => {
     const privateTask = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000009')!
     privateTask.due_precision = 'datetime'
     privateTask.due_on = null
@@ -373,7 +373,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByTestId('private-lock-now').evaluate((element) => (element as HTMLButtonElement).click())
     await expect.poll(() => taskApi.count('POST', '/api/private/lock')).toBe(1)
     await expect(page.getByText('Task riêng tư')).toHaveCount(0)
-    await expect(page.getByTestId('calendar-day-dialog')).toBeHidden()
+    await expect(page.getByTestId('calendar-day-dialog')).toBeVisible()
   })
 
   test('mini-nav does not exist on mobile', async ({ page }) => {
@@ -569,7 +569,7 @@ test.describe('desktop (1280x800)', () => {
     }).format(new Date(moved.due_at!))
     await card.getByTestId('task-reschedule-today').click()
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved).toMatchObject({
+    await expect.poll(() => moved).toMatchObject({
       due_precision: 'datetime',
       due_on: null,
       due_at: `${vnDay(0)}T${oldClock}:00+07:00`,

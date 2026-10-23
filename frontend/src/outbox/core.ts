@@ -8,9 +8,9 @@ import type { BootstrapSession } from './types'
 import { maskPrivateQueries } from './private-visibility'
 
 type Context = {principal:string;verified:boolean;expires:number;privateUntil:number}
-export type Snapshot = {rows:Command[];context:Context;error:string;capability:string;reconciling:string[];revision:number;admitting:number}
+export type Snapshot = {rows:Command[];context:Context;error:string;capability:string;reconciling:string[];revision:number;admitting:number;authRequired:boolean}
 let context:Context = {principal:'',verified:false,expires:0,privateUntil:0}
-let snapshot:Snapshot = {rows:[],context,error:'',capability:'Đang kiểm tra',reconciling:[],revision:0,admitting:0}
+let snapshot:Snapshot = {rows:[],context,error:'',capability:'Đang kiểm tra',reconciling:[],revision:0,admitting:0,authRequired:false}
 let client:QueryClient | undefined, timer:ReturnType<typeof setTimeout> | undefined, privateTimer:ReturnType<typeof setTimeout> | undefined
 let authHeld = false
 let authEpoch = 0, privateEpoch = 0, lockRequested = false
@@ -108,7 +108,7 @@ export async function bindSession(session:BootstrapSession, expectedEpoch = auth
   clearTimeout(privateTimer)
   if (unlocked()) privateTimer = setTimeout(() => lockLocal(),Math.max(0,context.privateUntil-Date.now()))
   if(previous!==principal || !wasVerified && context.verified){ checkedGeneration=-1;capable=false }
-  publish();wake()
+  publish({authRequired:!context.verified && authHeld});wake()
 }
 export async function sessionRequest():Promise<BootstrapSession> {
   const epoch = authEpoch, visibility = privateEpoch
@@ -157,7 +157,7 @@ export async function startOutbox(queryClient:QueryClient):Promise<void> {
           lockLocal(false);confirmed.clear();cancelled.clear()
           client?.removeQueries({predicate:q => q.queryKey[0]!=='session'})
           void client?.invalidateQueries({queryKey:['session']})
-          publish({capability:'Phiên đã đổi; cần xác minh'})
+          publish({capability:'Phiên đã đổi; cần xác minh',authRequired:true})
         } else if (event.data?.type === 'lock') { lockRequested=event.data.pending===true;lockLocal(false) }
         else void refresh().then(wake)
       }
@@ -173,7 +173,7 @@ export async function startOutbox(queryClient:QueryClient):Promise<void> {
       if (path === '/api/private/lock') { lockRequested=false;lockLocal() }
       if (path === '/api/private/unlock') { lockRequested=false;privateEpoch++;checkedGeneration=-1; wake() }
     })
-    window.addEventListener('microsched:auth-lost',() => { authEpoch++;authHeld=true;context.verified=false;capable=false;lockLocal();void purgePublicCache().catch(() => {});publish({capability:'Cần đăng nhập lại'}) })
+    window.addEventListener('microsched:auth-lost',() => { authEpoch++;authHeld=true;context.verified=false;capable=false;lockLocal();void purgePublicCache().catch(() => {});publish({capability:'Cần đăng nhập lại',authRequired:true}) })
     window.addEventListener('microsched:private-lock',event => {
       if ((event as CustomEvent<{requested?:boolean}>).detail?.requested) lockRequested=true
       lockLocal()
@@ -221,6 +221,9 @@ async function admitIntent(kind:Kind,entity:string,parent:string,body:Fields):Pr
         !all.some(r => r.kind==='task.create' && r.entity===parent && !r.requires_private)) ||
         all.some(r => r.aggregate===aggregate && r.requires_private))
       if (requiresPrivate && !unlocked()) throw new Error('Cần mở khoá riêng tư; nội dung chưa lưu.')
+      if (requiresPrivate && (!navigator.onLine || !context.verified))
+        throw new Error('Cần kết nối và phiên đã xác minh để lưu thay đổi riêng tư; nội dung chưa lưu.')
+
       if (remembered) {
         const remapped = new Map(remembered.map(r => [r.id,r.id]))
         let predecessor = [...all].reverse().find(r => r.aggregate===aggregate)?.id??null

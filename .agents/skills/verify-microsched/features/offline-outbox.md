@@ -24,7 +24,11 @@ Journey imports: waitForQueueCount(page,count,{timeout}), readCanonical(page,pat
 
 For physical-row receipts use the frozen container/DB plus schema-qualified microsched tables inside BEGIN READ ONLY/COMMIT; bind validated synthetic case UUIDs from the current manifest. Never infer SQL persistence from an API mock or projected DTO, and never run lifecycle/fixture setup from a reviewer probe. Database URLs/role passwords stay in ignored state and are not output arguments. The owned Docker local socket psql transport uses the declared database without a password-bearing URL.
 
-| Case | Required independent boundary |
+## Historical matrix (original scope; superseded as release obligation by Owner322)
+
+The following table preserves the old case map, not a requirement to rerun all9. Q9 benchmark100 is no longer a release gate. Current focused QA grant/freeze controls execution.
+
+| Case | Historical independent boundary |
 |---|---|
 |Q1|Durable offline Task+initial children and existing-tracker Entry; public reload; reconnect stable IDs/original time|
 |Q2|Actual API/PG commit + lost ACK, predecessor order and shared429/503/network pacing|
@@ -41,3 +45,22 @@ Use actual PM fixture/oracles/capabilities; builder self-check is separate. Miss
 Grouped privacy/draft repair: same-origin lock masks private-capable RAM queries (including reminders/session) and private editors immediately; known public rows and still-connected public forms retain their draft ownership. The public disk-cache allowlist is separate and unchanged. Visibility prunes disconnected PWA form baselines rather than clearing connected ones. Same-context two-page author before/after receipts are diagnostic; independent privacy/late-response/Q8 cases still require their own grant and frozen real API/PG/SW evidence.
 
 Version qualification: a V1-aware bundle → compatible controlled generation proves only that declared transition. It does not prove an existing Owner pre-V1 service-worker profile updates successfully. Preserve that legacy qualification; never clear a real profile/site or force an Owner dirty reload as a workaround. Controlled variants must be built from the exact frozen source with only generation changed into a new own output directory, and restore/verify the complete candidate dist rather than comparing index.html alone.
+
+## Current Owner322 narrow delivery / night repair
+
+Primary online path updates UI after local durable admission, then sends in background;
+aggregates remain explicitly last-confirmed. Reuse unchanged Q1/Q2/Q3/Q5 receipts only
+within their proved seams; worker PASS is separate from PM acceptance. Required CI stays.
+Current affected proof: slow HTTP ACK with already-visible local change, real IDB abort
+retaining an editable/copyable/retryable draft and zero HTTP fallback, private Note draft
+erasure on same-origin lock with connected public draft retained, authoritative domain401
+returning guest without a GETme loop, private admission policy and one compatible PWA
+pending+dirty-draft update. No full-app-offline or100-sample benchmark obligation.
+
+New private commands require a current verified session, live unlock and known online
+state; no roundtrip probe per click. Reject offline admission and keep input. Already
+admitted private commands survive disconnection/unknown/lock, and resume only after
+current verification/unlock. No queue clear/encryption/auth-policy change. PIN-specific401
+retains its existing local-gate meaning. All new actual evidence stays author-only until
+independent PM-granted focused QA and source closure. Legacy Owner pre-V1 profile and
+physical iPhone remain separately unproved; never clear a real site/profile.

@@ -90,6 +90,11 @@ test('011b: registers this device before saving an existing tracker reminder', a
     Object.defineProperty(navigator, 'serviceWorker', {
       configurable: true,
       value: {
+        // Keep real EventTarget methods; override only push readiness.
+        addEventListener: navigator.serviceWorker.addEventListener.bind(navigator.serviceWorker),
+        removeEventListener: navigator.serviceWorker.removeEventListener.bind(navigator.serviceWorker),
+        register: navigator.serviceWorker.register.bind(navigator.serviceWorker),
+        getRegistration: navigator.serviceWorker.getRegistration.bind(navigator.serviceWorker),
         ready: Promise.resolve({
           pushManager: {
             subscribe: async () => ({
@@ -154,6 +159,10 @@ test('F15: --border token and rendered outline borders keep non-text contrast >=
   expect(token.background).toMatch(/^#[0-9a-f]{6}$/i)
   const tokenRatio = contrastRatio(token.border, token.background)
   expect(tokenRatio, `--border ${token.border} vs ${token.background}`).toBeGreaterThanOrEqual(3)
+
+  // Exercise a real outline control instead of assuming one exists on every shell.
+  await page.getByRole('button', { name: 'Thêm chi tiết', exact: true }).click()
+  await expect(page.getByTestId('task-create-dialog')).toBeVisible()
 
   // Rendered outline buttons: their visible border is the control's boundary,
   // so it must hold >= 3:1 against the button's own background (light mode).

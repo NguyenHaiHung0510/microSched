@@ -249,47 +249,28 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
     unlockTimers.current.set(trackerId, timer)
   }
 
-  function capture(tracker: Tracker, input?: string, occurredAt?: string) {
-    if (lockedIds.has(tracker.id)) return Promise.resolve(false)
+  async function capture(tracker: Tracker, input?: string, occurredAt?: string) {
+    if (lockedIds.has(tracker.id)) return false
     lock(tracker.id)
-    setCapturingIds((previous) => {
-      const next = new Set(previous)
-      next.add(tracker.id)
-      return next
-    })
-    return writes.createEntry.mutateAsync(
-      capturePayload(tracker, input ?? '', occurredAt),
-      {
-        onSuccess: (entry) => {
-          setCapturingIds((previous) => {
-            const next = new Set(previous)
-            next.delete(tracker.id)
-            return next
-          })
-          toast(
-            <span className="block min-w-0 max-w-full break-words">
-              Đã ghi “{tracker.name}”
-            </span>,
-            {
-              duration: 10_000,
-              action: {
-                label: 'Hoàn tác',
-                onClick: () => undoDeleteEntry(entry.id),
-              },
-            },
-          )
-        },
-        onError: (error) => {
-          setCapturingIds((previous) => {
-            const next = new Set(previous)
-            next.delete(tracker.id)
-            return next
-          })
-          toast.error(errorMessage(error))
-        },
-        onSettled: () => unlockLater(tracker.id),
-      },
-    ).then(() => true, () => false)
+    setCapturingIds(previous => new Set(previous).add(tracker.id))
+    try {
+      const entry = await writes.createEntry.mutateAsync(capturePayload(tracker, input ?? '', occurredAt))
+      unlockLater(tracker.id)
+      toast(<span className="block min-w-0 max-w-full break-words">Đã ghi “{tracker.name}”</span>, {
+        duration: 10_000, action: {label: 'Hoàn tác', onClick: () => undoDeleteEntry(entry.id)},
+      })
+      return true
+    } catch (error) {
+      // Failed admission has no durable command to protect with a duplicate-click lock.
+      const timer = unlockTimers.current.get(tracker.id)
+      if (timer) window.clearTimeout(timer)
+      unlockTimers.current.delete(tracker.id)
+      setLockedIds(previous => { const next = new Set(previous); next.delete(tracker.id); return next })
+      toast.error(errorMessage(error))
+      return false
+    } finally {
+      setCapturingIds(previous => { const next = new Set(previous); next.delete(tracker.id); return next })
+    }
   }
 
   async function submitBackdate() {
