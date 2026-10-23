@@ -22,6 +22,15 @@ describe('Vietnam record periods', () => {
   })
 })
 describe('fixed rare-activity heatmap scale',()=>{
+  it('preserves the selected group before server paging and intersects a tracker selection', () => {
+    const s: RecordsSelection = {mode:'day',trackerId:'all',groupId:'group-a',anchor:'2024-02-29',order:'asc',page:1,expanded:true}
+    const url = new URL(recordsUrl(s)!, 'http://localhost')
+    expect(url.searchParams.get('group_id')).toBe('group-a')
+    expect(url.searchParams.get('offset')).toBe('50')
+    expect(url.searchParams.has('tracker_id')).toBe(false)
+    expect(new URL(recordsUrl({...s,trackerId:'member'})!, 'http://localhost').searchParams.get('tracker_id')).toBe('member')
+    expect(new URL(recordsUrl({...s,groupId:undefined})!, 'http://localhost').searchParams.has('group_id')).toBe(false)
+  })
   it('uses0/1/2/>=3 independently of report maximum',()=>{
     expect([0,1,2,3,4,100].map(activityLevel)).toEqual([0,1,2,3,3,3])
   })

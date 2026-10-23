@@ -1,6 +1,6 @@
 import { currentVietnamMonth } from '@/tracker-ui'
 export type RecordMode = 'recent' | 'day' | 'month' | 'quarter' | 'year'
-export type RecordsSelection = { mode: RecordMode; trackerId: string; anchor: string; order: 'asc' | 'desc'; page: number; expanded: boolean }
+export type RecordsSelection = { mode: RecordMode; trackerId: string; groupId?: string; anchor: string; order: 'asc' | 'desc'; page: number; expanded: boolean }
 export function initialRecordsSelection(): RecordsSelection {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
   const v = (k: string) => today.find(p => p.type === k)?.value
@@ -25,6 +25,7 @@ export function recordsUrl(selection: RecordsSelection): string | null {
   if (selection.mode !== 'recent' && !bounds) return null
   const params = new URLSearchParams({ limit: selection.mode === 'recent' ? '20' : '51', offset: String(selection.mode === 'recent' ? 0 : selection.page * 50), order: selection.order })
   if (selection.trackerId !== 'all') params.set('tracker_id', selection.trackerId)
+  if (selection.groupId) params.set('group_id', selection.groupId)
   if (bounds) { params.set('from', bounds.from); params.set('to', bounds.to) }
   return `/api/tracker/entries?${params}`
 }

@@ -198,6 +198,112 @@ def test_activity_calendar_privacy_and_stable_entries_paging_083(pg_dsn: str):
     asyncio.run(scenario())
 
 
+def test_group_activity_and_paging_share_current_visible_membership(pg_dsn: str):
+    """090: scope precedes aggregation/paging, intersects tracker, and survives group removal."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        group_id = None
+        try:
+            created = await client.post(
+                "/api/tracker/groups", json={"name": "090 synthetic group", "kind": "general"}
+            )
+            assert created.status_code == 201, created.text
+            group_id = created.json()["id"]
+            members = []
+            for name, private in (("090 A", False), ("090 B", False), ("090 private", True)):
+                members.append(
+                    await _create_tracker(
+                        client, name=name, kind="general", group_id=group_id, is_private=private
+                    )
+                )
+            outsider = await _create_tracker(client, name="090 outside", kind="general")
+            tracker_ids = [UUID(t["id"]) for t in [*members, outsider]]
+            ids = []
+            for i in range(55):
+                row = await _create_entry(
+                    client, members[i % 2]["id"], occurred_at="2024-02-28T17:00:00Z"
+                )
+                assert row.status_code == 201, row.text
+                ids.append(row.json()["id"])
+                # Interleaved excluded rows would crowd pages if filtering were applied later.
+                assert (
+                    await _create_entry(client, outsider["id"], occurred_at="2024-02-28T17:00:00Z")
+                ).status_code == 201
+            for t in (members[2], members[0]):
+                assert (
+                    await _create_entry(client, t["id"], occurred_at="2024-02-28T16:59:59Z")
+                ).status_code == 201
+            auth_state["value"] = _auth(unlocked=False)
+            counts = await client.get(
+                "/api/tracker/activity", params={"year": 2024, "group_id": group_id}
+            )
+            assert counts.status_code == 200, counts.text
+            assert counts.json()["items"] == [
+                {"day": "2024-02-28", "count": 1},
+                {"day": "2024-02-29", "count": 55},
+            ]
+            params = {
+                "group_id": group_id,
+                "from": "2024-02-29T00:00:00+07:00",
+                "to": "2024-03-01T00:00:00+07:00",
+                "limit": 50,
+                "order": "asc",
+            }
+            first = (await client.get("/api/tracker/entries", params=params)).json()["items"]
+            second = (
+                await client.get("/api/tracker/entries", params={**params, "offset": 50})
+            ).json()["items"]
+            assert len(first) == 50 and len(second) == 5
+            assert [r["id"] for r in first + second] == sorted(ids)
+            for endpoint, extra in (("activity", {"year": 2024}), ("entries", {})):
+                assert (
+                    await client.get(
+                        f"/api/tracker/{endpoint}",
+                        params={**extra, "group_id": group_id, "tracker_id": outsider["id"]},
+                    )
+                ).json()["items"] == []
+                assert (
+                    await client.get(
+                        f"/api/tracker/{endpoint}", params={**extra, "group_id": "invalid"}
+                    )
+                ).status_code == 422
+            auth_state["value"] = _auth()
+            unlocked = (
+                await client.get(
+                    "/api/tracker/activity", params={"year": 2024, "group_id": group_id}
+                )
+            ).json()["items"]
+            assert unlocked[0] == {"day": "2024-02-28", "count": 2}
+            moved = await client.patch(
+                f"/api/tracker/trackers/{members[1]['id']}", json={"group_id": None}
+            )
+            assert moved.status_code == 200, moved.text
+            remaining = (
+                await client.get(
+                    "/api/tracker/activity", params={"year": 2024, "group_id": group_id}
+                )
+            ).json()["items"]
+            assert remaining[1]["count"] == 28
+            assert (await client.delete(f"/api/tracker/groups/{group_id}")).status_code == 204
+            for endpoint, extra in (("activity", {"year": 2024}), ("entries", {})):
+                assert (
+                    await client.get(
+                        f"/api/tracker/{endpoint}", params={**extra, "group_id": group_id}
+                    )
+                ).json()["items"] == []
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", tracker_ids)
+            if group_id:
+                await _cleanup(pg_dsn, "tracker_group", [UUID(group_id)])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_public_tracker_name_is_ciphertext_at_rest(pg_dsn: str):
     """Tạo tracker công khai ⇒ `name` trong DB bắt đầu bằng `enc:v1:` (spec §2.1 #1)."""
 

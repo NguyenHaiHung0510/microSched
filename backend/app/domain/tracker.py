@@ -1068,6 +1068,7 @@ class TrackerStore:
         auth: AuthSession,
         *,
         tracker_id: UUID | None = None,
+        group_id: UUID | None = None,
         from_: datetime | None = None,
         to: datetime | None = None,
         limit: int = 100,
@@ -1080,6 +1081,8 @@ class TrackerStore:
         stmt = not_deleted(stmt, Entry)  # soft-delete of the entry itself
         if tracker_id is not None:
             stmt = stmt.where(Entry.tracker_id == tracker_id)
+        if group_id is not None:
+            stmt = stmt.where(Tracker.group_id == group_id)
         if from_ is not None:
             stmt = stmt.where(Entry.occurred_at >= from_)
         if to is not None:
@@ -1090,7 +1093,13 @@ class TrackerStore:
         return [self._entry_read(entry) for entry in result.scalars()]
 
     async def activity_days(
-        self, db: AsyncSession, auth: AuthSession, *, year: int, tracker_id: UUID | None = None
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        *,
+        year: int,
+        tracker_id: UUID | None = None,
+        group_id: UUID | None = None,
     ) -> list[ActivityDayRead]:
         """Bound one calendar year, applying visibility before aggregating in SQL."""
         start = datetime(year, 1, 1, tzinfo=VN_TZ)
@@ -1101,6 +1110,8 @@ class TrackerStore:
         stmt = stmt.where(Entry.occurred_at >= start, Entry.occurred_at < end)
         if tracker_id is not None:
             stmt = stmt.where(Entry.tracker_id == tracker_id)
+        if group_id is not None:
+            stmt = stmt.where(Tracker.group_id == group_id)
         result = await db.execute(stmt.group_by(day).order_by(day))
         return [ActivityDayRead(day=value, count=count) for value, count in result.all()]
 

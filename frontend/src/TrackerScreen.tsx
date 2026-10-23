@@ -876,7 +876,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         )}
       </Card>
 
-      <TrackerRecords trackers={trackers} selection={records} onChange={setRecords} onEdit={setEditingEntry} onRemove={removeEntry} showListPrice={showListPrice} privateUnlocked={privateUnlocked} />
+      <TrackerRecords trackers={trackers} groups={groups} selection={records} onChange={setRecords} onEdit={setEditingEntry} onRemove={removeEntry} showListPrice={showListPrice} privateUnlocked={privateUnlocked} />
 
       <Card id="tracker-report" className="scroll-mt-4 gap-3 p-4 shadow-1 ring-0">
         <Button
@@ -907,8 +907,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         error={dashboardQuery.error}
         onRetry={() => void refresh()}
       />
-      <div className="mt-4"><TrackerHeatmap key={String(privateUnlocked) + month} trackers={trackers} initialMonth={month} privateUnlocked={privateUnlocked} onDay={(trackerId, day) => {
-        setRecords({ mode: 'day', trackerId, anchor: day, order: 'desc', page: 0, expanded: true })
+      <div className="mt-4"><TrackerHeatmap key={String(privateUnlocked) + month} trackers={trackers} groups={groups} initialMonth={month} privateUnlocked={privateUnlocked} onDay={(trackerId, day, groupId) => {
+        setRecords({ mode: 'day', trackerId, groupId, anchor: day, order: 'desc', page: 0, expanded: true })
         window.requestAnimationFrame(() => document.getElementById('tracker-records')?.scrollIntoView({ block: 'start' }))
       }} /></div>
           </div>

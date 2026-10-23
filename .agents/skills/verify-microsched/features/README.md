@@ -1,3 +1,9 @@
+# Current candidate routing — Task090
+
+Current microSched slice: [Task090 H2](../../../../agent-tasks/090-group-heatmap.md), source worktrees/090-group-heatmap at the exact private freeze. [Affected tracker recipe](tracker-form.md) is source-maintained for current controls/API. Independent R1 acceptance NOT_RUN until PM reconciliation. Remaining recipes below retain their dated source mappings and are not revalidated or runtime-accepted by R1.
+
+## Historical H14 map (original evidence retained)
+
 # Feature map — verify-microsched
 
 Broad source map for exact candidate `aa9d7251cdb506e968a6ffddfbae6767b6987327` at `harness-b-verification/microsched`. T1 technical acceptance 2026-10-15 covers only public-home attempt4: 6/6 UI +15/15 decoded images, zero blocked and completed owned cleanup. This map has **1/12 OBSERVED_ACCEPTED**, **11/12 NOT_RUN**; combined maps **2/24 (8.3%) OBSERVED_ACCEPTED**, **22/24 (91.7%) NOT_RUN**. Original failures remain in private H14-N1/R9 evidence. No latest-product/whole-app/device/provider-quality/CI/production acceptance. Evidence locator: final-grouped-retest-handback, the named case receipt/pixels, final-runtime-cleanup and R6 final-technical-signoff.

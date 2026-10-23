@@ -24,11 +24,17 @@ import {
 import { daysInReportMonth } from '@/tracker-rhythm'
 import { activityLevel, initialHeatmapMonth, initialRecordsSelection, periodBounds } from '@/tracker-records'
 import { standardRefetchInterval } from '@/query-polling'
-import { trackerQueryKey, type Entry, type Tracker } from '@/tracker-ui'
+import { trackerQueryKey, type Entry, type Tracker, type TrackerGroup } from '@/tracker-ui'
 
 type Activity = { day: string; count: number }
 const WEEKDAYS = ['T2','T3','T4','T5','T6','T7','CN']
 const LEVELS = ['0','1','2','≥3']
+// Scope labels stay readable without changing the shared Select defaults.
+const scopeSelectTriggerClass = 'min-h-11 w-full min-w-0 [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:flex-1 [&_[data-slot=select-value]>span]:truncate'
+const scopeSelectContentClass = 'w-(--radix-select-trigger-width) min-w-0 max-w-(--radix-select-content-available-width) data-[side=bottom]:translate-y-0 data-[side=top]:translate-y-0 [&_[data-radix-select-viewport]]:min-w-0'
+const scopeSelectItemClass = 'min-h-11 whitespace-normal [&>span:last-child]:min-w-0 [&>span:last-child]:block'
+// Touch focus stays on content so scroll-button mounts cannot scroll the focused option back into view.
+
 function daysInYear(year: number): string[] {
   if (year < 1 || year > 9998) return []
   const day = new Date(`${String(year).padStart(4,'0')}-01-01T00:00:00Z`)
@@ -54,6 +60,7 @@ function HeatmapDayDetail({
   day,
   count,
   trackerId,
+  groupId,
   trackers,
   privateUnlocked,
   today,
@@ -63,6 +70,7 @@ function HeatmapDayDetail({
   day: string
   count: number
   trackerId: string
+  groupId?: string
   trackers: Tracker[]
   privateUnlocked: boolean
   today: string
@@ -72,13 +80,14 @@ function HeatmapDayDetail({
   const isFuture = day > today
   const bounds = useMemo(() => periodBounds('day', day), [day])
   const query = useInfiniteQuery({
-    queryKey: [...trackerQueryKey('entries'), 'heatmap-day-preview', privateUnlocked, trackerId, day],
+    queryKey: [...trackerQueryKey('entries'), 'heatmap-day-preview', privateUnlocked, trackerId, groupId, day],
     initialPageParam: 0,
     queryFn: ({ signal, pageParam }) => {
       const params = new URLSearchParams({
         from: bounds!.from, to: bounds!.to, limit: '51', offset: String(pageParam), order: 'asc',
       })
       if (trackerId !== 'all') params.set('tracker_id', trackerId)
+      if (groupId) params.set('group_id', groupId)
       return apiRequest<{ items: Entry[] }>(`/api/tracker/entries?${params}`, { signal })
     },
     getNextPageParam: (lastPage, _pages, offset) => lastPage.items.length > 50 ? offset + 50 : undefined,
@@ -143,10 +152,11 @@ function HeatmapDayDetail({
     </div>
   )
 }
-function AnnualHeatmap({ yearDays, yearOffset, counts, today, trackerId, trackers, privateUnlocked, onDay, onTouch }: {
+function AnnualHeatmap({ yearDays, yearOffset, counts, today, trackerId, groupId, trackers, privateUnlocked, onDay, onTouch }: {
   yearDays: string[]; yearOffset: number; counts: Map<string, number>; today: string
   trackerId: string; trackers: Tracker[]; privateUnlocked: boolean
-  onDay: (trackerId: string, day: string) => void; onTouch: (day: string) => void
+  groupId?: string
+  onDay: (trackerId: string, day: string, groupId?: string) => void; onTouch: (day: string) => void
 }) {
   const [preview, setPreview] = useState<{ day: string; element: SVGRectElement } | null>(null)
   const [focusDay, setFocusDay] = useState(() => yearDays.includes(today) ? today : yearDays.find(day => day <= today))
@@ -194,14 +204,14 @@ function AnnualHeatmap({ yearDays, yearOffset, counts, today, trackerId, tracker
             onClick={event => {
               if (future) return
               if (touchPointer.current) { setPreview(null); onTouch(day) }
-              else { setPreview(null); onDay(trackerId, day) }
+              else { setPreview(null); onDay(trackerId, day, groupId) }
               event.preventDefault()
             }}
             onKeyDown={event => {
               if (future) return
               touchPointer.current = false
               if (event.key === 'Escape') { keepOpen(); setPreview(null); event.preventDefault(); return }
-              if (event.key === 'Enter' || event.key === ' ') { setPreview(null); onDay(trackerId, day); event.preventDefault(); return }
+              if (event.key === 'Enter' || event.key === ' ') { setPreview(null); onDay(trackerId, day, groupId); event.preventDefault(); return }
               if (event.key === 'F2') { show(day, event.currentTarget); requestAnimationFrame(() => contentRef.current?.querySelector<HTMLElement>('button, [tabindex="0"]')?.focus()); event.preventDefault(); return }
               const deltas: Record<string, number> = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -7, ArrowRight: 7 }
               const last = yearDays.filter(value => value <= today).length - 1
@@ -230,24 +240,38 @@ function AnnualHeatmap({ yearDays, yearOffset, counts, today, trackerId, tracker
         }}
         onPointerEnter={keepOpen} onPointerLeave={closeSoon} onFocusCapture={keepOpen} onBlurCapture={closeSoon}
         onInteractOutside={event => { if (event.target instanceof Element && event.target.closest('[data-testid="heatmap-year-overview"]')) event.preventDefault() }}>
-        <HeatmapDayDetail day={preview.day} count={counts.get(preview.day) ?? 0} trackerId={trackerId} trackers={trackers} privateUnlocked={privateUnlocked} today={today}
-          onJump={() => { const day = preview.day; setPreview(null); onDay(trackerId, day) }} mode="tooltip" />
+        <HeatmapDayDetail day={preview.day} count={counts.get(preview.day) ?? 0} trackerId={trackerId} groupId={groupId} trackers={trackers} privateUnlocked={privateUnlocked} today={today}
+          onJump={() => { const day = preview.day; setPreview(null); onDay(trackerId, day, groupId) }} mode="tooltip" />
       </PopoverContent> : null}
     </Popover>
   </div>
 }
 
-export function TrackerHeatmap({ trackers, initialMonth, onDay, privateUnlocked }: { trackers: Tracker[]; initialMonth: string; onDay: (trackerId: string, day: string) => void; privateUnlocked: boolean }) {
+export function TrackerHeatmap({ trackers, groups, initialMonth, onDay, privateUnlocked }: { trackers: Tracker[]; groups: TrackerGroup[]; initialMonth: string; onDay: (trackerId: string, day: string, groupId?: string) => void; privateUnlocked: boolean }) {
   const [yearText,setYearText] = useState(initialMonth.slice(0,4))
   const year = Number(yearText)
   const validYear = /^[0-9]{1,4}$/.test(yearText) && year >= 1 && year <= 9998
   const [month,setMonth] = useState(initialMonth)
-  const [trackerId,setTrackerId] = useState('all')
+  const [scope,setScope] = useState<'all' | 'group' | 'tracker'>('all')
+  const [selectedTracker,setSelectedTracker] = useState('')
+  const [selectedGroup,setSelectedGroup] = useState('')
+  const trackerId = scope === 'tracker' ? selectedTracker : 'all'
+  const groupId = scope === 'group' ? selectedGroup : undefined
+  const visibleTrackers = trackers.filter(tracker => privateUnlocked || !tracker.is_private)
+  const scopeReady = scope === 'all' || (scope === 'group'
+    ? groups.some(group => group.id === groupId)
+    : visibleTrackers.some(tracker => tracker.id === trackerId))
+  const scopeKey = `${scope}:${groupId ?? trackerId}`
   const [touchDetailDay, setTouchDetailDay] = useState<string | null>(null)
   const query = useQuery({
-    queryKey: ['tracker','activity',privateUnlocked,yearText,trackerId],
-    queryFn: ({signal}) => apiRequest<{items: Activity[]}>(`/api/tracker/activity?year=${year}${trackerId==='all'?'':`&tracker_id=${trackerId}`}`,{signal}),
-    enabled: validYear,
+    queryKey: ['tracker','activity',privateUnlocked,yearText,scopeKey],
+    queryFn: ({signal}) => {
+      const params = new URLSearchParams({ year: String(year) })
+      if (trackerId !== 'all') params.set('tracker_id', trackerId)
+      if (groupId) params.set('group_id', groupId)
+      return apiRequest<{items: Activity[]}>(`/api/tracker/activity?${params}`,{signal})
+    },
+    enabled: validYear && scopeReady,
     refetchInterval: standardRefetchInterval,
   })
   const counts = useMemo(() => new Map(query.data?.items.map(row=>[row.day,row.count]) ?? []), [query.data])
@@ -263,18 +287,29 @@ export function TrackerHeatmap({ trackers, initialMonth, onDay, privateUnlocked 
   }
   return <Card data-testid="tracker-heatmap" className="gap-4 p-4 shadow-1 ring-0">
     <div><h3 className="text-base font-bold">Heatmap số lần ghi</h3><p className="mt-1 text-xs text-muted-foreground">Mỗi ô là một ngày theo giờ Việt Nam. Màu đậm hơn là nhiều lần ghi hơn.</p></div>
+    <div role="group" aria-label="Phạm vi heatmap" className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1 sm:w-fit">
+      {([['all', 'Tất cả'], ['group', 'Nhóm'], ['tracker', 'Tracker']] as const).map(([value, label]) =>
+        <Button key={value} data-testid={`heatmap-scope-${value}`} aria-pressed={scope === value} variant={scope === value ? 'selected' : 'ghost'} className="min-h-11 min-w-0 sm:min-w-24" onClick={() => {
+          setTouchDetailDay(null)
+          setScope(value)
+          if (value === 'group' && !groups.some(group => group.id === selectedGroup)) setSelectedGroup(groups[0]?.id ?? '')
+          if (value === 'tracker' && !visibleTrackers.some(tracker => tracker.id === selectedTracker)) setSelectedTracker(visibleTrackers[0]?.id ?? '')
+        }}>{label}</Button>)}
+    </div>
     <div className="grid gap-3 sm:grid-cols-2">
-      <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Tracker</span>
-        <Select value={trackerId} onValueChange={value => { setTouchDetailDay(null); setTrackerId(value) }}><SelectTrigger data-testid="heatmap-tracker" className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả tracker</SelectItem>{trackers.map(t=><SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select>
-      </label>
+      {scope === 'group' ? <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Nhóm</span>
+        <Select value={scopeReady ? selectedGroup : ''} onValueChange={value => { setTouchDetailDay(null); setSelectedGroup(value) }} disabled={!groups.length}><SelectTrigger data-testid="heatmap-group" className={scopeSelectTriggerClass}><SelectValue placeholder="Chọn nhóm" /></SelectTrigger><SelectContent position="popper" align="start" sideOffset={4} collisionPadding={8} className={scopeSelectContentClass} onTouchStart={event => event.currentTarget.focus({ preventScroll: true })}>{groups.map(group => <SelectItem key={group.id} value={group.id} className={scopeSelectItemClass}><span className="block [overflow-wrap:anywhere]">{group.name} · {visibleTrackers.filter(tracker => tracker.group_id === group.id).length} tracker</span></SelectItem>)}</SelectContent></Select>
+      </label> : scope === 'tracker' ? <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Tracker</span>
+        <Select value={scopeReady ? selectedTracker : ''} onValueChange={value => { setTouchDetailDay(null); setSelectedTracker(value) }} disabled={!visibleTrackers.length}><SelectTrigger data-testid="heatmap-tracker" className={scopeSelectTriggerClass}><SelectValue placeholder="Chọn tracker" /></SelectTrigger><SelectContent position="popper" align="start" sideOffset={4} collisionPadding={8} className={scopeSelectContentClass} onTouchStart={event => event.currentTarget.focus({ preventScroll: true })}>{visibleTrackers.map(t=><SelectItem key={t.id} value={t.id} className={scopeSelectItemClass}><span className="block [overflow-wrap:anywhere]">{t.name}</span></SelectItem>)}</SelectContent></Select>
+      </label> : null}
       <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Năm</span><Input data-testid="heatmap-year" type="number" min={1} max={9998} className="min-h-11 text-base" value={yearText} onChange={e=>{
         const value=e.target.value;setTouchDetailDay(null);setYearText(value)
         if (/^[0-9]{1,4}$/.test(value) && Number(value)>=1 && Number(value)<=9998) setMonth(initialHeatmapMonth(Number(value)))
       }} /></label>
     </div>
-    {!validYear ? <p role="alert" className="text-sm text-bad">Chọn năm từ 1 đến 9998.</p> : query.isError ? <div role="alert" className="space-y-2"><p className="text-sm text-bad">Không tải được heatmap.</p><Button variant="outline" className="min-h-11" onClick={()=>void query.refetch()}>Thử lại</Button></div> : query.isPending ? <p role="status" className="text-sm text-muted-foreground">Đang tải heatmap…</p> : <>
-      <p className="text-sm text-muted-foreground" data-testid="heatmap-summary">{total} lần ghi trong năm {year} · {counts.size} ngày có bản ghi</p>
-      <AnnualHeatmap key={`${yearText}-${trackerId}`} yearDays={yearDays} yearOffset={yearOffset} counts={counts} today={today} trackerId={trackerId} trackers={trackers} privateUnlocked={privateUnlocked} onDay={onDay} onTouch={setTouchDetailDay} />
+    {!validYear ? <p role="alert" className="text-sm text-bad">Chọn năm từ 1 đến 9998.</p> : !scopeReady ? <p role="status" className="text-sm text-muted-foreground">{scope === 'group' ? 'Chọn một nhóm hiện có để xem heatmap. Nhóm đã xoá không còn bản ghi trong phạm vi này.' : 'Chọn một tracker hiện có để xem heatmap.'}</p> : query.isError ? <div role="alert" className="space-y-2"><p className="text-sm text-bad">Không tải được heatmap.</p><Button variant="outline" className="min-h-11" onClick={()=>void query.refetch()}>Thử lại</Button></div> : query.isPending ? <p role="status" className="text-sm text-muted-foreground">Đang tải heatmap…</p> : <>
+      <p role="status" className="text-sm text-muted-foreground" data-testid="heatmap-summary">{total} lần ghi trong năm {year} · {counts.size} ngày có bản ghi</p>
+      <AnnualHeatmap key={`${yearText}-${scopeKey}`} yearDays={yearDays} yearOffset={yearOffset} counts={counts} today={today} trackerId={trackerId} groupId={groupId} trackers={visibleTrackers} privateUnlocked={privateUnlocked} onDay={onDay} onTouch={setTouchDetailDay} />
       <div className="flex flex-wrap items-end justify-between gap-2">
         <label className="min-w-0 space-y-1 text-sm font-semibold"><span>Tháng chi tiết</span><Input data-testid="heatmap-month" type="month" min={`${String(year).padStart(4,'0')}-01`} max={`${String(year).padStart(4,'0')}-12`} className="min-h-11 text-base" value={month} onChange={e=>{
           const value=e.target.value
@@ -306,7 +341,7 @@ export function TrackerHeatmap({ trackers, initialMonth, onDay, privateUnlocked 
                       if (isTouch) {
                         setTouchDetailDay(day)
                       } else {
-                        onDay(trackerId,day)
+                        onDay(trackerId,day,groupId)
                       }
                     }}
                   >
@@ -320,10 +355,11 @@ export function TrackerHeatmap({ trackers, initialMonth, onDay, privateUnlocked 
                     day={day}
                     count={count}
                     trackerId={trackerId}
-                    trackers={trackers}
+                    groupId={groupId}
+                    trackers={visibleTrackers}
                     privateUnlocked={privateUnlocked}
                     today={today}
-                    onJump={()=>onDay(trackerId,day)}
+                    onJump={()=>onDay(trackerId,day,groupId)}
                     mode="tooltip"
                   />
                 </TooltipContent>
@@ -342,13 +378,14 @@ export function TrackerHeatmap({ trackers, initialMonth, onDay, privateUnlocked 
               day={touchDetailDay}
               count={counts.get(touchDetailDay) ?? 0}
               trackerId={trackerId}
-              trackers={trackers}
+              groupId={groupId}
+              trackers={visibleTrackers}
               privateUnlocked={privateUnlocked}
               today={today}
               onJump={() => {
                 const d = touchDetailDay
                 setTouchDetailDay(null)
-                onDay(trackerId, d)
+                onDay(trackerId, d, groupId)
               }}
             />
           ) : null}
