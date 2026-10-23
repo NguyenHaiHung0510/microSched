@@ -3,8 +3,9 @@ import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
 import { uuidv7 } from '@/lib/uuidv7'
 import { byOrder, db, removeAndSplice, semanticTree } from './store'
 import { canonical, decode, hash, KINDS, retryDelay, route, TOMBSTONES, validatePayload, type Command, type Fields, type Kind } from './protocol'
-import { isCanonicalFamily, offlineBootstrap, purgePublicCache, restorePublicQueries, saveBootstrap } from './public-cache'
+import { offlineBootstrap, purgePublicCache, restorePublicQueries, saveBootstrap } from './public-cache'
 import type { BootstrapSession } from './types'
+import { maskPrivateQueries } from './private-visibility'
 
 type Context = {principal:string;verified:boolean;expires:number;privateUntil:number}
 export type Snapshot = {rows:Command[];context:Context;error:string;capability:string;reconciling:string[];revision:number;admitting:number}
@@ -80,11 +81,8 @@ export function lockLocal(broadcast = true) {
   for (const [key,row] of confirmed) if (row.is_private !== false &&
     (!key.startsWith('entry:') || confirmed.get('tracker:'+row.tracker_id)?.is_private !== false)) confirmed.delete(key)
   for (const [aggregate,rows] of reconciling) if (rows.some(effectivePrivate)) reconciling.delete(aggregate)
+  if (client) maskPrivateQueries(client)
   window.dispatchEvent(new Event('microsched:visibility'))
-  if (client) {
-    client.cancelQueries({predicate:q => isCanonicalFamily(q.queryKey)}).catch(() => {})
-    client.removeQueries({predicate:q => isCanonicalFamily(q.queryKey)})
-  }
   void purgePublicCache(true).catch(() => {})
   if (broadcast) channel?.postMessage({type:'lock',pending:lockRequested})
   publish()

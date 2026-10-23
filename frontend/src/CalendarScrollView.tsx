@@ -1,5 +1,6 @@
 import { unlocked } from '@/outbox/core'
 import { taskRequest } from '@/outbox/adapters'
+import { sessionRequest } from '@/outbox/core'
 import { useTaskProjection } from '@/outbox/view'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
@@ -154,7 +155,7 @@ async function getAnnotations(from: string, to: string): Promise<Envelope<DayAnn
 }
 
 async function fetchSession(): Promise<SessionLite> {
-  return apiRequest<SessionLite>('/api/me')
+  return sessionRequest()
 }
 
 /** Cursor pages are bounded and stop only at the server's explicit end marker. */
@@ -230,6 +231,11 @@ export function CalendarScrollView() {
   const [centerWeekKey, setCenterWeekKey] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [agendaTaskEdit, setAgendaTaskEdit] = useState<CalendarTask | null>(null)
+  useEffect(() => {
+    const mask = () => setAgendaTaskEdit(task => task?.is_private ? null : task)
+    window.addEventListener('microsched:visibility', mask)
+    return () => window.removeEventListener('microsched:visibility', mask)
+  }, [])
   const visibleRef = useRef(new Map<string, boolean>())
   const extendingRef = useRef(false)
   const prependScrollRef = useRef<number | null>(null)

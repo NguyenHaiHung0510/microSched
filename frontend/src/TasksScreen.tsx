@@ -1,5 +1,6 @@
 import { useTaskProjection } from '@/outbox/view'
 import { taskRequest as apiRequest } from '@/outbox/adapters'
+import { sessionRequest } from '@/outbox/core'
 import {
   type FormEvent,
   type MouseEvent,
@@ -123,7 +124,7 @@ export function TasksScreen() {
   const queryClient = useQueryClient()
   const session = useQuery({
     ...sessionQuerySpec,
-    queryFn: () => apiRequest<{ private_until: string | null }>('/api/me'),
+    queryFn: sessionRequest,
   })
   const privateUnlocked = remainingSeconds(session.data?.private_until ?? null) > 0
   const quickInputRef = useRef<HTMLInputElement>(null)
@@ -138,6 +139,11 @@ export function TasksScreen() {
   const [loadedStart, setLoadedStart] = useState(defaultStart)
   const [loadedEnd, setLoadedEnd] = useState(defaultEnd)
   const [extraTasks, setExtraTasks] = useState<Task[]>([])
+  useEffect(() => {
+    const mask = () => setExtraTasks(tasks => tasks.filter(task => !task.is_private))
+    window.addEventListener('microsched:visibility',mask)
+    return () => window.removeEventListener('microsched:visibility',mask)
+  }, [])
   const handleTaskUpdated = useCallback((updated: Task) => {
     // Extended ranges are held outside the default-range React Query entry.
     // Apply the successful server response there before the editor closes.

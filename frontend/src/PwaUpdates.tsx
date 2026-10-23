@@ -3,6 +3,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { Button } from '@/components/ui/button'
 import { useOutbox } from '@/outbox/view'
 import { getSnapshot } from '@/outbox/core'
+import { pruneDraftBaselines } from '@/draft-baselines'
 
 function formValue(form: HTMLFormElement): string {
   return JSON.stringify([...form.querySelectorAll('input,textarea,select,[role="checkbox"],[role="combobox"]')].map(element => {
@@ -21,9 +22,11 @@ export function PwaUpdates() {
       const form=event.target instanceof Element?event.target.closest('form'):null
       if(form&&!drafts.has(form))drafts.set(form,formValue(form))
     }
-    const clear=() => drafts.clear()
+    const clear=() => pruneDraftBaselines(drafts)
     document.addEventListener('focusin',capture,true)
     window.addEventListener('microsched:visibility',clear)
+    const removedForms=new MutationObserver(() => pruneDraftBaselines(drafts))
+    removedForms.observe(document.body,{childList:true,subtree:true})
     const dirty=() => [...drafts].some(([form,initial]) => form.isConnected&&formValue(form)!==initial)
     const reload=() => {
       if(!reloadApproved.current)return
@@ -46,6 +49,7 @@ export function PwaUpdates() {
     return () => {
       document.removeEventListener('focusin',capture,true)
       window.removeEventListener('microsched:visibility',clear)
+      removedForms.disconnect()
       navigator.serviceWorker?.removeEventListener('controllerchange',controlled)
     }
   },[drafts])

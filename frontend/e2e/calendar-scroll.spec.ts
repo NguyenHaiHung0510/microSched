@@ -146,7 +146,7 @@ function calendarRoutes(
 
 test.beforeEach(async ({ page, taskApi }) => {
   // A task due today gives the grid a task chip on today's cell (spec §5.4).
-  const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
+  const dueToday = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000011')
   if (dueToday) {
     dueToday.due_precision = 'datetime'
     dueToday.due_on = null
@@ -274,7 +274,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
 
-    const moved = taskApi.tasks.find((entry) => entry.id === 'task-004')!
+    const moved = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000004')!
     const originalSchedule = {
       due_precision: moved.due_precision,
       due_on: moved.due_on,
@@ -361,7 +361,7 @@ test.describe('mobile (390x844, touch)', () => {
   })
 
   test('private lock remounts calendar and closes a detail dialog', async ({ page, taskApi }) => {
-    const privateTask = taskApi.tasks.find((entry) => entry.id === 'task-009')!
+    const privateTask = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000009')!
     privateTask.due_precision = 'datetime'
     privateTask.due_on = null
     privateTask.due_at = iso(vnDay(0), 10)
@@ -554,13 +554,13 @@ test.describe('desktop (1280x800)', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Task' }).click()
 
-    const card = page.locator('[data-testid="task-card"][data-task-id="task-004"]')
+    const card = page.locator('[data-testid="task-card"][data-task-id="019a0e2e-0000-7000-8001-000000000004"]')
     await expect(card).toBeVisible()
     await expect(card.getByTestId('task-reschedule-today')).toBeVisible()
     await expect(card.getByTestId('task-reschedule-tomorrow')).toBeVisible()
     await expect(card.getByTestId('task-reschedule-day-after')).toBeVisible()
 
-    const moved = taskApi.tasks.find((entry) => entry.id === 'task-004')!
+    const moved = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000004')!
     const oldClock = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Asia/Ho_Chi_Minh',
       hour: '2-digit',
@@ -616,7 +616,7 @@ test('an ICS event opened from the day dialog shows the will-lose-edits warning'
 })
 
 test('desktop font sizes are at least 12px', async ({ page, taskApi }) => {
-  const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
+  const dueToday = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000011')
   if (dueToday) {
     dueToday.due_precision = 'datetime'
     dueToday.due_on = null

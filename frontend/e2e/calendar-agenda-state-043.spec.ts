@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures/tasks'
+import { collectQueue } from '../../.agents/skills/verify-microsched/scripts/r2_browser.mjs'
 
 test.beforeEach(async ({ page }) => {
   for (const pattern of ['**/api/notes**', '**/api/subscriptions**', '**/api/settings**']) {
@@ -51,9 +52,9 @@ test('agenda starts at its picker and restores the previous grid position', asyn
   await expect.poll(() => container.evaluate((node, previousTop) => Math.abs(node.scrollTop - previousTop), gridTop)).toBeLessThan(2)
 })
 
-test('agenda task toggle prevents duplicate requests and explains failure before retry', async ({ page }) => {
+test('agenda task toggle admits once and replays the same command after transport failure', async ({ page }) => {
   await setupCalendarRoutes(page)
-  const task = { id: 'agenda-status', title: 'Synthetic status task', status: 'open', due_precision: 'date', due_on: vnDay(0), due_at: null, is_private: false, items: [] }
+  const task = { id: '019a0e2e-0000-7000-8005-000000000002', title: 'Synthetic status task', status: 'open', due_precision: 'date', due_on: vnDay(0), due_at: null, is_private: false, items: [] }
   let fail = true
   let requests = 0
   let release: (() => void) | undefined
@@ -77,16 +78,17 @@ test('agenda task toggle prevents duplicate requests and explains failure before
   const toggle = page.getByTestId('calendar-agenda-task-toggle')
   await toggle.click()
   await expect.poll(() => requests).toBe(1)
-  try {
-    await expect(toggle).toBeDisabled()
-    await expect(page.getByTestId('calendar-agenda-task-pending')).toBeVisible()
-  } finally { release?.() }
-  await expect(page.getByTestId('calendar-agenda-task-status-error')).toBeVisible()
-  await expect(toggle).not.toBeChecked()
-  fail = false
-  await toggle.click()
+  const admitted=(await collectQueue(page)).rows[0]
+  await expect(toggle).toBeEnabled()
   await expect(toggle).toBeChecked()
-  await expect(page.getByTestId('calendar-agenda-task-status-error')).toHaveCount(0)
+  await expect(page.getByTestId('outbox-trigger')).toBeVisible()
+  release?.()
+  await expect.poll(async()=>(await collectQueue(page)).rows[0]?.state).toBe('unknown')
+  expect((await collectQueue(page)).rows[0].id).toBe(admitted.id)
+  fail = false
+  // No second user toggle: retry the same admitted absolute command.
+  await expect.poll(async()=>(await collectQueue(page)).rows.length).toBe(0)
+  await expect(toggle).toBeChecked()
   expect(requests).toBe(2)
 })
 
@@ -378,7 +380,7 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
     await expect(page.getByTestId('calendar-agenda-event-title')).toHaveText('Buổi đã tải sau khi thử lại')
   })
 
-  test('agenda quick add retains draft on failure, clears on success and maintains input focus', async ({ page }) => {
+  test('agenda quick add retains admitted intent across transport failure without recapturing', async ({ page }) => {
     let failCreate = true
     let capturedBody: Record<string, unknown> | null = null
 
@@ -400,7 +402,7 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
           status: 201,
           contentType: 'application/json',
           body: JSON.stringify({
-            id: 'task-created-001',
+            id: capturedBody?.id,
             title: capturedBody?.title ?? '',
             status: 'open',
             priority: null,
@@ -431,15 +433,14 @@ test.describe('Task 043: Calendar agenda mode state & persistence', () => {
     await quickInput.fill(draftText)
     await quickSubmit.click()
 
-    // On failure: draft text is retained in the input!
-    await expect(quickInput).toHaveValue(draftText)
+    // Local acceptance clears only after IDB admission; HTTP500 retains that command.
+    await expect(quickInput).toHaveValue('')
     await expect(quickInput).toBeFocused()
-
-    // Allow success on next attempt
+    await expect.poll(async()=>(await collectQueue(page)).rows[0]?.state).toBe('unknown')
+    const admitted=(await collectQueue(page)).rows[0]
+    expect(admitted.entity).toBe(capturedBody?.id)
     failCreate = false
-    await quickSubmit.click()
-
-    // On success: input is cleared and focused for repeated entry
+    await expect.poll(async()=>(await collectQueue(page)).rows.length).toBe(0)
     await expect(quickInput).toHaveValue('')
     await expect(quickInput).toBeFocused()
 

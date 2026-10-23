@@ -1316,11 +1316,21 @@ class TrackerStore:
     async def deleted_entry_visible(
         self, db: AsyncSession, auth: AuthSession, entry_id: UUID
     ) -> bool:
-        probe = (await db.execute(select(Entry.tracker_id).where(
-            Entry.id == entry_id, Entry.deleted_at.is_not(None)
-        ))).scalar_one_or_none()
+        probe = (
+            await db.execute(
+                select(Entry.tracker_id).where(Entry.id == entry_id, Entry.deleted_at.is_not(None))
+            )
+        ).scalar_one_or_none()
         if probe is None or await self._tracker(db, auth, probe, for_update=True) is None:
             return False
-        return (await db.execute(select(Entry.id).where(
-            Entry.id == entry_id, Entry.tracker_id == probe, Entry.deleted_at.is_not(None),
-        ).with_for_update())).scalar_one_or_none() is not None
+        return (
+            await db.execute(
+                select(Entry.id)
+                .where(
+                    Entry.id == entry_id,
+                    Entry.tracker_id == probe,
+                    Entry.deleted_at.is_not(None),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none() is not None

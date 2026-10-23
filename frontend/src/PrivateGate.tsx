@@ -27,6 +27,7 @@ import { taskInvalidationKey } from '@/task-ui'
 import { noteInvalidationKey } from '@/note-ui'
 import { trackerInvalidationKey } from '@/tracker-ui'
 import { subscriptionInvalidationKey } from '@/subscription-ui'
+import { maskPrivateQueries } from '@/outbox/private-visibility'
 
 type Props = {
   session: PrivateSessionState
@@ -73,6 +74,17 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
   const privateUntil = privateOverride === undefined ? session.private_until : privateOverride
   const lockedUntil =
     lockedOverride === undefined ? session.private_locked_until : lockedOverride
+
+  useEffect(() => {
+    const mask = () => {
+      setPrivateOverride(null)
+      setUnlockOpen(false); setChangeOpen(false)
+      setPin(''); setCurrentPin(''); setNewPin(''); setConfirmPin('')
+      setErrorText(null)
+    }
+    window.addEventListener('microsched:visibility', mask)
+    return () => window.removeEventListener('microsched:visibility', mask)
+  }, [])
 
   const invalidateStatus = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['session'] })
@@ -172,12 +184,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
     onSuccess: () => {
       // R6 order is load-bearing: erase private responses before any refetch can
       // leave the previous result rendered while the network request is pending.
-      queryClient.removeQueries({ queryKey: taskInvalidationKey })
-      queryClient.removeQueries({ queryKey: ['calendar'] })
-      queryClient.removeQueries({ queryKey: noteInvalidationKey })
-      queryClient.removeQueries({ queryKey: trackerInvalidationKey })
-      queryClient.removeQueries({ queryKey: subscriptionInvalidationKey })
-      queryClient.removeQueries({ queryKey: ['reminders'] })
+      maskPrivateQueries(queryClient)
       setPrivateOverride(null)
       setErrorText(null)
       invalidateStatus()

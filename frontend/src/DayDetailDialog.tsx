@@ -1,6 +1,6 @@
 import { taskRequest } from '@/outbox/adapters'
 import { useTaskProjection } from '@/outbox/view'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Calendar, Edit3, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -300,6 +300,14 @@ export function DayDetailDialog({
   const [annotationError, setAnnotationError] = useState<string | null>(null)
   const [eventError, setEventError] = useState<string | null>(null)
   const [deleteEventConfirm, setDeleteEventConfirm] = useState<CalendarEvent | null>(null)
+  useEffect(() => {
+    const mask = () => {
+      setTaskEdit(task => task?.is_private ? null : task)
+      setMoveTasks(tasks => tasks.filter(task => !task.is_private))
+    }
+    window.addEventListener('microsched:visibility', mask)
+    return () => window.removeEventListener('microsched:visibility', mask)
+  }, [])
 
   const refreshCalendar = () =>
     void queryClient.invalidateQueries({ queryKey: CALENDAR_FAMILY_KEY })

@@ -1,4 +1,5 @@
 import { expect, test as base } from './tasks'
+import { uuidv7 } from '../../src/lib/uuidv7'
 
 /**
  * Mock for the tracker slice (`/api/tracker/**`). It intentionally mirrors the
@@ -45,7 +46,7 @@ function nowIso(): string {
 
 function tracker(overrides: Partial<FixtureTracker>): FixtureTracker {
   return {
-    id: 'tracker-001',
+    id: '019a0e2e-0000-7000-8003-000000000001',
     name: 'Hút thuốc',
     kind: 'health',
     direction: 'out',
@@ -69,8 +70,8 @@ function tracker(overrides: Partial<FixtureTracker>): FixtureTracker {
 
 function entry(overrides: Partial<FixtureEntry>): FixtureEntry {
   return {
-    id: `entry-${Date.now()}`,
-    tracker_id: 'tracker-001',
+    id: uuidv7(),
+    tracker_id: '019a0e2e-0000-7000-8003-000000000001',
     occurred_at: nowIso(),
     quantity: null,
     amount: null,
@@ -98,7 +99,7 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         groups: [{ id: 'group-001', name: 'Sức khoẻ', kind: 'health', tracker_count: 1 }],
         trackers: [
           tracker({
-            id: 'tracker-001',
+            id: '019a0e2e-0000-7000-8003-000000000001',
             name: 'Hút thuốc',
             kind: 'health',
             input_mode: 'event',
@@ -107,7 +108,7 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
             last_entry_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
           }),
           tracker({
-            id: 'tracker-002',
+            id: '019a0e2e-0000-7000-8003-000000000002',
             name: 'Ăn uống',
             kind: 'finance',
             direction: 'out',
@@ -116,7 +117,7 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
             last_entry_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
           }),
           tracker({
-            id: 'tracker-003',
+            id: '019a0e2e-0000-7000-8003-000000000003',
             name: 'Đọc sách',
             kind: 'health',
             input_mode: 'quantity',
@@ -174,7 +175,7 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         if (path === '/api/tracker/trackers' && method === 'POST') {
           const payload = JSON.parse(request.postData() ?? '{}') as Partial<FixtureTracker>
           const created = tracker({
-            id: payload.id ?? `tracker-${Date.now()}`,
+            id: payload.id ?? uuidv7(),
             name: payload.name ?? '',
             kind: payload.kind ?? 'health',
             input_mode: payload.input_mode ?? 'event',
@@ -241,8 +242,10 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
             amount?: number
             quantity?: number
           }
+          const replay = state.entries.find(entry => entry.id === payload.id)
+          if (replay) { await route.fulfill(jsonResponse(replay)); return }
           const created = entry({
-            id: payload.id ?? `entry-${Date.now()}`,
+            id: payload.id ?? uuidv7(),
             tracker_id: payload.tracker_id,
             occurred_at: payload.occurred_at ?? nowIso(),
             amount: payload.amount ?? null,

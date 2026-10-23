@@ -1190,23 +1190,32 @@ class TaskStore:
             item = TaskItem(**values)
             db.add(item)
         else:
-            inserted_id = (await db.execute(
-                insert(TaskItem).values(id=payload.id, **values)
-                .on_conflict_do_nothing(index_elements=[TaskItem.id]).returning(TaskItem.id)
-            )).scalar_one_or_none()
+            inserted_id = (
+                await db.execute(
+                    insert(TaskItem)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[TaskItem.id])
+                    .returning(TaskItem.id)
+                )
+            ).scalar_one_or_none()
             if inserted_id is None:
-                existing = (await db.execute(select(TaskItem).where(
-                    TaskItem.id == payload.id, TaskItem.task_id == parent.id,
-                    TaskItem.deleted_at.is_(None),
-                ))).scalar_one_or_none()
+                existing = (
+                    await db.execute(
+                        select(TaskItem).where(
+                            TaskItem.id == payload.id,
+                            TaskItem.task_id == parent.id,
+                            TaskItem.deleted_at.is_(None),
+                        )
+                    )
+                ).scalar_one_or_none()
                 if existing is None:
                     raise TaskIdConflict
                 result = self._item_read(existing)
                 result.created = False
                 return result
-            item = (await db.execute(select(TaskItem).where(
-                TaskItem.id == inserted_id
-            ))).scalar_one()
+            item = (
+                await db.execute(select(TaskItem).where(TaskItem.id == inserted_id))
+            ).scalar_one()
         parent.updated_at = datetime.now(UTC)
         await db.flush()
         return self._item_read(item)
@@ -1274,9 +1283,9 @@ class TaskStore:
     async def deleted_task_visible(
         self, db: AsyncSession, auth: AuthSession, task_id: UUID
     ) -> bool:
-        stmt = with_privacy_gate(select(Task.id).where(
-            Task.id == task_id, Task.deleted_at.is_not(None)
-        ), Task, auth)
+        stmt = with_privacy_gate(
+            select(Task.id).where(Task.id == task_id, Task.deleted_at.is_not(None)), Task, auth
+        )
         return (await db.execute(stmt)).scalar_one_or_none() is not None
 
     async def deleted_item_visible(
@@ -1285,7 +1294,12 @@ class TaskStore:
         parent = await self._parent(db, auth, task_id, for_update=True)
         if parent is None:
             return False
-        return (await db.execute(select(TaskItem.id).where(
-            TaskItem.id == item_id, TaskItem.task_id == parent.id,
-            TaskItem.deleted_at.is_not(None),
-        ))).scalar_one_or_none() is not None
+        return (
+            await db.execute(
+                select(TaskItem.id).where(
+                    TaskItem.id == item_id,
+                    TaskItem.task_id == parent.id,
+                    TaskItem.deleted_at.is_not(None),
+                )
+            )
+        ).scalar_one_or_none() is not None

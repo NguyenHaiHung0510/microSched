@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell } from 'lucide-react'
 import { apiRequest } from '@/api'
@@ -33,6 +33,11 @@ export function ReminderEditor({ kind, sourceId, onClose }: {
       `/api/reminders?section=active&kind=${kind}&source_id=${sourceId}`, { signal }),
     ...NO_POLLING_QUERY_OPTIONS })
   const current = reminders.data?.items.find(activeReminder)
+  useEffect(() => {
+    const mask = () => { if (source.data?.is_private !== false) onClose() }
+    window.addEventListener('microsched:visibility',mask)
+    return () => window.removeEventListener('microsched:visibility',mask)
+  }, [onClose, source.data?.is_private])
   return <Dialog open onOpenChange={(value) => { if (!value) onClose() }}>
     <DialogContent className="max-h-[90dvh] overflow-y-auto" data-testid="reminder-editor">
       <DialogHeader><DialogTitle>Nhắc tôi</DialogTitle>

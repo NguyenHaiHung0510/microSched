@@ -37,3 +37,7 @@ For physical-row receipts use the frozen container/DB plus schema-qualified micr
 |Q9|Declared synthetic100 admissions with p50/p95/failure/sample machine/build/method evidence|
 
 Use actual PM fixture/oracles/capabilities; builder self-check is separate. Missing physical iPhone/Safari/provider/production evidence stays NOT_RUN. No runtime or independent outcomes transfer from R1/017/069. Future domains remain whole-batch work.
+
+Grouped privacy/draft repair: same-origin lock masks private-capable RAM queries (including reminders/session) and private editors immediately; known public rows and still-connected public forms retain their draft ownership. The public disk-cache allowlist is separate and unchanged. Visibility prunes disconnected PWA form baselines rather than clearing connected ones. Same-context two-page author before/after receipts are diagnostic; independent privacy/late-response/Q8 cases still require their own grant and frozen real API/PG/SW evidence.
+
+Version qualification: a V1-aware bundle → compatible controlled generation proves only that declared transition. It does not prove an existing Owner pre-V1 service-worker profile updates successfully. Preserve that legacy qualification; never clear a real profile/site or force an Owner dirty reload as a workaround. Controlled variants must be built from the exact frozen source with only generation changed into a new own output directory, and restore/verify the complete candidate dist rather than comparing index.html alone.

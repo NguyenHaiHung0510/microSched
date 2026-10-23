@@ -1,6 +1,6 @@
 import { useTaskProjection } from '@/outbox/view'
 import { taskRequest as apiRequest } from '@/outbox/adapters'
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { ReminderButton } from '@/ReminderEditor'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
@@ -378,6 +378,11 @@ export function TaskForm({
   const [dueOn, setDueOn] = useState(dueInitial.day)
   const [dueTime, setDueTime] = useState(dueInitial.time)
   const [isPrivate, setIsPrivate] = useState(initial?.is_private ?? false)
+  useEffect(() => {
+    const mask = () => { if (isPrivate) onCancel?.() }
+    window.addEventListener('microsched:visibility',mask)
+    return () => window.removeEventListener('microsched:visibility',mask)
+  }, [isPrivate, onCancel])
 
   // Checklist state for Create mode (draft items before parent exists)
   const [draftItems, setDraftItems] = useState<string[]>([])

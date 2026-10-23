@@ -101,13 +101,6 @@ function SignedIn({ session }: { session: SessionResponse }) {
     setActiveScreen(tab)
   }
 
-  // A private visibility transition is a local-state boundary as well as a
-  // query-cache boundary. Remount the two views that can hold private task
-  // rows in dialog/history state after lock, expiry, or unlock.
-  const [privateScopeVersion, setPrivateScopeVersion] = useState(0)
-  const onPrivateVisibilityChange = useCallback(() => {
-    setPrivateScopeVersion((version) => version + 1)
-  }, [])
   const logout = useMutation({
     mutationFn: postLogout,
     // Full navigation, not cache surgery. Logging in is already a real page load
@@ -210,9 +203,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
         {currentTab === 'mimi' ? navigation : null}
         {currentTab === 'mimi' ? <details className="relative shrink-0"><summary aria-label="Tùy chọn microSched" className="flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:outline-ring"><MoreVertical className="size-4" /></summary><div className="absolute right-0 top-full z-40 max-w-[calc(100vw-3rem)] rounded-xl border bg-popover p-3 shadow-md">        <div className="flex flex-wrap items-center justify-end gap-2">
 
-          <ReminderCenter key={`reminders-${privateScopeVersion}`} />
+          <ReminderCenter />
             <OutboxPanel />
-            <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
+            <PrivateGate session={session} />
           <Button
             variant="secondary"
             size="icon-lg"
@@ -227,9 +220,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           {session.mimi_available ? (
             <MimiDockButton open={mimiDockOpen} onToggle={() => setMimiDockOpen((open) => !open)} />
           ) : null}
-          <ReminderCenter key={`reminders-${privateScopeVersion}`} />
+          <ReminderCenter />
             <OutboxPanel />
-            <PrivateGate session={session} onVisibilityChange={onPrivateVisibilityChange} />
+            <PrivateGate session={session} />
           <Button
             variant="secondary"
             size="icon-lg"
@@ -256,9 +249,9 @@ function SignedIn({ session }: { session: SessionResponse }) {
           <>
         {currentTab !== 'mimi' ? navigation : null}
         <div role="tabpanel">
-          {currentTab === 'tasks' ? <TasksScreen key={`tasks-${privateScopeVersion}`} /> : null}
+          {currentTab === 'tasks' ? <TasksScreen /> : null}
           {currentTab === 'notes' ? <NotesScreen /> : null}
-          {currentTab === 'calendar' ? <CalendarScreen key={`calendar-${privateScopeVersion}`} /> : null}
+          {currentTab === 'calendar' ? <CalendarScreen /> : null}
           {currentTab === 'tracker' ? (
             <TrackerScreen privateUnlocked={outboxState.context.privateUntil > 0} />
           ) : null}
