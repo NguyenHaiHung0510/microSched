@@ -398,6 +398,7 @@ def test_occurrence_clock_cancelled_future_and_filters(pg_dsn):
             ]
             assert future.id not in [x["occurrence_ref"]["id"] for x in result["items"]]
             assert result["items"][0]["time_basis"] == "recorded_only"
+            assert all(not item["can_open"] for item in result["items"])
             assert result["items"][0]["scheduled_at"] == NOW + timedelta(days=4)
             result = await h.list_history(
                 db,

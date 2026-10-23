@@ -43,7 +43,7 @@ from app.domain.models import (
     TrackerReminderBatchItem,
 )
 from app.domain.notification_content import public_text
-from app.domain.one_shot import SOURCES, VN, source_title
+from app.domain.one_shot import SOURCES, VN, source_open, source_title
 from app.domain.one_shot_delivery import build_one_shot_payload
 from app.domain.reading import can_see_private, readable
 
@@ -448,6 +448,7 @@ async def _hydrate(db, auth, rows):
             source = sources.get((kind, row["source_id"]))
             if source is None:
                 raise HTTPException(409, "history_view_changed")
+            record["can_open"] = source_open(source) if kind in SOURCES else True
             record["is_private"] = private_sources.get(
                 (kind, source.id), getattr(source, "is_private", False)
             )
