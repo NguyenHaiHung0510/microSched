@@ -18,7 +18,7 @@ type CaptureGridProps = {
   loading: boolean
   error: unknown
   onRetry: () => void
-  onCapture: (tracker: Tracker, input?: string) => void
+  onCapture: (tracker: Tracker, input?: string) => Promise<boolean>
   onBackdate: (tracker: Tracker) => void
 }
 

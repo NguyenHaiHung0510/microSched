@@ -1,6 +1,8 @@
 """Request-scoped guards and transaction dependencies for protected routes."""
 
 import asyncio
+import hashlib
+import hmac
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
@@ -116,4 +118,28 @@ async def require_session(
     if session is None:
         raise _unauthenticated()
 
+    return session
+
+
+async def require_outbox_session(
+    request: Request, session: AuthSession = Depends(require_session)
+) -> AuthSession:
+    """Optional V1 routing fence; authentication still comes only from the cookie."""
+    principal = request.headers.get("X-MicroSched-Outbox-Principal")
+    protocol = request.headers.get("X-MicroSched-Outbox-Protocol")
+    if principal is None and protocol is None:
+        return session  # Existing online clients retain the exact auth contract.
+    expected = hashlib.sha256(session.user_email.strip().lower().encode("utf-8")).hexdigest()
+    if principal is None or not hmac.compare_digest(principal, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="Outbox principal mismatch",
+            headers={"X-MicroSched-Error-Code": "OUTBOX_PRINCIPAL_MISMATCH"},
+        )
+    if protocol != "1":
+        raise HTTPException(
+            status_code=409,
+            detail="Outbox protocol unsupported",
+            headers={"X-MicroSched-Error-Code": "OUTBOX_PROTOCOL_UNSUPPORTED"},
+        )
     return session

@@ -1,3 +1,4 @@
+import { useEntryProjection } from '@/outbox/view'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, Pencil, Trash2 } from 'lucide-react'
 import { apiRequest } from '@/api'
@@ -21,9 +22,10 @@ export function TrackerRecords({ trackers, groups, selection, onChange, onEdit, 
     enabled: url !== null,
     refetchInterval: standardRefetchInterval,
   })
+  const projectedEntries = useEntryProjection(query.data?.items ?? [], url ?? '/api/tracker/entries')
   const change = (patch: Partial<RecordsSelection>) => onChange({ ...selection, ...patch, page:0 })
-  const items = query.data?.items.slice(0, selection.mode === 'recent' ? 20 : 50) ?? []
-  const next = selection.mode !== 'recent' && (query.data?.items.length ?? 0) > 50
+  const items = projectedEntries.slice(0, selection.mode === 'recent' ? 20 : 50) ?? []
+  const next = selection.mode !== 'recent' && (projectedEntries.length ?? 0) > 50
   const dateType = selection.mode === 'day' ? 'date' : selection.mode === 'year' ? 'number' : 'month'
   const dateValue = dateType === 'date' ? selection.anchor : dateType === 'number' ? String(Number(selection.anchor.slice(0,4))) : selection.anchor.slice(0,7)
   return <Card id="tracker-records" data-testid="tracker-records" className="scroll-mt-4 gap-3 p-4 shadow-1 ring-0">

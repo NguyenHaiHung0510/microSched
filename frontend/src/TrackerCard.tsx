@@ -27,7 +27,7 @@ type TrackerCardProps = {
   locked: boolean
   pending: boolean
   /** input is the digit string for money/quantity trackers; undefined = event capture. */
-  onCapture: (input?: string) => void
+  onCapture: (input?: string) => Promise<boolean>
   onBackdate: () => void
 }
 
@@ -73,18 +73,19 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
       return
     }
     if (tracker.input_mode === 'event') {
-      onCapture()
+      void onCapture()
       return
     }
     setInputOpen(true)
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault()
     if (!canSubmitAmount(input) || locked || pending) return
-    onCapture(tracker.input_mode === 'money' ? digitsOnly(input) : input)
-    setInput('')
-    setInputOpen(false)
+    if (await onCapture(tracker.input_mode === 'money' ? digitsOnly(input) : input)) {
+      setInput('')
+      setInputOpen(false)
+    }
   }
 
   const needsAmount = tracker.input_mode === 'money' || tracker.input_mode === 'quantity'
@@ -108,6 +109,7 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
               className="h-10 bg-card text-base"
               inputMode="numeric"
               autoFocus
+              disabled={locked || pending}
               value={input}
               onChange={(event) =>
                 setInput(
@@ -142,6 +144,7 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
               variant="ghost"
               className="min-h-11"
               type="button"
+              disabled={locked || pending}
               onClick={() => {
                 setInput('')
                 setInputOpen(false)

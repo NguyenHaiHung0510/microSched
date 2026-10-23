@@ -1,7 +1,7 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect, test as base, type FixtureTask } from './fixtures/tasks'
 
-const taskId = 'preview-main'
+const taskId = '019a0e2e-0000-7000-8005-000000000001'
 const LONG = 'Nội dung tiếng Việt đầy đủ 🌸\n' + 'Đ'.repeat(100) + '\n' + 'Chi tiết kiểm tra bố cục. '.repeat(80)
 const task = (id: string, patch: Partial<FixtureTask> = {}): FixtureTask => ({ id, title: 'Chuẩn bị bản xem trước lịch tháng 10', body_md: 'Mô tả tổng hợp để chụp tooltip của tiêu đề task.',
   status: 'open', priority: 'p1', due_precision: 'date', due_on: '2026-10-20', due_at: null, is_private: false, pinned: true,
@@ -90,11 +90,11 @@ test('task and calendar completion controls remain independent; drag keeps resch
   await card(page).getByTestId('task-title').hover()
   await card(page).getByTestId('task-checkbox').first().click()
   await expect(page.getByTestId('task-detail-dialog')).toHaveCount(0)
-  expect(previewApi.writes.at(-1)).toMatchObject({ status: 'completed' })
+  await expect.poll(() => previewApi.writes.at(-1)).toMatchObject({ status: 'completed' })
   await calendar(page)
   await chip(page).getByTestId('calendar-chip-task-toggle').click()
   await expect(page.getByTestId('calendar-day-dialog')).toHaveCount(0)
-  expect(previewApi.writes.at(-1)).toMatchObject({ status: 'open' })
+  await expect.poll(() => previewApi.writes.at(-1)).toMatchObject({ status: 'open' })
   await chip(page).getByTestId('calendar-task-title').hover()
   await expect(preview(page)).toBeVisible()
   const payload = await chip(page).evaluate(node => {

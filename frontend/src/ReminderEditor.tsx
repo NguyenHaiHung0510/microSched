@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell } from 'lucide-react'
 import { apiRequest } from '@/api'
+import { barrier } from '@/outbox/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
@@ -32,6 +33,11 @@ export function ReminderEditor({ kind, sourceId, onClose }: {
       `/api/reminders?section=active&kind=${kind}&source_id=${sourceId}`, { signal }),
     ...NO_POLLING_QUERY_OPTIONS })
   const current = reminders.data?.items.find(activeReminder)
+  useEffect(() => {
+    const mask = () => { if (source.data?.is_private !== false) onClose() }
+    window.addEventListener('microsched:visibility',mask)
+    return () => window.removeEventListener('microsched:visibility',mask)
+  }, [onClose, source.data?.is_private])
   return <Dialog open onOpenChange={(value) => { if (!value) onClose() }}>
     <DialogContent className="max-h-[90dvh] overflow-y-auto" data-testid="reminder-editor">
       <DialogHeader><DialogTitle>Nhắc tôi</DialogTitle>
@@ -60,7 +66,15 @@ function ReminderFields({ source, kind, sourceId, current, onClose }: {
   const preview = reminderPreview(source, mode, absolute, amount, unit, direction, clock)
   const relativeAvailable = kind !== 'tracker' && Boolean(source.anchor_at || source.anchor_day)
   const refresh = () => { void client.invalidateQueries({ queryKey: reminderKey }); onClose() }
-  const save = useMutation({ mutationFn: () => apiRequest(`/api/reminders/${kind}/${sourceId}`, {
+  const beforeWrite = async () => {
+    if(kind === 'task' || kind === 'tracker')await barrier(kind+':'+sourceId)
+    const fresh = await apiRequest<ReminderSourceInfo>(`/api/reminders/source/${kind}/${sourceId}`)
+    if(fresh.updated_at !== source.updated_at) {
+      void client.invalidateQueries({queryKey:[...reminderKey,'source',kind,sourceId]})
+      throw new Error('Nguồn vừa thay đổi. Mở lại để đặt lời nhắc theo dữ liệu mới.')
+    }
+  }
+  const save = useMutation({ mutationFn: async () => { await beforeWrite(); return apiRequest(`/api/reminders/${kind}/${sourceId}`, {
     method: 'PUT', body: JSON.stringify({ mode,
       ...(mode === 'absolute' ? { due_at: preview } : {
         offset_minutes: Number(amount) * Number(unit) * Number(direction),
@@ -68,11 +82,11 @@ function ReminderFields({ source, kind, sourceId, current, onClose }: {
       expected_id: current?.id ?? null, expected_revision: current?.revision ?? null,
       expected_source_updated_at: source.updated_at ?? null,
     }),
-  }), onSuccess: refresh,
+  }) }, onSuccess: refresh,
   onError: () => { void client.invalidateQueries({ queryKey: [...reminderKey, 'active', kind, sourceId] });
     void client.invalidateQueries({ queryKey: [...reminderKey, 'source', kind, sourceId] }) } })
-  const cancel = useMutation({ mutationFn: () => apiRequest(
-    `/api/reminders/${current!.id}?revision=${current!.revision}`, { method: 'DELETE' }), onSuccess: refresh })
+  const cancel = useMutation({ mutationFn: async () => { await beforeWrite(); return apiRequest(
+    `/api/reminders/${current!.id}?revision=${current!.revision}`, { method: 'DELETE' }) }, onSuccess: refresh })
   const busy = save.isPending || cancel.isPending
   return <div className="space-y-4">
     <p className="break-words font-semibold">{source.title}</p>

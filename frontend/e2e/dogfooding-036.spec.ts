@@ -1,3 +1,4 @@
+import { collectQueue } from '../../.agents/skills/verify-microsched/scripts/r2_browser.mjs'
 import { test, expect, type FixtureTracker } from './fixtures/tracker'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -37,8 +38,13 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
       })
       Object.defineProperty(navigator, 'serviceWorker', {
         configurable: true,
-        value: {
-          ready: Promise.resolve({
+      value: {
+        // Keep real EventTarget methods; override only push readiness.
+        addEventListener: navigator.serviceWorker.addEventListener.bind(navigator.serviceWorker),
+        removeEventListener: navigator.serviceWorker.removeEventListener.bind(navigator.serviceWorker),
+        register: navigator.serviceWorker.register.bind(navigator.serviceWorker),
+        getRegistration: navigator.serviceWorker.getRegistration.bind(navigator.serviceWorker),
+        ready: Promise.resolve({
             pushManager: {
               subscribe: async () => ({
                 endpoint: 'https://fcm.googleapis.com/fcm/send/e2e-device',
@@ -524,10 +530,12 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
 
   test('Subtask create flow: draft add, inline edit, delete, and atomic single POST failure/retry', async ({ page }) => {
     let postBody: any = null
+    const postAttempts: string[] = []
     let shouldFailFirstPost = true
     await page.route('**/api/tasks', async (route) => {
       if (route.request().method() === 'POST') {
         postBody = route.request().postDataJSON()
+        postAttempts.push(route.request().postData()!)
         if (shouldFailFirstPost) {
           shouldFailFirstPost = false
           await route.fulfill({
@@ -541,7 +549,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({
-            id: 'task-created-1',
+            id: postBody.id,
             title: postBody.title,
             body_md: postBody.body_md,
             status: 'open',
@@ -552,7 +560,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
             is_private: false,
             pinned: false,
             items: (postBody.items || []).map((content: string, i: number) => ({
-              id: `item-${i}`,
+              id: postBody.item_ids[i],
               content,
               is_completed: false,
               position: i,
@@ -625,257 +633,85 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await items.nth(2).getByTestId('task-item-delete').click()
     await expect(createDialog.getByText('Mục 3 cần xoá')).toHaveCount(0)
 
-    // Submit task create (first try will fail with 500)
-    await createDialog.getByRole('button', { name: 'Tạo task' }).click()
-    // Assert: dialog stays visible and drafts are preserved
-    await expect(createDialog).toBeVisible()
-    const createError = createDialog.getByTestId('task-create-error')
-    await expect(createError).toBeVisible()
-    await expect(createError).toContainText('Lỗi tạo task thử nghiệm')
-    await expect(page.getByTestId('quick-add-error')).toHaveCount(0)
-    await expect(createDialog.getByText('Mục 1')).toBeVisible()
-    await expect(createDialog.getByText('Mục 2 đã sửa')).toBeVisible()
-
-    // Submit again (second try succeeds)
+    // Local durable admission closes the form; HTTP500 remains the same queued intent.
     await createDialog.getByRole('button', { name: 'Tạo task' }).click()
     await expect(createDialog).toBeHidden()
-
-    // Verify atomic POST payload carried items
-    expect(postBody).toBeDefined()
+    await expect.poll(async()=> (await collectQueue(page)).rows[0]?.state).toBe('unknown')
+    const pending=(await collectQueue(page)).rows[0]
+    expect(pending.kind).toBe('task.create')
+    await expect.poll(async()=> (await collectQueue(page)).rows.length,{timeout:15000}).toBe(0)
+    expect(postAttempts).toHaveLength(2)
+    expect(postAttempts[0]).toBe(postAttempts[1])
+    expect(postBody.id).toBe(pending.entity)
     expect(postBody.title).toBe('Task có subtasks mới')
     expect(postBody.items).toEqual(['Mục 1', 'Mục 2 đã sửa'])
+    expect(new Set(postBody.item_ids).size).toBe(2)
   })
 
- test('Subtask persisted edit flow: in-dialog add/edit/tick/delete failure and concurrency', async ({ page }) => {
-    let failAdd = false
-   let failEdit = true
-   let failTick = true
-   let failDelete = true
-   let deferChildPost = false
-   let resolveChildPost: (() => void) | null = null
-    let childPostPromise: Promise<void> | null = null
-   let deferParentPatch = false
-   let resolveParentPatch: (() => void) | null = null
-    let parentPatchPromise: Promise<void> | null = null
-   let failParentPatch = false
-
-   await page.route('**/api/tasks/task-012/items', async (route) => {
-     if (route.request().method() === 'POST') {
-        if (deferChildPost && childPostPromise) {
-          await childPostPromise
-        }
-        if (failAdd) {
-          failAdd = false
-          await route.fulfill({
-            status: 500,
-            contentType: 'application/json',
-            body: JSON.stringify({ detail: 'Lỗi thêm checklist item' }),
-          })
-          return
-        }
-        const data = route.request().postDataJSON()
-        await route.fulfill({
-          status: 201,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            id: 'item-added-new',
-            content: data.content,
-            is_completed: false,
-            position: 99,
-          }),
-        })
-        return
-      }
-      await route.fallback()
+  test('Subtask persisted edit flow: durable child/parent order and same-command failure recovery', async ({ page, taskApi }) => {
+    const id='019a0e2e-0000-7000-8001-000000000012'
+    let release!:()=>void
+    const gate=new Promise<void>(resolve=>{release=resolve})
+    let first=true
+    const faults=new Set(['content','is_completed','DELETE','parent'])
+    const attempts: Array<{path:string;body:string}>=[]
+    await page.route('**/api/tasks/'+id+'/**',async route=>{
+      const req=route.request(),method=req.method()
+      if(method==='GET')return route.fallback()
+      attempts.push({path:new URL(req.url()).pathname,body:req.postData()??''})
+      if(method==='POST'&&first){first=false;await gate}
+      const payload=method==='PATCH'?req.postDataJSON():{}
+      const fault=method==='DELETE'?'DELETE':payload.content!==undefined?'content':payload.is_completed!==undefined?'is_completed':''
+      if(faults.delete(fault))return route.fulfill({status:500,json:{detail:'Synthetic child retry'}})
+      return route.fallback()
     })
-
-   await page.route('**/api/tasks/task-012/items/**', async (route) => {
-     const method = route.request().method()
-     const url = route.request().url()
-     const itemId = url.split('/').pop() || 'item-0'
-     if (method === 'PATCH') {
-       const data = route.request().postDataJSON()
-       if (data.content && failEdit) {
-         failEdit = false
-         await route.fulfill({
-           status: 500,
-           contentType: 'application/json',
-           body: JSON.stringify({ detail: 'Lỗi sửa nội dung checklist' }),
-         })
-         return
-       }
-       if (data.is_completed !== undefined && failTick) {
-         failTick = false
-         await route.fulfill({
-           status: 500,
-           contentType: 'application/json',
-           body: JSON.stringify({ detail: 'Lỗi đổi trạng thái checklist' }),
-         })
-         return
-       }
-       await route.fulfill({
-         status: 200,
-         contentType: 'application/json',
-         body: JSON.stringify({
-           id: itemId,
-           content: data.content ?? 'Nội dung checklist',
-           is_completed: data.is_completed ?? false,
-           position: 0,
-         }),
-       })
-       return
-     }
-     if (method === 'DELETE') {
-       if (failDelete) {
-         failDelete = false
-         await route.fulfill({
-           status: 500,
-           contentType: 'application/json',
-           body: JSON.stringify({ detail: 'Lỗi xoá checklist item' }),
-         })
-         return
-       }
-       await route.fulfill({ status: 204 })
-       return
-     }
-     await route.fallback()
-   })
-
-   await page.route('**/api/tasks/task-012', async (route) => {
-     if (route.request().method() === 'PATCH') {
-        if (deferParentPatch && parentPatchPromise) {
-          await parentPatchPromise
-        }
-        if (failParentPatch) {
-          failParentPatch = false
-          await route.fulfill({
-            status: 500,
-            contentType: 'application/json',
-            body: JSON.stringify({ detail: 'Lỗi lưu thay đổi task cha' }),
-          })
-          return
-        }
-        const data = route.request().postDataJSON()
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            id: 'task-012',
-            title: data.title ?? 'Checklist nhiều mục',
-            body_md: data.body_md ?? null,
-            priority: data.priority ?? null,
-            due_precision: data.due_precision ?? 'none',
-            due_on: null,
-            due_at: null,
-            is_private: false,
-            pinned: false,
-            status: 'open',
-            items: [],
-          }),
-        })
-        return
-      }
-      await route.fallback()
+    await page.route('**/api/tasks/'+id,async route=>{
+      if(route.request().method()==='PATCH'&&faults.delete('parent'))return route.fulfill({status:500,json:{detail:'Synthetic parent retry'}})
+      return route.fallback()
     })
-
-   await page.goto('/')
-   // Open edit dialog for task-012 (which has checklist items in fixture)
-   const taskCard = page.locator('[data-task-id="task-012"]')
-   await expect(taskCard).toBeVisible()
-   await taskCard.getByTestId('task-edit').click()
-
-   const editDialog = page.getByTestId('task-detail-dialog')
-   await expect(editDialog).toBeVisible()
-   await expect(editDialog.getByTestId('task-checklist-section')).toBeVisible()
-
-   // 1. Concurrency: child mutation pending => parent submit and parent controls disabled
-   deferChildPost = true
-    childPostPromise = new Promise<void>((r) => {
-      resolveChildPost = r
-    })
-   const addInput = editDialog.getByTestId('task-item-add-input')
-   const addBtn = editDialog.getByTestId('task-item-add-submit')
-   await addInput.fill('Mục kiểm tra pending child')
-   await addBtn.click()
-
-   // Assert: while child POST is pending, parent submit and inputs are disabled
-   const parentSubmitBtn = editDialog.locator('button[type="submit"]')
-   await expect(parentSubmitBtn).toBeDisabled()
-   await expect(editDialog.getByLabel('Tiêu đề')).toBeDisabled()
-   await expect(editDialog.getByLabel('Nội dung')).toBeDisabled()
-
-   // Release child POST
-    deferChildPost = false
-   if (resolveChildPost) resolveChildPost()
-   await expect(editDialog.getByText('Mục kiểm tra pending child')).toBeVisible()
-
-   // 2. Child POST fail: draft and input preserved, retry succeeds
-    failAdd = true
-    await addInput.fill('Mục mới thử nghiệm fail')
-    await addBtn.click()
-    // First attempt fails -> error message visible, draft still in input
-    await expect(editDialog.getByRole('alert')).toBeVisible()
-    await expect(addInput).toHaveValue('Mục mới thử nghiệm fail')
-    // Retry succeeds
-    await addBtn.click()
-    await expect(editDialog.getByText('Mục mới thử nghiệm fail')).toBeVisible()
-
-    // 3. Child PATCH content fail: inline edit input stays open with draft content, retry succeeds
-    const firstItem = editDialog.getByTestId('task-item').first()
+    await page.goto('/')
+    const card=page.locator('[data-testid="task-card"][data-task-id="'+id+'"]')
+    await card.getByTestId('task-edit').click()
+    const dialog=page.getByTestId('task-detail-dialog'),add=dialog.getByTestId('task-item-add-input')
+    await add.fill('Mục pending theo thứ tự');await dialog.getByTestId('task-item-add-submit').click()
+    await expect(dialog.getByText('Mục pending theo thứ tự',{exact:true})).toBeVisible()
+    await expect(dialog.getByLabel('Tiêu đề',{exact:true})).toBeEnabled()
+    await dialog.getByLabel('Tiêu đề',{exact:true}).fill('Parent after durable child')
+    await dialog.locator('button[type="submit"]').click()
+    await expect(dialog.getByLabel('Tiêu đề',{exact:true})).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await expect.poll(async()=> (await collectQueue(page)).rows.length).toBe(2)
+    expect(taskApi.count('PATCH','/api/tasks/'+id)).toBe(0)
+    release()
+    await expect.poll(async()=> (await collectQueue(page)).rows.length,{timeout:15000}).toBe(0)
+    const canonical=()=>taskApi.tasks.find(t=>t.id===id)!
+    expect(canonical().title).toBe('Parent after durable child')
+    expect(canonical().items.some(i=>i.content==='Mục pending theo thứ tự')).toBe(true)
+    await card.getByTestId('task-edit').click()
+    const firstItem=dialog.getByTestId('task-item').first(),itemId=canonical().items[0].id
     await firstItem.getByTestId('task-item-edit').click()
-    const editInput = editDialog.getByTestId('task-item-edit-input')
-    await editInput.fill('Sửa nội dung có lỗi 500')
-    await editDialog.getByTestId('task-item-edit-save').click()
-    // First edit attempt fails -> error message visible, edit input stays open
-    await expect(editDialog.getByRole('alert')).toBeVisible()
-    await expect(editInput).toBeVisible()
-    await expect(editInput).toHaveValue('Sửa nội dung có lỗi 500')
-    // Retry edit succeeds
-    await editDialog.getByTestId('task-item-edit-save').click()
-    await expect(editDialog.getByText('Sửa nội dung có lỗi 500')).toBeVisible()
-
-    // 4. Child tick fail: error rendered
-    const checkbox = firstItem.getByTestId('task-item-checkbox')
-    await checkbox.click()
-    await expect(editDialog.getByRole('alert')).toBeVisible()
-
-    // 5. Child delete fail: item is not removed on 500 error
-    const itemToDelete = editDialog.getByTestId('task-item').nth(1)
-    await itemToDelete.getByTestId('task-item-delete').click()
-    await expect(editDialog.getByRole('alert')).toBeVisible()
-    await expect(itemToDelete).toBeVisible()
-
-   // 6. Concurrency: parent PATCH pending => all child controls disabled
-   deferParentPatch = true
-    parentPatchPromise = new Promise<void>((r) => {
-      resolveParentPatch = r
-    })
-   failParentPatch = true
-   const titleInput = editDialog.getByLabel('Tiêu đề')
-   await titleInput.fill('Tiêu đề task cha đã sửa')
-   await parentSubmitBtn.click()
-
-   // Assert: while parent PATCH is pending, child controls are disabled
-   await expect(addInput).toBeDisabled()
-   await expect(addBtn).toBeDisabled()
-   await expect(firstItem.getByTestId('task-item-edit')).toBeDisabled()
-   await expect(firstItem.getByTestId('task-item-delete')).toBeDisabled()
-   await expect(firstItem.getByTestId('task-item-checkbox')).toBeDisabled()
-
-   // Release parent PATCH with 500 error (child success + parent PATCH fail)
-    deferParentPatch = false
-   if (resolveParentPatch) resolveParentPatch()
-
-   // 7. Child success then parent PATCH fail: child persists, parent draft preserved, error visible
-    await expect(editDialog).toBeVisible()
-    await expect(titleInput).toHaveValue('Tiêu đề task cha đã sửa')
-    await expect(editDialog.getByText('Mục mới thử nghiệm fail')).toBeVisible()
+    await dialog.getByTestId('task-item-edit-input').fill('Nội dung giữ qua500')
+    await dialog.getByTestId('task-item-edit-save').click()
+    await expect(dialog.getByText('Nội dung giữ qua500',{exact:true})).toBeVisible()
+    await expect.poll(async()=> (await collectQueue(page)).rows.length,{timeout:15000}).toBe(0)
+    expect(canonical().items.find(i=>i.id===itemId)?.content).toBe('Nội dung giữ qua500')
+    await firstItem.getByTestId('task-item-checkbox').click()
+    await expect(firstItem.getByTestId('task-item-checkbox')).not.toBeChecked()
+    await expect.poll(async()=> (await collectQueue(page)).rows.length,{timeout:15000}).toBe(0)
+    expect(canonical().items.find(i=>i.id===itemId)?.is_completed).toBe(false)
+    await firstItem.getByTestId('task-item-delete').click()
+    await expect.poll(async()=> (await collectQueue(page)).rows.length,{timeout:15000}).toBe(0)
+    expect(canonical().items.some(i=>i.id===itemId)).toBe(false)
+    for(const key of ['content','is_completed','DELETE','parent'])expect(faults.has(key)).toBe(false)
+    const edits=attempts.filter(a=>a.path.endsWith('/'+itemId)&&a.body.includes('Nội dung giữ qua500'))
+    expect(edits).toHaveLength(2);expect(edits[0]).toEqual(edits[1])
   })
 
   test('Calendar DayDetailDialog subtask flow: open task from DayDetail, add/edit/tick/delete and state persistence', async ({ page, taskApi }) => {
    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10)
 
-    const existing13 = taskApi.tasks.find((t) => t.id === 'task-013')
+    const existing13 = taskApi.tasks.find((t) => t.id === '019a0e2e-0000-7000-8001-000000000013')
     if (existing13) {
       existing13.items = [{ id: 'item-cal-init-1', content: 'Checklist sẵn có', is_completed: false, position: 0 }]
     }
@@ -884,11 +720,11 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
      { id: 'item-cal-init-1', content: 'Checklist sẵn có', is_completed: false, position: 0 },
    ]
 
-   await page.route('**/api/tasks/task-013/items', async (route) => {
+   await page.route('**/api/tasks/019a0e2e-0000-7000-8001-000000000013/items', async (route) => {
      if (route.request().method() === 'POST') {
        const data = route.request().postDataJSON()
        const newItem = {
-         id: `item-cal-${Date.now()}`,
+         id: data.id,
          content: data.content,
          is_completed: false,
          position: taskItems.length,
@@ -905,7 +741,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
      await route.fallback()
    })
 
-   await page.route('**/api/tasks/task-013/items/**', async (route) => {
+   await page.route('**/api/tasks/019a0e2e-0000-7000-8001-000000000013/items/**', async (route) => {
      const method = route.request().method()
      const itemId = route.request().url().split('/').pop() || ''
      if (method === 'PATCH') {
@@ -950,7 +786,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     const dayDialog = page.getByTestId('calendar-day-dialog')
     await expect(dayDialog).toBeVisible()
 
-    // Check if task-013 is in the day dialog tasks section
+    // Check if 019a0e2e-0000-7000-8001-000000000013 is in the day dialog tasks section
     const dayTask = dayDialog.locator('[data-testid="calendar-day-task"]').first()
     await expect(dayTask).toBeVisible()
     // Click task title to open edit dialog via stable data-testid
@@ -966,7 +802,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await addInput.fill('Subtask từ lịch')
     await taskEditDialog.getByTestId('task-item-add-submit').click()
     await expect(taskEditDialog.getByText('Subtask từ lịch')).toBeVisible()
-    expect(taskItems.some((i) => i.content === 'Subtask từ lịch')).toBe(true)
+    await expect.poll(() => taskItems.some((i) => i.content === 'Subtask từ lịch')).toBe(true)
 
     // Inline edit subtask in calendar
     const subtaskItem = taskEditDialog.getByTestId('task-item').last()
@@ -975,18 +811,18 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await editInput.fill('Subtask từ lịch đã sửa')
     await taskEditDialog.getByTestId('task-item-edit-save').click()
     await expect(taskEditDialog.getByText('Subtask từ lịch đã sửa')).toBeVisible()
-    expect(taskItems.some((i) => i.content === 'Subtask từ lịch đã sửa')).toBe(true)
+    await expect.poll(() => taskItems.some((i) => i.content === 'Subtask từ lịch đã sửa')).toBe(true)
 
     // Tick subtask in calendar
     const subtaskCheckbox = subtaskItem.getByTestId('task-item-checkbox')
     await subtaskCheckbox.click()
     await expect(subtaskCheckbox).toBeChecked()
-    expect(taskItems.find((i) => i.content === 'Subtask từ lịch đã sửa')?.is_completed).toBe(true)
+    await expect.poll(() => taskItems.find((i) => i.content === 'Subtask từ lịch đã sửa')?.is_completed).toBe(true)
 
     // Delete subtask in calendar (delete the newly added subtask)
     await subtaskItem.getByTestId('task-item-delete').click()
     await expect(taskEditDialog.getByText('Subtask từ lịch đã sửa')).toHaveCount(0)
-    expect(taskItems.some((i) => i.content === 'Subtask từ lịch đã sửa')).toBe(false)
+    await expect.poll(() => taskItems.some((i) => i.content === 'Subtask từ lịch đã sửa')).toBe(false)
 
     // Close task edit dialog
     await page.keyboard.press('Escape')
@@ -1533,7 +1369,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await page.screenshot({ path: tasksPath })
 
     // 2. Task edit dialog on long task with checklist items
-    const taskCard = page.locator('[data-task-id="task-012"]')
+    const taskCard = page.locator('[data-task-id="019a0e2e-0000-7000-8001-000000000012"]')
     await expect(taskCard).toBeVisible()
     await taskCard.getByTestId('task-edit').click()
     const taskDialog = page.getByTestId('task-detail-dialog')

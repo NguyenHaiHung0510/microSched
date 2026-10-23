@@ -21,3 +21,5 @@ Oracle: Correct owned thread and truthful expiry; in-app evidence does not imply
 Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
 
 Owner196: physical notification delivery NOT_RUN_OWNER_WAIVED only. Notifications ON and permission/privacy/dedup/stale/deep-link/runtime acceptance remain required.
+
+Shared091 auth boundary (Owner322): authoritative domain401 returns the shell to guest and holds outbox; existing PIN401 is not logout. This is not live Mimi/attention/device acceptance or new permissions. Current native/provider/device statuses above remain qualified; use the separately frozen focused QA grant.

@@ -1,4 +1,6 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
+
+import { unlocked } from '@/outbox/core'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -36,6 +38,16 @@ export function NoteForm({
   const [isPrivate, setIsPrivate] = useState(initial?.is_private ?? false)
   const [pinned, setPinned] = useState(initial?.pinned ?? false)
   const state: NoteFormState = { title, body, isPrivate, pinned }
+  useEffect(() => {
+    const mask = () => {
+      if (!(isPrivate || initial?.is_private) || unlocked()) return
+      setTitle(''); setBody(''); setIsPrivate(false); setPinned(false)
+      onCancel?.()
+    }
+    window.addEventListener('microsched:visibility', mask)
+    return () => window.removeEventListener('microsched:visibility', mask)
+  }, [isPrivate, initial?.is_private, onCancel])
+
 
   function submit(event: FormEvent) {
     event.preventDefault()

@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react'
+import { taskRequest } from '@/outbox/adapters'
+import { useTaskProjection } from '@/outbox/view'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Calendar, Edit3, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -108,10 +110,15 @@ function DayOverdueTasksSection({
     enabled: open && Boolean(day),
   })
 
-  const allOverdueTasks = useMemo(() => {
+  const confirmedOverdueTasks = useMemo(() => {
     const base = overdueQuery.data?.items ?? []
     return [...base, ...extraOverdue]
   }, [overdueQuery.data?.items, extraOverdue])
+
+  const allOverdueTasks = useTaskProjection(confirmedOverdueTasks, 'open').filter(task => {
+    const due = task.due_on ?? task.due_at?.slice(0,10)
+    return due !== null && due !== undefined && due < day
+  })
 
   const overdueNextCursor = extraCursor ?? overdueQuery.data?.next_cursor ?? null
   const isOverdueLoading = overdueQuery.isLoading || extraLoading
@@ -293,6 +300,14 @@ export function DayDetailDialog({
   const [annotationError, setAnnotationError] = useState<string | null>(null)
   const [eventError, setEventError] = useState<string | null>(null)
   const [deleteEventConfirm, setDeleteEventConfirm] = useState<CalendarEvent | null>(null)
+  useEffect(() => {
+    const mask = () => {
+      setTaskEdit(task => task?.is_private ? null : task)
+      setMoveTasks(tasks => tasks.filter(task => !task.is_private))
+    }
+    window.addEventListener('microsched:visibility', mask)
+    return () => window.removeEventListener('microsched:visibility', mask)
+  }, [])
 
   const refreshCalendar = () =>
     void queryClient.invalidateQueries({ queryKey: CALENDAR_FAMILY_KEY })
@@ -373,8 +388,9 @@ export function DayDetailDialog({
   })
 
   const editTask = useMutation({
+    networkMode: 'always',
     mutationFn: ({ taskId, payload }: { taskId: string; payload: TaskWritePayload }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${taskId}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
@@ -385,8 +401,9 @@ export function DayDetailDialog({
   })
 
   const toggleTaskStatus = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: variables.status }),
       }),
@@ -396,8 +413,9 @@ export function DayDetailDialog({
   })
 
   const deleteTask = useMutation({
+    networkMode: 'always',
     mutationFn: (taskId: string) =>
-      apiRequest<void>('/api/tasks/' + taskId, { method: 'DELETE' }),
+      taskRequest<void>('/api/tasks/' + taskId, { method: 'DELETE' }),
     onSuccess: (_data, taskId) => {
       refreshAll()
       const task = tasks.find((t) => t.id === taskId)
@@ -429,13 +447,14 @@ export function DayDetailDialog({
   })
 
   const rescheduleTask = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: {
       taskId: string
       schedule: TaskSchedule
       previousSchedule: TaskSchedule
       showToast: boolean
     }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
         body: JSON.stringify(variables.schedule),
       }),

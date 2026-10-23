@@ -73,5 +73,6 @@ async def readyz() -> dict[str, object]:
         "version": settings.app_version,
         "db": database,
         "commit": settings.git_sha,
+        "outbox_protocols": [1],
     }
     return result

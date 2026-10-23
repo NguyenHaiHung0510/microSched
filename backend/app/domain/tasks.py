@@ -87,8 +87,16 @@ def _canonicalize_schedule(payload: BaseModel, *, default_none: bool) -> None:
 class TaskItemCreate(BaseModel):
     """Fields accepted when appending a checklist item."""
 
+    id: UUID | None = None
     content: str = Field(min_length=1)
     position: int = Field(default=0, ge=0)
+
+    @field_validator("id")
+    @classmethod
+    def validate_client_id(cls, value: UUID | None) -> UUID | None:
+        if value is not None and value.version != 7:
+            raise ValueError("id must be a UUIDv7")
+        return value
 
     @field_validator("content")
     @classmethod
@@ -126,6 +134,7 @@ class TaskItemRead(BaseModel):
     """Decrypted checklist item returned at the API boundary."""
 
     id: UUID
+    created: bool = Field(default=True, exclude=True)
     content: str
     is_completed: bool
     position: int
@@ -146,12 +155,20 @@ class TaskCreate(BaseModel):
     due_at: datetime | None = None
     is_private: bool = False
     items: list[NonEmptyText] = Field(default_factory=list)
+    item_ids: list[UUID] | None = None
 
     @model_validator(mode="after")
     def validate_create(self) -> "TaskCreate":
         """Preserve UUID ordering and canonicalize legacy/V2 due inputs."""
         if self.id is not None and self.id.version != 7:
             raise ValueError("id must be a UUIDv7")
+        if self.item_ids is not None:
+            if len(self.item_ids) != len(self.items):
+                raise ValueError("item_ids must align with items")
+            if len(set(self.item_ids)) != len(self.item_ids):
+                raise ValueError("item_ids must be unique")
+            if any(item_id.version != 7 for item_id in self.item_ids):
+                raise ValueError("item_ids must be UUIDv7")
         _canonicalize_schedule(self, default_none=True)
         return self
 
@@ -1027,6 +1044,7 @@ class TaskStore:
         task = locked.scalar_one()
         items = [
             TaskItem(
+                **({"id": payload.item_ids[position]} if payload.item_ids is not None else {}),
                 task_id=task.id,
                 content=_sealed(content) if task.is_private else content,
                 position=position,
@@ -1163,12 +1181,41 @@ class TaskStore:
         parent = await self._parent(db, auth, task_id, for_update=True)
         if parent is None:
             return None
-        item = TaskItem(
-            task_id=parent.id,
-            content=_sealed(payload.content) if parent.is_private else payload.content,
-            position=payload.position,
-        )
-        db.add(item)
+        values = {
+            "task_id": parent.id,
+            "content": _sealed(payload.content) if parent.is_private else payload.content,
+            "position": payload.position,
+        }
+        if payload.id is None:
+            item = TaskItem(**values)
+            db.add(item)
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(TaskItem)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[TaskItem.id])
+                    .returning(TaskItem.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                existing = (
+                    await db.execute(
+                        select(TaskItem).where(
+                            TaskItem.id == payload.id,
+                            TaskItem.task_id == parent.id,
+                            TaskItem.deleted_at.is_(None),
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    raise TaskIdConflict
+                result = self._item_read(existing)
+                result.created = False
+                return result
+            item = (
+                await db.execute(select(TaskItem).where(TaskItem.id == inserted_id))
+            ).scalar_one()
         parent.updated_at = datetime.now(UTC)
         await db.flush()
         return self._item_read(item)
@@ -1232,3 +1279,27 @@ class TaskStore:
         await db.flush()
         parent.updated_at = datetime.now(UTC)
         return True
+
+    async def deleted_task_visible(
+        self, db: AsyncSession, auth: AuthSession, task_id: UUID
+    ) -> bool:
+        stmt = with_privacy_gate(
+            select(Task.id).where(Task.id == task_id, Task.deleted_at.is_not(None)), Task, auth
+        )
+        return (await db.execute(stmt)).scalar_one_or_none() is not None
+
+    async def deleted_item_visible(
+        self, db: AsyncSession, auth: AuthSession, task_id: UUID, item_id: UUID
+    ) -> bool:
+        parent = await self._parent(db, auth, task_id, for_update=True)
+        if parent is None:
+            return False
+        return (
+            await db.execute(
+                select(TaskItem.id).where(
+                    TaskItem.id == item_id,
+                    TaskItem.task_id == parent.id,
+                    TaskItem.deleted_at.is_not(None),
+                )
+            )
+        ).scalar_one_or_none() is not None

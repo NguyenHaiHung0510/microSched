@@ -6,10 +6,7 @@ const { apiRequest, toastError } = vi.hoisted(() => ({
   toastError: vi.fn(),
 }))
 
-vi.mock('../src/api', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../src/api')>()
-  return { ...original, apiRequest }
-})
+vi.mock('../src/outbox/adapters', () => ({ taskRequest: apiRequest }))
 
 vi.mock('sonner', () => ({
   toast: { error: toastError },
@@ -22,7 +19,7 @@ beforeEach(() => {
   toastError.mockReset()
 })
 
-test('restore posts to the task restore endpoint and refreshes after success', async () => {
+test('restore delegates to durable Task admission and refreshes only after local acceptance', async () => {
   apiRequest.mockResolvedValue({ id: 'task-1', status: 'restored' })
   const refresh = vi.fn()
 
@@ -36,7 +33,7 @@ test('restore posts to the task restore endpoint and refreshes after success', a
 })
 
 test('restore failure is reported through the shared toast error path', async () => {
-  apiRequest.mockRejectedValue(new Error('network failed'))
+  apiRequest.mockRejectedValue(new Error('local admission failed'))
   const refresh = vi.fn()
 
   await restoreTask('task-1', refresh)

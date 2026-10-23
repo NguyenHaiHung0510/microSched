@@ -30,7 +30,7 @@ from app.domain.tracker import (
     TrackerStore,
     TrackerUpdate,
 )
-from app.web.deps import get_session, require_session
+from app.web.deps import get_session, require_outbox_session
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ store = TrackerStore()
 dashboard_service = DashboardService()
 
 Database = Annotated[AsyncSession, Depends(get_session)]
-CurrentSession = Annotated[AuthSession, Depends(require_session)]
+CurrentSession = Annotated[AuthSession, Depends(require_outbox_session)]
 
 
 def _not_found(kind: str = "Tracker") -> HTTPException:
@@ -50,6 +50,7 @@ def _private_locked() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Private mode is locked",
+        headers={"X-MicroSched-Error-Code": "PRIVATE_UNLOCK_REQUIRED"},
     )
 
 
@@ -301,7 +302,10 @@ async def update_entry(
 async def delete_entry(entry_id: UUID, db: Database, session: CurrentSession) -> Response:
     """Soft-delete an entry — this is the one-tap undo button."""
     if not await store.soft_delete_entry(db, session, entry_id):
-        raise _not_found("Entry")
+        error = _not_found("Entry")
+        if await store.deleted_entry_visible(db, session, entry_id):
+            error.headers = {"X-MicroSched-Error-Code": "ENTRY_ALREADY_DELETED"}
+        raise error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

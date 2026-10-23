@@ -15,11 +15,11 @@ function seed(api: TrackerApiState) {
     created_at: `${DAY}T00:00:00Z`, updated_at: `${DAY}T00:00:00Z`, ...values,
   })
   api.entries = [
-    row('event-1', 'tracker-001', '09:15', 'Thử prompt cho bài tập'),
-    row('event-2', 'tracker-001', '20:40', LONG_NOTE),
-    row('money-1', 'tracker-002', '08:10', 'Cà phê sáng', { amount: 35000 }),
-    row('money-2', 'tracker-002', '16:05', 'Gặp bạn buổi chiều', { amount: 45000 }),
-    row('quantity-1', 'tracker-003', '18:30', 'Đi bộ quanh công viên', { quantity: 2.5 }),
+    row('event-1', '019a0e2e-0000-7000-8003-000000000001', '09:15', 'Thử prompt cho bài tập'),
+    row('event-2', '019a0e2e-0000-7000-8003-000000000001', '20:40', LONG_NOTE),
+    row('money-1', '019a0e2e-0000-7000-8003-000000000002', '08:10', 'Cà phê sáng', { amount: 35000 }),
+    row('money-2', '019a0e2e-0000-7000-8003-000000000002', '16:05', 'Gặp bạn buổi chiều', { amount: 45000 }),
+    row('quantity-1', '019a0e2e-0000-7000-8003-000000000003', '18:30', 'Đi bộ quanh công viên', { quantity: 2.5 }),
   ]
 }
 
@@ -286,7 +286,7 @@ test('month touch detail and full-record action remain available at 390px', asyn
 
 test('ordinary B composition shows separate money and event groups in the current app', async ({ page, trackerApi }, info) => {
   test.skip(info.project.name !== 'desktop', 'Annual view is desktop.')
-  trackerApi.entries = trackerApi.entries.filter(entry => entry.tracker_id !== 'tracker-003')
+  trackerApi.entries = trackerApi.entries.filter(entry => entry.tracker_id !== '019a0e2e-0000-7000-8003-000000000003')
   trackerApi.entries.find(entry => entry.id === 'event-2')!.note_md = 'Đọc lại kết quả và ghi chú'
   await open(page)
   await annualDay(page).hover()

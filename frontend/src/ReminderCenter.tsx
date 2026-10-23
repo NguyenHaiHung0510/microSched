@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell } from 'lucide-react'
 import { apiRequest } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -13,12 +13,27 @@ import { PrivateMarker } from '@/PrivateMarker'
 import { ReminderDevices } from '@/ReminderDevices'
 
 export function ReminderCenter() {
+  const client = useQueryClient()
   const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).has('reminders'))
   const [section, setSection] = useState('upcoming')
   const [offset, setOffset] = useState(0)
   const [edit, setEdit] = useState<{ kind: ReminderSource; id: string } | null>(null)
   const [source, setSource] = useState<{ kind: ReminderSource; id: string } | null>(null)
   const [targetId, setTargetId] = useState(() => new URLSearchParams(window.location.search).get('reminder'))
+  useEffect(() => {
+    const mask = () => {
+      const isPublic = (value: {kind: ReminderSource; id: string}) => {
+        const detail = client.getQueryData<{is_private:boolean}>([...reminderKey,'detail',value.kind,value.id])
+        const metadata = client.getQueryData<{is_private:boolean}>([...reminderKey,'source',value.kind,value.id])
+        return detail?.is_private === false || metadata?.is_private === false
+      }
+      if (source && !isPublic(source)) setSource(null)
+      if (edit && !isPublic(edit)) setEdit(null)
+      if (targetId && client.getQueryData<{is_private:boolean}>([...reminderKey,'target',targetId])?.is_private !== false) setTargetId(null)
+    }
+    window.addEventListener('microsched:visibility',mask)
+    return () => window.removeEventListener('microsched:visibility',mask)
+  }, [client, edit, source, targetId])
   const target = useQuery({ queryKey: [...reminderKey, 'target', targetId],
     queryFn: ({ signal }) => apiRequest<Reminder>(`/api/reminders/detail/${encodeURIComponent(targetId!)}`, { signal }),
     enabled: open && !!targetId, ...NO_POLLING_QUERY_OPTIONS, retry: false })
