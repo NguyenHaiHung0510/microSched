@@ -124,7 +124,7 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
   }
 
   if ((init?.method ?? 'GET') === 'GET' && visibility !== privateVisibilityEpoch &&
-      /^\/api\/(tasks|tracker|calendar|notes|reminders)/.test(path))
+      /^\/api\/(tasks|tracker|calendar|notes|reminders|reminder-history)/.test(path))
     throw new ApiError(409,'Phạm vi hiển thị đã đổi; tải lại dữ liệu.')
   if (typeof window !== 'undefined')
     window.dispatchEvent(new CustomEvent('microsched:api',{detail:{path,body}}))

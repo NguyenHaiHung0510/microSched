@@ -267,7 +267,7 @@ def test_all_origins_dedup_current_content_and_read_does_not_ack(pg_dsn):
             assert result["items"][-1]["origin"] == "subscription_dispatch"
             assert not any(key in mimi for key in ("endpoint", "preference_id", "p256dh", "auth"))
             assert i.read_at is None and d.confirmed_at is None and t.status == "open"
-            assert all(not x["can_handle"] and x["handled_at"] is None for x in result["items"])
+            assert all(x["can_handle"] and x["handled_at"] is None for x in result["items"])
             assert [s.status for s in shots] == ["sent"] * 4
             assert "note" not in result["coverage"]["supported_sources"]
 
@@ -500,7 +500,7 @@ def test_http_auth_validation_cache_contract_and_readonly_transaction(pg_dsn):
                 app.dependency_overrides[require_session] = lambda: actor()
                 assert (await client.get("/api/reminder-history?source=note")).status_code == 422
                 assert (
-                    await client.get("/api/reminder-history?handled=handled")
+                    await client.get("/api/reminder-history?handled=unsupported")
                 ).status_code == 422
                 assert (await client.get("/api/reminder-history?limit=101")).status_code == 422
                 response = await client.get("/api/reminder-history")

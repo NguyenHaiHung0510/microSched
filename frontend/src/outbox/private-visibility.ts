@@ -1,7 +1,7 @@
 import { type QueryClient, type QueryKey } from '@tanstack/react-query'
 import type { Fields } from './protocol'
 
-const families = new Set(['tasks', 'calendar', 'tracker', 'notes', 'subscription', 'subscriptions', 'reminders'])
+const families = new Set(['tasks', 'calendar', 'tracker', 'notes', 'subscription', 'subscriptions', 'reminders', 'reminder-history'])
 export const isPrivateCapableFamily = (key: QueryKey) => families.has(String(key[0]))
 const object = (value: unknown): value is Fields => !!value && typeof value === 'object' && !Array.isArray(value)
 

@@ -39,3 +39,21 @@ copy retain their explicit basis; current conversation prose is not reconstructe
 Author deterministic API/local-PG tests exercise synthetic intent/device rows only,
 with no live Mimi/provider/dispatch. Independent History UI, physical delivery and
 production remain NOT_RUN; retain the historical qualifications above.
+
+## R3 night history UI and handled successor
+
+ReminderCenter → Lịch sử now includes this same qualified intent once, grouped by
+its recorded creation day/clock. Online-only desired handled=true and exact confirmed
+bulk add a separate owner/occurrence association; `read_at`, device receipt status,
+attempts, preferences and conversation/run state stay unchanged. Current disclosure
+gates are revalidated at commit; applied replay after visibility loss is coarse and
+does not return prior counts or scope. No new provider, push permission or offline
+adapter follows from this ACK.
+
+Author actual local PG covers all four typed origins, idempotency, current privacy,
+exact >50 manifest, concurrent same-batch commit and unchanged Mimi read/delivery.
+The synthetic UI has zero push devices/deliveries and live provider disabled; the
+intent fixture's initial owner-derivation error and corrected exact IDs are retained
+in the R3 night receipt/manifest. Actual own UI shows all origins, not physical
+delivery. Reuse `verify-microsched/scripts/r3_history.mjs` and its shared freeze;
+independent runtime/provider/device/production statuses are not promoted by author QA.

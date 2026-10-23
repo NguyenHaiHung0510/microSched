@@ -49,3 +49,35 @@ entries, mark handled or mutate sources.
 
 Author API/PG evidence belongs to the versioned R3A handback; independent H1-H4,
 History UI H8, R3B/O1, physical device and production acceptance remain NOT_RUN.
+
+## R3 night successor — history B and independent handled state
+
+Supersedes only the R3A phase's "no UI/handled" scope statement above. Open
+Nhắc nhở → Lịch sử: latest-first server day groups, source/send-status/handled/date
+filters, keyset page50, explicit unknown legacy clock, typed source links. Note is
+not a history origin. Handled is an online-only occurrence ACK, never Task completion,
+Entry confirmation, schedule change or Mimi read/delivery.
+
+Single desired=true keeps its first timestamp. Selected checkboxes and **all matching
+the filter** both prepare an exact server manifest and show count/cutoff/confirmation;
+all matching includes unloaded pages. Commit rechecks current disclosure atomically.
+Retries retain the same batch ID/result; expired uncommitted selection requires a new
+visible preparation. Private lock clears history pages, selection and confirmation
+RAM/cursor, while a mounted public source draft remains. No history disk-cache entry.
+Relevant pending Task/Tracker aggregate blocks ACK/count until resolved.
+
+Focused existing-stack driver: `scripts/r3_history.mjs --output ABS_OWN_REPORT_ROOT
+--case common|private|draft|bulk`. It requires the owned092 loopback8002/4175,
+current HEAD in readyz/db=up, ignored `.local/r3-092/runtime.json` and exact
+`fixture-manifest.json`; refuses091/remote egress, uses isolated contexts and unique
+receipt folders. It intentionally mutates only explicit synthetic occurrence ACKs
+and local private session gates. Inspect durable state/earlier receipts before any
+retry; its initial common/bulk expectations are not an automatic repeatable seed.
+
+Author actual PG/schema:37 focused checks PASS; backend1216PASS/1SKIP;
+frontend293PASS. Actual own UI common/draft/bulk PASS; private01 partial failure
+retains its successful cross-page purge assertion and a later driver-label timeout.
+The unfinished public-draft step passed separately. Receipts, fixture correction,
+schema-role/restore/nonempty rollback proof and exact candidate binding are in the
+versioned R3 night handback/freeze. This is author evidence; independent runtime,
+required CI, device and production acceptance remain separate/NOT_RUN here.

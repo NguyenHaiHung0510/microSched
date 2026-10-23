@@ -35,6 +35,7 @@ from app.domain.models import (
     CalendarEvent,
     OneShotReminder,
     ReminderDispatch,
+    ReminderOccurrenceHandled,
     Subscription,
     Task,
     TaskItem,
@@ -73,7 +74,7 @@ class HistoryFilter(BaseModel):
     origin: Origin | None = None
     source: Source | None = None
     status: Status | None = None
-    handled: Literal["all", "unhandled"] = "all"
+    handled: Literal["all", "unhandled", "handled"] = "all"
     day_from: date | None = None
     day_to: date | None = None
 
@@ -410,8 +411,8 @@ async def _hydrate(db, auth, rows):
             occurrence_ref={"origin": row["origin"], "id": rid},
             source_ref={"kind": kind, "id": row["source_id"]},
             can_open=True,
-            can_handle=False,
-            handled_at=None,
+            can_handle=True,
+            handled_at=row.get("handled_at"),
             is_private=False,
             scheduled_at=None,
             last_attempt_at=None,
@@ -492,17 +493,16 @@ async def _hydrate(db, auth, rows):
     return output
 
 
-async def list_history(db, auth, filters: HistoryFilter, *, limit=50, cursor=None, now=None):
-    now = now or datetime.now(UTC)
-    if not 1 <= limit <= 100 or (
-        filters.day_from and filters.day_to and filters.day_from > filters.day_to
-    ):
-        raise HTTPException(422, "history_filter_invalid")
-    fingerprint = _fingerprint(auth, filters)
-    cutoff, last = _decode_cursor(cursor, fingerprint, now) if cursor else (now, None)
+def filtered_query(auth, filters: HistoryFilter, now, cutoff):
     p = _projection(auth, now, cutoff)
-    keys = [p.c.sort_day, p.c.precision, p.c.clock, p.c.rank, p.c.receipt_id]
-    q = select(p)
+    h = ReminderOccurrenceHandled
+    match = (
+        (p.c.origin == "one_shot") & (h.one_shot_id == p.c.receipt_id)
+        | p.c.origin.in_(("tracker_dispatch", "subscription_dispatch"))
+        & (h.dispatch_id == p.c.receipt_id)
+        | (p.c.origin == "mimi_intent") & (h.mimi_intent_id == p.c.receipt_id)
+    )
+    q = select(p, h.handled_at).outerjoin(h, (h.owner_id == _owner_id(auth)) & match)
     for name, value in [
         ("origin", filters.origin),
         ("source_kind", filters.source),
@@ -514,6 +514,23 @@ async def list_history(db, auth, filters: HistoryFilter, *, limit=50, cursor=Non
         q = q.where(p.c.occurrence_on >= filters.day_from)
     if filters.day_to:
         q = q.where(p.c.occurrence_on <= filters.day_to)
+    if filters.handled != "all":
+        q = q.where(
+            h.handled_at.is_not(None) if filters.handled == "handled" else h.handled_at.is_(None)
+        )
+    return p, q
+
+
+async def list_history(db, auth, filters: HistoryFilter, *, limit=50, cursor=None, now=None):
+    now = now or datetime.now(UTC)
+    if not 1 <= limit <= 100 or (
+        filters.day_from and filters.day_to and filters.day_from > filters.day_to
+    ):
+        raise HTTPException(422, "history_filter_invalid")
+    fingerprint = _fingerprint(auth, filters)
+    cutoff, last = _decode_cursor(cursor, fingerprint, now) if cursor else (now, None)
+    p, q = filtered_query(auth, filters, now, cutoff)
+    keys = [p.c.sort_day, p.c.precision, p.c.clock, p.c.rank, p.c.receipt_id]
     if last:
         q = q.where(tuple_(*keys) < tuple_(*last))
     rows = (
@@ -539,7 +556,7 @@ async def list_history(db, auth, filters: HistoryFilter, *, limit=50, cursor=Non
             "time": "occurrence_not_device_delivery;legacy_dispatch_day_only",
             "private": "locked_rows_omitted;constant_notice_not_inventory",
             "unavailable": "hidden_deleted_or_orphan_sources_omitted",
-            "handled": "not_implemented",
+            "handled": "online_only_independent_occurrence_ack",
             "pagination": "keyset_browsing_bookmark_not_transaction_snapshot",
             "supported_sources": ["task", "event", "tracker", "annotation", "subscription", "mimi"],
         },
