@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { FundingSelector } from '@/FundingSelector'
 import {
   decimalInput,
   digitsOnly,
@@ -20,6 +21,7 @@ import {
 } from '@/tracker-ui'
 
 export type EntryEditPayload = {
+  funding_entry_id?:string|null
   occurred_at?: string
   quantity?: number | null
   amount?: number | null
@@ -49,6 +51,7 @@ export function EntryEditDialog({
     entry?.quantity != null ? String(entry.quantity) : '',
   )
   const [note, setNote] = useState(entry?.note_md ?? '')
+  const [funding,setFunding]=useState('keep')
 
   if (!entry) return null
 
@@ -56,7 +59,7 @@ export function EntryEditDialog({
   const isQuantity = tracker?.input_mode === 'quantity'
   const amountRequired = isMoney && amount.length === 0
   const quantityRequired = isQuantity && quantity.length === 0
-  const canSubmit = !pending && !amountRequired && !quantityRequired
+  const canSubmit = !pending && !amountRequired && !quantityRequired && funding !== 'locked'
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -69,6 +72,7 @@ export function EntryEditDialog({
     }
     if (isQuantity) payload.quantity = quantity ? quantityToNumber(quantity) : null
     payload.note_md = note.trim() || null
+    if(funding!=='keep'&&funding!=='locked')payload.funding_entry_id=funding==='none'?null:funding
     onSubmit(entry.id, payload)
   }
 
@@ -82,6 +86,7 @@ export function EntryEditDialog({
           </DialogDescription>
         </DialogHeader>
         <form data-testid="entry-edit" className="space-y-4" onSubmit={submit}>
+          {tracker?.direction==='out'&&entry.amount!==null?<FundingSelector value={funding} onChange={setFunding} current={entry.funding??{status:'unavailable'}} disabled={pending}/>:null}
           <label className="block space-y-1.5 text-sm font-semibold">
             <span>Thời điểm</span>
             <Input

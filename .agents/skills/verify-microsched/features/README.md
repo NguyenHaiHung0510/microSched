@@ -1,3 +1,5 @@
+Current Task095 funding route: [income Entry/report](funding-entry.md). Current grant/freeze wins; previous map acceptance is historical.
+
 # Current candidate routing — Task090
 
 Current microSched slice: [Task090 H2](../../../../agent-tasks/090-group-heatmap.md), source worktrees/090-group-heatmap at the exact private freeze. [Affected tracker recipe](tracker-form.md) is source-maintained for current controls/API. Independent R1 acceptance NOT_RUN until PM reconciliation. Remaining recipes below retain their dated source mappings and are not revalidated or runtime-accepted by R1.

@@ -18,7 +18,7 @@ export function TrackerRecords({ trackers, groups, selection, onChange, onEdit, 
   const url = recordsUrl(selection)
   const query = useQuery({
     queryKey: [...trackerQueryKey('entries'), 'explorer', privateUnlocked, url],
-    queryFn: ({ signal }) => apiRequest<{ items: Entry[] }>(url!, { signal }),
+    queryFn: ({ signal }) => apiRequest<{ items: Entry[] }>(url!+'&include_funding=true', { signal }),
     enabled: url !== null,
     refetchInterval: standardRefetchInterval,
   })

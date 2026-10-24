@@ -6,6 +6,7 @@ import { canonical, decode, hash, KINDS, retryDelay, route, TOMBSTONES, validate
 import { offlineBootstrap, purgePublicCache, restorePublicQueries, saveBootstrap } from './public-cache'
 import type { BootstrapSession } from './types'
 import { maskPrivateQueries } from './private-visibility'
+import { fundingReference, needsFunding, withoutFunding } from './funding'
 
 type Context = {principal:string;verified:boolean;expires:number;privateUntil:number}
 export type Snapshot = {rows:Command[];context:Context;error:string;capability:string;reconciling:string[];revision:number;admitting:number;authRequired:boolean}
@@ -17,6 +18,7 @@ let authEpoch = 0, privateEpoch = 0, lockRequested = false
 let capabilityAttempt = 0
 let generation = 0, checkedGeneration = -1, capable = false, started = false, running = false
 let legacy = false, channel:BroadcastChannel | undefined
+let fundingCapable = false
 const listeners = new Set<() => void>()
 const confirmed = new Map<string,Fields>()
 const cancelled = new Map<string,Command[]>()
@@ -65,10 +67,14 @@ export function cancelledParent(id:string):string|undefined { return cancelled.g
 export function known(type:'task'|'tracker'|'entry'|'item',id:string):Fields | undefined {
   return confirmed.get(type+':'+id)
 }
-export function effectivePrivate(row:Pick<Command,'kind'|'parent'|'requires_private'>):boolean {
+export function effectivePrivate(row:Pick<Command,'kind'|'parent'|'requires_private'> & Partial<Pick<Command,'payload'>>):boolean {
   const parent = known(row.kind.startsWith('entry.')?'tracker':'task',row.parent)
   const pendingParent = snapshot.rows.find(r => r.kind==='task.create' && r.entity===row.parent && r.principal===context.principal)
-  return row.requires_private || (parent ? parent.is_private !== false : row.kind==='task.create' ? false : !pendingParent)
+  const ref = row.payload ? fundingReference({...row,payload:row.payload}) : null
+  const source = ref ? known('entry',ref) : undefined
+  const sourceCreate = ref ? snapshot.rows.find(r => r.kind==='entry.create' && r.entity===ref && r.principal===context.principal) : undefined
+  const sourceParent = known('tracker',String(source?.tracker_id??sourceCreate?.parent??''))
+  return row.requires_private || Boolean(ref && sourceParent?.is_private !== false) || (parent ? parent.is_private !== false : row.kind==='task.create' ? false : !pendingParent)
 }
 export function visibleCommands():Command[] {
   return [...snapshot.rows,...[...reconciling.values()].flat()].filter(row =>
@@ -80,6 +86,7 @@ export function lockLocal(broadcast = true) {
   for (const [id,rows] of cancelled) if (rows.some(r => r.requires_private)) cancelled.delete(id)
   for (const [key,row] of confirmed) if (row.is_private !== false &&
     (!key.startsWith('entry:') || confirmed.get('tracker:'+row.tracker_id)?.is_private !== false)) confirmed.delete(key)
+  for (const [key,row] of confirmed) if (key.startsWith('entry:')) confirmed.set(key,withoutFunding(row))
   for (const [aggregate,rows] of reconciling) if (rows.some(effectivePrivate)) reconciling.delete(aggregate)
   if (client) maskPrivateQueries(client)
   window.dispatchEvent(new Event('microsched:visibility'))
@@ -216,8 +223,14 @@ async function admitIntent(kind:Kind,entity:string,parent:string,body:Fields):Pr
       const undoTarget = kind.endsWith('.delete') ? root : kind.endsWith('.restore')
         ? [...all].reverse().find(r => r.entity===entity && r.kind.endsWith('.delete')) : undefined
       const current = known(kind.startsWith('entry.')?'tracker':'task',parent)
+      const fundingId = typeof body.funding_entry_id === 'string' ? body.funding_entry_id : null
+      const fundingCreator = fundingId ? all.find(r => r.kind==='entry.create' && r.entity===fundingId) : undefined
+      const source = fundingId ? known('entry',fundingId) : undefined
+      const sourceTracker = fundingId ? known('tracker',String(source?.tracker_id??fundingCreator?.parent??'')) : undefined
+      if (fundingId && (!sourceTracker || sourceTracker.direction!=='in' || !source && !fundingCreator)) throw new Error('Chưa xác minh nguồn thu. Giữ nội dung và kết nối để chọn lại.')
+      if (kind==='entry.delete' && all.some(r => fundingReference(r)===entity)) throw new Error('Khoản chi đang chờ còn gắn nguồn này. Đợi lưu hoặc bỏ liên kết trước khi xoá nguồn thu.')
       const remembered = kind.endsWith('.restore') ? cancelled.get(entity) : undefined
-      const requiresPrivate = remembered?.some(r => r.requires_private) ?? (body.is_private === true || (kind==='task.create' ? false : current?.is_private !== false &&
+      const requiresPrivate = remembered?.some(r => r.requires_private) ?? (Boolean(fundingId && sourceTracker?.is_private !== false) || body.is_private === true || (kind==='task.create' ? false : current?.is_private !== false &&
         !all.some(r => r.kind==='task.create' && r.entity===parent && !r.requires_private)) ||
         all.some(r => r.aggregate===aggregate && r.requires_private))
       if (requiresPrivate && !unlocked()) throw new Error('Cần mở khoá riêng tư; nội dung chưa lưu.')
@@ -249,8 +262,10 @@ async function admitIntent(kind:Kind,entity:string,parent:string,body:Fields):Pr
       }
       const predecessor = [...all].reverse().find(r => r.aggregate===aggregate)?.id??null
       const creator = root ?? all.find(r => r.kind==='task.create' && r.entity===parent)
+      if (creator && fundingCreator && creator.id!==fundingCreator.id && creator.dependency!==fundingCreator.id)
+        throw new Error('Đợi bản ghi đang tạo được lưu rồi chọn nguồn thu mới. Nội dung vẫn được giữ.')
       admitted = {version:1,id,principal:owner,kind,entity,parent,aggregate,predecessor,
-        dependency:creator?.id??null,created_at:new Date().toISOString(),expires_at:context.expires,
+        dependency:creator?.id??fundingCreator?.id??null,created_at:new Date().toISOString(),expires_at:context.expires,
         payload,digest,envelope_digest,byte_length:new TextEncoder().encode(payload).length,requires_private:requiresPrivate,
         state:'pending',attempted:false,attempt:0,next_due:Math.max(0,...all.map(r => r.transport_until??0)),reason:''}
       admitted.operation_id = await db.rows.add(admitted)
@@ -277,16 +292,17 @@ export async function barrier(aggregate:string):Promise<void> {
 }
 async function capability():Promise<boolean> {
   if (checkedGeneration === generation) return capable
-  checkedGeneration = generation; capable = false
+  checkedGeneration = generation; capable = false; fundingCapable = false
   const epoch = authEpoch, visibility = privateEpoch
   try {
     const session = await apiRequest<BootstrapSession>('/api/me')
     await bindSession(session,epoch,visibility)
-    const ready = await apiRequest<{outbox_protocols?:number[];db:string}>('/api/readyz')
+    const ready = await apiRequest<{outbox_protocols?:number[];db:string;entry_funding_version?:number}>('/api/readyz')
     if(ready.db!=='up')throw new Error('Database not ready')
     checkedGeneration=generation
     capabilityAttempt=0
     capable = ready.db==='up' && ready.outbox_protocols?.includes(1)===true
+    fundingCapable = ready.entry_funding_version===1
     publish({capability:capable?'Sẵn sàng':'Máy chủ chưa hỗ trợ V1; đang giữ'})
   } catch (error) {
     if(error instanceof UnauthenticatedError || error instanceof ApiError && error.status===401) {
@@ -354,9 +370,11 @@ export async function flush():Promise<void> {
         for (const broken of dangling) await hold(broken,'Thiếu lệnh tiền nhiệm; cần kiểm tra')
         const ids = new Set(all.map(r => r.id))
         const row = all.find(r => r.principal===owner && r.state!=='rejected' && r.state!=='held' &&
+          (!needsFunding(r) || fundingCapable) &&
           (!r.predecessor || !ids.has(r.predecessor)) && (!r.dependency || !ids.has(r.dependency)) &&
           r.next_due<=Date.now() && (!effectivePrivate(r) || unlocked()))
         if (!row) {
+          if (!fundingCapable && all.some(needsFunding)) publish({capability:'Máy chủ chưa hỗ trợ nguồn thu; đang giữ khoản chi. Thử đồng bộ lại sau khi cập nhật.'})
           const due = all.filter(r => r.principal===owner && r.next_due>Date.now() && r.state!=='held' && r.state!=='rejected').map(r => r.next_due)
           if (due.length) schedule(Math.min(...due))
           break

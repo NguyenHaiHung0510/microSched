@@ -6,6 +6,8 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 
 ## Current navigation — re-query trước khi giao việc
 
+Funding: [095 — optional income Entry/report](095-funding-entry.md); source candidate, author evidence qualified; independent QA/CI/release separate.
+
 Policy đang dùng: [harness-policy](../docs/harness-policy.md), entry point [AGENTS](../AGENTS.md).
 Phiên migration 2026-09-06: [042 — bounded authority](042-harness-authority-v1.md).
 UI/UX readability work: [043 — calendar, private presentation and upcoming reminders](043-ui-ux-readability.md).
