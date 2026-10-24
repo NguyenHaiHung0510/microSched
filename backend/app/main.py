@@ -26,6 +26,7 @@ from app.web.routers.mimi_workflow_pilot import router as mimi_workflow_pilot_ro
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
 from app.web.routers.push import router as push_router
+from app.web.routers.reminder_history import router as reminder_history_router
 from app.web.routers.reminders import router as reminders_router
 from app.web.routers.settings import router as settings_router
 from app.web.routers.subscription import router as subscription_router
@@ -270,6 +271,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(settings_router)
     protected_api.include_router(push_router)
     protected_api.include_router(reminders_router)
+    protected_api.include_router(reminder_history_router)
     protected_api.include_router(mimi_router)
     protected_api.include_router(mimi_workflow_pilot_router)
 
