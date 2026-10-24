@@ -48,6 +48,9 @@ import {
 } from '@/calendar-queries'
 import { DayCell, type DropTaskPayload } from '@/DayCell'
 import { DayDetailDialog } from '@/DayDetailDialog'
+import { CalendarMoveDialog } from '@/CalendarMoveDialog'
+import type { CalendarMoveTarget } from '@/calendar-move'
+import { useCalendarMove } from '@/use-calendar-move'
 import { MiniNav } from '@/MiniNav'
 import { TaskForm } from '@/TaskForm'
 import { importErrorMessage } from '@/calendar-ui'
@@ -231,8 +234,13 @@ export function CalendarScrollView() {
   const [centerWeekKey, setCenterWeekKey] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [agendaTaskEdit, setAgendaTaskEdit] = useState<CalendarTask | null>(null)
+  const [moveTarget, setMoveTarget] = useState<CalendarMoveTarget | null>(null)
+  const movement = useCalendarMove()
   useEffect(() => {
-    const mask = () => setAgendaTaskEdit(task => task?.is_private ? null : task)
+    const mask = () => {
+      setAgendaTaskEdit(task => task?.is_private ? null : task)
+      setMoveTarget(target => target?.item.is_private ? null : target)
+    }
     window.addEventListener('microsched:visibility', mask)
     return () => window.removeEventListener('microsched:visibility', mask)
   }, [])
@@ -341,47 +349,19 @@ export function CalendarScrollView() {
     },
   })
 
-  const rescheduleTask = useMutation({
-    networkMode: 'always',
-    mutationFn: (variables: {
-      taskId: string
-      due_on: string
-      previousDueOn?: string
-    }) =>
-      taskRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          due_precision: 'date',
-          due_on: variables.due_on,
-          due_at: null,
-        }),
-      }),
-    onSuccess: (_data, variables) => {
-      refreshAll()
-      toast(`Đã dời task sang ${formatShortVietnamDate(variables.due_on)}`, {
-        action: variables.previousDueOn
-          ? {
-              label: 'Hoàn tác',
-              onClick: () =>
-                rescheduleTask.mutate({
-                  taskId: variables.taskId,
-                  due_on: variables.previousDueOn!,
-                }),
-            }
-          : undefined,
-      })
-    },
-  })
-
   function handleDropTask(day: string, payload: DropTaskPayload) {
     if (payload.kind === 'quick-new-task') {
       createQuickTask.mutate({ title: payload.title, due_on: day })
+    } else if (movement.isPending) {
+      toast.error('Đang chuyển ngày. Đợi xác minh lần chuyển trước.')
     } else if (payload.kind === 'reschedule-task') {
-      rescheduleTask.mutate({
-        taskId: payload.taskId,
-        due_on: day,
-        previousDueOn: payload.fromDay,
-      })
+      const item = projectedCalendarTasks.find(task => task.id === payload.taskId)
+      if (item) movement.move({ kind: 'task', item, grabbedDay: payload.fromDay ?? day }, day)
+      else toast.error('Không tìm thấy việc trong phạm vi hiện tại. Tải lại rồi thử lại.')
+    } else if (payload.kind === 'move-annotation') {
+      const item = annotationsQuery.data?.items.find(annotation => annotation.id === payload.annotationId)
+      if (item) movement.move({ kind: 'annotation', item, grabbedDay: payload.fromDay }, day)
+      else toast.error('Không tìm thấy dấu ngày trong phạm vi hiện tại. Tải lại rồi thử lại.')
     }
   }
 
@@ -470,10 +450,7 @@ export function CalendarScrollView() {
   )
   const privateLocked = !unlocked() || !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
   const projectedCalendarTasks = useTaskProjection(allTasksQuery.data ?? [])
-  const tasksByDayMap = useMemo(
-    () => tasksByDueDay(projectedCalendarTasks.filter(task => !task.is_private || !privateLocked)),
-    [projectedCalendarTasks, privateLocked],
-  )
+  const tasksByDayMap = tasksByDueDay(projectedCalendarTasks.filter(task => !task.is_private || !privateLocked))
   const sourceById = useMemo(
     () => new Map((sourcesQuery.data?.items ?? []).map((source) => [source.id, source])),
     [sourcesQuery.data],
@@ -810,6 +787,8 @@ export function CalendarScrollView() {
           ) : null}
        </div>
 
+       {movement.isPending ? <p data-testid="calendar-move-pending" role="status" className="border-b px-3 py-2 text-sm text-muted-foreground">Đang chuyển ngày… Chờ xác minh lưu.</p> : null}
+       {movement.isError && !moveTarget ? <p role="alert" className="border-b px-3 py-2 text-sm text-bad">{importErrorMessage(movement.error)}</p> : null}
        {staleWithData ? (
           <p
             data-testid="calendar-stale-indicator"
@@ -1314,7 +1293,19 @@ export function CalendarScrollView() {
         annotations={selectedDay ? (annotationsByDayMap.get(selectedDay) ?? []) : []}
         sourceById={sourceById}
         privateLocked={privateLocked}
+        onRequestMove={target => {
+          if (movement.isPending) { toast.error('Đang chuyển ngày. Đợi xác minh lần chuyển trước.'); return }
+          movement.reset()
+          setSelectedDay(null)
+          setMoveTarget(target)
+        }}
       />
+
+      {moveTarget ? <CalendarMoveDialog key={`${moveTarget.kind}:${moveTarget.item.id}:${moveTarget.grabbedDay}`}
+        target={moveTarget} pending={movement.isPending}
+        error={movement.isError ? importErrorMessage(movement.error) : null}
+        onClose={() => setMoveTarget(null)} onEdit={() => movement.reset()}
+        onMove={day => movement.move(moveTarget, day, () => setMoveTarget(null))} /> : null}
 
       <Dialog open={agendaTaskEdit !== null} onOpenChange={(next) => !next && setAgendaTaskEdit(null)}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">

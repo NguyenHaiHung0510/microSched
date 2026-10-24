@@ -2,7 +2,14 @@
 name: verify-microsched
 description: "Verify the currently granted synthetic microSched candidate with its source/resource freeze and parameterized direct browser primitives; no implicit real profile or production."
 ---
-# microSched verification — Task091
+# microSched verification
+
+Read the current grant and frozen handback before choosing a recipe. Calendar093/094 uses the
+[calendar recipe](features/calendar.md), its own exact API/proxy/PG ports and `calendar_move.mjs`
+arguments; the091 launcher below does not recover that cell. Author evidence, independent QA and
+historical map counts keep their separate status. This skill grants no lifecycle or product effects.
+
+## Task091 recipe
 
 Read current grant, [Task091](../../../agent-tasks/091-offline-outbox-core.md), [offline recipe](features/offline-outbox.md) and [feature map](features/README.md). R2 implements Task/checklist and existing-tracker Entry only. Other domains remain online. Author confidence is not independent Q1–Q9 acceptance.
 
