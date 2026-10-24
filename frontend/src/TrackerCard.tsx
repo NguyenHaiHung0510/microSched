@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
+import { FundingSelector } from '@/FundingSelector'
 import {
   amountToNumber,
   canSubmitAmount,
@@ -27,13 +28,14 @@ type TrackerCardProps = {
   locked: boolean
   pending: boolean
   /** input is the digit string for money/quantity trackers; undefined = event capture. */
-  onCapture: (input?: string) => Promise<boolean>
+  onCapture: (input?: string, fundingId?:string|null) => Promise<boolean>
   onBackdate: () => void
 }
 
 export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }: TrackerCardProps) {
   const [inputOpen, setInputOpen] = useState(false)
   const [input, setInput] = useState('')
+  const [funding,setFunding]=useState('none')
   const longPressTimer = useRef<number | null>(null)
   const longPressFired = useRef(false)
   const suppressClickUntil = useRef(0)
@@ -82,8 +84,10 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!canSubmitAmount(input) || locked || pending) return
-    if (await onCapture(tracker.input_mode === 'money' ? digitsOnly(input) : input)) {
+    if (funding==='locked'||funding==='keep') return
+    if (await onCapture(tracker.input_mode === 'money' ? digitsOnly(input) : input, funding==='none'?undefined:funding)) {
       setInput('')
+      setFunding('none')
       setInputOpen(false)
     }
   }
@@ -130,12 +134,13 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
               = {formatQuantity(echoQuantity)} {tracker.unit ?? 'đơn vị'}
             </p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <div className="space-y-2">
+            {tracker.input_mode==='money'&&tracker.direction==='out'?<FundingSelector value={funding} onChange={setFunding} disabled={locked||pending}/>:null}
             <Button
               size="lg"
               className="min-h-11"
               type="submit"
-              disabled={!canSubmitAmount(input) || locked || pending}
+              disabled={!canSubmitAmount(input) || locked || pending || funding==='locked'||funding==='keep'}
             >
               {pending ? 'Đang ghi…' : 'Ghi'}
             </Button>

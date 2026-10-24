@@ -399,6 +399,17 @@ def cutover_approved_schema():
     child = historical.tables["microsched.task_item"]
     child.indexes = {i for i in child.indexes if i.name != "ix_task_item_active_position"}
     child._columns.remove(child.c.deleted_at)
+    # Task095 is additive at head; this rehearsal intentionally stays at0012.
+    # Remove only the later funding column and its exact constraints/index from
+    # the cloned test metadata. Production models and attestation stay strict.
+    entry = historical.tables["microsched.entry"]
+    entry.constraints = {
+        c
+        for c in entry.constraints
+        if c.name not in {"ck_entry_funding_not_self", "fk_entry_funding_entry_id_entry"}
+    }
+    entry.indexes = {i for i in entry.indexes if i.name != "ix_entry_funding_entry_id"}
+    entry._columns.remove(entry.c.funding_entry_id)
     patch = pytest.MonkeyPatch()
     patch.setattr(cutover_v2, "SQLModel", SimpleNamespace(metadata=historical))
     patch.setattr(

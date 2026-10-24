@@ -503,6 +503,9 @@ class Entry(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
     __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
+        CheckConstraint(
+            "funding_entry_id IS NULL OR funding_entry_id <> id", name="funding_not_self"
+        ),
         CheckConstraint("quantity IS NULL OR quantity > 0", name="quantity_positive"),
         CheckConstraint(
             "amount IS NULL OR amount LIKE 'enc:v1:%'",
@@ -532,6 +535,15 @@ class Entry(UUIDTimestampModel, table=True):
             PGUUID(as_uuid=True),
             ForeignKey(f"{SCHEMA}.subscription.id", ondelete="SET NULL"),
             nullable=True,
+        ),
+    )
+    funding_entry_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.entry.id", ondelete="RESTRICT"),
+            nullable=True,
+            index=True,
         ),
     )
     quantity: Decimal | None = Field(

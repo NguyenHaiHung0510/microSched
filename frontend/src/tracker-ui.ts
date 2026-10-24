@@ -161,6 +161,7 @@ export type Entry = {
   note_md: string | null
   created_at: string | null
   updated_at: string | null
+  funding?: import('@/funding-ui').Funding | null
 }
 
 export type DashboardF6 = {
@@ -521,6 +522,7 @@ export function currentVietnamMonth(now = new Date()): string {
 export type EntryCreatePayload = {
   id: string
   tracker_id: string
+  funding_entry_id?: string | null
   occurred_at?: string
   quantity?: number
   amount?: number
@@ -677,7 +679,7 @@ export function useTrackerWrites(refresh: () => void) {
       payload,
     }: {
       entryId: string
-      payload: Partial<Pick<Entry, 'occurred_at' | 'quantity' | 'amount' | 'list_amount' | 'note_md'>>
+        payload: Partial<Pick<Entry, 'occurred_at' | 'quantity' | 'amount' | 'list_amount' | 'note_md'>> & {funding_entry_id?:string|null}
     }) =>
       entryRequest<Entry>(`/api/tracker/entries/${entryId}`, {
         method: 'PATCH',
