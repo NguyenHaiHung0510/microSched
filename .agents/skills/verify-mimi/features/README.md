@@ -1,3 +1,7 @@
+# Task096 shared-entrypoint delta
+
+Global five-domain navigation/oneappmenu, PIN entry and safePWAupdate use current096 freeze/ports and sibling [responsive shell](../../verify-microsched/features/responsive-shell.md)/[PWA recipe](../../verify-microsched/features/pwa-freshness.md). No Mimi provider/actual-native runtime acceptance. Preserve historicalOwner192denominators below.
+
 # Current readiness — no new Mimi activation in Task090
 
 The current heatmap task inspects shared entrypoints only; no Mimi runtime matrix, paid calls or acceptance is granted. The map below is the preserved Owner192 source map, not an automatically selected current candidate. Read the current SKILL entrypoint and applicable future task before using its archived native source doctor/activation.

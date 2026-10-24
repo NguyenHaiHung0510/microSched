@@ -1,3 +1,5 @@
+Current096source: [responsive shell A / Tracker regions / safe automatic update](096-responsive-ux.md); author freeze and independentQA/CI/release tracked separately.
+
 # agent-tasks/ — hàng đợi việc giao cho agent
 
 Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một agent chạy độc lập.

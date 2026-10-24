@@ -26,7 +26,7 @@ function seed(api: TrackerApiState) {
 async function open(page: Page) {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
-  await page.getByTestId('tracker-report-toggle').click()
+  await page.getByTestId('tracker-tab-report').click()
   await expect(page.getByTestId('heatmap-summary')).toBeVisible()
   await page.getByTestId('heatmap-year').fill('2026')
   await page.getByTestId('heatmap-month').fill('2026-10')
@@ -134,6 +134,7 @@ test('H2 group scope matches counts, details and record drilldown; empty group s
   }
   await expect(page.getByTestId('records-group-scope')).toContainText('Nhóm học tập')
   await expect(page.getByTestId('records-list').getByTestId('entry-row')).toHaveCount(4)
+  await page.getByTestId('tracker-tab-report').click()
   await page.getByTestId('heatmap-group').click()
   await page.getByRole('option', {name:'Nhóm trống · 0 tracker',exact:true}).click()
   await expect(page.getByTestId('heatmap-summary')).toContainText('0 lần ghi')

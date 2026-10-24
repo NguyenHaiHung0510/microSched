@@ -59,14 +59,14 @@ test.beforeEach(async ({page,taskApi,trackerApi}) => {
 test('absolute report controls load all supported windows and keep labels and colors honest',async({page,taskApi},info) => {
   const requests: number[]=[]
   await page.route('**/api/tracker/dashboard?*', route => {const query=new URL(route.request().url()).searchParams;const months=Number(query.get('months')??1);requests.push(months);return route.fulfill({json:report(query.get('month')??'2026-09',months,Boolean(taskApi.privateUntil))})})
-  await page.goto('/');await page.getByRole('tab',{name:'Theo dõi'}).click()
+  await page.goto('/');await page.getByRole('tab',{name:'Theo dõi'}).click();await page.getByTestId('tracker-tab-report').click()
   const overview=page.getByTestId('tracker-finance-overview')
   const controls=overview.getByRole('group',{name:'Khoảng báo cáo'})
   await expect(controls.getByRole('button',{name:'1 tháng',exact:true})).toHaveAttribute('aria-pressed','true')
   await expect(page.getByTestId('tracker-finance-total')).toContainText('642.000')
   const monthField=page.getByTestId('tracker-report-month')
   expect(await monthField.evaluate(el => el.getBoundingClientRect().top-el.parentElement!.querySelector('span')!.getBoundingClientRect().bottom)).toBeGreaterThanOrEqual(8)
-  await page.getByTestId('tracker-open-report').click()
+  await page.getByTestId('tracker-report-jump').click()
   await expect(page.getByTestId('finance-month-bar')).toHaveCount(2)
   await expect(page.getByTestId('dashboard-f2-compare')).toContainText('1.838.000')
   await capture(page,'finance-one-month',info.project.name)
@@ -92,7 +92,7 @@ test('absolute report controls load all supported windows and keep labels and co
 
 test('rhythm selection survives focus, changes month cleanly and hides private rows on lock',async({page,taskApi},info)=>{
   await page.route('**/api/tracker/dashboard?*',route=>{const q=new URL(route.request().url()).searchParams;return route.fulfill({json:report(q.get('month')??'2026-09',Number(q.get('months')??1),Boolean(taskApi.privateUntil))})})
-  await page.goto('/');await page.getByRole('tab',{name:'Theo dõi'}).click();await page.getByTestId('tracker-open-report').click()
+  await page.goto('/');await page.getByRole('tab',{name:'Theo dõi'}).click();await page.getByTestId('tracker-tab-report').click();await page.getByTestId('tracker-report-jump').click()
   const rhythm=page.getByTestId('tracker-rhythm')
   await expect(rhythm).toContainText('Tuần 2 / 5')
   await rhythm.getByRole('button', { name: 'Tuần trước', exact: true }).click()
@@ -118,7 +118,7 @@ test('rhythm selection survives focus, changes month cleanly and hides private r
   await expect(page.getByTestId('rhythm-detail')).toContainText('Chọn một chấm')
   await expect(rhythm).not.toContainText('02/09/2026')
   await page.getByTestId('private-lock-now').click()
-  await page.getByTestId('tracker-open-report').click()
+  await page.getByTestId('tracker-report-jump').click()
   await expect(page.getByTestId('tracker-rhythm')).toBeVisible()
   await expect(page.getByTestId('tracker-rhythm')).not.toContainText('Nhịp riêng tư mô phỏng')
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
@@ -127,7 +127,7 @@ test('rhythm selection survives focus, changes month cleanly and hides private r
 test('empty and signed reports never invent bars or an activity completion rate',async({page,taskApi})=>{
   let empty=true
   await page.route('**/api/tracker/dashboard?*',route=>{const q=new URL(route.request().url()).searchParams;return route.fulfill({json:report(q.get('month')??'2026-09',Number(q.get('months')??1),Boolean(taskApi.privateUntil),empty,!empty)})})
-  await page.goto('/');await page.getByRole('tab',{name:'Theo dõi'}).click();await page.getByTestId('tracker-open-report').click()
+  await page.goto('/');await page.getByRole('tab',{name:'Theo dõi'}).click();await page.getByTestId('tracker-tab-report').click();await page.getByTestId('tracker-report-jump').click()
   await expect(page.getByTestId('dashboard-f1-total')).toContainText('0')
   await expect(page.getByTestId('rhythm-empty')).toBeVisible()
   const widths=await page.getByTestId('finance-month-bar').locator('[aria-hidden="true"] > span').evaluateAll(elements=>elements.map(el=>el.getBoundingClientRect().width))
