@@ -1,3 +1,4 @@
+<!-- Current scoped source phase: [097 content density](097-content-density.md), Owner334/PM R6bGO; R6a source frozen for independent QA. -->
 Current096source: [responsive shell A / Tracker regions / safe automatic update](096-responsive-ux.md); author freeze and independentQA/CI/release tracked separately.
 
 # agent-tasks/ — hàng đợi việc giao cho agent

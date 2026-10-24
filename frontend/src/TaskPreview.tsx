@@ -23,7 +23,7 @@ function dueLabel(task: TaskSchedule): string | null {
 
 const priorities: Record<TaskPriority, string> = { p1: 'Ưu tiên cao', p2: 'Ưu tiên vừa', p3: 'Ưu tiên thấp' }
 
-export function TaskPreviewContent({ task }: { task: TaskPreviewData }) {
+export function TaskPreviewContent({ task, compact=false }: { task: TaskPreviewData; compact?:boolean }) {
   const items = task.items ?? []
   const due = dueLabel(task)
   const metadata = [due, task.priority ? priorities[task.priority] : null].filter(Boolean).join(' · ')
@@ -31,16 +31,17 @@ export function TaskPreviewContent({ task }: { task: TaskPreviewData }) {
     {metadata ? <p data-testid="task-preview-metadata" className="text-xs font-semibold text-primary">{metadata}</p> : null}
     {task.body_md?.trim() ? <section className="space-y-1" data-testid="task-preview-body">
       <p className="text-xs font-bold text-primary">Nội dung</p>
-      <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{task.body_md}</p>
+      <p className={!compact?"whitespace-pre-wrap [overflow-wrap:anywhere]":"line-clamp-3 whitespace-pre-wrap [overflow-wrap:anywhere]"}>{task.body_md}</p>
     </section> : null}
     {items.length ? <section data-testid="task-preview-checklist" className={`space-y-2 ${task.body_md?.trim() ? 'border-t border-border/30 pt-3' : ''}`}>
       <p className="text-xs font-bold text-primary">Checklist · {items.filter(item => item.is_completed).length}/{items.length} đã xong</p>
-      <ul className="space-y-2">{items.map(item => <li key={item.id} data-testid="task-preview-item" className="flex items-start gap-2">
+      <ul className="space-y-2">{(compact?items.slice(0,3):items).map(item => <li key={item.id} data-testid="task-preview-item" className="flex items-start gap-2">
         {item.is_completed ? <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-primary" /> : <Square aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
         <span className="sr-only">{item.is_completed ? 'Đã xong: ' : 'Chưa xong: '}</span>
         <span className={item.is_completed ? 'min-w-0 text-muted-foreground line-through [overflow-wrap:anywhere]' : 'min-w-0 [overflow-wrap:anywhere]'}>{item.content}</span>
       </li>)}</ul>
     </section> : null}
+    {compact&&items.length>3?<p className="text-xs text-muted-foreground">Còn {items.length-3} mục khác</p>:null}
   </div>
 }
 
@@ -54,7 +55,7 @@ export function TaskPreview({ task, disabled = false, children }: { task: TaskPr
       className="w-[min(360px,calc(100vw-24px))] max-w-none overflow-hidden rounded-xl border border-primary/30 bg-card p-4 text-foreground shadow-2"
       onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
       <div className="max-h-[min(320px,55dvh,var(--radix-tooltip-content-available-height))] overflow-y-auto overscroll-contain" data-testid="task-preview-scroll">
-        <TaskPreviewContent task={task} />
+        <TaskPreviewContent task={task} compact />
       </div>
     </TooltipContent>
   </Tooltip></TooltipProvider>

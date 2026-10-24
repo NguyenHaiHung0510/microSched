@@ -61,7 +61,7 @@ export function ReminderCenter() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent data-testid="reminder-center" className="inset-y-0 right-0 left-auto h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-5 sm:max-w-2xl">
         <DialogHeader><DialogTitle>Nhắc nhở</DialogTitle><DialogDescription>Lịch nhắc của bạn · giờ Việt Nam</DialogDescription></DialogHeader>
-        <ReminderDevices />
+        <ReminderDevices compact />
         {targetId && target.isError && <p role="alert">Lời nhắc không còn hiển thị hoặc chưa tải được.</p>}
         <div className="flex flex-wrap gap-2" aria-label="Nhóm lời nhắc">
           {[['upcoming', 'Sắp tới'], ['attention', 'Cần chú ý']].map(([value, label]) =>

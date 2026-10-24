@@ -7,6 +7,7 @@ import { Edit3, Plus, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -89,6 +90,7 @@ function PersistedChecklistSection({
 }) {
   const queryClient = useQueryClient()
   const [items, setItems] = useState<TaskItem[]>(initialItems)
+  const [deletingItem,setDeletingItem]=useState<TaskItem|null>(null)
   const projectedParent = useTaskProjection([{id:taskId,items}])[0]
   const visibleItems = (projectedParent?.items ?? items) as TaskItem[]
   const [newContent, setNewContent] = useState('')
@@ -161,6 +163,7 @@ function PersistedChecklistSection({
     onMutate: () => onPendingChange(true),
     onSettled: () => onPendingChange(false),
     onSuccess: (_data, item) => {
+      setDeletingItem(null)
       setItems((prev) => prev.filter((i) => i.id !== item.id))
       if (editingItemId === item.id) {
         setEditingItemId(null)
@@ -309,7 +312,7 @@ function PersistedChecklistSection({
                   className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8 text-bad hover:text-bad"
                   aria-label={`Xoá mục ${item.content}`}
                   disabled={disabled || childPending}
-                  onClick={() => removeItemMutation.mutate(item)}
+                  onClick={() => setDeletingItem(item)}
                 >
                   <Trash2 className="size-4" />
                 </Button>
@@ -351,6 +354,7 @@ function PersistedChecklistSection({
           </p>
         ) : null}
       </div>
+      <Dialog open={!!deletingItem} onOpenChange={open=>{if(!open&&!removeItemMutation.isPending)setDeletingItem(null)}}><DialogContent data-testid="task-child-delete-confirm"><DialogHeader><DialogTitle>Xoá mục nhỏ?</DialogTitle><DialogDescription>Mục này sẽ bị xoá khỏi task. Bạn cần xác nhận trước khi lưu thay đổi này.</DialogDescription></DialogHeader><p className="break-words text-sm">{deletingItem?.content}</p>{removeItemMutation.isError?<p role="alert" className="text-sm text-bad">{errorMessage(removeItemMutation.error)}</p>:null}<div className="flex justify-end gap-2"><Button type="button" size="lg" variant="outline" disabled={removeItemMutation.isPending} onClick={()=>setDeletingItem(null)}>Huỷ</Button><Button type="button" data-testid="task-child-delete-commit" size="lg" variant="destructive" disabled={removeItemMutation.isPending} onClick={()=>{if(deletingItem)removeItemMutation.mutate(deletingItem)}}>{removeItemMutation.isPending?'Đang xoá…':'Xoá mục'}</Button></div></DialogContent></Dialog>
     </div>
   )
 }

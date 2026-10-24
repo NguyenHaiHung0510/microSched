@@ -826,6 +826,7 @@ const TaskCard = memo(function TaskCard({
       }),
     onSuccess: refresh,
   })
+  const [deletingChild,setDeletingChild]=useState<Task['items'][number]|null>(null)
   const removeItem = useMutation({
     networkMode: 'always',
     mutationFn: (item: TaskItem) =>
@@ -909,7 +910,7 @@ const TaskCard = memo(function TaskCard({
         data-private={task.is_private}
         onClick={openDetailsFromCard}
         className={cn(
-          'group/task relative gap-3 overflow-visible rounded-lg px-4 py-4 shadow-2 ring-0 transition-shadow',
+          'group/task relative gap-2 overflow-visible rounded-lg px-4 py-3 shadow-2 ring-0 transition-shadow',
           task.pinned ? 'bg-brand-50 shadow-rose' : 'bg-card',
           task.is_private && PRIVATE_SURFACE_CLASS,
           task.status === 'completed' && !task.is_private ? 'opacity-70' : '',
@@ -945,14 +946,14 @@ const TaskCard = memo(function TaskCard({
                       //   `min-w-0`     — gỡ `min-width:auto` mặc định của flex item.
                       //   `break-words` — `whitespace-normal` chỉ xuống dòng ở khoảng
                       //                   trắng; một cụm 70 ký tự liền thì không có chỗ.
-                      'h-auto min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
+                      'h-auto min-h-11 min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
                       task.status === 'completed' ? 'line-through' : '',
                     ].join(' ')}
                     variant="ghost"
                     aria-label={`Mở chi tiết ${task.title}`}
                     onClick={openDetails}
                   >
-                    {task.title}
+                    <span className="line-clamp-2 [overflow-wrap:anywhere]">{task.title}</span>
                   </Button>
               </TaskPreview>
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
@@ -1098,6 +1099,7 @@ const TaskCard = memo(function TaskCard({
 
       </Card>
 
+      <Dialog open={!!deletingChild} onOpenChange={open=>{if(!open&&!removeItem.isPending)setDeletingChild(null)}}><DialogContent data-testid="task-child-delete-confirm"><DialogHeader><DialogTitle>Xoá mục nhỏ?</DialogTitle><DialogDescription>Xác nhận xoá mục này khỏi task.</DialogDescription></DialogHeader><p className="break-words text-sm">{deletingChild?.content}</p>{removeItem.isError?<p role="alert" className="text-sm text-bad">{errorMessage(removeItem.error)}</p>:null}<div className="flex justify-end gap-2"><Button size="lg" variant="outline" disabled={removeItem.isPending} onClick={()=>setDeletingChild(null)}>Huỷ</Button><Button data-testid="task-child-delete-commit" size="lg" variant="destructive" disabled={removeItem.isPending} onClick={()=>{if(deletingChild)removeItem.mutate(deletingChild,{onSuccess:()=>setDeletingChild(null)})}}>{removeItem.isPending?'Đang xoá…':'Xoá mục'}</Button></div></DialogContent></Dialog>
       <Dialog
         open={detailsOpen}
         onOpenChange={(open) => {
@@ -1209,7 +1211,7 @@ const TaskCard = memo(function TaskCard({
                           className="text-bad hover:text-bad"
                           aria-label={`Xoá mục ${item.content}`}
                           disabled={removeItem.isPending}
-                          onClick={() => removeItem.mutate(item)}
+                          onClick={() => setDeletingChild(item)}
                         >
                           <Trash2 />
                         </Button>

@@ -658,11 +658,22 @@ export function CalendarScrollView() {
          )}
        >
          <div className="flex flex-wrap items-center justify-between gap-2 w-full">
+           <div className="flex min-w-0 flex-wrap items-center gap-2" role="group" aria-label="Tháng đang xem và hôm nay">
            <h3 data-testid="calendar-month-header" className="text-base font-extrabold truncate">
              {calendarMode === 'agenda'
                ? monthLabel(agendaMonth.year, agendaMonth.month)
                : monthLabel(headerMonth.year, headerMonth.month)}
            </h3>
+              <Button
+                data-testid="calendar-today-button"
+                size="default"
+                variant="outline"
+                className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                onClick={handleTodayClick}
+              >
+                Hôm nay
+              </Button>
+           </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <div
                 className="flex items-center gap-1 rounded-lg bg-muted p-1"
@@ -702,15 +713,7 @@ export function CalendarScrollView() {
                   {showMiniNav ? 'Thu gọn lịch nhỏ' : 'Hiện lịch nhỏ'}
                 </Button>
               ) : null}
-              <Button
-                data-testid="calendar-today-button"
-                size="default"
-                variant="outline"
-                className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
-                onClick={handleTodayClick}
-              >
-                Hôm nay
-              </Button>
+
             </div>
           </div>
 

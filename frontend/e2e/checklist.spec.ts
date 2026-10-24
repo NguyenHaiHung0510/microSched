@@ -24,6 +24,7 @@ test('task checklist can be added and deleted through stable test hooks', async 
   const createdRow = dialog.getByText(content, { exact: true }).locator('..')
   await expect(createdRow.getByTestId('task-item-delete')).toHaveCount(1)
   await createdRow.getByTestId('task-item-delete').click()
+  await page.getByTestId('task-child-delete-confirm').getByTestId('task-child-delete-commit').click()
   await expect.poll(() => taskApi.count('DELETE', `/api/tasks/019a0e2e-0000-7000-8001-000000000012/items/${created.id}`)).toBe(1)
   expect(taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000012')?.items).not.toContainEqual(created)
   await expect(dialog.getByText(content)).toHaveCount(0)

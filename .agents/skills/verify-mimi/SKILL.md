@@ -31,3 +31,6 @@ R1 Task090 is accepted/merged per PM. Task091 changes shared App/auth/private/qu
 
 ## Current Task096 shared shell/update boundary
 Owner334R6a changes only global navigation/compact entrypoints and safe update markers; Mimi workspace/provider/confirmation/privacy semantics remain. Use current096 freeze + verify-microsched responsive-shell/PWA recipes, API8006/preview4179, never historicalOwner192doctor. Memory-only composer drafts and cached positive-feedback draft protect quiet automatic reload even when their editor is not visible; local feedback/run markers guard current work. No new provider call or actual Mimi acceptance follows. Synthetic structural checks and source review stay qualified; independent affectedQA/CI/release remain separate.
+
+## Current Task097 shared entrypoints
+Task097 compacts Notes/Tasks/History and groups calendar toolbar; Mimi body/provider/PWAguard unchanged. Use sibling content-density recipe and own0974180/API8008 r6b_browser adapter for shared navigation only. Frozen096 belongs to its independent QA owner. No new Mimi/native/provider activation or historical denominator change.

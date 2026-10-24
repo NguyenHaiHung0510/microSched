@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, ExternalLink, RefreshCw } from 'lucide-react';
+import { Check, ExternalLink, Filter, Info, LockKeyhole, RefreshCw } from 'lucide-react';
 import { apiRequest } from '@/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -22,6 +22,7 @@ export function ReminderHistory() {
     const client = useQueryClient(), state = useOutbox();
     const [epoch, setEpoch] = useState(0), [source, setSource] = useState('all'), [status, setStatus] = useState('all'), [handled, setHandled] = useState('all');
     const [from, setFrom] = useState(''), [to, setTo] = useState(''), [selected, setSelected] = useState<string[]>([]);
+    const [filtersOpen,setFiltersOpen]=useState(false),[selectionMode,setSelectionMode]=useState(false);
     const [batch, setBatch] = useState<HistoryBatch | null>(null), [message, setMessage] = useState(''), [opened, setOpened] = useState<HistoryRow | null>(null);
     const gate = useRef(0), replayId = useRef<string | null>(null), replayScope = useRef('');
     const filter = useMemo(() => ({ ...(source === 'all' ? {} : { source }), ...(status === 'all' ? {} : { status }), handled, ...(from ? { day_from: from } : {}), ...(to ? { day_to: to } : {}) }), [source, status, handled, from, to]);
@@ -85,32 +86,36 @@ export function ReminderHistory() {
     else
         setOpened(row); }
     return <section data-testid="reminder-history" className="min-w-0 space-y-4">
-  <div className="space-y-1"><h3 className="text-lg font-bold">Lịch sử nhắc</h3><p className="text-sm text-muted-foreground">Gần nhất trước · Xử lý lần nhắc độc lập với hoàn thành công việc.</p></div>
-  <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
-   <Select value={source} onValueChange={v => changeFilter(() => setSource(v))}><SelectTrigger className="min-h-11 w-full" aria-label="Nguồn lịch sử"><SelectValue /></SelectTrigger><SelectContent>{sources.map(([v, label]) => <SelectItem key={v} value={v}>{label}</SelectItem>)}</SelectContent></Select>
+  <div className="space-y-1"><h3 className="text-base font-bold">Lịch sử nhắc</h3><p className="text-xs text-muted-foreground">Gần nhất trước · Xử lý lần nhắc, không hoàn thành công việc.</p></div>
+  <div className="grid min-w-0 grid-cols-2 items-center gap-2">
+   <Select value={source} onValueChange={v => changeFilter(() => setSource(v))}><SelectTrigger className="col-span-2 min-h-11 w-full sm:col-span-1" aria-label="Nguồn lịch sử"><SelectValue /></SelectTrigger><SelectContent>{sources.map(([v, label]) => <SelectItem key={v} value={v}>{label}</SelectItem>)}</SelectContent></Select>
    <Select value={handled} onValueChange={v => changeFilter(() => setHandled(v))}><SelectTrigger className="min-h-11 w-full" aria-label="Trạng thái xử lý"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả xử lý</SelectItem><SelectItem value="unhandled">Chưa xử lý</SelectItem><SelectItem value="handled">Đã xử lý</SelectItem></SelectContent></Select>
+   <div className="flex items-center justify-end gap-1"><Button data-testid="history-filters-toggle" size="lg" variant="outline" aria-expanded={filtersOpen} aria-controls="history-filters" onClick={()=>setFiltersOpen(open=>!open)}><Filter aria-hidden="true"/>Lọc{status!=='all'||from||to?' · Đang lọc':''}</Button><Button size="icon-lg" variant="ghost" aria-label="Làm mới lịch sử" onClick={refresh}><RefreshCw aria-hidden="true"/></Button></div>
+  </div>
+  <div id="history-filters" hidden={!filtersOpen} className="grid min-w-0 gap-2 rounded-lg border p-3 sm:grid-cols-2">
    <Select value={status} onValueChange={v => changeFilter(() => setStatus(v))}><SelectTrigger className="min-h-11 w-full" aria-label="Trạng thái gửi"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Mọi trạng thái gửi</SelectItem>{Object.entries(historyStatus).map(([v, label]) => <SelectItem key={v} value={v}>{label}</SelectItem>)}</SelectContent></Select>
-   <Button size="lg" variant="outline" onClick={refresh}><RefreshCw aria-hidden="true"/>Làm mới</Button>
+   <Button size="lg" variant="ghost" onClick={()=>changeFilter(()=>{setStatus('all');setFrom('');setTo('')})}>Đặt lại lọc nâng cao</Button>
    <label className="space-y-1 text-sm">Từ ngày<Input name="history-from" type="date" value={from} onChange={e => changeFilter(() => setFrom(e.target.value))} className="min-h-11"/></label>
    <label className="space-y-1 text-sm">Đến ngày<Input name="history-to" type="date" value={to} onChange={e => changeFilter(() => setTo(e.target.value))} className="min-h-11"/></label>
   </div>
-  {rows.data?.pages[0].private_notice && <p className="rounded-lg bg-muted p-3 text-sm">Nhắc việc riêng tư · Nội dung được ẩn.</p>}
-  <p className="text-xs text-muted-foreground">Chỉ gồm các lần nhắc còn bản ghi. Nội dung đối tượng là hiện tại; giờ gửi hoặc lịch sử cũ không được lưu sẽ không suy đoán.</p>
-  <div className="sticky top-0 z-10 flex flex-wrap gap-2 bg-popover py-2">
-   <Button size="lg" variant="outline" disabled={!selected.length || prepare.isPending} onClick={() => prepare.mutate('selected')}>{prepare.isPending ? 'Đang đếm…' : 'Xử lý ' + selected.length + ' đã chọn'}</Button>
-   <Button data-testid="history-prepare-all" size="lg" variant="outline" disabled={prepare.isPending} onClick={() => prepare.mutate('all')}>{prepare.isPending ? 'Đang đếm…' : 'Xử lý tất cả theo bộ lọc'}</Button>
-  </div>
+  <div className="flex flex-wrap items-start justify-between gap-2">{rows.data?.pages[0].private_notice && <p className="flex min-h-11 items-center gap-1 text-xs text-muted-foreground"><LockKeyhole aria-hidden="true" className="size-4"/>Nhắc riêng tư được ẩn</p>}
+  <details className="text-xs text-muted-foreground"><summary className="flex min-h-11 cursor-pointer items-center gap-2"><Info aria-hidden="true" className="size-4"/>Về lịch sử</summary><p className="max-w-sm pb-2">Chỉ gồm các lần nhắc còn bản ghi. Nội dung đối tượng là hiện tại; giờ gửi hoặc lịch sử cũ không được lưu sẽ không suy đoán.</p></details></div>
   {message && <p role="status" aria-live="polite" className="break-words text-sm">{message}</p>}
   {rows.isPending ? <p role="status">Đang tải lịch sử…</p> : rows.isError ? <p role="alert">Chưa tải được lịch sử. Làm mới để thử lại.</p> : items.length === 0 ? <p className="text-sm text-muted-foreground">Chưa có lần nhắc phù hợp.</p> : null}
   {[...groups].map(([day, dayRows]) => <section key={day} className="space-y-2" aria-label={historyDay(day)}><h4 className="border-b pb-2 text-sm font-bold">{historyDay(day)}</h4>{dayRows.map(row => {
                 const id = historyIdentity(row), pending = mark.isPending && mark.variables?.occurrence_ref.id === row.occurrence_ref.id;
                 return <article key={id} data-testid="history-row" data-occurrence={id} className="min-w-0 space-y-2 rounded-lg border p-3 [content-visibility:auto]">
-   <div className="flex min-w-0 items-start gap-2"><label className="flex min-h-11 min-w-11 items-center justify-center"><Checkbox aria-label={'Chọn ' + row.title} checked={selected.includes(id)} disabled={!!row.handled_at} onCheckedChange={v => { replayId.current = null; setSelected(s => v ? [...new Set([...s, id])] : s.filter(x => x !== id)); }}/></label><div className="min-w-0 flex-1"><p className="break-words font-semibold">{row.title}</p><p className="text-xs text-muted-foreground">{originLabel[row.origin]} · {historyTime(row)}</p></div>{row.is_private && <PrivateMarker />}</div>
-   <p className="whitespace-pre-wrap break-words text-sm">{row.body}</p>
+   <div className="flex min-w-0 items-start gap-2">{selectionMode?<label className="flex min-h-11 min-w-11 items-center justify-center"><Checkbox aria-label={'Chọn ' + row.title} checked={selected.includes(id)} disabled={!!row.handled_at} onCheckedChange={v => { replayId.current = null; setSelected(s => v ? [...new Set([...s, id])] : s.filter(x => x !== id)); }}/></label>:null}<div className="min-w-0 flex-1"><p className="break-words font-semibold">{row.title}</p><p className="text-xs text-muted-foreground">{originLabel[row.origin]} · {historyTime(row)}</p></div>{row.is_private && <PrivateMarker />}</div>
+   {row.body?<details className="group/history-body text-sm"><summary className="min-h-11 cursor-pointer list-none py-1"><span className="line-clamp-2 whitespace-pre-wrap [overflow-wrap:anywhere] group-open/history-body:hidden">{row.body}</span><span className="text-xs font-semibold text-primary"><span className="group-open/history-body:hidden">Xem đầy đủ</span><span className="hidden group-open/history-body:inline">Thu gọn</span></span></summary><p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{row.body}</p></details>:null}
    <p className="text-xs text-muted-foreground">{historyStatus[row.status] ?? row.status}{row.handled_at ? ' · Đã xử lý' : ''}</p>
    <div className="flex flex-wrap gap-2"><Button data-testid="history-handle" size="lg" variant={row.handled_at ? 'ghost' : 'outline'} disabled={!!row.handled_at || mark.isPending || prepare.isPending || commit.isPending} onClick={() => mark.mutate({occurrence_ref:row.occurrence_ref,source_ref:row.source_ref})}><Check aria-hidden="true"/>{pending ? 'Đang xác nhận…' : row.handled_at ? 'Đã xử lý' : 'Đánh dấu đã xử lý'}</Button>{row.can_open && <Button size="lg" variant="ghost" onClick={() => open(row)}><ExternalLink aria-hidden="true"/>Mở đối tượng</Button>}</div>
   </article>;
             })}</section>)}
+  <div className="flex flex-wrap items-center gap-2">
+   <Button data-testid="history-selection-toggle" size="lg" variant="outline" disabled={prepare.isPending||commit.isPending} aria-pressed={selectionMode} onClick={()=>{setSelectionMode(value=>!value);setSelected([]);setBatch(null);replayId.current=null}}>{selectionMode?'Huỷ chọn nhiều':'Chọn nhiều'}</Button>
+   {selectionMode?<><Button size="lg" variant="outline" disabled={!selected.length || prepare.isPending} onClick={() => prepare.mutate('selected')}>{prepare.isPending ? 'Đang đếm…' : 'Xử lý ' + selected.length + ' đã chọn'}</Button>
+   <Button data-testid="history-prepare-all" size="lg" variant="outline" disabled={prepare.isPending} onClick={() => prepare.mutate('all')}>{prepare.isPending ? 'Đang đếm…' : 'Xử lý tất cả theo bộ lọc'}</Button></>:null}
+  </div>
   {rows.hasNextPage && <Button data-testid="history-more" size="lg" variant="outline" disabled={rows.isFetchingNextPage} onClick={() => void rows.fetchNextPage()}>{rows.isFetchingNextPage ? 'Đang tải…' : 'Xem thêm lịch sử'}</Button>}
   {batch && <Dialog open onOpenChange={v => { if (!v && !commit.isPending) {
         setBatch(null);

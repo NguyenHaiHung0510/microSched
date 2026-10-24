@@ -91,7 +91,7 @@ export function NoteChecklist({ items, pending, failed = false, preview = false,
     if (failed || items.find((item) => item.id === focus.id)?.is_completed === focus.checked) {
       focusAfterToggle.current = null
     }
-  }, [items, pending, failed])
+  }, [items, pending, failed, preview])
 
   function renderRow(item: NoteItem, hidden: boolean) {
     const toggle = (
