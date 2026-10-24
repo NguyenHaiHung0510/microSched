@@ -408,7 +408,8 @@ test('Mimi side-chat stays available from the Task surface without page overflow
 
   await page.goto('/')
   await expect(page.getByRole('tab', { name: 'Task' })).toHaveAttribute('aria-selected', 'true')
-  await page.getByTestId('mimi-dock-toggle').click()
+  await page.getByTestId('app-menu-open').click()
+  await page.getByTestId('mimi-dock-open').click()
   await expect(page.getByTestId('mimi-side-chat')).toBeVisible()
   await expect(page.getByLabel('Nhắn Mimi')).toBeVisible()
   if (capturePreview) {
@@ -560,12 +561,12 @@ test('P1C-A synthetic browser loop keeps one conversation observable and compose
   // The shared dock is exposed on domain screens, not inside its full Workspace.
   await page.getByRole('tab', { name: 'Task', exact: true }).click()
   await expect(page.getByRole('tab', { name: 'Task', exact: true })).toHaveAttribute('aria-selected', 'true')
-  const dockToggle = page.getByTestId('mimi-dock-toggle')
-  await dockToggle.click()
+  await page.getByTestId('app-menu-open').click()
+  await page.getByTestId('mimi-dock-open').click()
   await expect(page.getByTestId('mimi-side-chat')).toBeVisible()
   await expect(page.getByTestId('mimi-side-chat').getByTestId('mimi-messages')).toContainText('Câu hỏi chỉ đọc')
   if ((page.viewportSize()?.width ?? 1280) < 640) await page.keyboard.press('Escape')
-  else await dockToggle.click()
+  else await page.getByRole('button', {name:'Đóng side-chat', exact:true}).click()
   await expect(page.getByTestId('mimi-side-chat')).toHaveCount(0)
 
   await page.getByRole('tab', { name: 'Mimi', exact: true }).click()

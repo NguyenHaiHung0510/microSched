@@ -108,17 +108,17 @@ function SignedIn({ session }: { session: SessionResponse }) {
         <OfflineCoverage/><PwaUpdates/><DerivedPendingNotice/>
         {attentionLocator&&attentionLink.isError?<p role="alert" className="m-3 rounded-lg bg-warn-bg p-3 text-sm">Không mở được thông báo. Liên kết có thể không thuộc phiên này; chưa thực hiện thay đổi nào.</p>:null}
         {attentionLink.data?.expired?<p role="status" className="m-3 text-sm text-muted-foreground">Thông báo đã hết hạn; đang mở đúng hội thoại để đọc trạng thái hiện tại.</p>:null}
-        <header data-testid="app-header" className={cn('grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-border/60 bg-background px-3 py-2 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:gap-4 lg:px-5',currentTab==='mimi'&&'mimi-app-header')}>
-          <div className="min-w-0">
+        <header data-testid="app-header" className={cn('grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-border/60 bg-background px-3 py-2 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:gap-4 lg:px-5',currentTab==='mimi'&&'mimi-app-header')}>
+          <div className="min-w-max">
             <h1><Button asChild data-testid="app-logo-button" variant="ghost" size="lg" className="min-h-11 px-0 text-lg font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary lg:text-xl" aria-label="Về trang Task mặc định"><a href="/" onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();goToDefaultScreen()}}>microSched</a></Button></h1>
             <p className="hidden text-xs capitalize text-muted-foreground lg:block">{todayLabel()}</p>
           </div>
           <DomainNavigation current={currentTab} mimiAvailable={session.mimi_available} onSelect={selectTab}/>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+          <div data-testid="app-header-actions" className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1">
             <ReminderCenter/>
             <OutboxPanel compact/>
             <PrivateGate session={session} compact manageOpen={pinManageOpen} onManageOpenChange={setPinManageOpen}/>
-            <ApplicationMenu current={currentTab} mimiAvailable={session.mimi_available} onSelect={selectTab} onChat={()=>setMimiDockOpen(true)} onPin={()=>setPinManageOpen(true)} onHome={()=>leave(()=>window.location.assign('/home'))} onLogout={()=>leave(()=>logout.mutate())} loggingOut={logout.isPending}/>
+            <ApplicationMenu current={currentTab} mimiAvailable={session.mimi_available} onSelect={selectTab} onChat={()=>setMimiDockOpen(true)} onPin={()=>setPinManageOpen(true)} onHome={()=>leave(()=>window.location.assign('/home'))} onSubscription={()=>leave(()=>navigate('/subscription'))} onLogout={()=>leave(()=>logout.mutate())} loggingOut={logout.isPending}/>
           </div>
         </header>
         <div className={cn('px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-4 sm:px-5 lg:pb-6',currentTab==='mimi'&&'pt-0')}>

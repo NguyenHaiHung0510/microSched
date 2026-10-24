@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { BookOpen, ChevronRight, Grid2X2, KeyRound, Leaf, LogOut, MessagesSquare } from 'lucide-react'
+import { BookOpen, ChevronRight, CreditCard, Grid2X2, KeyRound, Leaf, LogOut, MessagesSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -19,7 +19,7 @@ export function DomainNavigation({current,mimiAvailable,onSelect}:{current:AppSc
   </nav>
 }
 
-export function ApplicationMenu({current,mimiAvailable,onSelect,onChat,onPin,onHome,onLogout,loggingOut}:{current:AppScreen;mimiAvailable:boolean;onSelect:(screen:AppScreen)=>void;onChat:()=>void;onPin:()=>void;onHome:()=>void;onLogout:()=>void;loggingOut:boolean}) {
+export function ApplicationMenu({current,mimiAvailable,onSelect,onChat,onPin,onHome,onSubscription,onLogout,loggingOut}:{current:AppScreen;mimiAvailable:boolean;onSelect:(screen:AppScreen)=>void;onChat:()=>void;onPin:()=>void;onHome:()=>void;onSubscription:()=>void;onLogout:()=>void;loggingOut:boolean}) {
   const [open,setOpen]=useState(false)
   const trigger=useRef<HTMLButtonElement>(null)
   const afterClose=useRef<(()=>void)|null>(null)
@@ -33,7 +33,8 @@ export function ApplicationMenu({current,mimiAvailable,onSelect,onChat,onPin,onH
         <Button data-testid="migarden-placeholder" type="button" variant="ghost" disabled className="h-auto min-h-11 justify-start gap-3 text-left disabled:opacity-100"><Leaf className="size-5 text-muted-foreground" aria-hidden="true"/><span className="flex-1 text-muted-foreground">miGarden</span><Badge variant="secondary">Sắp có</Badge></Button>
       </div>
       <div className="grid gap-1 border-t pt-3">
-        {mimiAvailable?<Button variant="ghost" className="min-h-11 justify-start gap-3" onClick={()=>choose(onChat)}><MessagesSquare aria-hidden="true"/>Chat với Mimi</Button>:null}
+        {mimiAvailable?<Button data-testid="mimi-dock-open" aria-controls="mimi-side-chat" variant="ghost" className="min-h-11 justify-start gap-3" onClick={()=>choose(onChat)}><MessagesSquare aria-hidden="true"/>Chat với Mimi</Button>:null}
+        <Button asChild variant="ghost" className="min-h-11 justify-start gap-3"><a href="/subscription" data-testid="app-subscriptions-link" onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();choose(onSubscription)}}><CreditCard aria-hidden="true"/>Đăng ký định kỳ</a></Button>
         <Button data-testid="private-pin-change-open" variant="ghost" className="min-h-11 justify-start gap-3" onClick={()=>choose(onPin)}><KeyRound aria-hidden="true"/>Đổi PIN riêng tư</Button>
         <Button asChild variant="ghost" className="min-h-11 justify-start gap-3"><a href="/home" data-testid="app-homepage-link" onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();choose(onHome)}}><BookOpen aria-hidden="true"/>Giới thiệu microSched</a></Button>
         <Button variant="ghost" disabled={loggingOut} className="min-h-11 justify-start gap-3" onClick={()=>choose(onLogout)}><LogOut aria-hidden="true"/>Đăng xuất</Button>

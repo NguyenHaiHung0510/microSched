@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures/tracker'
+import type { DashboardResponse } from '../src/tracker-ui'
 
 test.describe('QA Dogfooding UI/UX Verification', () => {
   test.beforeEach(async ({ page }) => {
@@ -7,6 +8,11 @@ test.describe('QA Dogfooding UI/UX Verification', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
+          period_start: '2026-09-01T00:00:00+07:00',
+          period_end: '2026-09-07T12:00:00+07:00',
+          current_period_days: 7,
+          prev_period_days: 31,
+          prev_period_truncated: false,
           f1_total: 1500000,
           f2_current: 1500000,
           f2_previous: 1200000,
@@ -17,10 +23,14 @@ test.describe('QA Dogfooding UI/UX Verification', () => {
           activity_month: '2026-09',
           activity_days: [],
           f5_net: -1500000,
-          f6: { subscriptions: [], total_fixed: 0, corrupted_subscription_count: 0 },
+          f3_groups: [],
+          f4_top: [],
+          a2_gap: [],
+          a3_counts: { week: 0, month: 0, year: 0 },
+          f6: { upcoming: [], monthly_burn: 0, subscription_count: 0, corrupted_subscription_count: 0 },
           corrupted_entry_count: 0,
-          a4_trend: { trend: 'stable' },
-        }),
+          a4_trend: { current_month: 0, prev_avg: 0, trend: 'flat' },
+        } satisfies DashboardResponse),
       })
     })
     await page.route('**/api/notes**', async (route) => {
@@ -125,7 +135,8 @@ test.describe('QA Dogfooding UI/UX Verification', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Theo dõi' }).click()
 
-    // Verify Tracker top finance card is visible
+    await page.getByTestId('tracker-tab-report').click()
+    // Verify the finance card in its actual Reports region
     const financeCard = page.getByTestId('tracker-finance-overview')
     await expect(financeCard).toBeVisible()
     await expect(financeCard.getByText('Tài chính')).toBeVisible()
@@ -133,6 +144,7 @@ test.describe('QA Dogfooding UI/UX Verification', () => {
     await expect(financeCard.getByTestId('tracker-finance-total')).toContainText('1.500.000 ₫')
     await expect(financeCard.getByTestId('subscription-entry')).toBeVisible()
 
+    await page.getByTestId('tracker-tab-capture').click()
     // Verify Capture Grid is visible and grouped
     await expect(page.getByTestId('tracker-grid')).toBeVisible()
     await expect(page.getByTestId('tracker-button').first()).toBeVisible()
