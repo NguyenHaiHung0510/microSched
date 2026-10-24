@@ -963,3 +963,71 @@ Index(
 )
 Index("ix_reminder_dispatch_status", ReminderDispatch.__table__.c.status)
 Index("ix_tracker_reminder_batch_status", TrackerReminderBatch.__table__.c.status)
+
+
+class ReminderOccurrenceHandled(UUIDTimestampModel, table=True):
+    """Per-owner occurrence acknowledgement; never source completion or device delivery."""
+
+    __tablename__ = "reminder_occurrence_handled"
+    __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __delete_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(one_shot_id, dispatch_id, mimi_intent_id) = 1", name="one_receipt"
+        ),
+        UniqueConstraint("owner_id", "one_shot_id", name="uq_history_handled_one_shot"),
+        UniqueConstraint("owner_id", "dispatch_id", name="uq_history_handled_dispatch"),
+        UniqueConstraint("owner_id", "mimi_intent_id", name="uq_history_handled_mimi"),
+        {"schema": SCHEMA},
+    )
+    owner_id: UUID = Field(sa_column=Column(PGUUID, nullable=False, index=True))
+    one_shot_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID, ForeignKey(f"{SCHEMA}.one_shot_reminder.id", ondelete="CASCADE")),
+    )
+    dispatch_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID, ForeignKey(f"{SCHEMA}.reminder_dispatch.id", ondelete="CASCADE")),
+    )
+    mimi_intent_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID, ForeignKey(f"{SCHEMA}.mimi_notification_intent.id", ondelete="CASCADE")
+        ),
+    )
+    handled_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    )
+
+
+class ReminderHandledBatch(UUIDTimestampModel, table=True):
+    """Frozen owner-scoped typed targets and replay result, without source prose."""
+
+    __tablename__ = "reminder_handled_batch"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE  # Owner authorization, no public inventory API.
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        CheckConstraint("schema_version = 1", name="version"),
+        CheckConstraint(
+            "jsonb_typeof(target_refs) = 'array' "
+            "AND jsonb_array_length(target_refs) = selected_count",
+            name="target_count",
+        ),
+        CheckConstraint("selected_count >= 0 AND expires_at > cutoff", name="scope"),
+        CheckConstraint("jsonb_typeof(normalized_filter) = 'object'", name="filter_object"),
+        CheckConstraint("fingerprint ~ '^[0-9a-f]{64}$'", name="fingerprint"),
+        CheckConstraint("(committed_at IS NULL) = (result IS NULL)", name="result_state"),
+        {"schema": SCHEMA},
+    )
+    owner_id: UUID = Field(sa_column=Column(PGUUID, nullable=False, index=True))
+    schema_version: int = Field(
+        default=1, sa_column=Column(Integer, nullable=False, server_default=text("1"))
+    )
+    normalized_filter: dict = Field(sa_column=Column(JSONB, nullable=False))
+    fingerprint: str = Field(sa_column=Column(Text, nullable=False))
+    target_refs: list = Field(sa_column=Column(JSONB, nullable=False))
+    selected_count: int = Field(sa_column=Column(Integer, nullable=False))
+    cutoff: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    committed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    result: dict | None = Field(default=None, sa_column=Column(JSONB))

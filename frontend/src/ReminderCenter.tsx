@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ReminderHistory } from '@/ReminderHistory'
 import { Bell } from 'lucide-react'
 import { apiRequest } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -49,7 +50,7 @@ export function ReminderCenter() {
   const rows = useQuery({ queryKey: [...reminderKey, 'center', section, offset],
     queryFn: ({ signal }) => apiRequest<{ items: Reminder[]; has_more: boolean }>(
       `/api/reminders?section=${section}&offset=${offset}`, { signal }),
-    enabled: open, ...NO_POLLING_QUERY_OPTIONS })
+    enabled: open && section !== 'history', ...NO_POLLING_QUERY_OPTIONS })
   const trackers = useQuery({ queryKey: [...reminderKey, 'recurring'],
     queryFn: ({ signal }) => apiRequest<{ items: Tracker[] }>('/api/tracker/trackers', { signal }),
     enabled: open && section === 'upcoming', ...NO_POLLING_QUERY_OPTIONS })
@@ -58,7 +59,7 @@ export function ReminderCenter() {
       <Bell aria-hidden="true" /><span className="hidden sm:inline">Nhắc nhở</span>
     </Button>
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent data-testid="reminder-center" className="inset-y-0 right-0 left-auto h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-5 sm:max-w-lg">
+      <DialogContent data-testid="reminder-center" className="inset-y-0 right-0 left-auto h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-5 sm:max-w-2xl">
         <DialogHeader><DialogTitle>Nhắc nhở</DialogTitle><DialogDescription>Lịch nhắc của bạn · giờ Việt Nam</DialogDescription></DialogHeader>
         <ReminderDevices />
         {targetId && target.isError && <p role="alert">Lời nhắc không còn hiển thị hoặc chưa tải được.</p>}
@@ -68,9 +69,9 @@ export function ReminderCenter() {
               onClick={() => { setSection(value); setOffset(0) }}>{label}</Button>)}
           <Button size="lg" variant={section === 'history' ? 'selected' : 'ghost'} aria-expanded={section === 'history'}
             onClick={() => { setSection(section === 'history' ? 'upcoming' : 'history'); setOffset(0) }}>Lịch sử</Button>
-          <Button size="lg" variant="ghost" onClick={() => { void rows.refetch(); void trackers.refetch(); if (targetId) void target.refetch() }}>Làm mới</Button>
+          <Button size="lg" variant="ghost" onClick={() => { void rows.refetch(); void trackers.refetch(); if (targetId) void target.refetch(); if(section==='history')void client.invalidateQueries({queryKey:['reminder-history']}) }}>Làm mới</Button>
         </div>
-        {rows.isPending ? <p role="status">Đang tải…</p> : rows.isError ? <p role="alert">Chưa tải được lời nhắc. Bấm Làm mới để thử lại.</p>
+        {section === 'history' ? <ReminderHistory /> : rows.isPending ? <p role="status">Đang tải…</p> : rows.isError ? <p role="alert">Chưa tải được lời nhắc. Bấm Làm mới để thử lại.</p>
           : <div className="space-y-3">{rows.data.items.length === 0 && <p className="text-sm text-muted-foreground">Không có lời nhắc trong nhóm này.</p>}
             {rows.data.items.map((row) => <article key={row.id} data-testid="reminder-row" className="space-y-2 rounded-lg border p-3">
               <p className="break-words font-semibold">{row.source_title}</p>

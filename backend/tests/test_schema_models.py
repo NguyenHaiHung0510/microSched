@@ -1,6 +1,7 @@
 """Regression tests for one-way physical-schema decisions."""
 
 import asyncio
+import re
 from uuid import uuid4
 
 import asyncpg
@@ -47,6 +48,8 @@ EXPECTED_TABLES = {
     "mimi_device_preference",
     "mimi_notification_intent",
     "mimi_notification_delivery",
+    "reminder_occurrence_handled",
+    "reminder_handled_batch",
 }
 
 GATE_AXES = {
@@ -132,10 +135,22 @@ def assert_gate_declarations_match_columns(
                 if parent_gate is not Gate.VIA_PARENT:
                     return False
                 parent_table = vars(parent)["__table__"]
+                # Polymorphic receipt chains have nullable typed FKs whose SQL
+                # exactly-one constraint still guarantees a parent on every row.
+                required = {c.name for c in parent_table.columns if not c.nullable}
+                for constraint in parent_table.constraints:
+                    if not isinstance(constraint, CheckConstraint):
+                        continue
+                    match = re.fullmatch(r"num_nonnulls\(([^)]+)\) = 1", str(constraint.sqltext))
+                    if match:
+                        names = {name.strip() for name in match[1].split(",")}
+                        fk_names = {fk.parent.name for fk in parent_table.foreign_keys}
+                        assert names <= fk_names, "exactly-one parent contract must name typed FKs"
+                        required.update(names)
                 return any(
                     reaches_guarded_parent(fk.column.table.fullname, seen | {parent_name})
                     for fk in parent_table.foreign_keys
-                    if not fk.parent.nullable
+                    if fk.parent.name in required
                 )
 
             guarded_parents = [
