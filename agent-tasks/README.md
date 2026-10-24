@@ -11,6 +11,7 @@ Phiên migration 2026-09-06: [042 — bounded authority](042-harness-authority-v
 UI/UX readability work: [043 — calendar, private presentation and upcoming reminders](043-ui-ux-readability.md).
 Daily UI improvements: [087 — Note/Mimi input, annual heatmap and shared Task previews](087-daily-ui-improvements.md); local candidate implemented, independent QA/CI/release tracked separately.
 Group heatmap H2: [090 — All / Group / Tracker scope](090-group-heatmap.md); author synthetic app smoke complete, independent QA/CI/release pending.
+Calendar movement: [094 — Task and day-annotation move/undo](094-calendar-move.md); author evidence and independent/CI/release gates are tracked separately.
 
 Notification priority: [088 — One-shot day reminders and useful public/private notification content](088-annotation-reminder-content.md); Owner-approved implementation, independent QA and release pending before offline outbox.
 Public homepage / denied and live-link delivery: [044 — Owner-approved homepage](044-homepage-preview.md).
