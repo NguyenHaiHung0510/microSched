@@ -33,8 +33,8 @@ const fields: Record<Kind, readonly string[]> = {
   'task.delete': [], 'task.restore': [],
   'task_item.create': ['id','content','position'],
   'task_item.update': ['content','is_completed','position'], 'task_item.delete': [],
-  'entry.create': ['id','tracker_id','occurred_at','quantity','amount','list_amount','note_md'],
-  'entry.update': ['occurred_at','quantity','amount','list_amount','note_md'],
+  'entry.create': ['id','tracker_id','occurred_at','quantity','amount','list_amount','note_md','funding_entry_id'],
+  'entry.update': ['occurred_at','quantity','amount','list_amount','note_md','funding_entry_id'],
   'entry.delete': [], 'entry.restore': [],
 }
 export function validatePayload(kind: Kind, entity: string, parent: string, payload: Fields): void {
@@ -43,6 +43,7 @@ export function validatePayload(kind: Kind, entity: string, parent: string, payl
   if (kind.startsWith('task.') && entity !== parent) throw new Error('Task aggregate identity mismatch')
   if (kind.endsWith('.create') && payload.id !== entity) throw new Error('Client identity mismatch')
   if (kind === 'entry.create' && payload.tracker_id !== parent) throw new Error('Tracker identity mismatch')
+  if ('funding_entry_id' in payload && payload.funding_entry_id !== null && !validId(payload.funding_entry_id)) throw new Error('Nguồn thu không hợp lệ')
   if (kind === 'task.create') {
     if (typeof payload.title !== 'string' || !payload.title.trim()) throw new Error('Thiếu tên task')
     const items = payload.items as unknown[], ids = payload.item_ids as unknown[]

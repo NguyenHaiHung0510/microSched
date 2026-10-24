@@ -217,6 +217,33 @@ async def restore_tracker(
 # ------------------------------------------------------------------ entries
 
 
+@router.get("/tracker/funding-candidates")
+async def funding_candidates(
+    db: Database,
+    session: CurrentSession,
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> dict:
+    from app.domain.funding import candidates
+
+    try:
+        return await candidates(db, session, cursor, limit)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/tracker/funding-report")
+async def funding_report(
+    db: Database, session: CurrentSession, month: str, months: int = 1
+) -> dict:
+    from app.domain.funding import report
+
+    try:
+        return await report(db, session, month, months)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @router.get("/tracker/entries", response_model=dict[str, list[EntryRead]])
 async def list_entries(
     db: Database,
@@ -227,6 +254,7 @@ async def list_entries(
     to: datetime | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    include_funding: bool = Query(default=False),
     order: Literal["asc", "desc"] = Query(default="desc"),
 ) -> dict[str, list[EntryRead]]:
     """List visible entries, optionally filtered and paginated."""
@@ -234,19 +262,22 @@ async def list_entries(
     _tz_aware(to, "to")
     if from_ is not None and to is not None and from_ >= to:
         raise HTTPException(status_code=422, detail="from must be before to")
-    return {
-        "items": await store.list_entries(
-            db,
-            session,
-            tracker_id=tracker_id,
-            group_id=group_id,
-            from_=from_,
-            to=to,
-            limit=limit,
-            offset=offset,
-            order=order,
-        )
-    }
+    items = await store.list_entries(
+        db,
+        session,
+        tracker_id=tracker_id,
+        group_id=group_id,
+        from_=from_,
+        to=to,
+        limit=limit,
+        offset=offset,
+        order=order,
+    )
+    if include_funding:
+        from app.domain.funding import enrich
+
+        await enrich(db, session, items)
+    return {"items": items}
 
 
 @router.post("/tracker/entries", response_model=EntryRead)
@@ -275,10 +306,16 @@ async def create_entry(
 
 
 @router.get("/tracker/entries/{entry_id}", response_model=EntryRead)
-async def read_entry(entry_id: UUID, db: Database, session: CurrentSession) -> EntryRead:
+async def read_entry(
+    entry_id: UUID, db: Database, session: CurrentSession, include_funding: bool = False
+) -> EntryRead:
     entry = await store.get_entry(db, session, entry_id)
     if entry is None:
         raise _not_found("Entry")
+    if include_funding:
+        from app.domain.funding import enrich
+
+        await enrich(db, session, [entry])
     return entry
 
 

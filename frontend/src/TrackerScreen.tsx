@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { toVietnamDateTimeInput } from '@/calendar-ui'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Archive,
@@ -34,6 +35,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { CaptureGrid } from '@/CaptureGrid'
 import { DashboardPanel } from '@/DashboardPanel'
+import { FundingReport } from '@/FundingReport'
+import { FundingSelector } from '@/FundingSelector'
 import { TrackerRecords } from '@/TrackerRecords'
 import { TrackerHeatmap } from '@/TrackerHeatmap'
 import { initialRecordsSelection } from '@/tracker-records'
@@ -163,7 +166,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   // Map the frozen id order against the LATEST tracker rows so last_entry_at /
   // entry_count_30d are live — a capture then shows "Vừa xong" immediately
   // instead of waiting for the refetch to land a fresh row.
-  const trackerMap = new Map(trackers.map((tracker) => [tracker.id, tracker]))
+  const trackerMap = useMemo(() => new Map(trackers.map((tracker) => [tracker.id, tracker])), [trackers])
   const frozenOrder = frozenIds
     .map((id) => trackerMap.get(id))
     .filter((tracker): tracker is Tracker => Boolean(tracker))
@@ -177,6 +180,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [backdateChoice, setBackdateChoice] = useState<BackdateChoice>('yesterday')
   const [backdateCustom, setBackdateCustom] = useState('')
   const [backdateInput, setBackdateInput] = useState('')
+  const [backdateFunding,setBackdateFunding]=useState('none')
   const [archiveFor, setArchiveFor] = useState<Tracker | null>(null)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [lockedIds, setLockedIds] = useState<ReadonlySet<string>>(new Set())
@@ -193,6 +197,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   // whether an unsaved field has become private while the dialog is open.
   // Close every tracker-related dialog on a lock transition to unmount those
   // drafts fail-closed before a tracker refetch can paint.
+  /* eslint-disable react-hooks/set-state-in-effect -- Mask private local state synchronously at the lock boundary. */
   useEffect(() => {
     const previous = wasUnlocked.current
     if (previous && !privateUnlocked) {
@@ -201,23 +206,24 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       setGroupOpen(false)
       setEditingGroup(null)
       setDeletingGroup(null)
-      setBackdateFor(null)
-      setBackdateChoice('yesterday')
-      setBackdateCustom('')
-      setBackdateInput('')
+      if(backdateFor?.is_private){setBackdateFor(null);setBackdateChoice('yesterday');setBackdateCustom('');setBackdateInput('')}
       setArchiveFor(null)
-      setEditingEntry(null)
+      if(editingEntry) {
+        if(trackerMap.get(editingEntry.tracker_id)?.is_private!==false)setEditingEntry(null)
+        else setEditingEntry({...editingEntry,funding:undefined})
+      }
       setRecords(initialRecordsSelection())
       setLockedIds(new Set())
       setCapturingIds(new Set())
       editReturnRef.current = null
-      queryClient.removeQueries({ queryKey: trackerInvalidationKey })
+      // Core masks private rows; retain public forms and their dirty drafts during refetch.
       void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
     } else if (!previous && privateUnlocked) {
       void queryClient.invalidateQueries({ queryKey: trackerInvalidationKey })
     }
     wasUnlocked.current = privateUnlocked
-  }, [privateUnlocked, queryClient])
+  }, [privateUnlocked, queryClient, backdateFor, editingEntry, trackerMap])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
  useEffect(() => {
     const timers = unlockTimers.current
@@ -249,12 +255,15 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
     unlockTimers.current.set(trackerId, timer)
   }
 
-  async function capture(tracker: Tracker, input?: string, occurredAt?: string) {
+  async function capture(tracker: Tracker, input?: string, occurredAt?: string, fundingId?:string|null) {
     if (lockedIds.has(tracker.id)) return false
     lock(tracker.id)
     setCapturingIds(previous => new Set(previous).add(tracker.id))
     try {
-      const entry = await writes.createEntry.mutateAsync(capturePayload(tracker, input ?? '', occurredAt))
+      if(fundingId==='locked'||fundingId==='keep')return false
+      const payload=capturePayload(tracker,input??'',occurredAt)
+      if(fundingId!==undefined)payload.funding_entry_id=fundingId
+      const entry = await writes.createEntry.mutateAsync(payload)
       unlockLater(tracker.id)
       toast(<span className="block min-w-0 max-w-full break-words">Đã ghi “{tracker.name}”</span>, {
         duration: 10_000, action: {label: 'Hoàn tác', onClick: () => undoDeleteEntry(entry.id)},
@@ -283,7 +292,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         : backdateOptions().find(({ label }) =>
             backdateChoice === 'yesterday' ? label === 'Hôm qua' : label === '2 giờ trước',
           )?.value
-    if (await capture(backdateFor, backdateInput, option)) setBackdateFor(null)
+    if (await capture(backdateFor, backdateInput, option,backdateFunding==='none'?undefined:backdateFunding)) setBackdateFor(null)
   }
 
   function submitTracker(payload: TrackerWritePayload) {
@@ -600,8 +609,9 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         loading={trackersQuery.isPending}
         error={trackersQuery.error}
         onRetry={() => void refresh()}
-        onCapture={capture}
+        onCapture={(tracker,input,funding)=>capture(tracker,input,undefined,funding)}
         onBackdate={(tracker) => {
+          setBackdateFunding('none')
           setBackdateChoice('yesterday')
           setBackdateCustom('')
           setBackdateInput('')
@@ -889,6 +899,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         </Button>
         {!rhythmCollapsed ? (
           <div className="pt-2">
+      <FundingReport month={month} months={reportMonths} onOpenSource={source=>{setRecords({mode:'day',trackerId:source.tracker_id,anchor:toVietnamDateTimeInput(source.occurred_at).slice(0,10),order:'desc',page:0,expanded:true});window.requestAnimationFrame(()=>document.getElementById('tracker-records')?.scrollIntoView({block:'start'}))}}/>
       <DashboardPanel
         dashboard={dashboardQuery.data ?? null}
         monthLabel={reportMonthLabel(month, reportMonths)}
@@ -1089,7 +1100,8 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
                 }}
               />
             </label>
-            <Button size="lg" className="min-h-11 w-full" onClick={() => void submitBackdate()} disabled={writes.createEntry.isPending || !!backdateFor && (lockedIds.has(backdateFor.id) || backdateFor.input_mode !== 'event' && !canSubmitAmount(backdateInput))}>
+            {backdateFor?.input_mode==='money'&&backdateFor.direction==='out'?<FundingSelector value={backdateFunding} onChange={setBackdateFunding} disabled={writes.createEntry.isPending}/>:null}
+            <Button size="lg" className="min-h-11 w-full" onClick={() => void submitBackdate()} disabled={writes.createEntry.isPending || backdateFunding==='locked' || !!backdateFor && (lockedIds.has(backdateFor.id) || backdateFor.input_mode !== 'event' && !canSubmitAmount(backdateInput))}>
               {writes.createEntry.isPending ? 'Đang ghi…' : 'Ghi'}
             </Button>
           </div>

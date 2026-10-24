@@ -34,3 +34,6 @@ Freeze once at meaningful boundaries, reuse unchanged evidence. Author/runtime/C
 ## Cleanup
 
 Close/log out settled owned isolated contexts. Only owner stops exact recorded own listener PIDs after port checks; retain DB/container/volume/WIP/evidence. No kill-by-name, reset/delete or merge/deploy grant. [R1 Task090 map snapshot](R1-090-ARCHIVE.md), [H14 archive](H14-ARCHIVE.md) retain their original evidence/limits.
+
+## Task095 funding affected lane
+Use [funding recipe](features/funding-entry.md) with its current095 freeze. Preserve existing Task091 protocols and archived evidence; no shared setup replay or independent acceptance inferred.

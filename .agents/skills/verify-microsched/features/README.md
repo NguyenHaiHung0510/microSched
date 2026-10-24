@@ -1,4 +1,6 @@
-# Current candidate routing — calendar094
+# Current candidate routing — funding095 and calendar094
+
+Current Task095 funding route: [income Entry/report](funding-entry.md). Current grant/freeze wins; previous map acceptance is historical.
 
 [Task094](../../../../agent-tasks/094-calendar-move.md) and the [calendar recipe](calendar.md) describe
 the current movement candidate, its owned094 cell and parameterized helper. Builder receipts are

@@ -1,5 +1,6 @@
 import { type QueryClient, type QueryKey } from '@tanstack/react-query'
 import type { Fields } from './protocol'
+import { withoutFunding } from './funding'
 
 const families = new Set(['tasks', 'calendar', 'tracker', 'notes', 'subscription', 'subscriptions', 'reminders', 'reminder-history'])
 export const isPrivateCapableFamily = (key: QueryKey) => families.has(String(key[0]))
@@ -31,14 +32,14 @@ export function maskPrivateQueries(client: Pick<QueryClient, 'cancelQueries' | '
     const publicRow = (row: unknown) => object(row) && (isEntry
       ? publicTrackers.has(String(row.tracker_id)) : row.is_private === false)
     let safe: unknown
-    if (Array.isArray(data)) safe = data.filter(publicRow)
+    if (Array.isArray(data)) safe = data.filter(publicRow).map(row => isEntry && object(row) ? withoutFunding(row) : row)
     else if (object(data) && Array.isArray(data.items)) {
       // Old mixed-private totals and continuation cursors are not public facts.
-      const rows = data.items.filter(publicRow)
+      const rows = data.items.filter(publicRow).map(row => isEntry && object(row) ? withoutFunding(row) : row)
       safe = { items: rows, next_cursor: null, has_more: false, snapshot_partial: true,
         ...(key[1] === 'timeline' ? { bucket_cursors: {overdue:null,dated:null,undated:null},
           bucket_counts: {overdue:0,dated:0,undated:0},has_previous:false,has_next:false } : {}) }
-    } else if (publicRow(data)) safe = data
+    } else if (publicRow(data)) safe = isEntry && object(data) ? withoutFunding(data) : data
     if (safe === undefined) client.removeQueries({ queryKey: key, exact: true })
     else client.setQueryData(key, safe, { updatedAt: query.state.dataUpdatedAt })
   }

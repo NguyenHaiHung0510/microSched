@@ -22,3 +22,6 @@ Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs
 
 ### Task091 shared shell readiness
 R2 Task/Entry outbox uses separate canonical snapshots/pending projection and current private/principal epochs. Mimi remains online, no queued arbitrary URL/provider/confirmation. Verify a deterministic canonical invalidation does not erase pending Task/Entry state through the current R2 synthetic shell. Actual Mimi activation/provider acceptance NOT_RUN. Current commands live in verify-microsched Task091 recipe; archived doctor is not repointed.
+
+### Task095 funding compatibility
+Funding is a native Tracker/Entry lane, not a Mimi tool capability. Existing agent/default Entry reads do not opt into nested funding metadata; ordinary agent updates omit the optional FK and preserve it. No new source-ID write or provider activation is granted. Shared lock/cache and protocol1 semantics use the current [funding recipe](../../verify-microsched/features/funding-entry.md); do not rerun a provider matrix or archived Owner192 doctor. Actual Mimi/provider acceptance remains NOT_RUN.

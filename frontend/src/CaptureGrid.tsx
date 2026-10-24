@@ -18,7 +18,7 @@ type CaptureGridProps = {
   loading: boolean
   error: unknown
   onRetry: () => void
-  onCapture: (tracker: Tracker, input?: string) => Promise<boolean>
+  onCapture: (tracker: Tracker, input?: string, fundingId?:string|null) => Promise<boolean>
   onBackdate: (tracker: Tracker) => void
 }
 
@@ -106,7 +106,7 @@ export function CaptureGrid({
             tracker={tracker}
             locked={locked.has(tracker.id)}
             pending={pendingTrackerId === tracker.id}
-            onCapture={(input) => onCapture(tracker, input)}
+            onCapture={(input,funding) => onCapture(tracker, input,funding)}
             onBackdate={() => onBackdate(tracker)}
           />
         ))}
@@ -166,7 +166,7 @@ export function CaptureGrid({
                     tracker={tracker}
                     locked={locked.has(tracker.id)}
                     pending={pendingTrackerId === tracker.id}
-                    onCapture={(input) => onCapture(tracker, input)}
+                    onCapture={(input,funding) => onCapture(tracker, input,funding)}
                     onBackdate={() => onBackdate(tracker)}
                   />
                 ))}
@@ -210,7 +210,7 @@ export function CaptureGrid({
                  tracker={tracker}
                  locked={locked.has(tracker.id)}
                  pending={pendingTrackerId === tracker.id}
-                 onCapture={(input) => onCapture(tracker, input)}
+                 onCapture={(input,funding) => onCapture(tracker, input,funding)}
                  onBackdate={() => onBackdate(tracker)}
                />
              ))}
