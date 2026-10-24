@@ -55,3 +55,45 @@ logs out and closes that context. Existing ignored093 `.local/r8-093/oracle.py` 
 via own local transport. No provider/push/real profile. Retain failed attempts; inspect unknown
 effects before a fresh attempt. New author output is not independent acceptance. Builder receipts
 and immutable full freeze are in the current grant's `techlead/o8-093-dev328` output.
+
+## 094 — move Task and day annotation
+
+Month-grid desktop drag and day-detail **Chuyển ngày** use the same move action. Mobile uses the
+visible tap button; keyboard can open the day and submit the date form. Tasks retain date precision
+or their Vietnam clock, including seconds/milliseconds. A range annotation shifts from the grabbed
+day, including a middle day, and retains its inclusive length. Undo restores the full prior schedule.
+Calendar-source sessions have no movement handle. Existing desktop-only quick creation stays intact.
+
+The action requires an online, verified session and an unlocked private display where applicable.
+Task moves use the existing typed outbox and same-object barrier. Local admission remains pending
+until queue/reconciliation settlement and a matching canonical GET; unknown/held/rejected commands
+are retained. Annotation errors restore the local date projection and retain an editable retry draft.
+Private lock purges the move dialog; no private pixels or payloads belong in reports.
+
+Owned094 recovery: API8004, preview4177, PG55494/database `microsched_r4_094`, labelled container/volume
+`r4-094-20261024-microsched` / `r4-094-20261024-microsched-db`. Use the current frozen handback and
+ignored `.local/r4-094/runtime.py` for exact owned launch commands and env **names**. Preview requires
+process-only `VITE_BACKEND_ORIGIN=http://127.0.0.1:8004`; the default8000 is not this cell. Inspect actual
+PID/command/listener and proxied readyz before lifecycle actions; preserve fixtures and failed attempts.
+
+Selectors: `calendar-day-cell[data-day]`, `calendar-day-chip-task[data-task-id]`,
+`calendar-day-annotation[data-annotation-id]`, `calendar-day-task[data-task-id]`,
+`calendar-annotation-detail[data-annotation-id]`, `calendar-task-move`, `calendar-annotation-move`,
+`calendar-move-dialog`, `calendar-move-preview`, `calendar-move-error`, `calendar-move-pending`.
+Cancel restores focus to the grabbed day. New form input/action controls are at least44px high.
+
+Bounded direct driver: `scripts/calendar_move.mjs --origin http://127.0.0.1:4177 --case
+desktop|mobile|touch|diagnostic|private --output ABSOLUTE_UNIQUE_OWN_OUTPUT --python
+EXISTING_READONLY_PYTHON --oracle ABSOLUTE_094_LOCAL_ORACLE`. Desktop/mobile create additive synthetic
+fixtures, recording returned IDs immediately. Touch and diagnostic accept `--resume OWN_PRIOR_RECEIPT`
+to reuse settled public IDs. Desktop drag uses native pointer delivery; the retained failed locator
+attempts are driver evidence, not a product PASS. The own-ID read-only PG oracle corroborates API
+schedule/reminder snapshots. Private mode captures neither pixels nor raw error details. Each mode
+logs out and closes its isolated context. Its `nativeDrag` uses Playwright `page.mouse` down/move/up
+and browser-native dragstart/dragover/drop, with durable PATCH200/undo proof. This differs from
+JavaScript `dispatchEvent` and the mocked API regression layer. Final mocked browser result is
+5PASS/1SKIP; the SKIP is desktop HTML drag on mobile, whose native-touch alternative has its own
+real API/PG receipt. No real profile, provider, reseed/reset or baseline cleanup.
+
+Current author receipts and full freeze: granted `techlead/r4-094-dev328`. These are builder confidence;
+independent QA, required CI, physical-device and production acceptance remain separate gates.

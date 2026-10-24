@@ -45,6 +45,7 @@ import {
 import { CALENDAR_FAMILY_KEY } from '@/calendar-queries'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
+import type { CalendarMoveTarget } from '@/calendar-move'
 
 type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
 
@@ -276,6 +277,7 @@ export function DayDetailDialog({
   annotations,
   sourceById,
   privateLocked,
+  onRequestMove,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -286,6 +288,7 @@ export function DayDetailDialog({
   annotations: DayAnnotation[]
   sourceById: Map<string, CalendarSource>
   privateLocked: boolean
+  onRequestMove?: (target: CalendarMoveTarget) => void
 }) {
   const queryClient = useQueryClient()
   const [annotationForm, setAnnotationForm] = useState<AnnotationFormState>(null)
@@ -615,6 +618,7 @@ export function DayDetailDialog({
                     <div
                       key={annotation.id}
                       data-testid="calendar-annotation-detail"
+                      data-annotation-id={annotation.id}
                       data-private={annotation.is_private}
                       className={cn('flex items-start gap-3 rounded-lg border p-3', annotation.is_private && PRIVATE_SURFACE_CLASS)}
                     >
@@ -636,6 +640,11 @@ export function DayDetailDialog({
                             {annotation.note_md}
                           </p>
                         ) : null}
+                        {onRequestMove ? <Button type="button" variant="outline" className="mt-2 min-h-11"
+                          data-testid="calendar-annotation-move" aria-label={`Chuyển ngày dấu ${annotation.label}`}
+                          onClick={() => onRequestMove({ kind: 'annotation', item: annotation, grabbedDay: day })}>
+                          <Calendar aria-hidden="true" />Chuyển ngày
+                        </Button> : null}
                       </div>
                       <div className="flex shrink-0 gap-1">
                         <ReminderButton kind="annotation" sourceId={annotation.id} compact />
@@ -770,6 +779,16 @@ export function DayDetailDialog({
                         {task.title}
                         {task.is_private ? <PrivateMarker /> : null}
                       </Button>
+                      {onRequestMove ? <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11 shrink-0 px-2"
+                        data-testid="calendar-task-move"
+                        aria-label={`Chuyển ngày ${task.title}`}
+                        onClick={() => onRequestMove({ kind: 'task', item: task, grabbedDay: day })}
+                      >
+                        <Calendar aria-hidden="true" className="size-4" />Chuyển ngày
+                      </Button> : null}
                       <Button
                         data-testid="calendar-day-task-delete"
                         size="icon-sm"

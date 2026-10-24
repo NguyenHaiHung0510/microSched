@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, LockKeyhole } from 'lucide-react'
+import { Check, GripVertical, LockKeyhole } from 'lucide-react'
 
 import { formatVietnamTime, type CalendarEvent } from '@/calendar-ui'
 import {
@@ -15,6 +15,7 @@ import { TaskPreview } from '@/TaskPreview'
 export type DropTaskPayload =
   | { kind: 'quick-new-task'; title: string }
   | { kind: 'reschedule-task'; taskId: string; fromDay?: string }
+  | { kind: 'move-annotation'; annotationId: string; fromDay: string }
 
 export function DayCell({
   day,
@@ -73,7 +74,7 @@ export function DayCell({
     if (!raw || !onDropTask) return
     try {
       const payload = JSON.parse(raw) as DropTaskPayload
-      if (payload.kind === 'quick-new-task' || payload.kind === 'reschedule-task') {
+      if (payload.kind === 'quick-new-task' || payload.kind === 'reschedule-task' || payload.kind === 'move-annotation') {
         onDropTask(day, payload)
       }
     } catch {
@@ -100,15 +101,24 @@ export function DayCell({
         {visibleAnnotations.map((annotation) => (
           <span
             data-testid="calendar-day-annotation"
+            data-annotation-id={annotation.id}
             data-private={annotation.is_private}
             key={annotation.id}
+            draggable={isDesktop}
+            onDragStart={event => {
+              event.stopPropagation()
+              event.dataTransfer.setData('application/json', JSON.stringify({ kind: 'move-annotation', annotationId: annotation.id, fromDay: day }))
+              event.dataTransfer.effectAllowed = 'move'
+            }}
             style={sourceTone(annotation.color)}
             className={cn(
               'block truncate rounded-sm px-1 py-px text-xs font-semibold',
               annotation.is_private && 'border-s-2 border-s-primary',
               !showAnnotationLabels && 'min-h-1.5 py-0',
+              isDesktop && 'cursor-grab active:cursor-grabbing',
             )}
           >
+            {isDesktop ? <GripVertical aria-hidden="true" className="mr-0.5 inline size-3" /> : null}
             {annotation.is_private ? <LockKeyhole aria-label="Riêng tư" role="img" className="mr-1 inline size-3 text-primary" /> : null}
             {showAnnotationLabels ? annotation.label : null}
           </span>
@@ -153,6 +163,7 @@ export function DayCell({
           ) : isDesktop ? (
             <div
               data-testid="calendar-day-chip-task"
+              data-task-id={chip.task.id}
               data-private={chip.task.is_private ?? false}
               key={chip.task.id}
               draggable={isDesktop}
@@ -190,6 +201,7 @@ export function DayCell({
                   chip.task.status === 'completed' && 'line-through',
                 )}
               >
+                <GripVertical aria-hidden="true" className="inline size-3 shrink-0" />
                 {chip.task.is_private ? <LockKeyhole aria-label="Riêng tư" role="img" className="mr-1 inline size-3 text-primary" /> : null}
                 {chip.task.title}
               </span>

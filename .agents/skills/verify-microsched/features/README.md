@@ -1,4 +1,11 @@
-# Current candidate routing — Task090
+# Current candidate routing — calendar094
+
+[Task094](../../../../agent-tasks/094-calendar-move.md) and the [calendar recipe](calendar.md) describe
+the current movement candidate, its owned094 cell and parameterized helper. Builder receipts are
+separate from independent094 QA, which is NOT_RUN at author freeze. No historical row/count below
+is upgraded by the094 author observations. Match the actual current grant before any execution.
+
+## Prior Task090 routing (retained)
 
 Current microSched slice: [Task090 H2](../../../../agent-tasks/090-group-heatmap.md), source worktrees/090-group-heatmap at the exact private freeze. [Affected tracker recipe](tracker-form.md) is source-maintained for current controls/API. Independent R1 acceptance NOT_RUN until PM reconciliation. Remaining recipes below retain their dated source mappings and are not revalidated or runtime-accepted by R1.
 
