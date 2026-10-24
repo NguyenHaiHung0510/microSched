@@ -61,7 +61,7 @@ function SupplementEditor({ conversationId, targetId, onLater }: Props) {
     send.mutate(intent)
   }
   const unknown = !!draft.intent && !send.isPending
-  return <form className="space-y-3" onSubmit={submit} data-testid="mimi-positive-supplement">
+  return <form data-draft-owner="mimi-feedback-supplement" className="space-y-3" onSubmit={submit} data-testid="mimi-positive-supplement">
     <p className="text-sm font-semibold">Bạn có thể chia sẻ thêm (không bắt buộc)</p>
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{['Rõ ràng', 'Đúng ý', 'Hữu ích', 'Nhanh', 'Dễ hiểu', 'Khác'].map((reason) => <Button type="button" key={reason} variant={draft.reasons.includes(reason) ? 'selected' : 'outline'} size="sm" className="min-h-8" aria-pressed={draft.reasons.includes(reason)} onClick={() => update((old) => ({ ...old, reasons: old.reasons.includes(reason) ? old.reasons.filter((item) => item !== reason) : [...old.reasons, reason], revision: old.revision + 1, savedRevision: null }))}>{reason}</Button>)}</div>
     <div className="space-y-2">

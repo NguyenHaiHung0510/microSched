@@ -60,6 +60,10 @@ export function selectCreatedMimiConversation(client: QueryClient, created: Mimi
   selectMimiConversation(created.id)
 }
 
+export function hasMimiComposerDrafts(): boolean {
+  return [...drafts.values()].some(text => text.length > 0)
+}
+
 export function readMimiComposerDraft(id: string): string {
   return drafts.get(id) ?? ''
 }

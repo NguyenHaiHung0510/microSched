@@ -210,10 +210,10 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     })
   })
 
-  test('Tracker DOM order and geometry: reminder section appears before finance overview, no overflow at 390px and 1280px', async ({ page }) => {
+  test('Tracker regions keep reminders in capture and finance in reports without overflow at 390px and 1280px', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Theo dõi' }).click()
-    await expect(page.getByTestId('tracker-finance-overview')).toBeVisible()
+    await expect(page.getByTestId('tracker-finance-overview')).toBeHidden()
     await expect(page.getByTestId('tracker-reminders-overview')).toBeVisible()
 
     // 1. DOM order check: exactly one reminder overview before finance overview
@@ -227,6 +227,10 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
       return Boolean(reminder.compareDocumentPosition(finance) & Node.DOCUMENT_POSITION_FOLLOWING)
     })
     expect(orderCheck).toBe(true)
+    await page.getByTestId('tracker-tab-report').click()
+    await expect(page.getByTestId('tracker-finance-overview')).toBeVisible()
+    await expect(page.getByTestId('tracker-reminders-overview')).toBeHidden()
+    await page.getByTestId('tracker-tab-capture').click()
 
     // 2. Geometry measurements: preview has useful width (>=200px on desktop, >=150px on mobile)
     const previewEl = page.getByTestId('tracker-reminder-preview').first()
@@ -481,7 +485,8 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     })
 
    // Open edit dialog for tracker-reminder-1 via its edit button in management section
-   await page.getByRole('button', { name: 'Mở rộng tất cả' }).click()
+   await page.getByTestId('tracker-tab-manage').click()
+    await page.getByRole('button', { name: 'Mở rộng tất cả' }).click()
    const editBtn = page.locator('[data-testid="tracker-edit"][data-tracker-id="tracker-reminder-1"]')
    await editBtn.click()
    const editDialog = page.getByTestId('tracker-dialog')
@@ -1011,6 +1016,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
 
     await page.goto('/')
     await page.getByRole('tab', { name: 'Theo dõi' }).click()
+    await page.getByTestId('tracker-tab-manage').click()
     await page.getByRole('button', { name: 'Mở rộng tất cả' }).click()
     await expect(
       page.locator(`[data-testid="tracker-edit"][data-tracker-id="${privateTracker.id}"]`),
@@ -1073,6 +1079,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
 
     await page.goto('/')
     await page.getByRole('tab', { name: 'Theo dõi' }).click()
+    await page.getByTestId('tracker-tab-manage').click()
     await page.getByRole('button', { name: 'Mở rộng tất cả' }).click()
     await expect(
       page.locator(`[data-testid="tracker-edit"][data-tracker-id="${privateTracker.id}"]`),

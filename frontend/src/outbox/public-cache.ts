@@ -3,6 +3,7 @@ import type { QueryClient, QueryKey } from '@tanstack/react-query'
 import { persistQueryClientRestore, persistQueryClientSubscribe, type PersistedClient, type Persister } from '@tanstack/query-persist-client-core'
 import type { BootstrapSession } from './types'
 import { hash, type Fields } from './protocol'
+import { withoutFunding } from './funding'
 
 type Bootstrap = {id: 'bootstrap'; principal: string; expires: number; saved: number}
 type Snapshot = {id: string; value: PersistedClient}
@@ -71,7 +72,7 @@ export function sanitizeSnapshot(value: PersistedClient): PersistedClient {
       ...row, tracker_count: [...publicTrackers.values()].filter(t => t.group_id === row.id).length,
     }))
     else if (key[0] === 'tracker' && key[1] === 'entries' && visibilityAt >= query.state.dataUpdatedAt)
-      rows = items(data).filter(row => publicTrackers.has(String(row.tracker_id)))
+      rows = items(data).filter(row => publicTrackers.has(String(row.tracker_id))).map(withoutFunding)
     else return []
     // Never serialize a projected graph, mixed-private totals, continuation cursor or session.
     const clean = Array.isArray(data) ? rows : {items:rows,next_cursor:null,snapshot_partial:true,

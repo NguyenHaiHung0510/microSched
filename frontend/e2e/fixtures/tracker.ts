@@ -143,6 +143,16 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         const key = `${method}:${path}`
         state.counts[key] = (state.counts[key] ?? 0) + 1
 
+        // Funding is mounted alongside report/capture. Keep synthetic tests inside
+        // this fixture instead of leaking an unhandled read to the real auth API.
+        if (path === '/api/tracker/funding-candidates' && method === 'GET') {
+          await route.fulfill(jsonResponse({ items: [], next_cursor: null }))
+          return
+        }
+        if (path === '/api/tracker/funding-report' && method === 'GET') {
+          await route.fulfill(jsonResponse({ expense_total: 0, income_total: 0, net: 0, corrupted_entry_count: 0, buckets: [] }))
+          return
+        }
         if (path === '/api/tracker/groups' && method === 'GET') {
           await route.fulfill(jsonResponse({ items: state.groups }))
           return

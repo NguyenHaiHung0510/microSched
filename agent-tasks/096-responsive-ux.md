@@ -1,0 +1,9 @@
+# 096 — shell A / Tracker regions / safe automatic update
+
+Owner334 + PM currentR6aSOURCE_GO, sole Confucius Sol/xhigh. Source branch feat/096-responsive-ux; normalFF E7 preserves prior16WIP. E7funding is an explicit unaccepted dependency; R5QA/operator/release remain parent-owned. No R6bNotesTask/history-density scope in this candidate. Successor also retains explicit calendar-toolbar KEEP-or-minimal-grouping assessment against existing Calendar-move-profile-v1.png; calendar body/Mimi remain KEEP.
+
+Implemented: responsive five-domain nav and one accessible app menu; miGarden disabledfuture entry; compact header/privacy/queue; four mounted Tracker regions with existing capture/records/reports/management and scoped heatmap drilldown; menu→PIN focus restore. Owner334 automatic update removes routine banner and defers silently for actual draft/mutation/admission/storage/transport boundaries without clearing/persisting private drafts or changing V1 bytes.
+
+Author evidence: current private096 handback/freeze/resource exports; frontend317PASS, lint/build/type PASS, syntheticaffected59PASS cumulative+9intentionalSKIP plus10changedconsumerPASS; actualtwo-generation SW dirtytabs/clean-boundary/no-banner/pendingV1same-digest+ACKonce PASS. Original helperOOM happened beforebrowser/distchange; original fail retained. Actualpublic journey/remainingfreeze tracked in handback. IndependentQA/CI/production NOT accepted by these claims. Physicaldevice/provider/Ownerprofile NOT_RUN.
+
+M1 maps and r6_browser.mjs reflect actual selectors/resources; historicaldoctor/receipt counts unchanged. Preserve unchanged backend/queue/protocol/calendar/Mimi behavior, requiredCI and freshparentCAS gate. No productionbackup/DDL/merge/deploy or095 mutation in this phase. DraftPR/freeze/fullhandoff thenHOLD.

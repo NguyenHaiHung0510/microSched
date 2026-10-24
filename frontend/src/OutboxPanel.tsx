@@ -7,12 +7,12 @@ import { useOutbox, useDerivedPending } from '@/outbox/view'
 import { snapshotAt } from '@/outbox/public-cache'
 import type { Fields } from '@/outbox/protocol'
 
-export function OutboxPanel() {
+export function OutboxPanel({compact=false}:{compact?:boolean}) {
   const state=useOutbox(),[open,setOpen]=useState(false),[discard,setDiscard]=useState<string|null>(null),[error,setError]=useState('')
   const rows=state.rows.filter(r => r.principal===state.context.principal)
   return <>
-    {(rows.length>0||state.error) && <Button data-testid="outbox-trigger" variant="selected" size="lg" onClick={() => setOpen(true)}>
-      <CloudUpload />{rows.length} đang chờ gửi
+    {(rows.length>0||state.error) && <Button data-testid="outbox-trigger" variant="selected" size="lg" className={compact?'min-h-11 min-w-11 px-2':undefined} aria-label={`${rows.length} thay đổi đang chờ gửi`} onClick={() => setOpen(true)}>
+      <CloudUpload aria-hidden="true"/>{compact?rows.length:rows.length+' đang chờ gửi'}
     </Button>}
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent data-testid="outbox-panel" className="left-auto right-0 top-0 flex h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 flex-col rounded-none border-0 p-5 sm:max-w-md"

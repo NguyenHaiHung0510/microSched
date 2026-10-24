@@ -4,7 +4,7 @@ description: "Verify the currently granted synthetic microSched candidate with i
 ---
 # microSched verification
 
-Read the current grant and frozen handback before choosing a recipe. Calendar093/094 uses the
+Read the current grant and frozen handback before choosing a recipe. Task096 uses [responsive shell](features/responsive-shell.md) and [safe automatic update](features/pwa-freshness.md); its owned096 ports/helper are separate from frozen095/091. Calendar093/094 uses the
 [calendar recipe](features/calendar.md), its own exact API/proxy/PG ports and `calendar_move.mjs`
 arguments; the091 launcher below does not recover that cell. Author evidence, independent QA and
 historical map counts keep their separate status. This skill grants no lifecycle or product effects.
@@ -34,3 +34,6 @@ Freeze once at meaningful boundaries, reuse unchanged evidence. Author/runtime/C
 ## Cleanup
 
 Close/log out settled owned isolated contexts. Only owner stops exact recorded own listener PIDs after port checks; retain DB/container/volume/WIP/evidence. No kill-by-name, reset/delete or merge/deploy grant. [R1 Task090 map snapshot](R1-090-ARCHIVE.md), [H14 archive](H14-ARCHIVE.md) retain their original evidence/limits.
+
+## Task095 funding affected lane
+Use [funding recipe](features/funding-entry.md) with its current095 freeze. Preserve existing Task091 protocols and archived evidence; no shared setup replay or independent acceptance inferred.

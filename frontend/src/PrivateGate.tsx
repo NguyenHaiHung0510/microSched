@@ -32,6 +32,9 @@ import { maskPrivateQueries } from '@/outbox/private-visibility'
 type Props = {
   session: PrivateSessionState
   onVisibilityChange?: () => void
+  compact?: boolean
+  manageOpen?: boolean
+  onManageOpenChange?: (open:boolean)=>void
 }
 
 function messageFor(error: unknown): {
@@ -58,13 +61,15 @@ function isSixAsciiDigits(value: string): boolean {
   return /^[0-9]{6}$/.test(value)
 }
 
-export function PrivateGate({ session, onVisibilityChange }: Props) {
+export function PrivateGate({ session, onVisibilityChange, compact=false, manageOpen, onManageOpenChange }: Props) {
   const queryClient = useQueryClient()
   const [privateOverride, setPrivateOverride] = useState<string | null>()
   const [lockedOverride, setLockedOverride] = useState<string | null>()
   const [clock, setClock] = useState(0)
   const [unlockOpen, setUnlockOpen] = useState(false)
-  const [changeOpen, setChangeOpen] = useState(false)
+  const [localChangeOpen,setLocalChangeOpen]=useState(false)
+  const changeOpen=manageOpen??localChangeOpen
+  const setChangeOpen=onManageOpenChange??setLocalChangeOpen
   const [pin, setPin] = useState('')
   const [currentPin, setCurrentPin] = useState('')
   const [newPin, setNewPin] = useState('')
@@ -84,7 +89,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
     }
     window.addEventListener('microsched:visibility', mask)
     return () => window.removeEventListener('microsched:visibility', mask)
-  }, [])
+  }, [setChangeOpen])
 
   const invalidateStatus = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['session'] })
@@ -239,7 +244,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      <Badge
+      {!compact ? (<Badge
         data-testid="private-badge"
         variant={isOpen ? 'default' : isThrottled ? 'destructive' : 'outline'}
       >
@@ -257,7 +262,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
             <Lock data-icon="inline-start" /> Riêng tư · đang khoá
           </>
         )}
-      </Badge>
+      </Badge>) : null}
 
       {isOpen ? (
         <Button
@@ -267,9 +272,10 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
           className="min-h-11"
           data-testid="private-lock-now"
           disabled={lock.isPending}
+          aria-label="Khoá lại ngay"
           onClick={() => lock.mutate()}
         >
-          <Lock data-icon="inline-start" /> Khoá lại ngay
+          {compact?<Badge data-testid="private-badge" variant="default"><LockOpen aria-hidden="true"/>còn {Math.max(1,Math.ceil(privateSeconds/60))} phút</Badge>:<><Lock data-icon="inline-start" /> Khoá lại ngay</>}
         </Button>
       ) : (
         <Button
@@ -279,13 +285,14 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
           className="min-h-11"
           data-testid="private-unlock-open"
           disabled={isThrottled}
+          aria-label="Mở khoá"
           onClick={() => setUnlockOpen(true)}
         >
-          <LockOpen data-icon="inline-start" /> Mở khoá
+          {compact?<Badge data-testid="private-badge" variant={isThrottled?'destructive':'outline'}><Lock aria-hidden="true"/>{isThrottled?`Khoá tạm · còn ${countdownLabel(lockedSeconds)}`:'đang khoá'}</Badge>:<><LockOpen data-icon="inline-start" /> Mở khoá</>}
         </Button>
       )}
 
-      <Button
+      {!compact?<Button
         type="button"
         variant="ghost"
         size="icon-lg"
@@ -295,7 +302,7 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
         onClick={() => setChangeOpen(true)}
       >
         <KeyRound />
-      </Button>
+      </Button>:null}
 
       {session.pin_is_bootstrap ? (
         <p className="basis-full text-right text-xs text-bad">
@@ -362,7 +369,11 @@ export function PrivateGate({ session, onVisibilityChange }: Props) {
       </Dialog>
 
       <Dialog open={changeOpen} onOpenChange={setChangeOpen}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={event => {
+          if (!compact) return
+          event.preventDefault()
+          document.querySelector<HTMLButtonElement>('[data-testid="app-menu-open"]')?.focus()
+        }}>
           <DialogHeader>
             <DialogTitle>{session.pin_is_set ? 'Đổi PIN' : 'Đặt PIN'}</DialogTitle>
             <DialogDescription>

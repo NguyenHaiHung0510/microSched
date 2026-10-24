@@ -1,3 +1,5 @@
+Current096source: [responsive shell A / Tracker regions / safe automatic update](096-responsive-ux.md); author freeze and independentQA/CI/release tracked separately.
+
 # agent-tasks/ — hàng đợi việc giao cho agent
 
 Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một agent chạy độc lập.
@@ -5,6 +7,8 @@ Mỗi file `NNN-<slug>.md` là **một spec tự-chứa** để giao cho một a
 > 📁 **`harness-audit/`** — hồ sơ **RETIRED** của các phép đối soát harness trước đây, đánh số riêng `01`/`02` và **không** thuộc hàng đợi 001–012. Giữ receipt lịch sử; không dùng làm policy hay routing hiện hành. Output lịch sử nằm ở `harness-reports/` (thư mục có trong git, **nội dung thì không** — xem README trong đó).
 
 ## Current navigation — re-query trước khi giao việc
+
+Funding: [095 — optional income Entry/report](095-funding-entry.md); source candidate, author evidence qualified; independent QA/CI/release separate.
 
 Policy đang dùng: [harness-policy](../docs/harness-policy.md), entry point [AGENTS](../AGENTS.md).
 Phiên migration 2026-09-06: [042 — bounded authority](042-harness-authority-v1.md).
