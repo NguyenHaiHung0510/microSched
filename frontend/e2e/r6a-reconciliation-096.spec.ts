@@ -77,4 +77,8 @@ test('held private canonical GET cannot reopen editor after UI lock and preserve
   expect(mutations).toBe(0)
   await page.getByTestId('tracker-tab-capture').click()
   await expect(publicCard.getByTestId('tracker-amount-input')).toHaveValue('97531')
+  await expect(page.getByTestId('tracker-grid')).toHaveAttribute('data-update-dirty', 'true')
+  await publicCard.getByRole('button', { name: 'Huỷ', exact: true }).click()
+  await expect(page.getByTestId('tracker-grid')).not.toHaveAttribute('data-update-dirty', 'true')
+  expect(mutations).toBe(0)
 })

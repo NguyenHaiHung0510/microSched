@@ -49,11 +49,15 @@ export function CaptureGrid({
     }
   }
 
+  // A remounted form may capture its restored value as a clean DOM baseline.
+  // Keep the existing PWA owner signal alive even while cards are unmounted.
+  const updateDirty = Object.values(publicDrafts).some(draft => draft.inputOpen && draft.input !== '') ? 'true' : undefined
+
   // Loading and error are separate from "empty": an empty grid means the server
   // answered with zero trackers, not that the request is still pending (M3).
   if (loading) {
     return (
-      <p data-testid="tracker-grid-loading" className="py-6 text-center text-sm text-muted-foreground">
+      <p data-update-dirty={updateDirty} data-testid="tracker-grid-loading" className="py-6 text-center text-sm text-muted-foreground">
         Đang tải tracker…
       </p>
     )
@@ -62,6 +66,7 @@ export function CaptureGrid({
     return (
       <Card
         data-testid="tracker-grid-error"
+        data-update-dirty={updateDirty}
         className="gap-3 p-4 shadow-1 ring-0"
         role="alert"
       >
@@ -74,7 +79,7 @@ export function CaptureGrid({
   }
   if (trackers.length === 0) {
     return (
-      <p className="py-6 text-center text-sm text-muted-foreground">
+      <p data-update-dirty={updateDirty} className="py-6 text-center text-sm text-muted-foreground">
         Chưa có tracker nào. Bấm “Tracker mới” để bắt đầu.
       </p>
     )
@@ -111,6 +116,7 @@ export function CaptureGrid({
     return (
       <div
         data-testid="tracker-grid"
+        data-update-dirty={updateDirty}
         className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-3"
       >
         {trackers.map((tracker) => (
@@ -129,7 +135,7 @@ export function CaptureGrid({
   }
 
   return (
-    <div data-testid="tracker-grid" className="space-y-4">
+    <div data-testid="tracker-grid" data-update-dirty={updateDirty} className="space-y-4">
       <div className="flex items-center justify-between gap-2 px-0.5">
         <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
           Lưới ghi nhanh
