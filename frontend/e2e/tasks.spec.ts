@@ -313,7 +313,7 @@ test('last card tooltip is portalled and fully inside the desktop viewport', asy
   await page.screenshot({ path: 'output/playwright/tooltip-last-card.png', fullPage: true })
 })
 
-test('019a0e2e-0000-7000-8001-000000000012 tooltip shows every checklist item with read-only completion status', async ({ page }, testInfo) => {
+test('019a0e2e-0000-7000-8001-000000000012 compact tooltip retains checklist summary and full detail shows every completion status', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Radix tooltip is a desktop shortcut')
   await openTasksScreen(page)
   const title = page.locator('[data-task-id="019a0e2e-0000-7000-8001-000000000012"]').getByTestId('task-title')
@@ -324,13 +324,25 @@ test('019a0e2e-0000-7000-8001-000000000012 tooltip shows every checklist item wi
   const expectedItems = fixtureTasks.find(task => task.id === '019a0e2e-0000-7000-8001-000000000012')!.items
   await expect(tooltip.getByText(`Checklist · ${expectedItems.filter(item => item.is_completed).length}/4 đã xong`)).toBeVisible()
   const items = tooltip.getByRole('listitem')
-  await expect(items).toHaveCount(expectedItems.length)
-  for (const [index, item] of expectedItems.entries()) {
+  await expect(items).toHaveCount(3)
+  await expect(tooltip.getByText('Còn 1 mục khác', { exact: true })).toBeVisible()
+  for (const [index, item] of expectedItems.slice(0, 3).entries()) {
     await expect(items.nth(index)).toContainText(item.content)
     await expect(items.nth(index)).toContainText(item.is_completed ? 'Đã xong:' : 'Chưa xong:')
   }
   await expect(tooltip.locator('button, input, [role="button"], [role="checkbox"]')).toHaveCount(0)
   await page.screenshot({ path: 'output/playwright/tooltip-task-012-desktop.png', fullPage: true })
+  await title.click()
+  const detail = page.getByTestId('task-detail-dialog')
+  await expect(detail).toBeVisible()
+  await expect(detail.getByText(`${expectedItems.filter(item => item.is_completed).length}/4 mục đã xong`, { exact: true })).toBeVisible()
+  await expect(detail.getByRole('checkbox')).toHaveCount(4)
+  for (const item of expectedItems) {
+    await expect(detail.getByText(item.content, { exact: true })).toBeVisible()
+    const status = detail.getByRole('checkbox', { name: `Đánh dấu ${item.content} hoàn thành`, exact: true })
+    if (item.is_completed) await expect(status).toBeChecked()
+    else await expect(status).not.toBeChecked()
+  }
 })
 
 test('add-details button has symmetric zero horizontal padding', async ({ page }, testInfo) => {

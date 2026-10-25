@@ -1,3 +1,8 @@
+# Task097 shared content boundary
+
+[Content-density recipe](../../verify-microsched/features/content-density.md) uses own0974180/API8008. Mimi body/provider unchanged; no provider calls or independent Mimi runtime acceptance. Historical counts below retained.
+
+---
 # Task096 shared-entrypoint delta
 
 Global five-domain navigation/oneappmenu, PIN entry and safePWAupdate use current096 freeze/ports and sibling [responsive shell](../../verify-microsched/features/responsive-shell.md)/[PWA recipe](../../verify-microsched/features/pwa-freshness.md). No Mimi provider/actual-native runtime acceptance. Preserve historicalOwner192denominators below.

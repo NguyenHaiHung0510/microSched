@@ -1,0 +1,7 @@
+# 097 — compact Notes / Task / reminder History / calendar toolbar
+
+Owner334 wholebatch + PM R6bGO, soleConfucius nativeSol/xhigh. Base exactR6a f3f5549 via normalFF; R6a is unaccepted until parentQA/CI/release. R5E7/R4 parentaccepted/productioncloseded6 schema20, no new backend/schema/protocol/PWA/provider changes. Own namespace PG55498/API8008/preview4180; no frozen095/096 effects.
+
+Selected density/history/calendar images and corrections control scope. Notes two-column desktop/one mobile, pinned-first/sort/local find/bounded body+checklist+full expansion/detail paths, quickEnterfocus/CtrlEnterIME/reorder/reflections/parentundo and explicit persistedchild delete confirmation. Task compact rows, existing B full tooltip/touch detail/day navigation/dateprecision/pin/tick/undo. History compact basic/advanced/help/device controls and explicit selection separate from saved handled; same exact bulk API/count/cutoff/lock/privacy contract. Month+Today grouped apart from mode/Mini; calendarbody/Mimi KEEP.
+
+Author focused existing/new E2E, guard intendedFAIL→restorePASS, real ownpublic denseAPI/UI journeys and K18typedDTO/SQLID-only oracles are required; inherit unaffected R2–R6a proof, no fullrarestate/provider matrix. M1 both maps plus ownr6b_browser updated/validated. Private local handback/freeze/resources supplies exact head/build/served/config/PID/fixtures/exits and honest failures. IndependentQA/device/provider/fullCI/release remain parentowned; normaldraftPR/fullhandoff thenHOLD. No selfmerge/deploy/productionbackupDDL/agents/CRON.

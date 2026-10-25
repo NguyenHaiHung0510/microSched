@@ -77,6 +77,9 @@ function noteLabel(note: Note): string {
 const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const queryClient = useQueryClient()
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [deletingItem, setDeletingItem] = useState<NoteItem | null>(null)
+  const [deletingReflection,setDeletingReflection]=useState<number|null>(null)
   const [editing, setEditing] = useState(false)
   const [newItem, setNewItem] = useState('')
   const [reflectionOpen, setReflectionOpen] = useState(false)
@@ -175,7 +178,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const removeItem = useMutation({
     mutationFn: (item: NoteItem) =>
       apiRequest<void>(`/api/notes/${note.id}/items/${item.id}`, { method: 'DELETE' }),
-    onSuccess: refresh,
+    onSuccess: () => { setDeletingItem(null); refresh() },
   })
 
   const completedItems = note.items.filter((item) => item.is_completed).length
@@ -277,7 +280,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               ) : null}
               <Button
                 data-testid="note-title"
-                className="h-auto min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent"
+                className="h-auto min-h-11 min-w-0 shrink justify-start whitespace-normal [overflow-wrap:anywhere] p-0 text-left text-base font-bold tracking-tight hover:bg-transparent"
                 variant="ghost"
                 aria-label={`Mở chi tiết ${label}`}
                 onClick={openDetails}
@@ -291,14 +294,14 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
             </div>
 
             {parsedBody.baseText ? (
-              <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground w-full">
+              <p data-testid="note-body-preview" className={cn("whitespace-pre-wrap [overflow-wrap:anywhere] text-sm text-muted-foreground w-full",!expanded&&"line-clamp-3")}>
                 {parsedBody.baseText}
               </p>
             ) : null}
 
             {parsedBody.reflections.length > 0 ? (
               <div className="space-y-2 pt-1 w-full">
-                {parsedBody.reflections.map((refl, idx) => (
+                {(expanded ? parsedBody.reflections : parsedBody.reflections.slice(0,1)).map((refl, idx) => (
                  <div
                    key={refl.id}
                    data-testid="note-reflection-box"
@@ -330,15 +333,14 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                           aria-label="Xoá lời nhắn"
                           onClick={(e) => {
                             e.stopPropagation()
-                            const newBody = deleteFutureReflection(note.body_md, idx)
-                            update.mutate({ body_md: newBody })
+                            setDeletingReflection(idx)
                           }}
                         >
                           <Trash2 className="size-3" />
                         </Button>
                       </div>
                     </div>
-                    <p className="whitespace-pre-wrap break-words text-xs text-foreground">
+                    <p className={cn("whitespace-pre-wrap [overflow-wrap:anywhere] text-xs text-foreground",!expanded&&"line-clamp-2")}>
                       {refl.text}
                     </p>
                   </div>
@@ -412,7 +414,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         {note.items.length > 0 ? (
           <NoteChecklist
             items={note.items}
-            preview
+            preview={!expanded}
             pending={changeItem.isPending}
             failed={changeItem.isError}
             onToggle={(item, checked) =>
@@ -421,6 +423,10 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           />
         ) : null}
 
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-2">
+          <Button data-testid="note-expand" variant="ghost" className="min-h-11" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}>{expanded ? 'Thu gọn' : 'Xem đầy đủ'}</Button>
+          <Button data-testid="note-open-full" variant="link" className="min-h-11" aria-label={`Mở chi tiết ${label}`} onClick={openDetails}>Chi tiết & mục nhỏ</Button>
+        </div>
         {mutationError ? <p className="text-sm text-bad">{errorMessage(mutationError)}</p> : null}
       </Card>
 
@@ -517,8 +523,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               className="size-8 min-h-8 min-w-8 p-0 text-bad hover:bg-reflection-foreground/10 hover:text-bad"
                               aria-label="Xoá lời nhắn"
                               onClick={() => {
-                                const newBody = deleteFutureReflection(note.body_md, idx)
-                                update.mutate({ body_md: newBody })
+                                setDeletingReflection(idx)
                               }}
                             >
                               <Trash2 className="size-3" />
@@ -628,7 +633,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8 text-bad hover:text-bad"
                               aria-label={`Xoá mục ${item.content}`}
                               disabled={removeItem.isPending}
-                              onClick={() => removeItem.mutate(item)}
+                              onClick={() => setDeletingItem(item)}
                             >
                               <Trash2 />
                             </Button>
@@ -816,6 +821,8 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           </form>
         </DialogContent>
       </Dialog>
+      <Dialog open={deletingReflection!==null} onOpenChange={open=>{if(!open&&!update.isPending)setDeletingReflection(null)}}><DialogContent data-testid="note-reflection-delete-confirm"><DialogHeader><DialogTitle>Xoá lời nhắn này?</DialogTitle><DialogDescription>Lời nhắn sẽ bị xoá khỏi ghi chú và không thể hoàn tác.</DialogDescription></DialogHeader>{update.isError?<p role="alert" className="text-sm text-bad">{errorMessage(update.error)}</p>:null}<div className="flex justify-end gap-2"><Button size="lg" variant="outline" disabled={update.isPending} onClick={()=>setDeletingReflection(null)}>Huỷ</Button><Button size="lg" variant="destructive" disabled={update.isPending} onClick={()=>{if(deletingReflection!==null)update.mutate({body_md:deleteFutureReflection(note.body_md,deletingReflection)},{onSuccess:()=>setDeletingReflection(null)})}}>{update.isPending?'Đang xoá…':'Xoá lời nhắn'}</Button></div></DialogContent></Dialog>
+      <Dialog open={!!deletingItem} onOpenChange={open=>{if(!open&&!removeItem.isPending)setDeletingItem(null)}}><DialogContent data-testid="note-child-delete-confirm"><DialogHeader><DialogTitle>Xoá mục nhỏ?</DialogTitle><DialogDescription>Mục này sẽ bị xoá khỏi ghi chú và không thể hoàn tác.</DialogDescription></DialogHeader><p className="break-words text-sm">{deletingItem?.content}</p>{removeItem.isError?<p role="alert" className="text-sm text-bad">{errorMessage(removeItem.error)}</p>:null}<div className="flex justify-end gap-2"><Button size="lg" variant="outline" disabled={removeItem.isPending} onClick={()=>setDeletingItem(null)}>Huỷ</Button><Button data-testid="note-child-delete-commit" size="lg" variant="destructive" disabled={removeItem.isPending} onClick={()=>{if(deletingItem)removeItem.mutate(deletingItem)}}>{removeItem.isPending?'Đang xoá…':'Xoá mục'}</Button></div></DialogContent></Dialog>
      </>
    )
  })
@@ -824,6 +831,7 @@ export function NotesScreen() {
   const queryClient = useQueryClient()
   const quickInputRef = useRef<HTMLInputElement>(null)
   const [quickTitle, setQuickTitle] = useState('')
+  const [find, setFind] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [sortMode, setSortMode] = useState<NoteSortMode>(() => {
     try {
@@ -863,6 +871,11 @@ export function NotesScreen() {
     () => sortNotes(notes.data ?? [], sortMode),
     [notes.data, sortMode],
   )
+
+  const visibleNotes = useMemo(() => {
+    const query=find.trim().toLocaleLowerCase('vi-VN')
+    return query ? sortedNotes.filter(note=>[note.title,note.body_md,...note.items.map(item=>item.content)].some(text=>text?.toLocaleLowerCase('vi-VN').includes(query))) : sortedNotes
+  }, [sortedNotes,find])
 
   const create = useMutation({
     mutationFn: ({ payload }: { payload: NotePayload; source: CreateSource }) =>
@@ -1016,9 +1029,11 @@ export function NotesScreen() {
         ) : null}
 
         {!notes.isError ? (
-          <div data-testid="note-list" className="space-y-3">
-            {sortedNotes.map((note) => <NoteCard note={note} key={note.id} />)}
-          </div>
+          <><Input data-testid="note-find" type="search" name="note-find" aria-label="Tìm trong ghi chú đã tải" placeholder="Tìm ghi chú…" className="min-h-11 bg-card" value={find} onChange={event=>setFind(event.target.value)}/>
+          {find.trim()&&visibleNotes.length===0?<p role="status" className="text-sm text-muted-foreground">Không có ghi chú phù hợp.</p>:null}
+          <div data-testid="note-list" className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
+            {visibleNotes.map((note) => <NoteCard note={note} key={note.id} />)}
+          </div></>
         ) : null}
       </section>
     </div>

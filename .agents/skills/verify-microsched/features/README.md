@@ -1,3 +1,8 @@
+# Current Task097 — compact content
+
+Use [content density](content-density.md), own097 freeze/resource/oracle exports and r6b_browser.mjs. R6a exactf3 is an explicit unaccepted dependency; R5E7/R4 parentaccepted and productioncloseded6. No provider/physicaldevice claim or denominator reset.
+
+---
 # Current Task096 — shell A / Tracker regions / safe automatic update
 
 Use [responsive shell](responsive-shell.md), [PWA lifecycle](pwa-freshness.md), current096 handback/freeze and `r6_browser.mjs` with own4179/API8006. No current production/independent acceptance follows from author evidence; unacceptedR5dependency and Owner334gates remain. Historical map denominators below are unchanged.

@@ -4,7 +4,7 @@ description: "Verify the currently granted synthetic microSched candidate with i
 ---
 # microSched verification
 
-Read the current grant and frozen handback before choosing a recipe. Task096 uses [responsive shell](features/responsive-shell.md) and [safe automatic update](features/pwa-freshness.md); its owned096 ports/helper are separate from frozen095/091. Calendar093/094 uses the
+Read the current grant and frozen handback before choosing a recipe. Task097 uses [content density](features/content-density.md) and scripts/r6b_browser.mjs at4180/API8008; frozen096 stays separate. Task096 uses [responsive shell](features/responsive-shell.md) and [safe automatic update](features/pwa-freshness.md); its owned096 ports/helper are separate from frozen095/091. Calendar093/094 uses the
 [calendar recipe](features/calendar.md), its own exact API/proxy/PG ports and `calendar_move.mjs`
 arguments; the091 launcher below does not recover that cell. Author evidence, independent QA and
 historical map counts keep their separate status. This skill grants no lifecycle or product effects.

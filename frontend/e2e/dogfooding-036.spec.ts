@@ -705,9 +705,23 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await expect(firstItem.getByTestId('task-item-checkbox')).not.toBeChecked()
     await expect.poll(async()=> (await collectQueue(page)).rows.length,{timeout:15000}).toBe(0)
     expect(canonical().items.find(i=>i.id===itemId)?.is_completed).toBe(false)
+    const deletesBefore = attempts.filter(a => a.path.endsWith('/' + itemId) && a.body === '').length
     await firstItem.getByTestId('task-item-delete').click()
+    const deleteConfirm = page.getByTestId('task-child-delete-confirm')
+    await expect(deleteConfirm).toBeVisible()
+    await expect(deleteConfirm).toContainText('Nội dung giữ qua500')
+    await deleteConfirm.getByRole('button', { name: 'Huỷ', exact: true }).click()
+    await expect(deleteConfirm).toBeHidden()
+    expect(attempts.filter(a => a.path.endsWith('/' + itemId) && a.body === '')).toHaveLength(deletesBefore)
+    expect(canonical().items.some(i => i.id === itemId)).toBe(true)
+    await firstItem.getByTestId('task-item-delete').click()
+    await deleteConfirm.getByTestId('task-child-delete-commit').click()
+    await expect(deleteConfirm).toBeHidden()
     await expect.poll(async()=> (await collectQueue(page)).rows.length,{timeout:15000}).toBe(0)
     expect(canonical().items.some(i=>i.id===itemId)).toBe(false)
+    const deletes = attempts.filter(a => a.path.endsWith('/' + itemId) && a.body === '')
+    expect(deletes).toHaveLength(deletesBefore + 2)
+    expect(deletes.at(-1)).toEqual(deletes.at(-2))
     for(const key of ['content','is_completed','DELETE','parent'])expect(faults.has(key)).toBe(false)
     const edits=attempts.filter(a=>a.path.endsWith('/'+itemId)&&a.body.includes('Nội dung giữ qua500'))
     expect(edits).toHaveLength(2);expect(edits[0]).toEqual(edits[1])
@@ -721,6 +735,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
       existing13.items = [{ id: 'item-cal-init-1', content: 'Checklist sẵn có', is_completed: false, position: 0 }]
     }
 
+   const childDeletes: string[] = []
    let taskItems: Array<{ id: string; content: string; is_completed: boolean; position: number }> = [
      { id: 'item-cal-init-1', content: 'Checklist sẵn có', is_completed: false, position: 0 },
    ]
@@ -771,6 +786,7 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
        return
      }
      if (method === 'DELETE') {
+       childDeletes.push(itemId)
        taskItems = taskItems.filter((i) => i.id !== itemId)
         if (existing13) existing13.items = [...taskItems]
        await route.fulfill({ status: 204 })
@@ -824,9 +840,21 @@ test.describe('Task 036 Dogfooding UI/UX verification', () => {
     await expect(subtaskCheckbox).toBeChecked()
     await expect.poll(() => taskItems.find((i) => i.content === 'Subtask từ lịch đã sửa')?.is_completed).toBe(true)
 
-    // Delete subtask in calendar (delete the newly added subtask)
+    // Cancel must keep the persisted child; only confirmation admits the delete.
+    const deletedItemId = taskItems.find(i => i.content === 'Subtask từ lịch đã sửa')!.id
     await subtaskItem.getByTestId('task-item-delete').click()
+    const deleteConfirm = page.getByTestId('task-child-delete-confirm')
+    await expect(deleteConfirm).toBeVisible()
+    await expect(deleteConfirm).toContainText('Subtask từ lịch đã sửa')
+    await deleteConfirm.getByRole('button', { name: 'Huỷ', exact: true }).click()
+    await expect(deleteConfirm).toBeHidden()
+    expect(childDeletes).toHaveLength(0)
+    expect(taskItems.some(i => i.id === deletedItemId)).toBe(true)
+    await subtaskItem.getByTestId('task-item-delete').click()
+    await deleteConfirm.getByTestId('task-child-delete-commit').click()
+    await expect(deleteConfirm).toBeHidden()
     await expect(taskEditDialog.getByText('Subtask từ lịch đã sửa')).toHaveCount(0)
+    await expect.poll(() => childDeletes).toEqual([deletedItemId])
     await expect.poll(() => taskItems.some((i) => i.content === 'Subtask từ lịch đã sửa')).toBe(false)
 
     // Close task edit dialog
