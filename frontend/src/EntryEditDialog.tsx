@@ -65,7 +65,7 @@ export function EntryEditDialog({
     event.preventDefault()
     if (!entry || !canSubmit) return
     const payload: EntryEditPayload = {}
-    if (occurredAt) payload.occurred_at = vietnamInputToIso(occurredAt)
+    if (occurredAt && occurredAt !== toVietnamDateTimeInput(entry.occurred_at)) payload.occurred_at = vietnamInputToIso(occurredAt)
     if (isMoney) {
       payload.amount = amount ? Number(digitsOnly(amount)) : null
       payload.list_amount = listAmount ? Number(digitsOnly(listAmount)) : null
@@ -78,14 +78,14 @@ export function EntryEditDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-      <DialogContent data-testid="entry-edit-dialog">
+      <DialogContent data-testid="entry-edit-dialog" className="max-h-[90dvh] grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Sửa bản ghi</DialogTitle>
           <DialogDescription>
             {tracker ? `Bản ghi của “${tracker.name}”` : 'Sửa thời gian, số liệu và ghi chú.'}
           </DialogDescription>
         </DialogHeader>
-        <form data-testid="entry-edit" className="space-y-4" onSubmit={submit}>
+        <form data-testid="entry-edit" className="min-w-0 max-w-full space-y-4" onSubmit={submit}>
           {tracker?.direction==='out'&&entry.amount!==null?<FundingSelector value={funding} onChange={setFunding} current={entry.funding??{status:'unavailable'}} disabled={pending}/>:null}
           <label className="block space-y-1.5 text-sm font-semibold">
             <span>Thời điểm</span>
@@ -132,7 +132,7 @@ export function EntryEditDialog({
           <label className="block space-y-1.5 text-sm font-semibold">
             <span>Ghi chú</span>
             <Textarea
-              className="min-h-24 bg-card font-normal"
+              className="min-h-24 min-w-0 max-w-full resize-y bg-card font-normal [field-sizing:fixed]"
               value={note}
               onChange={(event) => setNote(event.target.value)}
             />

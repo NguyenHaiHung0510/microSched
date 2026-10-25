@@ -189,6 +189,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [backdateFunding,setBackdateFunding]=useState('none')
   const [archiveFor, setArchiveFor] = useState<Tracker | null>(null)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
+  const openingEntry = useRef<AbortController | null>(null)
   const [lockedIds, setLockedIds] = useState<ReadonlySet<string>>(new Set())
   const [capturingIds, setCapturingIds] = useState<ReadonlySet<string>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set(groups.map((g) => g.id)))
@@ -233,7 +234,13 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
  useEffect(() => {
     const timers = unlockTimers.current
+    const cancelEntryOpen = () => openingEntry.current?.abort()
+    window.addEventListener('microsched:private-lock', cancelEntryOpen)
+    window.addEventListener('microsched:visibility', cancelEntryOpen)
     return () => {
+      cancelEntryOpen()
+      window.removeEventListener('microsched:private-lock', cancelEntryOpen)
+      window.removeEventListener('microsched:visibility', cancelEntryOpen)
       for (const timer of timers.values()) window.clearTimeout(timer)
       timers.clear()
     }
@@ -336,6 +343,34 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         )
     } else {
       saveTracker()
+    }
+  }
+
+  async function openEntry(entry: Entry) {
+    // Keep cached offline editing on the existing V1 admission path.
+    if (!navigator.onLine) {
+      setEditingEntry(entry)
+      return
+    }
+    if (openingEntry.current) return
+    const controller = new AbortController()
+    openingEntry.current = controller
+    const openingToast = toast.loading('Đang mở bản ghi…')
+    try {
+      // Refresh the visible row after tracker metadata is known. A journal read
+      // can precede that metadata and therefore cannot seed a public baseline.
+      const current = await apiRequest<Entry>(`/api/tracker/entries/${entry.id}?include_funding=true`, { signal: controller.signal })
+      if (controller.signal.aborted || openingEntry.current !== controller) {
+        toast.dismiss(openingToast)
+        return
+      }
+      setEditingEntry(current)
+      toast.dismiss(openingToast)
+    } catch (error) {
+      if (controller.signal.aborted) toast.dismiss(openingToast)
+      else toast.error(errorMessage(error), { id: openingToast })
+    } finally {
+      if (openingEntry.current === controller) openingEntry.current = null
     }
   }
 
@@ -569,7 +604,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
       </section>
       <section id="tracker-region-journal" data-testid="tracker-region-journal" role="tabpanel" aria-labelledby="tracker-tab-journal" hidden={region!=='journal'} className="space-y-5">
-      <TrackerRecords trackers={trackers} groups={groups} selection={records} onChange={setRecords} onEdit={setEditingEntry} onRemove={removeEntry} showListPrice={showListPrice} privateUnlocked={privateUnlocked} />
+      <TrackerRecords trackers={trackers} groups={groups} selection={records} onChange={setRecords} onEdit={openEntry} onRemove={removeEntry} showListPrice={showListPrice} privateUnlocked={privateUnlocked} />
 
       </section>
       <section id="tracker-region-report" data-testid="tracker-region-report" role="tabpanel" aria-labelledby="tracker-tab-report" hidden={region!=='report'} className="space-y-5">
