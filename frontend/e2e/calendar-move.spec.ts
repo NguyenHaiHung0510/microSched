@@ -27,14 +27,27 @@ async function calendar(page: Page) {
 }
 const cell = (page: Page, value: string) => page.locator(`[data-testid="calendar-day-cell"][data-day="${value}"]`)
 
-test('tap and keyboard move datetime Task and undo the full schedule', async ({ page, taskApi }) => {
+test('tap and keyboard move datetime Task and undo the full schedule', async ({ page, taskApi }, testInfo) => {
   const task = taskApi.tasks.find(item => !item.is_private)!
-  taskApi.tasks = [task]
+  const overdue = taskApi.tasks.find(item => !item.is_private && item.id !== task.id && item.status === 'open')!
+  Object.assign(overdue, { title: 'Việc quá hạn synthetic', due_precision: 'date', due_on: addDays(day, -1), due_at: null })
+  taskApi.tasks = [task, overdue]
   Object.assign(task, { title: 'Việc có giờ synthetic', due_precision: 'datetime', due_on: null, due_at: day + 'T23:30:45.123+07:00' })
   const original = task.due_at!
   await calendar(page)
   await cell(page, day).click()
-  await page.getByTestId('calendar-task-move').click()
+  const move = page.getByTestId('calendar-task-move')
+  await expect(move).toHaveAccessibleName('Chuyển ngày Việc có giờ synthetic')
+  await expect(move).toHaveText('')
+  await expect(move.locator('svg.lucide-calendar')).toHaveCount(1)
+  const target = await move.boundingBox()
+  expect(target!.width).toBeGreaterThanOrEqual(44)
+  expect(target!.height).toBeGreaterThanOrEqual(44)
+  await move.focus()
+  await expect(move).toBeFocused()
+  await expect(page.getByTestId('calendar-day-overdue-task-reschedule')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('day-detail-due-overdue-icon.png') })
+  await move.click()
   await expect(page.getByRole('dialog')).toHaveCount(1)
   const dialog = page.getByTestId('calendar-move-dialog')
   await dialog.getByLabel('Ngày mới').fill(addDays(day, 3))

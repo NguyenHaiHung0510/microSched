@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, Folder, Sparkles } from 'lucide-react'
 
-import { TrackerCard } from '@/TrackerCard'
+import { TrackerCard, type TrackerCaptureDraft } from '@/TrackerCard'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -35,6 +35,19 @@ export function CaptureGrid({
 }: CaptureGridProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(new Set())
   const [unassignedCollapsed, setUnassignedCollapsed] = useState(false)
+  // Only public numeric drafts survive a transient query/error or group-layout
+  // remount. Private card drafts and funding stay local to their existing guard.
+  const [publicDrafts, setPublicDrafts] = useState<Record<string, TrackerCaptureDraft>>({})
+  function publicDraftProps(tracker: Tracker) {
+    if (tracker.is_private !== false) return {}
+    return {
+      publicDraft: publicDrafts[tracker.id] ?? { inputOpen: false, input: '' },
+      onPublicDraftChange: (patch: Partial<TrackerCaptureDraft>) => setPublicDrafts(previous => ({
+        ...previous,
+        [tracker.id]: { ...(previous[tracker.id] ?? { inputOpen: false, input: '' }), ...patch },
+      })),
+    }
+  }
 
   // Loading and error are separate from "empty": an empty grid means the server
   // answered with zero trackers, not that the request is still pending (M3).
@@ -104,6 +117,7 @@ export function CaptureGrid({
           <TrackerCard
             key={tracker.id}
             tracker={tracker}
+            {...publicDraftProps(tracker)}
             locked={locked.has(tracker.id)}
             pending={pendingTrackerId === tracker.id}
             onCapture={(input,funding) => onCapture(tracker, input,funding)}
@@ -164,6 +178,7 @@ export function CaptureGrid({
                   <TrackerCard
                     key={tracker.id}
                     tracker={tracker}
+                    {...publicDraftProps(tracker)}
                     locked={locked.has(tracker.id)}
                     pending={pendingTrackerId === tracker.id}
                     onCapture={(input,funding) => onCapture(tracker, input,funding)}
@@ -208,6 +223,7 @@ export function CaptureGrid({
                <TrackerCard
                  key={tracker.id}
                  tracker={tracker}
+                 {...publicDraftProps(tracker)}
                  locked={locked.has(tracker.id)}
                  pending={pendingTrackerId === tracker.id}
                  onCapture={(input,funding) => onCapture(tracker, input,funding)}

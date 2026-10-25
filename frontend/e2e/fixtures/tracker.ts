@@ -267,6 +267,11 @@ export const test = base.extend<{ trackerApi: TrackerApiState }>({
         }
 
         const entryMatch = path.match(/^\/api\/tracker\/entries\/([^/]+)$/)
+        if (entryMatch && method === 'GET') {
+          const found = state.entries.find(item => item.id === entryMatch[1])
+          await route.fulfill(found ? jsonResponse(found) : { status: 404, json: { detail: 'Không tìm thấy bản ghi.' } })
+          return
+        }
         if (entryMatch && method === 'DELETE') {
           state.entries = state.entries.filter((item) => item.id !== entryMatch[1])
           await route.fulfill({ status: 204 })

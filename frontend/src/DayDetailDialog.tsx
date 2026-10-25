@@ -781,13 +781,15 @@ export function DayDetailDialog({
                       </Button>
                       {onRequestMove ? <Button
                         type="button"
-                        variant="outline"
-                        className="min-h-11 shrink-0 px-2"
+                        variant="ghost"
+                        size="icon"
+                        className="min-h-11 min-w-11 shrink-0 text-muted-foreground hover:text-foreground"
                         data-testid="calendar-task-move"
                         aria-label={`Chuyển ngày ${task.title}`}
+                        title="Chuyển ngày"
                         onClick={() => onRequestMove({ kind: 'task', item: task, grabbedDay: day })}
                       >
-                        <Calendar aria-hidden="true" className="size-4" />Chuyển ngày
+                        <Calendar aria-hidden="true" className="size-4" />
                       </Button> : null}
                       <Button
                         data-testid="calendar-day-task-delete"
