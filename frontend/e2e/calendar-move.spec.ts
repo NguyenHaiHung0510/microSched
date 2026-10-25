@@ -30,14 +30,43 @@ const cell = (page: Page, value: string) => page.locator(`[data-testid="calendar
 test('tap and keyboard move datetime Task and undo the full schedule', async ({ page, taskApi }, testInfo) => {
   const task = taskApi.tasks.find(item => !item.is_private)!
   const overdue = taskApi.tasks.find(item => !item.is_private && item.id !== task.id && item.status === 'open')!
-  Object.assign(overdue, { title: 'Việc quá hạn synthetic', due_precision: 'date', due_on: addDays(day, -1), due_at: null })
-  taskApi.tasks = [task, overdue]
-  Object.assign(task, { title: 'Việc có giờ synthetic', due_precision: 'datetime', due_on: null, due_at: day + 'T23:30:45.123+07:00' })
+  const peer = taskApi.tasks.find(item => !item.is_private && item.id !== task.id && item.id !== overdue.id && item.status === 'open')!
+  const longTitle = 'Việc có giờ synthetic ' + 'LongUnbrokenTask0123456789'.repeat(6)
+  Object.assign(overdue, { title: 'Việc quá hạn synthetic ' + 'LongOverdueTask0123456789'.repeat(5), due_precision: 'date', due_on: addDays(day, -1), due_at: null })
+  Object.assign(peer, { title: 'Việc ngắn synthetic', due_precision: 'date', due_on: day, due_at: null })
+  taskApi.tasks = [task, peer, overdue]
+  Object.assign(task, { title: longTitle, due_precision: 'datetime', due_on: null, due_at: day + 'T23:30:45.123+07:00' })
   const original = task.due_at!
   await calendar(page)
   await cell(page, day).click()
-  const move = page.getByTestId('calendar-task-move')
-  await expect(move).toHaveAccessibleName('Chuyển ngày Việc có giờ synthetic')
+  const dayDetail = page.getByTestId('calendar-day-dialog')
+  await expect(dayDetail.getByTestId('calendar-day-task')).toHaveCount(2)
+  await expect(dayDetail.getByTestId('calendar-day-overdue-task')).toHaveCount(1)
+  // Measure before focus/click/scrollIntoView can conceal horizontal overflow.
+  const geometry = await dayDetail.evaluate(dialog => {
+    const d = dialog.getBoundingClientRect(), style = getComputedStyle(dialog)
+    const left = d.left + dialog.clientLeft + Number.parseFloat(style.paddingLeft)
+    const right = d.left + dialog.clientLeft + dialog.clientWidth - Number.parseFloat(style.paddingRight)
+    const rows = [...dialog.querySelectorAll('[data-testid="calendar-day-task"], [data-testid="calendar-day-overdue-task"]')]
+    return { viewport: innerWidth, dialog: { left: d.left, right: d.right, scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth, scrollLeft: dialog.scrollLeft },
+      nodes: rows.flatMap(row => [row, ...row.querySelectorAll('button')]).map(node => {
+        const box = node.getBoundingClientRect()
+        return { testId: node.getAttribute('data-testid'), left: box.left, right: box.right,
+          fits: box.left >= Math.max(0, left) - 1 && box.right <= Math.min(innerWidth, right) + 1 }
+      }) }
+  })
+  console.info('DAYDETAIL_INITIAL_GEOMETRY', JSON.stringify(geometry))
+  await testInfo.attach('day-detail-initial-geometry', { body: JSON.stringify(geometry, null, 2), contentType: 'application/json' })
+  await page.screenshot({ path: testInfo.outputPath('day-detail-before-focus.png') })
+  expect(geometry.dialog.left).toBeGreaterThanOrEqual(0)
+  expect(geometry.dialog.right).toBeLessThanOrEqual(geometry.viewport)
+  expect(geometry.dialog.scrollLeft).toBe(0)
+  expect(geometry.dialog.scrollWidth).toBeLessThanOrEqual(geometry.dialog.clientWidth + 1)
+  expect(geometry.nodes.every(node => node.fits)).toBe(true)
+  await expect(dayDetail.getByTestId('calendar-day-task-edit-trigger').filter({ hasText: longTitle })).toHaveText(longTitle)
+  await expect(dayDetail.getByTestId('calendar-day-overdue-task-edit-trigger')).toContainText(overdue.title)
+  const move = dayDetail.locator('[data-testid="calendar-day-task"][data-task-id="' + task.id + '"]').getByTestId('calendar-task-move')
+  await expect(move).toHaveAccessibleName('Chuyển ngày ' + longTitle)
   await expect(move).toHaveText('')
   await expect(move.locator('svg.lucide-calendar')).toHaveCount(1)
   const target = await move.boundingBox()
@@ -50,6 +79,14 @@ test('tap and keyboard move datetime Task and undo the full schedule', async ({ 
   await move.click()
   await expect(page.getByRole('dialog')).toHaveCount(1)
   const dialog = page.getByTestId('calendar-move-dialog')
+  const patchesBeforeCancel = taskApi.count('PATCH', '/api/tasks/' + task.id)
+  await dialog.getByRole('button', { name: 'Huỷ', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(taskApi.count('PATCH', '/api/tasks/' + task.id)).toBe(patchesBeforeCancel)
+  expect(task.due_at).toBe(original)
+  await cell(page, day).click()
+  await move.click()
+  await expect(dialog).toBeVisible()
   await dialog.getByLabel('Ngày mới').fill(addDays(day, 3))
   await dialog.getByLabel('Ngày mới').press('Enter')
   await expect(dialog).toBeHidden()
