@@ -4,21 +4,15 @@ import { PwaUpdates } from '@/PwaUpdates'
 import { sessionRequest, logoutBoundary } from '@/outbox/core'
 import { ReminderConfirmScreen } from '@/ReminderConfirmScreen'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import {
-  Activity,
-  Bot,
-  CalendarDays,
-  ListTodo,
-  BookOpen,
-  LogOut,
-  NotebookPen,
-  MoreVertical,
-  RefreshCw,
-} from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DomainNavigation, ApplicationMenu } from '@/AppNavigation'
+import type { AppScreen } from '@/app-navigation'
+import { hasUnsavedFormChanges } from '@/draft-baselines'
 import { Card } from '@/components/ui/card'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -36,7 +30,7 @@ import { LiveStatus } from '@/LiveStatus'
 import HomePage from '@/HomePage'
 import { ReminderCenter } from '@/ReminderCenter'
 import { MimiControlCenter } from '@/MimiControlCenter'
-import { MimiDock, MimiDockButton } from '@/MimiDock'
+import { MimiDock } from '@/MimiDock'
 import { isHomepage, type PublicAuthState } from '@/public-navigation'
 import { resolveMimiAttention } from '@/mimi-api'
 import { selectMimiConversation } from '@/mimi-selection'
@@ -87,19 +81,17 @@ function SignedIn({ session }: { session: SessionResponse }) {
   useEffect(() => { if (attentionLink.data) selectMimiConversation(attentionLink.data.conversation_id) }, [attentionLink.data])
   const currentTab = isMimiRoute ? 'mimi' : isTrackersRoute ? 'tracker' : activeScreen
 
-  const goToDefaultScreen = useCallback(() => {
-    if (location !== '/') {
-      navigate('/')
-    }
-    setActiveScreen('tasks')
-  }, [location])
-
-  function selectTab(tab: 'tasks' | 'notes' | 'calendar' | 'tracker' | 'mimi') {
-    if (isTrackersRoute || isMimiRoute) {
-      navigate('/')
-    }
-    setActiveScreen(tab)
+  const [pinManageOpen,setPinManageOpen]=useState(false)
+  const [pendingNavigation,setPendingNavigation]=useState<(()=>void)|null>(null)
+  function leave(action:()=>void) {
+    if(hasUnsavedFormChanges()||outboxState.admitting>0){setPendingNavigation(()=>action);return}
+    action()
   }
+  function selectTab(tab:AppScreen) {
+    if(tab===currentTab&&location==='/')return
+    leave(()=>{if(location!=='/')navigate('/');setActiveScreen(tab)})
+  }
+  function goToDefaultScreen(){selectTab('tasks')}
 
   const logout = useMutation({
     mutationFn: postLogout,
@@ -110,165 +102,39 @@ function SignedIn({ session }: { session: SessionResponse }) {
     onSuccess: () => { selectMimiConversation(null); window.location.assign('/') },
   })
 
-  const navigation = (
-<div className="mimi-app-tabs mb-2 flex flex-nowrap gap-1 overflow-x-auto sm:flex-wrap [&>button]:min-w-0 [&>button]:px-1 [&>button]:text-xs [&>button]:transition-colors sm:[&>button]:px-3 sm:[&>button]:text-sm" role="tablist" aria-label="Chọn nội dung">
-          <Button
-            role="tab"
-            size="lg"
-            variant={currentTab === 'tasks' ? 'selected' : 'ghost'}
-            aria-selected={currentTab === 'tasks'}
-            onClick={() => selectTab('tasks')}
-          >
-            <ListTodo data-icon="inline-start" />
-            Task
-          </Button>
-          <Button
-            role="tab"
-            size="lg"
-            variant={currentTab === 'notes' ? 'selected' : 'ghost'}
-            aria-selected={currentTab === 'notes'}
-            onClick={() => selectTab('notes')}
-          >
-            <NotebookPen data-icon="inline-start" />
-            Ghi chú
-          </Button>
-          <Button
-            role="tab"
-            size="lg"
-            variant={currentTab === 'calendar' ? 'selected' : 'ghost'}
-            aria-selected={currentTab === 'calendar'}
-            onClick={() => selectTab('calendar')}
-          >
-            <CalendarDays data-icon="inline-start" />
-            Lịch
-          </Button>
-          <Button
-            role="tab"
-            size="lg"
-            variant={currentTab === 'tracker' ? 'selected' : 'ghost'}
-            aria-selected={currentTab === 'tracker'}
-            onClick={() => selectTab('tracker')}
-          >
-            <Activity data-icon="inline-start" />
-            Theo dõi
-          </Button>
-          {session.mimi_available ? (
-            <Button
-              role="tab"
-              size="lg"
-              variant={currentTab === 'mimi' ? 'selected' : 'ghost'}
-              aria-selected={currentTab === 'mimi'}
-              onClick={() => selectTab('mimi')}
-            >
-              <Bot data-icon="inline-start" />
-              Mimi
-            </Button>
-          ) : null}
-        </div>
-  )
-
   return (
-    <div className={cn(
-      'mimi-app-layout mx-auto grid w-full items-start gap-4',
-      mimiDockOpen && currentTab !== 'mimi' ? 'mimi-app-with-dock max-w-[1920px]' : currentTab === 'mimi' ? 'max-w-[1920px]' : currentTab === 'calendar' && location === '/' ? 'max-w-[1680px]' : 'max-w-5xl',
-    )} style={{ '--mimi-dock-width': `${mimiDockWidth}px` } as import('react').CSSProperties}>
-    <div className={cn("min-w-0 overflow-hidden rounded-xl bg-background shadow-3", currentTab === 'mimi' && 'mimi-app-workspace')}>
-      <OfflineCoverage /><PwaUpdates /><DerivedPendingNotice />
-      {attentionLocator && attentionLink.isError ? <p role="alert" className="m-3 rounded-lg bg-warn-bg p-3 text-sm">Không mở được thông báo. Liên kết có thể không thuộc phiên này; chưa thực hiện thay đổi nào.</p> : null}
-      {attentionLink.data?.expired ? <p role="status" className="m-3 text-sm text-muted-foreground">Thông báo đã hết hạn; đang mở đúng hội thoại để đọc trạng thái hiện tại.</p> : null}
-      <header className={cn("flex items-center justify-between gap-4 px-5 pb-2 sm:px-6", currentTab === 'mimi' ? 'mimi-app-header pt-2' : 'pt-5')}>
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1>
-          <Button asChild
-            data-testid="app-logo-button"
-            variant="ghost"
-            size="lg"
-            className="min-h-11 px-0 text-xl font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary text-left focus-visible:ring-2 focus-visible:ring-primary"
-            aria-label="Về trang Task mặc định"
-          >
-            <a href="/" onClick={(event) => {
-              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-              event.preventDefault()
-              goToDefaultScreen()
-            }}>
-              microSched
-            </a>
-          </Button>
-          </h1>
-          {currentTab !== 'mimi' ? <p className="text-xs capitalize text-muted-foreground">{todayLabel()}</p> : null}
-          {currentTab !== 'calendar' && currentTab !== 'mimi' && !location.startsWith('/subscription') && !location.startsWith('/reminder-confirm') ? (
-            <div className="basis-full"><LiveStatus key={currentTab} tab={currentTab} /></div>
-          ) : null}
+    <div data-app-generation={import.meta.env.VITE_APP_GENERATION ?? 'v1'} className={cn('mimi-app-layout mx-auto grid w-full items-start gap-4',mimiDockOpen&&currentTab!=='mimi'?'mimi-app-with-dock max-w-[1920px]':currentTab==='mimi'?'max-w-[1920px]':currentTab==='calendar'&&location==='/'?'max-w-[1680px]':'max-w-[1440px]')} style={{'--mimi-dock-width':`${mimiDockWidth}px`} as import('react').CSSProperties}>
+      <div className={cn('min-w-0 overflow-hidden bg-background shadow-3 lg:rounded-xl',currentTab==='mimi'&&'mimi-app-workspace')}>
+        <OfflineCoverage/><PwaUpdates/><DerivedPendingNotice/>
+        {attentionLocator&&attentionLink.isError?<p role="alert" className="m-3 rounded-lg bg-warn-bg p-3 text-sm">Không mở được thông báo. Liên kết có thể không thuộc phiên này; chưa thực hiện thay đổi nào.</p>:null}
+        {attentionLink.data?.expired?<p role="status" className="m-3 text-sm text-muted-foreground">Thông báo đã hết hạn; đang mở đúng hội thoại để đọc trạng thái hiện tại.</p>:null}
+        <header data-testid="app-header" className={cn('grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-border/60 bg-background px-3 py-2 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:gap-4 lg:px-5',currentTab==='mimi'&&'mimi-app-header')}>
+          <div className="min-w-max">
+            <h1><Button asChild data-testid="app-logo-button" variant="ghost" size="lg" className="min-h-11 px-0 text-lg font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary lg:text-xl" aria-label="Về trang Task mặc định"><a href="/" onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();goToDefaultScreen()}}>microSched</a></Button></h1>
+            <p className="hidden text-xs capitalize text-muted-foreground lg:block">{todayLabel()}</p>
+          </div>
+          <DomainNavigation current={currentTab} mimiAvailable={session.mimi_available} onSelect={selectTab}/>
+          <div data-testid="app-header-actions" className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1">
+            <ReminderCenter/>
+            <OutboxPanel compact/>
+            <PrivateGate session={session} compact manageOpen={pinManageOpen} onManageOpenChange={setPinManageOpen}/>
+            <ApplicationMenu current={currentTab} mimiAvailable={session.mimi_available} onSelect={selectTab} onChat={()=>setMimiDockOpen(true)} onPin={()=>setPinManageOpen(true)} onHome={()=>leave(()=>window.location.assign('/home'))} onSubscription={()=>leave(()=>navigate('/subscription'))} onLogout={()=>leave(()=>logout.mutate())} loggingOut={logout.isPending}/>
+          </div>
+        </header>
+        <div className={cn('px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-4 sm:px-5 lg:pb-6',currentTab==='mimi'&&'pt-0')}>
+          {currentTab!=='calendar'&&currentTab!=='mimi'&&!location.startsWith('/subscription')&&!location.startsWith('/reminder-confirm')?<div className="mb-2"><LiveStatus key={currentTab} tab={currentTab}/></div>:null}
+          {location.startsWith('/subscription')?<SubscriptionScreen/>:location.startsWith('/reminder-confirm')?<ReminderConfirmScreen key={reminderDispatchKey}/>:<div id="app-domain-panel" role="tabpanel">
+            {currentTab==='tasks'?<TasksScreen/>:null}
+            {currentTab==='notes'?<NotesScreen/>:null}
+            {currentTab==='calendar'?<CalendarScreen/>:null}
+            {currentTab==='tracker'?<TrackerScreen privateUnlocked={outboxState.context.privateUntil>0}/>:null}
+            {currentTab==='mimi'&&session.mimi_available?<MimiControlCenter onOpenDomain={domain=>selectTab(domain)} configurationOpen={mimiConfigurationOpen} onConfigurationOpenChange={setMimiConfigurationOpen}/>:null}
+          </div>}
+          {logout.isError?<p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>:null}
         </div>
-        {currentTab === 'mimi' ? navigation : null}
-        {currentTab === 'mimi' ? <details className="relative shrink-0"><summary aria-label="Tùy chọn microSched" className="flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:outline-ring"><MoreVertical className="size-4" /></summary><div className="absolute right-0 top-full z-40 max-w-[calc(100vw-3rem)] rounded-xl border bg-popover p-3 shadow-md">        <div className="flex flex-wrap items-center justify-end gap-2">
-
-          <ReminderCenter />
-            <OutboxPanel />
-            <PrivateGate session={session} />
-          <Button
-            variant="secondary"
-            size="icon-lg"
-            className="size-11"
-            aria-label="Đăng xuất"
-            disabled={logout.isPending}
-            onClick={() => logout.mutate()}
-          >
-            <LogOut />
-          </Button>
-        </div><Button asChild size="lg" variant="link"><a href="/home">Giới thiệu microSched</a></Button></div></details> :         <div className="flex flex-wrap items-center justify-end gap-2">
-          {session.mimi_available ? (
-            <MimiDockButton open={mimiDockOpen} onToggle={() => setMimiDockOpen((open) => !open)} />
-          ) : null}
-          <ReminderCenter />
-            <OutboxPanel />
-            <PrivateGate session={session} />
-          <Button
-            variant="secondary"
-            size="icon-lg"
-            className="size-11"
-            aria-label="Đăng xuất"
-            disabled={logout.isPending}
-            onClick={() => logout.mutate()}
-          >
-            <LogOut />
-          </Button>
-        </div>}
-
-      </header>
-
-      <div className={cn('px-5 sm:px-6', currentTab === 'mimi' ? 'pt-0 pb-3' : 'pt-3 pb-6')}>
-        {currentTab !== 'mimi' ? <Button asChild variant="link" size="lg" className="mb-2 px-0 text-xs">
-          <a href="/home" data-testid="app-homepage-link"><BookOpen aria-hidden="true" />Giới thiệu microSched</a>
-        </Button> : null}
-        {location.startsWith('/subscription') ? (
-          <SubscriptionScreen />
-        ) : location.startsWith('/reminder-confirm') ? (
-          <ReminderConfirmScreen key={reminderDispatchKey} />
-        ) : (
-          <>
-        {currentTab !== 'mimi' ? navigation : null}
-        <div role="tabpanel">
-          {currentTab === 'tasks' ? <TasksScreen /> : null}
-          {currentTab === 'notes' ? <NotesScreen /> : null}
-          {currentTab === 'calendar' ? <CalendarScreen /> : null}
-          {currentTab === 'tracker' ? (
-            <TrackerScreen privateUnlocked={outboxState.context.privateUntil > 0} />
-          ) : null}
-          {currentTab === 'mimi' && session.mimi_available ? (
-            <MimiControlCenter onOpenDomain={(domain) => selectTab(domain)} configurationOpen={mimiConfigurationOpen} onConfigurationOpenChange={setMimiConfigurationOpen} />
-          ) : null}
-        </div>
-          </>
-        )}
-        {logout.isError ? (
-          <p className="mt-4 text-sm text-bad">Không thể đăng xuất. Thử lại sau.</p>
-        ) : null}
       </div>
-    </div>
-    {session.mimi_available ? (
-      <MimiDock open={mimiDockOpen && currentTab !== 'mimi'} onOpenChange={setMimiDockOpen} onOpenTasks={() => selectTab('tasks')} onOpenWorkspace={() => { setMimiDockOpen(false); selectTab('mimi') }} onOpenConfiguration={() => { setMimiDockOpen(false); selectTab('mimi'); setMimiConfigurationOpen(true) }} width={mimiDockWidth} onWidthChange={setMimiDockWidth} />
-    ) : null}
+      {session.mimi_available?<MimiDock open={mimiDockOpen&&currentTab!=='mimi'} onOpenChange={setMimiDockOpen} onOpenTasks={()=>selectTab('tasks')} onOpenWorkspace={()=>{setMimiDockOpen(false);selectTab('mimi')}} onOpenConfiguration={()=>{setMimiDockOpen(false);selectTab('mimi');setMimiConfigurationOpen(true)}} width={mimiDockWidth} onWidthChange={setMimiDockWidth}/>:null}
+      <Dialog open={pendingNavigation!==null} onOpenChange={open=>{if(!open)setPendingNavigation(null)}}><DialogContent data-testid="leave-draft-confirm"><DialogHeader><DialogTitle>Rời nội dung chưa lưu?</DialogTitle><DialogDescription>Nội dung đang nhập chưa lưu sẽ mất. Bạn có thể ở lại để lưu trước. Các thay đổi đã lưu vào hàng đợi vẫn được giữ.</DialogDescription></DialogHeader>{outboxState.admitting>0?<p role="status">Đang lưu cục bộ. Đợi lưu xong trước khi rời.</p>:null}<div className="flex flex-wrap gap-2"><Button variant="outline" className="min-h-11" onClick={()=>setPendingNavigation(null)}>Ở lại</Button><Button variant="destructive" className="min-h-11" disabled={outboxState.admitting>0} onClick={()=>{const action=pendingNavigation;setPendingNavigation(null);action?.()}}>Rời bản nháp</Button></div></DialogContent></Dialog>
     </div>
   )
 }
@@ -301,7 +167,7 @@ function App() {
 
   return (
     <TooltipProvider>
-      <main className="min-h-screen bg-muted px-4 py-6 sm:px-6 sm:py-8">
+      <main className="min-h-screen bg-muted lg:px-6 lg:py-6">
         {/* `aria-live` từng nằm trên chính div này. Nó bọc cả app, nên mọi thay đổi
             bên trong — tick một mục, ghim, đổi bộ lọc — đều có thể bị đọc lên.
             Vùng thông báo phải NHỎ và chỉ chứa thứ đáng thông báo. */}

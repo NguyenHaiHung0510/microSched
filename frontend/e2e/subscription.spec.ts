@@ -451,7 +451,9 @@ test('hostile highlight value cannot crash or highlight anything (F5)', async ({
 test('back from an in-app subscription entry does not loop (F6)', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
-  await page.getByTestId('subscription-entry').click()
+  await page.getByTestId('app-menu-open').click()
+  await expect(page.getByTestId('app-subscriptions-link')).toHaveAttribute('href', '/subscription')
+  await page.getByTestId('app-subscriptions-link').click()
   await expect(page.getByTestId('subscription-screen')).toBeVisible()
   await page.getByRole('button', { name: 'Quay lại' }).click()
   await expect(page).toHaveURL('/')

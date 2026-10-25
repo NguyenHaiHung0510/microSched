@@ -118,6 +118,12 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const writes = useTrackerWrites(refresh)
   const currentMonth = currentVietnamMonth()
   const [month, setMonth] = useState(currentMonth)
+  const [region,setRegion]=useState<'capture'|'journal'|'report'|'manage'>('capture')
+  function selectRegion(next:'capture'|'journal'|'report'|'manage'){
+    setRegion(next)
+    if(next==='report')setRhythmCollapsed(false)
+    if(next==='journal')setRecords(previous=>({...previous,expanded:true}))
+  }
   const [reportMonths, setReportMonths] = useState<1 | 3 | 6 | 12>(1)
   const chooseReportMonths = (months: 1 | 3 | 6 | 12) => {
     setReportMonths(months)
@@ -183,6 +189,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
   const [backdateFunding,setBackdateFunding]=useState('none')
   const [archiveFor, setArchiveFor] = useState<Tracker | null>(null)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
+  const openingEntry = useRef<AbortController | null>(null)
   const [lockedIds, setLockedIds] = useState<ReadonlySet<string>>(new Set())
   const [capturingIds, setCapturingIds] = useState<ReadonlySet<string>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set(groups.map((g) => g.id)))
@@ -227,7 +234,13 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
 
  useEffect(() => {
     const timers = unlockTimers.current
+    const cancelEntryOpen = () => openingEntry.current?.abort()
+    window.addEventListener('microsched:private-lock', cancelEntryOpen)
+    window.addEventListener('microsched:visibility', cancelEntryOpen)
     return () => {
+      cancelEntryOpen()
+      window.removeEventListener('microsched:private-lock', cancelEntryOpen)
+      window.removeEventListener('microsched:visibility', cancelEntryOpen)
       for (const timer of timers.values()) window.clearTimeout(timer)
       timers.clear()
     }
@@ -330,6 +343,34 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         )
     } else {
       saveTracker()
+    }
+  }
+
+  async function openEntry(entry: Entry) {
+    // Keep cached offline editing on the existing V1 admission path.
+    if (!navigator.onLine) {
+      setEditingEntry(entry)
+      return
+    }
+    if (openingEntry.current) return
+    const controller = new AbortController()
+    openingEntry.current = controller
+    const openingToast = toast.loading('Đang mở bản ghi…')
+    try {
+      // Refresh the visible row after tracker metadata is known. A journal read
+      // can precede that metadata and therefore cannot seed a public baseline.
+      const current = await apiRequest<Entry>(`/api/tracker/entries/${entry.id}?include_funding=true`, { signal: controller.signal })
+      if (controller.signal.aborted || openingEntry.current !== controller) {
+        toast.dismiss(openingToast)
+        return
+      }
+      setEditingEntry(current)
+      toast.dismiss(openingToast)
+    } catch (error) {
+      if (controller.signal.aborted) toast.dismiss(openingToast)
+      else toast.error(errorMessage(error), { id: openingToast })
+    } finally {
+      if (openingEntry.current === controller) openingEntry.current = null
     }
   }
 
@@ -462,6 +503,16 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         </Card>
       ) : null}
 
+      <div role="tablist" aria-label="Vùng Theo dõi" onKeyDown={event => {
+        if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return
+        const tabs=[...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+        const current=tabs.indexOf(document.activeElement as HTMLButtonElement)
+        const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(current+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length
+        event.preventDefault();tabs[next]?.focus();tabs[next]?.click()
+      }} className="grid grid-cols-4 gap-1 border-b border-border pb-2">
+        {([['capture','Ghi nhanh'],['journal','Nhật ký'],['report','Báo cáo'],['manage','Quản lý']] as const).map(([id,label])=><Button key={id} id={'tracker-tab-'+id} data-testid={'tracker-tab-'+id} role="tab" tabIndex={region===id?0:-1} aria-selected={region===id} aria-controls={'tracker-region-'+id} variant={region===id?'selected':'ghost'} className="h-auto min-h-11 min-w-0 whitespace-normal px-1 text-xs sm:text-sm" onClick={()=>selectRegion(id)}>{label}</Button>)}
+      </div>
+      <section id="tracker-region-capture" data-testid="tracker-region-capture" role="tabpanel" aria-labelledby="tracker-tab-capture" hidden={region!=='capture'} className="space-y-5">
       {reminderGroups.length > 0 ? (
         <Card data-testid="tracker-reminders-overview" className="gap-3 p-4 shadow-1 ring-0">
           <div className="flex items-center justify-between gap-2">
@@ -531,6 +582,32 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         </Card>
       ) : null}
 
+      <div className="flex justify-end"><Button data-testid="tracker-open-report" variant="outline" className="min-h-11" onClick={()=>selectRegion('report')}>Xem biểu đồ</Button></div>
+      {/* 2. Lưới ghi nhanh (Phân theo nhóm, mặc định mở rộng) */}
+      <CaptureGrid
+        trackers={frozenOrder}
+        groups={groups}
+        locked={lockedIds}
+        pendingTrackerId={capturingIds.size === 1 ? [...capturingIds][0] : null}
+        loading={trackersQuery.isPending}
+        error={trackersQuery.error}
+        onRetry={() => void refresh()}
+        onCapture={(tracker,input,funding)=>capture(tracker,input,undefined,funding)}
+        onBackdate={(tracker) => {
+          setBackdateFunding('none')
+          setBackdateChoice('yesterday')
+          setBackdateCustom('')
+          setBackdateInput('')
+          setBackdateFor(tracker)
+        }}
+      />
+
+      </section>
+      <section id="tracker-region-journal" data-testid="tracker-region-journal" role="tabpanel" aria-labelledby="tracker-tab-journal" hidden={region!=='journal'} className="space-y-5">
+      <TrackerRecords trackers={trackers} groups={groups} selection={records} onChange={setRecords} onEdit={openEntry} onRemove={removeEntry} showListPrice={showListPrice} privateUnlocked={privateUnlocked} />
+
+      </section>
+      <section id="tracker-region-report" data-testid="tracker-region-report" role="tabpanel" aria-labelledby="tracker-tab-report" hidden={region!=='report'} className="space-y-5">
       {/* 1. Tài chính tháng X năm Y lên đầu */}
       <DerivedPendingNotice />
       <Card data-testid="tracker-finance-overview" className="gap-3 p-4 shadow-1 ring-0 bg-gradient-to-br from-brand-50/60 to-card border-brand-200">
@@ -593,32 +670,54 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
           <div className="grid grid-cols-4 gap-1 sm:flex" role="group" aria-label="Khoảng báo cáo">
             {([1, 3, 6, 12] as const).map((months) => <Button key={months} size="lg" variant={reportMonths === months ? 'selected' : 'ghost'} aria-pressed={reportMonths === months} onClick={() => chooseReportMonths(months)}>{months === 12 ? '1 năm' : `${months} tháng`}</Button>)}
           </div>
-          <Button data-testid="tracker-open-report" variant="outline" className="min-h-11" onClick={() => {
-            setRhythmCollapsed(false)
+          <Button data-testid="tracker-report-jump" variant="outline" className="min-h-11" onClick={() => {
+            selectRegion('report')
             window.requestAnimationFrame(() => document.getElementById('tracker-report')?.scrollIntoView({ block: 'start' }))
           }}>Xem biểu đồ</Button>
         </div>
       </Card>
 
-      {/* 2. Lưới ghi nhanh (Phân theo nhóm, mặc định mở rộng) */}
-      <CaptureGrid
-        trackers={frozenOrder}
-        groups={groups}
-        locked={lockedIds}
-        pendingTrackerId={capturingIds.size === 1 ? [...capturingIds][0] : null}
-        loading={trackersQuery.isPending}
-        error={trackersQuery.error}
+      <Card id="tracker-report" className="scroll-mt-4 gap-3 p-4 shadow-1 ring-0">
+        <Button
+          type="button"
+          variant="ghost"
+          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none h-auto p-0 hover:bg-transparent"
+          onClick={() => setRhythmCollapsed(!rhythmCollapsed)}
+          data-testid="tracker-report-toggle"
+          aria-expanded={!rhythmCollapsed}
+        >
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-bold">Nhịp ghi & Báo cáo</h3>
+          </div>
+          {rhythmCollapsed ? (
+            <ChevronDown className="size-4 text-muted-foreground" />
+          ) : (
+            <ChevronUp className="size-4 text-muted-foreground" />
+          )}
+        </Button>
+        {!rhythmCollapsed ? (
+          <div className="pt-2">
+      <FundingReport month={month} months={reportMonths} onOpenSource={source=>{selectRegion('journal');setRecords({mode:'day',trackerId:source.tracker_id,anchor:toVietnamDateTimeInput(source.occurred_at).slice(0,10),order:'desc',page:0,expanded:true});window.requestAnimationFrame(()=>document.getElementById('tracker-records')?.scrollIntoView({block:'start'}))}}/>
+      <DashboardPanel
+        dashboard={dashboardQuery.data ?? null}
+        monthLabel={reportMonthLabel(month, reportMonths)}
+        financeExtra={<div className="flex flex-wrap gap-1" role="group" aria-label="Đổi khoảng báo cáo trong chi tiết">{([1, 3, 6, 12] as const).map((months) => <Button key={months} size="lg" variant={reportMonths === months ? 'selected' : 'ghost'} aria-pressed={reportMonths === months} onClick={() => chooseReportMonths(months)}>{months === 12 ? '1 năm' : `${months} tháng`}</Button>)}</div>}
+        trackers={trackers}
+        loading={dashboardQuery.isPending}
+        error={dashboardQuery.error}
         onRetry={() => void refresh()}
-        onCapture={(tracker,input,funding)=>capture(tracker,input,undefined,funding)}
-        onBackdate={(tracker) => {
-          setBackdateFunding('none')
-          setBackdateChoice('yesterday')
-          setBackdateCustom('')
-          setBackdateInput('')
-          setBackdateFor(tracker)
-        }}
       />
+      <div className="mt-4"><TrackerHeatmap key={String(privateUnlocked) + month} trackers={trackers} groups={groups} initialMonth={month} privateUnlocked={privateUnlocked} onDay={(trackerId, day, groupId) => {
+        selectRegion('journal')
+        setRecords({ mode: 'day', trackerId, groupId, anchor: day, order: 'desc', page: 0, expanded: true })
+        window.requestAnimationFrame(() => document.getElementById('tracker-records')?.scrollIntoView({ block: 'start' }))
+      }} /></div>
+          </div>
+        ) : null}
+      </Card>
 
+      </section>
+      <section id="tracker-region-manage" data-testid="tracker-region-manage" role="tabpanel" aria-labelledby="tracker-tab-manage" hidden={region!=='manage'} className="space-y-5">
       {/* 3. Quản lý nhóm & Tracker (Mặc định thu gọn) */}
       <Card data-testid="tracker-management" className="gap-4 p-4 shadow-1 ring-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -877,46 +976,7 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
         )}
       </Card>
 
-      <TrackerRecords trackers={trackers} groups={groups} selection={records} onChange={setRecords} onEdit={setEditingEntry} onRemove={removeEntry} showListPrice={showListPrice} privateUnlocked={privateUnlocked} />
-
-      <Card id="tracker-report" className="scroll-mt-4 gap-3 p-4 shadow-1 ring-0">
-        <Button
-          type="button"
-          variant="ghost"
-          className="flex w-full items-center justify-between gap-3 text-left cursor-pointer select-none h-auto p-0 hover:bg-transparent"
-          onClick={() => setRhythmCollapsed(!rhythmCollapsed)}
-          data-testid="tracker-report-toggle"
-          aria-expanded={!rhythmCollapsed}
-        >
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-bold">Nhịp ghi & Báo cáo</h3>
-          </div>
-          {rhythmCollapsed ? (
-            <ChevronDown className="size-4 text-muted-foreground" />
-          ) : (
-            <ChevronUp className="size-4 text-muted-foreground" />
-          )}
-        </Button>
-        {!rhythmCollapsed ? (
-          <div className="pt-2">
-      <FundingReport month={month} months={reportMonths} onOpenSource={source=>{setRecords({mode:'day',trackerId:source.tracker_id,anchor:toVietnamDateTimeInput(source.occurred_at).slice(0,10),order:'desc',page:0,expanded:true});window.requestAnimationFrame(()=>document.getElementById('tracker-records')?.scrollIntoView({block:'start'}))}}/>
-      <DashboardPanel
-        dashboard={dashboardQuery.data ?? null}
-        monthLabel={reportMonthLabel(month, reportMonths)}
-        financeExtra={<div className="flex flex-wrap gap-1" role="group" aria-label="Đổi khoảng báo cáo trong chi tiết">{([1, 3, 6, 12] as const).map((months) => <Button key={months} size="lg" variant={reportMonths === months ? 'selected' : 'ghost'} aria-pressed={reportMonths === months} onClick={() => chooseReportMonths(months)}>{months === 12 ? '1 năm' : `${months} tháng`}</Button>)}</div>}
-        trackers={trackers}
-        loading={dashboardQuery.isPending}
-        error={dashboardQuery.error}
-        onRetry={() => void refresh()}
-      />
-      <div className="mt-4"><TrackerHeatmap key={String(privateUnlocked) + month} trackers={trackers} groups={groups} initialMonth={month} privateUnlocked={privateUnlocked} onDay={(trackerId, day, groupId) => {
-        setRecords({ mode: 'day', trackerId, groupId, anchor: day, order: 'desc', page: 0, expanded: true })
-        window.requestAnimationFrame(() => document.getElementById('tracker-records')?.scrollIntoView({ block: 'start' }))
-      }} /></div>
-          </div>
-        ) : null}
-      </Card>
-
+      </section>
       <Dialog open={createOpen} onOpenChange={(open) => !open && setCreateOpen(false)}>
         <DialogContent
           data-testid="tracker-dialog"

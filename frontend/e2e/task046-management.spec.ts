@@ -12,6 +12,7 @@ test('Task046 tracker management keeps long names and controls in separate mobil
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await page.getByTestId('tracker-tab-manage').click()
   const management = page.getByTestId('tracker-management')
   const row = management.getByTestId('tracker-management-row')
   await expect(row).toHaveCount(1)

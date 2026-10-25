@@ -2,7 +2,7 @@ import { expect, test } from './fixtures/tasks'
 
 test.beforeEach(async ({ page }) => {
   // Every screen visited by navigation tests stays fully synthetic.
-  for (const pattern of ['**/api/calendar/**', '**/api/notes**', '**/api/subscriptions**', '**/api/settings**']) {
+  for (const pattern of ['**/api/calendar/**', '**/api/notes**', '**/api/subscriptions**', '**/api/settings**', '**/api/tracker/trackers']) {
     await page.route(pattern, (route) => route.fulfill({ json: { items: [] } }))
   }
 })
@@ -127,6 +127,8 @@ test.describe('Area 1: Logo microSched navigation', () => {
     await expect(logoButton).toHaveAttribute('aria-label', 'Về trang Task mặc định')
     await expect(logoButton).toHaveAttribute('href', '/')
     const origin = await page.evaluate(() => performance.timeOrigin)
+    await expect(logoButton).toHaveJSProperty('tagName', 'A')
+    expect(await logoButton.evaluate(element => { const box=element.getBoundingClientRect(); return element.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2)) })).toBe(true)
     const logoBox = await logoButton.boundingBox()
     expect(logoBox!.height).toBeGreaterThanOrEqual(44)
     await logoButton.click()
@@ -143,12 +145,14 @@ test.describe('Area 1: Logo microSched navigation', () => {
 
     const logoButton = page.getByTestId('app-logo-button')
     await expect(logoButton).toBeVisible()
+    const origin = await page.evaluate(() => performance.timeOrigin)
     await logoButton.click()
 
     // Should return to "/" and Task tab
     await expect(page).toHaveURL(/\/$/)
     await expect(page.getByRole('tab', { name: 'Task' })).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('task-list')).toBeVisible()
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin)
   })
 
   test('logo button supports keyboard activation via Enter', async ({ page }) => {

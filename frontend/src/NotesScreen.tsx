@@ -566,6 +566,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                             <div className="min-w-0 flex-1 space-y-1">
                               <Textarea
                                 data-testid="note-item-edit-input"
+                                data-update-dirty={editingItemId !== null || undefined}
                                 rows={2}
                                 className="min-h-20 min-w-0 resize-y bg-card"
                                 aria-label={`Sửa mục ${item.content}`}

@@ -55,7 +55,7 @@ export function ReminderCenter() {
     queryFn: ({ signal }) => apiRequest<{ items: Tracker[] }>('/api/tracker/trackers', { signal }),
     enabled: open && section === 'upcoming', ...NO_POLLING_QUERY_OPTIONS })
   return <>
-    <Button type="button" size="lg" variant="outline" aria-label="Nhắc nhở" data-testid="reminder-center-open" onClick={() => setOpen(true)}>
+    <Button type="button" size="lg" variant="outline" className="min-h-11 min-w-11" aria-label="Nhắc nhở" data-testid="reminder-center-open" onClick={() => setOpen(true)}>
       <Bell aria-hidden="true" /><span className="hidden sm:inline">Nhắc nhở</span>
     </Button>
     <Dialog open={open} onOpenChange={setOpen}>

@@ -1,3 +1,4 @@
+import { hasUnsentFeedback } from '@/pwa-update'
 import { MimiToolActivity } from '@/MimiToolActivity'
 import type { MimiEvent } from '@/mimi-api'
 import { toast } from 'sonner'
@@ -786,7 +787,7 @@ export function MimiScreen({
     : (latestRun?.state === 'waiting_confirmation' ? 'ready' : 'idle')
 
   return (
-    <section className={`mimi-chat mimi-chat-${variant} w-full max-w-full min-w-0 min-h-0 flex flex-col h-full gap-2 overflow-hidden`} aria-labelledby={`mimi-title-${variant}`}>
+    <section data-update-busy={runtimeActive || undefined} data-update-dirty={hasUnsentFeedback(feedbackDraft, feedbackExpected, feedbackReasons, !!feedbackAcknowledgment) || undefined} className={`mimi-chat mimi-chat-${variant} w-full max-w-full min-w-0 min-h-0 flex flex-col h-full gap-2 overflow-hidden`} aria-labelledby={`mimi-title-${variant}`}>
       <MimiBackdrop active={current.messages.length > 0} />
       <div className={`mimi-chat-heading ${variant === 'dock' ? 'mimi-chat-heading-dock' : ''}`}>
         <div className="flex min-w-0 items-center gap-2"><MimiAvatar size="xs" state={mimiState} /><h3 id={`mimi-title-${variant}`} className="truncate text-xs font-semibold">{current.title ?? 'Mimi'}</h3></div>
@@ -947,7 +948,7 @@ export function MimiScreen({
           </CardHeader>
           <CardContent>
             {selectedSystemNotice ? <div className="mb-3 space-y-2"><p role="status" className="text-sm">{feedback.isPending ? 'Đang lưu phản hồi…' : systemVoteAcknowledged ? 'Đã ghi nhận phản hồi chưa tốt' : 'Chưa xác nhận phản hồi đã lưu'}</p>{!systemVoteAcknowledged && !feedback.isPending ? <Button type="button" variant="outline" onClick={() => openMessageFeedback(selectedSystemNotice.id, 'negative', true)}>Thử lại phản hồi chưa tốt</Button> : null}{systemVoteAcknowledged ? <p className="text-xs text-muted-foreground">Có thể bổ sung chi tiết bên dưới (không bắt buộc), lưu thành phản hồi riêng.</p> : null}</div> : null}
-            {(!selectedSystemNotice || systemVoteAcknowledged) ? <form className="space-y-3" onSubmit={submitFeedback}>
+            {(!selectedSystemNotice || systemVoteAcknowledged) ? <form data-draft-owner="mimi-feedback" className="space-y-3" onSubmit={submitFeedback}>
               <div className="space-y-1.5">
                 <label htmlFor="mimi-feedback-target" className="text-sm font-semibold">Mục cần góp ý</label>
                 <Select
@@ -1078,7 +1079,7 @@ export function MimiScreen({
         </DialogContent></Dialog>
       ) : null}
 
-      <form onSubmit={submitMessage} className="mimi-composer shrink-0">
+      <form data-draft-owner="mimi-composer" onSubmit={submitMessage} className="mimi-composer shrink-0">
         {showJump ? <Button type="button" size="icon-lg" variant="outline" className="mimi-jump-latest min-h-11 min-w-11" aria-label="Đến tin nhắn mới nhất" onClick={() => { followLatest.current = true; setShowJump(false); transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'auto' }) }}><ArrowDown className="size-5" aria-hidden="true" /></Button> : null}
         {revisionTarget && !activeRevision ? (
           <div role="alert" className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-bad-bg p-3 text-sm text-bad">

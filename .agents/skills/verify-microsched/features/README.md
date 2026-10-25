@@ -1,3 +1,7 @@
+# Current Task096 — shell A / Tracker regions / safe automatic update
+
+Use [responsive shell](responsive-shell.md), [PWA lifecycle](pwa-freshness.md), current096 handback/freeze and `r6_browser.mjs` with own4179/API8006. No current production/independent acceptance follows from author evidence; unacceptedR5dependency and Owner334gates remain. Historical map denominators below are unchanged.
+
 # Current candidate routing — funding095 and calendar094
 
 Current Task095 funding route: [income Entry/report](funding-entry.md). Current grant/freeze wins; previous map acceptance is historical.

@@ -213,12 +213,12 @@ function DayOverdueTasksSection({
                         variant="ghost"
                         data-testid="calendar-day-overdue-task-edit-trigger"
                         className={cn(
-                          'h-auto min-w-0 flex-1 flex-col items-start justify-start whitespace-normal break-words p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
+                          'h-auto min-w-0 max-w-full flex-1 flex-col items-start justify-start whitespace-normal [overflow-wrap:anywhere] p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                           task.status === 'completed' && 'line-through',
                         )}
                         onClick={() => onEditTask(task)}
                       >
-                        <span>{task.title}</span>
+                        <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">{task.title}</span>
                         {scheduleDay(task) ? (
                           <span className="text-xs font-bold text-bad">
                             Hạn: {formatShortVietnamDate(scheduleDay(task) as string)}
@@ -557,7 +557,7 @@ export function DayDetailDialog({
       <Dialog open={open} onOpenChange={(next) => (next ? undefined : closeDialog())}>
         <DialogContent
           data-testid="calendar-day-dialog"
-          className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+          className="max-h-[85vh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-lg"
         >
           <DialogHeader>
             <DialogTitle>{formatFullVietnameseDate(day)}</DialogTitle>
@@ -592,7 +592,7 @@ export function DayDetailDialog({
               ) : null}
             </div>
           ) : (
-            <div className="space-y-5">
+            <div className="min-w-0 max-w-full space-y-5">
               <section aria-labelledby="day-annotations-heading" className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4
@@ -771,7 +771,7 @@ export function DayDetailDialog({
                         variant="ghost"
                         data-testid="calendar-day-task-edit-trigger"
                         className={cn(
-                          'h-auto min-w-0 flex-1 flex-col items-start justify-start whitespace-normal break-words p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
+                          'h-auto min-w-0 max-w-full flex-1 flex-col items-start justify-start whitespace-normal [overflow-wrap:anywhere] p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                          task.status === 'completed' && 'line-through',
                         )}
                         onClick={() => setTaskEdit(task)}
@@ -781,13 +781,15 @@ export function DayDetailDialog({
                       </Button>
                       {onRequestMove ? <Button
                         type="button"
-                        variant="outline"
-                        className="min-h-11 shrink-0 px-2"
+                        variant="ghost"
+                        size="icon"
+                        className="min-h-11 min-w-11 shrink-0 text-muted-foreground hover:text-foreground"
                         data-testid="calendar-task-move"
                         aria-label={`Chuyển ngày ${task.title}`}
+                        title="Chuyển ngày"
                         onClick={() => onRequestMove({ kind: 'task', item: task, grabbedDay: day })}
                       >
-                        <Calendar aria-hidden="true" className="size-4" />Chuyển ngày
+                        <Calendar aria-hidden="true" className="size-4" />
                       </Button> : null}
                       <Button
                         data-testid="calendar-day-task-delete"

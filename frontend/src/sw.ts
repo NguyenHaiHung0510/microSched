@@ -33,7 +33,7 @@ self.addEventListener('notificationclick', (event: NotificationEvent) => {
   event.waitUntil(openNotificationTarget(self.clients, event.notification.data?.url ?? '/', self.location.origin))
 })
 
-// Activation is requested only by the visible, draft-safe update control.
+// The client requests activation only at a draft-safe, idle boundary.
 self.addEventListener('message', event => {
   if (event.data?.type === 'SKIP_WAITING') void self.skipWaiting()
 })

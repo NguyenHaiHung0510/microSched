@@ -23,8 +23,12 @@ import {
 const LONG_PRESS_MS = 500
 const CLICK_SUPPRESS_MS = 400
 
+export type TrackerCaptureDraft = { inputOpen: boolean; input: string }
+
 type TrackerCardProps = {
   tracker: Tracker
+  publicDraft?: TrackerCaptureDraft
+  onPublicDraftChange?: (patch: Partial<TrackerCaptureDraft>) => void
   locked: boolean
   pending: boolean
   /** input is the digit string for money/quantity trackers; undefined = event capture. */
@@ -32,9 +36,15 @@ type TrackerCardProps = {
   onBackdate: () => void
 }
 
-export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }: TrackerCardProps) {
-  const [inputOpen, setInputOpen] = useState(false)
-  const [input, setInput] = useState('')
+export function TrackerCard({ tracker, publicDraft, onPublicDraftChange, locked, pending, onCapture, onBackdate }: TrackerCardProps) {
+  const [localInputOpen, setLocalInputOpen] = useState(false)
+  const [localInput, setLocalInput] = useState('')
+  const inputOpen = publicDraft?.inputOpen ?? localInputOpen
+  const input = publicDraft?.input ?? localInput
+  const setInputOpen = (value: boolean) => publicDraft && onPublicDraftChange
+    ? onPublicDraftChange({ inputOpen: value }) : setLocalInputOpen(value)
+  const setInput = (value: string) => publicDraft && onPublicDraftChange
+    ? onPublicDraftChange({ input: value }) : setLocalInput(value)
   const [funding,setFunding]=useState('none')
   const longPressTimer = useRef<number | null>(null)
   const longPressFired = useRef(false)

@@ -41,12 +41,13 @@ test('F15: tab nav touch targets are >= 44px and never overflow 390px', async ({
 }) => {
   await page.goto('/')
 
-  const tabs = page.getByRole('tab')
-  await expect(tabs).toHaveCount(4)
+  const tabs = page.getByRole('tablist', {name:'Chọn nội dung'}).getByRole('tab')
+  await expect(tabs).toHaveCount(5)
   const heights: number[] = []
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     const box = await tabs.nth(index).boundingBox()
     expect(box, `tab #${index} must be visible`).not.toBeNull()
+    expect(box!.width).toBeGreaterThanOrEqual(44)
     heights.push(box!.height)
   }
   for (const height of heights) {
@@ -131,6 +132,8 @@ test('011b: registers this device before saving an existing tracker reminder', a
   trackerApi.trackers[0].reminder_time = '08:00'
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await page.getByTestId('tracker-tab-manage').click()
+  await page.getByTestId('tracker-management').getByRole('button', {name:'Mở rộng tất cả', exact:true}).click()
   await page.getByRole('button', { name: 'Sửa Hút thuốc' }).click()
   await page.getByTestId('tracker-reminder-time').fill('08:30')
   await page.getByRole('button', { name: 'Lưu thay đổi' }).click()
