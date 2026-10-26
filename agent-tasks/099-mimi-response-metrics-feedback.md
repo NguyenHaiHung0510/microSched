@@ -109,3 +109,21 @@ Numeric guard mutation produced the intended bool/string rejection failures;
 restoration passed6/6. Fresh-process actual FastAPI/session/SSE/DB wire smoke
 passed plain/preview/timing POST/reload with0provider calls. Full browser paint,
 IME and independent/device/CI/production acceptance remain NOT_RUN.
+
+## Integrated durable ACK correction — 2026-10-27
+
+The independent review found request-yield commit could follow a201ACK. The
+integrated candidate opts in exactly six handlers to commit before returning:
+Mimi timing/feedback, Note move-to-top, History handled/prepare/commit. Failure
+rolls back and returns sanitized503commit_unknown; a commit may already have
+succeeded, so no “not saved” claim or automatic model retry is made. Global
+get_session, auth, permissions, cron and unrelatedCRUD are unchanged.
+
+Actual route/wire proof:18intendedRED →18GREEN; actualPostgreSQL commit failure
+before/after the durable effect and same-key/body replay covered both MimiPOSTs.
+Affected backend batch52PASS,14deselected; full frontend329PASS/57files; production
+build plus Apple-icon/PWA static guardsPASS. Clients keep original feedback
+intent; NoteTop captures its snapshot in mutation variables and exposes exact
+replay after uncertainty. Existing History identity/filter/selection remains.
+These builder checks are distinct from PM's independent integrated15journeyQA,
+physical device/live provider/CI/production gates, all still NOT_RUN here.

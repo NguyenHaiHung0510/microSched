@@ -16,6 +16,7 @@ from app.domain.reminder_handled import (
     prepare_batch,
 )
 from app.domain.reminder_history import HistoryFilter, Origin, Source, Status, list_history
+from app.web.acknowledgement import commit_before_ack
 from app.web.deps import get_session, require_session
 
 router = APIRouter(prefix="/reminder-history", tags=["reminder-history"])
@@ -62,7 +63,9 @@ async def handle(
     response: Response,
 ):
     response.headers["Cache-Control"] = "no-store"
-    return await mark_handled(db, session, origin, receipt_id)
+    result = await mark_handled(db, session, origin, receipt_id)
+    await commit_before_ack(db, "history_handled")
+    return result
 
 
 @router.post("/handled-batches/prepare")
@@ -73,7 +76,9 @@ async def prepare(
     response: Response,
 ):
     response.headers["Cache-Control"] = "no-store"
-    return await prepare_batch(db, session, payload)
+    result = await prepare_batch(db, session, payload)
+    await commit_before_ack(db, "history_batch_prepare")
+    return result
 
 
 @router.post("/handled-batches/{batch_id}/commit")
@@ -84,4 +89,6 @@ async def commit(
     response: Response,
 ):
     response.headers["Cache-Control"] = "no-store"
-    return await commit_batch(db, session, batch_id)
+    result = await commit_batch(db, session, batch_id)
+    await commit_before_ack(db, "history_batch_commit")
+    return result

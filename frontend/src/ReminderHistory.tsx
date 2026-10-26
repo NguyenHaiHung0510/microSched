@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { Check, ExternalLink, Filter, Info, LockKeyhole, RefreshCw } from 'lucide-react';
 import { apiRequest } from '@/api';
+import { commitOutcomeMessage } from '@/acknowledgement';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -76,12 +77,12 @@ export function ReminderHistory() {
                 return handled==='unhandled'?[]:[{...row,handled_at:ack.handled_at,can_handle:false}];
             })}))}) : undefined);
             void client.invalidateQueries({queryKey:key,exact:true}).finally(() => settlePosition(position));
-        }, onError: (e,row) => { const position=capturePosition(row.occurrence_ref.origin+':'+row.occurrence_ref.id); setMessage(e.message); settlePosition(position); } });
+        }, onError: (e,row) => { const position=capturePosition(row.occurrence_ref.origin+':'+row.occurrence_ref.id); setMessage(commitOutcomeMessage(e) ?? e.message); settlePosition(position); } });
     const prepare = useMutation({ networkMode: 'always', mutationFn: async (mode: 'all' | 'selected') => { const g = gate.current; await queueBarrier(); const selected_refs = mode === 'selected' ? items.filter(r => selected.includes(historyIdentity(r))).map(r => r.occurrence_ref) : undefined; const scope=JSON.stringify({filter,selected_refs}); if(scope!==replayScope.current){replayId.current=null;replayScope.current=scope} replayId.current ??= uuidv7(); const result = await apiRequest<HistoryBatch>('/api/reminder-history/handled-batches/prepare', { method: 'POST', body: JSON.stringify({ batch_id: replayId.current, filter, selected_refs }) }); if (g !== gate.current)
-            throw new Error('Phạm vi đã đổi; chuẩn bị lựa chọn mới.'); return result; }, onSuccess: setBatch, onError: e => setMessage(e.message) });
+            throw new Error('Phạm vi đã đổi; chuẩn bị lựa chọn mới.'); return result; }, onSuccess: setBatch, onError: e => setMessage(commitOutcomeMessage(e) ?? e.message) });
     const commit = useMutation({ networkMode: 'always', mutationFn: async () => { if (!batch)
             throw new Error('Chọn lại phạm vi.'); const g = gate.current; await queueBarrier(); const result = await apiRequest<HistoryBatch>('/api/reminder-history/handled-batches/' + batch.id + '/commit', { method: 'POST', body: '{}' }); if (g !== gate.current)
-            throw new Error('Phạm vi đã đổi; tải lại lịch sử.'); return result; }, onSuccess: r => { setMessage(r.scope_visible ? 'Đã xử lý ' + r.result?.selected_count + ' lần nhắc.' : 'Đã xác nhận thao tác trước; nội dung hiện không còn hiển thị.'); refresh(); }, onError: e => setMessage(e.message) });
+            throw new Error('Phạm vi đã đổi; tải lại lịch sử.'); return result; }, onSuccess: r => { setMessage(r.scope_visible ? 'Đã xử lý ' + r.result?.selected_count + ' lần nhắc.' : 'Đã xác nhận thao tác trước; nội dung hiện không còn hiển thị.'); refresh(); }, onError: e => setMessage(commitOutcomeMessage(e) ?? e.message) });
     const {reset:resetMark}=mark, {reset:resetPrepare}=prepare, {reset:resetCommit}=commit;
     useEffect(() => {
         const purge = () => { forgetPosition(); resetMark(); resetPrepare(); resetCommit(); gate.current++; setEpoch(x => x + 1); setSelected([]); setBatch(null); setOpened(row => row?.is_private ? null : row); setMessage(''); replayId.current = null; void client.cancelQueries({ queryKey: ['reminder-history'] }); client.removeQueries({ queryKey: ['reminder-history'] }); };

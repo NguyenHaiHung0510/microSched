@@ -20,6 +20,7 @@ from app.domain.notes import (
     NoteUpdate,
     PrivateWriteLocked,
 )
+from app.web.acknowledgement import commit_before_ack
 from app.web.deps import get_session, require_session
 
 router = APIRouter(tags=["note"])
@@ -173,6 +174,7 @@ async def move_note_item_to_top(
         ) from error
     if items is None:
         raise _not_found()
+    await commit_before_ack(db, "note_move_to_top")
     return items
 
 

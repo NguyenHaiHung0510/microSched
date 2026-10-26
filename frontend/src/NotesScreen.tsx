@@ -22,6 +22,7 @@ import {
 import { toast } from 'sonner'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
+import { commitOutcomeMessage } from '@/acknowledgement'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -166,12 +167,12 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     onSettled: () => { editInFlight.current = false },
   })
   const reorderItems = useMutation({
-    mutationFn: (item: NoteItem) => apiRequest<NoteItem[]>(
+    mutationFn: ({ item, expectedItems }: { item: NoteItem; expectedItems: Pick<NoteItem, 'id' | 'position' | 'is_completed'>[] }) => apiRequest<NoteItem[]>(
       `/api/notes/${note.id}/items/${item.id}/move-to-top`, {
         method: 'POST',
-        body: JSON.stringify({ expected_items: note.items.map(({ id, position, is_completed }) => ({ id, position, is_completed })) }),
+        body: JSON.stringify({ expected_items: expectedItems }),
       }),
-    onSuccess: (items, item) => {
+    onSuccess: (items, { item }) => {
       // Update only an existing visible note; never resurrect a cache removed by lock/logout.
       queryClient.setQueryData<Note[]>(noteQueryKey, old => old?.map(entry => entry.id === note.id ? { ...entry, items } : entry))
       refresh()
@@ -277,7 +278,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     if (group[0]?.id === item.id || moveInFlight.current || changeItem.isPending || editingItemId) return
     moveInFlight.current = true
     moveFocus.current = document.activeElement
-    reorderItems.mutate(item)
+    reorderItems.mutate({ item, expectedItems: note.items.map(({ id, position, is_completed }) => ({ id, position, is_completed })) })
   }
 
   function jumpToSection(name: string) {
@@ -458,6 +459,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           <Button data-testid="note-open-full" variant="link" className="min-h-11" aria-label={`Mở chi tiết ${label}`} onClick={openDetails}>Chi tiết & mục nhỏ</Button>
         </div>
         {mutationError ? <p className="text-sm text-bad">{errorMessage(mutationError)}</p> : null}
+        {commitOutcomeMessage(reorderItems.error) && reorderItems.variables ? <Button type="button" variant="outline" disabled={reorderItems.isPending} onClick={() => reorderItems.mutate(reorderItems.variables!)}>Thử lại đúng yêu cầu đưa lên đầu</Button> : null}
       </Card>
 
       <Dialog
@@ -746,6 +748,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           )}
 
           {mutationError ? <p className="text-sm text-bad">{errorMessage(mutationError)}</p> : null}
+          {commitOutcomeMessage(reorderItems.error) && reorderItems.variables ? <Button type="button" variant="outline" disabled={reorderItems.isPending} onClick={() => reorderItems.mutate(reorderItems.variables!)}>Thử lại đúng yêu cầu đưa lên đầu</Button> : null}
           </div>
         </DialogContent>
       </Dialog>

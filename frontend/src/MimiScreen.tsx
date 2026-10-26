@@ -1,4 +1,5 @@
 import { hasUnsentFeedback } from '@/pwa-update'
+import { commitOutcomeMessage } from '@/acknowledgement'
 import { MimiToolActivity } from '@/MimiToolActivity'
 import type { MimiEvent } from '@/mimi-api'
 import { toast } from 'sonner'
@@ -65,6 +66,8 @@ import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { selectCreatedMimiConversation, setMimiComposerDraft, useMimiComposerDraft } from '@/mimi-selection'
 
 function errorMessage(error: unknown): string {
+  const uncertain = commitOutcomeMessage(error)
+  if (uncertain) return uncertain
   if (error instanceof TimeoutError) return error.message
   if (error instanceof ApiError) {
     if (error.status === 422 && typeof error.body === 'object' && error.body && 'detail' in error.body) {
@@ -1090,7 +1093,7 @@ export function MimiScreen({
               {feedback.isError ? (
                 <p role="alert" className="flex items-center gap-2 text-sm text-bad">
                   <MessageSquareWarning className="size-4" />
-                  Chưa lưu feedback. {errorMessage(feedback.error)} Nội dung vẫn được giữ để thử lại.
+                  Chưa xác nhận feedback đã lưu. {errorMessage(feedback.error)} Nội dung vẫn được giữ để thử lại.
                 </p>
               ) : null}
               {(feedbackAcknowledgment?.conversationId === current.id

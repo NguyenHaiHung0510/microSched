@@ -60,6 +60,7 @@ from app.agent.service import (
 from app.core.db import get_sessionmaker
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
+from app.web.acknowledgement import commit_before_ack
 from app.web.deps import get_session, require_session
 from app.web.mimi_csrf import require_mimi_csrf
 
@@ -651,7 +652,9 @@ async def decide_change_set(
 async def post_response_timing(
     conversation_id: UUID, payload: ResponseTimingCreate, db: Database, session: CurrentSession
 ) -> dict:
-    return await save_response_timing(db, session, conversation_id, payload)
+    result = await save_response_timing(db, session, conversation_id, payload)
+    await commit_before_ack(db, "mimi_response_timing")
+    return result
 
 
 @router.post(
@@ -665,7 +668,9 @@ async def post_feedback(
     db: Database,
     session: CurrentSession,
 ) -> dict:
-    return await save_feedback(db, session, conversation_id, payload)
+    result = await save_feedback(db, session, conversation_id, payload)
+    await commit_before_ack(db, "mimi_feedback")
+    return result
 
 
 async def require_mimi_notifications():
