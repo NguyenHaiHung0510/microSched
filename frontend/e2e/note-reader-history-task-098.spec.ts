@@ -7,9 +7,10 @@ test.beforeEach(async({page})=>{
  await page.route('**/api/tracker/trackers**',route=>route.fulfill({json:{items:[]}}))
 })
 
-test('098 unknown bulk ACK retains the same snapshot through dismissal and retry, but purges on scope loss',async({page,taskApi})=>{
- const row:HistoryRow={origin:'one_shot',source_kind:'task',occurrence_ref:{origin:'one_shot',id:'bulk098'},source_ref:{kind:'task',id:taskApi.tasks[0].id},occurrence_at:'2026-10-24T09:00:00Z',occurrence_on:'2026-10-24',time_precision:'datetime',time_basis:'recorded_only',status:'sent',title:'Synthetic bulk retry',body:null,handled_at:null,is_private:false,can_open:true,can_handle:true}
- const prepared:string[]=[],committed:string[]=[];let unknown=true
+for(const fault of ['503','network','timeout'] as const) test('098 '+fault+' unknown bulk ACK retains the same snapshot through dismissal and retry, but purges on scope loss',async({page,taskApi,context})=>{
+ if(fault==='timeout')test.setTimeout(45000)
+ const row:HistoryRow={origin:'one_shot',source_kind:'task',occurrence_ref:{origin:'one_shot',id:'bulk098'},source_ref:{kind:'task',id:taskApi.tasks[0].id},occurrence_at:'2026-10-24T09:00:00Z',occurrence_on:'2026-10-24',time_precision:'datetime',time_basis:'recorded_only',status:'sent',title:'Synthetic bulk retry',body:'',handled_at:null,is_private:false,can_open:true,can_handle:true}
+ const prepared:string[]=[],committed:string[]=[];let unknown:'503'|'network'|'timeout'|null=fault
  await page.route('**/api/reminders**',r=>r.fulfill({json:{items:[],has_more:false,registered_devices:0}}))
  await page.route('**/api/reminder-history**',async route=>{
   const req=route.request(),url=new URL(req.url())
@@ -20,6 +21,12 @@ test('098 unknown bulk ACK retains the same snapshot through dismissal and retry
   }
   if(url.pathname.endsWith('/commit')){
    const id=url.pathname.split('/').at(-2)!;committed.push(id)
+   if(unknown==='network')return route.abort('connectionreset')
+   if(unknown==='timeout'){
+    await new Promise(resolve=>setTimeout(resolve,21000))
+    try{await route.fulfill({status:503,json:{detail:'history_batch_commit_unknown'}})}catch{/* The client deliberately aborted at its real20s deadline. */}
+    return
+   }
    if(unknown)return route.fulfill({status:503,json:{detail:'history_batch_commit_unknown'}})
    return route.fulfill({json:{id,selected_count:1,cutoff:'2026-10-24T10:00:00Z',expires_at:'2026-10-24T10:15:00Z',filter:{},scope_visible:true,result:{selected_count:1,new_count:0,already_count:1}} satisfies HistoryBatch})
   }
@@ -28,18 +35,47 @@ test('098 unknown bulk ACK retains the same snapshot through dismissal and retry
  await page.goto('/?reminders=1');await page.getByRole('button',{name:'Lịch sử',exact:true}).click()
  const history=page.getByTestId('reminder-history'),confirm=page.getByTestId('history-bulk-confirm')
  await history.getByTestId('history-selection-toggle').click();await history.getByTestId('history-prepare-all').click()
- await page.getByTestId('history-bulk-commit').click();await expect(confirm.getByRole('alert')).toContainText('Chưa xác định')
+ await page.getByTestId('history-bulk-commit').click();await expect(confirm.getByRole('alert')).toContainText('Chưa xác định',{timeout:fault==='timeout'?25000:5000})
  await expect(confirm.getByRole('button',{name:'Huỷ',exact:true})).toBeDisabled()
  await expect(confirm.getByRole('button',{name:'Đóng',exact:true})).toHaveCount(0)
  await page.keyboard.press('Escape');await expect(confirm).toBeVisible()
  await page.locator('[data-slot="dialog-overlay"]').last().click({position:{x:3,y:3},force:true});await expect(confirm).toBeVisible()
- unknown=false;await page.getByTestId('history-bulk-commit').click();await expect(confirm).toBeHidden()
+ if(fault==='network'){
+  await context.setOffline(true);await page.getByTestId('history-bulk-commit').click()
+  await expect(confirm.getByRole('alert')).toContainText('Chưa xác định')
+  await expect(confirm.getByRole('button',{name:'Huỷ',exact:true})).toBeDisabled()
+  expect(committed).toHaveLength(1);await context.setOffline(false)
+ }
+ unknown=null;await page.getByTestId('history-bulk-commit').click();await expect(confirm).toBeHidden()
  expect(prepared).toHaveLength(1);expect(committed).toEqual([prepared[0],prepared[0]])
  await expect(history.getByRole('status')).toContainText('Đã xử lý 1')
- unknown=true;await history.getByTestId('history-prepare-all').click();await page.getByTestId('history-bulk-commit').click()
+ unknown='503';await history.getByTestId('history-prepare-all').click();await page.getByTestId('history-bulk-commit').click()
  await expect(confirm.getByRole('alert')).toContainText('Chưa xác định')
  await page.evaluate(()=>window.dispatchEvent(new Event('microsched:visibility')));await expect(confirm).toBeHidden()
  expect(prepared[1]).not.toBe(prepared[0]);expect(committed).toHaveLength(3)
+})
+
+test('098 fresh bulk confirmation does not borrow a previous single ACK',async({page,taskApi})=>{
+ const rows:HistoryRow[]=[0,1].map(i=>({origin:'one_shot',source_kind:'task',occurrence_ref:{origin:'one_shot',id:'prior'+i},source_ref:{kind:'task',id:taskApi.tasks[0].id},occurrence_at:'2026-10-24T09:00:00Z',occurrence_on:'2026-10-24',time_precision:'datetime',time_basis:'recorded_only',status:'sent',title:'Synthetic prior '+i,body:'',handled_at:null,is_private:false,can_open:true,can_handle:true}))
+ let commits=0
+ await page.route('**/api/reminders**',r=>r.fulfill({json:{items:[],has_more:false,registered_devices:0}}))
+ await page.route('**/api/reminder-history**',async route=>{
+  const req=route.request(),url=new URL(req.url())
+  if(req.method()==='GET')return route.fulfill({json:{items:rows,next_cursor:null,has_more:false,private_notice:null}})
+  if(req.method()==='PUT'){rows[0].handled_at='2026-10-24T10:00:00Z';rows[0].can_handle=false;return route.fulfill({json:{occurrence_ref:rows[0].occurrence_ref,handled:true,handled_at:rows[0].handled_at}})}
+  if(url.pathname.endsWith('/prepare')){const body=req.postDataJSON();return route.fulfill({json:{id:body.batch_id,selected_count:1,cutoff:'2026-10-24T10:00:00Z',expires_at:'2026-10-24T10:15:00Z',filter:{...body.filter,selected_refs:body.selected_refs},scope_visible:true,result:null} satisfies HistoryBatch})}
+  commits++;return route.fulfill({status:500})
+ })
+ await page.goto('/?reminders=1');await page.getByRole('button',{name:'Lịch sử',exact:true}).click()
+ const history=page.getByTestId('reminder-history')
+ await history.getByTestId('history-row').first().getByTestId('history-handle').click()
+ await expect(history.getByRole('status')).toHaveText('Đã xử lý lần nhắc.')
+ await history.getByTestId('history-selection-toggle').click();await history.getByTestId('history-row').nth(1).getByRole('checkbox').click()
+ await history.getByRole('button',{name:'Xử lý 1 đã chọn',exact:true}).click()
+ const confirm=page.getByTestId('history-bulk-confirm');await expect(confirm).toBeVisible()
+ await expect(confirm.getByText('Đã xử lý lần nhắc.',{exact:true})).toHaveCount(0)
+ await expect(history.getByRole('status')).toHaveText('Đã xử lý lần nhắc.')
+ await confirm.getByRole('button',{name:'Huỷ',exact:true}).click();expect(commits).toBe(0)
 })
 
 for(const mode of ['all','unhandled']) test('098 History '+mode+' retains pages, disclosure and current/next anchor',async({page,taskApi})=>{
@@ -170,6 +206,12 @@ test('098 shared Task title wraps, autogrows and retains Input Enter/paste/IME s
  await page.goto('/');const card=page.locator('[data-task-id="'+task.id+'"]')
  await card.getByTestId('task-edit').click()
  const title=page.getByTestId('task-title-input');await expect(title).toHaveValue(original)
+ await expect.poll(()=>title.evaluate(el=>{const dialog=el.closest('[role="dialog"]')!;return dialog.scrollWidth-dialog.clientWidth})).toBeLessThanOrEqual(1)
+ const originalViewport=page.viewportSize()!
+ await page.setViewportSize(originalViewport.width===390?{width:1280,height:800}:{width:390,height:844})
+ await expect.poll(()=>title.evaluate(el=>el.scrollHeight-el.clientHeight)).toBeLessThanOrEqual(2)
+ await expect.poll(()=>title.evaluate(el=>{const dialog=el.closest('[role="dialog"]')!;return dialog.scrollWidth-dialog.clientWidth})).toBeLessThanOrEqual(1)
+ await page.setViewportSize(originalViewport)
  let writes=0;page.on('request',request=>{if(request.method()==='PATCH'&&new URL(request.url()).pathname.endsWith('/tasks/'+task.id))writes++})
  await title.fill('   ');await title.press('Enter');await expect(title).toBeVisible();expect(writes).toBe(0)
  await title.fill(original)

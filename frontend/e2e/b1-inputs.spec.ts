@@ -152,10 +152,13 @@ test('exact8000 Unicode boundary, all reasons and separate explicit vote/supplem
   await expect(page.getByTestId('mimi-positive-submit')).toBeDisabled()
   await input(page).fill(text)
   await expect(page.getByTestId('mimi-positive-count')).toHaveText('8.000/8.000')
+  await page.getByTestId('mimi-positive-expected').fill('ữ'.repeat(8000))
+  await expect.poll(()=>page.getByTestId('mimi-feedback').evaluate(el=>el.scrollWidth-el.clientWidth)).toBeLessThanOrEqual(1)
   for (const reason of ['Rõ ràng', 'Đúng ý', 'Hữu ích', 'Nhanh', 'Dễ hiểu', 'Khác']) await supplement(page).getByRole('button', { name: reason, exact: true }).click()
   await page.getByTestId('mimi-positive-submit').click()
   await expect.poll(() => b1.feedback.length).toBe(2)
   const sent = b1.feedback[1]
+  expect(sent.expected).toBe('ữ'.repeat(8000))
   expect(sent.comment).toContain(text)
   expect(Array.from(sent.comment).length).toBeLessThanOrEqual(10000)
   expect(sent.client_id).not.toBe(b1.feedback[0].client_id)
