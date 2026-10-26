@@ -1,5 +1,11 @@
 # Task tab and task lifecycle
 
+Task098 (2026-10-26): shared `TaskForm` uses `task-title-input`, a wrapping,
+autogrowing textarea retaining text-input CR/LF, Enter and IME semantics. It never
+rewrites an unchanged stored title. Focused cases cover Task-tab edit, calendar
+month/day and agenda edit, plus a forced `field-sizing:fixed` fallback. WebKit and
+physical iPhone require separate evidence; Chromium viewports do not prove them.
+
 Source: `frontend/src/App.tsx:168` (`currentTab === 'tasks'`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
 
 ## Sub-features

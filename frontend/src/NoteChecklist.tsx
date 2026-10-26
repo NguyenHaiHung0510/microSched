@@ -137,11 +137,10 @@ export function NoteChecklist({ items, pending, failed = false, preview = false,
           }}
         />
         </label>
-        <span
-          data-testid="note-item-content"
-          className={cn('min-w-0 py-2.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere]', item.is_completed && 'text-muted-foreground line-through')}
-        >
+        <span className="min-w-0 py-2.5">
+        <span data-testid="note-item-content" className={cn('block whitespace-pre-wrap break-words [overflow-wrap:anywhere]', preview && 'line-clamp-4', item.is_completed && 'text-muted-foreground line-through')}>
           {item.content}
+        </span>
         </span>
       </div>
     )

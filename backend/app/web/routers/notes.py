@@ -13,6 +13,8 @@ from app.domain.notes import (
     NoteItemCreate,
     NoteItemRead,
     NoteItemUpdate,
+    NoteMoveToTop,
+    NoteOrderConflict,
     NoteRead,
     NoteStore,
     NoteUpdate,
@@ -151,6 +153,27 @@ async def update_note_item(
     if item is None:
         raise _not_found()
     return item
+
+
+@router.post("/notes/{note_id}/items/{item_id}/move-to-top", response_model=list[NoteItemRead])
+async def move_note_item_to_top(
+    note_id: UUID,
+    item_id: UUID,
+    payload: NoteMoveToTop,
+    db: Database,
+    session: CurrentSession,
+) -> list[NoteItemRead]:
+    """Move once inside the current completion group, or reject a stale snapshot."""
+    try:
+        items = await store.move_item_to_top(db, session, note_id, item_id, payload)
+    except NoteOrderConflict as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Checklist đã thay đổi. Tải lại trước khi đưa mục lên đầu.",
+        ) from error
+    if items is None:
+        raise _not_found()
+    return items
 
 
 @router.delete("/notes/{note_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

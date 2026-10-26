@@ -1,5 +1,10 @@
 # Task097 compact Notes / Task / History / calendar toolbar
 
+Task098 supersedes the Note preview/reader/item-order controls and History ACK
+refresh behavior described below; see `notes.md`, `reminder-center.md` and
+`task-calendar.md` for its scoped selectors/oracles. The historical097 runtime
+namespace and immutable receipts below are not task098 runtime ownership.
+
 Read current097 grant/freeze/HANDBACK. Own r6b-097 namespace PG55498/API8008/preview4180; cached setup only for a new empty cell, never setup/reseed retained cells. Runtime owner alone launches or stops exact current PID. Frozen095/096 are separate and immutable. Use scripts/r6b_browser.mjs (4180/8008 only); legacy091/096 collectors and archived Owner192 doctors are not this cell. Shared source/build/config/helper/oracle manifest at batch start/end suffices; case receipts reference it.
 
 Notes: two columns >=lg, one mobile; existing pinned-first/sort; note-find filters only currently visible loaded title/body/checklists. note-expand reveals all body/reflections and remaining checklist naturally; no persisted truncation or fixed card height. Completed group still has its explicit disclosure. note-open-full/title opens full existing dialog, checklist edit/reorder/Ctrl+Enter+IME, all reflection paths. Actual X/Y checklist count remains truth. Quick-add Enter/focus and parent-delete undo remain. Persisted Note checklist and reflection delete require explicit confirmation; cancellation must make zero writes, failure retains dialog/item. Task persisted checklist delete requires the same deliberate confirmation in detail and editor; draft create-form items are unsaved and retain existing removal. Never claim fake child undo.

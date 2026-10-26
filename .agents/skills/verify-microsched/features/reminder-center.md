@@ -1,5 +1,14 @@
 # Reminder center
 
+Task098 (2026-10-26) adds an ACK-position oracle in
+`frontend/e2e/note-reader-history-task-098.spec.ts`: 125 synthetic occurrences over
+three days, three loaded pages, all/unhandled filters, disclosure, failure/retry,
+current/next/last-row anchors, and lock with late ACK. ACK patches only an existing
+cache row using the server timestamp, retaining query identity and loaded pages
+during background refetch. Private/auth purge still removes pages and pending UI.
+The task098 browser config targets only its explicitly owned preview15198; do not
+reuse legacy driver ports or infer physical-device/independent acceptance.
+
 Source: `frontend/src/App.tsx:139` (`<ReminderCenter`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
 
 ## Sub-features

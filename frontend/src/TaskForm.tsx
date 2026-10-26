@@ -1,6 +1,6 @@
 import { useTaskProjection } from '@/outbox/view'
 import { taskRequest as apiRequest } from '@/outbox/adapters'
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useId, useState } from 'react'
 import { ReminderButton } from '@/ReminderEditor'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
@@ -16,6 +16,7 @@ import {
   SelectTrigger,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { TaskTitleInput } from '@/TaskTitleInput'
 import {
   canSubmitTask,
   type TaskDuePrecision,
@@ -373,6 +374,7 @@ export function TaskForm({
   onCancel?: () => void
 }) {
   const taskId = initial?.id
+  const titleId = useId()
 
   const [title, setTitle] = useState(initial?.title ?? '')
   const [body, setBody] = useState(initial?.body_md ?? '')
@@ -464,17 +466,15 @@ export function TaskForm({
 
   return (
     <form className="space-y-4" onSubmit={submit}>
-      <label className="block space-y-1.5 text-sm font-semibold">
-        <span>Tiêu đề</span>
-        <Input
-          className="h-11 bg-card"
+      <div className="block space-y-1.5 text-sm font-semibold">
+        <label htmlFor={titleId}>Tiêu đề</label>
+        <TaskTitleInput
+          id={titleId}
           value={title}
-          minLength={1}
-          required
           disabled={pending || childPending}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={setTitle}
         />
-      </label>
+      </div>
 
       <label className="block space-y-1.5 text-sm font-semibold">
         <span>Nội dung</span>

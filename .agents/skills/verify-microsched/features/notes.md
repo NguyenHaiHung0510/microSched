@@ -23,3 +23,27 @@ Observable oracle: Correct fixture note and sort/pin state are visible; cancel p
 No real personal note payloads in screenshots. Notes are not covered by task or homepage smoke.
 
 Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
+
+## Task098 successor — 2026-10-26
+
+The approved B reader reuses `note-detail-dialog` as a full-region reading surface,
+without a new route. `note-reader-back` restores the opener's visual position and
+filter context. Section buttons navigate body → checklist → reflections within the
+actual reader scroller. Item controls are exactly `note-item-edit`, `note-item-top`,
+`note-item-delete` (Pencil/ArrowUpToLine/Trash). Adjacent up/down is removed.
+
+`POST /api/notes/{note_id}/items/{item_id}/move-to-top` compares the complete
+content-free `{id, position, is_completed}` snapshot under the parent lock, then
+moves within the current completion group in one transaction. Stale snapshots are
+409 without writes; an exact unchanged postcondition permits lost-response replay.
+Tick does not reorder. No pin field or DDL. Existing private visibility and child
+delete confirmation remain required.
+
+Preview is body6 / first reflection4 / first3 unfinished items×4 rendered lines;
+completed items are also clamped when explicitly disclosed. Full-card collapse
+resets both checklist disclosures. Stored content is never truncated.
+
+Focused author oracles: `frontend/e2e/note-reader-history-task-098.spec.ts`,
+`frontend/e2e/notes-checklist-045.spec.ts`, `backend/tests/test_note_order.py` and
+`backend/tests/test_notes_api.py`. Author evidence is separate from independent QA,
+CI, device and production. See `agent-tasks/098-note-reader-history-task.md`.

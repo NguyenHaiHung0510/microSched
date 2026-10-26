@@ -33,6 +33,17 @@ const test = base.extend<{ notes: { note: Note; patches: object[]; creates: obje
         return
       }
       const item = state.note.items.find((entry) => url.pathname.endsWith(`/items/${entry.id}`))
+      if (request.method() === 'POST' && url.pathname.endsWith('/move-to-top')) {
+        const id = url.pathname.split('/').at(-2)
+        const target = state.note.items.find(entry => entry.id === id)!
+        const group = state.note.items.filter(entry => entry.is_completed === target.is_completed)
+        const ordered = [target, ...group.filter(entry => entry.id !== id)]
+        let index = 0
+        state.note.items = state.note.items.map(entry => entry.is_completed === target.is_completed ? ordered[index++] : entry).map((entry, position) => ({ ...entry, position }))
+        state.patches.push({ move_to_top: id })
+        await route.fulfill({ json: state.note.items })
+        return
+      }
       if (request.method() === 'PATCH' && item) {
         const changes = request.postDataJSON() as object
         state.patches.push(changes)
@@ -148,9 +159,9 @@ test('detail text does not toggle, checkbox does, long text fits and editing per
   await row.getByTestId('note-item-edit-save').click()
   await expect(row.getByTestId('note-item-content')).toHaveText('Nội dung đã sửa')
   expect(notes.patches).toEqual([{ is_completed: true }, { is_completed: false }, { content: 'Nội dung đã sửa' }])
-  await dialog.locator('[data-note-item-id="item-3"]').getByTestId('note-item-up').click()
+  await dialog.locator('[data-note-item-id="item-3"]').getByTestId('note-item-top').click()
   await expect(dialog.getByTestId('note-item').first()).toHaveAttribute('data-note-item-id', 'item-3')
-  expect(notes.patches.slice(3)).toEqual(expect.arrayContaining([{ position: 1 }, { position: 3 }]))
+  expect(notes.patches.slice(3)).toEqual([{ move_to_top: 'item-3' }])
   await dialog.evaluate((element) => { element.scrollTop = 0 })
   if (process.env.CAPTURE_TASK045 === '1') await page.screenshot({ path: testInfo.outputPath('notes-detail.png') })
 })
