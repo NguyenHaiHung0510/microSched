@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { feedbackComment } from './mimi-owner-feedback'
+import { feedbackComment, feedbackFieldOverflow } from './mimi-owner-feedback'
 import { clampMimiRail, fitMimiRails, mimiRailMaximum } from './mimi-layout'
 
 test('positive one-tap maps to an ordinary nonempty comment without inventing API fields', () => {
@@ -8,8 +8,8 @@ test('positive one-tap maps to an ordinary nonempty comment without inventing AP
 test('negative feedback retains chosen reasons and exact issue in the existing comment', () => {
   expect(feedbackComment('negative', ['Thiếu ngữ cảnh', 'Khó hiểu'], 'Mimi bỏ mất checklist.')).toBe('Phản hồi chưa tốt.\nLý do: Thiếu ngữ cảnh, Khó hiểu.\nMimi bỏ mất checklist.')
   expect(() => feedbackComment('negative', ['Khác'], '   ')).toThrow('requires an issue')
-  expect(() => feedbackComment('negative', [], 'x'.repeat(501))).toThrow('exceeds500')
-  expect(feedbackComment('negative', [], 'x'.repeat(500))).toContain('x'.repeat(500))
+  expect(() => feedbackComment('negative', [], 'x'.repeat(8001))).toThrow('exceeds8000')
+  expect(feedbackComment('negative', [], 'x'.repeat(8000))).toContain('x'.repeat(8000))
 })
 
 test('positive supplement allows exactly8000 Unicode codepoints with all reasons below the unchanged API limit', () => {
@@ -20,7 +20,10 @@ test('positive supplement allows exactly8000 Unicode codepoints with all reasons
   expect(Array.from(comment).length).toBeLessThanOrEqual(10000)
   for (const reason of reasons) expect(comment).toContain(reason)
   expect(() => feedbackComment('positive', reasons, issue + 'x')).toThrow('exceeds8000')
-  expect(() => feedbackComment('negative', [], 'x'.repeat(501))).toThrow('exceeds500')
+  expect(() => feedbackComment('negative', reasons, issue)).not.toThrow()
+  expect(() => feedbackComment('negative', [], issue + 'x')).toThrow('exceeds8000')
+  expect(feedbackFieldOverflow(issue)).toBe(false)
+  expect(feedbackFieldOverflow(issue + 'x')).toBe(true)
 })
 test('normal desktop allows640px on either rail and preserves existing defaults/minimum', () => {
   expect(fitMimiRails(200, 220, 1490, true, true)).toEqual({ left: 200, right: 220 })

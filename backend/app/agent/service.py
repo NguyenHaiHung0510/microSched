@@ -4519,11 +4519,19 @@ async def conversation_view(
         .scalars()
         .all()
     )
-    # Only scalar assistant bindings; message bodies are not loaded for accounting.
+    # Scalar bindings only: timing spans all retained responses, not the public
+    # message/event window. Never load message bodies for these aggregates.
     accounting_messages = (
         await db.execute(
-            select(MimiMessage.id, MimiMessage.run_id, MimiMessage.role)
-            .where(MimiMessage.conversation_id == conversation.id, MimiMessage.role == "assistant")
+            select(
+                MimiMessage.id,
+                MimiMessage.run_id,
+                MimiMessage.role,
+                MimiMessage.sequence,
+                MimiMessage.conversation_id,
+                MimiMessage.client_id,
+            )
+            .where(MimiMessage.conversation_id == conversation.id)
             .order_by(MimiMessage.sequence)
         )
     ).all()
@@ -4534,6 +4542,11 @@ async def conversation_view(
         as_of=datetime.now(UTC).isoformat(),
         scope_start=conversation.created_at.isoformat(),
         trigger_tokens=get_settings().mimi_compaction_trigger_tokens,
+    )
+    from app.agent.response_timing import retained_response_timings
+
+    response_timings = await retained_response_timings(
+        db, conversation, accounting_runs, accounting_messages, accounting_calls
     )
     # The historical public event window is an existing P1 contract. A separate
     # bounded receipt projection keeps recent tool details available on reload.
@@ -4722,6 +4735,7 @@ async def conversation_view(
         "events": [_event_read(row, dek) for row in events],
         "tool_activities": [_event_read(row, dek) for row in reversed(activity_rows)],
         "metrics": metrics,
+        "response_timings": response_timings,
         "run_observations": {
             str(run.id): {
                 **run_costs([call for call in provider_calls if call.run_id == run.id]),

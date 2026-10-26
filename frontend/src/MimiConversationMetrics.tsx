@@ -1,13 +1,16 @@
 import type { MimiAccountingSummary, MimiConversation } from '@/mimi-api'
 import { lastMeasuredInput, formatMetric } from '@/mimi-context-metrics'
 import { mimiRunLabel } from '@/mimi-presentation'
+import { responseSeconds, responseOutcomeLabel } from '@/mimi-response-timing'
 
 const money = (value: string | null) => value == null ? '—' : `$${value}`
 const coverage = (observed: number, missing: number) => `${observed}/${observed + missing} call${missing ? ` · ${missing} chưa có số liệu` : ''}`
 
 export function MimiMetricsTable({ conversation }: { conversation: MimiConversation }) {
   const metrics = conversation.metrics
+  const timings = conversation.response_timings
   const rows = [
+    ['E2E min / TB / max', `${responseSeconds(timings?.min_ms)} / ${responseSeconds(timings?.avg_ms)} / ${responseSeconds(timings?.max_ms)}`, timings ? `${timings.observed}/${timings.eligible} phản hồi thành công có đo · ${timings.missing} thiếu` : 'Chưa có phép đo browser'],
     ['Context đã đo', `${formatMetric(lastMeasuredInput(conversation))} / 400k`, metrics?.last_measured_input ? new Date(metrics.last_measured_input.as_of).toLocaleString('vi-VN') : ''],
     ['Ngưỡng compact mềm', formatMetric(metrics?.context_policy?.compaction_trigger_tokens), ''],
     ['USD đã ghi nhận', metrics ? money(metrics.usd.known) : '—', ''],
@@ -24,6 +27,8 @@ export function MimiMetricsTable({ conversation }: { conversation: MimiConversat
       <p className="mt-1">Context là lần đo gần nhất; context hiện tại chưa đo lại. Native input gồm cache; reasoning nằm trong output.</p>
       {metrics ? <><dl className="mt-1 space-y-1">{(['input', 'output', 'reasoning', 'usd'] as const).map((key) => <div key={key}><dt className="inline font-semibold">{key}: </dt><dd className="inline">{coverage(metrics[key].observed, metrics[key].missing)}</dd></div>)}<div><dt className="inline font-semibold">Cache: </dt><dd className="inline">{formatMetric(metrics.cache.cached)} / {formatMetric(metrics.cache.sample_input)} input cùng mẫu · {coverage(metrics.cache.observed, metrics.cache.missing)}</dd></div></dl><p className="mt-1">{metrics.eligible_dispatches} dispatch · main {metrics.purpose_counts.main} · helper {metrics.purpose_counts.helper} · chưa phân loại {metrics.purpose_counts.unclassified} · {metrics.reused_calls} lượt dùng lại, không cộng phí.</p><p>Receipts còn lưu{metrics.scope_complete ? '' : ' · phạm vi chưa đầy đủ'} · cập nhật {new Date(metrics.as_of).toLocaleString('vi-VN')}{metrics.anomaly_dispatches ? ` · ${metrics.anomaly_dispatches} dispatch mâu thuẫn` : ''}.</p></> : <p>Chưa có tổng hợp từ server.</p>}
       <p>Output / thời gian call: — (chưa có khoảng đo tương ứng).</p>
+      <p>E2E từ Gửi (hoặc Tiếp tục / Xác nhận) đến response hoàn tất trên browser có paint opportunity. Mỗi segment một mẫu; không phải provider latency. Thời gian chờ bạn xác nhận không vào TB.</p>
+      {timings ? <p>{timings.pending} đang chờ · {timings.failed} thất bại · {timings.cancelled} đã huỷ · {timings.unknown} chưa rõ. Các outcome này không vào min/TB/max thành công. Reload không đo lại; hidden/offscreen/legacy thiếu phép đo vẫn là thiếu. Phạm vi: toàn bộ response còn lưu.</p> : null}
     </details>
   </div>
 }
@@ -37,11 +42,11 @@ export function MimiTokenPrices({ conversation }: { conversation: MimiConversati
   </details>
 }
 
-function ResponseValues({ row }: { row: MimiAccountingSummary }) {
-  return <><td className="p-2 tabular-nums">{money(row.usd.known)}<p className="text-xs text-muted-foreground">{coverage(row.usd.observed, row.usd.missing)}</p></td><td className="p-2 tabular-nums">{formatMetric(row.output.known)}<p className="text-xs text-muted-foreground">{coverage(row.output.observed, row.output.missing)}</p></td><td className="p-2">—</td></>
+function ResponseValues({ row, timings }: { row: MimiAccountingSummary & { run_id: string | null }; timings: MimiConversation['response_timings'] }) {
+  return <><td className="p-2 tabular-nums">{money(row.usd.known)}<p className="text-xs text-muted-foreground">{coverage(row.usd.observed, row.usd.missing)}</p></td><td className="p-2 tabular-nums">{formatMetric(row.output.known)}<p className="text-xs text-muted-foreground">{coverage(row.output.observed, row.output.missing)}</p></td><td className="p-2">{timings?.responses.filter(t => t.run_id === row.run_id).map(t => <p key={`${t.target_id}:${t.phase}`} className="whitespace-nowrap">{t.phase === 'confirmation' ? 'Xác nhận' : t.phase === 'resume' ? 'Tiếp tục' : t.response_kind === 'preview' ? 'Preview' : 'Phản hồi'}: {responseSeconds(t.elapsed_ms)} · {responseOutcomeLabel(t.outcome)}</p>) ?? '—'}</td></>
 }
 
 export function MimiConversationMetrics({ conversation }: { conversation: MimiConversation }) {
   const rows = conversation.metrics?.responses ?? []
-  return <div className="space-y-3"><MimiMetricsTable conversation={conversation} /><MimiTokenPrices conversation={conversation} /><details className="rounded-xl border" data-testid="mimi-metrics-responses"><summary className="cursor-pointer p-3 text-sm font-semibold">Theo phản hồi ({rows.length})</summary><div className="max-h-80 overflow-auto"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-card"><tr><th className="p-2">Phản hồi / lượt</th><th className="p-2">USD</th><th className="p-2">Output</th><th className="p-2">token/s</th></tr></thead><tbody>{rows.map((row, i) => <tr key={row.run_id ?? 'unassigned'} className="border-t"><th scope="row" className="p-2 font-medium">{row.run_id == null ? 'Chưa gắn lượt' : row.assistant_message_id ? `Phản hồi ${i + 1}` : `Lượt ${i + 1} · chưa có câu trả lời`}<p className="text-xs font-normal text-muted-foreground">{mimiRunLabel(row.state)}</p></th><ResponseValues row={row} /></tr>)}</tbody></table></div></details></div>
+  return <div className="space-y-3"><MimiMetricsTable conversation={conversation} /><MimiTokenPrices conversation={conversation} /><details className="rounded-xl border" data-testid="mimi-metrics-responses"><summary className="cursor-pointer p-3 text-sm font-semibold">Theo phản hồi ({rows.length})</summary><div className="max-h-80 overflow-auto"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-card"><tr><th className="p-2">Phản hồi / lượt</th><th className="p-2">USD</th><th className="p-2">Output</th><th className="p-2">E2E từng segment</th></tr></thead><tbody>{rows.map((row, i) => <tr key={row.run_id ?? 'unassigned'} className="border-t"><th scope="row" className="p-2 font-medium">{row.run_id == null ? 'Chưa gắn lượt' : row.assistant_message_id ? `Phản hồi ${i + 1}` : `Lượt ${i + 1} · chưa có câu trả lời`}<p className="text-xs font-normal text-muted-foreground">{mimiRunLabel(row.state)}</p></th><ResponseValues row={row} timings={conversation.response_timings} /></tr>)}</tbody></table></div></details></div>
 }

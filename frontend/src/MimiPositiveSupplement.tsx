@@ -40,7 +40,7 @@ function SupplementEditor({ conversationId, targetId, onLater }: Props) {
   }
   const send = useMutation({
     mutationFn: async (intent: SupplementIntent): Promise<MimiFeedback> => {
-      const saved = await saveMimiFeedback(intent.conversationId, { target_type: 'turn', target_id: intent.targetId }, intent.comment, '', intent.clientId)
+      const saved = await saveMimiFeedback(intent.conversationId, { target_type: 'turn', target_id: intent.targetId }, intent.comment, intent.expected ?? '', intent.clientId)
       return verifySupplementAck(saved, intent)
     },
     onSuccess: (_saved, intent) => {
@@ -50,10 +50,12 @@ function SupplementEditor({ conversationId, targetId, onLater }: Props) {
     onSettled: () => { inFlight.current = false },
   })
   const count = unicodeCodepoints(draft.text)
-  const overflow = count > POSITIVE_SUPPLEMENT_LIMIT
+  const expectedCount = unicodeCodepoints(draft.expected ?? '')
+  const issueOverflow = count > POSITIVE_SUPPLEMENT_LIMIT
+  const overflow = issueOverflow || expectedCount > POSITIVE_SUPPLEMENT_LIMIT
   function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (send.isPending || inFlight.current || composing.current || (!liveDraft.current.intent && unicodeCodepoints(liveDraft.current.text) > POSITIVE_SUPPLEMENT_LIMIT)) return
+    if (send.isPending || inFlight.current || composing.current || (!liveDraft.current.intent && (unicodeCodepoints(liveDraft.current.text) > POSITIVE_SUPPLEMENT_LIMIT || unicodeCodepoints(liveDraft.current.expected ?? '') > POSITIVE_SUPPLEMENT_LIMIT))) return
     const intent = supplementIntent(liveDraft.current, conversationId, targetId, crypto.randomUUID())
     if (!intent) return
     inFlight.current = true
@@ -67,13 +69,21 @@ function SupplementEditor({ conversationId, targetId, onLater }: Props) {
     <div className="space-y-2">
       <label className="text-sm font-semibold" htmlFor={detailId}>Ghi chú phản hồi tích cực</label>
       <Textarea id={detailId} data-testid="mimi-positive-detail" className="field-sizing-fixed h-44 min-h-40 resize-y bg-card sm:h-48" value={draft.text}
-        aria-describedby={`${detailId}-count ${detailId}-help`} aria-invalid={overflow}
+        aria-describedby={`${detailId}-count ${detailId}-help`} aria-invalid={issueOverflow}
         onCompositionStart={() => { composing.current = true; setIsComposing(true) }}
         onCompositionEnd={() => { composing.current = false; setIsComposing(false) }}
         onChange={(event) => { const text = event.target.value; update(old => ({ ...old, text, revision: old.revision + 1, savedRevision: null })) }}
         placeholder="Muốn ghi chú thêm? (không bắt buộc)" />
       <p id={`${detailId}-count`} data-testid="mimi-positive-count" className={`text-right text-xs ${overflow ? 'text-bad' : 'text-muted-foreground'}`}>{count.toLocaleString('vi-VN')}/8.000</p>
-      {overflow ? <p role="alert" className="text-xs text-bad">Ghi chú tối đa 8.000 ký tự. Rút ngắn nội dung trước khi gửi.</p> : null}
+      {issueOverflow ? <p role="alert" className="text-xs text-bad">Ghi chú tối đa 8.000 ký tự. Rút ngắn nội dung trước khi gửi.</p> : null}
+    </div>
+    <div className="space-y-2">
+      <label className="text-sm font-semibold" htmlFor={`${detailId}-expected`}>Kết quả bạn mong đợi (không bắt buộc)</label>
+      <Textarea id={`${detailId}-expected`} data-testid="mimi-positive-expected" value={draft.expected ?? ''} className="min-h-24 bg-card" aria-describedby={`${detailId}-expected-count`} aria-invalid={expectedCount > POSITIVE_SUPPLEMENT_LIMIT}
+        onCompositionStart={() => { composing.current = true; setIsComposing(true) }} onCompositionEnd={() => { composing.current = false; setIsComposing(false) }}
+        onChange={event => { const expected = event.target.value; update(old => ({ ...old, expected, revision: old.revision + 1, savedRevision: null })) }} />
+      <p id={`${detailId}-expected-count`} className="text-right text-xs text-muted-foreground">{expectedCount.toLocaleString('vi-VN')}/8.000</p>
+      {expectedCount > POSITIVE_SUPPLEMENT_LIMIT ? <p role="alert" className="text-xs text-bad">Kết quả mong đợi tối đa 8.000 ký tự. Nội dung vẫn được giữ để sửa.</p> : null}
     </div>
     <p id={`${detailId}-help`} className="text-xs text-muted-foreground">Chỉ gửi khi bạn bấm Gửi bổ sung.</p>
     {unknown ? <p role="alert" className="text-sm text-bad">Chưa xác định kết quả lưu. Bản nháp được giữ; thử lại sẽ gửi cùng nội dung và khóa ban đầu.</p> : null}
@@ -81,7 +91,7 @@ function SupplementEditor({ conversationId, targetId, onLater }: Props) {
     {draft.savedRevision === draft.revision ? <p role="status" className="text-sm text-ok">Đã lưu góp ý chi tiết</p> : null}
     <div className="flex flex-wrap justify-end gap-2">
       {onLater ? <Button type="button" variant="outline" className="min-h-11" onClick={onLater}>Để sau</Button> : null}
-      <Button type="submit" data-testid="mimi-positive-submit" className="min-h-11" disabled={send.isPending || isComposing || (!draft.intent && (overflow || (!draft.text.trim() && !draft.reasons.length)))}>{send.isPending ? 'Đang gửi…' : draft.intent ? 'Thử lại góp ý đã gửi' : 'Gửi bổ sung'}</Button>
+      <Button type="submit" data-testid="mimi-positive-submit" className="min-h-11" disabled={send.isPending || isComposing || (!draft.intent && (overflow || (!draft.text.trim() && !draft.reasons.length && !draft.expected?.trim())))}>{send.isPending ? 'Đang gửi…' : draft.intent ? 'Thử lại góp ý đã gửi' : 'Gửi bổ sung'}</Button>
     </div>
   </form>
 }
