@@ -1,5 +1,14 @@
 # Response feedback and target binding
 
+Task099 M2 candidate: detail **and expected** each8,000 Unicode codepoints for
+Mimi/system ×positive/negative; no native truncation. Use `mimi-positive-detail`,
+`mimi-positive-expected`, `mimi-feedback`, `mimi-feedback-expected` and their
+visible counters. Test7999/8000/8001, emoji/IME/paste/middle edits, original
+key/body/target on unknown retry, and late ACK preserving new edits. Existing
+encrypted API envelope10,000 and causal evidence remain. See
+[Task099](../../../../agent-tasks/099-mimi-response-metrics-feedback.md).
+Independent current-candidate browser/device acceptance remains **NOT_RUN**.
+
 Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:931`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features

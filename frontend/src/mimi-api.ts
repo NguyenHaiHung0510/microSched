@@ -83,6 +83,51 @@ export type MimiFeedback = {
   evidence_bundle_ids?: string[]
 }
 
+export type MimiResponseTimingInput = {
+  version: 1
+  client_id: string
+  run_id: string
+  target_id: string
+  phase: 'send' | 'resume' | 'confirmation'
+  source_id: string
+  observation: 'visible_paint' | 'hidden' | 'offscreen'
+  elapsed_ms: number | null
+}
+export type MimiResponseTiming = {
+  run_id: string
+  target_id: string
+  phase: MimiResponseTimingInput['phase']
+  source_id: string | null
+  response_kind: string
+  outcome: 'succeeded' | 'failed' | 'cancelled' | 'unknown' | 'pending'
+  parent_run_id: string | null
+  elapsed_ms: number | null
+  observation: string
+  provenance: string
+}
+export type MimiResponseTimings = {
+  version: 1
+  scope: string
+  provenance: string
+  min_ms: number | null
+  avg_ms: number | null
+  max_ms: number | null
+  observed: number
+  eligible: number
+  missing: number
+  pending: number
+  failed: number
+  cancelled: number
+  unknown: number
+  responses: MimiResponseTiming[]
+}
+
+export function saveMimiResponseTiming(conversationId: string, receipt: MimiResponseTimingInput): Promise<MimiResponseTimingInput> {
+  return apiRequest(`/api/mimi/conversations/${conversationId}/response-timings`, {
+    method: 'POST', headers: MIMI_WRITE_HEADERS, body: JSON.stringify(receipt),
+  })
+}
+
 export type MimiFeedbackTarget = {
   target_type: 'turn' | 'run' | 'call' | 'operation' | 'receipt'
   target_id: string
@@ -280,6 +325,7 @@ export type MimiToolActivityView = {
 }
 
 export type MimiConversation = {
+  response_timings?: MimiResponseTimings
   id: string
   sensitivity: 'standard'
   title?: string

@@ -24,6 +24,7 @@ from app.agent.notifications import (
     set_preference,
 )
 from app.agent.policy import load_standard_policy
+from app.agent.response_timing import ResponseTimingCreate, save_response_timing
 from app.agent.route_config import ConfigurationChange, profiles_for_ui
 from app.agent.runtime import admit_run, hold_run_guard_if_enabled, release_run
 from app.agent.service import (
@@ -59,6 +60,7 @@ from app.agent.service import (
 from app.core.db import get_sessionmaker
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
+from app.web.acknowledgement import commit_before_ack
 from app.web.deps import get_session, require_session
 from app.web.mimi_csrf import require_mimi_csrf
 
@@ -643,6 +645,19 @@ async def decide_change_set(
 
 
 @router.post(
+    "/conversations/{conversation_id}/response-timings",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_response_timing(
+    conversation_id: UUID, payload: ResponseTimingCreate, db: Database, session: CurrentSession
+) -> dict:
+    result = await save_response_timing(db, session, conversation_id, payload)
+    await commit_before_ack(db, "mimi_response_timing")
+    return result
+
+
+@router.post(
     "/conversations/{conversation_id}/feedback",
     dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
     status_code=status.HTTP_201_CREATED,
@@ -653,7 +668,9 @@ async def post_feedback(
     db: Database,
     session: CurrentSession,
 ) -> dict:
-    return await save_feedback(db, session, conversation_id, payload)
+    result = await save_feedback(db, session, conversation_id, payload)
+    await commit_before_ack(db, "mimi_feedback")
+    return result
 
 
 async def require_mimi_notifications():

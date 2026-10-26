@@ -1,5 +1,15 @@
 # Run observations, context and recovery
 
+Task099 M1 candidate adds browser E2E beside response/run cost and conversation
+min/TB/max with n/N successful-segment coverage. `mimi-answer-timing` and
+`mimi-metrics-summary` expose the results. Existing provider latency/server run
+elapsed remain separate. Preview and Confirm/Resume have distinct source/phase;
+failure/cancel/unknown do not enter success averages; missing/hidden/offscreen,
+reload and all-retained history must stay honest. No extra model calls, DDL or
+per-token telemetry. See [Task099](../../../../agent-tasks/099-mimi-response-metrics-feedback.md)
+for fixture/commands and M01–M06. Independent browser/device acceptance is
+**NOT_RUN** until PM freezes and accepts the integrated candidate.
+
 Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiRunObservations.tsx:13`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
