@@ -316,15 +316,15 @@ test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable exp
   await feedbackDraft.fill('Preview cần hiển thị nguồn rõ hơn')
   for (const mismatch of ['wrong-client', 'wrong-target'] as const) {
     feedbackAckMode = mismatch
-    await page.getByRole('button', { name: 'Lưu feedback' }).click()
-    await expect(page.getByRole('alert').filter({ hasText: 'Chưa lưu feedback.' })).toBeVisible()
+    await page.getByRole('button', { name: /^(Lưu feedback|Thử lại feedback đã gửi)$/ }).click()
+    await expect(page.getByRole('alert').filter({ hasText: 'Chưa xác nhận feedback đã lưu.' })).toBeVisible()
     await expect(acknowledgment).toHaveCount(0)
     await expect(feedbackDraft).toHaveValue('Preview cần hiển thị nguồn rõ hơn')
     expect(conversation!.feedback).toEqual([])
   }
   feedbackAckMode = 'matching'
   const savedResponse = page.waitForResponse((response) => response.url().endsWith(`/conversations/${conversationId}/feedback`) && response.request().method() === 'POST')
-  await page.getByRole('button', { name: 'Lưu feedback' }).click()
+  await page.getByRole('button', { name: 'Thử lại feedback đã gửi', exact: true }).click()
   const response = await savedResponse
   expect(response.status()).toBe(201)
   const savedFeedback = await response.json()

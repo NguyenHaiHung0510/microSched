@@ -26,3 +26,9 @@ Base: 1a2c739af5512f86e037ba4086b210fbc35c80d2. No DDL, provider calls, producti
 The local handback supplies exact commit/build/config/fixtures and all author receipts. Existing required CI and PM acceptance are retained; no push/PR/merge or cleanup is authorized by this task's author verification.
 
 Final shared-create smoke additionally found a textarea-label ambiguity: the wrapping label included title value text, so a title containing “giờ” matched the time label. The title now has an explicit useId/htmlFor association. Original unchanged create smoke and affected title/calendar cases:6/6 PASS; final consolidated browser32/32 PASS again. All failure receipts remain retained.
+
+## PM grouped review correction — 2026-10-27, Asia/Saigon
+
+Independent integrated review found that an ambiguous bulk-commit ACK could be dismissed and lose its original snapshot ID. While that commit is pending or explicitly unknown, the confirmation stays open, its cancel/close controls cannot discard the batch, and retry sends the same prepared ID. Auth/private-scope purge still clears it. The intended enabled-cancel failure was reproduced before the guard; the corrected same-ID retry, Escape/outside dismissal and visibility purge passed on desktop and mobile.
+
+CI feedback assertions now follow the existing uncertain-save message and explicit original-intent retry button; the three-attempt identity/target/body checks remain. Both formerly failing viewport journeys passed locally. A Calendar test now counts only open_picker requests, checks its actual first-page limit and exact next cursor, and verifies retained/appended rows; unrelated grid/overdue refreshes no longer pollute the counter. No Calendar product code changed. Picker and adjacent undated case passed twice on mobile. Fresh independent delta/UI QA and final CI remain PM-owned.

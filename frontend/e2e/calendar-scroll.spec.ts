@@ -314,26 +314,51 @@ test.describe('mobile (390x844, touch)', () => {
 
   test('move picker loads one bounded page only when opened and retains its cursor', async ({
     page,
-    taskApi,
   }) => {
+    const taskReads: URL[] = []
+    page.on('request', request => {
+      const url = new URL(request.url())
+      if (request.method() === 'GET' && url.pathname === '/api/tasks') taskReads.push(url)
+    })
+    const pickerReads = () => taskReads.filter(url => url.searchParams.get('bucket') === 'open_picker')
+    const pickerResponse = () => page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return response.request().method() === 'GET' && url.pathname === '/api/tasks' && url.searchParams.get('bucket') === 'open_picker'
+    })
     await calendarRoutes(page, { events: [], annotations: [] })
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
     await expect(page.getByTestId('calendar-scroll-container')).toBeVisible()
-    // The grid's bounded Task pages may still be loading after the container
-    // mounts. Establish the baseline only after those initial requests settle.
-    await page.waitForLoadState('networkidle')
-    const before = taskApi.count('GET', '/api/tasks')
+    const overdueResponse = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname === '/api/tasks' && url.searchParams.get('status') === 'open' && url.searchParams.get('bucket') === 'dated' && !url.searchParams.has('from') && url.searchParams.get('to') === `${vnDay(0)}T00:00:00+07:00`
+    })
     await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
     await expect(page.getByTestId('calendar-day-dialog')).toBeVisible()
-    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 1)
-    const afterDayOpen = taskApi.count('GET', '/api/tasks')
+    expect((await overdueResponse).ok()).toBe(true)
+    // Grid/overdue lifecycle refreshes share /api/tasks; only picker dispatches
+    // establish the bounded-page contract under test.
+    expect(pickerReads()).toHaveLength(0)
+    const firstResponse = pickerResponse()
     await page.getByTestId('calendar-day-move-task').tap()
     await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
-    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(afterDayOpen + 1)
-    if (await page.getByTestId('calendar-move-load-more').isVisible()) {
+    const firstPage = await (await firstResponse).json()
+    expect(pickerReads()).toHaveLength(1)
+    expect(pickerReads()[0].searchParams.get('limit')).toBe('50')
+    expect(pickerReads()[0].searchParams.has('cursor')).toBe(false)
+    expect(firstPage.items.length).toBeLessThanOrEqual(50)
+    if (firstPage.next_cursor) {
+      const previousIds = firstPage.items.map((item: { id: string }) => item.id)
+      const nextResponse = pickerResponse()
       await page.getByTestId('calendar-move-load-more').click()
-      await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(afterDayOpen + 2)
+      const nextPage = await (await nextResponse).json()
+      expect(pickerReads()).toHaveLength(2)
+      expect(pickerReads()[1].searchParams.get('cursor')).toBe(firstPage.next_cursor)
+      expect(nextPage.items.length).toBeLessThanOrEqual(50)
+      const renderedIds = await page.getByTestId('calendar-move-task').evaluateAll(elements => elements.map(element => element.getAttribute('data-task-id')))
+      expect(renderedIds).toEqual(expect.arrayContaining([...previousIds, ...nextPage.items.map((item: { id: string }) => item.id)]))
+    } else {
+      await expect(page.getByTestId('calendar-move-load-more')).toBeHidden()
     }
   })
 

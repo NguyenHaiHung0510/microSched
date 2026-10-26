@@ -1,10 +1,45 @@
 import {test,expect} from './fixtures/tasks'
-import type {HistoryRow} from '../src/reminder-history'
+import type {HistoryRow,HistoryBatch} from '../src/reminder-history'
 import type {Note} from '../src/note-ui'
 import {appendFutureReflection} from '../src/note-ui'
 
 test.beforeEach(async({page})=>{
  await page.route('**/api/tracker/trackers**',route=>route.fulfill({json:{items:[]}}))
+})
+
+test('098 unknown bulk ACK retains the same snapshot through dismissal and retry, but purges on scope loss',async({page,taskApi})=>{
+ const row:HistoryRow={origin:'one_shot',source_kind:'task',occurrence_ref:{origin:'one_shot',id:'bulk098'},source_ref:{kind:'task',id:taskApi.tasks[0].id},occurrence_at:'2026-10-24T09:00:00Z',occurrence_on:'2026-10-24',time_precision:'datetime',time_basis:'recorded_only',status:'sent',title:'Synthetic bulk retry',body:null,handled_at:null,is_private:false,can_open:true,can_handle:true}
+ const prepared:string[]=[],committed:string[]=[];let unknown=true
+ await page.route('**/api/reminders**',r=>r.fulfill({json:{items:[],has_more:false,registered_devices:0}}))
+ await page.route('**/api/reminder-history**',async route=>{
+  const req=route.request(),url=new URL(req.url())
+  if(req.method()==='GET')return route.fulfill({json:{items:[row],next_cursor:null,has_more:false,private_notice:null}})
+  if(url.pathname.endsWith('/prepare')){
+   const body=req.postDataJSON();prepared.push(body.batch_id)
+   return route.fulfill({json:{id:body.batch_id,selected_count:1,cutoff:'2026-10-24T10:00:00Z',expires_at:'2026-10-24T10:15:00Z',filter:body.filter,scope_visible:true,result:null} satisfies HistoryBatch})
+  }
+  if(url.pathname.endsWith('/commit')){
+   const id=url.pathname.split('/').at(-2)!;committed.push(id)
+   if(unknown)return route.fulfill({status:503,json:{detail:'history_batch_commit_unknown'}})
+   return route.fulfill({json:{id,selected_count:1,cutoff:'2026-10-24T10:00:00Z',expires_at:'2026-10-24T10:15:00Z',filter:{},scope_visible:true,result:{selected_count:1,new_count:0,already_count:1}} satisfies HistoryBatch})
+  }
+  return route.fulfill({status:404})
+ })
+ await page.goto('/?reminders=1');await page.getByRole('button',{name:'Lịch sử',exact:true}).click()
+ const history=page.getByTestId('reminder-history'),confirm=page.getByTestId('history-bulk-confirm')
+ await history.getByTestId('history-selection-toggle').click();await history.getByTestId('history-prepare-all').click()
+ await page.getByTestId('history-bulk-commit').click();await expect(confirm.getByRole('alert')).toContainText('Chưa xác định')
+ await expect(confirm.getByRole('button',{name:'Huỷ',exact:true})).toBeDisabled()
+ await expect(confirm.getByRole('button',{name:'Đóng',exact:true})).toHaveCount(0)
+ await page.keyboard.press('Escape');await expect(confirm).toBeVisible()
+ await page.locator('[data-slot="dialog-overlay"]').last().click({position:{x:3,y:3},force:true});await expect(confirm).toBeVisible()
+ unknown=false;await page.getByTestId('history-bulk-commit').click();await expect(confirm).toBeHidden()
+ expect(prepared).toHaveLength(1);expect(committed).toEqual([prepared[0],prepared[0]])
+ await expect(history.getByRole('status')).toContainText('Đã xử lý 1')
+ unknown=true;await history.getByTestId('history-prepare-all').click();await page.getByTestId('history-bulk-commit').click()
+ await expect(confirm.getByRole('alert')).toContainText('Chưa xác định')
+ await page.evaluate(()=>window.dispatchEvent(new Event('microsched:visibility')));await expect(confirm).toBeHidden()
+ expect(prepared[1]).not.toBe(prepared[0]);expect(committed).toHaveLength(3)
 })
 
 for(const mode of ['all','unhandled']) test('098 History '+mode+' retains pages, disclosure and current/next anchor',async({page,taskApi})=>{
