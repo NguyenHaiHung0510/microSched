@@ -100,7 +100,13 @@ ACK failure; all-retained coverage beyond public windows; both actors/polarities
 and both fields at7999/8000/8001 with emoji, Vietnamese IME, paste/middle edits,
 unknown-save retry and stale ACK. No real provider is needed for lifecycle cases.
 Full-app visual/physical iPhone/live provider/CI/production evidence is NOT_RUN
-by this builder lane until separately observed. No push/PR/merge in this lane.
+by this builder lane until separately observed. No push/PR/merge in this lane
+was the builder-lane boundary. Owner follow-up on 2026-10-27: “Alright mình muốn
+bỏ dòng này ở dưới thông báo hệ thống đi -> làm nó cho mình”; “bỏ cả ở dưới
+phản hồi mimi”; “tạo PR vào develop”; “tạo nhánh mới”. This follow-up authorizes
+a separate branch and PR into develop for removing the response timing line from
+system notices and Mimi assistant replies; it supersedes the builder-lane PR
+restriction for this scoped display change only. It does not authorize merge.
 
 Builder checks observed2026-10-26 Asia/Saigon:103/103 backend focused tests
 (84unit/regression +19PostgreSQL),105/105 frontend Mimi/PWA tests across22files,

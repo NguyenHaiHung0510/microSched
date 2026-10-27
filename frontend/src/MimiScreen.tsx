@@ -931,7 +931,7 @@ export function MimiScreen({
         {showWelcome ? (
           <div className="mimi-welcome" data-testid="mimi-welcome"><MimiAvatar size="xl" className="mimi-welcome-avatar" /><h2>Chào bạn,<br className="mimi-dock-linebreak" /> vào việc thôi</h2><div className="mimi-welcome-suggestions"><Button type="button" variant="outline" onClick={() => { setDraft('Mimi có thể làm gì?'); messageInputRef.current?.focus() }}><Sparkles className="size-4" />Mimi có thể làm gì?</Button><Button type="button" variant="outline" onClick={() => { setDraft('Tư vấn mình xếp lại lịch'); messageInputRef.current?.focus() }}><CalendarDays className="size-4" />Tư vấn mình xếp lại lịch</Button></div></div>
         ) : current.messages.map((message) => isVerifiedServerNotice(message) ? (
-          <div key={message.id} data-mimi-response-id={message.id}><MimiSystemNotice message={message} feedbackPending={feedback.isPending} onFeedback={(mood) => openMessageFeedback(message.id, mood, true)} /><MimiResponseTiming conversation={current} targetId={message.id} /></div>
+          <div key={message.id} data-mimi-response-id={message.id}><MimiSystemNotice message={message} feedbackPending={feedback.isPending} onFeedback={(mood) => openMessageFeedback(message.id, mood, true)} /></div>
         ) : (
           <article
             key={message.id}
@@ -945,7 +945,6 @@ export function MimiScreen({
               <div className="mimi-message-body">{message.role === 'user' ? <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p> : <MimiMessageText text={message.content} />}
                 {message.role === 'assistant' ? <MimiToolActivity events={current.tool_activities ?? current.events} runId={message.run_id} /> : null}
                 <time className="mimi-message-time">{new Date(message.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</time>
-                {message.role === 'assistant' ? <MimiResponseTiming conversation={current} targetId={message.id} /> : null}
               </div>
               {message.role === 'assistant' ? <div className="mimi-answer-actions" aria-label={`Hành động câu trả lời ${message.sequence}`}>
                 <Button type="button" size="icon" variant="ghost" aria-label={`Sao chép câu trả lời ${message.sequence}`} onClick={() => { void navigator.clipboard.writeText(message.content).then(() => toast.success('Đã sao chép', { duration: 2000 })).catch(() => toast.error('Chưa sao chép được', { duration: 2000 })) }}><Copy className="size-4" /></Button>
