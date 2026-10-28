@@ -679,6 +679,11 @@ export async function decideMimiChangeSet(
       decision,
     }),
   })
+  if (saved.change_set_id !== changeSet.id
+    || (decision === 'confirm' && (!('executed_at' in saved) || saved.digest !== changeSet.digest || saved.operation_id !== changeSet.operation.operation_id))
+    || (decision === 'reject' && (!('state' in saved) || saved.state !== 'rejected'))) {
+    throw new Error('Mimi decision acknowledgment does not match the frozen preview')
+  }
   if (decision === 'confirm' && 'executed_at' in saved) publishMimiTaskCommit(changeSet, saved)
   return saved
 }

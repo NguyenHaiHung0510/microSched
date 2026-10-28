@@ -5,6 +5,7 @@ import { getSnapshot, subscribe } from '@/outbox/core'
 import { activeDraftBaselines, formValue, hasUnsavedFormChanges, pruneDraftBaselines } from '@/draft-baselines'
 import { hasMimiComposerDrafts } from '@/mimi-selection'
 import { hasUnsentSupplement } from '@/mimi-positive-supplement'
+import { hasUnsentRetainedMimiFeedback } from '@/mimi-feedback-state'
 import { safeAutomaticUpdate } from '@/pwa-update'
 
 export function PwaUpdates() {
@@ -21,6 +22,7 @@ export function PwaUpdates() {
       const state = getSnapshot()
       const feedback = client.getQueryCache().getAll().some(query => {
         if (query.queryKey[0] !== 'mimi-feedback-draft') return false
+        if (query.queryKey[1] === 'negative-flow') return hasUnsentRetainedMimiFeedback(query.state.data as Record<string, unknown> | undefined)
         return hasUnsentSupplement(query.state.data as Parameters<typeof hasUnsentSupplement>[0])
       })
       return safeAutomaticUpdate({

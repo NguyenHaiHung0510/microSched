@@ -1,4 +1,6 @@
 import { hasUnsentFeedback } from '@/pwa-update'
+import { useMimiFeedbackField, useMimiFeedbackRevision, useRetainedMimiFeedback } from '@/mimi-feedback-state'
+import { activeMimiPreview, blockedNewMimiPreview, matchesMimiPreview, type MimiPreviewBinding } from '@/mimi-active-preview'
 import { commitOutcomeMessage } from '@/acknowledgement'
 import { MimiToolActivity } from '@/MimiToolActivity'
 import type { MimiEvent } from '@/mimi-api'
@@ -81,6 +83,12 @@ function errorMessage(error: unknown): string {
   }
   if (error instanceof TypeError) return 'Không kết nối được. Nội dung bạn nhập vẫn được giữ lại.'
   return 'Có lỗi chưa xác định. Thử lại sau.'
+}
+
+function feedbackErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 409) return 'Mục góp ý hoặc nội dung gửi không khớp. Bản gửi và khóa đối chiếu vẫn được giữ.'
+  if (error instanceof ApiError && error.status >= 500) return 'Dịch vụ feedback chưa trả kết quả xác nhận.'
+  return errorMessage(error)
 }
 
 function expiryLabel(value: string): string {
@@ -210,6 +218,7 @@ export function MimiScreen({
   onTechnicalOpenChange,
   onTechnicalCloseFocus,
   onOpenConfiguration,
+  autoFocusComposer = false,
 }: {
   onOpenTasks: () => void
   variant?: 'workspace' | 'dock'
@@ -221,37 +230,41 @@ export function MimiScreen({
   onTechnicalOpenChange?: (open: boolean) => void
   onTechnicalCloseFocus?: () => void
   onConversationCreated?: (conversationId: string) => void
+  autoFocusComposer?: boolean
 }) {
   const queryClient = useQueryClient()
-  const [revisionTarget, setRevisionTarget] = useState<{ id: string; digest: string } | null>(null)
+  useRetainedMimiFeedback(conversationId)
+  const [revisionTarget, setRevisionTarget] = useState<MimiPreviewBinding | null>(null)
+  const [acknowledgedPreview, setAcknowledgedPreview] = useState<MimiPreviewBinding | null>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
+  const feedbackOpener = useRef<HTMLElement | null>(null)
   const [online, setOnline] = useState(() => navigator.onLine)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
-  const [feedbackMood, setFeedbackMood] = useState<'positive' | 'negative'>('negative')
-  const [feedbackReasons, setFeedbackReasons] = useState<string[]>([])
+  const [feedbackMood, setFeedbackMood] = useMimiFeedbackField<'positive' | 'negative'>(conversationId, 'mood', 'negative')
+  const [feedbackReasons, setFeedbackReasons] = useMimiFeedbackField<string[]>(conversationId, 'reasons', [])
   const [localDecisionIntent, setDecisionIntent] = useState<MimiDecisionIntent | null>(null)
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
-  const [feedbackDraft, setFeedbackDraft] = useState('')
-  const [feedbackExpected, setFeedbackExpected] = useState('')
-  const [feedbackClientId, setFeedbackClientId] = useState<string | null>(null)
-  const [feedbackTargetKey, setFeedbackTargetKey] = useState('')
-  const [feedbackBinding, setFeedbackBinding] = useState<{
+  const [feedbackDraft, setFeedbackDraft] = useMimiFeedbackField(conversationId, 'draft', '')
+  const [feedbackExpected, setFeedbackExpected] = useMimiFeedbackField(conversationId, 'expected', '')
+  const [feedbackClientId, setFeedbackClientId] = useMimiFeedbackField<string | null>(conversationId, 'clientId', null)
+  const [feedbackTargetKey, setFeedbackTargetKey] = useMimiFeedbackField(conversationId, 'targetKey', '')
+  const [feedbackBinding, setFeedbackBinding] = useMimiFeedbackField<{
     conversationId: string
     targetKey: string
-  } | null>(null)
-  const [feedbackAcknowledgment, setFeedbackAcknowledgment] = useState<{
+  } | null>(conversationId, 'binding', null)
+  const [feedbackAcknowledgment, setFeedbackAcknowledgment] = useMimiFeedbackField<{
     conversationId: string
     targetKey: string
     mood: 'positive' | 'negative'
-  } | null>(null)
-  const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null)
-  const feedbackDraftRevision = useRef(0)
+  } | null>(conversationId, 'acknowledgment', null)
+  const [feedbackNotice, setFeedbackNotice] = useMimiFeedbackField<string | null>(conversationId, 'notice', null)
+  const feedbackDraftRevision = useMimiFeedbackRevision(conversationId)
   const feedbackComposing = useRef(false)
   const [feedbackIsComposing, setFeedbackIsComposing] = useState(false)
-  const [negativeFeedbackIntent, setNegativeFeedbackIntent] = useState<{
+  const [negativeFeedbackIntent, setNegativeFeedbackIntent] = useMimiFeedbackField<{
     conversationId: string; targetKey: string; comment: string; expected: string;
     clientId: string; draftRevision: number;
-  } | null>(null)
+  } | null>(conversationId, 'intent', null)
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
   const [runStage, setRunStage] = useState('Sẵn sàng')
@@ -308,6 +321,12 @@ export function MimiScreen({
   })
   const queryKey = conversationId ? ['mimi', 'conversation', conversationId] : ['mimi', 'current']
   const current = conversation.data
+  const focusConversationId = current?.id
+  useEffect(() => {
+    if (!autoFocusComposer || !focusConversationId) return
+    const frame = requestAnimationFrame(() => messageInputRef.current?.focus({ preventScroll: true }))
+    return () => cancelAnimationFrame(frame)
+  }, [autoFocusComposer, focusConversationId])
   const responseTiming = useMimiResponseTiming(current)
   const decisionIntent = current ? (localDecisionIntent?.conversationId === current.id ? localDecisionIntent : readMimiIntent(current.id, current.change_sets)) : null
   const [draft, setDraft] = useMimiComposerDraft(current?.id)
@@ -359,7 +378,7 @@ export function MimiScreen({
       current: MimiConversation
       content: string
       clientId: string
-      revision?: { id: string; digest: string } | null
+      revision?: MimiPreviewBinding | null
       startedAt: number
     }) => streamMimiMessage(
       current.id,
@@ -385,8 +404,9 @@ export function MimiScreen({
       const accepted = data.messages.find(message => message.client_id === variables.clientId)
       if (accepted?.run_id) responseTiming.bind(variables.current.id, 'send', variables.clientId, accepted.run_id)
       queryClient.setQueryData(queryKey, data)
-      setMimiComposerDraft(variables.current.id, '')
-      if (variables.revision) setRevisionTarget(null)
+      const revisionRetained = variables.revision && matchesMimiPreview(data, activeMimiPreview(data.change_sets), variables.revision)
+      if (!revisionRetained) setMimiComposerDraft(variables.current.id, '')
+      if (variables.revision && !matchesMimiPreview(data, activeMimiPreview(data.change_sets), variables.revision)) setRevisionTarget(null)
       const terminalRun = data.runs.at(-1)
       if (terminalRun && runStageRunId.current === terminalRun.id) {
         runStageRunId.current = null
@@ -439,7 +459,22 @@ export function MimiScreen({
 
   const decision = useMutation({
     mutationFn: (intent: MimiDecisionIntent) => decideMimiChangeSet(intent.changeSet, intent.choice, intent.key),
-    onSuccess: (_saved, intent) => {
+    onSuccess: async (saved, intent) => {
+      const binding = { conversationId: intent.conversationId, id: intent.changeSet.id, digest: intent.changeSet.digest, nonce: intent.changeSet.nonce }
+      setAcknowledgedPreview(binding)
+      // Cancel older reads before publishing the matching ACK. Refetch is still
+      // required, but its latency must not re-enable the just-decided preview.
+      await queryClient.cancelQueries({ queryKey: ['mimi', 'conversation', intent.conversationId], exact: true })
+      await queryClient.cancelQueries({ queryKey: ['mimi', 'current'], exact: true })
+      const publish = (snapshot: MimiConversation | null | undefined) => {
+        if (!snapshot || snapshot.id !== intent.conversationId) return snapshot
+        return { ...snapshot, change_sets: snapshot.change_sets.map(change => matchesMimiPreview(snapshot, change, binding)
+          ? { ...change, state: intent.choice === 'reject' ? 'rejected' : 'executed' } : change),
+          receipts: 'executed_at' in saved && !snapshot.receipts.some(receipt => receipt.id === saved.id)
+            ? [...snapshot.receipts, saved] : snapshot.receipts }
+      }
+      queryClient.setQueryData(['mimi', 'conversation', intent.conversationId], publish)
+      queryClient.setQueryData(['mimi', 'current'], publish)
       clearMimiIntent(intent.conversationId)
       setDecisionIntent(null)
       setRecoveryNotice(null)
@@ -489,7 +524,7 @@ export function MimiScreen({
   })
   const undo = useMutation({ mutationFn: prepareMimiUndo, onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['mimi'] }) })
   function confirmDecision(changeSet: MimiChangeSet, choice: 'confirm' | 'reject') {
-    if (!current || decisionIntent || decision.isPending) return
+    if (!current || decisionIntent || decision.isPending || previewAwaitingRefresh || previewConflict) return
     const intent = { conversationId: current.id, changeSet, choice, key: crypto.randomUUID() }
     try { saveMimiIntent(intent) } catch { setRecoveryNotice('Không giữ được khóa đối chiếu ở phiên trình duyệt. Chưa gửi thao tác.'); return }
     setDecisionIntent(intent)
@@ -511,30 +546,32 @@ export function MimiScreen({
       return saved
     }),
     onSuccess: (_saved, variables) => {
-      if (negativeFeedbackIntent?.clientId === variables.clientId) setNegativeFeedbackIntent(null)
+      setNegativeFeedbackIntent(intent => intent?.clientId === variables.clientId ? null : intent)
       const targetKey = `${variables.target.target_type}:${variables.target.target_id}`
       setFeedbackAcknowledgment({ conversationId: variables.current.id, targetKey, mood: variables.mood })
       if (variables.mood === 'positive') queryClient.setQueryData(['mimi', 'positive-feedback-intent', variables.current.id, variables.target.target_id], { clientId: variables.clientId, saved: true })
       if (variables.mood === 'negative' && variables.draftRevision === -1) queryClient.setQueryData(['mimi', 'system-negative-feedback-intent', variables.current.id, variables.target.target_id], { clientId: variables.clientId, saved: true })
-      if (current?.id === variables.current.id && feedbackDraftRevision.current === variables.draftRevision) {
+      if (current?.id === variables.current.id && feedbackDraftRevision.read() === variables.draftRevision) {
         setFeedbackDraft('')
         setFeedbackExpected('')
         setFeedbackClientId(null)
         setFeedbackBinding(null)
-        feedbackDraftRevision.current += 1
+        feedbackDraftRevision.bump()
       }
       void queryClient.invalidateQueries({ queryKey: ['mimi'] })
     },
   })
 
   const pendingChangeSet = useMemo(
-    () => [...(current?.change_sets ?? [])].reverse().find((item) => item.state === 'pending'),
+    () => activeMimiPreview(current?.change_sets ?? []),
     [current?.change_sets],
   )
+  const previewConflict = (current?.change_sets.filter(item => item.state === 'pending').length ?? 0) > 1
+  const previewAwaitingRefresh = !!(current && acknowledgedPreview && matchesMimiPreview(current, pendingChangeSet, acknowledgedPreview))
   const pendingPreviewExpired = usePreviewExpired(pendingChangeSet?.expires_at ?? '')
   const activeRevision = revisionTarget
-    && pendingChangeSet?.id === revisionTarget.id
-    && pendingChangeSet.digest === revisionTarget.digest
+    && current && !pendingPreviewExpired && !previewAwaitingRefresh
+    && matchesMimiPreview(current, pendingChangeSet, revisionTarget)
     ? revisionTarget
     : null
   const latestReceipt = current?.receipts.at(-1)
@@ -715,7 +752,8 @@ export function MimiScreen({
   }
 
   function startPreviewRevision(changeSet: MimiChangeSet) {
-    setRevisionTarget({ id: changeSet.id, digest: changeSet.digest })
+    if (!current || pendingPreviewExpired || decisionIntent || previewAwaitingRefresh || changeSet !== pendingChangeSet) return
+    setRevisionTarget({ conversationId: current.id, id: changeSet.id, digest: changeSet.digest, nonce: changeSet.nonce })
     requestAnimationFrame(() => messageInputRef.current?.focus())
   }
 
@@ -730,7 +768,7 @@ export function MimiScreen({
     }
     if (!intent) {
       if (!feedbackDraft.trim() || feedbackOverflow) return
-      intent = { conversationId: current.id, targetKey, clientId: feedbackClientId ?? crypto.randomUUID(), comment: feedbackComment(feedbackMood, feedbackReasons, feedbackDraft), expected: feedbackExpected, draftRevision: feedbackDraftRevision.current }
+      intent = { conversationId: current.id, targetKey, clientId: feedbackClientId ?? crypto.randomUUID(), comment: feedbackComment(feedbackMood, feedbackReasons, feedbackDraft), expected: feedbackExpected, draftRevision: feedbackDraftRevision.read() }
       setNegativeFeedbackIntent(intent)
     }
     const clientId = intent.clientId
@@ -749,7 +787,7 @@ export function MimiScreen({
   function toggleFeedbackReason(reason: string) {
     setFeedbackReasons((old) => old.includes(reason) ? old.filter((item) => item !== reason) : [...old, reason])
     if (feedbackMood === 'negative') {
-      feedbackDraftRevision.current += 1
+      feedbackDraftRevision.bump()
       setFeedbackClientId(null)
       setFeedbackAcknowledgment(null)
       feedback.reset()
@@ -758,16 +796,24 @@ export function MimiScreen({
 
   function openMessageFeedback(messageId: string, mood: 'positive' | 'negative', systemNotice = false) {
     if (!current || feedback.isPending) return
+    if (!feedbackOpen) feedbackOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const targetKey = `turn:${messageId}`
+    if (feedbackBinding?.conversationId === current.id && feedbackBinding.targetKey !== targetKey
+      && (feedbackDraft.trim() || feedbackExpected.trim() || negativeFeedbackIntent)) {
+      setFeedbackTargetKey(feedbackBinding.targetKey)
+      setFeedbackOpen(true)
+      setFeedbackNotice('Đang giữ bản nháp và mục góp ý trước. Chọn rõ mục trong form nếu muốn đổi; bản gửi chưa rõ kết quả vẫn giữ nguyên khóa và đích.')
+      return
+    }
     setFeedbackMood(mood)
-    setFeedbackReasons([])
+    if (!feedbackDraft.trim() && !feedbackExpected.trim()) setFeedbackReasons([])
     setFeedbackTargetKey(targetKey)
     setFeedbackOpen(true)
     setFeedbackBinding({ conversationId: current.id, targetKey })
     setFeedbackAcknowledgment(null)
     setFeedbackNotice(null)
     feedback.reset()
-    feedbackDraftRevision.current += 1
+    feedbackDraftRevision.bump()
     if (mood === 'negative' && !systemNotice) { setFeedbackClientId(null); return }
     const intentKey = ['mimi', mood === 'positive' ? 'positive-feedback-intent' : 'system-negative-feedback-intent', current.id, messageId]
     const intent = queryClient.getQueryData<{ clientId: string; saved: boolean }>(intentKey)
@@ -783,7 +829,7 @@ export function MimiScreen({
     return <p role="status" className="py-12 text-center text-sm text-muted-foreground">Đang mở Mimi…</p>
   }
 
-  if (conversation.isError) {
+  if (conversation.isError && !current) {
     return (
       <Card role="alert" className="mx-auto max-w-lg">
         <CardHeader>
@@ -962,11 +1008,16 @@ export function MimiScreen({
 
       {current.response_timings?.responses.filter(row => row.run_id === latestRun?.id && ['status', 'decision'].includes(row.response_kind) && row.outcome !== 'pending').map(row => <div key={`${row.phase}:${row.target_id}`} data-mimi-response-id={row.target_id} className="rounded-lg bg-muted p-3 text-sm"><p>{row.phase === 'confirmation' ? 'Kết quả quyết định preview' : 'Trạng thái lượt chạy'} · {mimiTerminalRunStage(latestRun?.state ?? '', latestRun?.provider_outcome ?? null)}</p><MimiResponseTiming conversation={current} targetId={row.target_id} /></div>)}
 
+      {conversation.isError ? <div role="alert" className="rounded-lg bg-warn-bg p-3 text-sm"><p>Chưa đồng bộ được hội thoại. Đang giữ snapshot trước; kết quả đã ACK không được gửi lại.</p><Button variant="outline" disabled={conversation.isFetching} onClick={() => void conversation.refetch()}>Đọc lại hội thoại</Button></div> : null}
+      {previewConflict ? <div role="alert" className="rounded-lg bg-warn-bg p-3 text-sm" data-testid="mimi-preview-conflict"><p>Server trả về nhiều preview đang chờ. Chưa chọn hoặc xác nhận phương án nào; hãy đọc lại trạng thái.</p><Button variant="outline" onClick={() => void conversation.refetch()}>Đọc lại preview</Button></div> : null}
+      {previewAwaitingRefresh ? <p role="status" className="text-sm" data-testid="mimi-preview-refresh">Server đã xác nhận quyết định cho phương án này. Đang chờ snapshot mới; không gửi lại thao tác.</p> : null}
+      {blockedNewMimiPreview(current) ? <p role="status" className="rounded-lg bg-warn-bg p-3 text-sm" data-testid="mimi-blocked-new-preview">Yêu cầu vừa rồi chưa tạo preview mới. {pendingChangeSet ? 'Phương án hiển thị vẫn là phương án đang giữ. Chọn “Sửa phương án này” để thay thế đúng phương án đó.' : 'Không có preview mới để duyệt. Từ chối phương án trước không tự tạo lại yêu cầu bị chặn; hãy gửi yêu cầu mới khi bạn muốn.'}</p> : null}
       {pendingChangeSet ? (
         <ChangeSetPreview
+          key={`${pendingChangeSet.id}:${pendingChangeSet.digest}:${pendingChangeSet.nonce}`}
           changeSet={pendingChangeSet}
           conversationId={current.id}
-          pending={decision.isPending || !!decisionIntent}
+          pending={decision.isPending || runtimeActive || !!decisionIntent || previewAwaitingRefresh}
           error={decision.isError ? errorMessage(decision.error) : null}
           onRevise={() => startPreviewRevision(pendingChangeSet)}
           onDecision={(choice) => confirmDecision(pendingChangeSet, choice)}
@@ -977,7 +1028,7 @@ export function MimiScreen({
       {latestReceipt ? <details className="max-h-40 overflow-auto rounded-lg border bg-card p-2 text-xs" data-testid="mimi-receipt"><summary className="cursor-pointer font-semibold">Đã lưu thay đổi · {typeof latestReceipt.result.count === 'number' ? latestReceipt.result.count : 1} Task</summary><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" onClick={onOpenTasks}>Mở Task</Button>{latestReceipt.result.undo_available === true ? <Button variant="outline" disabled={undo.isPending || runtimeActive || !!pendingChangeSet || !!decisionIntent} onClick={() => undo.mutate(latestReceipt.id)}>Chuẩn bị hoàn tác</Button> : null}</div><p className="mt-2 break-all text-xs">Receipt {latestReceipt.id}</p><p className="text-xs">Hoàn tác tạo preview mới có kiểm tra phiên bản; cần xác nhận riêng.</p>{undo.isError ? <p role="alert" className="text-bad">{errorMessage(undo.error)}</p> : null}</details> : null}
 
       {feedbackTargets.length ? (
-        <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}><DialogContent className={cn('max-h-[90dvh] overflow-y-auto', feedbackMood === 'positive' && 'sm:max-w-xl')} data-testid="mimi-feedback"><DialogHeader><DialogTitle>Góp ý câu trả lời</DialogTitle><DialogDescription>Feedback được gắn với đúng câu trả lời, run, lần gọi hoặc receipt bạn chọn.</DialogDescription></DialogHeader>
+        <Dialog open={feedbackOpen} onOpenChange={setFeedbackOpen}><DialogContent onCloseAutoFocus={event => { event.preventDefault(); feedbackOpener.current?.focus({ preventScroll: true }) }} className={cn('max-h-[90dvh] overflow-hidden flex flex-col', feedbackMood === 'positive' && 'sm:max-w-xl')} data-testid="mimi-feedback"><DialogHeader className="shrink-0 pr-10"><DialogTitle>Góp ý câu trả lời</DialogTitle><DialogDescription>Feedback được gắn với đúng câu trả lời, run, lần gọi hoặc receipt bạn chọn.</DialogDescription></DialogHeader><div className="min-h-0 overflow-y-auto">
           {feedbackMood === 'positive' ? <div className="space-y-3" data-testid="mimi-positive-feedback">
             <ThumbsUp className="mx-auto size-8 text-primary" />
             <p role="status" className="text-center font-semibold">{feedback.isPending ? 'Đang lưu phản hồi tích cực…' : feedbackAcknowledgment?.conversationId === current.id && feedbackAcknowledgment.targetKey === resolvedFeedbackTargetKey && feedbackAcknowledgment.mood === 'positive' ? 'Đã ghi nhận phản hồi tích cực' : 'Chưa xác nhận phản hồi tích cực đã lưu'}</p>
@@ -1001,7 +1052,7 @@ export function MimiScreen({
                     const hadDraft = !!feedbackDraft.trim() || !!feedbackExpected.trim()
                     setFeedbackTargetKey(value)
                     setFeedbackClientId(null)
-                    feedbackDraftRevision.current += 1
+                    feedbackDraftRevision.bump()
                     setFeedbackBinding(feedbackDraft.trim() || feedbackExpected.trim()
                       ? { conversationId: current.id, targetKey: value }
                       : null)
@@ -1040,7 +1091,7 @@ export function MimiScreen({
                   disabled={feedback.isPending}
                   placeholder="Mô tả kết quả chưa đúng hoặc thiếu điều gì."
                   onChange={(event) => {
-                    feedbackDraftRevision.current += 1
+                    feedbackDraftRevision.bump()
                     setFeedbackDraft(event.target.value)
                     setFeedbackClientId(null)
                     setFeedbackAcknowledgment(null)
@@ -1070,7 +1121,7 @@ export function MimiScreen({
                   disabled={feedback.isPending}
                   placeholder="Ví dụ: cần hỏi lại ngày trước khi tạo Task."
                   onChange={(event) => {
-                    feedbackDraftRevision.current += 1
+                    feedbackDraftRevision.bump()
                     setFeedbackExpected(event.target.value)
                     setFeedbackClientId(null)
                     setFeedbackAcknowledgment(null)
@@ -1092,7 +1143,7 @@ export function MimiScreen({
               {feedback.isError ? (
                 <p role="alert" className="flex items-center gap-2 text-sm text-bad">
                   <MessageSquareWarning className="size-4" />
-                  Chưa xác nhận feedback đã lưu. {errorMessage(feedback.error)} Nội dung vẫn được giữ để thử lại.
+                  Chưa xác nhận feedback đã lưu. {feedbackErrorMessage(feedback.error)} Nội dung vẫn được giữ để thử lại.
                 </p>
               ) : null}
               {(feedbackAcknowledgment?.conversationId === current.id
@@ -1125,7 +1176,7 @@ export function MimiScreen({
             </form> : null}
           </CardContent>
           </Card>}
-          <MimiFeedbackEvidence conversation={current} target={selectedFeedbackTarget} />
+          <MimiFeedbackEvidence conversation={current} target={selectedFeedbackTarget} /></div>
         </DialogContent></Dialog>
       ) : null}
 
