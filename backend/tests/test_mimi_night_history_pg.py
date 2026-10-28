@@ -224,6 +224,8 @@ def test_two_create_undo_cycles_keep_four_receipts_through_reload_compaction_and
                 assert [t.model_dump() for t in tasks] == before
                 # Current privacy still withholds both scalar refs involving this Task.
                 tasks[0].is_private = True
+                tasks[0].title = "enc:v1:synthetic"
+                tasks[0].body_md = None
                 await db.flush()
                 assert not await working_refs_current(db, cid, refs, dek, settings)
                 await db.rollback()
