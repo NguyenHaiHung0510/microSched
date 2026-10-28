@@ -186,6 +186,11 @@ def read_requirements(pairs, *, historical=True):
             if historical:
                 raise ValueError("working_history_unrecheckable_aggregate")
             continue  # Immediate current-run aggregate remains an authorized read.
+        if historical and isinstance(result.get("selection"), dict):
+            # A selected subset does not prove the source closure of its free
+            # text. Keep the canonical encrypted audit, but do not replay this
+            # opaque historical segment into main/helper/checkpoint context.
+            raise ValueError("working_history_opaque_selection")
         observed = set()
         for row in result.get("rows", []):
             if isinstance(row, dict) and row.get("id"):

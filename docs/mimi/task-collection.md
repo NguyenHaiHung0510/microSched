@@ -269,3 +269,11 @@ ID/digest and generation before I/O and rechecks the same pending, unexpired A a
 I/O. Text/read/clarification/invalid/failure retain A. Explicit revision keeps its
 stricter contract; no new client binding fields or natural-language router are used.
 Reject/expiry/other-tab frontier changes block a late B; no predecessor revival.
+
+Historical selection reason/intent/variants/query text has opaque source lineage:
+selected member eligibility cannot authorize prose copied from an unclassified
+read source. Historical context therefore exposes only eligible scalar bindings
+and member metadata with unavailable free-text coverage. Finalized working segments
+containing opaque selection results are withheld from replay/compaction. Canonical
+encrypted snapshots/audits remain intact; immediate current-run read/selection,
+Confirm, and independently eligible query evidence keep their existing semantics.

@@ -410,7 +410,28 @@ async def selection_for_egress(db, selection):
         str(member["id"]) for member in members if member.get("deleted_read_authorized") is not True
     }
     if await sources_current(db, ids, active):
-        return selection
+        # Member eligibility is not lineage for model-written reason/intent/
+        # variants: those may quote unclassified or earlier read sources. Keep
+        # only fixed scalar bindings here; the encrypted canonical snapshot and
+        # immediate current-run tool result are unchanged.
+        scalar_fields = {
+            "id",
+            "classification",
+            "collection_version",
+            "source_version",
+            "deleted_read_authorized",
+        }
+        return {
+            "event_id": selection["event_id"],
+            "run_id": selection["run_id"],
+            "selection_id": selection["snapshot"]["selection_id"],
+            "members": [
+                {key: value for key, value in member.items() if key in scalar_fields}
+                for member in members
+            ],
+            "coverage": "unavailable",
+            "reason": "historical_selection_free_text_withheld",
+        }
     return {
         "event_id": selection["event_id"],
         "run_id": selection["run_id"],
