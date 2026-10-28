@@ -179,7 +179,11 @@ def _decode_cursor(request: TaskQuery) -> tuple[datetime, UUID] | None:
 def _project(row: Task, projection: tuple[str, ...]) -> dict[str, Any]:
     # Identity and version are mandatory provenance even when the requested
     # display projection is narrower; confirmation can then bind every row.
-    data: dict[str, Any] = {"id": str(row.id)}
+    data: dict[str, Any] = {
+        "id": str(row.id),
+        "lifecycle": "deleted" if row.deleted_at is not None else "active",
+        "deleted_at": row.deleted_at.isoformat() if row.deleted_at is not None else None,
+    }
     for field in projection:
         value = getattr(row, field)
         data[field] = (
@@ -220,7 +224,7 @@ async def query_tasks(db: AsyncSession, request: TaskQuery) -> dict[str, Any]:
         "count": len(selected),
         "coverage": "partial" if more else "complete",
         "next_cursor": _encode_cursor(request, selected[-1]) if more and selected else None,
-        "omitted_fields": sorted(set(_FIELDS) - set(request.projection) - {"id"}),
+        "omitted_fields": sorted(set(_FIELDS) - set(request.projection) - {"id", "deleted_at"}),
         "data_as_of": datetime.now(UTC).isoformat(),
         "source": "microsched.task.standard.v1",
     }
@@ -256,7 +260,7 @@ async def inspect_tasks(db: AsyncSession, request: TaskInspectBatch) -> dict[str
         ],
         "missing_ids": [str(item) for item in request.ids if item not in found],
         "coverage": "complete",
-        "omitted_fields": sorted(set(_FIELDS) - set(request.projection) - {"id"}),
+        "omitted_fields": sorted(set(_FIELDS) - set(request.projection) - {"id", "deleted_at"}),
         "data_as_of": datetime.now(UTC).isoformat(),
         "source": "microsched.task.standard.v1",
     }

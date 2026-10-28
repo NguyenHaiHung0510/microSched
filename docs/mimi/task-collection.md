@@ -224,3 +224,30 @@ explains a retained stale preview; its frozen payload and persisted expiry stay
 unchanged. A later race still yields authoritative POST refusal. The client only
 clears a known frontier-refusal intent after a matching ID/digest/nonce terminal
 server snapshot; receipt absence or a transport error remains UNKNOWN/no replay.
+
+## Create repair and historical state
+
+Create advertisement requires `fields.title`; edit omission still preserves fields.
+Scheduling requires the complete triad, with civil dates distinct from timezone-aware
+instants. Independent creates with supplied facts need no selection/read. The policy
+checks item count and each corresponding date; general natural-language completeness
+still requires actual-model acceptance, not a schema-validity claim.
+
+Known shape/calendar errors return bounded allowlisted wire paths after the existing
+durable known-cost accounting gate. A repeated unresolved issue signature after
+actionable feedback reserves a no-tools final answer within the existing run bound;
+changed issues and valid repairs continue without a new correction cap. Every model
+wire receives current remaining allowances. Unauthorized fields/tools, unknown
+dispatch/cost and final-only violations retain their existing fail/reconcile gates.
+
+Scalar execution receipts retain history after soft-delete, while raw historical
+read pairs still require active STANDARD sources. Both retain current privacy and
+receipt/event binding checks, including checkpoint egress. Task projections always
+include lifecycle/deleted_at. Recent preview lifecycle exposes only bounded scalar
+IDs, digest/state/expiry and receipt references. It does not restore content or grant
+execution; only a canonical superseded event establishes that reason, and absent
+successor links stay unknown. Reject never revives a predecessor or replays a call.
+Validated scalar receipt outcomes for those recent previews are also rehydrated
+independently of the prose checkpoint frontier. A withheld checkpoint containing
+an ineligible raw read therefore does not erase otherwise eligible receipt facts;
+partial coverage and current privacy failures remain explicit.

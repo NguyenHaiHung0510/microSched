@@ -52,9 +52,10 @@ class RouteContractError(ValueError):
 class CandidateContractError(RouteContractError):
     """A wholly rejected native candidate turn; never a partial proposal/read."""
 
-    def __init__(self, code: str, tool_names: tuple[str, ...]):
+    def __init__(self, code: str, tool_names: tuple[str, ...], *, issues=()):
         super().__init__(code)
         self.tool_names = tool_names
+        self.issues = tuple(issues)
         # Only the service can enable feedback after durable accounting.
         self.correction_ready = False
 
@@ -535,6 +536,108 @@ def build_request(
     return request
 
 
+def _candidate_issues(error: ValidationError) -> tuple[dict[str, str], ...] | None:
+    """Allowlisted shape/value diagnostics, never validator input, ctx or unknown keys.
+
+    Nested Task DTO validation runs inside TaskCommand's after-validator; its
+    locations need the wire's fields component. Authorization/identity errors
+    deliberately remain fatal instead of turning into correction authority.
+    """
+    allowed_parts = {
+        "entries",
+        "fields",
+        "title",
+        "body_md",
+        "status",
+        "priority",
+        "pinned",
+        "due_precision",
+        "due_on",
+        "due_at",
+        "children",
+        "content",
+        "position",
+        "is_completed",
+        "reminder",
+        "configuration",
+        "action",
+        "selection_id",
+    }
+    allowed_types = {
+        "missing",
+        "string_type",
+        "dict_type",
+        "tuple_type",
+        "too_short",
+        "too_long",
+        "literal_error",
+        "bool_parsing",
+        "bool_type",
+        "int_type",
+        "int_parsing",
+        "greater_than_equal",
+        "date_from_datetime_parsing",
+        "date_from_datetime_inexact",
+        "date_parsing",
+        "date_type",
+        "datetime_from_date_parsing",
+        "datetime_parsing",
+        "datetime_type",
+        "task_schedule_invalid",
+    }
+    issues = []
+    for issue in error.errors(include_input=False, include_url=False):
+        parts = list(issue["loc"])
+        if any(not (type(p) is int or p in allowed_parts) for p in parts):
+            return None
+        code = issue["type"]
+        if code == "value_error":
+            reason = str(issue.get("ctx", {}).get("error", ""))
+            if reason == "title must not be blank" and parts and parts[-1] == "title":
+                code = "nonempty_title_required"
+            elif reason == "task_due_triad_must_be_complete":
+                code = reason
+                parts.append("fields")
+            else:
+                return None
+        elif code not in allowed_types:
+            return None
+        if code == "task_schedule_invalid" and len(parts) == 2 and parts[0] == "entries":
+            parts.append("fields")
+        if len(parts) >= 3 and parts[0] == "entries" and type(parts[1]) is int:
+            if parts[2] in {
+                "title",
+                "body_md",
+                "status",
+                "priority",
+                "pinned",
+                "due_precision",
+                "due_on",
+                "due_at",
+            }:
+                parts.insert(2, "fields")
+        if "children" in parts:
+            child = parts.index("children")
+            if len(parts) > child + 2 and parts[child + 2] in {
+                "content",
+                "position",
+                "is_completed",
+            }:
+                parts.insert(child + 2, "fields")
+        path = "".join(
+            f"[{p}]" if type(p) is int else ("." if n else "") + p for n, p in enumerate(parts)
+        )
+        expected = {
+            "title": "nonempty fields.title for each create; preserve the full requested set",
+            "due_on": "valid civil YYYY-MM-DD with due_precision=date and due_at=null",
+            "due_at": "timezone-aware datetime with due_precision=datetime and due_on=null",
+            "fields": "complete due_precision/due_on/due_at triad when scheduling",
+        }.get(parts[-1] if parts else "", "the leased field type/shape; no invented source facts")
+        issues.append({"path": path or "entries", "code": code, "expected": expected})
+    # A bounded prefix is enough for one corrective turn; never echo the payload.
+    return tuple(issues[:32])
+
+
 def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
     """Validate one model turn before any server-owned read or preview transition."""
 
@@ -629,18 +732,14 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
             raise CandidateContractError(str(error), native_names) from error
         raise
     except (KeyError, TypeError, ValueError, ValidationError) as error:
-        shape_error = not isinstance(error, ValidationError) or all(
-            (
-                issue["type"] in {"missing", "string_type", "dict_type", "tuple_type", "too_short"}
-                or (
-                    issue["type"] == "value_error"
-                    and str(issue.get("ctx", {}).get("error")) == "task_due_triad_must_be_complete"
-                )
-            )
-            for issue in error.errors(include_input=False)
-        )
-        if shape_error and set(native_names) & {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}:
-            raise CandidateContractError("invalid_agent_terminal_payload", native_names) from error
+        issues = _candidate_issues(error) if isinstance(error, ValidationError) else ()
+        if issues is not None and set(native_names) & {
+            CREATE_CANDIDATE_TOOL,
+            COLLECTION_CANDIDATE_TOOL,
+        }:
+            raise CandidateContractError(
+                "invalid_agent_terminal_payload", native_names, issues=issues
+            ) from error
         raise RouteContractError("invalid_agent_terminal_payload") from error
 
 

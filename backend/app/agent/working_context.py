@@ -297,17 +297,22 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
             validate_body(body, user, assistant, max_bytes=settings.mimi_max_payload_bytes)
             if digest(body) != event.payload.get("sha256"):
                 raise ValueError("working_projection_hash_invalid")
-            ids = task_ids(body["pairs"]) | set((body["terminal"] or {}).get("task_ids", []))
+            read_ids = task_ids(body["pairs"])
+            ids = read_ids | set((body["terminal"] or {}).get("task_ids", []))
             if ids:
-                # Recheck only STANDARD/lifecycle eligibility, not current content,
-                # versions or query scope. Historical staleness is not a read grant.
+                # Receipt scalars remain historical truth after soft-delete.
+                # Raw read pairs still require active STANDARD sources. Both
+                # retain the current privacy gate, never restoring deleted content.
                 eligible = (
                     (
                         await db.execute(
                             select(Task.id).where(
                                 Task.id.in_([UUID(identity) for identity in ids]),
                                 Task.is_private.is_(False),
-                                Task.deleted_at.is_(None),
+                                (
+                                    Task.deleted_at.is_(None)
+                                    | Task.id.not_in([UUID(identity) for identity in read_ids])
+                                ),
                             )
                         )
                     )
@@ -487,6 +492,7 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
         )
         by_id = {str(event.id): event for event in events}
         task_refs = set()
+        read_refs = set()
         for ref in refs:
             event = by_id.get(ref["event_id"])
             if (
@@ -521,6 +527,7 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
                     db, conversation_id, event.run_id, body["terminal"]
                 ):
                     return False
+                read_refs.update(task_ids(body["pairs"]))
                 task_refs.update(task_ids(body["pairs"]))
                 task_refs.update((body["terminal"] or {}).get("task_ids", []))
         if task_refs:
@@ -530,7 +537,10 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
                         select(Task.id).where(
                             Task.id.in_([UUID(identity) for identity in task_refs]),
                             Task.is_private.is_(False),
-                            Task.deleted_at.is_(None),
+                            (
+                                Task.deleted_at.is_(None)
+                                | Task.id.not_in([UUID(identity) for identity in read_refs])
+                            ),
                         )
                     )
                 )
@@ -541,6 +551,106 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
         return True
     except ValueError, TypeError, KeyError, AttributeError, InvalidTag, Base64Error:
         return False
+
+
+async def preview_lifecycle_context(db, conversation_id, *, dek, settings):
+    """Bounded scalar state only; no frozen payload, nonce, lease or recovery data."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.agent.models import (
+        MimiChangeSet,
+        MimiEvent,
+        MimiExecutionReceipt,
+        MimiMessage,
+        MimiRun,
+    )
+
+    superseded = (
+        select(MimiEvent.id)
+        .where(
+            MimiEvent.run_id == MimiChangeSet.run_id,
+            MimiEvent.kind == "change_set.superseded",
+        )
+        .exists()
+    )
+    rows = (
+        await db.execute(
+            select(
+                MimiChangeSet.id,
+                MimiChangeSet.run_id,
+                MimiChangeSet.state,
+                MimiChangeSet.digest_sha256,
+                MimiChangeSet.expires_at,
+                MimiExecutionReceipt.id.label("receipt_id"),
+                superseded.label("superseded"),
+            )
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .outerjoin(MimiExecutionReceipt, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
+            .where(MimiRun.conversation_id == conversation_id)
+            .order_by(MimiChangeSet.created_at.desc(), MimiChangeSet.id.desc())
+            .limit(21)
+        )
+    ).all()
+    # Rehydrate only validated scalar receipt events independently of the prose
+    # checkpoint frontier. A checkpoint containing a now-ineligible raw read may
+    # be withheld in full; that must not erase otherwise eligible receipt facts.
+    receipt_runs = [row.run_id for row in rows[:20] if row.receipt_id]
+    history = WorkingHistory()
+    if receipt_runs:
+        assistants = (
+            await db.scalars(
+                select(MimiMessage)
+                .where(
+                    MimiMessage.conversation_id == conversation_id,
+                    MimiMessage.run_id.in_(receipt_runs),
+                    MimiMessage.role == "assistant",
+                )
+                .order_by(MimiMessage.sequence)
+                .limit(1001)
+            )
+        ).all()
+        if len(assistants) <= 1000:
+            history = await load_history(
+                db, SimpleNamespace(id=conversation_id), dek, assistants, settings
+            )
+        else:
+            history.gaps.add("working_event_window_exceeded")
+    now = datetime.now(UTC)
+    return {
+        "classification": "historical_state_not_current_read_or_write_authority",
+        "coverage": "partial" if len(rows) > 20 else "complete",
+        "order": "newest_first",
+        "data_as_of": now.isoformat(),
+        "historical_outcomes": [history.outcomes[key] for key in sorted(history.outcomes)],
+        "receipt_history_coverage": "complete"
+        if not history.gaps and len(history.outcomes) == len(receipt_runs) and len(rows) <= 20
+        else "partial",
+        "previews": [
+            {
+                "id": str(row.id),
+                "run_id": str(row.run_id),
+                "digest": row.digest_sha256,
+                "state": row.state,
+                "effective_state": "expired"
+                if row.state == "pending" and row.expires_at <= now
+                else row.state,
+                "expiry": row.expires_at.isoformat(),
+                "receipt_id": str(row.receipt_id) if row.receipt_id else None,
+                "reason": "superseded_by_validated_preview"
+                if row.superseded
+                else "rejected"
+                if row.state == "rejected"
+                else "unknown"
+                if row.state == "stale"
+                else None,
+                "successor_id": None,  # No canonical successor link; never infer one.
+            }
+            for row in rows[:20]
+        ],
+    }
 
 
 def checkpoint_for_egress(checkpoint, allowed):

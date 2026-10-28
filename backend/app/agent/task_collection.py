@@ -113,10 +113,85 @@ def _task_fields_json_schema(schema: dict[str, Any]) -> None:
     )
     schema["properties"]["due_precision"] = TypeAdapter(TaskDuePrecision).json_schema()
     schema["properties"]["pinned"] = {"type": "boolean"}
+    # Omission remains valid for undated creates and ordinary edits. Once any
+    # schedule member is supplied, advertise the same complete triad as validation.
+    schema["dependentRequired"] = {
+        key: sorted(SCHEDULE_FIELDS - {key}) for key in sorted(SCHEDULE_FIELDS)
+    }
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {"due_precision": {"const": precision}},
+                "required": ["due_precision"],
+            },
+            "then": {"properties": properties},
+        }
+        for precision, properties in (
+            ("none", {"due_on": {"type": "null"}, "due_at": {"type": "null"}}),
+            ("date", {"due_on": {"type": "string", "format": "date"}, "due_at": {"type": "null"}}),
+            (
+                "datetime",
+                {"due_on": {"type": "null"}, "due_at": {"type": "string", "format": "date-time"}},
+            ),
+        )
+    ]
+
+
+def _task_command_json_schema(schema: dict[str, Any]) -> None:
+    schema["allOf"] = [
+        {
+            "if": {"properties": {"action": {"const": "create"}}, "required": ["action"]},
+            "then": {
+                "required": ["fields"],
+                "properties": {
+                    "fields": {"required": ["title"]},
+                    "id": {"type": "null"},
+                    "expected_collection_version": {"type": "null"},
+                },
+            },
+            "else": {
+                "required": ["id", "expected_collection_version"],
+                "properties": {
+                    "id": {"type": "string", "format": "uuid"},
+                    "expected_collection_version": {"type": "integer", "minimum": 1},
+                },
+            },
+        },
+        {
+            "if": {"properties": {"action": {"const": "soft_delete"}}, "required": ["action"]},
+            "then": {
+                "properties": {
+                    "fields": {"maxProperties": 0},
+                    "children": {"maxItems": 0},
+                    "reminder": {"properties": {"action": {"const": "keep"}}},
+                }
+            },
+        },
+        {
+            "if": {"properties": {"action": {"const": "edit"}}, "required": ["action"]},
+            "then": {
+                "anyOf": [
+                    {"required": ["fields"], "properties": {"fields": {"minProperties": 1}}},
+                    {"required": ["children"], "properties": {"children": {"minItems": 1}}},
+                    {
+                        "required": ["reminder"],
+                        "properties": {
+                            "reminder": {
+                                "required": ["action"],
+                                "properties": {"action": {"enum": ["cancel", "configure"]}},
+                            }
+                        },
+                    },
+                ]
+            },
+        },
+    ]
 
 
 class TaskCommand(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, json_schema_extra=_task_command_json_schema
+    )
     action: Literal["create", "edit", "soft_delete", "restore"]
     id: UUID | None = None
     expected_collection_version: int | None = Field(default=None, ge=1, strict=True)

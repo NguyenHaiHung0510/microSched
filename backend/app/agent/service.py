@@ -2219,7 +2219,11 @@ async def send_message(
     working_history = WorkingHistory()
     finalized_working_messages = None
     agent_result_kind: str | None = None
+    lifecycle = None
     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+        from app.agent.working_context import preview_lifecycle_context
+
+        lifecycle = await preview_lifecycle_context(db, conversation.id, dek=dek, settings=settings)
 
         def probe_context(
             history,
@@ -2258,6 +2262,7 @@ async def send_message(
                 remaining_tool_calls=lease.max_tool_calls,
                 pending_draft_content=pending_draft_content,
                 working_history=working_history.metadata(checkpoint_frontier),
+                preview_lifecycle=lifecycle,
             )
             # Exercise the same serialized contract and selected cap as the
             # eventual provider dispatch, including tool/schema/output reserve.
@@ -2363,6 +2368,7 @@ async def send_message(
                 pending_draft_content=pending_draft_content,
                 selection_context=selection_context,
                 working_history=working_history.metadata(conversation.context_frontier_sequence),
+                preview_lifecycle=lifecycle,
             )
         except ValueError as error:
             run.state = "budget_exceeded"
@@ -2665,6 +2671,13 @@ async def send_message(
                     messages: list[dict[str, Any]], turn: int
                 ) -> AgentCompletion:
                     nonlocal call, settings, context_envelope
+                    context_envelope, rebound = rebind_policy_budget(
+                        context_envelope,
+                        messages,
+                        settings=settings,
+                        remaining_turns=max(0, lease.max_turns - turn + 1),
+                    )
+                    messages[:] = rebound
                     current_run = (
                         await db.execute(
                             select(MimiRun)

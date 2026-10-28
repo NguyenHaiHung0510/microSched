@@ -58,6 +58,7 @@ def assemble_context(
     pending_draft_content: str | None = None,
     selection_context: dict | None = None,
     working_history: dict[str, Any] | None = None,
+    preview_lifecycle: dict[str, Any] | None = None,
 ) -> tuple[ContextEnvelope, list[dict[str, Any]]]:
     """Return ephemeral plaintext and provider messages; callers persist only metadata."""
 
@@ -189,6 +190,7 @@ def assemble_context(
     pending_state = {
         "draft": pending_draft.model_dump(mode="json") if pending_draft else None,
         "preview": pending_preview.model_dump(mode="json") if pending_preview else None,
+        "preview_lifecycle": preview_lifecycle,
     }
     selection_source = SourceManifest(
         source_id="task.selection.frozen.v1",
@@ -261,6 +263,13 @@ def assemble_context(
                 "coverage=unavailable with count=0 means data has not been loaded or queried; "
                 "it is not an empty read result. Report absence only from an actual read result "
                 "with sufficient coverage. Conversation checkpoint recall does not query Tasks."
+            ),
+            "preview_revision": (
+                "There is at most one active preview. A revision is bound to its exact ID/digest. "
+                "Only a validated replacement supersedes it. A blocked auto candidate is not a "
+                "second preview. Rejection never revives a predecessor or dispatches a model. "
+                "Lifecycle state and receipt IDs are historical facts, not execution authority; "
+                "unknown successor links must stay unknown."
             ),
             "text_example": (
                 "Natural Vietnamese reply"
@@ -424,12 +433,25 @@ def rebind_after_read(
 
 
 def rebind_policy_budget(
-    envelope: ContextEnvelope, messages: list[dict[str, Any]], *, settings: Settings
+    envelope: ContextEnvelope,
+    messages: list[dict[str, Any]],
+    *,
+    settings: Settings,
+    remaining_turns: int | None = None,
+    remaining_tool_calls: int | None = None,
 ) -> tuple[ContextEnvelope, list[dict[str, Any]]]:
-    """Refresh only server policy revision before the next unsent wire."""
+    """Refresh policy and actual allowances before every unsent model wire."""
+    turns = envelope.authority.remaining_turns if remaining_turns is None else remaining_turns
+    calls = (
+        envelope.authority.remaining_tool_calls
+        if remaining_tool_calls is None
+        else remaining_tool_calls
+    )
     if (
         envelope.manifest.budget.operating_policy_revision
         == settings.mimi_operating_policy_revision
+        and turns == envelope.authority.remaining_turns
+        and calls == envelope.authority.remaining_tool_calls
     ):
         return envelope, messages
     prior_authority = serialize_openrouter_messages(envelope)[-2]
@@ -440,10 +462,20 @@ def rebind_policy_budget(
         update={
             "operating_policy_revision": settings.mimi_operating_policy_revision,
             "serialized_input_upper_bound": 0,
+            "remaining_turns": turns,
+            "remaining_tool_calls": calls,
         }
     )
     updated = envelope.model_copy(
-        update={"manifest": envelope.manifest.model_copy(update={"budget": budget})}
+        update={
+            "authority": envelope.authority.model_copy(
+                update={
+                    "remaining_turns": turns,
+                    "remaining_tool_calls": calls,
+                }
+            ),
+            "manifest": envelope.manifest.model_copy(update={"budget": budget}),
+        }
     )
     for _ in range(4):
         rebound = list(messages)
