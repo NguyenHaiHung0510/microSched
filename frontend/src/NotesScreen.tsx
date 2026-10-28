@@ -1,6 +1,7 @@
 import {
   type FormEvent,
   type MouseEvent,
+  type KeyboardEvent,
   memo,
   useMemo,
   useRef,
@@ -8,8 +9,8 @@ import {
 } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  ArrowDown,
-  ArrowUp,
+  ArrowLeft,
+  ArrowUpToLine,
   Clock,
   Edit3,
   Pencil,
@@ -21,6 +22,7 @@ import {
 import { toast } from 'sonner'
 
 import { apiRequest, UnauthenticatedError } from '@/api'
+import { commitOutcomeMessage } from '@/acknowledgement'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -76,16 +78,30 @@ function noteLabel(note: Note): string {
 const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
   const queryClient = useQueryClient()
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [deletingItem, setDeletingItem] = useState<NoteItem | null>(null)
+  const [deletingReflection,setDeletingReflection]=useState<number|null>(null)
   const [editing, setEditing] = useState(false)
   const [newItem, setNewItem] = useState('')
   const [reflectionOpen, setReflectionOpen] = useState(false)
   const [reflectionText, setReflectionText] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingItemContent, setEditingItemContent] = useState('')
+  const newItemRevision = useRef(0)
+  const editDraft = useRef({ id: '', revision: 0 })
+  const addInFlight = useRef(false)
+  const editInFlight = useRef(false)
+  const addComposing = useRef(false)
+  const editComposing = useRef(false)
   const [editingReflectionIdx, setEditingReflectionIdx] = useState<number | null>(null)
   const [editingReflectionText, setEditingReflectionText] = useState('')
   const parsedBody = useMemo(() => parseNoteBody(note.body_md), [note.body_md])
   const detailsReturnRef = useRef<HTMLButtonElement | null>(null)
+  const detailsReturnTop = useRef<number | null>(null)
+  const readerRef = useRef<HTMLDivElement>(null)
+  const readerHeaderRef = useRef<HTMLDivElement>(null)
+  const moveInFlight = useRef(false)
+  const moveFocus = useRef<Element | null>(null)
   const label = noteLabel(note)
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: noteInvalidationKey })
@@ -120,54 +136,67 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     },
   })
   const addItem = useMutation({
-    mutationFn: (content: string) =>
+    mutationFn: ({ content }: { content: string; revision: number }) =>
       apiRequest<NoteItem>(`/api/notes/${note.id}/items`, {
         method: 'POST',
         body: JSON.stringify({ content, position: note.items.length }),
       }),
     onSuccess: (_data, variables) => {
-      setNewItem((current) => (current === variables || current.trim() === variables ? '' : current))
+      if (newItemRevision.current === variables.revision) {
+        newItemRevision.current += 1
+        setNewItem('')
+      }
       refresh()
     },
+    onSettled: () => { addInFlight.current = false },
   })
   const changeItem = useMutation({
-    mutationFn: ({ item, changes }: { item: NoteItem; changes: Partial<NoteItem> }) =>
+    mutationFn: ({ item, changes }: { item: NoteItem; changes: Partial<NoteItem>; draftRevision?: number }) =>
       apiRequest<NoteItem>(`/api/notes/${note.id}/items/${item.id}`, {
         method: 'PATCH',
         body: JSON.stringify(changes),
       }),
     onSuccess: (_data, variables) => {
-      if (variables.changes.content !== undefined) {
-        setEditingItemContent((current) => {
-          if (current === variables.changes.content) {
-            setEditingItemId((currentId) => (currentId === variables.item.id ? null : currentId))
-            return ''
-          }
-          return current
-        })
+      if (variables.changes.content !== undefined && editDraft.current.id === variables.item.id && editDraft.current.revision === variables.draftRevision) {
+        editDraft.current = { id: '', revision: editDraft.current.revision + 1 }
+        setEditingItemId(null)
+        setEditingItemContent('')
       }
       refresh()
     },
+    onSettled: () => { editInFlight.current = false },
   })
   const reorderItems = useMutation({
-    mutationFn: async ({ item, other }: { item: NoteItem; other: NoteItem }) => {
-      await Promise.all([
-        apiRequest<NoteItem>(`/api/notes/${note.id}/items/${item.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ position: other.position }),
-        }),
-        apiRequest<NoteItem>(`/api/notes/${note.id}/items/${other.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ position: item.position }),
-        }),
-      ])
+    mutationFn: ({ item, expectedItems }: { item: NoteItem; expectedItems: Pick<NoteItem, 'id' | 'position' | 'is_completed'>[] }) => apiRequest<NoteItem[]>(
+      `/api/notes/${note.id}/items/${item.id}/move-to-top`, {
+        method: 'POST',
+        body: JSON.stringify({ expected_items: expectedItems }),
+      }),
+    onSuccess: (items, { item }) => {
+      // Update only an existing visible note; never resurrect a cache removed by lock/logout.
+      queryClient.setQueryData<Note[]>(noteQueryKey, old => old?.map(entry => entry.id === note.id ? { ...entry, items } : entry))
+      refresh()
+      requestAnimationFrame(() => {
+        const reader = readerRef.current
+        if (!reader || (document.activeElement !== document.body && document.activeElement !== moveFocus.current)) return
+        const row = reader.querySelector<HTMLElement>(`[data-note-item-id="${item.id}"]`)
+        if (!row) return
+        const control = row.querySelector<HTMLButtonElement>('[data-testid="note-item-edit"]')
+        if (!control) return
+        const headerBottom = readerHeaderRef.current?.getBoundingClientRect().bottom ?? 0
+        if (control.getBoundingClientRect().top < headerBottom || control.getBoundingClientRect().bottom > reader.getBoundingClientRect().bottom) {
+          reader.scrollTop += control.getBoundingClientRect().top - headerBottom - 16
+        }
+        control.focus({ preventScroll: true })
+      })
     },
-    onSuccess: refresh,
+    onError: refresh,
+    onSettled: () => { moveInFlight.current = false },
   })
   const removeItem = useMutation({
     mutationFn: (item: NoteItem) =>
       apiRequest<void>(`/api/notes/${note.id}/items/${item.id}`, { method: 'DELETE' }),
-    onSuccess: refresh,
+    onSuccess: () => { setDeletingItem(null); refresh() },
   })
 
   const completedItems = note.items.filter((item) => item.is_completed).length
@@ -183,6 +212,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     const selection = window.getSelection()
     if (selection && !selection.isCollapsed) return
     detailsReturnRef.current = event.currentTarget
+    detailsReturnTop.current = event.currentTarget.getBoundingClientRect().top
     setEditing(false)
     setDetailsOpen(true)
   }
@@ -204,26 +234,59 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
     )
     if (!title) return
     detailsReturnRef.current = title
+    detailsReturnTop.current = title.getBoundingClientRect().top
     setEditing(false)
     setDetailsOpen(true)
   }
 
   function openEditor(event: MouseEvent<HTMLButtonElement>) {
     detailsReturnRef.current = event.currentTarget
+    detailsReturnTop.current = event.currentTarget.getBoundingClientRect().top
     setEditing(true)
     setDetailsOpen(true)
   }
 
   function startEditingItem(item: NoteItem) {
+    editDraft.current = { id: item.id, revision: editDraft.current.revision + 1 }
     setEditingItemId(item.id)
     setEditingItemContent(item.content)
   }
 
-  function moveItem(item: NoteItem, direction: -1 | 1) {
+  function submitNewItem() {
+    const content = newItem.trim()
+    if (!content || addItem.isPending || addInFlight.current || addComposing.current) return
+    addInFlight.current = true
+    addItem.mutate({ content, revision: newItemRevision.current })
+  }
+
+  function submitEditedItem(item: NoteItem) {
+    const content = editingItemContent.trim()
+    if (!content || changeItem.isPending || editInFlight.current || editComposing.current) return
+    editInFlight.current = true
+    changeItem.mutate({ item, changes: { content }, draftRevision: editDraft.current.revision })
+  }
+
+  function checklistKey(event: KeyboardEvent<HTMLTextAreaElement>, submit: () => void) {
+    if (event.key !== 'Enter' || !event.ctrlKey) return
+    event.preventDefault()
+    if (event.repeat || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+    submit()
+  }
+
+  function moveItem(item: NoteItem) {
     const group = note.items.filter((entry) => entry.is_completed === item.is_completed)
-    const index = group.findIndex((entry) => entry.id === item.id)
-    const other = group[index + direction]
-    if (other) reorderItems.mutate({ item, other })
+    if (group[0]?.id === item.id || moveInFlight.current || changeItem.isPending || editingItemId) return
+    moveInFlight.current = true
+    moveFocus.current = document.activeElement
+    reorderItems.mutate({ item, expectedItems: note.items.map(({ id, position, is_completed }) => ({ id, position, is_completed })) })
+  }
+
+  function jumpToSection(name: string) {
+    const reader = readerRef.current
+    const section = reader?.querySelector<HTMLElement>(`[data-reader-section="${name}"]`)
+    if (!reader || !section) return
+    reader.scrollTop += section.getBoundingClientRect().top - reader.getBoundingClientRect().top - (readerHeaderRef.current?.offsetHeight ?? 0) - 16
+    section.focus({ preventScroll: true })
   }
 
   return (
@@ -247,7 +310,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
               ) : null}
               <Button
                 data-testid="note-title"
-                className="h-auto min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent"
+                className="h-auto min-h-11 min-w-0 shrink justify-start whitespace-normal [overflow-wrap:anywhere] p-0 text-left text-base font-bold tracking-tight hover:bg-transparent"
                 variant="ghost"
                 aria-label={`Mở chi tiết ${label}`}
                 onClick={openDetails}
@@ -261,14 +324,14 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
             </div>
 
             {parsedBody.baseText ? (
-              <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground w-full">
+              <p data-testid="note-body-preview" className={cn("whitespace-pre-wrap [overflow-wrap:anywhere] text-sm text-muted-foreground w-full",!expanded&&"line-clamp-6")}>
                 {parsedBody.baseText}
               </p>
             ) : null}
 
             {parsedBody.reflections.length > 0 ? (
               <div className="space-y-2 pt-1 w-full">
-                {parsedBody.reflections.map((refl, idx) => (
+                {(expanded ? parsedBody.reflections : parsedBody.reflections.slice(0,1)).map((refl, idx) => (
                  <div
                    key={refl.id}
                    data-testid="note-reflection-box"
@@ -300,15 +363,14 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                           aria-label="Xoá lời nhắn"
                           onClick={(e) => {
                             e.stopPropagation()
-                            const newBody = deleteFutureReflection(note.body_md, idx)
-                            update.mutate({ body_md: newBody })
+                            setDeletingReflection(idx)
                           }}
                         >
                           <Trash2 className="size-3" />
                         </Button>
                       </div>
                     </div>
-                    <p className="whitespace-pre-wrap break-words text-xs text-foreground">
+                    <p className={cn("whitespace-pre-wrap [overflow-wrap:anywhere] text-xs text-foreground",!expanded&&"line-clamp-4")}>
                       {refl.text}
                     </p>
                   </div>
@@ -381,8 +443,9 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
 
         {note.items.length > 0 ? (
           <NoteChecklist
+            key={expanded ? 'full' : 'preview'}
             items={note.items}
-            preview
+            preview={!expanded}
             pending={changeItem.isPending}
             failed={changeItem.isError}
             onToggle={(item, checked) =>
@@ -391,7 +454,12 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           />
         ) : null}
 
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-2">
+          <Button data-testid="note-expand" variant="ghost" className="min-h-11" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}>{expanded ? 'Thu gọn' : 'Xem đầy đủ'}</Button>
+          <Button data-testid="note-open-full" variant="link" className="min-h-11" aria-label={`Mở chi tiết ${label}`} onClick={openDetails}>Chi tiết & mục nhỏ</Button>
+        </div>
         {mutationError ? <p className="text-sm text-bad">{errorMessage(mutationError)}</p> : null}
+        {commitOutcomeMessage(reorderItems.error) && reorderItems.variables ? <Button type="button" variant="outline" disabled={reorderItems.isPending} onClick={() => reorderItems.mutate(reorderItems.variables!)}>Thử lại đúng yêu cầu đưa lên đầu</Button> : null}
       </Card>
 
       <Dialog
@@ -405,20 +473,42 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
         }}
       >
         <DialogContent
+          ref={readerRef}
           data-testid="note-detail-dialog"
-          className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+          showCloseButton={false}
+          className="inset-0 h-dvh max-h-dvh w-full max-w-none translate-x-0 translate-y-0 content-start gap-0 overflow-y-auto overscroll-contain rounded-none p-0 sm:max-w-none"
+          onOpenAutoFocus={event => { event.preventDefault(); readerHeaderRef.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true }) }}
           onCloseAutoFocus={(event) => {
             const opener = detailsReturnRef.current
             if (!opener?.isConnected) return
             event.preventDefault()
-            opener.focus()
+            requestAnimationFrame(() => {
+              if (!opener.isConnected) return
+              opener.focus({ preventScroll: true })
+              if (detailsReturnTop.current !== null) {
+                window.scrollBy({ top: opener.getBoundingClientRect().top - detailsReturnTop.current, behavior: 'instant' })
+              }
+            })
           }}
         >
-          <DialogHeader>
-            <DialogTitle>{editing ? `Sửa · ${label}` : label}</DialogTitle>
-            <DialogDescription>
-              {editing ? 'Cập nhật nội dung hoặc chế độ riêng tư.' : 'Chi tiết ghi chú và checklist.'}
-            </DialogDescription>
+          <div ref={readerHeaderRef} className="sticky top-0 z-10 border-b bg-card px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-8">
+            <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2">
+              <Button variant="ghost" size="lg" data-testid="note-reader-back" onClick={() => { setDetailsOpen(false); setEditing(false); setEditingItemId(null) }}><ArrowLeft aria-hidden="true" />Ghi chú</Button>
+              <div className="flex gap-2">
+                {!editing ? <Button variant="outline" size="lg" onClick={() => { jumpToSection('checklist'); readerRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="note-item-add-input"]')?.focus() }}><Plus aria-hidden="true" />Thêm mục</Button> : null}
+                {!editing ? <Button variant="outline" size="lg" onClick={() => setEditing(true)}><Pencil aria-hidden="true" />Chỉnh sửa</Button> : null}
+              </div>
+            </div>
+            {!editing ? <nav aria-label="Phần ghi chú" className="mx-auto flex max-w-[80ch] flex-wrap gap-1">
+              <Button variant="ghost" className="min-h-11" onClick={() => jumpToSection('body')}>Nội dung</Button>
+              <Button variant="ghost" className="min-h-11" onClick={() => jumpToSection('checklist')}>Checklist {completedItems}/{note.items.length}</Button>
+              <Button variant="ghost" className="min-h-11" onClick={() => jumpToSection('reflections')}>Lời nhắn</Button>
+            </nav> : null}
+          </div>
+          <div className="mx-auto w-full min-w-0 max-w-[80ch] space-y-6 px-4 py-6 pb-[max(2rem,env(safe-area-inset-bottom))] sm:px-8">
+          <DialogHeader className="text-left">
+            <DialogTitle className="pr-0 text-2xl leading-tight [overflow-wrap:anywhere] sm:text-3xl">{editing ? `Sửa · ${label}` : label}</DialogTitle>
+            <DialogDescription>{editing ? 'Cập nhật nội dung hoặc chế độ riêng tư.' : `${completedItems}/${note.items.length} mục đã xong`}</DialogDescription>
           </DialogHeader>
 
           {editing ? (
@@ -441,7 +531,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                 </Badge>
               ) : null}
 
-             <div className="space-y-1">
+             <section data-reader-section="body" tabIndex={-1} className="space-y-1 outline-none">
                <div className="flex items-center justify-between gap-2">
                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                    Nội dung
@@ -452,9 +542,133 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                    </span>
                  ) : null}
                </div>
-               <p className="whitespace-pre-wrap break-words text-sm">
-                  {parsedBody.baseText || (parsedBody.reflections.length === 0 ? 'Chưa có nội dung.' : '')}
+               <p className="whitespace-pre-wrap [overflow-wrap:anywhere] text-base leading-relaxed">
+                  {parsedBody.baseText || 'Chưa có nội dung.'}
                </p>
+
+             </section>
+
+              <section data-reader-section="checklist" tabIndex={-1} className="space-y-3 border-t pt-6 outline-none">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Checklist
+                  </p>
+                  {note.items.length > 0 ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {completedItems}/{note.items.length} mục đã xong
+                    </p>
+                  ) : null}
+                </div>
+
+               {note.items.length === 0 ? (
+                 <p className="text-sm text-muted-foreground">Chưa có mục nhỏ.</p>
+               ) : (
+                 <NoteChecklist
+                   items={note.items}
+                   pending={changeItem.isPending}
+                   failed={changeItem.isError}
+                   onToggle={(item, checked) =>
+                     changeItem.mutate({ item, changes: { is_completed: checked } })
+                   }
+                   renderItem={(item, toggle) => {
+                     const group = note.items.filter((entry) => entry.is_completed === item.is_completed)
+                     const index = group.findIndex((entry) => entry.id === item.id)
+                     return (
+                     <div className="min-w-0 space-y-2 border-b border-border/60 py-3">
+                        {editingItemId === item.id ? (
+                          <>
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <Textarea
+                                data-testid="note-item-edit-input"
+                                data-update-dirty={editingItemId !== null || undefined}
+                                rows={2}
+                                className="min-h-20 min-w-0 resize-y bg-card"
+                                aria-label={`Sửa mục ${item.content}`}
+                                aria-describedby={`note-edit-hint-${note.id}`}
+                                value={editingItemContent}
+                                onChange={event => { editDraft.current.revision += 1; setEditingItemContent(event.target.value) }}
+                                onCompositionStart={() => { editComposing.current = true }}
+                                onCompositionEnd={() => { editComposing.current = false }}
+                                onKeyDown={event => checklistKey(event, () => submitEditedItem(item))}
+                              />
+                              <p id={`note-edit-hint-${note.id}`} className="text-xs text-muted-foreground">Enter xuống dòng · Ctrl+Enter lưu</p>
+                            </div>
+                            <Button data-testid="note-item-edit-save" size="lg"
+                              disabled={!editingItemContent.trim() || changeItem.isPending}
+                              onClick={() => submitEditedItem(item)}>
+                              Lưu
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <div className="min-w-0 flex-1">{toggle}</div>
+                            <div className="flex items-center gap-2 pl-11">
+                            <Button
+                              data-testid="note-item-edit"
+                              size="icon-lg"
+                              variant="ghost"
+                              className="size-11 min-h-11 min-w-11"
+                              title="Sửa mục"
+                              aria-label={`Sửa mục ${item.content}`}
+                              onClick={() => startEditingItem(item)}
+                            >
+                              <Pencil aria-hidden="true" />
+                            </Button>
+                            <Button
+                              data-testid="note-item-top"
+                              size="icon-lg"
+                              variant="outline"
+                              className="size-11 min-h-11 min-w-11"
+                              title="Đưa lên đầu"
+                              aria-label={`Đưa ${item.content} lên đầu`}
+                              disabled={index === 0 || reorderItems.isPending || changeItem.isPending || editingItemId !== null}
+                              onClick={() => moveItem(item)}
+                            ><ArrowUpToLine aria-hidden="true" /></Button>
+                            <Button
+                              data-testid="note-item-delete"
+                              size="icon-lg"
+                              variant="ghost"
+                              className="size-11 min-h-11 min-w-11 text-bad hover:text-bad"
+                              title="Xoá mục"
+                              aria-label={`Xoá mục ${item.content}`}
+                              disabled={removeItem.isPending}
+                              onClick={() => setDeletingItem(item)}
+                            >
+                              <Trash2 />
+                            </Button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                     )
+                   }}
+                 />
+                )}
+
+                <form className="space-y-1" onSubmit={event => { event.preventDefault(); submitNewItem() }}>
+                  <div className="flex items-start gap-2">
+                    <Textarea
+                      data-testid="note-item-add-input"
+                      rows={2}
+                      aria-label={`Thêm checklist cho ${label}`}
+                      aria-describedby={`note-add-hint-${note.id}`}
+                      className="min-h-20 resize-y bg-card"
+                      placeholder="Thêm checklist…"
+                      value={newItem}
+                      onChange={event => { newItemRevision.current += 1; setNewItem(event.target.value) }}
+                      onCompositionStart={() => { addComposing.current = true }}
+                      onCompositionEnd={() => { addComposing.current = false }}
+                      onKeyDown={event => checklistKey(event, submitNewItem)}
+                    />
+                    <Button data-testid="note-item-add-submit" size="lg" type="submit" variant="secondary" disabled={!newItem.trim() || addItem.isPending}>
+                      <Plus data-icon="inline-start" />Thêm
+                    </Button>
+                  </div>
+                  <p id={`note-add-hint-${note.id}`} className="text-xs text-muted-foreground">Enter xuống dòng · Ctrl+Enter thêm</p>
+                </form>
+              </section>
+              <section data-reader-section="reflections" tabIndex={-1} className="space-y-3 border-t pt-6 outline-none">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Lời nhắn từ tương lai</h3>
                 {parsedBody.reflections.length > 0 ? (
                   <div className="space-y-2 pt-2">
                     {parsedBody.reflections.map((refl, idx) => (
@@ -487,8 +701,7 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                               className="size-8 min-h-8 min-w-8 p-0 text-bad hover:bg-reflection-foreground/10 hover:text-bad"
                               aria-label="Xoá lời nhắn"
                               onClick={() => {
-                                const newBody = deleteFutureReflection(note.body_md, idx)
-                                update.mutate({ body_md: newBody })
+                                setDeletingReflection(idx)
                               }}
                             >
                               <Trash2 className="size-3" />
@@ -502,144 +715,8 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
                     ))}
                   </div>
                 ) : null}
-             </div>
-
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Checklist
-                  </p>
-                  {note.items.length > 0 ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {completedItems}/{note.items.length} mục đã xong
-                    </p>
-                  ) : null}
-                </div>
-
-               {note.items.length === 0 ? (
-                 <p className="text-sm text-muted-foreground">Chưa có mục nhỏ.</p>
-               ) : (
-                 <NoteChecklist
-                   items={note.items}
-                   pending={changeItem.isPending}
-                   failed={changeItem.isError}
-                   onToggle={(item, checked) =>
-                     changeItem.mutate({ item, changes: { is_completed: checked } })
-                   }
-                   renderItem={(item, toggle) => {
-                     const group = note.items.filter((entry) => entry.is_completed === item.is_completed)
-                     const index = group.findIndex((entry) => entry.id === item.id)
-                     return (
-                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 rounded-md bg-muted/40 p-2 sm:px-2.5 sm:py-1.5">
-                        {editingItemId === item.id ? (
-                          <>
-                            <Textarea
-                              data-testid="note-item-edit-input"
-                              rows={2}
-                              className="min-h-20 min-w-0 flex-1 resize-y bg-card"
-                              aria-label={`Sửa mục ${item.content}`}
-                              value={editingItemContent}
-                              onChange={(event) => setEditingItemContent(event.target.value)}
-                            />
-                            <Button
-                              data-testid="note-item-edit-save"
-                              size="lg"
-                              disabled={!editingItemContent.trim() || changeItem.isPending}
-                              onClick={() =>
-                                changeItem.mutate({
-                                  item,
-                                  changes: { content: editingItemContent.trim() },
-                                })
-                              }
-                            >
-                              Lưu
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <div className="min-w-0 flex-1">{toggle}</div>
-                            <div className="flex shrink-0 items-center justify-end gap-1 self-end sm:self-auto pt-1 sm:pt-0">
-                            <Button
-                              data-testid="note-item-up"
-                              size="icon-lg"
-                              variant="ghost"
-                              className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8"
-                              aria-label={`Đưa ${item.content} lên`}
-                              disabled={index === 0 || reorderItems.isPending}
-                              onClick={() => moveItem(item, -1)}
-                            >
-                              <ArrowUp />
-                            </Button>
-                            <Button
-                              data-testid="note-item-down"
-                              size="icon-lg"
-                              variant="ghost"
-                              className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8"
-                              aria-label={`Đưa ${item.content} xuống`}
-                              disabled={index === group.length - 1 || reorderItems.isPending}
-                              onClick={() => moveItem(item, 1)}
-                            >
-                              <ArrowDown />
-                            </Button>
-                            <Button
-                              data-testid="note-item-edit"
-                              size="icon-lg"
-                              variant="ghost"
-                              className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8"
-                              aria-label={`Sửa mục ${item.content}`}
-                              onClick={() => startEditingItem(item)}
-                            >
-                              <Edit3 />
-                            </Button>
-                            <Button
-                              data-testid="note-item-delete"
-                              size="icon-lg"
-                              variant="ghost"
-                              className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8 text-bad hover:text-bad"
-                              aria-label={`Xoá mục ${item.content}`}
-                              disabled={removeItem.isPending}
-                              onClick={() => removeItem.mutate(item)}
-                            >
-                              <Trash2 />
-                            </Button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                     )
-                   }}
-                 />
-                )}
-
-                <form
-                  className="flex items-start gap-2"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    const content = newItem.trim()
-                    if (content) addItem.mutate(content)
-                  }}
-                >
-                  <Textarea
-                    data-testid="note-item-add-input"
-                    rows={2}
-                    aria-label={`Thêm checklist cho ${label}`}
-                    className="min-h-20 resize-y bg-card"
-                    placeholder="Thêm checklist…"
-                    value={newItem}
-                    onChange={(event) => setNewItem(event.target.value)}
-                  />
-                  <Button
-                    data-testid="note-item-add-submit"
-                    size="lg"
-                    type="submit"
-                    variant="secondary"
-                    disabled={!newItem.trim() || addItem.isPending}
-                  >
-                    <Plus data-icon="inline-start" />
-                    Thêm
-                  </Button>
-                </form>
-              </div>
+                {parsedBody.reflections.length === 0 ? <p className="text-sm text-muted-foreground">Chưa có lời nhắn.</p> : null}
+              </section>
 
               <div className="flex flex-wrap gap-2 border-t pt-4">
                 <Button
@@ -671,6 +748,8 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           )}
 
           {mutationError ? <p className="text-sm text-bad">{errorMessage(mutationError)}</p> : null}
+          {commitOutcomeMessage(reorderItems.error) && reorderItems.variables ? <Button type="button" variant="outline" disabled={reorderItems.isPending} onClick={() => reorderItems.mutate(reorderItems.variables!)}>Thử lại đúng yêu cầu đưa lên đầu</Button> : null}
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -793,6 +872,8 @@ const NoteCard = memo(function NoteCard({ note }: { note: Note }) {
           </form>
         </DialogContent>
       </Dialog>
+      <Dialog open={deletingReflection!==null} onOpenChange={open=>{if(!open&&!update.isPending)setDeletingReflection(null)}}><DialogContent data-testid="note-reflection-delete-confirm"><DialogHeader><DialogTitle>Xoá lời nhắn này?</DialogTitle><DialogDescription>Lời nhắn sẽ bị xoá khỏi ghi chú và không thể hoàn tác.</DialogDescription></DialogHeader>{update.isError?<p role="alert" className="text-sm text-bad">{errorMessage(update.error)}</p>:null}<div className="flex justify-end gap-2"><Button size="lg" variant="outline" disabled={update.isPending} onClick={()=>setDeletingReflection(null)}>Huỷ</Button><Button size="lg" variant="destructive" disabled={update.isPending} onClick={()=>{if(deletingReflection!==null)update.mutate({body_md:deleteFutureReflection(note.body_md,deletingReflection)},{onSuccess:()=>setDeletingReflection(null)})}}>{update.isPending?'Đang xoá…':'Xoá lời nhắn'}</Button></div></DialogContent></Dialog>
+      <Dialog open={!!deletingItem} onOpenChange={open=>{if(!open&&!removeItem.isPending)setDeletingItem(null)}}><DialogContent data-testid="note-child-delete-confirm"><DialogHeader><DialogTitle>Xoá mục nhỏ?</DialogTitle><DialogDescription>Mục này sẽ bị xoá khỏi ghi chú và không thể hoàn tác.</DialogDescription></DialogHeader><p className="break-words text-sm">{deletingItem?.content}</p>{removeItem.isError?<p role="alert" className="text-sm text-bad">{errorMessage(removeItem.error)}</p>:null}<div className="flex justify-end gap-2"><Button size="lg" variant="outline" disabled={removeItem.isPending} onClick={()=>setDeletingItem(null)}>Huỷ</Button><Button data-testid="note-child-delete-commit" size="lg" variant="destructive" disabled={removeItem.isPending} onClick={()=>{if(deletingItem)removeItem.mutate(deletingItem)}}>{removeItem.isPending?'Đang xoá…':'Xoá mục'}</Button></div></DialogContent></Dialog>
      </>
    )
  })
@@ -801,6 +882,7 @@ export function NotesScreen() {
   const queryClient = useQueryClient()
   const quickInputRef = useRef<HTMLInputElement>(null)
   const [quickTitle, setQuickTitle] = useState('')
+  const [find, setFind] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [sortMode, setSortMode] = useState<NoteSortMode>(() => {
     try {
@@ -840,6 +922,11 @@ export function NotesScreen() {
     () => sortNotes(notes.data ?? [], sortMode),
     [notes.data, sortMode],
   )
+
+  const visibleNotes = useMemo(() => {
+    const query=find.trim().toLocaleLowerCase('vi-VN')
+    return query ? sortedNotes.filter(note=>[note.title,note.body_md,...note.items.map(item=>item.content)].some(text=>text?.toLocaleLowerCase('vi-VN').includes(query))) : sortedNotes
+  }, [sortedNotes,find])
 
   const create = useMutation({
     mutationFn: ({ payload }: { payload: NotePayload; source: CreateSource }) =>
@@ -993,9 +1080,11 @@ export function NotesScreen() {
         ) : null}
 
         {!notes.isError ? (
-          <div data-testid="note-list" className="space-y-3">
-            {sortedNotes.map((note) => <NoteCard note={note} key={note.id} />)}
-          </div>
+          <><Input data-testid="note-find" type="search" name="note-find" aria-label="Tìm trong ghi chú đã tải" placeholder="Tìm ghi chú…" className="min-h-11 bg-card" value={find} onChange={event=>setFind(event.target.value)}/>
+          {find.trim()&&visibleNotes.length===0?<p role="status" className="text-sm text-muted-foreground">Không có ghi chú phù hợp.</p>:null}
+          <div data-testid="note-list" className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
+            {visibleNotes.map((note) => <NoteCard note={note} key={note.id} />)}
+          </div></>
         ) : null}
       </section>
     </div>

@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ReminderHistory } from '@/ReminderHistory'
 import { Bell } from 'lucide-react'
 import { apiRequest } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -13,35 +14,64 @@ import { PrivateMarker } from '@/PrivateMarker'
 import { ReminderDevices } from '@/ReminderDevices'
 
 export function ReminderCenter() {
+  const client = useQueryClient()
   const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).has('reminders'))
   const [section, setSection] = useState('upcoming')
   const [offset, setOffset] = useState(0)
   const [edit, setEdit] = useState<{ kind: ReminderSource; id: string } | null>(null)
   const [source, setSource] = useState<{ kind: ReminderSource; id: string } | null>(null)
+  const [targetId, setTargetId] = useState(() => new URLSearchParams(window.location.search).get('reminder'))
+  useEffect(() => {
+    const mask = () => {
+      const isPublic = (value: {kind: ReminderSource; id: string}) => {
+        const detail = client.getQueryData<{is_private:boolean}>([...reminderKey,'detail',value.kind,value.id])
+        const metadata = client.getQueryData<{is_private:boolean}>([...reminderKey,'source',value.kind,value.id])
+        return detail?.is_private === false || metadata?.is_private === false
+      }
+      if (source && !isPublic(source)) setSource(null)
+      if (edit && !isPublic(edit)) setEdit(null)
+      if (targetId && client.getQueryData<{is_private:boolean}>([...reminderKey,'target',targetId])?.is_private !== false) setTargetId(null)
+    }
+    window.addEventListener('microsched:visibility',mask)
+    return () => window.removeEventListener('microsched:visibility',mask)
+  }, [client, edit, source, targetId])
+  const target = useQuery({ queryKey: [...reminderKey, 'target', targetId],
+    queryFn: ({ signal }) => apiRequest<Reminder>(`/api/reminders/detail/${encodeURIComponent(targetId!)}`, { signal }),
+    enabled: open && !!targetId, ...NO_POLLING_QUERY_OPTIONS, retry: false })
+  const selectedSource = source ?? (open && targetId && target.data
+    ? { kind: target.data.source_kind, id: target.data.source_id } : null)
+  const closeSource = () => {
+    setSource(null)
+    setTargetId(null)
+    const url = new URL(window.location.href)
+    url.searchParams.delete('reminder')
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash)
+  }
   const rows = useQuery({ queryKey: [...reminderKey, 'center', section, offset],
     queryFn: ({ signal }) => apiRequest<{ items: Reminder[]; has_more: boolean }>(
       `/api/reminders?section=${section}&offset=${offset}`, { signal }),
-    enabled: open, ...NO_POLLING_QUERY_OPTIONS })
+    enabled: open && section !== 'history', ...NO_POLLING_QUERY_OPTIONS })
   const trackers = useQuery({ queryKey: [...reminderKey, 'recurring'],
     queryFn: ({ signal }) => apiRequest<{ items: Tracker[] }>('/api/tracker/trackers', { signal }),
     enabled: open && section === 'upcoming', ...NO_POLLING_QUERY_OPTIONS })
   return <>
-    <Button type="button" size="lg" variant="outline" aria-label="Nhắc nhở" data-testid="reminder-center-open" onClick={() => setOpen(true)}>
+    <Button type="button" size="lg" variant="outline" className="min-h-11 min-w-11" aria-label="Nhắc nhở" data-testid="reminder-center-open" onClick={() => setOpen(true)}>
       <Bell aria-hidden="true" /><span className="hidden sm:inline">Nhắc nhở</span>
     </Button>
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent data-testid="reminder-center" className="inset-y-0 right-0 left-auto h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-5 sm:max-w-lg">
+      <DialogContent data-testid="reminder-center" className="inset-y-0 right-0 left-auto h-dvh max-h-dvh w-full max-w-full translate-x-0 translate-y-0 content-start overflow-y-auto rounded-none p-5 sm:max-w-2xl">
         <DialogHeader><DialogTitle>Nhắc nhở</DialogTitle><DialogDescription>Lịch nhắc của bạn · giờ Việt Nam</DialogDescription></DialogHeader>
-        <ReminderDevices />
+        <ReminderDevices compact />
+        {targetId && target.isError && <p role="alert">Lời nhắc không còn hiển thị hoặc chưa tải được.</p>}
         <div className="flex flex-wrap gap-2" aria-label="Nhóm lời nhắc">
           {[['upcoming', 'Sắp tới'], ['attention', 'Cần chú ý']].map(([value, label]) =>
             <Button key={value} size="lg" variant={section === value ? 'selected' : 'outline'} aria-pressed={section === value}
               onClick={() => { setSection(value); setOffset(0) }}>{label}</Button>)}
           <Button size="lg" variant={section === 'history' ? 'selected' : 'ghost'} aria-expanded={section === 'history'}
             onClick={() => { setSection(section === 'history' ? 'upcoming' : 'history'); setOffset(0) }}>Lịch sử</Button>
-          <Button size="lg" variant="ghost" onClick={() => { void rows.refetch(); void trackers.refetch() }}>Làm mới</Button>
+          <Button size="lg" variant="ghost" onClick={() => { void rows.refetch(); void trackers.refetch(); if (targetId) void target.refetch(); if(section==='history')void client.invalidateQueries({queryKey:['reminder-history']}) }}>Làm mới</Button>
         </div>
-        {rows.isPending ? <p role="status">Đang tải…</p> : rows.isError ? <p role="alert">Chưa tải được lời nhắc. Bấm Làm mới để thử lại.</p>
+        {section === 'history' ? <ReminderHistory /> : rows.isPending ? <p role="status">Đang tải…</p> : rows.isError ? <p role="alert">Chưa tải được lời nhắc. Bấm Làm mới để thử lại.</p>
           : <div className="space-y-3">{rows.data.items.length === 0 && <p className="text-sm text-muted-foreground">Không có lời nhắc trong nhóm này.</p>}
             {rows.data.items.map((row) => <article key={row.id} data-testid="reminder-row" className="space-y-2 rounded-lg border p-3">
               <p className="break-words font-semibold">{row.source_title}</p>
@@ -67,6 +97,6 @@ export function ReminderCenter() {
       </DialogContent>
     </Dialog>
     {edit && <ReminderEditor kind={edit.kind} sourceId={edit.id} onClose={() => setEdit(null)} />}
-    {source && <ReminderSourceDialog kind={source.kind} sourceId={source.id} onClose={() => setSource(null)} />}
+    {selectedSource && <ReminderSourceDialog kind={selectedSource.kind} sourceId={selectedSource.id} onClose={closeSource} />}
   </>
 }

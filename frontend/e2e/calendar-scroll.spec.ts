@@ -146,7 +146,7 @@ function calendarRoutes(
 
 test.beforeEach(async ({ page, taskApi }) => {
   // A task due today gives the grid a task chip on today's cell (spec §5.4).
-  const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
+  const dueToday = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000011')
   if (dueToday) {
     dueToday.due_precision = 'datetime'
     dueToday.due_on = null
@@ -225,6 +225,47 @@ test.describe('mobile (390x844, touch)', () => {
     ).toHaveCount(1)
   })
 
+  test('a day annotation offers reminder action A and requires a relative anchor clock', async ({ page }) => {
+    await calendarRoutes(page, { events: [], annotations: [] })
+    const writes: Record<string, unknown>[] = []
+    await page.route('**/api/reminders**', async (route) => {
+      if (route.request().url().includes('/source/annotation/')) return route.fulfill({ json: {
+        title: 'Dấu ngày synthetic 088', is_private: false, open: true,
+        anchor_at: null, anchor_day: vnDay(0), date_only: true,
+      } })
+      if (route.request().method() === 'PUT') {
+        writes.push(route.request().postDataJSON())
+        expect(route.request().url()).toContain('/reminders/annotation/')
+        return route.fulfill({ json: { id: 'synthetic-088', ...writes[0] } })
+      }
+      return route.fulfill({ json: { items: [], has_more: false, registered_devices: 0 } })
+    })
+    await page.goto('/')
+    await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
+    await page.getByTestId('calendar-day-add-annotation').tap()
+    await page.getByLabel('Nhãn').fill('Dấu ngày synthetic 088')
+    await page.getByRole('button', { name: 'Thêm dấu ngày' }).tap()
+    const action = page.getByTestId('calendar-annotation-detail').getByTestId('source-reminder')
+    await expect(action).toHaveText('Nhắc tôi')
+    expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await action.tap()
+    const editor = page.getByTestId('reminder-editor')
+    await editor.getByRole('button', { name: 'Bật nhắc nhở', exact: true }).tap()
+    await editor.getByRole('combobox', { name: 'Cách đặt' }).click()
+    await page.getByRole('option', { name: 'Trước / sau mốc đã lưu' }).click()
+    await expect(editor.getByTestId('reminder-save')).toBeDisabled()
+    await editor.getByLabel('Giờ mốc trong ngày').fill('09:00')
+    await editor.getByRole('combobox', { name: 'Trước hay sau' }).click()
+    await page.getByRole('option', { name: 'Sau', exact: true }).click()
+    await editor.getByLabel('Khoảng thời gian').fill('1440')
+    await expect(editor.getByTestId('reminder-preview')).toContainText('09:00')
+    await editor.getByTestId('reminder-save').tap()
+    await expect(editor).toBeHidden()
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toMatchObject({ mode: 'relative', offset_minutes: 1440, anchor_time: '09:00' })
+  })
+
   test('moves a task from the dialog and undoes it back to the old deadline', async ({
     page,
     taskApi,
@@ -233,7 +274,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
 
-    const moved = taskApi.tasks.find((entry) => entry.id === 'task-004')!
+    const moved = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000004')!
     const originalSchedule = {
       due_precision: moved.due_precision,
       due_on: moved.due_on,
@@ -255,7 +296,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByRole('button', { name: /Việc trễ hạn thứ nhất/ }).tap()
 
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved).toMatchObject({
+    await expect.poll(() => moved).toMatchObject({
       due_precision: 'datetime',
       due_on: null,
       due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
@@ -273,23 +314,51 @@ test.describe('mobile (390x844, touch)', () => {
 
   test('move picker loads one bounded page only when opened and retains its cursor', async ({
     page,
-    taskApi,
   }) => {
+    const taskReads: URL[] = []
+    page.on('request', request => {
+      const url = new URL(request.url())
+      if (request.method() === 'GET' && url.pathname === '/api/tasks') taskReads.push(url)
+    })
+    const pickerReads = () => taskReads.filter(url => url.searchParams.get('bucket') === 'open_picker')
+    const pickerResponse = () => page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return response.request().method() === 'GET' && url.pathname === '/api/tasks' && url.searchParams.get('bucket') === 'open_picker'
+    })
     await calendarRoutes(page, { events: [], annotations: [] })
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
     await expect(page.getByTestId('calendar-scroll-container')).toBeVisible()
-    const before = taskApi.count('GET', '/api/tasks')
+    const overdueResponse = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname === '/api/tasks' && url.searchParams.get('status') === 'open' && url.searchParams.get('bucket') === 'dated' && !url.searchParams.has('from') && url.searchParams.get('to') === `${vnDay(0)}T00:00:00+07:00`
+    })
     await page.locator(`[data-testid="calendar-day-cell"][data-day="${vnDay(0)}"]`).tap()
     await expect(page.getByTestId('calendar-day-dialog')).toBeVisible()
-    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(before + 1)
-    const afterDayOpen = taskApi.count('GET', '/api/tasks')
+    expect((await overdueResponse).ok()).toBe(true)
+    // Grid/overdue lifecycle refreshes share /api/tasks; only picker dispatches
+    // establish the bounded-page contract under test.
+    expect(pickerReads()).toHaveLength(0)
+    const firstResponse = pickerResponse()
     await page.getByTestId('calendar-day-move-task').tap()
     await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
-    await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(afterDayOpen + 1)
-    if (await page.getByTestId('calendar-move-load-more').isVisible()) {
+    const firstPage = await (await firstResponse).json()
+    expect(pickerReads()).toHaveLength(1)
+    expect(pickerReads()[0].searchParams.get('limit')).toBe('50')
+    expect(pickerReads()[0].searchParams.has('cursor')).toBe(false)
+    expect(firstPage.items.length).toBeLessThanOrEqual(50)
+    if (firstPage.next_cursor) {
+      const previousIds = firstPage.items.map((item: { id: string }) => item.id)
+      const nextResponse = pickerResponse()
       await page.getByTestId('calendar-move-load-more').click()
-      await expect.poll(() => taskApi.count('GET', '/api/tasks')).toBe(afterDayOpen + 2)
+      const nextPage = await (await nextResponse).json()
+      expect(pickerReads()).toHaveLength(2)
+      expect(pickerReads()[1].searchParams.get('cursor')).toBe(firstPage.next_cursor)
+      expect(nextPage.items.length).toBeLessThanOrEqual(50)
+      const renderedIds = await page.getByTestId('calendar-move-task').evaluateAll(elements => elements.map(element => element.getAttribute('data-task-id')))
+      expect(renderedIds).toEqual(expect.arrayContaining([...previousIds, ...nextPage.items.map((item: { id: string }) => item.id)]))
+    } else {
+      await expect(page.getByTestId('calendar-move-load-more')).toBeHidden()
     }
   })
 
@@ -301,7 +370,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByTestId('calendar-day-move-task').tap()
     await expect(page.getByText('Dời việc sang ngày này').first()).toBeVisible()
 
-    const target = page.locator('[data-testid="calendar-move-task"][data-task-id="undated-001"]')
+    const target = page.locator('[data-testid="calendar-move-task"][data-task-id="019a0e2e-0000-7000-8001-000000009001"]')
     for (let attempt = 0; attempt < 8 && !(await target.isVisible()); attempt += 1) {
       const more = page.getByTestId('calendar-move-load-more')
       await expect(more).toBeVisible()
@@ -309,15 +378,15 @@ test.describe('mobile (390x844, touch)', () => {
     }
     await expect(target).toBeVisible()
     await target.click()
-    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === 'undated-001')).toMatchObject({
+    await expect.poll(() => taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000009001')).toMatchObject({
       due_precision: 'date',
       due_on: vnDay(0),
       due_at: null,
     })
   })
 
-  test('private lock remounts calendar and closes a detail dialog', async ({ page, taskApi }) => {
-    const privateTask = taskApi.tasks.find((entry) => entry.id === 'task-009')!
+  test('private lock masks private calendar content while retaining the public day view', async ({ page, taskApi }) => {
+    const privateTask = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000009')!
     privateTask.due_precision = 'datetime'
     privateTask.due_on = null
     privateTask.due_at = iso(vnDay(0), 10)
@@ -329,7 +398,7 @@ test.describe('mobile (390x844, touch)', () => {
     await page.getByTestId('private-lock-now').evaluate((element) => (element as HTMLButtonElement).click())
     await expect.poll(() => taskApi.count('POST', '/api/private/lock')).toBe(1)
     await expect(page.getByText('Task riêng tư')).toHaveCount(0)
-    await expect(page.getByTestId('calendar-day-dialog')).toBeHidden()
+    await expect(page.getByTestId('calendar-day-dialog')).toBeVisible()
   })
 
   test('mini-nav does not exist on mobile', async ({ page }) => {
@@ -418,6 +487,7 @@ test.describe('desktop (1280x800)', () => {
     await calendarRoutes(page, { events: [], annotations: [] })
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.getByTestId('calendar-toggle-sidebar').click()
 
     const header = page.getByTestId('calendar-month-header')
     await expect(header).toBeVisible()
@@ -509,13 +579,13 @@ test.describe('desktop (1280x800)', () => {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Task' }).click()
 
-    const card = page.locator('[data-testid="task-card"][data-task-id="task-004"]')
+    const card = page.locator('[data-testid="task-card"][data-task-id="019a0e2e-0000-7000-8001-000000000004"]')
     await expect(card).toBeVisible()
     await expect(card.getByTestId('task-reschedule-today')).toBeVisible()
     await expect(card.getByTestId('task-reschedule-tomorrow')).toBeVisible()
     await expect(card.getByTestId('task-reschedule-day-after')).toBeVisible()
 
-    const moved = taskApi.tasks.find((entry) => entry.id === 'task-004')!
+    const moved = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000004')!
     const oldClock = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Asia/Ho_Chi_Minh',
       hour: '2-digit',
@@ -524,7 +594,7 @@ test.describe('desktop (1280x800)', () => {
     }).format(new Date(moved.due_at!))
     await card.getByTestId('task-reschedule-today').click()
     await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
-    expect(moved).toMatchObject({
+    await expect.poll(() => moved).toMatchObject({
       due_precision: 'datetime',
       due_on: null,
       due_at: `${vnDay(0)}T${oldClock}:00+07:00`,
@@ -535,6 +605,7 @@ test.describe('desktop (1280x800)', () => {
     await calendarRoutes(page, { events: [], annotations: [] })
     await page.goto('/')
     await page.getByRole('tab', { name: 'Lịch' }).click()
+    await page.getByTestId('calendar-toggle-sidebar').click()
     const rect = await page
       .getByTestId('calendar-mininav-day')
       .first()
@@ -570,7 +641,7 @@ test('an ICS event opened from the day dialog shows the will-lose-edits warning'
 })
 
 test('desktop font sizes are at least 12px', async ({ page, taskApi }) => {
-  const dueToday = taskApi.tasks.find((entry) => entry.id === 'task-011')
+  const dueToday = taskApi.tasks.find((entry) => entry.id === '019a0e2e-0000-7000-8001-000000000011')
   if (dueToday) {
     dueToday.due_precision = 'datetime'
     dueToday.due_on = null

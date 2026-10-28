@@ -1417,7 +1417,7 @@ def write_guard_receipt(
 
 
 def validate_final_receipt(repo_root: Path, receipt: dict[str, Any]) -> None:
-    schema_path = repo_root / "agent-tasks" / "025-qa-receipt.schema.json"
+    schema_path = repo_root / "qa" / "production-cell" / "contracts" / "qa-receipt.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     validate_receipt_object(schema, receipt)
 

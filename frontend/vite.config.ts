@@ -9,7 +9,7 @@ const backendOrigin = process.env.VITE_BACKEND_ORIGIN ?? 'http://localhost:8000'
 // https://vite.dev/config/
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, '**/e2e/**'],
+    exclude: [...configDefaults.exclude, '**/e2e/**', '**/integrated/**'],
   },
   plugins: [
     react(),
@@ -18,9 +18,9 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       injectManifest: {
-        globPatterns: ['**/*.{js,css,html,ico,png,woff2}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,webp,woff2}'],
         globIgnores: ['**/*cyrillic*'],
       },
       manifest: {

@@ -73,7 +73,7 @@ test('Task045 synthetic UI evidence', async ({ page, taskApi, trackerApi }, info
   await capture('tracker-overview')
   await page.getByTestId('tracker-open-report').click()
   await capture('finance-report')
-  await page.getByTestId('tracker-entries-toggle').click()
+  await page.getByTestId('tracker-tab-journal').click()
   await page.getByTestId('tracker-entries-toggle').scrollIntoViewIfNeeded()
   await capture('recent-entries')
   await page.getByTestId('private-lock-now').click()

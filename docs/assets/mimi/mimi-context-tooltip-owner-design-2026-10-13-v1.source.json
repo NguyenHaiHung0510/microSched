@@ -1,0 +1,21 @@
+{
+  "version": "2026-10-13-owner-design-v1",
+  "sha256": "c9cf6363ad1b941cebf1fd7b3fa8fedd68b3d587b61937c0d1ebdec880f19c18",
+  "source": {
+    "date": "2026-10-13",
+    "version": "owner-design-v1",
+    "issuer": "Owner",
+    "source_message": "ledgerMIMI-20261013-175",
+    "saved_filename": "mimi-context-tooltip-owner-design-2026-10-13-v1.png",
+    "sha256": "C9CF6363AD1B941CEBF1FD7B3FA8FEDD68B3D587B61937C0D1EBDEC880F19C18",
+    "copy": "ORIGINAL_EXACT_BYTES_NO_EDIT",
+    "design_status": "OWNER_APPROVED_CONTEXT_PROTOTYPE_V1",
+    "mock_numbers": "ILLUSTRATIVE_NOT_OBSERVED",
+    "prototype": "prototype-v1/index.html",
+    "prototype_review": "PROTOTYPE-REVIEW.json",
+    "prototype_status": "OWNER_APPROVED_CONTEXT_PROTOTYPE_PRODUCT_INTEGRATION_AUTHORIZED",
+    "approval_source": "MIMI-20261013-176"
+  },
+  "approval": "Owner176 context prototype-v1; Owner177 configuration A",
+  "artifact_status": "Exact original design snapshot; not a live telemetry or production-state diagram"
+}

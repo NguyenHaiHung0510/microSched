@@ -13,23 +13,45 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.config_policy import PolicyChange, read_policy, save_policy
+from app.agent.notifications import (
+    DevicePreferenceChange,
+    DevicePreferenceProof,
+    acknowledge,
+    list_attention,
+    read_preference,
+    resolve_locator,
+    set_preference,
+)
+from app.agent.policy import load_standard_policy
+from app.agent.response_timing import ResponseTimingCreate, save_response_timing
+from app.agent.route_config import ConfigurationChange, profiles_for_ui
+from app.agent.runtime import admit_run, hold_run_guard_if_enabled, release_run
 from app.agent.service import (
     ConfirmationDecision,
     ConversationCreate,
     ConversationRename,
     ConversationStateChange,
+    DraftDirectionDecision,
     FeedbackCreate,
     MessageCreate,
+    _owner_id,
     confirm_change_set,
+    conversation_checkpoint_view,
+    conversation_configuration,
     conversation_view,
     create_conversation,
     current_conversation,
+    decide_draft_direction,
+    ensure_message_admissible,
     finish_interrupted_run,
     list_conversations,
     list_standard_tasks,
     prepare_run_resume,
+    read_execution_receipt,
     reconcile_unknown_run,
     rename_conversation,
+    request_run_pause,
     run_events_after,
     save_feedback,
     send_message,
@@ -38,6 +60,7 @@ from app.agent.service import (
 from app.core.db import get_sessionmaker
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
+from app.web.acknowledgement import commit_before_ack
 from app.web.deps import get_session, require_session
 from app.web.mimi_csrf import require_mimi_csrf
 
@@ -59,9 +82,51 @@ def _encode_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str, separators=(',', ':'))}\n\n"
 
 
-async def _observe_run(factory, supervisor, auth, run_id: UUID, conversation_id: UUID):
+@router.get("/capabilities", dependencies=[Depends(require_mimi_available)])
+async def mimi_capabilities(_session: CurrentSession) -> dict:
+    """Expose only non-secret route capability actually configured for this app."""
+
+    settings = get_settings()
+    from app.agent.workflow_pilot import pilot_available
+
+    return {
+        "workflow_pilot_enabled": pilot_available(settings),
+        "context_v1_enabled": settings.mimi_context_v1_enabled,
+        "live_provider_enabled": settings.mimi_live_provider_enabled,
+        "requested_model": (
+            settings.mimi_route_model if settings.mimi_live_provider_enabled else None
+        ),
+        "requested_effort": (
+            settings.mimi_route_reasoning_effort if settings.mimi_live_provider_enabled else None
+        ),
+        "route_mode": settings.mimi_route_mode if settings.mimi_live_provider_enabled else None,
+        "model_selection_enabled": (
+            settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
+        ),
+        "context_policy": "observed_prompt_trigger",
+        "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
+        "payload_limit_bytes": settings.mimi_max_payload_bytes,
+        "model_profiles": profiles_for_ui(settings),
+        "conversation_planning_mode": "prose",
+        "runner": settings.mimi_runner,
+        "context_limit": settings.mimi_route_context_tokens,
+        "output_reserve": settings.mimi_route_max_output_tokens,
+        "output_policy": "provider_default"
+        if settings.mimi_route_mode == "native"
+        else "explicit_cap",
+        "collection_enabled": settings.mimi_collection_enabled,
+        "notifications_enabled": settings.mimi_notifications_enabled,
+        "policy_id": load_standard_policy().policy_id if settings.mimi_context_v1_enabled else None,
+        "policy_sha256": load_standard_policy().sha256
+        if settings.mimi_context_v1_enabled
+        else None,
+    }
+
+
+async def _observe_run(
+    factory, supervisor, auth, run_id: UUID, conversation_id: UUID, *, after: int = 0
+):
     yield _encode_sse("run.reserved", {"run_id": str(run_id)})
-    after = 0
     last_emit = time.monotonic()
     terminal_states = {
         "waiting_confirmation",
@@ -116,6 +181,38 @@ async def start_conversation(
     return await create_conversation(db, session, payload)
 
 
+@router.get("/operating-policy", dependencies=[Depends(require_mimi_available)])
+async def read_operating_policy(db: Database, session: CurrentSession) -> dict:
+    del session
+    policy = await read_policy(db, get_settings())
+    return {
+        "policy": policy.model_dump(mode="json"),
+        "applies_to": "next_unsent_wire",
+        "input_unit": "unicode_codepoints",
+        "price_unit": "USD_per_million_tokens",
+    }
+
+
+@router.put(
+    "/operating-policy", dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)]
+)
+async def update_operating_policy(
+    payload: PolicyChange, db: Database, session: CurrentSession
+) -> dict:
+    del session
+    policy = await save_policy(db, get_settings(), payload)
+    return {"policy": policy.model_dump(mode="json"), "applies_to": "next_unsent_wire"}
+
+
+@router.post(
+    "/metadata-warmup", dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)]
+)
+async def warm_chat_metadata(db: Database, session: CurrentSession) -> dict:
+    """Compatibility chat-open hook; native routing has no local catalog to warm."""
+    del db, session
+    return {"status": "not_required_native_routing", "paid_calls": 0}
+
+
 @router.get(
     "/conversations",
     dependencies=[Depends(require_mimi_available)],
@@ -146,6 +243,16 @@ async def read_conversation(conversation_id: UUID, db: Database, session: Curren
     return await conversation_view(db, session, conversation_id)
 
 
+@router.get(
+    "/conversations/{conversation_id}/context",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_conversation_context(
+    conversation_id: UUID, db: Database, session: CurrentSession
+) -> dict:
+    return await conversation_checkpoint_view(db, session, conversation_id)
+
+
 @router.patch(
     "/conversations/{conversation_id}",
     dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
@@ -157,6 +264,30 @@ async def patch_conversation(
     session: CurrentSession,
 ) -> dict:
     return await rename_conversation(db, session, conversation_id, payload)
+
+
+@router.get(
+    "/conversations/{conversation_id}/configuration", dependencies=[Depends(require_mimi_available)]
+)
+async def read_conversation_configuration(
+    conversation_id: UUID,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await conversation_configuration(db, session, conversation_id)
+
+
+@router.put(
+    "/conversations/{conversation_id}/configuration",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def change_conversation_configuration(
+    conversation_id: UUID,
+    payload: ConfigurationChange,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await conversation_configuration(db, session, conversation_id, payload)
 
 
 @router.post(
@@ -195,7 +326,39 @@ async def post_message(
     db: Database,
     session: CurrentSession,
 ) -> dict:
-    return await send_message(db, session, conversation_id, payload)
+    await ensure_message_admissible(db, session, conversation_id, payload)
+    run_id = uuid7()
+    async with hold_run_guard_if_enabled(run_id):
+        try:
+            return await send_message(db, session, conversation_id, payload, reserved_run_id=run_id)
+        except (Exception, asyncio.CancelledError) as error:
+            # Accepted runs/provider terminals may already be committed. Request
+            # rollback must not leave them active or erase the separate finalizer.
+            await db.rollback()
+            factory = get_sessionmaker()
+            if factory is not None:
+                async with factory() as terminal_db:
+                    await finish_interrupted_run(
+                        terminal_db,
+                        session,
+                        run_id,
+                        cancelled=isinstance(error, asyncio.CancelledError),
+                    )
+                    await terminal_db.commit()
+            raise
+
+
+@router.post(
+    "/conversations/{conversation_id}/draft-direction",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def post_draft_direction(
+    conversation_id: UUID,
+    payload: DraftDirectionDecision,
+    db: Database,
+    session: CurrentSession,
+) -> dict:
+    return await decide_draft_direction(db, session, conversation_id, payload)
 
 
 @router.post(
@@ -206,16 +369,20 @@ async def stream_message(
     conversation_id: UUID,
     payload: MessageCreate,
     request: Request,
+    db: Database,
     session: CurrentSession,
 ) -> StreamingResponse:
     """Start server-owned work and observe it over a disconnect-safe SSE stream."""
     factory = get_sessionmaker()
     if factory is None:
         raise HTTPException(status_code=503, detail="Database is not configured")
+    await ensure_message_admissible(db, session, conversation_id, payload)
     run_id = uuid7()
     detached_session = AuthSession.model_validate(session.model_dump())
+    # Authentication is complete; do not retain its ORM checkout for the SSE lifetime.
+    await db.commit()
 
-    async def work() -> None:
+    async def work_body() -> None:
         async with factory() as worker_db:
             try:
                 await send_message(
@@ -238,8 +405,15 @@ async def stream_message(
                     )
                     await terminal_db.commit()
                 raise
-            except Exception:
-                logger.exception("mimi_run_worker_failed run_id=%s", run_id)
+            except Exception as error:
+                # SDK/driver chains can contain echoed requests or SQL values.
+                # Durable run/call receipts keep the bounded diagnostic.
+                logger.error(
+                    "mimi_run_worker_failed run_id=%s error_type=%s status=%s",
+                    run_id,
+                    type(error).__name__,
+                    error.status_code if isinstance(error, HTTPException) else None,
+                )
                 await worker_db.rollback()
                 async with factory() as terminal_db:
                     await finish_interrupted_run(
@@ -250,8 +424,19 @@ async def stream_message(
                     )
                     await terminal_db.commit()
 
+    async def work() -> None:
+        async with hold_run_guard_if_enabled(run_id, already_admitted=True):
+            await work_body()
+
     supervisor = request.app.state.mimi_run_supervisor
-    supervisor.start(run_id, work())
+    admit_run(run_id)
+    coroutine = work()
+    try:
+        supervisor.start(run_id, coroutine)
+    except Exception:
+        coroutine.close()
+        release_run(run_id)
+        raise
 
     return StreamingResponse(
         _observe_run(factory, supervisor, detached_session, run_id, conversation_id),
@@ -271,6 +456,39 @@ async def read_run_events(
     after: Annotated[int, Query(ge=0)] = 0,
 ) -> dict:
     return await run_events_after(db, session, run_id, after=after)
+
+
+@router.get(
+    "/runs/{run_id}/events/stream",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def observe_existing_run(
+    run_id: UUID,
+    request: Request,
+    db: Database,
+    session: CurrentSession,
+    after: Annotated[int, Query(ge=0)] = 0,
+) -> StreamingResponse:
+    """Reattach to a durable run without creating a new model turn."""
+
+    snapshot = await run_events_after(db, session, run_id, after=after)
+    await db.commit()
+    factory = get_sessionmaker()
+    if factory is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    detached_session = AuthSession.model_validate(session.model_dump())
+    return StreamingResponse(
+        _observe_run(
+            factory,
+            request.app.state.mimi_run_supervisor,
+            detached_session,
+            run_id,
+            snapshot["conversation_id"],
+            after=after,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post(
@@ -302,6 +520,14 @@ async def reconcile_run(run_id: UUID, db: Database, session: CurrentSession) -> 
 
 
 @router.post(
+    "/runs/{run_id}/pause",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def pause_run(run_id: UUID, db: Database, session: CurrentSession) -> dict:
+    return await request_run_pause(db, session, run_id)
+
+
+@router.post(
     "/runs/{run_id}/resume",
     dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
 )
@@ -318,7 +544,7 @@ async def resume_run(
     await db.commit()
     detached_session = AuthSession.model_validate(session.model_dump())
 
-    async def work() -> None:
+    async def work_body() -> None:
         async with factory() as worker_db:
             try:
                 await send_message(
@@ -355,8 +581,19 @@ async def resume_run(
                     )
                     await terminal_db.commit()
 
+    async def work() -> None:
+        async with hold_run_guard_if_enabled(successor_id, already_admitted=True):
+            await work_body()
+
     supervisor = request.app.state.mimi_run_supervisor
-    supervisor.start(successor_id, work())
+    admit_run(successor_id)
+    coroutine = work()
+    try:
+        supervisor.start(successor_id, coroutine)
+    except Exception:
+        coroutine.close()
+        release_run(successor_id)
+        raise
     return StreamingResponse(
         _observe_run(
             factory,
@@ -390,7 +627,34 @@ async def decide_change_set(
     session: CurrentSession,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
 ) -> dict:
-    return await confirm_change_set(db, session, change_set_id, payload, idempotency_key)
+    result = await confirm_change_set(db, session, change_set_id, payload, idempotency_key)
+    # Yield-dependency cleanup may run after HTTP success headers. Keep the
+    # Task, receipt and idempotency commit ahead of every success response.
+    try:
+        await db.commit()
+    except Exception as error:
+        await db.rollback()
+        # Driver exceptions may embed SQL parameters or connection details.
+        logger.error(
+            "mimi_confirmation_commit_failed change_set_id=%s error_type=%s",
+            change_set_id,
+            type(error).__name__,
+        )
+        raise HTTPException(status_code=503, detail="mimi_confirmation_commit_failed") from None
+    return result
+
+
+@router.post(
+    "/conversations/{conversation_id}/response-timings",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_response_timing(
+    conversation_id: UUID, payload: ResponseTimingCreate, db: Database, session: CurrentSession
+) -> dict:
+    result = await save_response_timing(db, session, conversation_id, payload)
+    await commit_before_ack(db, "mimi_response_timing")
+    return result
 
 
 @router.post(
@@ -404,4 +668,164 @@ async def post_feedback(
     db: Database,
     session: CurrentSession,
 ) -> dict:
-    return await save_feedback(db, session, conversation_id, payload)
+    result = await save_feedback(db, session, conversation_id, payload)
+    await commit_before_ack(db, "mimi_feedback")
+    return result
+
+
+async def require_mimi_notifications():
+    if not get_settings().mimi_notifications_enabled:
+        raise HTTPException(404, "Mimi attention is disabled")
+
+
+@router.post(
+    "/devices/preference/read",
+    dependencies=[
+        Depends(require_mimi_available),
+        Depends(require_mimi_csrf),
+        Depends(require_mimi_notifications),
+    ],
+)
+async def read_mimi_device_preference(
+    payload: DevicePreferenceProof, db: Database, session: CurrentSession
+):
+    # Proof stays in a CSRF-protected body, never URL/query/referrer state.
+    return await read_preference(db, _owner_id(session), payload)
+
+
+@router.post(
+    "/devices/preference",
+    dependencies=[
+        Depends(require_mimi_available),
+        Depends(require_mimi_csrf),
+        Depends(require_mimi_notifications),
+    ],
+)
+async def change_mimi_device_preference(
+    payload: DevicePreferenceChange, db: Database, session: CurrentSession
+):
+    return await set_preference(db, _owner_id(session), payload)
+
+
+@router.get(
+    "/attention",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_notifications)],
+)
+async def read_mimi_attention(db: Database, session: CurrentSession):
+    return await list_attention(db, _owner_id(session))
+
+
+@router.post(
+    "/attention/{intent_id}/read",
+    dependencies=[
+        Depends(require_mimi_available),
+        Depends(require_mimi_csrf),
+        Depends(require_mimi_notifications),
+    ],
+)
+async def read_mimi_attention_ack(intent_id: UUID, db: Database, session: CurrentSession):
+    return await acknowledge(db, _owner_id(session), intent_id)
+
+
+@router.get(
+    "/attention/resolve/{locator}",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_notifications)],
+)
+async def resolve_mimi_attention(locator: str, db: Database, session: CurrentSession):
+    if not 1 <= len(locator) <= 100:
+        raise HTTPException(404, "Mimi attention not found")
+    return await resolve_locator(db, _owner_id(session), locator)
+
+
+@router.get(
+    "/conversations/{conversation_id}/evidence/{bundle_id}",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_mimi_evidence(
+    conversation_id: UUID, bundle_id: UUID, db: Database, session: CurrentSession
+):
+    from app.agent.evidence import read_evidence
+    from app.agent.service import _conversation
+
+    conversation = await _conversation(db, session, conversation_id)
+    return await read_evidence(db, conversation, bundle_id)
+
+
+@router.get(
+    "/conversations/{conversation_id}/change-sets/{change_set_id}/receipt",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_mimi_execution_receipt(
+    conversation_id: UUID,
+    change_set_id: UUID,
+    db: Database,
+    session: CurrentSession,
+    digest: Annotated[str, Query(min_length=64, max_length=64, pattern="^[0-9a-f]{64}$")],
+    nonce: UUID,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=160)],
+):
+    return await read_execution_receipt(
+        db, session, conversation_id, change_set_id, digest, nonce, idempotency_key
+    )
+
+
+@router.post(
+    "/receipts/{receipt_id}/undo-preview",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def prepare_mimi_undo(receipt_id: UUID, db: Database, session: CurrentSession):
+    from app.agent.service import prepare_receipt_undo
+
+    return await prepare_receipt_undo(db, session, receipt_id)
+
+
+@router.get(
+    "/conversations/{conversation_id}/selections/{selection_id}",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_mimi_selection(
+    conversation_id: UUID, selection_id: UUID, db: Database, session: CurrentSession
+):
+    from app.agent import crypto
+    from app.agent.selection import load_selection
+    from app.agent.service import _conversation
+
+    if not get_settings().mimi_collection_enabled:
+        raise HTTPException(404, "Mimi collections are disabled")
+    conversation = await _conversation(db, session, conversation_id)
+    if conversation.is_private or conversation.sensitivity != "standard":
+        raise HTTPException(404, "Mimi selection not found")
+    return await load_selection(
+        db, conversation.id, selection_id, crypto.unwrap_dek(conversation.dek_wrapped)
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/provider-pool/refresh",
+    dependencies=[Depends(require_mimi_available), Depends(require_mimi_csrf)],
+)
+async def refresh_mimi_provider_pool(conversation_id: UUID, db: Database, session: CurrentSession):
+    from app.agent.config_policy import bind_policy, read_policy
+    from app.agent.openrouter import _provider_policy
+    from app.agent.route_config import bind_configuration, default_configuration
+    from app.agent.service import _conversation
+
+    settings = get_settings()
+    if not settings.mimi_live_provider_enabled:
+        raise HTTPException(404, "Mimi routing is disabled")
+    conversation = await _conversation(db, session, conversation_id)
+    if conversation.is_private or conversation.sensitivity != "standard":
+        raise HTTPException(404, "Mimi route not found")
+    selected = bind_configuration(
+        settings, conversation.route_config or default_configuration(settings)
+    )
+    selected = bind_policy(selected, await read_policy(db, selected))
+    return {
+        "model": selected.mimi_route_model,
+        "effort": selected.mimi_route_reasoning_effort,
+        "routing_mode": "native",
+        "provider_policy": _provider_policy(selected),
+        "selection": "openrouter_default",
+        "qualification": "NO_LOCAL_PROVIDER_CERTIFICATION",
+        "paid_calls": 0,
+    }

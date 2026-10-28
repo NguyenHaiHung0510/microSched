@@ -6,6 +6,12 @@ on:
     branches:
       - develop
 
+# Replace superseded PR checks only. Push runs have distinct groups, and the
+# workflow name isolates CI, CodeQL and deployment from each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   backend:
     name: Backend checks
@@ -14,11 +20,15 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+          # Preserve v6 cache pruning; v10 defaults to retaining the full cache.
+          prune-cache: true
+          # Preserve direct GitHub Releases downloads rather than the new mirror default.
+          download-from-astral-mirror: false
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: uv sync --frozen
@@ -44,32 +54,39 @@ jobs:
       # it, create_app() correctly refuses to start.
       OAUTH_STATE_SECRET: ci-only-not-a-production-secret
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+          # Preserve v6 cache pruning; v10 defaults to retaining the full cache.
+          prune-cache: true
+          # Preserve direct GitHub Releases downloads rather than the new mirror default.
+          download-from-astral-mirror: false
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: uv sync --frozen --no-dev
       - run: uv run --no-dev python -c "from app.main import create_app; create_app()"
+      - run: uv run --no-dev python -m scripts.check_mimi_alpha_runtime
 
   hooks:
     name: Repository hooks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: pip install pre-commit
+      # PyYAML is already installed with pre-commit.
+      - run: python -m unittest discover -s .github/tests -v
       - run: pre-commit run --all-files
 
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -103,8 +120,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -121,8 +138,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -143,6 +160,7 @@ jobs:
           POSTGRES_DB: microsched_ci
         ports:
           - 5432:5432
+          - 21887:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d microsched_ci"
           --health-interval 5s
@@ -152,38 +170,80 @@ jobs:
       run:
         working-directory: backend
     env:
-      CI_PG_BOOTSTRAP_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
-      NEON_MIGRATOR_URL: postgresql://postgres:postgres@localhost:5432/microsched_ci
-      CI_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+      # Retain the service bootstrap DB; all test app/migrator connections use
+      # the same existing authorized local Mimi tuple, never a production URL.
+      CI_PG_SERVICE_URL: postgresql://postgres:postgres@127.0.0.1:21887/microsched_ci
+      CI_PG_BOOTSTRAP_URL: postgresql://postgres:postgres@127.0.0.1:21887/mimi086_qa
+      NEON_MIGRATOR_URL: postgresql://postgres:postgres@127.0.0.1:21887/mimi086_qa
+      CI_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       CI_MIGRATOR_PASSWORD: synthetic-migrator
       CI_APP_PASSWORD: synthetic-app
-      CI_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@localhost:5432/microsched_ci
+      CI_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@127.0.0.1:21887/mimi086_qa
+      MIMI_LANGGRAPH_APP_DATABASE_URL: postgresql://microsched_app:synthetic-app@127.0.0.1:21887/mimi086_qa
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+          # Preserve v6 cache pruning; v10 defaults to retaining the full cache.
+          prune-cache: true
+          # Preserve direct GitHub Releases downloads rather than the new mirror default.
+          download-from-astral-mirror: false
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: uv sync --frozen
+      - name: Prepare named disposable Mimi database
+        run: |
+          uv run python - <<'PY'
+          import os
+          import psycopg
+
+          with psycopg.connect(os.environ["CI_PG_SERVICE_URL"], autocommit=True) as connection:
+              connection.execute("CREATE DATABASE mimi086_qa")
+          PY
       - run: uv run python -m scripts.prepare_ci_database --bootstrap-url "$CI_PG_BOOTSTRAP_URL"
       - run: uv run python -m scripts.check_migration_drops
       - run: uv run alembic upgrade head
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       - run: uv run python -m scripts.check_migration_drift
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       - run: uv run alembic downgrade base
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       - run: uv run alembic upgrade head
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
       - run: uv run python -m scripts.check_migration_drift
         env:
-          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@localhost:5432/microsched_ci
+          NEON_MIGRATOR_URL: postgresql://microsched_migrator:synthetic-migrator@127.0.0.1:21887/mimi086_qa
+      - name: Prepare real LangGraph saver for the disposable app role
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import os
+          from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+          from psycopg import AsyncConnection
+
+          async def prepare():
+              owner_url = os.environ["CI_PG_BOOTSTRAP_URL"]
+              async with AsyncPostgresSaver.from_conn_string(owner_url) as saver:
+                  await saver.setup()
+              async with await AsyncConnection.connect(owner_url, autocommit=True) as connection:
+                  await connection.execute("GRANT USAGE ON SCHEMA public TO microsched_app")
+                  await connection.execute(
+                      "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "
+                      "public.checkpoints, public.checkpoint_blobs, public.checkpoint_writes "
+                      "TO microsched_app"
+                  )
+                  await connection.execute(
+                      "GRANT SELECT ON TABLE public.checkpoint_migrations TO microsched_app"
+                  )
+
+          asyncio.run(prepare())
+          PY
       # DB-backed tests run here, reusing this job's migrated pgvector service instead
       # of standing up a second Postgres in the backend job (spec §0.4, least
       # duplication). The schema is at head from the step above.

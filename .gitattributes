@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+docs/assets/mimi/context-builder-2026-10-11-v1.png filter=lfs diff=lfs merge=lfs -text
+docs/assets/mimi/mimi-context-tooltip-owner-design-2026-10-13-v1.png filter=lfs diff=lfs merge=lfs -text

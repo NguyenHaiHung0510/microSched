@@ -120,6 +120,138 @@ def test_oversized_import_body_is_rejected_before_json_parsing() -> None:
 
 
 @pytest.mark.pg
+def test_manual_time_edits_preserve_vietnam_intervals_and_server_validation(pg_dsn: str) -> None:
+    """093 changes feedback, while real persistence still enforces aware end > start."""
+
+    async def scenario() -> None:
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        app = create_app()
+
+        async def current_session() -> AuthSession:
+            return _auth()
+
+        async def request_session():
+            async with maker() as db:
+                try:
+                    yield db
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+        app.dependency_overrides[require_session] = current_session
+        app.dependency_overrides[get_session] = request_session
+        source_id = None
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                source = await client.post(
+                    "/api/calendar/sources",
+                    json={"name": f"093 interval {uuid4()}", "kind": "manual"},
+                )
+                assert source.status_code == 201
+                source_id = UUID(source.json()["id"])
+                created = await client.post(
+                    "/api/calendar/events",
+                    json={
+                        "source_id": str(source_id),
+                        "title": "093 synthetic time contract",
+                        "starts_at": "2026-10-25T08:00:00+07:00",
+                        "ends_at": "2026-10-25T09:00:00+07:00",
+                        "location": "Phòng synthetic",
+                        "description_md": "Giữ mô tả",
+                    },
+                )
+                assert created.status_code == 201
+                event_id = UUID(created.json()["id"])
+                path = f"/api/calendar/events/{event_id}"
+                valid_edits = [
+                    {"starts_at": "2026-10-25T08:15:00+07:00"},
+                    {"ends_at": "2026-10-25T09:15:00+07:00"},
+                    {
+                        "starts_at": "2026-10-26T23:30:00+07:00",
+                        "ends_at": "2026-10-27T00:15:00+07:00",
+                    },
+                ]
+                for edit in valid_edits:
+                    response = await client.patch(path, json=edit)
+                    assert response.status_code == 200
+                    row = response.json()
+                    for key, value in edit.items():
+                        assert datetime.fromisoformat(row[key]) == datetime.fromisoformat(value)
+                    assert row["source_id"] == str(source_id)
+                    assert row["title"] == "093 synthetic time contract"
+                    assert row["location"] == "Phòng synthetic"
+                    assert row["description_md"] == "Giữ mô tả"
+
+                persisted = await client.get(
+                    "/api/calendar/events",
+                    params={
+                        "from": "2026-10-26T00:00:00+07:00",
+                        "to": "2026-10-28T00:00:00+07:00",
+                    },
+                )
+                before = next(
+                    item for item in persisted.json()["items"] if item["id"] == str(event_id)
+                )
+                invalid_edits = [
+                    {"ends_at": "2026-10-26T23:30:00+07:00"},
+                    {"starts_at": "2026-10-27T01:00:00+07:00"},
+                    {
+                        "starts_at": "2026-10-26T23:30:00+07:00",
+                        "ends_at": "2026-10-26T23:30:00+07:00",
+                    },
+                    {
+                        "starts_at": "2026-10-27T01:00:00+07:00",
+                        "ends_at": "2026-10-27T00:15:00+07:00",
+                    },
+                    {"starts_at": "2026-10-26T23:30:00"},
+                ]
+                for edit in invalid_edits:
+                    rejected = await client.patch(path, json=edit)
+                    assert rejected.status_code == 422
+                    canonical = await client.get(
+                        "/api/calendar/events",
+                        params={
+                            "from": "2026-10-26T00:00:00+07:00",
+                            "to": "2026-10-28T00:00:00+07:00",
+                        },
+                    )
+                    row = next(
+                        item for item in canonical.json()["items"] if item["id"] == str(event_id)
+                    )
+                    assert row == before
+
+                all_day = await client.patch(
+                    path,
+                    json={
+                        "starts_at": "2026-10-27T00:00:00+07:00",
+                        "ends_at": "2026-10-28T00:00:00+07:00",
+                        "all_day": True,
+                    },
+                )
+                assert all_day.status_code == 200
+                assert all_day.json()["all_day"] is True
+                assert datetime.fromisoformat(all_day.json()["ends_at"]) - datetime.fromisoformat(
+                    all_day.json()["starts_at"]
+                ) == timedelta(days=1)
+        finally:
+            if source_id is not None:
+                connection = await asyncpg.connect(pg_dsn)
+                try:
+                    await connection.execute(
+                        "DELETE FROM microsched.calendar_source WHERE id = $1", source_id
+                    )
+                finally:
+                    await connection.close()
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.pg
 def test_calendar_crud_import_visibility_and_safety(pg_dsn: str) -> None:
     """Import replacement, kind rules, filters, conflicts, and cascades use real DB behavior."""
 

@@ -1,8 +1,12 @@
+import { useTaskProjection } from '@/outbox/view'
+import { taskRequest as apiRequest } from '@/outbox/adapters'
+import { sessionRequest } from '@/outbox/core'
 import {
   type FormEvent,
   type MouseEvent,
   memo,
   useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -20,7 +24,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { ApiError, apiRequest, UnauthenticatedError } from '@/api'
+import { ApiError, UnauthenticatedError } from '@/api'
 import { addVietnamDays, todayInVietnam, VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -35,14 +39,12 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { TaskPreview } from '@/TaskPreview'
 import { cn } from '@/lib/utils'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
+import { remainingSeconds } from '@/private-gate'
+import { sessionQuerySpec } from '@/calendar-queries'
 import { uuidv7 } from '@/lib/uuidv7'
 import { taskRefetchInterval } from '@/query-polling'
 import { TaskForm } from '@/TaskForm'
@@ -120,6 +122,11 @@ function sortTimelineTasks(
 
 export function TasksScreen() {
   const queryClient = useQueryClient()
+  const session = useQuery({
+    ...sessionQuerySpec,
+    queryFn: sessionRequest,
+  })
+  const privateUnlocked = remainingSeconds(session.data?.private_until ?? null) > 0
   const quickInputRef = useRef<HTMLInputElement>(null)
   const overdueRef = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState<ListView>('open')
@@ -132,6 +139,18 @@ export function TasksScreen() {
   const [loadedStart, setLoadedStart] = useState(defaultStart)
   const [loadedEnd, setLoadedEnd] = useState(defaultEnd)
   const [extraTasks, setExtraTasks] = useState<Task[]>([])
+  useEffect(() => {
+    const mask = () => setExtraTasks(tasks => tasks.filter(task => !task.is_private))
+    window.addEventListener('microsched:visibility',mask)
+    return () => window.removeEventListener('microsched:visibility',mask)
+  }, [])
+  const handleTaskUpdated = useCallback((updated: Task) => {
+    // Extended ranges are held outside the default-range React Query entry.
+    // Apply the successful server response there before the editor closes.
+    setExtraTasks((current) => current.some((task) => task.id === updated.id)
+      ? current.map((task) => task.id === updated.id ? updated : task)
+      : current)
+  }, [])
   const [bucketCursors, setBucketCursors] = useState<Record<TimelineBucket, string | null>>({
     overdue: null,
     dated: null,
@@ -232,7 +251,7 @@ export function TasksScreen() {
     }
     if (pinnedIds.length === 0) return
     try {
-      window.localStorage.setItem(PINNED_MIGRATED_KEY, '1')
+      // Completion is recorded after durable admissions below.
     } catch {
       return
     }
@@ -249,7 +268,7 @@ export function TasksScreen() {
         result.status === 'rejected' ? [pinnedIds[index]] : [],
       )
       try {
-        if (retryIds.length === 0) window.localStorage.removeItem(LEGACY_PIN_IDS_KEY)
+        if (retryIds.length === 0) { window.localStorage.removeItem(LEGACY_PIN_IDS_KEY); window.localStorage.setItem(PINNED_MIGRATED_KEY, '1') }
         else window.localStorage.setItem(LEGACY_PIN_IDS_KEY, JSON.stringify(retryIds))
         if (retryIds.length > 0) window.localStorage.removeItem(PINNED_MIGRATED_KEY)
       } catch {
@@ -261,6 +280,7 @@ export function TasksScreen() {
   }, [queryClient, timeline.isSuccess])
 
   const create = useMutation({
+    networkMode: 'always',
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       apiRequest<Task>('/api/tasks', {
         method: 'POST',
@@ -278,14 +298,17 @@ export function TasksScreen() {
     },
   })
 
-  const tasks = useMemo(() => {
+  const confirmedTasks = useMemo(() => {
     const seen = new Set<string>()
     return [...(timeline.data?.items ?? []), ...extraTasks].filter((task) => {
+      if (task.is_private && !privateUnlocked) return false
       if (seen.has(task.id)) return false
       seen.add(task.id)
       return true
     })
-  }, [extraTasks, timeline.data?.items])
+  }, [extraTasks, timeline.data?.items, privateUnlocked])
+
+  const tasks = useTaskProjection(confirmedTasks, filter)
 
   const dateKeys = useMemo(() => {
     const keys: string[] = []
@@ -515,8 +538,8 @@ export function TasksScreen() {
           ) : null}
         </div>
         <div className="space-y-3">
-          {open.map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />)}
-          {isOpen ? <div id={`task-completed-${day}`} className="space-y-3">{completed.map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />)}</div> : null}
+          {open.map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />)}
+          {isOpen ? <div id={`task-completed-${day}`} className="space-y-3">{completed.map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />)}</div> : null}
         </div>
       </Card>
     )
@@ -594,14 +617,14 @@ export function TasksScreen() {
               Quá hạn trước đó ({groups.overdue.length})
             </h3>
             {groups.overdue.map((task) => (
-              <TaskCard key={task.id} task={task} migratingPins={migratingPins} />
+              <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />
             ))}
           </div>
         ) : null}
         <div data-testid="task-list" className="grid grid-cols-2 gap-3 sm:grid-cols-3 [&>section]:col-span-full">
           {groups.dateGroups.map(({ day, tasks: groupTasks }) => renderGroup(day, groupTasks))}
-          {groups.undated.some((task) => task.status === 'open') && filter !== 'completed' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3>{groups.undated.filter((task) => task.status === 'open').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />)}</section> : null}
-          {groups.undated.some((task) => task.status === 'completed') && filter !== 'open' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3><Button data-testid="task-day-completed-toggle" size="lg" variant="ghost" aria-expanded={completedOpen.has('undated')} onClick={() => setCompletedOpen((current) => new Set(current).has('undated') ? new Set([...current].filter((key) => key !== 'undated')) : new Set([...current, 'undated']))}>Đã xong ({groups.undated.filter((task) => task.status === 'completed').length})</Button>{completedOpen.has('undated') ? groups.undated.filter((task) => task.status === 'completed').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} />) : null}</section> : null}
+          {groups.undated.some((task) => task.status === 'open') && filter !== 'completed' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3>{groups.undated.filter((task) => task.status === 'open').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />)}</section> : null}
+          {groups.undated.some((task) => task.status === 'completed') && filter !== 'open' ? <section data-testid="task-undated-group" className="space-y-3"><h3 className="text-base font-bold">Chưa xếp ngày</h3><Button data-testid="task-day-completed-toggle" size="lg" variant="ghost" aria-expanded={completedOpen.has('undated')} onClick={() => setCompletedOpen((current) => new Set(current).has('undated') ? new Set([...current].filter((key) => key !== 'undated')) : new Set([...current, 'undated']))}>Đã xong ({groups.undated.filter((task) => task.status === 'completed').length})</Button>{completedOpen.has('undated') ? groups.undated.filter((task) => task.status === 'completed').map((task) => <TaskCard key={task.id} task={task} migratingPins={migratingPins} onTaskUpdated={handleTaskUpdated} />) : null}</section> : null}
         </div>
         <div className="flex flex-wrap gap-2 pt-2">
           <Button data-testid="task-load-earlier" size="lg" variant="outline" disabled={loadingDirection !== null || !hasPrevious} title={!hasPrevious ? 'Không còn ngày trước trong phạm vi có thể xem' : undefined} onClick={() => void loadBlock('earlier')}>{loadingDirection === 'earlier' ? 'Đang tải…' : 'Xem thêm ngày trước'}</Button>
@@ -700,9 +723,11 @@ function PriorityBadge({ priority }: { priority: TaskPriority }) {
 const TaskCard = memo(function TaskCard({
   task,
   migratingPins,
+  onTaskUpdated,
 }: {
   task: Task
   migratingPins: boolean
+  onTaskUpdated?: (task: Task) => void
 }) {
   const queryClient = useQueryClient()
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -721,12 +746,14 @@ const TaskCard = memo(function TaskCard({
     void queryClient.invalidateQueries({ queryKey: ['calendar'] })
   }
   const reschedule = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { next: TaskSchedule; previous: TaskSchedule }) =>
       apiRequest<Task>(`/api/tasks/${task.id}`, {
         method: 'PATCH',
         body: JSON.stringify(variables.next),
       }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (updated, variables) => {
+      onTaskUpdated?.(updated)
       refresh()
       toast(
         <span className="block min-w-0 max-w-full break-words">
@@ -744,6 +771,7 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const update = useMutation({
+    networkMode: 'always',
     mutationFn: (
       payload: Partial<TaskPayload> & { status?: TaskStatus; pinned?: boolean },
     ) =>
@@ -751,12 +779,14 @@ const TaskCard = memo(function TaskCard({
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      onTaskUpdated?.(updated)
       setEditing(false)
       refresh()
     },
   })
   const remove = useMutation({
+    networkMode: 'always',
     mutationFn: () => apiRequest<void>(`/api/tasks/${task.id}`, { method: 'DELETE' }),
     onSuccess: () => {
       setDetailsOpen(false)
@@ -776,6 +806,7 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const addItem = useMutation({
+    networkMode: 'always',
     mutationFn: (content: string) =>
       apiRequest<TaskItem>(`/api/tasks/${task.id}/items`, {
         method: 'POST',
@@ -787,6 +818,7 @@ const TaskCard = memo(function TaskCard({
     },
   })
   const changeItem = useMutation({
+    networkMode: 'always',
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
       apiRequest<TaskItem>(`/api/tasks/${task.id}/items/${item.id}`, {
         method: 'PATCH',
@@ -794,7 +826,9 @@ const TaskCard = memo(function TaskCard({
       }),
     onSuccess: refresh,
   })
+  const [deletingChild,setDeletingChild]=useState<Task['items'][number]|null>(null)
   const removeItem = useMutation({
+    networkMode: 'always',
     mutationFn: (item: TaskItem) =>
       apiRequest<void>(`/api/tasks/${task.id}/items/${item.id}`, { method: 'DELETE' }),
     onSuccess: refresh,
@@ -876,7 +910,7 @@ const TaskCard = memo(function TaskCard({
         data-private={task.is_private}
         onClick={openDetailsFromCard}
         className={cn(
-          'group/task relative gap-3 overflow-visible rounded-lg px-4 py-4 shadow-2 ring-0 transition-shadow',
+          'group/task relative gap-2 overflow-visible rounded-lg px-4 py-3 shadow-2 ring-0 transition-shadow',
           task.pinned ? 'bg-brand-50 shadow-rose' : 'bg-card',
           task.is_private && PRIVATE_SURFACE_CLASS,
           task.status === 'completed' && !task.is_private ? 'opacity-70' : '',
@@ -900,8 +934,7 @@ const TaskCard = memo(function TaskCard({
                   3:1 của non-text contrast. Dùng `--primary` (rose-700, 5,29:1)
                   — vẫn là màu nhận diện, chỉ đậm hơn. */}
               {task.pinned ? <Pin className="size-4 text-primary" aria-hidden="true" /> : null}
-              <Tooltip>
-                <TooltipTrigger asChild>
+              <TaskPreview task={task} disabled={detailsOpen}>
                   <Button
                     data-testid="task-title"
                     className={[
@@ -913,49 +946,16 @@ const TaskCard = memo(function TaskCard({
                       //   `min-w-0`     — gỡ `min-width:auto` mặc định của flex item.
                       //   `break-words` — `whitespace-normal` chỉ xuống dòng ở khoảng
                       //                   trắng; một cụm 70 ký tự liền thì không có chỗ.
-                      'h-auto min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
+                      'h-auto min-h-11 min-w-0 shrink justify-start whitespace-normal break-words p-0 text-left text-base font-bold tracking-tight hover:bg-transparent',
                       task.status === 'completed' ? 'line-through' : '',
                     ].join(' ')}
                     variant="ghost"
                     aria-label={`Mở chi tiết ${task.title}`}
                     onClick={openDetails}
                   >
-                    {task.title}
+                    <span className="line-clamp-2 [overflow-wrap:anywhere]">{task.title}</span>
                   </Button>
-                </TooltipTrigger>
-                {task.body_md || task.items.length > 0 ? (
-                  <TooltipContent>
-                    {task.items.length > 0 ? (
-                      <div>
-                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
-                          Checklist ({task.items.length})
-                        </span>
-                        <ol className="mt-1 space-y-0.5">
-                          {task.items.slice(0, 3).map((item, index) => (
-                            <li key={item.id} className="flex gap-1.5">
-                              <span className="opacity-60">{index + 1}.</span>
-                              {item.content}
-                            </li>
-                          ))}
-                        </ol>
-                        {task.items.length > 3 ? (
-                          <p className="mt-1 text-xs opacity-70 italic">
-                            … và {task.items.length - 3} mục nữa
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {task.body_md ? (
-                      <div className={task.items.length > 0 ? 'mt-2' : ''}>
-                        <span className="block text-xs font-extrabold tracking-wide uppercase opacity-70">
-                          Ghi chú
-                        </span>
-                        {task.body_md}
-                      </div>
-                    ) : null}
-                  </TooltipContent>
-                ) : null}
-              </Tooltip>
+              </TaskPreview>
               {task.priority ? <PriorityBadge priority={task.priority} /> : null}
               {task.is_private ? (
                 <PrivateMarker />
@@ -1099,6 +1099,7 @@ const TaskCard = memo(function TaskCard({
 
       </Card>
 
+      <Dialog open={!!deletingChild} onOpenChange={open=>{if(!open&&!removeItem.isPending)setDeletingChild(null)}}><DialogContent data-testid="task-child-delete-confirm"><DialogHeader><DialogTitle>Xoá mục nhỏ?</DialogTitle><DialogDescription>Xác nhận xoá mục này khỏi task.</DialogDescription></DialogHeader><p className="break-words text-sm">{deletingChild?.content}</p>{removeItem.isError?<p role="alert" className="text-sm text-bad">{errorMessage(removeItem.error)}</p>:null}<div className="flex justify-end gap-2"><Button size="lg" variant="outline" disabled={removeItem.isPending} onClick={()=>setDeletingChild(null)}>Huỷ</Button><Button data-testid="task-child-delete-commit" size="lg" variant="destructive" disabled={removeItem.isPending} onClick={()=>{if(deletingChild)removeItem.mutate(deletingChild,{onSuccess:()=>setDeletingChild(null)})}}>{removeItem.isPending?'Đang xoá…':'Xoá mục'}</Button></div></DialogContent></Dialog>
       <Dialog
         open={detailsOpen}
         onOpenChange={(open) => {
@@ -1210,7 +1211,7 @@ const TaskCard = memo(function TaskCard({
                           className="text-bad hover:text-bad"
                           aria-label={`Xoá mục ${item.content}`}
                           disabled={removeItem.isPending}
-                          onClick={() => removeItem.mutate(item)}
+                          onClick={() => setDeletingChild(item)}
                         >
                           <Trash2 />
                         </Button>
@@ -1292,6 +1293,8 @@ export function LegacyTasksScreen() {
       !(error instanceof UnauthenticatedError) && failureCount < 2,
   })
 
+  const projectedLegacyTasks = useTaskProjection(tasks.data?.items ?? [])
+
   useEffect(() => {
     if (!tasks.isSuccess || !navigator.onLine) return
 
@@ -1310,7 +1313,7 @@ export function LegacyTasksScreen() {
 
     try {
       // This synchronous marker closes the two-tab race before the first PATCH starts.
-      window.localStorage.setItem(PINNED_MIGRATED_KEY, '1')
+      // Completion is recorded after durable admissions below.
     } catch (error) {
       console.warn('Could not claim legacy pin migration; migration will retry later.', error)
       return
@@ -1369,6 +1372,7 @@ export function LegacyTasksScreen() {
   }, [queryClient, tasks.isSuccess])
 
   const create = useMutation({
+    networkMode: 'always',
     mutationFn: ({ payload }: { payload: TaskPayload; source: CreateSource }) =>
       apiRequest<Task>('/api/tasks', {
         method: 'POST',
@@ -1391,8 +1395,8 @@ export function LegacyTasksScreen() {
   })
 
   const overdueCount = useMemo(
-    () => tasks.data?.items.filter(isOverdue).length ?? 0,
-    [tasks.data?.items],
+    () => projectedLegacyTasks.filter(isOverdue).length ?? 0,
+    [projectedLegacyTasks],
   )
 
   // Completing the final overdue task closes that derived view immediately;
@@ -1401,7 +1405,7 @@ export function LegacyTasksScreen() {
     filter === 'overdue' && overdueCount === 0 ? 'open' : filter
 
   const visibleTasks = useMemo(() => {
-    const items = tasks.data?.items ?? []
+    const items = projectedLegacyTasks ?? []
 
     return items
       .filter((task) =>
@@ -1409,7 +1413,7 @@ export function LegacyTasksScreen() {
           ? isOverdue(task)
           : activeFilter === 'all' || task.status === activeFilter,
       )
-  }, [activeFilter, tasks.data?.items])
+  }, [activeFilter, projectedLegacyTasks])
 
   function quickAdd(event: FormEvent) {
     event.preventDefault()

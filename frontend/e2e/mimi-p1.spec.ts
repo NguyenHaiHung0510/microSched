@@ -1,4 +1,4 @@
-import { expect } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 
 import { test } from './fixtures/tasks'
 import type { MimiConversation } from '../src/mimi-api'
@@ -31,6 +31,37 @@ function emptyConversation(): MimiConversation {
   }
 }
 
+// Approved Workspace keeps desktop rails visible and opens mobile rails in dialogs.
+async function openConversationRail(page: Page) {
+  const create=page.getByRole('button',{name:'Cuộc trò chuyện mới',exact:true})
+  if (!await create.isVisible()) await page.getByRole('button',{name:/^(?:Hội thoại(?: \(\d+\))?|Thu gọn hội thoại)$/}).click()
+  await expect(create).toBeVisible()
+}
+async function closeMobileRail(page: Page) {
+  if ((page.viewportSize()?.width ?? 1280)<1024) await page.keyboard.press('Escape')
+}
+async function createWorkspaceConversation(page: Page) {
+  await openConversationRail(page)
+  await page.getByRole('button',{name:'Cuộc trò chuyện mới',exact:true}).click()
+  await closeMobileRail(page)
+  await expect(page.getByTestId('mimi-input')).toBeVisible()
+}
+
+async function openDataRail(page: Page) {
+  const visible=page.locator('[data-testid="mimi-context-rail"]:visible')
+  if (!await visible.isVisible()) await page.getByRole('button',{name:(page.viewportSize()?.width ?? 1280)>=1024?'Thống kê hội thoại':'Thống kê và thông báo',exact:true}).click()
+  await expect(visible).toBeVisible()
+  const diagnostics = visible.locator('details').filter({ has: page.locator('summary', { hasText: 'Dữ liệu và chẩn đoán' }) }).first()
+  if (await diagnostics.getAttribute('open') === null) await diagnostics.locator('summary').first().click()
+  await visible.getByRole('button', { name: 'Context', exact: true }).click()
+  return visible
+}
+async function closeDataRail(page: Page) {
+  if ((page.viewportSize()?.width ?? 1280)>=1024) await page.getByRole('button',{name:'Đóng thống kê',exact:true}).click()
+  else await page.keyboard.press('Escape')
+  await expect(page.locator('[data-testid="mimi-context-rail"]:visible')).toHaveCount(0)
+}
+
 function summary(conversation: MimiConversation) {
   return {
     id: conversation.id,
@@ -46,10 +77,16 @@ function summary(conversation: MimiConversation) {
   }
 }
 
-test('Mimi Control Center and shared thread keep preview-confirm-receipt usable', async ({
+for (const expiresDuringReview of [false, true]) {
+test(`Mimi Control Center and shared thread ${expiresDuringReview ? 'disable expired preview across reload' : 'keep preview-confirm-receipt usable'}`, async ({
   page,
-}) => {
+}, testInfo) => {
+  const now = new Date('2026-10-02T16:00:00Z')
+  await page.clock.install({ time: now })
+  let decisions = 0
   let conversation: MimiConversation | null = null
+  let feedbackAckMode: 'matching' | 'wrong-client' | 'wrong-target' = 'matching'
+  const feedbackRequests: Array<{ client_id: string; target_type: string; target_id: string }> = []
   await page.route('**/api/me', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
@@ -68,6 +105,40 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
   await page.route('**/api/mimi/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    if (request.method() === 'GET' && path === '/api/mimi/operating-policy') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        policy: {
+          revision: 0,
+          input_codepoints: 50_000,
+          // Synthetic fixture caps, not a live price/catalog observation.
+          prices: {
+            'openai/gpt-6-luna': { prompt: '0.10', completion: '0.50' },
+            'xiaomi/mimo-v2.6-pro': { prompt: '0.43', completion: '0.87' },
+            'deepseek/deepseek-v4.1-flash': { prompt: '0.36', completion: '1.44' },
+            'z-ai/glm-5.3-flash': { prompt: '0.15', completion: '0.50' },
+          },
+        },
+        applies_to: 'next_unsent_wire',
+        input_unit: 'unicode_codepoints',
+        price_unit: 'USD_per_million_tokens',
+      }) })
+      return
+    }
+    if (request.method() === 'GET' && path.endsWith('/capabilities')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        context_v1_enabled: false,
+        live_provider_enabled: false,
+        requested_model: null,
+        requested_effort: null,
+        route_mode: null,
+        model_selection_enabled: false,
+        context_limit: 131072,
+        output_reserve: 4096,
+        policy_id: null,
+        policy_sha256: null,
+      }) })
+      return
+    }
     if (request.method() === 'GET' && path.endsWith('/conversations/current')) {
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation?.archived_at ? null : conversation) })
       return
@@ -87,6 +158,13 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
       return
     }
     expect(request.headers()['x-mimi-csrf']).toBe('1')
+    if (request.method() === 'POST' && path === '/api/mimi/metadata-warmup') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        status: 'not_applicable',
+        paid_calls: 0,
+      }) })
+      return
+    }
     if (request.method() === 'POST' && path.endsWith('/conversations')) {
       conversation = emptyConversation()
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(summary(conversation)) })
@@ -124,7 +202,7 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
           state: 'pending',
           digest: 'a'.repeat(64),
           nonce: '01990000-0000-7000-8000-000000000061',
-          expires_at: '2026-09-15T01:15:00Z',
+          expires_at: new Date(now.getTime() + 60_000).toISOString(),
           policy_version: 'mimi-standard-task-create.v1',
           operation: {
             operation_id: '01990000-0000-7000-8000-000000000062',
@@ -147,6 +225,7 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
       return
     }
     if (request.method() === 'POST' && path.endsWith('/decision')) {
+      decisions += 1
       const receipt = { id: receiptId, change_set_id: changeSetId, operation_id: conversation!.change_sets[0].operation.operation_id, task_id: taskId, digest: 'a'.repeat(64), result: { task_id: taskId }, executed_at: '2026-09-15T01:01:00Z' }
       conversation = {
         ...conversation!,
@@ -158,8 +237,15 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
       return
     }
     if (request.method() === 'POST' && path.endsWith('/feedback')) {
-      const feedback = { id: 'feedback-1', client_id: 'feedback-client', target_type: 'receipt', target_id: receiptId, state: 'new', unresolved: true, created_at: '2026-09-15T01:02:00Z' }
-      conversation = { ...conversation!, feedback: [feedback] }
+      const payload = request.postDataJSON()
+      expect(payload.client_id).toEqual(expect.any(String))
+      expect(payload.client_id).not.toBe('')
+      expect(payload.target_type).toBe('receipt')
+      expect(payload.target_id).toBe(receiptId)
+      feedbackRequests.push(payload)
+      // The acknowledgment must echo this submission's identity, as the server does.
+      const feedback = { id: 'feedback-1', client_id: feedbackAckMode === 'wrong-client' ? 'wrong-client' : payload.client_id, target_type: 'receipt', target_id: feedbackAckMode === 'wrong-target' ? 'wrong-receipt' : receiptId, state: 'new', unresolved: true, created_at: '2026-09-15T01:02:00Z' }
+      if (feedbackAckMode === 'matching') conversation = { ...conversation!, feedback: [feedback] }
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(feedback) })
       return
     }
@@ -168,52 +254,110 @@ test('Mimi Control Center and shared thread keep preview-confirm-receipt usable'
 
   await page.goto('/')
   await page.getByRole('tab', { name: 'Mimi' }).click()
-  await expect(page.getByRole('heading', { name: 'Mimi Control Center' })).toBeVisible()
-  await expect(page.getByText('Route hiệu lực')).toBeVisible()
+  await expect(page.getByTestId('mimi-workspace')).toBeVisible()
+  await expect(page.getByTestId('mimi-workspace-center')).toBeVisible()
   if (capturePreview) {
     await page.screenshot({
       path: `test-results/task-058/control-center-${page.viewportSize()?.width ?? 'unknown'}.png`,
       fullPage: true,
     })
   }
-  await page.getByRole('button', { name: 'Hội thoại' }).click()
-  await page.getByRole('button', { name: 'Bắt đầu conversation STANDARD' }).click()
+  await createWorkspaceConversation(page)
   await expect(page.getByLabel('Nhắn Mimi')).toBeVisible()
+  await page.getByTestId('mimi-configuration-hub-toggle').click()
+  await expect(page.getByRole('dialog',{name:'Cấu hình Mimi · Workspace'})).toBeVisible()
+  await expect(page.getByText('Lượt chat này chưa dùng model bên ngoài.')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await openConversationRail(page)
   await page.getByRole('button', { name: /^Tùy chọn / }).first().click()
   await page.getByRole('menuitem', { name: 'Đổi tên' }).click()
   await page.getByRole('textbox', { name: 'Tên hội thoại' }).fill('Tổng duyệt demo Mimi')
   await page.getByRole('button', { name: 'Lưu tên' }).click()
   await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
+  await closeMobileRail(page)
   await page.getByLabel('Nhắn Mimi').fill('Tạo task Chuẩn bị demo Mimi')
   await page.getByRole('button', { name: 'Gửi' }).click()
   await expect(page.getByTestId('mimi-change-set')).toContainText('Chuẩn bị demo Mimi')
+
+  if (expiresDuringReview) {
+    await expect(page.getByRole('button', { name: 'Xác nhận tạo Task' })).toBeEnabled()
+    await page.clock.fastForward(60_000)
+    const preview = page.getByTestId('mimi-change-set')
+    await expect(preview).toContainText('Preview đã hết hạn')
+    await expect(preview).toContainText('Gửi yêu cầu mới')
+    for (const name of ['Xác nhận tạo Task', 'Sửa phương án này', 'Từ chối']) {
+      await expect(preview.getByRole('button', { name, exact: true })).toBeDisabled()
+    }
+    expect(decisions).toBe(0)
+    await page.reload()
+    await page.getByRole('tab', { name: 'Mimi', exact: true }).click()
+    await expect(page.getByTestId('mimi-workspace-center')).toBeVisible()
+    await expect(preview).toContainText('Preview đã hết hạn')
+    await expect(preview.getByRole('button', { name: 'Xác nhận tạo Task' })).toBeDisabled()
+    await expect(page.getByLabel('Nhắn Mimi')).toBeEnabled()
+    expect(decisions).toBe(0)
+    return
+  }
 
   const confirm = page.getByRole('button', { name: 'Xác nhận tạo Task' })
   const confirmBox = await confirm.boundingBox()
   expect(confirmBox).not.toBeNull()
   expect(confirmBox!.height).toBeGreaterThanOrEqual(44)
   await confirm.click()
-  await expect(page.getByTestId('mimi-receipt')).toContainText(receiptId)
+  const receipt=page.getByTestId('mimi-receipt')
+  await receipt.locator('summary').click()
+  await expect(receipt).toContainText(receiptId)
 
-  await page.getByLabel('Feedback về kết quả này').fill('Preview cần hiển thị nguồn rõ hơn')
-  await page.getByRole('button', { name: 'Lưu feedback' }).click()
-  await expect(page.getByText('Feedback đã lưu · còn mở để xử lý.')).toBeVisible()
+  await page.getByRole('button',{name:'Chưa tốt · câu trả lời 2',exact:true}).click()
+  await page.getByRole('combobox',{name:'Mục cần góp ý'}).click()
+  await page.getByRole('option',{name:/Receipt 1/}).click()
+  const feedbackDraft = page.getByLabel('Điều gì cần sửa hoặc làm rõ?')
+  const acknowledgment = page.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.', { exact: true })
+  await feedbackDraft.fill('Preview cần hiển thị nguồn rõ hơn')
+  for (const mismatch of ['wrong-client', 'wrong-target'] as const) {
+    feedbackAckMode = mismatch
+    await page.getByRole('button', { name: /^(Lưu feedback|Thử lại feedback đã gửi)$/ }).click()
+    await expect(page.getByRole('alert').filter({ hasText: 'Chưa xác nhận feedback đã lưu.' })).toBeVisible()
+    await expect(acknowledgment).toHaveCount(0)
+    await expect(feedbackDraft).toHaveValue('Preview cần hiển thị nguồn rõ hơn')
+    expect(conversation!.feedback).toEqual([])
+  }
+  feedbackAckMode = 'matching'
+  const savedResponse = page.waitForResponse((response) => response.url().endsWith(`/conversations/${conversationId}/feedback`) && response.request().method() === 'POST')
+  await page.getByRole('button', { name: 'Thử lại feedback đã gửi', exact: true }).click()
+  const response = await savedResponse
+  expect(response.status()).toBe(201)
+  const savedFeedback = await response.json()
+  expect(feedbackRequests).toHaveLength(3)
+  expect(new Set(feedbackRequests.map((request) => request.client_id)).size).toBe(1)
+  expect(savedFeedback).toMatchObject({ client_id: feedbackRequests[0].client_id, target_type: 'receipt', target_id: receiptId })
+  expect(conversation!.feedback).toEqual([savedFeedback])
+  await expect(acknowledgment).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Mục cần góp ý' })).toContainText('Receipt 1')
+  await expect(feedbackDraft).toHaveValue('')
+  await testInfo.attach('receipt-feedback-ack', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+  await testInfo.attach('receipt-feedback-record', { body: JSON.stringify({ requests: feedbackRequests, savedFeedback, visibleText: await page.getByRole('dialog').innerText() }, null, 2), contentType: 'application/json' })
+  await page.keyboard.press('Escape')
 
+  await openConversationRail(page)
   await page.getByRole('button', { name: /^Tùy chọn / }).first().click()
   await page.getByRole('menuitem', { name: 'Lưu trữ' }).click()
   await page.getByRole('button', { name: 'Đã lưu' }).click()
   await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
+  await openConversationRail(page)
   await page.getByRole('button', { name: /^Tùy chọn / }).first().click()
   await page.getByRole('menuitem', { name: 'Khôi phục' }).click()
   await page.getByRole('button', { name: 'Đang dùng' }).click()
   await expect(page.getByText('Tổng duyệt demo Mimi').first()).toBeVisible()
 
+  await closeMobileRail(page)
   const overflow = await page.evaluate(() => {
     const root = document.scrollingElement ?? document.documentElement
     return [root.scrollWidth, root.clientWidth]
   })
   expect(overflow[0]).toBeLessThanOrEqual(overflow[1])
 })
+}
 
 test('Mimi side-chat stays available from the Task surface without page overflow', async ({
   page,
@@ -240,12 +384,32 @@ test('Mimi side-chat stays available from the Task surface without page overflow
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation) })
       return
     }
+    if (route.request().method() === 'GET' && path.endsWith('/conversations')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        items: conversation ? [summary(conversation)] : [], next_cursor: null,
+      }) })
+      return
+    }
+    if (route.request().method() === 'GET' && path.endsWith(`/conversations/${conversationId}`)) {
+      await route.fulfill({ status: conversation ? 200 : 404, contentType: 'application/json', body: JSON.stringify(conversation ?? {}) })
+      return
+    }
+    if (route.request().method() === 'GET' && path.endsWith('/capabilities')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        context_v1_enabled: false, live_provider_enabled: false,
+        requested_model: null, requested_effort: null, route_mode: null,
+        model_selection_enabled: false, context_limit: 131072,
+        output_reserve: 4096, policy_id: null, policy_sha256: null,
+      }) })
+      return
+    }
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   })
 
   await page.goto('/')
   await expect(page.getByRole('tab', { name: 'Task' })).toHaveAttribute('aria-selected', 'true')
-  await page.getByTestId('mimi-dock-toggle').click()
+  await page.getByTestId('app-menu-open').click()
+  await page.getByTestId('mimi-dock-open').click()
   await expect(page.getByTestId('mimi-side-chat')).toBeVisible()
   await expect(page.getByLabel('Nhắn Mimi')).toBeVisible()
   if (capturePreview) {
@@ -262,4 +426,176 @@ test('Mimi side-chat stays available from the Task surface without page overflow
   expect(overflow[0]).toBeLessThanOrEqual(overflow[1])
 
   conversation = null
+})
+
+test('P1C-A synthetic browser loop keeps one conversation observable and composer reachable', async ({
+  page,
+}) => {
+  let conversation: MimiConversation | null = null
+  let messagePosts = 0
+  let observerGets = 0
+  const createdAt = '2026-09-23T02:00:00Z'
+  const activeRun = {
+    id: runId,
+    generation: 1,
+    state: 'running',
+    provider_outcome: null,
+    deadline: '2026-09-23T02:30:00Z',
+    error_code: null,
+    created_at: createdAt,
+    completed_at: null,
+  }
+  const completedSnapshot = () => ({
+    ...conversation!,
+    runs: [{ ...activeRun, state: 'completed', provider_outcome: 'succeeded', completed_at: createdAt }],
+    events: [
+      {
+        id: 'context-manifest', run_id: runId, sequence: 1, kind: 'context.manifest', created_at: createdAt,
+        payload: {
+          input_upper_bound: 1200,
+          context_limit: 131072,
+          checkpoint_frontier: 0,
+          sources: [{ source_id: 'tasks.standard', coverage: 'bounded', count: 1, omitted_fields: ['body_md'], data_as_of: createdAt }],
+        },
+      },
+    ],
+    provider_calls: [{ run_id: runId, attempt: 1, state: 'completed', requested_model: 'synthetic-route', requested_effort: 'low', actual_model: 'synthetic-route', actual_provider: 'fake', usage: {} }],
+  })
+
+  await page.route('**/api/me', async (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      email: 'synthetic@example.test', signed_in_at: createdAt,
+      expires_at: '2026-09-24T02:00:00Z', private_until: null, private_locked_until: null,
+      pin_is_set: true, pin_is_bootstrap: false, mimi_available: true,
+    }),
+  }))
+  await page.route('**/api/mimi/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'GET' && path.endsWith('/capabilities')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        context_v1_enabled: true, live_provider_enabled: false, requested_model: 'synthetic-route',
+        requested_effort: 'low', route_mode: 'fake', model_selection_enabled: false,
+        context_limit: 131072, output_reserve: 4096, policy_id: 'synthetic-policy', policy_sha256: '0'.repeat(64),
+      }) })
+      return
+    }
+    if (request.method() === 'GET' && path.endsWith('/conversations/current')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversation) })
+      return
+    }
+    if (request.method() === 'GET' && path.endsWith('/conversations')) {
+      const items = conversation ? [summary(conversation)] : []
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items, next_cursor: null }) })
+      return
+    }
+    if (request.method() === 'GET' && path.endsWith(`/conversations/${conversationId}`)) {
+      await route.fulfill({ status: conversation ? 200 : 404, contentType: 'application/json', body: JSON.stringify(conversation ?? {}) })
+      return
+    }
+    if (request.method() === 'GET' && path.endsWith('/preview')) {
+      await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
+      return
+    }
+    if (request.method() === 'GET' && path.endsWith(`/runs/${runId}/events/stream`)) {
+      observerGets += 1
+      const snapshot = completedSnapshot()
+      conversation = snapshot
+      await route.fulfill({ contentType: 'text/event-stream', body: `event: conversation.snapshot\ndata: ${JSON.stringify(snapshot)}\n\n` })
+      return
+    }
+    if (request.method() === 'POST' && path.endsWith('/conversations')) {
+      conversation = emptyConversation()
+      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(summary(conversation)) })
+      return
+    }
+    if (request.method() === 'POST' && path.endsWith('/messages/stream')) {
+      messagePosts += 1
+      const content = request.postDataJSON().content as string
+      conversation = {
+        ...conversation!,
+        generation: conversation!.generation + 1,
+        messages: [...conversation!.messages, {
+          id: `user-${messagePosts}`, run_id: runId, client_id: 'synthetic-client',
+          sequence: conversation!.messages.length + 1, role: 'user', content, created_at: createdAt,
+        }],
+        runs: [activeRun],
+      }
+      // The run is durably accepted, while this response ends before a terminal snapshot.
+      // Reload must attach to the GET observer and must never repeat the message POST.
+      await route.fulfill({ contentType: 'text/event-stream', body: `event: run.reserved\ndata: ${JSON.stringify({ run_id: runId })}\n\n` })
+      return
+    }
+    await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
+  })
+
+  await page.route('**/api/tasks/timeline**', async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [{
+    id: 'task-synthetic', title: 'Task chỉ hiện trong rail', body_md: null, status: 'open', priority: null,
+    due_precision: 'none', due_on: null, due_at: null, is_private: false, pinned: false,
+    items: [], created_at: createdAt, updated_at: createdAt,
+  }], counts: { overdue: 0, dated: 0, undated: 1 }, bucket_cursors: { overdue: null, dated: null, undated: null } }) }))
+  await page.route('**/api/notes**', async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [] }) }))
+  await page.route('**/api/calendar/events**', async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [] }) }))
+  await page.route('**/api/tracker/trackers', async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [] }) }))
+
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Mimi' }).click()
+  await createWorkspaceConversation(page)
+  const composer = page.getByTestId('mimi-input')
+  await expect(composer).toBeVisible()
+  await composer.scrollIntoViewIfNeeded()
+  const composerBox = await composer.boundingBox()
+  expect(composerBox).not.toBeNull()
+  expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+
+  await composer.fill('Dòng đầu')
+  await composer.press('Shift+Enter')
+  await composer.type('dòng hai')
+  await expect(composer).toHaveValue('Dòng đầu\ndòng hai')
+  await composer.press('Control+A')
+  await composer.fill('Câu hỏi chỉ đọc')
+  await composer.press('Enter')
+  await expect.poll(() => messagePosts).toBe(1)
+
+  // The shared dock is exposed on domain screens, not inside its full Workspace.
+  await page.getByRole('tab', { name: 'Task', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Task', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await page.getByTestId('app-menu-open').click()
+  await page.getByTestId('mimi-dock-open').click()
+  await expect(page.getByTestId('mimi-side-chat')).toBeVisible()
+  await expect(page.getByTestId('mimi-side-chat').getByTestId('mimi-messages')).toContainText('Câu hỏi chỉ đọc')
+  if ((page.viewportSize()?.width ?? 1280) < 640) await page.keyboard.press('Escape')
+  else await page.getByRole('button', {name:'Đóng side-chat', exact:true}).click()
+  await expect(page.getByTestId('mimi-side-chat')).toHaveCount(0)
+
+  await page.getByRole('tab', { name: 'Mimi', exact: true }).click()
+  await expect(page.getByTestId('mimi-workspace')).toBeVisible()
+  await openConversationRail(page)
+  await page.getByRole('button', { name: 'Thu gọn danh sách' }).click()
+  await expect(page.getByRole('heading', { name: 'Cuộc trò chuyện', exact:true })).not.toBeVisible()
+  await openConversationRail(page)
+  await expect(page.getByRole('button', { name: 'Thu gọn danh sách' })).toBeVisible()
+  await closeMobileRail(page)
+  if ((page.viewportSize()?.width ?? 1280)>=1024) await closeDataRail(page)
+  const rail=await openDataRail(page)
+  await expect(rail).toContainText('Task chỉ hiện trong rail')
+  await expect(rail).toContainText('Dữ liệu đang xem không tự gửi vào model.')
+  await closeDataRail(page)
+
+  // Standard viewport, no fullscreen/F11; reload does not repeat the message POST.
+  await page.reload()
+  await page.getByRole('tab', { name: 'Mimi' }).click()
+  await expect(page.getByTestId('mimi-input')).toBeVisible()
+  await expect.poll(() => observerGets).toBeGreaterThan(0)
+  const restoredRail=await openDataRail(page)
+  await expect(restoredRail).toContainText('Task chỉ hiện trong rail')
+  await restoredRail.getByRole('button', { name: 'Run', exact:true }).click()
+  const inspector = restoredRail.getByTestId('mimi-context-inspector')
+  await inspector.locator('summary').click()
+  await expect(inspector).toContainText('tasks.standard')
+  await expect(inspector).toContainText('Không gửi: body_md')
+  await expect(inspector).not.toContainText('Task chỉ hiện trong rail')
+  expect(messagePosts).toBe(1)
+  expect(observerGets).toBeGreaterThan(0)
 })

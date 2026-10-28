@@ -1,0 +1,41 @@
+import { expect, test } from 'vitest'
+
+import { availableInputPresets, effortOptions } from './mimi-configuration.ts'
+import type { MimiModelProfile } from './mimi-api.ts'
+
+function profile(overrides: Partial<MimiModelProfile> = {}): MimiModelProfile {
+  return {
+    id: 'profile-1',
+    label: 'Model',
+    model: 'model',
+    provider: 'local',
+    quantization: 'Q4',
+    supported_efforts: ['low', 'high'],
+    context_limit: 1_048_576,
+    output_reserve: 32_000,
+    available: true,
+    unavailable_reason: null,
+    ...overrides,
+  }
+}
+
+test('context presets include the output reserve and stay within the model context', () => {
+  expect(availableInputPresets(profile())).toEqual([272_000])
+  expect(availableInputPresets(profile({ context_limit: 132_000 }))).toEqual([])
+  expect(availableInputPresets(profile({ compaction_trigger_tokens: 100_000 }))).toEqual([100_000])
+  expect(availableInputPresets(profile({ context_limit: 31_999 }))).toEqual([])
+})
+
+test('profiles without advertised effort levels use the provider default', () => {
+  expect(effortOptions(profile({ supported_efforts: [] }))).toEqual(['default'])
+  expect(effortOptions(profile({ supported_efforts: ['medium'] }))).toEqual(['medium'])
+})
+
+test('DeepSeek exposes none, low, high and max exactly as advertised by the server', () => {
+  expect(effortOptions(profile({
+    id: 'deepseek',
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    supported_efforts: ['none', 'low', 'high', 'max'],
+  }))).toEqual(['none', 'low', 'high', 'max'])
+  expect(effortOptions(profile())).toEqual(['low', 'high'])
+})

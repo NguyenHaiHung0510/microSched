@@ -11,10 +11,10 @@ test('smoke renders the capture grid with last-seen labels', async ({ page }) =>
   await openTrackerScreen(page)
   await expect(page.getByTestId('tracker-button')).toHaveCount(3)
   await expect(
-    page.locator('[data-testid="tracker-last-seen"][data-tracker-id="tracker-001"]'),
+    page.locator('[data-testid="tracker-last-seen"][data-tracker-id="019a0e2e-0000-7000-8003-000000000001"]'),
   ).toContainText('ngày trước')
   await expect(
-    page.locator('[data-testid="tracker-last-seen"][data-tracker-id="tracker-002"]'),
+    page.locator('[data-testid="tracker-last-seen"][data-tracker-id="019a0e2e-0000-7000-8003-000000000002"]'),
   ).toContainText('giờ trước')
 })
 
@@ -51,7 +51,7 @@ test('one-tap capture creates one entry and offers a 10s undo', async ({
   trackerApi,
 }) => {
   await openTrackerScreen(page)
-  await page.locator('[data-testid="tracker-button"][data-tracker-id="tracker-001"]').click()
+  await page.locator('[data-testid="tracker-button"][data-tracker-id="019a0e2e-0000-7000-8003-000000000001"]').click()
   await expect.poll(() => trackerApi.count('POST', '/api/tracker/entries')).toBe(1)
   await expect(page.getByRole('button', { name: 'Hoàn tác' })).toBeVisible()
 })
@@ -61,13 +61,13 @@ test('money input echoes the exact formatted number that will be sent', async ({
   trackerApi,
 }) => {
   await openTrackerScreen(page)
-  await page.locator('[data-testid="tracker-button"][data-tracker-id="tracker-002"]').click()
+  await page.locator('[data-testid="tracker-button"][data-tracker-id="019a0e2e-0000-7000-8003-000000000002"]').click()
   const input = page.getByTestId('tracker-amount-input')
   await expect(input).toBeVisible()
   await input.fill('100000')
   await expect(page.getByText('= 100.000 ₫')).toBeVisible()
   await page.getByTestId('tracker-backdate-dialog').count()
-  await page.locator('[data-tracker-id="tracker-002"]').getByRole('button', { name: 'Ghi' }).click()
+  await page.locator('[data-tracker-id="019a0e2e-0000-7000-8003-000000000002"]').getByRole('button', { name: 'Ghi' }).click()
   await expect.poll(() => trackerApi.count('POST', '/api/tracker/entries')).toBe(1)
   expect(trackerApi.entries[0].amount).toBe(100000)
 })
@@ -80,7 +80,7 @@ test('long-press backdates exactly one entry — the synthetic click is suppress
 
   await page.evaluate(() => {
     const el = document.querySelector(
-      '[data-testid="tracker-button"][data-tracker-id="tracker-001"]',
+      '[data-testid="tracker-button"][data-tracker-id="019a0e2e-0000-7000-8003-000000000001"]',
     ) as HTMLElement
     const touch = new Touch({ identifier: 1, target: el, clientX: 40, clientY: 40 })
     el.dispatchEvent(
@@ -90,7 +90,7 @@ test('long-press backdates exactly one entry — the synthetic click is suppress
   await page.waitForTimeout(650)
   await page.evaluate(() => {
     const el = document.querySelector(
-      '[data-testid="tracker-button"][data-tracker-id="tracker-001"]',
+      '[data-testid="tracker-button"][data-tracker-id="019a0e2e-0000-7000-8003-000000000001"]',
     ) as HTMLElement
     const touch = new Touch({ identifier: 1, target: el, clientX: 40, clientY: 40 })
     el.dispatchEvent(

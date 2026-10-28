@@ -1,0 +1,20 @@
+{
+  "schema": "mimi.context-builder.image.v1",
+  "version": "v1",
+  "date": "2026-10-11",
+  "source_commit": "43b50366a08f7ae84486ec6dc4fadcf2b8758b20",
+  "image": "context-builder-2026-10-11-v1.png",
+  "sha256": "35d121544fdd0e335cc9f82fd0930fa511725a8006719536c26b936667959f76",
+  "title": "Mimi lắp context và dùng công cụ như thế nào?",
+  "snapshot": "collection OFF, policy v2; hypothetical ON branch distinct",
+  "sources": [
+    "backend/app/agent/context_builder.py",
+    "backend/app/agent/service.py",
+    "backend/app/agent/langgraph_runner.py",
+    "backend/app/agent/tools/registry.py",
+    "backend/app/agent/openrouter.py"
+  ],
+  "kind": "source-explainer; not runtime/QA evidence",
+  "generator": "built-in imagegen",
+  "retention": "preserve dated snapshot; future updates create new version"
+}

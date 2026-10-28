@@ -103,14 +103,14 @@ def test_medication_payload_private_tracker_without_text():
     payload = build_medication_payload(tracker, DISPATCH_ID)
 
     assert payload["title"] == "Nhắc nhở microSched"
-    assert payload["body"] == "Đã tới hạn ghi nhận."
+    assert payload["body"] == "Có một lời nhắc bạn đã đặt. Mở microSched để xem."
     assert "secretname" not in payload["body"]
     assert "enc:v1:" not in payload["body"]
     assert payload["url"] == f"/reminder-confirm?dispatch={DISPATCH_ID}"
 
 
 def test_medication_payload_private_tracker_with_text():
-    """Private tracker with reminder_text uses public user-chosen text."""
+    """Private classification also hides custom reminder text."""
     tracker = Tracker(
         id=UUID("01912345-6789-7000-8000-000000000002"),
         name="enc:v1:secretname",
@@ -122,7 +122,8 @@ def test_medication_payload_private_tracker_with_text():
     payload = build_medication_payload(tracker, DISPATCH_ID)
 
     assert payload["title"] == "Nhắc nhở microSched"
-    assert payload["body"] == "Uống 1 viên sau ăn sáng"
+    assert payload["body"] == "Có một lời nhắc bạn đã đặt. Mở microSched để xem."
+    assert tracker.reminder_text not in str(payload)
     assert "secretname" not in payload["body"]
 
 
@@ -138,7 +139,7 @@ def test_medication_payload_public_tracker():
     )
     payload = build_medication_payload(tracker, DISPATCH_ID)
 
-    assert payload["title"] == "Nhắc nhở microSched"
+    assert payload["title"] == "Nhắc: Thuốc Huyết Áp"
     assert payload["body"] == "Đã tới hạn: Thuốc Huyết Áp"
 
 
@@ -252,7 +253,8 @@ def test_subscription_expiry_payload_decrypts_public_name(monkeypatch):
         sub, parent_tracker=parent, lead_days=3, today=date(2026, 8, 6)
     )
 
-    assert payload["body"] == "Đăng ký Netflix sắp hết hạn trong 4 ngày"
+    assert payload["title"] == "Hạn đăng ký: Netflix"
+    assert payload["body"] == ("Đăng ký Netflix sắp hết hạn trong 4 ngày\nHết hạn: 10/08/2026")
     assert "enc:v1:" not in payload["body"]
     assert payload["url"] == f"/subscription?highlight={sub.id}"
 
@@ -267,22 +269,23 @@ def test_subscription_expiry_payload_days_left_uses_vn_today():
     sub = Subscription(
         id=UUID("01912345-6789-7000-8000-000000000006"),
         tracker_id=UUID("01912345-6789-7000-8000-000000000007"),
-        name="enc:v1:secret_sub",
+        name="Gói mẫu",
         started_on=date(2026, 1, 1),
         expires_on=date(2026, 8, 10),
         period_count=1,
         period_unit="month",
-        is_private=True,
+        is_private=False,
     )
+    parent = Tracker(name="Đăng ký", kind="finance", input_mode="money", is_private=False)
     # VN "today" is 2026-08-06 → exactly 4 days left.
     payload = build_subscription_expiry_payload(
-        sub, parent_tracker=None, lead_days=3, today=date(2026, 8, 6)
+        sub, parent_tracker=parent, lead_days=3, today=date(2026, 8, 6)
     )
     assert "trong 4 ngày" in payload["body"]
 
     # A UTC-naive date.today() on 2026-08-05 23:00 UTC (2026-08-06 06:00 VN)
     # would report 5 days — the explicit VN date keeps it at 4.
     payload_next = build_subscription_expiry_payload(
-        sub, parent_tracker=None, lead_days=3, today=date(2026, 8, 7)
+        sub, parent_tracker=parent, lead_days=3, today=date(2026, 8, 7)
     )
     assert "trong 3 ngày" in payload_next["body"]

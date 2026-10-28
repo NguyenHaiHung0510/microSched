@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
+import { FundingSelector } from '@/FundingSelector'
 import {
   amountToNumber,
   canSubmitAmount,
@@ -22,18 +23,29 @@ import {
 const LONG_PRESS_MS = 500
 const CLICK_SUPPRESS_MS = 400
 
+export type TrackerCaptureDraft = { inputOpen: boolean; input: string }
+
 type TrackerCardProps = {
   tracker: Tracker
+  publicDraft?: TrackerCaptureDraft
+  onPublicDraftChange?: (patch: Partial<TrackerCaptureDraft>) => void
   locked: boolean
   pending: boolean
   /** input is the digit string for money/quantity trackers; undefined = event capture. */
-  onCapture: (input?: string) => void
+  onCapture: (input?: string, fundingId?:string|null) => Promise<boolean>
   onBackdate: () => void
 }
 
-export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }: TrackerCardProps) {
-  const [inputOpen, setInputOpen] = useState(false)
-  const [input, setInput] = useState('')
+export function TrackerCard({ tracker, publicDraft, onPublicDraftChange, locked, pending, onCapture, onBackdate }: TrackerCardProps) {
+  const [localInputOpen, setLocalInputOpen] = useState(false)
+  const [localInput, setLocalInput] = useState('')
+  const inputOpen = publicDraft?.inputOpen ?? localInputOpen
+  const input = publicDraft?.input ?? localInput
+  const setInputOpen = (value: boolean) => publicDraft && onPublicDraftChange
+    ? onPublicDraftChange({ inputOpen: value }) : setLocalInputOpen(value)
+  const setInput = (value: string) => publicDraft && onPublicDraftChange
+    ? onPublicDraftChange({ input: value }) : setLocalInput(value)
+  const [funding,setFunding]=useState('none')
   const longPressTimer = useRef<number | null>(null)
   const longPressFired = useRef(false)
   const suppressClickUntil = useRef(0)
@@ -73,18 +85,21 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
       return
     }
     if (tracker.input_mode === 'event') {
-      onCapture()
+      void onCapture()
       return
     }
     setInputOpen(true)
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault()
     if (!canSubmitAmount(input) || locked || pending) return
-    onCapture(tracker.input_mode === 'money' ? digitsOnly(input) : input)
-    setInput('')
-    setInputOpen(false)
+    if (funding==='locked'||funding==='keep') return
+    if (await onCapture(tracker.input_mode === 'money' ? digitsOnly(input) : input, funding==='none'?undefined:funding)) {
+      setInput('')
+      setFunding('none')
+      setInputOpen(false)
+    }
   }
 
   const needsAmount = tracker.input_mode === 'money' || tracker.input_mode === 'quantity'
@@ -108,6 +123,7 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
               className="h-10 bg-card text-base"
               inputMode="numeric"
               autoFocus
+              disabled={locked || pending}
               value={input}
               onChange={(event) =>
                 setInput(
@@ -128,12 +144,13 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
               = {formatQuantity(echoQuantity)} {tracker.unit ?? 'đơn vị'}
             </p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <div className="space-y-2">
+            {tracker.input_mode==='money'&&tracker.direction==='out'?<FundingSelector value={funding} onChange={setFunding} disabled={locked||pending}/>:null}
             <Button
               size="lg"
               className="min-h-11"
               type="submit"
-              disabled={!canSubmitAmount(input) || locked || pending}
+              disabled={!canSubmitAmount(input) || locked || pending || funding==='locked'||funding==='keep'}
             >
               {pending ? 'Đang ghi…' : 'Ghi'}
             </Button>
@@ -142,6 +159,7 @@ export function TrackerCard({ tracker, locked, pending, onCapture, onBackdate }:
               variant="ghost"
               className="min-h-11"
               type="button"
+              disabled={locked || pending}
               onClick={() => {
                 setInput('')
                 setInputOpen(false)

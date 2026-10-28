@@ -6,6 +6,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import AuthSession
@@ -24,7 +25,7 @@ from app.domain.tasks import (
     TaskTimeline,
     TaskUpdate,
 )
-from app.web.deps import get_session, require_session
+from app.web.deps import get_session, require_outbox_session
 
 router = APIRouter(tags=["task"])
 store = TaskStore()
@@ -37,7 +38,7 @@ except ZoneInfoNotFoundError:
     VIETNAM_TZ = timezone(timedelta(hours=7))
 
 Database = Annotated[AsyncSession, Depends(get_session)]
-CurrentSession = Annotated[AuthSession, Depends(require_session)]
+CurrentSession = Annotated[AuthSession, Depends(require_outbox_session)]
 
 
 def _not_found() -> HTTPException:
@@ -48,6 +49,7 @@ def _private_locked() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Private mode is locked",
+        headers={"X-MicroSched-Error-Code": "PRIVATE_UNLOCK_REQUIRED"},
     )
 
 
@@ -143,7 +145,8 @@ async def create_task(
     """Create a task and initial checklist in one request transaction."""
     try:
         task = await store.create(db, session, payload)
-    except TaskIdConflict:
+    except TaskIdConflict, IntegrityError:
+        await db.rollback()
         return Response(status_code=status.HTTP_409_CONFLICT)
     except PrivateWriteLocked as error:
         raise _private_locked() from error
@@ -178,7 +181,10 @@ async def update_task(
 async def delete_task(task_id: UUID, db: Database, session: CurrentSession) -> Response:
     """Soft-delete one visible task."""
     if not await store.soft_delete(db, session, task_id):
-        raise _not_found()
+        error = _not_found()
+        if await store.deleted_task_visible(db, session, task_id):
+            error.headers = {"X-MicroSched-Error-Code": "TASK_ALREADY_DELETED"}
+        raise error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -212,11 +218,16 @@ async def create_task_item(
     payload: TaskItemCreate,
     db: Database,
     session: CurrentSession,
-) -> TaskItemRead:
+    response: Response,
+) -> TaskItemRead | Response:
     """Append a checklist item through its visible, locked parent."""
-    item = await store.add_item(db, session, task_id, payload)
+    try:
+        item = await store.add_item(db, session, task_id, payload)
+    except TaskIdConflict:
+        return Response(status_code=status.HTTP_409_CONFLICT)
     if item is None:
         raise _not_found()
+    response.status_code = status.HTTP_201_CREATED if item.created else status.HTTP_200_OK
     return item
 
 
@@ -246,5 +257,8 @@ async def delete_task_item(
 ) -> Response:
     """Delete a checklist item through its visible, locked parent."""
     if not await store.delete_item(db, session, task_id, item_id):
-        raise _not_found()
+        error = _not_found()
+        if await store.deleted_item_visible(db, session, task_id, item_id):
+            error.headers = {"X-MicroSched-Error-Code": "TASK_ITEM_ALREADY_DELETED"}
+        raise error
     return Response(status_code=status.HTTP_204_NO_CONTENT)

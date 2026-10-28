@@ -1,12 +1,12 @@
 import { test, expect } from './fixtures/tracker'
 
-test('one header indicator follows active polling tabs, offline and excludes calendar', async ({ page, context }) => {
+test('one shared indicator follows active polling tabs, offline and excludes calendar', async ({ page, context }) => {
   await page.route('**/api/notes?*', (route) => route.fulfill({ json: { items: [] } }))
   await page.route('**/api/calendar/**', (route) => route.fulfill({ json: { items: [] } }))
   await page.goto('/')
   const status = page.getByTestId('app-live-status')
   await expect(status).toHaveAttribute('data-state', 'live')
-  await expect(page.locator('header').getByTestId('app-live-status')).toHaveCount(1)
+  await expect(page.getByTestId('app-live-status')).toHaveCount(1)
   await page.getByRole('tab', { name: 'Ghi chú' }).click()
   await expect(status).toHaveAttribute('data-state', 'live')
   await context.setOffline(true)
@@ -33,13 +33,14 @@ test('report month uses existing month endpoint and recent rows remain reachable
   page.on('request', (request) => { const url = new URL(request.url()); if (url.pathname === '/api/tracker/dashboard') months.push(url.searchParams.get('month') ?? '') })
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await page.getByTestId('tracker-open-report').click()
   await expect(page.getByTestId('tracker-report-month')).toBeVisible()
   await page.getByTestId('tracker-report-month').fill('2025-01')
   await expect.poll(() => months.includes('2025-01')).toBe(true)
-  await page.getByTestId('tracker-open-report').click()
+  await page.getByTestId('tracker-report-jump').click()
   await expect(page.getByTestId('tracker-report-toggle')).toHaveAttribute('aria-expanded', 'true')
   await expect(page.getByTestId('dashboard-panel')).toBeVisible()
-  await page.getByTestId('tracker-entries-toggle').click()
+  await page.getByTestId('tracker-tab-journal').click()
   await expect(page.getByTestId('tracker-entries-toggle')).toHaveAttribute('aria-expanded', 'true')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })

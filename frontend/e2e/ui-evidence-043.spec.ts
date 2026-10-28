@@ -96,10 +96,10 @@ test('Task043 synthetic screen evidence with verified private states', async ({ 
   await page.getByRole('tab', { name: 'Lịch' }).click()
   await expect(page.getByTestId('calendar-day-chip-event').first()).toBeAttached()
   await page.getByTestId('calendar-today-button').click()
-  await capture('calendar-grid')
+  await capture('calendar-wide')
   if (testInfo.project.name === 'desktop') {
     await page.getByTestId('calendar-toggle-sidebar').click()
-    await capture('calendar-wide')
+    await capture('calendar-grid')
   }
   await page.getByTestId('calendar-mode-toggle-agenda').click()
   await expect(page.getByTestId('calendar-agenda-event-title')).toHaveCount(3)

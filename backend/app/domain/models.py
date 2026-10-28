@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -105,6 +106,7 @@ class Task(UUIDTimestampModel, table=True):
     __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
         CheckConstraint("status IN ('open', 'completed')", name="status_values"),
+        CheckConstraint("collection_version >= 1", name="collection_version"),
         CheckConstraint(
             "priority IS NULL OR priority IN ('p1', 'p2', 'p3')",
             name="priority_values",
@@ -118,6 +120,9 @@ class Task(UUIDTimestampModel, table=True):
         {"schema": SCHEMA},
     )
 
+    collection_version: int = Field(
+        default=1, sa_column=Column(BigInteger, nullable=False, server_default=text("1"))
+    )
     title: str = Field(sa_column=Column(Text, nullable=False))
     body_md: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     status: str = Field(
@@ -153,11 +158,20 @@ class TaskItem(UUIDTimestampModel, table=True):
 
     __tablename__ = "task_item"
     __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
-    __delete_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
+        Index(
+            "ix_task_item_active_position",
+            "task_id",
+            "position",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
         CheckConstraint("position >= 0", name="position_nonnegative"),
         {"schema": SCHEMA},
     )
+
+    deleted_at: datetime | None = deleted_timestamp()
 
     task_id: UUID = Field(
         sa_column=Column(
@@ -489,6 +503,9 @@ class Entry(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
     __delete_gate__: ClassVar[Gate] = Gate.APPLIES
     __table_args__ = (
+        CheckConstraint(
+            "funding_entry_id IS NULL OR funding_entry_id <> id", name="funding_not_self"
+        ),
         CheckConstraint("quantity IS NULL OR quantity > 0", name="quantity_positive"),
         CheckConstraint(
             "amount IS NULL OR amount LIKE 'enc:v1:%'",
@@ -518,6 +535,15 @@ class Entry(UUIDTimestampModel, table=True):
             PGUUID(as_uuid=True),
             ForeignKey(f"{SCHEMA}.subscription.id", ondelete="SET NULL"),
             nullable=True,
+        ),
+    )
+    funding_entry_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey(f"{SCHEMA}.entry.id", ondelete="RESTRICT"),
+            nullable=True,
+            index=True,
         ),
     )
     quantity: Decimal | None = Field(
@@ -701,7 +727,9 @@ class OneShotReminder(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
     __delete_gate__: ClassVar[Gate] = Gate.VIA_PARENT
     __table_args__ = (
-        CheckConstraint("num_nonnulls(task_id, event_id, tracker_id) = 1", name="one_source"),
+        CheckConstraint(
+            "num_nonnulls(task_id, event_id, tracker_id, annotation_id) = 1", name="one_source"
+        ),
         CheckConstraint("mode IN ('absolute', 'relative')", name="mode"),
         CheckConstraint(
             "(mode = 'absolute' AND offset_minutes IS NULL AND anchor_time IS NULL) OR "
@@ -738,6 +766,12 @@ class OneShotReminder(UUIDTimestampModel, table=True):
             PGUUID, ForeignKey(f"{SCHEMA}.tracker.id", ondelete="CASCADE"), nullable=True
         ),
     )
+    annotation_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID, ForeignKey(f"{SCHEMA}.day_annotation.id", ondelete="CASCADE"), nullable=True
+        ),
+    )
     mode: str = Field(sa_column=Column(Text, nullable=False))
     offset_minutes: int | None = Field(default=None, sa_column=Column(Integer))
     anchor_time: time | None = Field(default=None, sa_column=Column(Time))
@@ -760,7 +794,7 @@ class OneShotReminder(UUIDTimestampModel, table=True):
     sent_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
 
 
-for _source_column in ("task_id", "event_id", "tracker_id"):
+for _source_column in ("task_id", "event_id", "tracker_id", "annotation_id"):
     Index(
         f"uq_one_shot_reminder_active_{_source_column}",
         OneShotReminder.__table__.c[_source_column],
@@ -941,3 +975,71 @@ Index(
 )
 Index("ix_reminder_dispatch_status", ReminderDispatch.__table__.c.status)
 Index("ix_tracker_reminder_batch_status", TrackerReminderBatch.__table__.c.status)
+
+
+class ReminderOccurrenceHandled(UUIDTimestampModel, table=True):
+    """Per-owner occurrence acknowledgement; never source completion or device delivery."""
+
+    __tablename__ = "reminder_occurrence_handled"
+    __privacy_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __delete_gate__: ClassVar[Gate] = Gate.VIA_PARENT
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(one_shot_id, dispatch_id, mimi_intent_id) = 1", name="one_receipt"
+        ),
+        UniqueConstraint("owner_id", "one_shot_id", name="uq_history_handled_one_shot"),
+        UniqueConstraint("owner_id", "dispatch_id", name="uq_history_handled_dispatch"),
+        UniqueConstraint("owner_id", "mimi_intent_id", name="uq_history_handled_mimi"),
+        {"schema": SCHEMA},
+    )
+    owner_id: UUID = Field(sa_column=Column(PGUUID, nullable=False, index=True))
+    one_shot_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID, ForeignKey(f"{SCHEMA}.one_shot_reminder.id", ondelete="CASCADE")),
+    )
+    dispatch_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID, ForeignKey(f"{SCHEMA}.reminder_dispatch.id", ondelete="CASCADE")),
+    )
+    mimi_intent_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID, ForeignKey(f"{SCHEMA}.mimi_notification_intent.id", ondelete="CASCADE")
+        ),
+    )
+    handled_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    )
+
+
+class ReminderHandledBatch(UUIDTimestampModel, table=True):
+    """Frozen owner-scoped typed targets and replay result, without source prose."""
+
+    __tablename__ = "reminder_handled_batch"
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE  # Owner authorization, no public inventory API.
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __table_args__ = (
+        CheckConstraint("schema_version = 1", name="version"),
+        CheckConstraint(
+            "jsonb_typeof(target_refs) = 'array' "
+            "AND jsonb_array_length(target_refs) = selected_count",
+            name="target_count",
+        ),
+        CheckConstraint("selected_count >= 0 AND expires_at > cutoff", name="scope"),
+        CheckConstraint("jsonb_typeof(normalized_filter) = 'object'", name="filter_object"),
+        CheckConstraint("fingerprint ~ '^[0-9a-f]{64}$'", name="fingerprint"),
+        CheckConstraint("(committed_at IS NULL) = (result IS NULL)", name="result_state"),
+        {"schema": SCHEMA},
+    )
+    owner_id: UUID = Field(sa_column=Column(PGUUID, nullable=False, index=True))
+    schema_version: int = Field(
+        default=1, sa_column=Column(Integer, nullable=False, server_default=text("1"))
+    )
+    normalized_filter: dict = Field(sa_column=Column(JSONB, nullable=False))
+    fingerprint: str = Field(sa_column=Column(Text, nullable=False))
+    target_refs: list = Field(sa_column=Column(JSONB, nullable=False))
+    selected_count: int = Field(sa_column=Column(Integer, nullable=False))
+    cutoff: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    committed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    result: dict | None = Field(default=None, sa_column=Column(JSONB))

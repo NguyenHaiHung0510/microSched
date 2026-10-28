@@ -15,8 +15,9 @@ for (const scenario of [
     } }))
     await page.goto('/')
     await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await page.getByTestId('tracker-tab-report').click()
     await expect(page.getByTestId('tracker-finance-compare')).toContainText(scenario.summary)
-    await page.getByTestId('tracker-open-report').click()
+    await page.getByTestId('tracker-report-jump').click()
     await expect(page.getByTestId('dashboard-f2-compare')).toContainText(scenario.report)
   })
 }
@@ -27,14 +28,15 @@ test('finance charts show exact periods, composition and keyboard disclosure wit
     corrupted_entry_count: 0, f1_total: 1800000, f2_current: 1800000, f2_previous: 2100000, f5_net: -1800000,
     report_months: 1, previous_period_start: '2026-07-01T00:00:00+07:00', previous_period_end: '2026-08-01T00:00:00+07:00',
     finance_months: [{ month: '2026-08', period_start: '2026-08-01T00:00:00+07:00', period_end: '2026-09-01T00:00:00+07:00', total: 1800000 }], activity_month: '2026-08', activity_days: [],
-    f3_groups: [{ name: 'Nhóm ' + 'X'.repeat(70), total: 1800000, trackers: [{ tracker_id: 'tracker-002', name: '', total: 1800000 }] }],
+    f3_groups: [{ name: 'Nhóm ' + 'X'.repeat(70), total: 1800000, trackers: [{ tracker_id: '019a0e2e-0000-7000-8003-000000000002', name: '', total: 1800000 }] }],
     f4_top: [], a2_gap: [], a3_counts: { week: 1, month: 2, year: 3 }, a4_trend: { current_month: 2, prev_avg: 3, trend: 'down' },
     f6: { monthly_burn: 0, subscription_count: 0, corrupted_subscription_count: 0, upcoming: [] },
   } }))
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await page.getByTestId('tracker-tab-report').click()
   await page.getByTestId('tracker-report-month').fill('2026-08')
-  await page.getByTestId('tracker-open-report').click()
+  await page.getByTestId('tracker-report-jump').click()
   const comparison = page.getByTestId('dashboard-finance-comparison')
   await expect(comparison).toContainText('1.800.000')
   await expect(comparison).toContainText('2.100.000')
@@ -56,8 +58,9 @@ test('failed financial request reports error instead of empty spending', async (
   await page.route('**/api/tracker/dashboard?*', (route) => route.fulfill({ status: 500, json: { detail: 'Synthetic unavailable' } }))
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await page.getByTestId('tracker-tab-report').click()
   await expect(page.getByTestId('app-live-status')).toHaveAttribute('data-state', 'error', { timeout: 15_000 })
   await expect(page.getByTestId('tracker-finance-total')).toHaveCount(0)
-  await page.getByTestId('tracker-open-report').click()
+  await page.getByTestId('tracker-report-jump').click()
   await expect(page.getByTestId('dashboard-error')).toBeVisible()
 })

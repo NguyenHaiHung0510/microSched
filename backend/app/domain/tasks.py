@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
-from sqlalchemy import Date, and_, case, cast, delete, false, func, literal, or_, select, text
+from sqlalchemy import Date, and_, case, cast, false, func, literal, or_, select, text, true
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,8 +87,16 @@ def _canonicalize_schedule(payload: BaseModel, *, default_none: bool) -> None:
 class TaskItemCreate(BaseModel):
     """Fields accepted when appending a checklist item."""
 
+    id: UUID | None = None
     content: str = Field(min_length=1)
     position: int = Field(default=0, ge=0)
+
+    @field_validator("id")
+    @classmethod
+    def validate_client_id(cls, value: UUID | None) -> UUID | None:
+        if value is not None and value.version != 7:
+            raise ValueError("id must be a UUIDv7")
+        return value
 
     @field_validator("content")
     @classmethod
@@ -126,6 +134,7 @@ class TaskItemRead(BaseModel):
     """Decrypted checklist item returned at the API boundary."""
 
     id: UUID
+    created: bool = Field(default=True, exclude=True)
     content: str
     is_completed: bool
     position: int
@@ -146,12 +155,20 @@ class TaskCreate(BaseModel):
     due_at: datetime | None = None
     is_private: bool = False
     items: list[NonEmptyText] = Field(default_factory=list)
+    item_ids: list[UUID] | None = None
 
     @model_validator(mode="after")
     def validate_create(self) -> "TaskCreate":
         """Preserve UUID ordering and canonicalize legacy/V2 due inputs."""
         if self.id is not None and self.id.version != 7:
             raise ValueError("id must be a UUIDv7")
+        if self.item_ids is not None:
+            if len(self.item_ids) != len(self.items):
+                raise ValueError("item_ids must align with items")
+            if len(set(self.item_ids)) != len(self.item_ids):
+                raise ValueError("item_ids must be unique")
+            if any(item_id.version != 7 for item_id in self.item_ids):
+                raise ValueError("item_ids must be UUIDv7")
         _canonicalize_schedule(self, default_none=True)
         return self
 
@@ -686,10 +703,15 @@ class TaskStore:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _items(self, db: AsyncSession, task_id: UUID) -> list[TaskItem]:
+    async def _items(
+        self, db: AsyncSession, task_id: UUID, *, include_deleted: bool = False
+    ) -> list[TaskItem]:
         result = await db.execute(
             select(TaskItem)
-            .where(TaskItem.task_id == task_id)
+            .where(
+                TaskItem.task_id == task_id,
+                true() if include_deleted else TaskItem.deleted_at.is_(None),
+            )
             .order_by(TaskItem.position, TaskItem.created_at)
         )
         return list(result.scalars())
@@ -745,7 +767,7 @@ class TaskStore:
         task_ids = [task.id for task in parents]
         child_result = await db.execute(
             select(TaskItem)
-            .where(TaskItem.task_id.in_(task_ids))
+            .where(TaskItem.task_id.in_(task_ids), TaskItem.deleted_at.is_(None))
             .order_by(TaskItem.position, TaskItem.created_at)
         )
         grouped: dict[UUID, list[TaskItem]] = defaultdict(list)
@@ -864,7 +886,7 @@ class TaskStore:
         task_ids = [task.id for task in parents]
         child_result = await db.execute(
             select(TaskItem)
-            .where(TaskItem.task_id.in_(task_ids))
+            .where(TaskItem.task_id.in_(task_ids), TaskItem.deleted_at.is_(None))
             .order_by(TaskItem.position, TaskItem.created_at)
         )
         grouped: dict[UUID, list[TaskItem]] = defaultdict(list)
@@ -1022,6 +1044,7 @@ class TaskStore:
         task = locked.scalar_one()
         items = [
             TaskItem(
+                **({"id": payload.item_ids[position]} if payload.item_ids is not None else {}),
                 task_id=task.id,
                 content=_sealed(content) if task.is_private else content,
                 position=position,
@@ -1048,7 +1071,7 @@ class TaskStore:
         task = await self._parent(db, auth, task_id, for_update=wants_toggle or "status" in changes)
         if task is None:
             return None
-        items = await self._items(db, task_id)
+        items = await self._items(db, task_id, include_deleted=wants_toggle)
         target_private = changes.get("is_private", task.is_private)
         if target_private and not can_see_private(auth):
             raise PrivateWriteLocked
@@ -1103,7 +1126,7 @@ class TaskStore:
         else:
             _dual_write_stored_schedule(task)
         await db.flush()
-        return self._task_read(task, items)
+        return self._task_read(task, [item for item in items if item.deleted_at is None])
 
     async def soft_delete(self, db: AsyncSession, auth: AuthSession, task_id: UUID) -> bool:
         """Mark a visible task deleted; its children become unreachable through it."""
@@ -1158,12 +1181,42 @@ class TaskStore:
         parent = await self._parent(db, auth, task_id, for_update=True)
         if parent is None:
             return None
-        item = TaskItem(
-            task_id=parent.id,
-            content=_sealed(payload.content) if parent.is_private else payload.content,
-            position=payload.position,
-        )
-        db.add(item)
+        values = {
+            "task_id": parent.id,
+            "content": _sealed(payload.content) if parent.is_private else payload.content,
+            "position": payload.position,
+        }
+        if payload.id is None:
+            item = TaskItem(**values)
+            db.add(item)
+        else:
+            inserted_id = (
+                await db.execute(
+                    insert(TaskItem)
+                    .values(id=payload.id, **values)
+                    .on_conflict_do_nothing(index_elements=[TaskItem.id])
+                    .returning(TaskItem.id)
+                )
+            ).scalar_one_or_none()
+            if inserted_id is None:
+                existing = (
+                    await db.execute(
+                        select(TaskItem).where(
+                            TaskItem.id == payload.id,
+                            TaskItem.task_id == parent.id,
+                            TaskItem.deleted_at.is_(None),
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    raise TaskIdConflict
+                result = self._item_read(existing)
+                result.created = False
+                return result
+            item = (
+                await db.execute(select(TaskItem).where(TaskItem.id == inserted_id))
+            ).scalar_one()
+        parent.updated_at = datetime.now(UTC)
         await db.flush()
         return self._item_read(item)
 
@@ -1184,7 +1237,9 @@ class TaskStore:
         if parent is None:
             return None
         result = await db.execute(
-            select(TaskItem).where(TaskItem.id == item_id, TaskItem.task_id == parent.id)
+            select(TaskItem).where(
+                TaskItem.id == item_id, TaskItem.task_id == parent.id, TaskItem.deleted_at.is_(None)
+            )
         )
         item = result.scalar_one_or_none()
         if item is None:
@@ -1196,6 +1251,8 @@ class TaskStore:
         for field in ("is_completed", "position"):
             if field in changes:
                 setattr(item, field, changes[field])
+        if changes:
+            parent.updated_at = datetime.now(UTC)
         await db.flush()
         return self._item_read(item)
 
@@ -1206,14 +1263,43 @@ class TaskStore:
         task_id: UUID,
         item_id: UUID,
     ) -> bool:
-        """Hard-delete one checklist item after locking its visible parent."""
+        """Retain a recoverable child tombstone beneath its locked visible parent."""
         parent = await self._parent(db, auth, task_id, for_update=True)
         if parent is None:
             return False
         result = await db.execute(
-            select(TaskItem.id).where(TaskItem.id == item_id, TaskItem.task_id == parent.id)
+            select(TaskItem).where(
+                TaskItem.id == item_id, TaskItem.task_id == parent.id, TaskItem.deleted_at.is_(None)
+            )
         )
-        if result.scalar_one_or_none() is None:
+        item = result.scalar_one_or_none()
+        if item is None:
             return False
-        await db.execute(delete(TaskItem).where(TaskItem.id == item_id))
+        item.deleted_at = datetime.now(UTC)
+        await db.flush()
+        parent.updated_at = datetime.now(UTC)
         return True
+
+    async def deleted_task_visible(
+        self, db: AsyncSession, auth: AuthSession, task_id: UUID
+    ) -> bool:
+        stmt = with_privacy_gate(
+            select(Task.id).where(Task.id == task_id, Task.deleted_at.is_not(None)), Task, auth
+        )
+        return (await db.execute(stmt)).scalar_one_or_none() is not None
+
+    async def deleted_item_visible(
+        self, db: AsyncSession, auth: AuthSession, task_id: UUID, item_id: UUID
+    ) -> bool:
+        parent = await self._parent(db, auth, task_id, for_update=True)
+        if parent is None:
+            return False
+        return (
+            await db.execute(
+                select(TaskItem.id).where(
+                    TaskItem.id == item_id,
+                    TaskItem.task_id == parent.id,
+                    TaskItem.deleted_at.is_not(None),
+                )
+            )
+        ).scalar_one_or_none() is not None

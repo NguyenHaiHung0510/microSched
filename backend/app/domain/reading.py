@@ -24,14 +24,14 @@ def _declared_gate(model: Any, flag_name: str) -> Gate:
         raise ReadingGateError(
             f"{_table_name(model)} chưa khai {flag_name}. "
             "Khai Gate.APPLIES, Gate.NONE hoặc Gate.VIA_PARENT; "
-            "xem agent-tasks/008n-reading-gate-registry.md."
+            "xem docs/verification/reading-gates.md."
         )
     gate = declarations[flag_name]
     if not isinstance(gate, Gate):
         raise ReadingGateError(
             f"{_table_name(model)} khai {flag_name} không hợp lệ. "
             "Dùng Gate.APPLIES, Gate.NONE hoặc Gate.VIA_PARENT; "
-            "xem agent-tasks/008n-reading-gate-registry.md."
+            "xem docs/verification/reading-gates.md."
         )
     return gate
 
@@ -74,7 +74,7 @@ def _gate_column(model: Any, flag_name: str, column_name: str) -> Any:
     if table is None or column_name not in table.columns:
         raise ReadingGateError(
             f"{_table_name(model)} khai {flag_name}=Gate.APPLIES nhưng không có cột "
-            f"{column_name}; sửa lời khai hoặc schema theo agent-tasks/008n."
+            f"{column_name}; sửa lời khai hoặc schema theo docs/verification/reading-gates.md."
         )
     return table.columns[column_name]
 

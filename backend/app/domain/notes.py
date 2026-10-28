@@ -52,6 +52,43 @@ class NoteItemRead(BaseModel):
     updated_at: datetime | None
 
 
+class NoteOrderEntry(BaseModel):
+    """Content-free snapshot for ordering and completion-group CAS."""
+
+    id: UUID
+    position: int = Field(ge=0, strict=True)
+    is_completed: bool = Field(strict=True)
+
+
+class NoteMoveToTop(BaseModel):
+    expected_items: list[NoteOrderEntry] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_items(self) -> "NoteMoveToTop":
+        if len({item.id for item in self.expected_items}) != len(self.expected_items):
+            raise ValueError("duplicate checklist item")
+        return self
+
+
+class NoteOrderConflict(Exception):
+    """The client's checklist snapshot no longer matches the locked parent."""
+
+
+def move_to_top_order(entries: list[NoteOrderEntry], item_id: UUID) -> list[NoteOrderEntry]:
+    """Permute only the target group's slots, then assign dense global ranks."""
+    target = next(entry for entry in entries if entry.id == item_id)
+    group = [entry for entry in entries if entry.is_completed == target.is_completed]
+    if group[0].id == item_id:
+        return entries
+    reordered = iter([target, *(entry for entry in group if entry.id != item_id)])
+    result = []
+    for position, entry in enumerate(entries):
+        if entry.is_completed == target.is_completed:
+            entry = next(reordered)
+        result.append(entry.model_copy(update={"position": position}))
+    return result
+
+
 class NoteCreate(BaseModel):
     """Fields accepted when creating a note and its initial checklist."""
 
@@ -140,11 +177,14 @@ class NoteStore:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _items(self, db: AsyncSession, note_id: UUID) -> list[NoteItem]:
+    async def _items(
+        self, db: AsyncSession, note_id: UUID, *, refresh: bool = False
+    ) -> list[NoteItem]:
         result = await db.execute(
             select(NoteItem)
             .where(NoteItem.note_id == note_id)
-            .order_by(NoteItem.position, NoteItem.created_at)
+            .order_by(NoteItem.position, NoteItem.created_at, NoteItem.id)
+            .execution_options(populate_existing=refresh)
         )
         return list(result.scalars())
 
@@ -191,7 +231,7 @@ class NoteStore:
         child_result = await db.execute(
             select(NoteItem)
             .where(NoteItem.note_id.in_(note_ids))
-            .order_by(NoteItem.position, NoteItem.created_at)
+            .order_by(NoteItem.position, NoteItem.created_at, NoteItem.id)
         )
         grouped: dict[UUID, list[NoteItem]] = defaultdict(list)
         for item in child_result.scalars():
@@ -400,6 +440,40 @@ class NoteStore:
                 setattr(item, field, changes[field])
         await db.flush()
         return self._item_read(item)
+
+    async def move_item_to_top(
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        note_id: UUID,
+        item_id: UUID,
+        payload: NoteMoveToTop,
+    ) -> list[NoteItemRead] | None:
+        """CAS one group permutation under the same parent lock as all child writes."""
+        parent = await self._parent(db, auth, note_id, for_update=True)
+        if parent is None:
+            return None
+        items = await self._items(db, parent.id)
+        if not any(item.id == item_id for item in items):
+            return None
+        current = [
+            NoteOrderEntry(id=item.id, position=item.position, is_completed=item.is_completed)
+            for item in items
+        ]
+        if not any(item.id == item_id for item in payload.expected_items):
+            raise NoteOrderConflict
+        desired = move_to_top_order(payload.expected_items, item_id)
+        if current != payload.expected_items:
+            # A lost response may be replayed only while the exact postcondition remains.
+            if current == desired:
+                return [self._item_read(item) for item in items]
+            raise NoteOrderConflict
+        by_id = {item.id: item for item in items}
+        for entry in desired:
+            by_id[entry.id].position = entry.position
+        await db.flush()
+        # Refresh DB-trigger timestamps in one query rather than returning stale identity-map DTOs.
+        return [self._item_read(item) for item in await self._items(db, parent.id, refresh=True)]
 
     async def delete_item(
         self,

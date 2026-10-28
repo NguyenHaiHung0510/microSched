@@ -1,31 +1,7 @@
-# Frontend microSched
+# microSched frontend
 
-Frontend là static PWA của microSched, viết bằng React + TypeScript và build bằng Vite. Node chỉ cần ở development/CI/build; production được FastAPI phục vụ cùng origin.
+Static React/TypeScript PWA, build bằng Vite; production được FastAPI phục vụ cùng origin. Node chỉ cần lúc development/build.
 
-## Development
+Từ thư mục này: `npm ci`, `npm run dev`. Vite proxy API/auth về backend mặc định ở `http://localhost:8000`. Các checks: `npm run lint`, `npm test`, `npm run build`, `npm run e2e`; build gồm Apple icon/PWA verification và precompression.
 
-```powershell
-cd frontend
-npm ci
-npm run dev
-```
-
-Backend chạy riêng ở `http://localhost:8000`; xem hướng dẫn env và database tại [`../backend/README.md`](../backend/README.md).
-
-## Scripts
-
-```powershell
-npm run lint
-npm test
-npm run build
-npm run e2e
-```
-
-`build` cũng kiểm tra Apple touch icon và PWA surface. E2E cần Playwright browser dependencies; không dùng dữ liệu cá nhân thật trong fixture hoặc screenshot.
-
-## UI và offline boundary
-
-- UI dùng Tailwind v4 + shadcn/ui theo design rules của [`../docs/ui-brief.md`](../docs/ui-brief.md).
-- TanStack Query quản lý server state; Dexie là local storage boundary.
-- Service worker hỗ trợ precache và notification paths.
-- Full offline outbox cho mọi write domain vẫn là roadmap, chưa mô tả như đã hoàn tất.
+[Development](../docs/engineering/development.md) giữ setup/test chuẩn; [UI contract](../docs/ui-brief.md) và [brand](../docs/brand-identity.md) giữ quy tắc trình bày. [Outbox](../docs/reference/offline-outbox.md) hỗ trợ 11 Task/checklist/Entry commands; các domain còn lại vẫn online. [Verification](../docs/verification/README.md) phân biệt source/unit/build, browser, device và production evidence.

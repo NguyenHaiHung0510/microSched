@@ -1,3 +1,7 @@
+import { unlocked } from '@/outbox/core'
+import { taskRequest } from '@/outbox/adapters'
+import { sessionRequest } from '@/outbox/core'
+import { useTaskProjection } from '@/outbox/view'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, GripVertical, MapPin, Plus } from 'lucide-react'
@@ -44,6 +48,9 @@ import {
 } from '@/calendar-queries'
 import { DayCell, type DropTaskPayload } from '@/DayCell'
 import { DayDetailDialog } from '@/DayDetailDialog'
+import { CalendarMoveDialog } from '@/CalendarMoveDialog'
+import type { CalendarMoveTarget } from '@/calendar-move'
+import { useCalendarMove } from '@/use-calendar-move'
 import { MiniNav } from '@/MiniNav'
 import { TaskForm } from '@/TaskForm'
 import { importErrorMessage } from '@/calendar-ui'
@@ -151,7 +158,7 @@ async function getAnnotations(from: string, to: string): Promise<Envelope<DayAnn
 }
 
 async function fetchSession(): Promise<SessionLite> {
-  return apiRequest<SessionLite>('/api/me')
+  return sessionRequest()
 }
 
 /** Cursor pages are bounded and stop only at the server's explicit end marker. */
@@ -183,7 +190,7 @@ type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
 async function fetchOpenTaskPage(cursor: string | null = null): Promise<OpenTaskPage> {
   const params = new URLSearchParams({ status: 'open', bucket: 'open_picker', limit: '50' })
   if (cursor) params.set('cursor', cursor)
-  return apiRequest<OpenTaskPage>(`/api/tasks?${params.toString()}`)
+  return taskRequest<OpenTaskPage>(`/api/tasks?${params.toString()}`)
 }
 
 function useIsDesktop(): boolean {
@@ -210,7 +217,7 @@ export function CalendarScrollView() {
   const [headerHeight, setHeaderHeight] = useState(HEADER_HEIGHT)
   const [quickTitle, setQuickTitle] = useState('')
   const [calendarMode, setCalendarMode] = useState<'grid' | 'agenda'>(getSavedCalendarMode)
-  const [showMiniNav, setShowMiniNav] = useState(true)
+  const [showMiniNav, setShowMiniNav] = useState(false)
   const [agendaDay, setAgendaDay] = useState(today)
   const [agendaMonth, setAgendaMonth] = useState<YearMonth>(() => ({
     year: Number(today.slice(0, 4)),
@@ -227,6 +234,16 @@ export function CalendarScrollView() {
   const [centerWeekKey, setCenterWeekKey] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [agendaTaskEdit, setAgendaTaskEdit] = useState<CalendarTask | null>(null)
+  const [moveTarget, setMoveTarget] = useState<CalendarMoveTarget | null>(null)
+  const movement = useCalendarMove()
+  useEffect(() => {
+    const mask = () => {
+      setAgendaTaskEdit(task => task?.is_private ? null : task)
+      setMoveTarget(target => target?.item.is_private ? null : target)
+    }
+    window.addEventListener('microsched:visibility', mask)
+    return () => window.removeEventListener('microsched:visibility', mask)
+  }, [])
   const visibleRef = useRef(new Map<string, boolean>())
   const extendingRef = useRef(false)
   const prependScrollRef = useRef<number | null>(null)
@@ -283,8 +300,9 @@ export function CalendarScrollView() {
   }
 
   const createQuickTask = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { title: string; due_on: string }) =>
-      apiRequest<CalendarTask>('/api/tasks', {
+      taskRequest<CalendarTask>('/api/tasks', {
         method: 'POST',
         body: JSON.stringify({
           title: variables.title,
@@ -307,8 +325,9 @@ export function CalendarScrollView() {
   })
 
   const toggleTaskStatus = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: variables.status }),
       }),
@@ -318,8 +337,9 @@ export function CalendarScrollView() {
   })
 
   const editAgendaTask = useMutation({
+    networkMode: 'always',
     mutationFn: ({ taskId, payload }: { taskId: string; payload: TaskWritePayload }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${taskId}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
@@ -329,46 +349,19 @@ export function CalendarScrollView() {
     },
   })
 
-  const rescheduleTask = useMutation({
-    mutationFn: (variables: {
-      taskId: string
-      due_on: string
-      previousDueOn?: string
-    }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          due_precision: 'date',
-          due_on: variables.due_on,
-          due_at: null,
-        }),
-      }),
-    onSuccess: (_data, variables) => {
-      refreshAll()
-      toast(`Đã dời task sang ${formatShortVietnamDate(variables.due_on)}`, {
-        action: variables.previousDueOn
-          ? {
-              label: 'Hoàn tác',
-              onClick: () =>
-                rescheduleTask.mutate({
-                  taskId: variables.taskId,
-                  due_on: variables.previousDueOn!,
-                }),
-            }
-          : undefined,
-      })
-    },
-  })
-
   function handleDropTask(day: string, payload: DropTaskPayload) {
     if (payload.kind === 'quick-new-task') {
       createQuickTask.mutate({ title: payload.title, due_on: day })
+    } else if (movement.isPending) {
+      toast.error('Đang chuyển ngày. Đợi xác minh lần chuyển trước.')
     } else if (payload.kind === 'reschedule-task') {
-      rescheduleTask.mutate({
-        taskId: payload.taskId,
-        due_on: day,
-        previousDueOn: payload.fromDay,
-      })
+      const item = projectedCalendarTasks.find(task => task.id === payload.taskId)
+      if (item) movement.move({ kind: 'task', item, grabbedDay: payload.fromDay ?? day }, day)
+      else toast.error('Không tìm thấy việc trong phạm vi hiện tại. Tải lại rồi thử lại.')
+    } else if (payload.kind === 'move-annotation') {
+      const item = annotationsQuery.data?.items.find(annotation => annotation.id === payload.annotationId)
+      if (item) movement.move({ kind: 'annotation', item, grabbedDay: payload.fromDay }, day)
+      else toast.error('Không tìm thấy dấu ngày trong phạm vi hiện tại. Tải lại rồi thử lại.')
     }
   }
 
@@ -380,8 +373,9 @@ export function CalendarScrollView() {
   }
 
   const createAgendaTask = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { title: string; due_on: string }) =>
-      apiRequest<CalendarTask>('/api/tasks', {
+      taskRequest<CalendarTask>('/api/tasks', {
         method: 'POST',
         body: JSON.stringify({
           title: variables.title,
@@ -454,10 +448,9 @@ export function CalendarScrollView() {
     () => annotationsByDay(annotationsQuery.data?.items ?? []),
     [annotationsQuery.data],
   )
-  const tasksByDayMap = useMemo(
-    () => tasksByDueDay(allTasksQuery.data ?? []),
-    [allTasksQuery.data],
-  )
+  const privateLocked = !unlocked() || !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
+  const projectedCalendarTasks = useTaskProjection(allTasksQuery.data ?? [])
+  const tasksByDayMap = tasksByDueDay(projectedCalendarTasks.filter(task => !task.is_private || !privateLocked))
   const sourceById = useMemo(
     () => new Map((sourcesQuery.data?.items ?? []).map((source) => [source.id, source])),
     [sourcesQuery.data],
@@ -492,8 +485,6 @@ export function CalendarScrollView() {
     [visibleWeekKeys, weekDaysByKey],
   )
 
-  const privateLocked =
-    !sessionQuery.data || remainingSeconds(sessionQuery.data.private_until) === 0
 
   const agendaMonthIndex = months.findIndex(
     (m) => m.year === agendaMonth.year && m.month === agendaMonth.month,
@@ -667,11 +658,22 @@ export function CalendarScrollView() {
          )}
        >
          <div className="flex flex-wrap items-center justify-between gap-2 w-full">
+           <div className="flex min-w-0 flex-wrap items-center gap-2" role="group" aria-label="Tháng đang xem và hôm nay">
            <h3 data-testid="calendar-month-header" className="text-base font-extrabold truncate">
              {calendarMode === 'agenda'
                ? monthLabel(agendaMonth.year, agendaMonth.month)
                : monthLabel(headerMonth.year, headerMonth.month)}
            </h3>
+              <Button
+                data-testid="calendar-today-button"
+                size="default"
+                variant="outline"
+                className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
+                onClick={handleTodayClick}
+              >
+                Hôm nay
+              </Button>
+           </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <div
                 className="flex items-center gap-1 rounded-lg bg-muted p-1"
@@ -711,15 +713,7 @@ export function CalendarScrollView() {
                   {showMiniNav ? 'Thu gọn lịch nhỏ' : 'Hiện lịch nhỏ'}
                 </Button>
               ) : null}
-              <Button
-                data-testid="calendar-today-button"
-                size="default"
-                variant="outline"
-                className="min-h-11 h-11 px-3 text-xs sm:text-sm font-semibold"
-                onClick={handleTodayClick}
-              >
-                Hôm nay
-              </Button>
+
             </div>
           </div>
 
@@ -796,6 +790,8 @@ export function CalendarScrollView() {
           ) : null}
        </div>
 
+       {movement.isPending ? <p data-testid="calendar-move-pending" role="status" className="border-b px-3 py-2 text-sm text-muted-foreground">Đang chuyển ngày… Chờ xác minh lưu.</p> : null}
+       {movement.isError && !moveTarget ? <p role="alert" className="border-b px-3 py-2 text-sm text-bad">{importErrorMessage(movement.error)}</p> : null}
        {staleWithData ? (
           <p
             data-testid="calendar-stale-indicator"
@@ -1262,6 +1258,7 @@ export function CalendarScrollView() {
                       showAnnotationLabels={isDesktop}
                       sourceColorOf={(sourceId) => sourceById.get(sourceId)?.color ?? null}
                         onSelect={setSelectedDay}
+                        previewDisabled={selectedDay !== null || agendaTaskEdit !== null}
                         onToggleTask={(taskId, status) =>
                           toggleTaskStatus.mutate({ taskId, status })
                         }
@@ -1299,7 +1296,19 @@ export function CalendarScrollView() {
         annotations={selectedDay ? (annotationsByDayMap.get(selectedDay) ?? []) : []}
         sourceById={sourceById}
         privateLocked={privateLocked}
+        onRequestMove={target => {
+          if (movement.isPending) { toast.error('Đang chuyển ngày. Đợi xác minh lần chuyển trước.'); return }
+          movement.reset()
+          setSelectedDay(null)
+          setMoveTarget(target)
+        }}
       />
+
+      {moveTarget ? <CalendarMoveDialog key={`${moveTarget.kind}:${moveTarget.item.id}:${moveTarget.grabbedDay}`}
+        target={moveTarget} pending={movement.isPending}
+        error={movement.isError ? importErrorMessage(movement.error) : null}
+        onClose={() => setMoveTarget(null)} onEdit={() => movement.reset()}
+        onMove={day => movement.move(moveTarget, day, () => setMoveTarget(null))} /> : null}
 
       <Dialog open={agendaTaskEdit !== null} onOpenChange={(next) => !next && setAgendaTaskEdit(null)}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
