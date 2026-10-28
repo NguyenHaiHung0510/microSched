@@ -18,7 +18,16 @@ from app.core import crypto
 from app.core.database_urls import async_postgres_url
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
-from app.domain.notes import NoteCreate, NoteItemCreate, NoteStore, NoteUpdate
+from app.domain.notes import (
+    NoteCreate,
+    NoteItemCreate,
+    NoteItemUpdate,
+    NoteMoveToTop,
+    NoteOrderConflict,
+    NoteOrderEntry,
+    NoteStore,
+    NoteUpdate,
+)
 from app.main import create_app
 from app.web.deps import get_session, require_session
 
@@ -488,6 +497,224 @@ def test_notes_list_pinned_then_newest_first(pg_dsn):
                 assert relevant == [older_pinned.id, newer_unpinned.id]
         finally:
             await _cleanup(pg_dsn, created_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def _order_snapshot(items):
+    return NoteMoveToTop(
+        expected_items=[
+            NoteOrderEntry(id=item.id, position=item.position, is_completed=item.is_completed)
+            for item in items
+        ]
+    )
+
+
+def test_note_top_atomic_replay_conflict_and_rollback(pg_dsn):
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        store, auth = NoteStore(), _auth()
+        note_id = None
+        try:
+            async with maker() as db:
+                note = await store.create(
+                    db, auth, NoteCreate(title="Top CAS", items=["A", "B", "C", "D", "E"])
+                )
+                note_id = note.id
+                original = note.items
+                for index, item in enumerate(original):
+                    await store.update_item(
+                        db,
+                        auth,
+                        note_id,
+                        item.id,
+                        NoteItemUpdate(position=index * 3, is_completed=index % 2 == 1),
+                    )
+                await db.commit()
+            async with maker() as db:
+                before = await store.get(db, auth, note_id)
+                snapshot = _order_snapshot(before.items)
+                moved = await store.move_item_to_top(db, auth, note_id, original[4].id, snapshot)
+                assert [item.content for item in moved] == ["E", "B", "A", "D", "C"]
+                assert [item.position for item in moved] == list(range(5))
+                # Readers see the old whole order until commit; rollback leaves it intact.
+                async with maker() as observer:
+                    assert (
+                        _order_snapshot((await store.get(observer, auth, note_id)).items)
+                        == snapshot
+                    )
+                await db.rollback()
+            async with maker() as db:
+                assert _order_snapshot((await store.get(db, auth, note_id)).items) == snapshot
+                first = await store.move_item_to_top(db, auth, note_id, original[4].id, snapshot)
+                await db.commit()
+            async with maker() as db:
+                replay = await store.move_item_to_top(db, auth, note_id, original[4].id, snapshot)
+                assert replay == first
+                await store.update_item(
+                    db, auth, note_id, original[1].id, NoteItemUpdate(is_completed=False)
+                )
+                await db.commit()
+            async with maker() as db:
+                current = await store.get(db, auth, note_id)
+                with pytest.raises(NoteOrderConflict):
+                    await store.move_item_to_top(db, auth, note_id, original[4].id, snapshot)
+                await db.commit()
+            async with maker() as db:
+                assert _order_snapshot(
+                    (await store.get(db, auth, note_id)).items
+                ) == _order_snapshot(current.items)
+                assert await store.move_item_to_top(db, auth, note_id, uuid4(), snapshot) is None
+                await store.update(db, auth, note_id, NoteUpdate(is_private=True))
+                await db.commit()
+            async with maker() as db:
+                assert (
+                    await store.move_item_to_top(
+                        db, _auth(unlocked=False), note_id, original[4].id, snapshot
+                    )
+                    is None
+                )
+        finally:
+            if note_id:
+                await _cleanup(pg_dsn, [note_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_note_top_competing_snapshots_have_one_winner(pg_dsn):
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        store, auth = NoteStore(), _auth()
+        note_id = None
+        try:
+            async with maker() as db:
+                note = await store.create(
+                    db, auth, NoteCreate(title="Concurrent top", items=["A", "B", "C", "D"])
+                )
+                note_id = note.id
+                snapshot = _order_snapshot(note.items)
+                await db.commit()
+
+            async def compete(item_id):
+                async with maker() as db:
+                    try:
+                        moved = await store.move_item_to_top(db, auth, note_id, item_id, snapshot)
+                        await db.commit()
+                        return [item.id for item in moved]
+                    except NoteOrderConflict:
+                        await db.rollback()
+                        return "conflict"
+
+            results = await asyncio.gather(compete(note.items[2].id), compete(note.items[3].id))
+            assert results.count("conflict") == 1
+            winner = next(result for result in results if result != "conflict")
+            async with maker() as db:
+                assert [item.id for item in (await store.get(db, auth, note_id)).items] == winner
+        finally:
+            if note_id:
+                await _cleanup(pg_dsn, [note_id])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_note_top_http_validates_cas_and_hides_unreachable_parent(pg_dsn):
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        app = create_app()
+        created_ids = []
+
+        async def current_session():
+            return _auth()
+
+        async def request_session():
+            async with maker() as db:
+                try:
+                    yield db
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+        app.dependency_overrides[require_session] = current_session
+        app.dependency_overrides[get_session] = request_session
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                created = (
+                    await client.post(
+                        "/api/notes", json={"title": "HTTP top", "items": ["A", "B", "C"]}
+                    )
+                ).json()
+                note_id = created["id"]
+                created_ids.append(UUID(note_id))
+                snapshot = {
+                    "expected_items": [
+                        {key: item[key] for key in ("id", "position", "is_completed")}
+                        for item in created["items"]
+                    ]
+                }
+                target = created["items"][2]["id"]
+                path = f"/api/notes/{note_id}/items/{target}/move-to-top"
+                response = await client.post(path, json=snapshot)
+                assert response.status_code == 200
+                assert [item["content"] for item in response.json()] == ["C", "A", "B"]
+                assert (await client.post(path, json=snapshot)).json() == response.json()
+                await client.patch(
+                    f"/api/notes/{note_id}/items/{target}", json={"is_completed": True}
+                )
+                assert (await client.post(path, json=snapshot)).status_code == 409
+                assert (await client.post(path, json={"expected_items": []})).status_code == 422
+                other = f"/api/notes/{uuid4()}/items/{target}/move-to-top"
+                assert (await client.post(other, json=snapshot)).status_code == 404
+                await client.delete(f"/api/notes/{note_id}")
+                assert (await client.post(path, json=snapshot)).status_code == 404
+        finally:
+            await _cleanup(pg_dsn, created_ids)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("change", ["append", "delete_other", "rank"])
+def test_note_top_stale_membership_or_rank_is_refused_without_writes(pg_dsn, change):
+    async def scenario():
+        engine = create_async_engine(async_postgres_url(pg_dsn))
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        store, auth = NoteStore(), _auth()
+        note_id = None
+        try:
+            async with maker() as db:
+                note = await store.create(db, auth, NoteCreate(items=["A", "B", "C"]))
+                note_id = note.id
+                snapshot = _order_snapshot(note.items)
+                await db.commit()
+            async with maker() as db:
+                if change == "append":
+                    await store.add_item(db, auth, note_id, NoteItemCreate(content="D", position=3))
+                elif change == "delete_other":
+                    await store.delete_item(db, auth, note_id, note.items[0].id)
+                else:
+                    await store.update_item(
+                        db, auth, note_id, note.items[0].id, NoteItemUpdate(position=9)
+                    )
+                await db.commit()
+            async with maker() as db:
+                current = _order_snapshot((await store.get(db, auth, note_id)).items)
+                with pytest.raises(NoteOrderConflict):
+                    await store.move_item_to_top(db, auth, note_id, note.items[2].id, snapshot)
+                await db.commit()
+            async with maker() as db:
+                assert _order_snapshot((await store.get(db, auth, note_id)).items) == current
+        finally:
+            if note_id:
+                await _cleanup(pg_dsn, [note_id])
             await engine.dispose()
 
     asyncio.run(scenario())

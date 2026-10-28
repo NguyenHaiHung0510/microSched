@@ -1,6 +1,8 @@
 """Regression tests for one-way physical-schema decisions."""
 
 import asyncio
+import re
+from uuid import uuid4
 
 import asyncpg
 import pytest
@@ -43,6 +45,11 @@ EXPECTED_TABLES = {
     "mimi_refresh_marker",
     "mimi_feedback",
     "mimi_evidence",
+    "mimi_device_preference",
+    "mimi_notification_intent",
+    "mimi_notification_delivery",
+    "reminder_occurrence_handled",
+    "reminder_handled_batch",
 }
 
 GATE_AXES = {
@@ -128,10 +135,22 @@ def assert_gate_declarations_match_columns(
                 if parent_gate is not Gate.VIA_PARENT:
                     return False
                 parent_table = vars(parent)["__table__"]
+                # Polymorphic receipt chains have nullable typed FKs whose SQL
+                # exactly-one constraint still guarantees a parent on every row.
+                required = {c.name for c in parent_table.columns if not c.nullable}
+                for constraint in parent_table.constraints:
+                    if not isinstance(constraint, CheckConstraint):
+                        continue
+                    match = re.fullmatch(r"num_nonnulls\(([^)]+)\) = 1", str(constraint.sqltext))
+                    if match:
+                        names = {name.strip() for name in match[1].split(",")}
+                        fk_names = {fk.parent.name for fk in parent_table.foreign_keys}
+                        assert names <= fk_names, "exactly-one parent contract must name typed FKs"
+                        required.update(names)
                 return any(
                     reaches_guarded_parent(fk.column.table.fullname, seen | {parent_name})
                     for fk in parent_table.foreign_keys
-                    if not fk.parent.nullable
+                    if fk.parent.name in required
                 )
 
             guarded_parents = [
@@ -463,14 +482,18 @@ def test_0008_tables_have_updated_at_triggers(pg_dsn: str) -> None:
 
     async def scenario() -> None:
         conn = await asyncpg.connect(pg_dsn)
+        sub_id = dispatch_id = None
         try:
+            # Every invocation owns fresh IDs; historical shared-store rows remain.
+            endpoint = f"https://example.com/push/{uuid4()}"
             # 1. Test push_subscription trigger
             res = await conn.fetchrow(
                 """
                 INSERT INTO microsched.push_subscription (endpoint, p256dh, auth)
-                VALUES ('https://example.com/push/1', 'p256key', 'authkey')
+                VALUES ($1, 'p256key', 'authkey')
                 RETURNING id, created_at, updated_at;
-                """
+                """,
+                endpoint,
             )
             sub_id, created_at, updated_at1 = res["id"], res["created_at"], res["updated_at"]
             assert created_at is not None
@@ -524,6 +547,16 @@ def test_0008_tables_have_updated_at_triggers(pg_dsn: str) -> None:
             assert d_updated_at2 > d_updated_at1
 
         finally:
-            await conn.close()
+            try:
+                if dispatch_id is not None:
+                    await conn.execute(
+                        "DELETE FROM microsched.reminder_dispatch WHERE id = $1", dispatch_id
+                    )
+                if sub_id is not None:
+                    await conn.execute(
+                        "DELETE FROM microsched.push_subscription WHERE id = $1", sub_id
+                    )
+            finally:
+                await conn.close()
 
     asyncio.run(scenario())

@@ -36,7 +36,18 @@ CSRF_HEADERS = {
 }
 
 
-def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("generation_terminal", "expected_outcome"),
+    [
+        ({"finish_reason": "stop", "cancelled": False}, "succeeded"),
+        ({}, "unknown"),
+        ({"finish_reason": "stop", "cancelled": True}, "failed"),
+        ({"finish_reason": "length", "cancelled": False}, "failed"),
+    ],
+)
+def test_stream_normalizes_events_and_encrypts_partial_text(
+    pg_dsn, monkeypatch, generation_terminal, expected_outcome
+) -> None:
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "mimi-stream-api-test")
     monkeypatch.setenv(
@@ -73,16 +84,21 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
         nonlocal hello_calls, retry_attempts
         del settings, session_id, client
         system_prompt = messages[0]["content"]
-        assert "Không gọi tool cho lời chào" in system_prompt
-        assert "yêu cầu chưa đủ dữ kiện" in system_prompt
-        assert "Chỉ gọi task.create.v1 khi user rõ ràng yêu cầu" in system_prompt
-        assert "tối đa một proposal STANDARD" in system_prompt
-        assert "QUY TẮC NGÔN NGỮ BẮT BUỘC" in system_prompt
-        assert "Do not infer a language switch" in system_prompt
-        assert "title là dữ kiện bắt buộc duy nhất" in system_prompt
-        assert "không hỏi về private" in system_prompt
+        assert "Do not call tools for greetings" in system_prompt
+        assert "incomplete requests in text" in system_prompt
+        assert "without a clear Task-create request" in system_prompt
+        assert "At most one Task proposal, never execution" in system_prompt
+        assert (
+            "Default to natural Vietnamese unless the user explicitly requests another language"
+            in system_prompt
+        )
+        assert "only STANDARD Tasks" in system_prompt
+        assert "Ask one short clarification for missing required information" in system_prompt
+        assert "an isolated greeting such as 'hello' does not change the language" in system_prompt
+        assert "title is the only required user fact" in system_prompt
+        assert "not privacy" in system_prompt
         assert "Asia/Ho_Chi_Minh, UTC+07:00" in system_prompt
-        assert "không hỏi lại ngày tuyệt đối nếu đã đủ rõ" in system_prompt
+        assert "do not ask for an absolute date when clear" in system_prompt
         current_message = messages[-1]["content"]
         if current_message == "Tạo task chuẩn bị demo Mimi":
             assert "Previous pending preview: []" in system_prompt
@@ -149,6 +165,13 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
         if current_message == "cancel me":
             cancel_started.set()
             await asyncio.Event().wait()
+        if current_message == "retry me":
+            assert (
+                sum(
+                    item.get("content") == "retry me" for item in messages if item["role"] == "user"
+                )
+                == 1
+            )
         if current_message == "retry me" and retry_attempts == 0:
             retry_attempts += 1
             raise ProviderDispatchError("retryable", 503)
@@ -179,6 +202,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
             "total_cost": 0.001,
             "tokens_prompt": 12,
             "tokens_completion": 2,
+            **generation_terminal,
         }
 
     monkeypatch.setattr("app.agent.service.openrouter_get_generation", fake_get_generation)
@@ -233,7 +257,7 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                     )
                     assert response.status_code == 200
                     assert response.headers["content-type"].startswith("text/event-stream")
-                    assert "event: provider.connected" in response.text
+                    assert "event: provider.connected" in response.text, response.text
                     assert "event: assistant.delta" in response.text
                     assert "event: conversation.snapshot" in response.text
                     view = await client.get(f"/api/mimi/conversations/{conversation_id}")
@@ -457,12 +481,14 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                     assert reconciled.status_code == 200
                     assert reconciled.json() == {
                         "run_id": unknown_run["id"],
-                        "state": "halted",
-                        "provider_outcome": "succeeded",
+                        "state": "outcome_unknown" if expected_outcome == "unknown" else "halted",
+                        "provider_outcome": expected_outcome,
                         "result_available": False,
                     }
                     reconciled_view = await client.get(f"/api/mimi/conversations/{unknown_id}")
-                    assert reconciled_view.json()["runs"][0]["state"] == "halted"
+                    assert reconciled_view.json()["runs"][0]["state"] == (
+                        "outcome_unknown" if expected_outcome == "unknown" else "halted"
+                    )
                     assert any(
                         item["kind"] == "run.reconciled"
                         for item in reconciled_view.json()["events"]
@@ -497,13 +523,13 @@ def test_stream_normalizes_events_and_encrypts_partial_text(pg_dsn, monkeypatch)
                     await conn.close()
             app.dependency_overrides.clear()
             await engine.dispose()
+            worker_engine = get_engine()
+            if worker_engine is not None:
+                await worker_engine.dispose()
 
     try:
         asyncio.run(scenario())
     finally:
-        engine = get_engine()
-        if engine is not None:
-            asyncio.run(engine.dispose())
         get_sessionmaker.cache_clear()
         get_engine.cache_clear()
         get_settings.cache_clear()

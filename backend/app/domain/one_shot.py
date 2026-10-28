@@ -11,7 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import crypto
-from app.domain.models import AuthSession, CalendarEvent, OneShotReminder, Task, Tracker
+from app.domain.models import (
+    AuthSession,
+    CalendarEvent,
+    DayAnnotation,
+    OneShotReminder,
+    Task,
+    Tracker,
+)
 from app.domain.reading import readable
 from app.web.deps import CRON_TIMER_RELOAD_INFO_KEY
 
@@ -19,11 +26,12 @@ VN = ZoneInfo("Asia/Ho_Chi_Minh")
 LATE_WINDOW = timedelta(minutes=45)
 ACTIVE = ("pending", "sending", "needs_reschedule")
 ATTENTION = ("needs_reschedule", "missed", "failed", "no_device")
-SourceKind = Literal["task", "event", "tracker"]
+SourceKind = Literal["task", "event", "tracker", "annotation"]
 SOURCES = {
     "task": (Task, "task_id"),
     "event": (CalendarEvent, "event_id"),
     "tracker": (Tracker, "tracker_id"),
+    "annotation": (DayAnnotation, "annotation_id"),
 }
 
 
@@ -75,6 +83,8 @@ def source_open(source) -> bool:
         return source.deleted_at is None and source.status == "open"
     if isinstance(source, Tracker):
         return source.deleted_at is None
+    if isinstance(source, DayAnnotation):
+        return True  # Annotation deletion is physical and cascades its owned reminders.
     return not source.is_hidden
 
 
@@ -96,6 +106,8 @@ def resolve_due(source, payload: ReminderWrite) -> datetime:
                 )
         else:
             anchor = source.starts_at
+    elif isinstance(source, DayAnnotation) and payload.anchor_time:
+        anchor = datetime.combine(source.starts_on, payload.anchor_time, VN)
     if anchor is None:
         raise HTTPException(422, "Nguồn chưa có mốc giờ. Chọn ngày giờ riêng hoặc bổ sung giờ mốc.")
     try:
@@ -118,14 +130,21 @@ async def get_source(
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
+def source_title(source) -> str:
+    stored = (
+        source.name
+        if isinstance(source, Tracker)
+        else (source.label if isinstance(source, DayAnnotation) else source.title)
+    )
+    return crypto.decrypt(stored) if crypto.is_encrypted(stored) else stored
+
+
 def as_read(row: OneShotReminder, kind: str, source) -> ReminderRead:
-    stored_title = source.name if kind == "tracker" else source.title
-    title = crypto.decrypt(stored_title) if crypto.is_encrypted(stored_title) else stored_title
     return ReminderRead(
         id=row.id,
         source_kind=kind,
         source_id=source.id,
-        source_title=title,
+        source_title=source_title(source),
         is_private=getattr(source, "is_private", False),
         source_open=source_open(source),
         mode=row.mode,
@@ -151,7 +170,7 @@ async def list_reminders(
     limit=50,
 ):
     # Each arm applies the parent's gates before any title is loaded/decrypted.
-    # Bounded three-arm merge; no per-row source lookups and no count-all query.
+    # Bounded source-arm merge; no per-row source lookups and no count-all query.
     records = []
     for source_kind, (model, column) in SOURCES.items():
         if kind is not None and kind != source_kind:
@@ -184,6 +203,16 @@ async def list_reminders(
         reverse=section != "upcoming",
     )
     return {"items": records[offset : offset + limit], "has_more": len(records) > offset + limit}
+
+
+async def read_reminder(db: AsyncSession, auth: AuthSession, reminder_id: UUID):
+    row = await db.get(OneShotReminder, reminder_id)
+    if row is not None:
+        kind, source_id = identity(row)
+        source = await get_source(db, kind, source_id, auth)
+        if source is not None:
+            return as_read(row, kind, source)
+    raise HTTPException(404, "Không tìm thấy lời nhắc.")
 
 
 async def save_reminder(

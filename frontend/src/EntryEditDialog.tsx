@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { FundingSelector } from '@/FundingSelector'
 import {
   decimalInput,
   digitsOnly,
@@ -20,6 +21,7 @@ import {
 } from '@/tracker-ui'
 
 export type EntryEditPayload = {
+  funding_entry_id?:string|null
   occurred_at?: string
   quantity?: number | null
   amount?: number | null
@@ -49,6 +51,7 @@ export function EntryEditDialog({
     entry?.quantity != null ? String(entry.quantity) : '',
   )
   const [note, setNote] = useState(entry?.note_md ?? '')
+  const [funding,setFunding]=useState('keep')
 
   if (!entry) return null
 
@@ -56,32 +59,34 @@ export function EntryEditDialog({
   const isQuantity = tracker?.input_mode === 'quantity'
   const amountRequired = isMoney && amount.length === 0
   const quantityRequired = isQuantity && quantity.length === 0
-  const canSubmit = !pending && !amountRequired && !quantityRequired
+  const canSubmit = !pending && !amountRequired && !quantityRequired && funding !== 'locked'
 
   function submit(event: FormEvent) {
     event.preventDefault()
     if (!entry || !canSubmit) return
     const payload: EntryEditPayload = {}
-    if (occurredAt) payload.occurred_at = vietnamInputToIso(occurredAt)
+    if (occurredAt && occurredAt !== toVietnamDateTimeInput(entry.occurred_at)) payload.occurred_at = vietnamInputToIso(occurredAt)
     if (isMoney) {
       payload.amount = amount ? Number(digitsOnly(amount)) : null
       payload.list_amount = listAmount ? Number(digitsOnly(listAmount)) : null
     }
     if (isQuantity) payload.quantity = quantity ? quantityToNumber(quantity) : null
     payload.note_md = note.trim() || null
+    if(funding!=='keep'&&funding!=='locked')payload.funding_entry_id=funding==='none'?null:funding
     onSubmit(entry.id, payload)
   }
 
   return (
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-      <DialogContent data-testid="entry-edit-dialog">
+      <DialogContent data-testid="entry-edit-dialog" className="max-h-[90dvh] grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Sửa bản ghi</DialogTitle>
           <DialogDescription>
             {tracker ? `Bản ghi của “${tracker.name}”` : 'Sửa thời gian, số liệu và ghi chú.'}
           </DialogDescription>
         </DialogHeader>
-        <form data-testid="entry-edit" className="space-y-4" onSubmit={submit}>
+        <form data-testid="entry-edit" className="min-w-0 max-w-full space-y-4" onSubmit={submit}>
+          {tracker?.direction==='out'&&entry.amount!==null?<FundingSelector value={funding} onChange={setFunding} current={entry.funding??{status:'unavailable'}} disabled={pending}/>:null}
           <label className="block space-y-1.5 text-sm font-semibold">
             <span>Thời điểm</span>
             <Input
@@ -127,7 +132,7 @@ export function EntryEditDialog({
           <label className="block space-y-1.5 text-sm font-semibold">
             <span>Ghi chú</span>
             <Textarea
-              className="min-h-24 bg-card font-normal"
+              className="min-h-24 min-w-0 max-w-full resize-y bg-card font-normal [field-sizing:fixed]"
               value={note}
               onChange={(event) => setNote(event.target.value)}
             />

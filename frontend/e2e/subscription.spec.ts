@@ -78,7 +78,7 @@ function formatDmy(iso: string): string {
 function subscription(overrides: Partial<FixtureSubscription>): FixtureSubscription {
   return {
     id: 'sub-001',
-    tracker_id: 'tracker-002',
+    tracker_id: '019a0e2e-0000-7000-8003-000000000002',
     name: 'Sub AI',
     amount: 260000,
     list_amount: 300000,
@@ -227,7 +227,7 @@ export const test = trackerTest.extend<{ subscriptionApi: SubscriptionApiState }
           const created = subscription({
             id: payload.id ?? `sub-${Date.now()}`,
             name: payload.name ?? '',
-            tracker_id: payload.tracker_id ?? 'tracker-002',
+            tracker_id: payload.tracker_id ?? '019a0e2e-0000-7000-8003-000000000002',
             amount: payload.amount ?? null,
             period_unit: payload.period_unit ?? 'month',
             started_on: payload.started_on ?? '',
@@ -451,7 +451,9 @@ test('hostile highlight value cannot crash or highlight anything (F5)', async ({
 test('back from an in-app subscription entry does not loop (F6)', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
-  await page.getByTestId('subscription-entry').click()
+  await page.getByTestId('app-menu-open').click()
+  await expect(page.getByTestId('app-subscriptions-link')).toHaveAttribute('href', '/subscription')
+  await page.getByTestId('app-subscriptions-link').click()
   await expect(page.getByTestId('subscription-screen')).toBeVisible()
   await page.getByRole('button', { name: 'Quay lại' }).click()
   await expect(page).toHaveURL('/')

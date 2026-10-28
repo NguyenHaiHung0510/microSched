@@ -1,0 +1,547 @@
+{
+  "schema_version": "mimi086.executable-qa.v1",
+  "gate": "Q-A0",
+  "denominator": 34,
+  "working_directory": "backend",
+  "offline_no_paid_calls": true,
+  "runtime": "main verified independent21887",
+  "case_manifest": "docs/qa-specs/mimi-task-collection-cases.json",
+  "cases": [
+    {
+      "id": "A0-01",
+      "oracle": "48 sessions + incidental exclusion; aliases/typos/query-page obligations, exact UUID/version union, semantic vs query completion",
+      "group": "selection",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_contracts.py::test_training49_frozen_classifications_are_not_query_completion",
+        "tests/test_mimi_collection_journey_pg.py"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "48 sessions + incidental exclusion",
+        " aliases/typos/query-page obligations, exact UUID/version union, semantic vs query completion"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-02",
+      "oracle": "four backend pages50, dedup/version-as-of; dropped cursor or variant blocks all-scope; explicit subset stays honest",
+      "group": "selection",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_contracts.py::test_four_pages_union_cursor_version_and_subset_obligations"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "four backend pages50, dedup/version-as-of",
+        " dropped cursor or variant blocks all-scope",
+        " explicit subset stays honest"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-03",
+      "oracle": "full body >4000 and item >500 continuation; stale parent stops; no silent lost suffix",
+      "group": "selection",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_extended_pg.py::test_long_body_and_item_continuation_union_clears_obligations_and_stale_stops",
+        "tests/test_mimi_task_content_pg.py"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "full body >4000 and item >500 continuation",
+        " stale parent stops",
+        " no silent lost suffix"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-04",
+      "oracle": "one preview/confirm edits50 exact selected IDs, no filter reselection, one receipt",
+      "group": "commands",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_safety_pg.py::test_one_collection_preview_confirmation_receipt_exact_complete_set[50]"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "one preview/confirm edits50 exact selected IDs, no filter reselection, one receipt"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-05",
+      "oracle": "one all-or-none confirmation100, ordered IDs/versions and original50 regression",
+      "group": "commands",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_safety_pg.py::test_one_collection_preview_confirmation_receipt_exact_complete_set[100]"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "one all-or-none confirmation100, ordered IDs/versions and original50 regression"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-06",
+      "oracle": "200 exact targets fit bounded payload;201 or empty rejected zero writes",
+      "group": "commands",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_safety_pg.py::test_one_collection_preview_confirmation_receipt_exact_complete_set[200]",
+        "tests/test_mimi_collection_contracts.py::test_collection_bounds_and_ungranted_fields_fail_before_execution"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "200 exact targets fit bounded payload",
+        "201 or empty rejected zero writes"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-07",
+      "oracle": "all writable fields, nullable clear/omitted preserve, date/datetime/none triad, derived completion, body/checklist retained",
+      "group": "commands",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_extended_pg.py::test_full_fields_checklist_identity_order_tombstone_and_parent_lifecycle"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "all writable fields, nullable clear/omitted preserve, date/datetime/none triad, derived completion, body/checklist retained"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-08",
+      "oracle": "append/edit/check/uncheck/reorder/remove/restore exact IDs; child version bumps parent; tombstones excluded",
+      "group": "commands",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_extended_pg.py::test_full_fields_checklist_identity_order_tombstone_and_parent_lifecycle",
+        "tests/test_mimi_task_collection_pg.py::test_checklist_recovery_and_raw_writer_version"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "append/edit/check/uncheck/reorder/remove/restore exact IDs",
+        " child version bumps parent",
+        " tombstones excluded"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-09",
+      "oracle": "parent delete/restore retains children and child tombstones; no permanent/private transition",
+      "group": "commands",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_extended_pg.py::test_full_fields_checklist_identity_order_tombstone_and_parent_lifecycle"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "parent delete/restore retains children and child tombstones",
+        " no permanent/private transition"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-10",
+      "oracle": "durable before/after inverse preview; concurrent post-version conflict zero writes; unrelated edits not overwritten",
+      "group": "commands",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_service_pg.py::test_confirm_receipt_idempotency_unknown_recovery_and_versioned_undo",
+        "tests/test_mimi_collection_extended_pg.py::test_undo_post_version_conflict_does_not_overwrite_later_edit"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "durable before/after inverse preview",
+        " concurrent post-version conflict zero writes",
+        " unrelated edits not overwritten"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-11",
+      "oracle": "one stale of200 => zero domain/receipt/intent; intended guard mutation FAIL then restored PASS",
+      "group": "safety",
+      "pytest_selectors": [
+        "tests/test_mimi_task_collection_pg.py::test_one_stale_member_gives_zero_writes"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "one stale of200 => zero domain/receipt/intent",
+        " intended guard mutation FAIL then restored PASS"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-12",
+      "oracle": "same key/content returns exact original receipt; different content/cross-owner conflict; concurrent requests exactly one write",
+      "group": "safety",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_safety_pg.py::test_concurrent_confirm_same_key_returns_exact_one_receipt",
+        "tests/test_mimi_collection_safety_pg.py::test_one_collection_preview_confirmation_receipt_exact_complete_set[50]"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "same key/content returns exact original receipt",
+        " different content/cross-owner conflict",
+        " concurrent requests exactly one write"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-13",
+      "oracle": "wrong nonce/digest/expiry/frontier/owner/lease/privacy fails before any write; intended negatives",
+      "group": "safety",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_safety_pg.py::test_confirmation_binding_adversaries_write_zero"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "wrong nonce/digest/expiry/frontier/owner/lease/privacy fails before any write",
+        " intended negatives"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-14",
+      "oracle": "fault after target1/before receipt/intent rolls back; fault after commit returns recovery receipt without replay/provider call",
+      "group": "safety",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_service_pg.py::test_fault_after_domain_write_cannot_commit_partial_state",
+        "tests/test_mimi_collection_service_pg.py::test_confirm_receipt_idempotency_unknown_recovery_and_versioned_undo"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "fault after target1/before receipt/intent rolls back",
+        " fault after commit returns recovery receipt without replay/provider call"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-15",
+      "oracle": "future due move recomputes relative sameTX; past/missing anchor needs_reschedule; revision CAS",
+      "group": "reminder",
+      "pytest_selectors": [
+        "tests/test_mimi_task_collection_pg.py::test_reminder_effect_preview_and_atomic_source_trigger[relative]",
+        "tests/test_mimi_collection_extended_pg.py::test_relative_missing_anchor_absolute_cancel_and_restore_no_rearm"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "future due move recomputes relative sameTX",
+        " past/missing anchor needs_reschedule",
+        " revision CAS"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-16",
+      "oracle": "source due move preserves absolute; complete/delete cancels active; explicit configure future-only",
+      "group": "reminder",
+      "pytest_selectors": [
+        "tests/test_mimi_task_collection_pg.py::test_reminder_effect_preview_and_atomic_source_trigger[absolute]",
+        "tests/test_mimi_collection_extended_pg.py::test_relative_missing_anchor_absolute_cancel_and_restore_no_rearm"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "source due move preserves absolute",
+        " complete/delete cancels active",
+        " explicit configure future-only"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-17",
+      "oracle": "sending/revision/absence drift zero-write; restore never rearms sent/past/cancelled; undo preserves delivery truth",
+      "group": "reminder",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_extended_pg.py::test_reminder_drift_freezes_zero_write_and_sending_blocks_effects",
+        "tests/test_mimi_collection_extended_pg.py::test_relative_missing_anchor_absolute_cancel_and_restore_no_rearm"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "sending/revision/absence drift zero-write",
+        " restore never rearms sent/past/cancelled",
+        " undo preserves delivery truth"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-18",
+      "oracle": "validate whole8 before reads; remaining3 executes3/marks5not_run; allowlist malformed batch executes0",
+      "group": "bounds",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_contracts.py::test_whole_fanout_validates_before_first_read",
+        "tests/test_mimi_collection_contracts.py::test_fanout8_remaining3_final_wire_omits_tools_and_preserves_obligations"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "validate whole8 before reads",
+        " remaining3 executes3/marks5not_run",
+        " allowlist malformed batch executes0"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-19",
+      "oracle": "legacy and graph parity: <=32turns/64reads, last wire tools absent/tool_choice none; coverage/ref obligations preserved",
+      "group": "bounds",
+      "pytest_selectors": [
+        "tests/test_mimi_langgraph.py::test_emergency_bounds_stop_before_over_limit_dispatch_or_read",
+        "tests/test_mimi_collection_contracts.py::test_fanout8_remaining3_final_wire_omits_tools_and_preserves_obligations"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "legacy and graph parity: <=32turns/64reads, last wire tools absent/tool_choice none",
+        " coverage/ref obligations preserved"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-20",
+      "oracle": "disconnect/cancel/no-progress/deadline distinguish; unknown no redispatch; payload bound no hidden truncation",
+      "group": "bounds",
+      "pytest_selectors": [
+        "tests/test_mimi_loop.py",
+        "tests/test_mimi_langgraph.py",
+        "tests/test_mimi_recovery_pg.py",
+        "tests/test_mimi_confirm_commit.py"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "disconnect/cancel/no-progress/deadline distinguish",
+        " unknown no redispatch",
+        " payload bound no hidden truncation"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-21",
+      "oracle": "exact DeepSeek/effort, ZDR deny parameters precision prices; native full endpoint tags, no default hard order",
+      "group": "route",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_contracts.py::test_pool_native_exact_model_effort_privacy_price_and_variant_boundary"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "exact DeepSeek/effort, ZDR deny parameters precision prices",
+        " native full endpoint tags, no default hard order"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-22",
+      "oracle": "95 exact excluded, >95 included;1d/30m configurable and frozen; stale/null/nonfinite/missing criteria no eligible",
+      "group": "route",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_contracts.py::test_strict_uptime_missing_and_nonfinite_excluded",
+        "tests/test_mimi_collection_contracts.py::test_feature_off_and_forced_collection_revision_preserve_exact_tool"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "95 exact excluded, >95 included",
+        "1d/30m configurable and frozen",
+        " stale/null/nonfinite/missing criteria no eligible"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-23",
+      "oracle": "finite on-demand singleflight/TTL/cooldown/size/timeout; soft affinity only while eligible; no weaker or model fallback",
+      "group": "route",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_contracts.py::test_catalog_singleflight_ttl_cooldown_size_timeout_and_fail_closed",
+        "tests/test_mimi_collection_budget.py"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "finite on-demand singleflight/TTL/cooldown/size/timeout",
+        " soft affinity only while eligible",
+        " no weaker or model fallback"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-24",
+      "oracle": "feedback old answer derives exact request/run/calls/sources/receipt; same-target idempotent; wrong-owner/run refs reject",
+      "group": "evidence",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_service_pg.py::test_feedback_causal_bundle_owner_scope_and_replay",
+        "tests/test_mimi_collection_journey_pg.py"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "feedback old answer derives exact request/run/calls/sources/receipt",
+        " same-target idempotent",
+        " wrong-owner/run refs reject"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-25",
+      "oracle": "ciphertext/AAD tamper fails; no plaintext/hidden reasoning/secret metadata;1MiB completeness truthful and logical expiry",
+      "group": "evidence",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_evidence_pg.py"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "ciphertext/AAD tamper fails",
+        " no plaintext/hidden reasoning/secret metadata",
+        "1MiB completeness truthful and logical expiry"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-26",
+      "oracle": "completion+intent sameTX; rollback none; startup restart rehydrates pending, stable dedup/inapp readACK",
+      "group": "notification",
+      "pytest_selectors": [
+        "tests/test_mimi_notifications_pg.py::test_notification_intent_atomic_copy_dedup_ack_and_opaque_owner_resolver",
+        "tests/test_mimi_notifications_pg.py::test_send_fence_bounded_retries_and_ambiguous_no_redispatch"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "completion+intent sameTX",
+        " rollback none",
+        " startup restart rehydrates pending, stable dedup/inapp readACK"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-27",
+      "oracle": "default off/no legacy inheritance; explicit owner-bound device opt-in; other-owner/private/stale preview suppression",
+      "group": "notification",
+      "pytest_selectors": [
+        "tests/test_mimi_notifications_pg.py::test_explicit_device_ownership_consent_private_and_stale_preview_suppression"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "default off/no legacy inheritance",
+        " explicit owner-bound device opt-in",
+        " other-owner/private/stale preview suppression"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-28",
+      "oracle": "canonical visible STANDARD title/snippet; approval-ready not-applied vs committed receipt wording; no hidden JSON/credential",
+      "group": "notification",
+      "pytest_selectors": [
+        "tests/test_mimi_notifications_pg.py::test_notification_intent_atomic_copy_dedup_ack_and_opaque_owner_resolver"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "canonical visible STANDARD title/snippet",
+        " approval-ready not-applied vs committed receipt wording",
+        " no hidden JSON/credential"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-29",
+      "oracle": "late send/timeout/restart UNKNOWN no retry; accepted!=displayed/read; proven retry/backoff/TTL bounded",
+      "group": "notification",
+      "pytest_selectors": [
+        "tests/test_mimi_notifications_pg.py::test_send_fence_bounded_retries_and_ambiguous_no_redispatch"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "late send/timeout/restart UNKNOWN no retry",
+        " accepted!=displayed/read",
+        " proven retry/backoff/TTL bounded"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-30",
+      "oracle": "opaque authenticated same-origin known-route owner resolver; tampered/foreign ref rejected;GET/click zero writes",
+      "group": "notification",
+      "pytest_selectors": [
+        "tests/test_mimi_notifications_pg.py::test_notification_intent_atomic_copy_dedup_ack_and_opaque_owner_resolver"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "opaque authenticated same-origin known-route owner resolver",
+        " tampered/foreign ref rejected",
+        "GET/click zero writes"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-31",
+      "oracle": "populated0016->0017; real PG constraints/FKs/indexes/grants/version triggers, no duplicated evidence table",
+      "group": "migration",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_migration_pg.py",
+        "tests/test_schema_models.py"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "populated0016->0017",
+        " real PG constraints/FKs/indexes/grants/version triggers, no duplicated evidence table"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-32",
+      "oracle": "new feature-off fallback on0017; old reads before activation; tombstone/recovery-data downgrade refusal; throwaway empty roundtrip",
+      "group": "migration",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_migration_pg.py",
+        "tests/test_mimi_collection_contracts.py::test_feature_off_and_forced_collection_revision_preserve_exact_tool",
+        "tests/test_mimi_collection_safety_pg.py::test_confirmation_binding_adversaries_write_zero[disabled]"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "new feature-off fallback on0017",
+        " old reads before activation",
+        " tombstone/recovery-data downgrade refusal",
+        " throwaway empty roundtrip"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-33",
+      "oracle": "concurrent child and source/reminder CAS parent lock order; old raw writes cannot reuse aggregate version",
+      "group": "safety",
+      "pytest_selectors": [
+        "tests/test_mimi_collection_extended_pg.py::test_concurrent_raw_child_and_parent_writers_preserve_monotone_aggregate_version",
+        "tests/test_mimi_task_collection_pg.py::test_checklist_recovery_and_raw_writer_version"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "concurrent child and source/reminder CAS parent lock order",
+        " old raw writes cannot reuse aggregate version"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    },
+    {
+      "id": "A0-34",
+      "oracle": "affected context/serializer/cache authority, API/SSE/confirm/schema/domain/reminder/route/evidence tests; exact exit counts",
+      "group": "regression",
+      "pytest_selectors": [
+        "tests/test_mimi_context.py",
+        "tests/test_mimi_openrouter.py",
+        "tests/test_mimi_openai_sdk.py",
+        "tests/test_mimi_p1_api.py",
+        "tests/test_mimi_confirm_commit.py",
+        "tests/test_mimi_p1c_pg.py",
+        "tests/test_mimi_p1c_stream_pg.py",
+        "tests/test_mimi_p1c_decisions_pg.py",
+        "tests/test_mimi_p1c_source_consistency_pg.py",
+        "tests/test_mimi_recovery_pg.py",
+        "tests/test_mimi_route_config.py",
+        "tests/test_mimi_route_config_pg.py",
+        "tests/test_schema_models.py",
+        "tests/test_tasks_api.py",
+        "tests/test_one_shot.py"
+      ],
+      "timeout_seconds": 180,
+      "required_assertions": [
+        "affected context/serializer/cache authority, API/SSE/confirm/schema/domain/reminder/route/evidence tests",
+        " exact exit counts"
+      ],
+      "status": "NOT_RUN_INDEPENDENT"
+    }
+  ],
+  "important": "Selectors are execution aids, not automatic whole-oracle acceptance. Challenge missing assertions with bounded synthetic DB/fault probes; preserve PARTIAL/FAIL when unsupported. No mechanical duplicate Gemini matrix.",
+  "negative_mutation": {
+    "A0-11": "Set MIMI086_NEGATIVE_BYPASS_CAS=1 only for this case, expect FAIL DID NOT RAISE; unset then PASS. Do not mutate source.",
+    "A0-14": "Author pre-fix intended partial-commit failure retained at night-shift/lead/a2-partial-commit-negative.txt; current restored test PASS."
+  }
+}

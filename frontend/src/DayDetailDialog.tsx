@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react'
+import { taskRequest } from '@/outbox/adapters'
+import { useTaskProjection } from '@/outbox/view'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Calendar, Edit3, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -20,6 +22,7 @@ import {
   type DayAnnotation,
 } from '@/calendar-scroll'
 import { AnnotationForm, type AnnotationFormValue } from '@/AnnotationForm'
+import { ReminderButton } from '@/ReminderEditor'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -42,6 +45,7 @@ import {
 import { CALENDAR_FAMILY_KEY } from '@/calendar-queries'
 import { PrivateMarker } from '@/PrivateMarker'
 import { PRIVATE_SURFACE_CLASS } from '@/private-presentation'
+import type { CalendarMoveTarget } from '@/calendar-move'
 
 type OpenTaskPage = { items: CalendarTask[]; next_cursor?: string | null }
 
@@ -107,10 +111,15 @@ function DayOverdueTasksSection({
     enabled: open && Boolean(day),
   })
 
-  const allOverdueTasks = useMemo(() => {
+  const confirmedOverdueTasks = useMemo(() => {
     const base = overdueQuery.data?.items ?? []
     return [...base, ...extraOverdue]
   }, [overdueQuery.data?.items, extraOverdue])
+
+  const allOverdueTasks = useTaskProjection(confirmedOverdueTasks, 'open').filter(task => {
+    const due = task.due_on ?? task.due_at?.slice(0,10)
+    return due !== null && due !== undefined && due < day
+  })
 
   const overdueNextCursor = extraCursor ?? overdueQuery.data?.next_cursor ?? null
   const isOverdueLoading = overdueQuery.isLoading || extraLoading
@@ -204,12 +213,12 @@ function DayOverdueTasksSection({
                         variant="ghost"
                         data-testid="calendar-day-overdue-task-edit-trigger"
                         className={cn(
-                          'h-auto min-w-0 flex-1 flex-col items-start justify-start whitespace-normal break-words p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
+                          'h-auto min-w-0 max-w-full flex-1 flex-col items-start justify-start whitespace-normal [overflow-wrap:anywhere] p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                           task.status === 'completed' && 'line-through',
                         )}
                         onClick={() => onEditTask(task)}
                       >
-                        <span>{task.title}</span>
+                        <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">{task.title}</span>
                         {scheduleDay(task) ? (
                           <span className="text-xs font-bold text-bad">
                             Hạn: {formatShortVietnamDate(scheduleDay(task) as string)}
@@ -268,6 +277,7 @@ export function DayDetailDialog({
   annotations,
   sourceById,
   privateLocked,
+  onRequestMove,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -278,6 +288,7 @@ export function DayDetailDialog({
   annotations: DayAnnotation[]
   sourceById: Map<string, CalendarSource>
   privateLocked: boolean
+  onRequestMove?: (target: CalendarMoveTarget) => void
 }) {
   const queryClient = useQueryClient()
   const [annotationForm, setAnnotationForm] = useState<AnnotationFormState>(null)
@@ -292,6 +303,14 @@ export function DayDetailDialog({
   const [annotationError, setAnnotationError] = useState<string | null>(null)
   const [eventError, setEventError] = useState<string | null>(null)
   const [deleteEventConfirm, setDeleteEventConfirm] = useState<CalendarEvent | null>(null)
+  useEffect(() => {
+    const mask = () => {
+      setTaskEdit(task => task?.is_private ? null : task)
+      setMoveTasks(tasks => tasks.filter(task => !task.is_private))
+    }
+    window.addEventListener('microsched:visibility', mask)
+    return () => window.removeEventListener('microsched:visibility', mask)
+  }, [])
 
   const refreshCalendar = () =>
     void queryClient.invalidateQueries({ queryKey: CALENDAR_FAMILY_KEY })
@@ -372,8 +391,9 @@ export function DayDetailDialog({
   })
 
   const editTask = useMutation({
+    networkMode: 'always',
     mutationFn: ({ taskId, payload }: { taskId: string; payload: TaskWritePayload }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${taskId}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
@@ -384,8 +404,9 @@ export function DayDetailDialog({
   })
 
   const toggleTaskStatus = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: { taskId: string; status: 'open' | 'completed' }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: variables.status }),
       }),
@@ -395,8 +416,9 @@ export function DayDetailDialog({
   })
 
   const deleteTask = useMutation({
+    networkMode: 'always',
     mutationFn: (taskId: string) =>
-      apiRequest<void>('/api/tasks/' + taskId, { method: 'DELETE' }),
+      taskRequest<void>('/api/tasks/' + taskId, { method: 'DELETE' }),
     onSuccess: (_data, taskId) => {
       refreshAll()
       const task = tasks.find((t) => t.id === taskId)
@@ -428,13 +450,14 @@ export function DayDetailDialog({
   })
 
   const rescheduleTask = useMutation({
+    networkMode: 'always',
     mutationFn: (variables: {
       taskId: string
       schedule: TaskSchedule
       previousSchedule: TaskSchedule
       showToast: boolean
     }) =>
-      apiRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
+      taskRequest<CalendarTask>(`/api/tasks/${variables.taskId}`, {
         method: 'PATCH',
         body: JSON.stringify(variables.schedule),
       }),
@@ -534,7 +557,7 @@ export function DayDetailDialog({
       <Dialog open={open} onOpenChange={(next) => (next ? undefined : closeDialog())}>
         <DialogContent
           data-testid="calendar-day-dialog"
-          className="max-h-[85vh] overflow-y-auto sm:max-w-lg"
+          className="max-h-[85vh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-lg"
         >
           <DialogHeader>
             <DialogTitle>{formatFullVietnameseDate(day)}</DialogTitle>
@@ -569,7 +592,7 @@ export function DayDetailDialog({
               ) : null}
             </div>
           ) : (
-            <div className="space-y-5">
+            <div className="min-w-0 max-w-full space-y-5">
               <section aria-labelledby="day-annotations-heading" className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4
@@ -595,6 +618,7 @@ export function DayDetailDialog({
                     <div
                       key={annotation.id}
                       data-testid="calendar-annotation-detail"
+                      data-annotation-id={annotation.id}
                       data-private={annotation.is_private}
                       className={cn('flex items-start gap-3 rounded-lg border p-3', annotation.is_private && PRIVATE_SURFACE_CLASS)}
                     >
@@ -616,8 +640,14 @@ export function DayDetailDialog({
                             {annotation.note_md}
                           </p>
                         ) : null}
+                        {onRequestMove ? <Button type="button" variant="outline" className="mt-2 min-h-11"
+                          data-testid="calendar-annotation-move" aria-label={`Chuyển ngày dấu ${annotation.label}`}
+                          onClick={() => onRequestMove({ kind: 'annotation', item: annotation, grabbedDay: day })}>
+                          <Calendar aria-hidden="true" />Chuyển ngày
+                        </Button> : null}
                       </div>
                       <div className="flex shrink-0 gap-1">
+                        <ReminderButton kind="annotation" sourceId={annotation.id} compact />
                         <Button
                           size="icon-sm"
                           variant="ghost"
@@ -741,7 +771,7 @@ export function DayDetailDialog({
                         variant="ghost"
                         data-testid="calendar-day-task-edit-trigger"
                         className={cn(
-                          'h-auto min-w-0 flex-1 flex-col items-start justify-start whitespace-normal break-words p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
+                          'h-auto min-w-0 max-w-full flex-1 flex-col items-start justify-start whitespace-normal [overflow-wrap:anywhere] p-1 text-left text-sm font-semibold hover:bg-transparent hover:underline',
                          task.status === 'completed' && 'line-through',
                         )}
                         onClick={() => setTaskEdit(task)}
@@ -749,6 +779,18 @@ export function DayDetailDialog({
                         {task.title}
                         {task.is_private ? <PrivateMarker /> : null}
                       </Button>
+                      {onRequestMove ? <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="min-h-11 min-w-11 shrink-0 text-muted-foreground hover:text-foreground"
+                        data-testid="calendar-task-move"
+                        aria-label={`Chuyển ngày ${task.title}`}
+                        title="Chuyển ngày"
+                        onClick={() => onRequestMove({ kind: 'task', item: task, grabbedDay: day })}
+                      >
+                        <Calendar aria-hidden="true" className="size-4" />
+                      </Button> : null}
                       <Button
                         data-testid="calendar-day-task-delete"
                         size="icon-sm"

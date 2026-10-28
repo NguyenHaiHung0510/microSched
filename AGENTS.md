@@ -4,9 +4,11 @@ Canonical entry point for every actor, including T1. Owner-approved migration: 2
 
 ## Read what applies
 
+- [docs/verification/README.md](docs/verification/README.md): normal-language B routing and isolated project verification/map candidates. Use the task grant; source mapping is not runtime acceptance.
 - [docs/harness-policy.md](docs/harness-policy.md): read for authority, delegation, review, merge/release or harness changes. T1 has bounded inherited authority to work/delegate/merge; no routine coordination-record prerequisite. Elevation needs a holder-issued grant; Owner-only boundaries remain.
 - [docs/project-guide.md](docs/project-guide.md): project discovery and domain reading map. Read the relevant brief and task contract, not every linked file/history.
-- [agent-tasks/README.md](agent-tasks/README.md): navigation/status, not approval. Re-query GitHub/runtime and task headers before current-state decisions.
+- For security/auth/import/external-input or Mimi tool-boundary assessments, read [docs/security-brief.md](docs/security-brief.md): one intended Owner user; external calendars/files/URLs/model content remain untrusted.
+- Navigation/status is not approval. Re-query GitHub/runtime and the assigned current task grant before current-state decisions.
 - AI agent/live-model work: read [docs/qa-agent-framework.md](docs/qa-agent-framework.md) with the slice QA spec; route probes, deterministic contracts, synthetic UI and live dogfood are separate evidence layers.
 - Approved specs/briefs control product meaning. Material requirement gaps or conflicting decisions: present both sides to Owner. Explicit approved migration supersedes the named old rules; history does not reactivate them.
 
@@ -19,7 +21,7 @@ Canonical entry point for every actor, including T1. Owner-approved migration: 2
 - No auto-migration on deploy. Never downgrade/round-trip live Neon; destructive migration tests use throwaway local/CI Postgres. Old app/stores are read-only rollback references; see project-guide.
 - Neon branch create/delete/Restore/Sync remains Owner-operated. High-fidelity QA: ask Owner to sync develop from main, await confirmation, then approved scrub. Canonical procedure is [qa-framework](docs/qa-framework.md) §2.1. No production seed/fault/migration-rehearsal/repeated automation.
 - Before UI writes, read [ui-brief](docs/ui-brief.md) and relevant QA contract. Existing shadcn components, no raw button/input/select; CSS tokens, no hardcoded colors; self-hosted Nunito; light-only; no hard card heights; text ≥12px; no hover-only interactions. Skills do not replace these decisions.
-- Significant UI work: prefer full local app preview using existing QA setup. Owner preview ≠ CI/device/production acceptance.
+- UI design/redesign: present multiple concrete prototypes for Owner comparison before product implementation; requested HTML is preparation. Design choice ≠ explicit batch grant. Significant implementation preview uses the full local app/QA setup; preview ≠ CI/device/runtime acceptance.
 
 ## Browser/data safety
 

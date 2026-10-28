@@ -72,7 +72,7 @@ Local, committed, CI, runtime, physical device and production are separate evide
 - Merge does not authorize cleanup. Default-retain branches/worktrees; separately authorized exact cleanup targets need dirty/open-PR/reachability/unique-work checks. Dirty/active/unique/mismatching targets remain.
 - Around two unproductive attempts at the same blocker, stop guessing and re-plan/escalate with logs. No universal count of review rounds; budget by risk/information gain.
 - Deadline, silence, heartbeat, tool permission or metadata never expands scope or permits deletion/cancellation.
-- Observation remains event-driven first. If T1 otherwise idles on live lanes, use one supported heartbeat per group (5 minutes ordinary, 8 minutes long visual QA unless Owner overrides), no duplicates/dense polling, retire when terminal. “Active monitor” requires actual schedule/wake evidence.
+QA uses actual completion/blocker events and finite batch handbacks; no automatic5/8-minute monitors. Estimates are nonbinding, never worker termination deadlines.
 
 ## 6. Knowledge and closeout
 
@@ -98,3 +98,11 @@ These cases test policy interpretation, **not a new enforcement engine**:
 | Historical authorization schema claims new authority | No grant from history |
 
 The 2026-09-06 Owner instruction explicitly authorizes this migration and application to PR #200 plus necessary migration PRs. It supersedes the old blanket-record model. Preserve old task-specific safety/acceptance requirements when resuming tasks; historical role recipes do not reactivate retired policy.
+
+## Current product/workflow gates — H14-N1-G1, 2026-10-15
+
+Capture meaningful Owner wording verbatim first in the existing canonical task ledger with source/date/stable ID/scope/pending choices; append supersession and retain grant/budget. Research→concrete packet→explicit Owner batch grant→implementation. Continue/model/prototype selection or silence is no grant. Preserve earlier explicit scoped grants. Multiple concrete UI prototypes precede product UI implementation; design choice, implementation approval and runtime/device acceptance separate. One existing ledger, no routine coordination record or duplicate todo authority.
+
+T1 exact GPT-6.1 Sol owns system/core/UI/integration/explainers, selects direct or bounded T1 delegation by net benefit. Owner-selected coordinator topology is task-specific; no automatic recursive chain. Sol is not T3. T3 default Luna prefers xhigh+, max for complex cases; Gemini3.8Flash/high selective critique only; Astra Owner-invoked only, never agent-call. DeepSeek/Muse failed free Codex routes remain historical disabled; do not change provider accounts/auth. Current task exact pins/actual runtime capability win.
+
+Freeze source/build/config/fixture/oracles/capabilities/resources once, independently execute QA batch, consolidate findings, T1 grouped repairs, retest affected/unproved plus proportional regressions as a batch. No per-case background acceptance or fixes. Manifest at freeze/startup/before-after batch/relevant change; reuse unaffected evidence, no redundant same-environment signatures. Preserve required gates/privacy/write/CAS/cost. T3 claim versus T1 accepted assertions/cases, attempt/partial/fail/blocked/not-run denominators/percentages and actual calls/cost/time/unknowns separate. No arbitrary tab cap; own/use/close only useful task resources. No guessed estimate termination cutoff; persist progress before quota interruption. Never turn a map into a reduced requirements oracle.

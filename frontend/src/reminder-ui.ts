@@ -1,4 +1,4 @@
-export type ReminderSource = 'task' | 'event' | 'tracker'
+export type ReminderSource = 'task' | 'event' | 'tracker' | 'annotation'
 export type Reminder = {
   id: string; source_kind: ReminderSource; source_id: string; source_title: string
   is_private: boolean; source_open: boolean; mode: 'absolute' | 'relative'

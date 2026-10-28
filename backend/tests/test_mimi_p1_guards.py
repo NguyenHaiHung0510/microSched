@@ -103,6 +103,21 @@ def test_live_route_cannot_be_enabled_without_real_chat_gate() -> None:
         )
 
 
+def test_langgraph_runner_requires_context_contract_in_every_environment() -> None:
+    with pytest.raises(ValueError, match="requires the P1C-A context runner path"):
+        Settings(
+            app_env="production",
+            oauth_state_secret="test",
+            mimi_runner="langgraph",
+        )
+    with pytest.raises(ValueError, match="requires the P1C-A context runner path"):
+        Settings(
+            app_env="local",
+            oauth_state_secret="test",
+            mimi_runner="langgraph",
+        )
+
+
 def test_adaptive_live_route_requires_nonempty_bounded_allowlists() -> None:
     with pytest.raises(ValueError, match="MIMI_ROUTE_ALLOWED_PROVIDERS"):
         Settings(

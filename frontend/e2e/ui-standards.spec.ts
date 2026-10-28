@@ -41,12 +41,13 @@ test('F15: tab nav touch targets are >= 44px and never overflow 390px', async ({
 }) => {
   await page.goto('/')
 
-  const tabs = page.getByRole('tab')
-  await expect(tabs).toHaveCount(4)
+  const tabs = page.getByRole('tablist', {name:'Chọn nội dung'}).getByRole('tab')
+  await expect(tabs).toHaveCount(5)
   const heights: number[] = []
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     const box = await tabs.nth(index).boundingBox()
     expect(box, `tab #${index} must be visible`).not.toBeNull()
+    expect(box!.width).toBeGreaterThanOrEqual(44)
     heights.push(box!.height)
   }
   for (const height of heights) {
@@ -90,6 +91,11 @@ test('011b: registers this device before saving an existing tracker reminder', a
     Object.defineProperty(navigator, 'serviceWorker', {
       configurable: true,
       value: {
+        // Keep real EventTarget methods; override only push readiness.
+        addEventListener: navigator.serviceWorker.addEventListener.bind(navigator.serviceWorker),
+        removeEventListener: navigator.serviceWorker.removeEventListener.bind(navigator.serviceWorker),
+        register: navigator.serviceWorker.register.bind(navigator.serviceWorker),
+        getRegistration: navigator.serviceWorker.getRegistration.bind(navigator.serviceWorker),
         ready: Promise.resolve({
           pushManager: {
             subscribe: async () => ({
@@ -126,15 +132,17 @@ test('011b: registers this device before saving an existing tracker reminder', a
   trackerApi.trackers[0].reminder_time = '08:00'
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
+  await page.getByTestId('tracker-tab-manage').click()
+  await page.getByTestId('tracker-management').getByRole('button', {name:'Mở rộng tất cả', exact:true}).click()
   await page.getByRole('button', { name: 'Sửa Hút thuốc' }).click()
   await page.getByTestId('tracker-reminder-time').fill('08:30')
   await page.getByRole('button', { name: 'Lưu thay đổi' }).click()
 
   await expect.poll(() => subscribeStarted).toBe(true)
-  expect(trackerApi.count('PATCH', '/api/tracker/trackers/tracker-001')).toBe(0)
+  expect(trackerApi.count('PATCH', '/api/tracker/trackers/019a0e2e-0000-7000-8003-000000000001')).toBe(0)
   releaseSubscribe?.()
   await expect
-    .poll(() => trackerApi.count('PATCH', '/api/tracker/trackers/tracker-001'))
+    .poll(() => trackerApi.count('PATCH', '/api/tracker/trackers/019a0e2e-0000-7000-8003-000000000001'))
     .toBe(1)
 })
 
@@ -154,6 +162,10 @@ test('F15: --border token and rendered outline borders keep non-text contrast >=
   expect(token.background).toMatch(/^#[0-9a-f]{6}$/i)
   const tokenRatio = contrastRatio(token.border, token.background)
   expect(tokenRatio, `--border ${token.border} vs ${token.background}`).toBeGreaterThanOrEqual(3)
+
+  // Exercise a real outline control instead of assuming one exists on every shell.
+  await page.getByRole('button', { name: 'Thêm chi tiết', exact: true }).click()
+  await expect(page.getByTestId('task-create-dialog')).toBeVisible()
 
   // Rendered outline buttons: their visible border is the control's boundary,
   // so it must hold >= 3:1 against the button's own background (light mode).

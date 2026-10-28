@@ -1,10 +1,13 @@
 import { toast } from 'sonner'
 
 import { ApiError, apiRequest, TimeoutError, UnauthenticatedError } from '@/api'
+import { commitOutcomeMessage } from '@/acknowledgement'
 
 type RefreshNotes = () => void
 
 export function errorMessage(error: unknown): string {
+  const uncertain = commitOutcomeMessage(error)
+  if (uncertain) return uncertain
   if (error instanceof UnauthenticatedError) return 'Phiên đã hết hạn. Tải lại để đăng nhập.'
   if (error instanceof TimeoutError) return error.message
   if (error instanceof ApiError) return error.message

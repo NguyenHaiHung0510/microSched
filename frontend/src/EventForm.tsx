@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useId, useRef, useState } from 'react'
 import { ReminderButton } from '@/ReminderEditor'
 
 import {
@@ -81,11 +81,24 @@ export function EventForm({
   const [allDay, setAllDay] = useState(editTarget?.all_day ?? false)
   const [location, setLocation] = useState(editTarget?.location ?? '')
   const [description, setDescription] = useState(editTarget?.description_md ?? '')
+  const [validateTimes, setValidateTimes] = useState(false)
+  const endsAtRef = useRef<HTMLInputElement>(null)
+  const intervalErrorId = useId()
+  const invalidInterval = Boolean(
+    startsAt && endsAt &&
+    Date.parse(vietnamInputToIso(endsAt)) <= Date.parse(vietnamInputToIso(startsAt)),
+  )
+  const showIntervalError = validateTimes && invalidInterval
 
   function submit(event: FormEvent) {
     event.preventDefault()
     const cleanTitle = title.trim()
     if (!cleanTitle || !sourceId || !startsAt || !endsAt || pending) return
+    if (invalidInterval) {
+      setValidateTimes(true)
+      endsAtRef.current?.focus()
+      return
+    }
     onSubmit({
       source_id: editTarget ? undefined : sourceId,
       title: cleanTitle,
@@ -144,18 +157,33 @@ export function EventForm({
             type="datetime-local"
             value={startsAt}
             required
+            onBlur={() => setValidateTimes(true)}
             onChange={(event) => setStartsAt(event.target.value)}
           />
         </label>
         <label className="block space-y-1.5 text-sm font-semibold">
           <span>Kết thúc · giờ Việt Nam</span>
           <Input
+            ref={endsAtRef}
             className="h-11 bg-card"
             type="datetime-local"
             value={endsAt}
             required
+            aria-invalid={showIntervalError || undefined}
+            aria-describedby={showIntervalError ? intervalErrorId : undefined}
+            onBlur={() => setValidateTimes(true)}
             onChange={(event) => setEndsAt(event.target.value)}
           />
+          {showIntervalError ? (
+            <span
+              id={intervalErrorId}
+              data-testid="calendar-event-interval-error"
+              className="block text-sm text-bad"
+              role="alert"
+            >
+              Thời gian kết thúc phải sau thời gian bắt đầu.
+            </span>
+          ) : null}
         </label>
       </div>
       <label className="flex min-h-11 items-center gap-3 text-sm font-semibold">

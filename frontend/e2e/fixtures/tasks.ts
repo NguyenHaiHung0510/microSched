@@ -1,4 +1,5 @@
 import { test as base, expect } from '@playwright/test'
+import { uuidv7 } from '../../src/lib/uuidv7'
 
 /**
  * This fixture mirrors backend/app/domain/tasks.py::TaskRead at the network
@@ -94,54 +95,54 @@ function task(
 
 /** Required QA data: hostile text, 30+ records, mixed status, and 3 scattered overdue records. */
 export const fixtureTasks: FixtureTask[] = [
-  task('task-001', 'Chuẩn bị kế hoạch tuần', { priority: 'p1', pinned: true }),
-  task('task-002', 'Đã xong nhưng vẫn ghim', { status: 'completed', pinned: true }),
-  task('task-003', 'Việc bình thường có emoji 🚲', { body_md: 'Ghi chú ngắn.' }),
-  task('task-004', 'Việc trễ hạn thứ nhất', { due_at: past(4) }),
-  task('task-005', adversarialNoBreak, {
+  task('019a0e2e-0000-7000-8001-000000000001', 'Chuẩn bị kế hoạch tuần', { priority: 'p1', pinned: true }),
+  task('019a0e2e-0000-7000-8001-000000000002', 'Đã xong nhưng vẫn ghim', { status: 'completed', pinned: true }),
+  task('019a0e2e-0000-7000-8001-000000000003', 'Việc bình thường có emoji 🚲', { body_md: 'Ghi chú ngắn.' }),
+  task('019a0e2e-0000-7000-8001-000000000004', 'Việc trễ hạn thứ nhất', { due_at: past(4) }),
+  task('019a0e2e-0000-7000-8001-000000000005', adversarialNoBreak, {
     body_md: 'Ghi chú của một task có tiêu đề không có điểm ngắt.',
-    items: [item('item-005', adversarialNoBreak)],
+    items: [item('019a0e2e-0000-7000-8002-000000001000', adversarialNoBreak)],
   }),
-  task('task-006', 'CHỮ HOA CÓ DẤU', { priority: 'p2' }),
-  task('task-007', '    ', { body_md: 'Nội dung fixture toàn khoảng trắng ở title.' }),
-  task('task-008', 'X'),
-  task('task-009', 'Task riêng tư', { is_private: true }),
-  task('task-010', 'Đã hoàn thành không ghim', { status: 'completed' }),
-  task('task-011', 'Việc kế tiếp', { due_at: future(2) }),
-  task('task-012', 'Checklist nhiều mục', {
+  task('019a0e2e-0000-7000-8001-000000000006', 'CHỮ HOA CÓ DẤU', { priority: 'p2' }),
+  task('019a0e2e-0000-7000-8001-000000000007', '    ', { body_md: 'Nội dung fixture toàn khoảng trắng ở title.' }),
+  task('019a0e2e-0000-7000-8001-000000000008', 'X'),
+  task('019a0e2e-0000-7000-8001-000000000009', 'Task riêng tư', { is_private: true }),
+  task('019a0e2e-0000-7000-8001-000000000010', 'Đã hoàn thành không ghim', { status: 'completed' }),
+  task('019a0e2e-0000-7000-8001-000000000011', 'Việc kế tiếp', { due_at: future(2) }),
+  task('019a0e2e-0000-7000-8001-000000000012', 'Checklist nhiều mục', {
     items: [
-      item('item-012-1', 'Mục đầu tiên', true),
-      item('item-012-2', 'Mục thứ hai'),
-      item('item-012-3', 'Mục thứ ba'),
-      item('item-012-4', 'Mục thứ tư'),
+      item('019a0e2e-0000-7000-8002-000000000004', 'Mục đầu tiên', true),
+      item('019a0e2e-0000-7000-8002-000000000005', 'Mục thứ hai'),
+      item('019a0e2e-0000-7000-8002-000000000006', 'Mục thứ ba'),
+      item('019a0e2e-0000-7000-8002-000000000007', 'Mục thứ tư'),
     ],
   }),
-  task('task-013', 'Học một điều mới', {
+  task('019a0e2e-0000-7000-8001-000000000013', 'Học một điều mới', {
     priority: 'p3',
     due_on: taskDateKey(new Date().toISOString()),
-    items: [item('item-013-1', 'Mục lịch ban đầu')],
+    items: [item('019a0e2e-0000-7000-8002-000000000008', 'Mục lịch ban đầu')],
   }),
-  task('task-014', 'Sắp xếp tài liệu'),
-  task('task-015', 'Gọi điện'),
-  task('task-016', 'Mua đồ dùng'),
-  task('task-017', 'Việc trễ hạn thứ hai', { due_at: past(2) }),
-  task('task-018', 'Đọc sách'),
-  task('task-019', 'Đi bộ'),
-  task('task-020', 'Viết nhật ký'),
-  task('task-021', 'Kiểm tra lịch'),
-  task('task-022', 'Lên thực đơn'),
-  task('task-023', 'Dọn bàn làm việc'),
-  task('task-024', 'Sao lưu dữ liệu'),
-  task('task-025', 'Xem lại mục tiêu'),
-  task('task-026', 'Tưới cây'),
-  task('task-027', 'Đặt lịch hẹn'),
-  task('task-028', 'Gửi tài liệu'),
-  task('task-029', 'Việc trễ hạn thứ ba', { due_at: past(1) }),
-  task('task-030', 'Chuẩn bị bữa sáng'),
-  task('task-031', 'Đọc email công việc'),
-  task('task-032', 'Thẻ cuối cùng để kiểm tooltip', {
+  task('019a0e2e-0000-7000-8001-000000000014', 'Sắp xếp tài liệu'),
+  task('019a0e2e-0000-7000-8001-000000000015', 'Gọi điện'),
+  task('019a0e2e-0000-7000-8001-000000000016', 'Mua đồ dùng'),
+  task('019a0e2e-0000-7000-8001-000000000017', 'Việc trễ hạn thứ hai', { due_at: past(2) }),
+  task('019a0e2e-0000-7000-8001-000000000018', 'Đọc sách'),
+  task('019a0e2e-0000-7000-8001-000000000019', 'Đi bộ'),
+  task('019a0e2e-0000-7000-8001-000000000020', 'Viết nhật ký'),
+  task('019a0e2e-0000-7000-8001-000000000021', 'Kiểm tra lịch'),
+  task('019a0e2e-0000-7000-8001-000000000022', 'Lên thực đơn'),
+  task('019a0e2e-0000-7000-8001-000000000023', 'Dọn bàn làm việc'),
+  task('019a0e2e-0000-7000-8001-000000000024', 'Sao lưu dữ liệu'),
+  task('019a0e2e-0000-7000-8001-000000000025', 'Xem lại mục tiêu'),
+  task('019a0e2e-0000-7000-8001-000000000026', 'Tưới cây'),
+  task('019a0e2e-0000-7000-8001-000000000027', 'Đặt lịch hẹn'),
+  task('019a0e2e-0000-7000-8001-000000000028', 'Gửi tài liệu'),
+  task('019a0e2e-0000-7000-8001-000000000029', 'Việc trễ hạn thứ ba', { due_at: past(1) }),
+  task('019a0e2e-0000-7000-8001-000000000030', 'Chuẩn bị bữa sáng'),
+  task('019a0e2e-0000-7000-8001-000000000031', 'Đọc email công việc'),
+  task('019a0e2e-0000-7000-8001-000000000032', 'Thẻ cuối cùng để kiểm tooltip', {
     body_md: adversarialVietnamese,
-    items: [item('item-032', 'Checklist cuối màn hình')],
+    items: [item('019a0e2e-0000-7000-8002-000000000009', 'Checklist cuối màn hình')],
   }),
 ]
 
@@ -159,7 +160,7 @@ fixtureTasks.push(
     }),
   ),
   ...Array.from({ length: 120 }, (_, index) =>
-    task(`undated-${String(index + 1).padStart(3, '0')}`, `Việc chưa xếp ngày ${index + 1}`, {
+    task(`019a0e2e-0000-7000-8001-${String(9001+index).padStart(12, '0')}`, `Việc chưa xếp ngày ${index + 1}`, {
       due_at: null,
       created_at: new Date(Date.now() - index * 1_000).toISOString(),
       updated_at: new Date(Date.now() - index * 1_000).toISOString(),
@@ -329,6 +330,11 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
       const path = url.pathname
       const key = `${method}:${path}`
       state.counts[key] = (state.counts[key] ?? 0) + 1
+
+      if (path === '/api/readyz') {
+        await route.fulfill(jsonResponse({status:'ok',db:'up',outbox_protocols:[1],commit:'e2e-fixture-v1'}))
+        return
+      }
 
       if (path === '/api/me') {
         if (state.sessionStatus !== 200) {
@@ -530,16 +536,19 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
       }
 
       if (path === '/api/tasks' && method === 'POST') {
-        const payload = JSON.parse(request.postData() ?? '{}') as Partial<FixtureTask>
+        const payload = JSON.parse(request.postData() ?? '{}') as Partial<Omit<FixtureTask,'items'>> & {items?:string[];item_ids?:string[]}
+        const replay = state.tasks.find(entry => entry.id === payload.id)
+        if (replay) { await route.fulfill(jsonResponse(replay)); return }
         const schedule = canonicalSchedule(payload)
         const created = task(
-          String(payload.id ?? `task-created-${Date.now()}`),
+          String(payload.id ?? uuidv7()),
           String(payload.title ?? ''),
           {
             body_md: payload.body_md ?? null,
             priority: payload.priority ?? null,
             ...schedule,
             is_private: payload.is_private ?? false,
+            items: (payload.items ?? []).map((content,index) => item(payload.item_ids?.[index] ?? uuidv7(),content)),
           },
         )
         state.tasks.unshift(created)
@@ -548,6 +557,12 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
       }
 
       const taskMatch = path.match(/^\/api\/tasks\/([^/]+)$/)
+      if (taskMatch && method === 'GET') {
+        const current = state.tasks.find(entry => entry.id === taskMatch[1])
+        const unlocked = state.privateUntil && Date.parse(state.privateUntil) > Date.now()
+        await route.fulfill(current && (!current.is_private || unlocked) ? jsonResponse(current) : {status:404})
+        return
+      }
       if (taskMatch && method === 'PATCH') {
         const current = state.tasks.find((entry) => entry.id === taskMatch[1])
         if (!current) {
@@ -583,10 +598,13 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
 
         if (method === 'POST' && !itemId) {
           const payload = JSON.parse(request.postData() ?? '{}') as {
+            id?: string
             content?: string
             position?: number
           }
-          const created = item(`item-created-${Date.now()}`, String(payload.content ?? ''))
+          const replay = owner.items.find(entry => entry.id === payload.id)
+          if (replay) { await route.fulfill(jsonResponse(replay)); return }
+          const created = item(payload.id ?? uuidv7(), String(payload.content ?? ''))
           owner.items.push(created)
           await route.fulfill(jsonResponse(created, 201))
           return

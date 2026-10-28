@@ -198,6 +198,112 @@ def test_activity_calendar_privacy_and_stable_entries_paging_083(pg_dsn: str):
     asyncio.run(scenario())
 
 
+def test_group_activity_and_paging_share_current_visible_membership(pg_dsn: str):
+    """090: scope precedes aggregation/paging, intersects tracker, and survives group removal."""
+
+    async def scenario():
+        auth_state = {"value": _auth()}
+        client, engine = _make_client(pg_dsn, auth_state)
+        tracker_ids = []
+        group_id = None
+        try:
+            created = await client.post(
+                "/api/tracker/groups", json={"name": "090 synthetic group", "kind": "general"}
+            )
+            assert created.status_code == 201, created.text
+            group_id = created.json()["id"]
+            members = []
+            for name, private in (("090 A", False), ("090 B", False), ("090 private", True)):
+                members.append(
+                    await _create_tracker(
+                        client, name=name, kind="general", group_id=group_id, is_private=private
+                    )
+                )
+            outsider = await _create_tracker(client, name="090 outside", kind="general")
+            tracker_ids = [UUID(t["id"]) for t in [*members, outsider]]
+            ids = []
+            for i in range(55):
+                row = await _create_entry(
+                    client, members[i % 2]["id"], occurred_at="2024-02-28T17:00:00Z"
+                )
+                assert row.status_code == 201, row.text
+                ids.append(row.json()["id"])
+                # Interleaved excluded rows would crowd pages if filtering were applied later.
+                assert (
+                    await _create_entry(client, outsider["id"], occurred_at="2024-02-28T17:00:00Z")
+                ).status_code == 201
+            for t in (members[2], members[0]):
+                assert (
+                    await _create_entry(client, t["id"], occurred_at="2024-02-28T16:59:59Z")
+                ).status_code == 201
+            auth_state["value"] = _auth(unlocked=False)
+            counts = await client.get(
+                "/api/tracker/activity", params={"year": 2024, "group_id": group_id}
+            )
+            assert counts.status_code == 200, counts.text
+            assert counts.json()["items"] == [
+                {"day": "2024-02-28", "count": 1},
+                {"day": "2024-02-29", "count": 55},
+            ]
+            params = {
+                "group_id": group_id,
+                "from": "2024-02-29T00:00:00+07:00",
+                "to": "2024-03-01T00:00:00+07:00",
+                "limit": 50,
+                "order": "asc",
+            }
+            first = (await client.get("/api/tracker/entries", params=params)).json()["items"]
+            second = (
+                await client.get("/api/tracker/entries", params={**params, "offset": 50})
+            ).json()["items"]
+            assert len(first) == 50 and len(second) == 5
+            assert [r["id"] for r in first + second] == sorted(ids)
+            for endpoint, extra in (("activity", {"year": 2024}), ("entries", {})):
+                assert (
+                    await client.get(
+                        f"/api/tracker/{endpoint}",
+                        params={**extra, "group_id": group_id, "tracker_id": outsider["id"]},
+                    )
+                ).json()["items"] == []
+                assert (
+                    await client.get(
+                        f"/api/tracker/{endpoint}", params={**extra, "group_id": "invalid"}
+                    )
+                ).status_code == 422
+            auth_state["value"] = _auth()
+            unlocked = (
+                await client.get(
+                    "/api/tracker/activity", params={"year": 2024, "group_id": group_id}
+                )
+            ).json()["items"]
+            assert unlocked[0] == {"day": "2024-02-28", "count": 2}
+            moved = await client.patch(
+                f"/api/tracker/trackers/{members[1]['id']}", json={"group_id": None}
+            )
+            assert moved.status_code == 200, moved.text
+            remaining = (
+                await client.get(
+                    "/api/tracker/activity", params={"year": 2024, "group_id": group_id}
+                )
+            ).json()["items"]
+            assert remaining[1]["count"] == 28
+            assert (await client.delete(f"/api/tracker/groups/{group_id}")).status_code == 204
+            for endpoint, extra in (("activity", {"year": 2024}), ("entries", {})):
+                assert (
+                    await client.get(
+                        f"/api/tracker/{endpoint}", params={**extra, "group_id": group_id}
+                    )
+                ).json()["items"] == []
+        finally:
+            await client.aclose()
+            await _cleanup(pg_dsn, "tracker", tracker_ids)
+            if group_id:
+                await _cleanup(pg_dsn, "tracker_group", [UUID(group_id)])
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_public_tracker_name_is_ciphertext_at_rest(pg_dsn: str):
     """Tạo tracker công khai ⇒ `name` trong DB bắt đầu bằng `enc:v1:` (spec §2.1 #1)."""
 
@@ -579,8 +685,29 @@ def test_entry_idempotent_create(pg_dsn: str):
     asyncio.run(scenario())
 
 
-def test_dashboard_period_boundaries_and_corrupt_amount(pg_dsn: str):
+@pytest.mark.parametrize(
+    "fixture_now",
+    [None, datetime(2026, 10, 9, 18, 23, tzinfo=UTC)],
+    ids=["wall-clock", "utc-vn-month-seam"],
+)
+def test_dashboard_period_boundaries_and_corrupt_amount(pg_dsn: str, monkeypatch, fixture_now):
     """?month= quá khứ → F1 cả tháng; ?month= tương lai → 0; dòng amount hỏng → dashboard 200."""
+
+    if fixture_now is not None:
+
+        class FixtureClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return (
+                    fixture_now.astimezone(tz)
+                    if tz is not None
+                    else fixture_now.replace(tzinfo=None)
+                )
+
+        monkeypatch.setattr(f"{__name__}.datetime", FixtureClock)
+        monkeypatch.setattr(
+            "app.domain.dashboard._relative_now", lambda: fixture_now.astimezone(VN_TZ)
+        )
 
     async def scenario():
         auth_state = {"value": _auth()}
@@ -598,14 +725,15 @@ def test_dashboard_period_boundaries_and_corrupt_amount(pg_dsn: str):
             assert resp.status_code == 201, resp.text
             entry_ids.append(UUID(resp.json()["id"]))
 
-            past_month = f"{past.year:04d}-{past.month:02d}"
+            past_vn = past.astimezone(VN_TZ)
+            past_month = f"{past_vn.year:04d}-{past_vn.month:02d}"
             dash = (await client.get(f"/api/tracker/dashboard?month={past_month}")).json()
             assert dash["f1_total"] == 40000
             # period_end is the end of the past month, not "now".
             end = datetime.fromisoformat(dash["period_end"])
-            assert end.day == 1 or end.month != past.month
+            assert end.day == 1 or end.month != past_vn.month
 
-            future = (datetime.now(UTC) + timedelta(days=45)).strftime("%Y-%m")
+            future = (datetime.now(UTC) + timedelta(days=45)).astimezone(VN_TZ).strftime("%Y-%m")
             dash = (await client.get(f"/api/tracker/dashboard?month={future}")).json()
             assert dash["f1_total"] == 0
 

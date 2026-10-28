@@ -332,6 +332,7 @@ class EntryCreate(BaseModel):
 
     id: UUID | None = None
     tracker_id: UUID
+    funding_entry_id: UUID | None = None
     occurred_at: datetime | None = None
     quantity: Decimal | None = None
     amount: Decimal | None = None
@@ -359,6 +360,7 @@ class EntryUpdate(BaseModel):
     amount: Decimal | None = None
     list_amount: Decimal | None = None
     note_md: str | None = None
+    funding_entry_id: UUID | None = None
 
     @model_validator(mode="after")
     def normalize(self) -> "EntryUpdate":
@@ -396,6 +398,7 @@ class EntryRead(BaseModel):
     note_md: str | None
     created_at: datetime | None
     updated_at: datetime | None
+    funding: dict | None = None
     created: bool | None = Field(default=None, exclude=True)
 
     @field_serializer("amount", "list_amount")
@@ -1068,6 +1071,7 @@ class TrackerStore:
         auth: AuthSession,
         *,
         tracker_id: UUID | None = None,
+        group_id: UUID | None = None,
         from_: datetime | None = None,
         to: datetime | None = None,
         limit: int = 100,
@@ -1080,6 +1084,8 @@ class TrackerStore:
         stmt = not_deleted(stmt, Entry)  # soft-delete of the entry itself
         if tracker_id is not None:
             stmt = stmt.where(Entry.tracker_id == tracker_id)
+        if group_id is not None:
+            stmt = stmt.where(Tracker.group_id == group_id)
         if from_ is not None:
             stmt = stmt.where(Entry.occurred_at >= from_)
         if to is not None:
@@ -1090,7 +1096,13 @@ class TrackerStore:
         return [self._entry_read(entry) for entry in result.scalars()]
 
     async def activity_days(
-        self, db: AsyncSession, auth: AuthSession, *, year: int, tracker_id: UUID | None = None
+        self,
+        db: AsyncSession,
+        auth: AuthSession,
+        *,
+        year: int,
+        tracker_id: UUID | None = None,
+        group_id: UUID | None = None,
     ) -> list[ActivityDayRead]:
         """Bound one calendar year, applying visibility before aggregating in SQL."""
         start = datetime(year, 1, 1, tzinfo=VN_TZ)
@@ -1101,6 +1113,8 @@ class TrackerStore:
         stmt = stmt.where(Entry.occurred_at >= start, Entry.occurred_at < end)
         if tracker_id is not None:
             stmt = stmt.where(Entry.tracker_id == tracker_id)
+        if group_id is not None:
+            stmt = stmt.where(Tracker.group_id == group_id)
         result = await db.execute(stmt.group_by(day).order_by(day))
         return [ActivityDayRead(day=value, count=count) for value, count in result.all()]
 
@@ -1161,18 +1175,42 @@ class TrackerStore:
         once (§2.4). ``subscription_id`` is an internal keyword used ONLY by
         ``SubscriptionStore.renew``; the 011a router never sets it.
         """
+        from app.domain.funding import lock_funding_parents, validate_link
+
+        if payload.funding_entry_id is not None:
+            await lock_funding_parents(db, payload.tracker_id, payload.funding_entry_id)
         tracker = await self._tracker(db, auth, payload.tracker_id, for_update=True)
         if tracker is None:
             raise EntryInvalid("Tracker không tồn tại.")
+        # An accepted create retry must not reapply a later-unavailable association.
+        if payload.id is not None:
+            existing = await self._entry(db, auth, payload.id)
+            if existing is not None:
+                if (
+                    existing.tracker_id != payload.tracker_id
+                    or existing.subscription_id != subscription_id
+                ):
+                    raise EntryIdConflict
+                if (
+                    "funding_entry_id" in payload.model_fields_set
+                    and existing.funding_entry_id != payload.funding_entry_id
+                ):
+                    raise EntryIdConflict
+                return existing.id, False
         await self._validate_entry(
             input_mode=tracker.input_mode,
             quantity=payload.quantity,
             amount=payload.amount,
             list_amount=payload.list_amount,
         )
+        if payload.funding_entry_id is not None:
+            await validate_link(
+                db, auth, tracker, payload.amount, payload.id, payload.funding_entry_id
+            )
         values = {
             "tracker_id": payload.tracker_id,
             "subscription_id": subscription_id,
+            "funding_entry_id": payload.funding_entry_id,
             "occurred_at": payload.occurred_at or datetime.now(UTC),
             "quantity": payload.quantity,
             "amount": _amount_out(payload.amount),
@@ -1204,6 +1242,10 @@ class TrackerStore:
             if (
                 existing.tracker_id != payload.tracker_id
                 or existing.subscription_id != subscription_id
+                or (
+                    "funding_entry_id" in payload.model_fields_set
+                    and existing.funding_entry_id != payload.funding_entry_id
+                )
             ):
                 # The same client id already belongs to a different row: this is
                 # a REAL conflict, not a retry of our own write (§2.4). Swallowing
@@ -1225,6 +1267,10 @@ class TrackerStore:
         probe = await self._entry(db, auth, entry_id)
         if probe is None:
             return None
+        from app.domain.funding import lock_funding_parents, validate_link
+
+        if changes.get("funding_entry_id") is not None:
+            await lock_funding_parents(db, probe.tracker_id, changes["funding_entry_id"])
         tracker = await self._tracker(db, auth, probe.tracker_id, for_update=True)
         if tracker is None:
             return None
@@ -1243,6 +1289,11 @@ class TrackerStore:
             amount=amount_raw,
             list_amount=list_raw,
         )
+        if "funding_entry_id" in changes:
+            target = changes["funding_entry_id"]
+            if target is not None and target != entry.funding_entry_id:
+                await validate_link(db, auth, tracker, amount_raw, entry.id, target)
+            entry.funding_entry_id = target
         if "amount" in changes:
             entry.amount = _amount_out(changes["amount"])
         if "list_amount" in changes:
@@ -1301,3 +1352,25 @@ class TrackerStore:
         db.info[CRON_TIMER_RELOAD_INFO_KEY] = "entry:restore"
         await db.flush()
         return entry
+
+    async def deleted_entry_visible(
+        self, db: AsyncSession, auth: AuthSession, entry_id: UUID
+    ) -> bool:
+        probe = (
+            await db.execute(
+                select(Entry.tracker_id).where(Entry.id == entry_id, Entry.deleted_at.is_not(None))
+            )
+        ).scalar_one_or_none()
+        if probe is None or await self._tracker(db, auth, probe, for_update=True) is None:
+            return False
+        return (
+            await db.execute(
+                select(Entry.id)
+                .where(
+                    Entry.id == entry_id,
+                    Entry.tracker_id == probe,
+                    Entry.deleted_at.is_not(None),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none() is not None

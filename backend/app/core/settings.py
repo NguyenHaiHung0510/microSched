@@ -2,10 +2,11 @@
 
 import ipaddress
 import os
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -87,22 +88,67 @@ class Settings(BaseSettings):
     # separate, explicit configuration decision.
     mimi_real_chat_enabled: bool = False
     mimi_live_provider_enabled: bool = False
+    mimi_context_v1_enabled: bool = False
+    # Code rollback ignores the versioned events; existing retention is unchanged.
+    mimi_working_projection_enabled: bool = True
+    # Alpha can explicitly select LangGraph; feature flags remain dark by default.
+    mimi_runner: Literal["current", "langgraph"] = "current"
+    mimi_workflow_pilot_enabled: bool = False
     mimi_public_origin: str | None = None
-    mimi_preview_ttl_minutes: int = 15
+    mimi_preview_ttl_minutes: int = 180
     mimi_run_deadline_seconds: int = 1_800
+    # Provisional emergency bounds, not a per-run dollar budget.
+    # Issued leases freeze these values; changing config does not alter old runs.
+    mimi_run_max_turns: int = 32
+    mimi_run_max_tool_calls: int = 64
     mimi_standard_api_key: str | None = None
-    mimi_route_mode: Literal["exact", "adaptive"] = "exact"
+    # Explicit alpha transport selection; no automatic fallback on route failure.
+    mimi_transport: Literal["httpx", "openai_sdk"] = "httpx"
+    mimi_text_response_format: Literal["structured", "natural"] = "structured"
+    mimi_route_min_uptime_percent: float = 95.0
+    mimi_route_uptime_window: Literal["1d", "30m"] = "1d"
+    mimi_route_catalog_checked_at: float | None = None
+    mimi_route_catalog_sha256: str | None = None
+    mimi_route_qualification_expires_at: float | None = None
+    mimi_route_qualification_sha256: str | None = None
+    mimi_route_qualified_provider_names: tuple[str, ...] = ()
+    # Trusted deployment qualification receipts, never supplied by model/UI.
+    # Empty means no adaptive endpoint is certified. No provider roster.
+    mimi_route_qualifications_json: str = "[]"
+    mimi_collection_enabled: bool = False
+    mimi_revision_collection: bool = False
+    mimi_notifications_enabled: bool = False
+    # Legacy values remain readable for old receipts and explicit rollback tests.
+    # New conversation runs always bind the native gateway policy.
+    mimi_route_mode: Literal["native", "exact", "adaptive"] = "native"
     mimi_route_model: str | None = None
     mimi_route_provider: str | None = None
     mimi_route_quantization: str | None = None
     mimi_route_allowed_providers: str = ""
     mimi_route_allowed_quantizations: str = ""
     mimi_route_forced_tool_choice: Literal["none", "required", "function"] = "none"
-    mimi_route_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] = "low"
-    mimi_route_context_tokens: int = 131_072
+    mimi_route_reasoning_effort: Literal[
+        "default", "none", "minimal", "low", "medium", "high", "max"
+    ] = "high"
+    # Endpoint metadata, never the compaction trigger or a byte-as-token gate.
+    mimi_route_context_tokens: int = 1_048_576
+    # Financial upper bound from the admitted native capacity snapshot, not bytes.
+    mimi_route_billing_prompt_ceiling: int | None = Field(default=None, ge=1, le=16_777_216)
+    mimi_route_capacity_source: str | None = None
+    mimi_compaction_trigger_tokens: Literal[100_000, 272_000] = 272_000
+    mimi_max_payload_bytes: int = 2_097_152
+    mimi_input_codepoints: int = Field(default=50_000, ge=1_000, le=100_000)
+    mimi_operating_policy_revision: int = 0
+    mimi_model_price_caps_json: str = "{}"
+    mimi_route_identity_aliases_json: str = "{}"
+    # At most four runs: guard + worker + observer <=12 of the existing15
+    # ORM pool connections; auth returns its checkout before SSE. LangGraph adds
+    # one direct checkpoint connection/run. Default two leaves ample Task room.
+    mimi_max_active_runs: int = 2
+    # Legacy wire cap; in native mode this is context planning reserve only.
     mimi_route_max_output_tokens: int = 4_096
-    mimi_route_max_input_price: float | None = None
-    mimi_route_max_output_price: float | None = None
+    mimi_route_max_input_price: float | Decimal | None = None
+    mimi_route_max_output_price: float | Decimal | None = None
     mimi_route_require_zdr: bool = True
 
     # auth-brief §2 allows 60-90 days; 90 chosen because the window is rolling, so it
@@ -119,6 +165,12 @@ class Settings(BaseSettings):
     # never connects through them; they only define which hosts are prod.
     neon_owner_url: str | None = None
     neon_migrator_url: str | None = None
+
+    @field_validator("mimi_compaction_trigger_tokens", mode="before")
+    @classmethod
+    def parse_compaction_trigger_environment(cls, value: object) -> object:
+        """Allow the approved integer preset through environment string input."""
+        return int(value) if value in {"100000", "272000"} else value
 
     @model_validator(mode="after")
     def validate_cron_and_vapid_settings(self) -> "Settings":
@@ -214,6 +266,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MIMI_PUBLIC_ORIGIN is required when Mimi real chat is enabled in production"
             )
+        # Explicit alpha configuration supports the same transport/runner in
+        # production. Egress, origin, route, privacy and confirmation guards stay.
+        if not 65_536 <= self.mimi_max_payload_bytes <= 4_194_304:
+            raise ValueError("MIMI_MAX_PAYLOAD_BYTES must be between 65536 and 4194304")
+        if not 1 <= self.mimi_max_active_runs <= 4:
+            raise ValueError("MIMI_MAX_ACTIVE_RUNS must be between 1 and 4")
+        if self.mimi_runner == "langgraph" and not (
+            self.mimi_context_v1_enabled and self.mimi_live_provider_enabled
+        ):
+            raise ValueError("MIMI_RUNNER=langgraph requires the P1C-A context runner path")
         if self.mimi_live_provider_enabled and not self.mimi_real_chat_enabled:
             raise ValueError("MIMI_LIVE_PROVIDER_ENABLED requires MIMI_REAL_CHAT_ENABLED")
         if self.mimi_live_provider_enabled:
@@ -230,14 +292,23 @@ class Settings(BaseSettings):
                         "MIMI_ROUTE_QUANTIZATION": self.mimi_route_quantization,
                     }
                 )
-            else:
+            elif self.mimi_route_mode == "adaptive":
                 required_route.update(
                     {
-                        "MIMI_ROUTE_ALLOWED_PROVIDERS": self.mimi_route_allowed_providers.strip(),
                         "MIMI_ROUTE_ALLOWED_QUANTIZATIONS": (
                             self.mimi_route_allowed_quantizations.strip()
                         ),
                     }
+                )
+            # Discovery replaces a static allowlist only in the admitted
+            # collection/model seam; arbitrary adaptive routes remain bounded.
+            if self.mimi_route_mode == "adaptive" and not (
+                self.mimi_collection_enabled
+                and self.mimi_route_model
+                in {"deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-1017"}
+            ):
+                required_route["MIMI_ROUTE_ALLOWED_PROVIDERS"] = (
+                    self.mimi_route_allowed_providers.strip()
                 )
             missing = [
                 name
@@ -252,13 +323,28 @@ class Settings(BaseSettings):
             raise ValueError("MIMI_ROUTE_MAX_OUTPUT_TOKENS must be between 256 and 32768")
         for field_name in ("mimi_route_max_input_price", "mimi_route_max_output_price"):
             price = getattr(self, field_name)
-            if price is not None and price < 0:
-                raise ValueError(f"{field_name.upper()} cannot be negative")
-        if not 1 <= self.mimi_preview_ttl_minutes <= 60:
-            raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 60")
+            if price is not None:
+                from app.agent.config_policy import finite_price
+
+                finite_price(price)
+        if not 1 <= self.mimi_preview_ttl_minutes <= 180:
+            raise ValueError("MIMI_PREVIEW_TTL_MINUTES must be between 1 and 180")
+        if not 1 <= self.mimi_run_max_turns <= 128:
+            raise ValueError("MIMI_RUN_MAX_TURNS must be between 1 and 128")
+        if not 1 <= self.mimi_run_max_tool_calls <= 256:
+            raise ValueError("MIMI_RUN_MAX_TOOL_CALLS must be between 1 and 256")
         if not 30 <= self.mimi_run_deadline_seconds <= 7_200:
             raise ValueError("MIMI_RUN_DEADLINE_SECONDS must be between 30 and 7200")
         return self
+
+    @field_validator("mimi_route_min_uptime_percent")
+    @classmethod
+    def finite_uptime_threshold(cls, value):
+        import math
+
+        if not math.isfinite(value) or not 0 <= value < 100:
+            raise ValueError("uptime threshold must be finite and0<=value<100")
+        return value
 
     @property
     def mimi_allowed_provider_list(self) -> tuple[str, ...]:

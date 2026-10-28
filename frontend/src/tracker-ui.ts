@@ -8,7 +8,7 @@
 
 import { useMutation } from '@tanstack/react-query'
 
-import { apiRequest } from '@/api'
+import { onlineTrackerRequest as apiRequest, entryRequest } from '@/outbox/adapters'
 import { VIETNAM_TIME_ZONE, vietnamInputToIso } from '@/calendar-ui'
 import { uuidv7 } from '@/lib/uuidv7'
 
@@ -161,6 +161,7 @@ export type Entry = {
   note_md: string | null
   created_at: string | null
   updated_at: string | null
+  funding?: import('@/funding-ui').Funding | null
 }
 
 export type DashboardF6 = {
@@ -521,6 +522,7 @@ export function currentVietnamMonth(now = new Date()): string {
 export type EntryCreatePayload = {
   id: string
   tracker_id: string
+  funding_entry_id?: string | null
   occurred_at?: string
   quantity?: number
   amount?: number
@@ -662,35 +664,39 @@ export function useTrackerWrites(refresh: () => void) {
     onSuccess: refresh,
   })
   const createEntry = useMutation({
+    networkMode: 'always',
     mutationFn: (payload: EntryCreatePayload) =>
-      apiRequest<Entry>('/api/tracker/entries', {
+      entryRequest<Entry>('/api/tracker/entries', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
     onSuccess: refresh,
   })
   const updateEntry = useMutation({
+    networkMode: 'always',
     mutationFn: ({
       entryId,
       payload,
     }: {
       entryId: string
-      payload: Partial<Pick<Entry, 'occurred_at' | 'quantity' | 'amount' | 'list_amount' | 'note_md'>>
+        payload: Partial<Pick<Entry, 'occurred_at' | 'quantity' | 'amount' | 'list_amount' | 'note_md'>> & {funding_entry_id?:string|null}
     }) =>
-      apiRequest<Entry>(`/api/tracker/entries/${entryId}`, {
+      entryRequest<Entry>(`/api/tracker/entries/${entryId}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       }),
     onSuccess: refresh,
   })
   const deleteEntry = useMutation({
+    networkMode: 'always',
     mutationFn: (entryId: string) =>
-      apiRequest<void>(`/api/tracker/entries/${entryId}`, { method: 'DELETE' }),
+      entryRequest<void>(`/api/tracker/entries/${entryId}`, { method: 'DELETE' }),
     onSuccess: refresh,
   })
   const restoreEntry = useMutation({
+    networkMode: 'always',
     mutationFn: (entryId: string) =>
-      apiRequest<{ id: string; status: 'restored' }>(
+      entryRequest<{ id: string; status: 'restored' }>(
         `/api/tracker/entries/${entryId}/restore`,
         { method: 'POST' },
       ),

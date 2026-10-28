@@ -11,7 +11,7 @@ test('long capture names wrap inside their own target, separate from backdate co
     'Theo dõi việc ghi chép sau buổi học và đọc lại những điều quan trọng',
     'X'.repeat(70),
     'Ghi nhanh',
-  ].map((name, index) => ({ ...template, id: `capture-046-${index}`, name, group_id: 'capture-group-046', is_private: index === 1, input_mode: 'event', reminder_time: null }))
+  ].map((name, index) => ({ ...template, id: `019a0046-0000-7000-8001-${String(index+1).padStart(12,'0')}`, name, group_id: 'capture-group-046', is_private: index === 1, input_mode: 'event', reminder_time: null }))
   await page.goto('/')
   await page.getByRole('tab', { name: 'Theo dõi' }).click()
   const cards = page.getByTestId('tracker-card')

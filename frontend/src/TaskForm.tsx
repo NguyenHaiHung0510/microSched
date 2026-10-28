@@ -1,11 +1,13 @@
-import { type FormEvent, useState } from 'react'
+import { useTaskProjection } from '@/outbox/view'
+import { taskRequest as apiRequest } from '@/outbox/adapters'
+import { type FormEvent, useEffect, useId, useState } from 'react'
 import { ReminderButton } from '@/ReminderEditor'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Edit3, Plus, Trash2 } from 'lucide-react'
 
-import { apiRequest } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -14,6 +16,7 @@ import {
   SelectTrigger,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { TaskTitleInput } from '@/TaskTitleInput'
 import {
   canSubmitTask,
   type TaskDuePrecision,
@@ -88,6 +91,9 @@ function PersistedChecklistSection({
 }) {
   const queryClient = useQueryClient()
   const [items, setItems] = useState<TaskItem[]>(initialItems)
+  const [deletingItem,setDeletingItem]=useState<TaskItem|null>(null)
+  const projectedParent = useTaskProjection([{id:taskId,items}])[0]
+  const visibleItems = (projectedParent?.items ?? items) as TaskItem[]
   const [newContent, setNewContent] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
@@ -98,6 +104,7 @@ function PersistedChecklistSection({
   }
 
   const addItemMutation = useMutation({
+    networkMode: 'always',
     mutationFn: (content: string) =>
       apiRequest<TaskItem>(`/api/tasks/${taskId}/items`, {
         method: 'POST',
@@ -113,6 +120,7 @@ function PersistedChecklistSection({
   })
 
   const updateContentMutation = useMutation({
+    networkMode: 'always',
     mutationFn: ({ itemId, content }: { itemId: string; content: string }) =>
       apiRequest<TaskItem>(`/api/tasks/${taskId}/items/${itemId}`, {
         method: 'PATCH',
@@ -131,6 +139,7 @@ function PersistedChecklistSection({
   })
 
   const toggleCompletedMutation = useMutation({
+    networkMode: 'always',
     mutationFn: ({ item, isCompleted }: { item: TaskItem; isCompleted: boolean }) =>
       apiRequest<TaskItem>(`/api/tasks/${taskId}/items/${item.id}`, {
         method: 'PATCH',
@@ -147,6 +156,7 @@ function PersistedChecklistSection({
   })
 
   const removeItemMutation = useMutation({
+    networkMode: 'always',
     mutationFn: (item: TaskItem) =>
       apiRequest<void>(`/api/tasks/${taskId}/items/${item.id}`, {
         method: 'DELETE',
@@ -154,6 +164,7 @@ function PersistedChecklistSection({
     onMutate: () => onPendingChange(true),
     onSettled: () => onPendingChange(false),
     onSuccess: (_data, item) => {
+      setDeletingItem(null)
       setItems((prev) => prev.filter((i) => i.id !== item.id))
       if (editingItemId === item.id) {
         setEditingItemId(null)
@@ -209,7 +220,7 @@ function PersistedChecklistSection({
       </div>
 
       <div className="space-y-2">
-        {items.map((item) =>
+        {visibleItems.map((item) =>
           editingItemId === item.id ? (
             <div
               key={item.id}
@@ -302,7 +313,7 @@ function PersistedChecklistSection({
                   className="size-11 min-h-11 min-w-11 sm:size-8 sm:min-h-8 sm:min-w-8 text-bad hover:text-bad"
                   aria-label={`Xoá mục ${item.content}`}
                   disabled={disabled || childPending}
-                  onClick={() => removeItemMutation.mutate(item)}
+                  onClick={() => setDeletingItem(item)}
                 >
                   <Trash2 className="size-4" />
                 </Button>
@@ -344,6 +355,7 @@ function PersistedChecklistSection({
           </p>
         ) : null}
       </div>
+      <Dialog open={!!deletingItem} onOpenChange={open=>{if(!open&&!removeItemMutation.isPending)setDeletingItem(null)}}><DialogContent data-testid="task-child-delete-confirm"><DialogHeader><DialogTitle>Xoá mục nhỏ?</DialogTitle><DialogDescription>Mục này sẽ bị xoá khỏi task. Bạn cần xác nhận trước khi lưu thay đổi này.</DialogDescription></DialogHeader><p className="break-words text-sm">{deletingItem?.content}</p>{removeItemMutation.isError?<p role="alert" className="text-sm text-bad">{errorMessage(removeItemMutation.error)}</p>:null}<div className="flex justify-end gap-2"><Button type="button" size="lg" variant="outline" disabled={removeItemMutation.isPending} onClick={()=>setDeletingItem(null)}>Huỷ</Button><Button type="button" data-testid="task-child-delete-commit" size="lg" variant="destructive" disabled={removeItemMutation.isPending} onClick={()=>{if(deletingItem)removeItemMutation.mutate(deletingItem)}}>{removeItemMutation.isPending?'Đang xoá…':'Xoá mục'}</Button></div></DialogContent></Dialog>
     </div>
   )
 }
@@ -362,6 +374,7 @@ export function TaskForm({
   onCancel?: () => void
 }) {
   const taskId = initial?.id
+  const titleId = useId()
 
   const [title, setTitle] = useState(initial?.title ?? '')
   const [body, setBody] = useState(initial?.body_md ?? '')
@@ -371,6 +384,11 @@ export function TaskForm({
   const [dueOn, setDueOn] = useState(dueInitial.day)
   const [dueTime, setDueTime] = useState(dueInitial.time)
   const [isPrivate, setIsPrivate] = useState(initial?.is_private ?? false)
+  useEffect(() => {
+    const mask = () => { if (isPrivate) onCancel?.() }
+    window.addEventListener('microsched:visibility',mask)
+    return () => window.removeEventListener('microsched:visibility',mask)
+  }, [isPrivate, onCancel])
 
   // Checklist state for Create mode (draft items before parent exists)
   const [draftItems, setDraftItems] = useState<string[]>([])
@@ -448,17 +466,15 @@ export function TaskForm({
 
   return (
     <form className="space-y-4" onSubmit={submit}>
-      <label className="block space-y-1.5 text-sm font-semibold">
-        <span>Tiêu đề</span>
-        <Input
-          className="h-11 bg-card"
+      <div className="block space-y-1.5 text-sm font-semibold">
+        <label htmlFor={titleId}>Tiêu đề</label>
+        <TaskTitleInput
+          id={titleId}
           value={title}
-          minLength={1}
-          required
           disabled={pending || childPending}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={setTitle}
         />
-      </label>
+      </div>
 
       <label className="block space-y-1.5 text-sm font-semibold">
         <span>Nội dung</span>

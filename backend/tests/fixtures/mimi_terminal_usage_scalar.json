@@ -1,0 +1,24 @@
+{
+  "provenance": "Numeric fields only from authorized R3-LIVE-BILLING-OBSERVED scalar projection; identity/BYOK/wire proof intentionally omitted",
+  "terminal_usage": {
+    "cost": 0.00103152,
+    "cost_details": {
+      "upstream_inference_cost": 0.00103152,
+      "upstream_inference_prompt_cost": 0.00062752,
+      "upstream_inference_completions_cost": 0.000404
+    },
+    "prompt_tokens": 7844,
+    "completion_tokens": 808,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "video_tokens": 0,
+      "cached_tokens": 0,
+      "cache_write_tokens": 0
+    },
+    "completion_tokens_details": {
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "reasoning_tokens": 547
+    }
+  }
+}
