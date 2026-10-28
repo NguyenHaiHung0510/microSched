@@ -9,7 +9,9 @@
 
 **microSched** là ứng dụng cá nhân all-in-one và phòng thử nghiệm phần mềm của mình — phiên bản thứ ba, cũng là phiên bản trưởng thành nhất trong hành trình tự xây công cụ cho bản thân đến hiện tại.
 
-Hành trình đó bắt đầu từ [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap), một chương trình CLI C++ cơ bản hồi năm nhất đại học; tiếp nối bằng [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian), ứng dụng desktop Python/Flet được vibe-code và đóng gói thành `.exe`; rồi đến microSched với harness engineering và AI engineering. Qua từng dự án, tư duy sản phẩm, kỹ năng kỹ thuật và cách mình cộng tác với AI cũng dần trưởng thành hơn. Mình đã dùng microSched trong đời sống thực từ **21 tháng 8 năm 2026** và tiếp tục cải thiện nó từ trải nghiệm sử dụng hằng ngày.
+Hành trình đó bắt đầu từ năm nhất đại học với [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap), một nhật ký học tập dạng CLI viết bằng C++, dùng để ghi lại việc học hằng ngày, lưu ghi chú theo môn hoặc công việc và tự đánh giá tiến độ. Tiếp đó là [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian), ứng dụng desktop Python/Flet được vibe-code để quản lý công việc và lịch trình cá nhân, đóng gói thành `.exe` trên Windows. Đến microSched, mình đưa công việc, ghi chú, lịch và tracker vào một ứng dụng web cá nhân, với Mimi hỗ trợ thao tác Task/checklist bằng AI.
+
+Đó là ba thế hệ công cụ cá nhân và cũng là ba chặng trong quá trình học của mình: thực hành lập trình qua một CLI nhỏ, xây ứng dụng desktop cùng AI, rồi phát triển và vận hành một sản phẩm rộng hơn với một nhóm agent được tổ chức và điều phối. Qua từng chặng, tư duy sản phẩm, kỹ năng kỹ thuật và cách mình cộng tác với AI cũng dần trưởng thành hơn. Mình đã dùng microSched trong đời sống thực từ **21 tháng 8 năm 2026** và tiếp tục cải thiện nó từ trải nghiệm sử dụng hằng ngày.
 
 ## Mình dùng microSched cho việc gì?
 
@@ -26,7 +28,7 @@ microSched gom công việc, ghi chú, lịch và các tracker của mình vào 
 
 Mình đang hướng tới trở thành một **AI engineer**. microSched là nơi mình vừa thử nghiệm, vừa học, vừa xây một sản phẩm mà bản thân thực sự sử dụng. Nhu cầu hằng ngày giúp mình chọn việc cần làm; quá trình dùng thật cho thấy thiết kế, implementation hay cách cộng tác với AI còn cần cải thiện ở đâu.
 
-- **Harness engineering và điều phối agent:** tổ chức agent theo vai trò, trong đó có PM quản lý phạm vi, ưu tiên và phối hợp công việc; giao task và context rõ ràng; review kết quả trước khi tích hợp vào dự án. Mình học cách tổ chức việc phát triển cùng AI thành một nhóm làm việc có phối hợp.
+- **Harness engineering và điều phối agent:** tổ chức agent theo vai trò, trong đó có PM quản lý phạm vi, ưu tiên và phối hợp công việc; giao task và context rõ ràng; review kết quả (cả việc review cũng giao cho các agent khác nữa xD) trước khi tích hợp vào dự án. Mình học cách tổ chức việc phát triển cùng AI thành một nhóm làm việc có phối hợp.
 - **Software engineering và vận hành:** làm việc xuyên suốt frontend, backend và database, rồi đưa thay đổi qua deployment, CI/CD, kiểm chứng, backup và bảo trì. Vì tự dùng ứng dụng, mình phải quan tâm đến độ tin cậy và khả năng bảo trì trong thực tế.
 - **AI engineering với Mimi:** phát triển một module AI ngay trong ứng dụng, từ tích hợp model và tool đến context, đề xuất thao tác Task/checklist, xác nhận rõ ràng và recovery. Mimi giúp mình học cách làm một sản phẩm AI và đánh giá nó có giúp ích cho công việc thực tế hay không.
 
