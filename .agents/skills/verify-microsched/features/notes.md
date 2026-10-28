@@ -46,4 +46,4 @@ resets both checklist disclosures. Stored content is never truncated.
 Focused author oracles: `frontend/e2e/note-reader-history-task-098.spec.ts`,
 `frontend/e2e/notes-checklist-045.spec.ts`, `backend/tests/test_note_order.py` and
 `backend/tests/test_notes_api.py`. Author evidence is separate from independent QA,
-CI, device and production. See `agent-tasks/098-note-reader-history-task.md`.
+CI, device and production. See `docs/reference/ui-behavior.md`.

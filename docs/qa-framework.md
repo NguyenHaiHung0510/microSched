@@ -279,14 +279,3 @@ Thao tác kiểm, theo thứ tự rẻ dần:
 
 Và luật ngược lại, cũng đã sinh lỗi thật: **lời tự khai của một agent về năng lực của chính nó là dữ
 liệu về cấu hình hiện tại, không phải về giới hạn** — "CANNOT-DO" đã hai lần hoá ra là làm được.
-
-## 9. Nhật ký các lượt QA
-
-| Ngày | Ai | Phạm vi | Kết quả | Khoảng trống lộ ra sau đó |
-|---|---|---|---|---|
-| 2026-07-25 | T3 (agy + Chrome DevTools MCP) | `008e` — màn Task, dữ liệu ác ý, 390px | 3 mục đỏ → sửa ở `008k` | **Trượt cả 5 mục của 29/07**: soi dữ liệu ác ý, không soi việc dùng lặp trên thiết bị thật |
-| 2026-07-29 | Chủ (dogfooding, iPhone + máy tính) | Dùng thật một buổi, đối chiếu ảnh app v1 | 5 mục (①tooltip bị cắt ②vùng bấm ③banner trễ hạn ④microcopy ⑤thiếu điều hướng theo ngày) | Không lặp lại được, không giao được, không nghiệm thu được ⇒ **file này** |
-| — | | | | |
-
-*Mục ⑤ (điều hướng `< Về hôm nay >` của app cũ) **không phải bug** — là câu hỏi thiết kế thật sự bỏ
-ngỏ, thuộc phạm vi `010` (calendar). Ghi ở đây để nó không bị QA sau bắt lại như lỗi mới.*

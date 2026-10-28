@@ -2,108 +2,22 @@
 
 [English](README.md) | Tiếng Việt
 
-[![CI](https://github.com/NguyenHaiHung0510/microSched/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/NguyenHaiHung0510/microSched/actions/workflows/ci.yml?query=branch%3Adevelop)
-[![CodeQL](https://github.com/NguyenHaiHung0510/microSched/actions/workflows/codeql.yml/badge.svg?branch=develop)](https://github.com/NguyenHaiHung0510/microSched/actions/workflows/codeql.yml?query=branch%3Adevelop)
-[![Latest release](https://img.shields.io/github/v/release/NguyenHaiHung0510/microSched?display_name=tag)](https://github.com/NguyenHaiHung0510/microSched/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/NguyenHaiHung0510/microSched/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/NguyenHaiHung0510/microSched/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/NguyenHaiHung0510/microSched)](https://github.com/NguyenHaiHung0510/microSched/releases/latest)
 
-[Xem trang giới thiệu](https://microsched.fly.dev/home)
+[Xem microSched](https://microsched.fly.dev/home) · [Tài liệu kỹ thuật](docs/project-guide.md) · [Changelog](CHANGELOG.md)
 
-**microSched** là app cá nhân toàn năng và personal software laboratory của mình — chặng thứ ba, cũng là phiên bản trưởng thành nhất hiện tại, trong hành trình xây công cụ cá nhân.
+microSched là PWA quản lý công việc, ghi chú, lịch và theo dõi cá nhân cho một Owner. Đây cũng là software laboratory để thực hành harness engineering và AI engineering, tiếp nối [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap) và [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian).
 
-Hành trình đi từ [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap) (CLI C++ sơ khai từ năm nhất), qua [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian) (desktop Python/Flet, vibe-coded, đóng gói `.exe`), đến microSched (harness engineering + AI engineering). Đây là sự trưởng thành trong tư duy sản phẩm, kỹ thuật và cách mình cộng tác với AI; microSched đã được dùng thật từ **21/07/2026** và tiếp tục cải tiến theo feedback thực tế.
+- **Task và note:** deadline, ưu tiên, ghim, checklist, soft-delete/khôi phục và đọc/sửa Markdown.
+- **Lịch và nhắc nhở:** nguồn ICS, sự kiện thủ công, dời ngày/giờ, annotation, nhắc một lần/định kỳ và lịch sử xử lý.
+- **Theo dõi:** nhóm tracker, entry theo thời điểm, ghi khoản thu/nguồn tiền, báo cáo VND và gia hạn subscription.
+- **Responsive PWA:** navigation chung, nội dung compact, public bootstrap offline và durable outbox cho **11 command Task/checklist/Entry**. Các domain khác vẫn cần mạng; lưu vào hàng đợi local khác với server đã xác nhận.
+- **Riêng tư:** Google OAuth allowlist, opaque session server-side, private display unlock và ranh giới mã hóa của ứng dụng.
+- **Mimi:** đã có năng lực đọc Task/checklist, đề xuất, review/revision và explicit Confirm. Toàn bộ module Mimi vẫn đang phát triển; xem [README kỹ thuật PARTIAL](docs/mimi/README.md).
 
-> Đây là dự án cá nhân đang phát triển. Tài liệu này mô tả những gì code hiện có; không phải mọi ý tưởng trong roadmap đều đã shipped.
+React/TypeScript/Vite build frontend tĩnh. Một process FastAPI phục vụ SPA và API, dùng PostgreSQL/pgvector trên Neon. Node chỉ cần ở development/build. Cấu hình Fly trong repo dùng một machine always-on; sức khỏe runtime cần bằng chứng riêng.
 
-## Tính năng hiện có
+Fresh clone bắt đầu tại [development setup](docs/engineering/development.md): Python 3.14, Node 24, `uv sync --frozen`, `npm ci`, vai trò environment và các lệnh test. [Operations](docs/operations/runbook.md) mô tả deploy, readiness, backup/recovery và migration có quyền riêng. Mô tả source hiện hành không chứng nhận mọi browser, thiết bị thật hay live-provider journey.
 
-- **Task:** deadline, checklist, ưu tiên, ghim, quá hạn, dời lịch và khôi phục sau soft-delete.
-- **Ghi chú:** nội dung Markdown, checklist, thời gian, ghim/ưu tiên và private visibility.
-- **Lịch:** nguồn lịch ICS, buổi thủ công, lịch cuộn theo ngày, annotation và dời task.
-- **Theo dõi:** ghi nhanh các tracker sức khỏe hoặc tài chính, entry theo thời điểm, dashboard VND và đăng ký định kỳ/gia hạn.
-- **Riêng tư:** Google OAuth với allowlist, server-side session và private unlock riêng cho lớp hiển thị. Dữ liệu mã hóa at-rest có ranh giới riêng; đây không phải tuyên bố security certification.
-- **PWA:** cài và sử dụng trên laptop hoặc iPhone, có service worker và nền tảng Web Push. Full offline outbox cho mọi write chưa phải scope đã shipped.
-
-## Định hướng học tập và hệ sinh thái
-
-microSched là **dự án trục**, nơi mình luyện product thinking, backend/API, data model, privacy boundary, evaluation và vận hành production. Các hướng liên quan đang được phát triển hoặc nghiên cứu — **chưa claim shipped** — gồm:
-
-- **Mimi:** AI agent hỗ trợ quản lý kế hoạch tích hợp website.
-- **microLink:** cầu nối MCP local giữa AI agent và microSched.
-- **miGarden:** hệ thống IoT giám sát và hỗ trợ tưới cây, dự kiến tích hợp vào microSched qua một seam tự nhiên.
-- Có thể bổ sung các sản phẩm liên quan khác khi có nhu cầu và scope rõ.
-- AI assistant read-only, hybrid retrieval, write tools có confirmation/audit và full offline outbox vẫn là roadmap/in-progress; MCP protocol chưa được bật trong microSched hiện tại.
-
-## Kiến trúc
-
-```text
-React + TypeScript PWA (browser: laptop / iPhone)
-                 │ JSON API, same origin
-                 ▼
-FastAPI modular monolith (một Python process)
-                 │
-                 ▼
-Neon PostgreSQL + pgvector
-```
-
-Frontend là static SPA/PWA được cài và sử dụng trên laptop hoặc iPhone; service worker và Web Push foundation đã có trong app. Node chỉ dùng lúc build, còn production chạy một Python process phục vụ cả API và frontend build. Domain, web, retrieval, agent và jobs giữ trong cùng process; không có microservices hay Redis broker.
-
-## Hạ tầng vận hành
-
-- **Application:** FastAPI modular monolith + static React/TypeScript PWA.
-- **Data:** Neon PostgreSQL với `pgvector`; private fields dùng encryption boundary của app.
-- **Delivery thực tế:** GitHub Actions build và kiểm tra → Docker multi-stage build → một Fly.io Machine tại `sin`, shared CPU, 256 MB RAM và 512 MB swap; dữ liệu chạy trên Neon PostgreSQL + `pgvector`. Mình dùng app thật trên laptop và iPhone.
-- **Auth:** Google OAuth allowlist và session server-side.
-
-## Chạy local
-
-### Backend
-
-Yêu cầu Python 3.14 và `uv`. Từ thư mục repo:
-
-```powershell
-cd backend
-uv sync
-Copy-Item .env.example .env
-uv run uvicorn app.main:create_app --factory --reload
-```
-
-Điền các biến local trong `backend/.env` theo `backend/README.md`. Không dùng owner/migrator URL làm runtime URL; không commit `.env` hoặc secret thật.
-
-### Frontend
-
-Yêu cầu Node 24 và npm:
-
-```powershell
-cd frontend
-npm ci
-npm run dev
-```
-
-Vite chạy frontend development; backend chạy riêng ở `http://localhost:8000`. Production không chạy Node process thứ hai.
-
-## Kiểm tra chất lượng
-
-```powershell
-cd backend
-uv run ruff check .
-uv run ruff format --check .
-uv run pytest
-
-cd ..\frontend
-npm run lint
-npm test
-npm run build
-```
-
-CI còn có Frontend e2e, secret scan và Migration QA với Postgres/pgvector. Các lệnh trên là cách chạy kiểm tra; trạng thái pass hiện tại phải xem receipt CI tương ứng.
-
-## Security và đóng góp
-
-- Xem [SECURITY.vi.md](SECURITY.vi.md) để báo cáo lỗ hổng qua GitHub private vulnerability reporting.
-- Xem [CONTRIBUTING.vi.md](CONTRIBUTING.vi.md) trước khi mở thay đổi.
-- Không đưa credential, dữ liệu cá nhân thật, OAuth allowlist hoặc production payload vào issue, PR, log hay fixture.
-
-## License
-
-Source code và logo/icon do project sở hữu được phát hành theo [MIT License](LICENSE). Dependencies và third-party assets giữ license tương ứng; personal data, secrets, credentials và service accounts không thuộc phạm vi cấp phép của project.
+Xem [đóng góp](CONTRIBUTING.vi.md) và [báo cáo security](SECURITY.vi.md). Không đưa credential, account identifier hay dữ liệu cá nhân vào issue, fixture hoặc PR. Source và logo/icon do project sở hữu dùng [MIT License](LICENSE); third-party assets giữ license riêng. Personal data và service account không nằm trong phạm vi cấp phép.

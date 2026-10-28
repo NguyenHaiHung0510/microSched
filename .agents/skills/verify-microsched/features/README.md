@@ -1,30 +1,10 @@
-# Current Task097 — compact content
+# microSched feature recipes
 
-Use [content density](content-density.md), own097 freeze/resource/oracle exports and r6b_browser.mjs. R6a exactf3 is an explicit unaccepted dependency; R5E7/R4 parentaccepted and productioncloseded6. No provider/physicaldevice claim or denominator reset.
+Đây là source/prerequisite map, không phải current runtime acceptance. Read [SKILL](../SKILL.md), current grant và [verification](../../../../docs/verification/README.md) trước khi chạy. Recipe line numbers, frozen tuples và historical verdicts cần đối chiếu exact candidate; không tự launch historical runtime. Current implementation overview ở [project guide](../../../../docs/project-guide.md).
 
----
-# Current Task096 — shell A / Tracker regions / safe automatic update
+Bảng bên dưới giữ dated source snapshot để định vị recipe. NOT_RUN/OBSERVED_ACCEPTED trong snapshot chỉ có nghĩa tại source/receipt của nó; không phải toàn app hiện tại. Mọi required cases/gates vẫn theo current contracts/specs.
 
-Use [responsive shell](responsive-shell.md), [PWA lifecycle](pwa-freshness.md), current096 handback/freeze and `r6_browser.mjs` with own4179/API8006. No current production/independent acceptance follows from author evidence; unacceptedR5dependency and Owner334gates remain. Historical map denominators below are unchanged.
-
-# Current candidate routing — funding095 and calendar094
-
-Current Task095 funding route: [income Entry/report](funding-entry.md). Current grant/freeze wins; previous map acceptance is historical.
-
-[Task094](../../../../agent-tasks/094-calendar-move.md) and the [calendar recipe](calendar.md) describe
-the current movement candidate, its owned094 cell and parameterized helper. Builder receipts are
-separate from independent094 QA, which is NOT_RUN at author freeze. No historical row/count below
-is upgraded by the094 author observations. Match the actual current grant before any execution.
-
-## Prior Task090 routing (retained)
-
-Current microSched slice: [Task090 H2](../../../../agent-tasks/090-group-heatmap.md), source worktrees/090-group-heatmap at the exact private freeze. [Affected tracker recipe](tracker-form.md) is source-maintained for current controls/API. Independent R1 acceptance NOT_RUN until PM reconciliation. Remaining recipes below retain their dated source mappings and are not revalidated or runtime-accepted by R1.
-
-## Historical H14 map (original evidence retained)
-
-# Feature map — verify-microsched
-
-Broad source map for exact candidate `aa9d7251cdb506e968a6ffddfbae6767b6987327` at `harness-b-verification/microsched`. T1 technical acceptance 2026-10-15 covers only public-home attempt4: 6/6 UI +15/15 decoded images, zero blocked and completed owned cleanup. This map has **1/12 OBSERVED_ACCEPTED**, **11/12 NOT_RUN**; combined maps **2/24 (8.3%) OBSERVED_ACCEPTED**, **22/24 (91.7%) NOT_RUN**. Original failures remain in private H14-N1/R9 evidence. No latest-product/whole-app/device/provider-quality/CI/production acceptance. Evidence locator: final-grouped-retest-handback, the named case receipt/pixels, final-runtime-cleanup and R6 final-technical-signoff.
+Affected recipes bổ sung: [offline outbox](offline-outbox.md), [responsive shell](responsive-shell.md), [content density](content-density.md), [funding Entry](funding-entry.md).
 
 | Entrypoint / feature | Exact source navigation | Status |
 |---|---|---|
@@ -40,8 +20,3 @@ Broad source map for exact candidate `aa9d7251cdb506e968a6ffddfbae6767b6987327` 
 | [Mimi workspace and dock entrypoints](mimi-entry.md) | `frontend/src/App.tsx:137` | NOT_RUN |
 | [Session, error and logout shell](session.md) | `frontend/src/App.tsx:44` | NOT_RUN |
 | [PWA and visible data freshness](pwa-freshness.md) | `frontend/src/LiveStatus.tsx:43` | NOT_RUN |
-
-Enumeration boundary: observed top-level app routes/tabs/global controls and reachable Mimi workspace/dock entrypoints in the named source. This is a broad inventory, not exhaustive per-field/state QA. Later or hidden/provider-dependent behaviors remain described by prerequisite, not silently accepted. On source changes re-inventory entrypoints and affected recipes; do not treat this old snapshot as current production truth.
-
-## Current Task091 source phase
-[Offline outbox recipe](offline-outbox.md): approved Task/checklist+Entry only, direct parameterized1.62.1 driver/unique receipts and nine independent cases. Actual acceptance remains in current frozen handback; historical rows retain original limits.

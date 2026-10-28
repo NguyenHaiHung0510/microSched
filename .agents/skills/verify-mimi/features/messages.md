@@ -1,6 +1,6 @@
 # Messages, provenance and composer
 
-Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:1098`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:1098`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
@@ -10,7 +10,7 @@ Full Unicode draft/history, stream, terminal and provenance.
 
 Submit only frozen synthetic text through the real composer; inspect stream and reload.
 
-## Driving it with the current scoped harness
+## Historical driver binding (current grant required)
 
 Journey `J2`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-input` (observed in current source). Native no-egress SDK double or separate approved live permit; frozen language/policy/history. Core actions share native/live/device QA receipts, not a second matrix.
 

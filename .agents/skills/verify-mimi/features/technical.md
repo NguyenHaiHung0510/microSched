@@ -1,6 +1,6 @@
 # Technical detail dialog
 
-Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:1144`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:1144`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
@@ -10,7 +10,7 @@ Manifest/context/checkpoint/run/provider diagnostics and disclosed uncertainty.
 
 Open Chi tiết kỹ thuật for the current owned run and compare the corresponding receipt.
 
-## Driving it with the current scoped harness
+## Historical driver binding (current grant required)
 
 Journey `J2/J4`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-technical-dialog` (observed in current source). Sanitized actual app diagnostics, never keys/cookies/hidden reasoning/private prose. Core actions share native/live/device QA receipts, not a second matrix.
 

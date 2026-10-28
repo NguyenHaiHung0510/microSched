@@ -1,48 +1,20 @@
-# microSched — project reading map
+# Bản đồ tài liệu microSched
 
-Process authority: [harness-policy.md](harness-policy.md). Entry point: [AGENTS.md](../AGENTS.md). Read the relevant subset, not the whole linked collection.
+Đọc theo câu hỏi; source/config và migration là bằng chứng về implementation. Tài liệu không tự cấp quyền chạy command, truy cập dữ liệu hoặc triển khai.
 
-microSched is a single-user personal task/note/calendar/tracker web app and learning project for harness engineering + AI engineering. Public story and shipped/roadmap distinctions: [README.md](../README.md). Predecessor VC_QuanLyThoiGian is reference/rollback material, not an app to modify.
-
-## Sources by question
-
-| Question | Read |
+| Cần biết | Nguồn chuẩn |
 |---|---|
-| Queue/accepted scope | [task index](../agent-tasks/README.md), assigned NNN spec, fresh GitHub/runtime receipts |
-| Backlog/AI sequencing | [forward spec](forward-spec.md), [owner idea inbox](upgrade-notes-inbox.md) |
-| Architecture/hosting/modules/MCP timing | [architecture](architecture-brief.md) |
-| Schema/DB/privacy indexes | [concept schema](schema-v1-brief.md), [physical schema](schema-physical-brief.md), [DB decisions](db-and-data-model-brief.md) |
-| Trackers/subscriptions/health/money | [tracking](tracking-brief.md) |
-| Frontend/PWA/offline | [frontend](frontend-brief.md) |
-| UI/interaction/components/QA | [UI](ui-brief.md), [QA](qa-framework.md) |
-| Auth/private/AI R1–R7 | [authentication](auth-brief.md) |
-| Security/threat model/external input | [security baseline](security-brief.md), [authentication](auth-brief.md) |
-| Repo/CI/release/operations/costs | [DevOps](devops-brief.md), [costs](cost-brief.md) |
-| Predecessor data/domain behavior | [migration mapping](migration-mapping-brief.md), [v1 reference](v1-reference.md) |
-| Historical rationale/receipts | [session log](session-log.md), [learnings](learnings-applied.md); not current authority |
+| Sản phẩm hiện có, phạm vi v2.0 | [README](../README.vi.md), [CHANGELOG](../CHANGELOG.md) |
+| Module, API, frontend, offline flow | [Architecture](engineering/architecture.md) |
+| Entity, quan hệ, encryption, schema | [Data model](engineering/data-model.md), [reading gates](verification/reading-gates.md) |
+| Fresh clone, env, chạy local, lint/test/build | [Development](engineering/development.md) |
+| Deploy/release, readiness, backup/recovery, migration | [Operations runbook](operations/runbook.md) |
+| Auth/session/private R1–R7 và threat model | [Auth](auth-brief.md), [security baseline](security-brief.md) |
+| UI/interaction và artwork được dùng | [UI contract](ui-brief.md), [brand](brand-identity.md) |
+| Check layers, QA runners, cases, evidence | [Verification](verification/README.md), [UI QA](qa-framework.md), [agent QA](qa-agent-framework.md) |
+| Mimi hiện có và các contract còn hoạt động | [Mimi — PARTIAL](mimi/README.md) |
+| Quyền của actor, review, merge | [AGENTS](../AGENTS.md), [harness policy](harness-policy.md) |
 
-## Architecture invariants
+Outbox core đã được tích hợp qua [PR272](https://github.com/NguyenHaiHung0510/microSched/pull/272): 11 command Task/checklist/Entry. Các scope offline rộng hơn của bản nháp cũ không phải backlog tự động. Mimi Task/checklist đã được triển khai; trạng thái phát triển của cả module và các giới hạn QA được mô tả riêng.
 
-- One PostgreSQL + pgvector store on Neon; no parallel SQLite/Postgres truths. Python/FastAPI modular monolith, SQLModel/Alembic, UUIDv7, TEXT+CHECK enums; exact rules in schema/architecture briefs.
-- React/TypeScript/Vite static SPA/PWA; one production Python process serves API and frontend. Node build-time only. No speculative microservices/Redis/Celery or premature MCP server.
-- Established Fly topology is one continuously running machine in sin; re-query fly.toml/live system for exact current state. Old cost/model tables are not current evidence.
-- Markdown for prose, structured columns for queryable meaning. Store full values, truncate only for display; entities/timestamps stay in schema briefs.
-- Google OAuth allowlist, server-side opaque sessions and private PIN display gate; encryption master key stays app-held. Read auth R1–R7 before AI/private work; encrypted columns never enter pgvector/FTS.
-- AI sequences foundation → read-only retrieval → narrow writes with confirmation/audit → finance. Existing offline seams do not mean full outbox shipped. Consult current specs/code, not old counts.
-- No automatic Alembic on deploy. Migration has a separately approved lane and real schema evidence beyond alembic current.
-
-## Legacy-data boundaries
-
-Old app `C:/Users/os/Desktop/old_prj/VC_QuanLyThoiGian`, its main branch and SQLite `C:/Users/os/Desktop/Tools/VC_microSchedule_home/todo.db` stay read-only rollback references. Legacy migration source was local Postgres `microschedule_v2`; after cutover, old migration-era prose is neither current production truth nor permission to access data. Reconcile the assigned migration contract before touching stores. Host Postgres superuser serves other projects: never reuse it for this app; use limited roles.
-
-The parent strategy workspace is `../../hoc_he_2026` relative to repository root; consult only for broader learning/strategy work, not routine implementation. Old-store inventory scripts do not grant real-data access.
-
-## Knowledge hygiene
-
-Status belongs in task index/receipts, domain decisions in briefs, history in session logs. Do not copy everything into AGENTS/CLAUDE. Memory locates sources; verify drifting facts from current code/config/runtime. Locked meaning changes need Owner approval; dated observations should not coexist as contradictory current truths.
-
-Public contributors do not need private harness-core: mandatory project rules are available in this repository.
-
-## B verification and explanation navigation
-
-For ordinary inquiry/design/diagnosis/how/why/teach, use the Owner B workflow when available; project briefs and batch grants remain authoritative. [Project B verification](harness-b-verification.md) links actual source-mapped commands/selectors and isolated resource/runner contract. Source mapping is NOT_RUN until executed; no app paid-model or production proof is inferred.
+Task, nghiên cứu, session log và receipt cũ đã commit có thể tra bằng `git log --all -- <path>` rồi `git show <commit>:<path>`. Baseline trước lần sắp xếp này là `48dc397663b145dab35994326af007dd0e26dcc7`; tham chiếu lịch sử phải gắn revision, không dùng làm trạng thái hiện tại. QA hình ảnh/canonical transcript được Owner quản lý trong archive local riêng; xem provenance tại Verification. Repo không phân phối archive cá nhân, backup hay key.

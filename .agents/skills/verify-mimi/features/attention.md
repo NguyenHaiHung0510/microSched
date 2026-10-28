@@ -1,6 +1,6 @@
 # Mimi attention and device notifications
 
-Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiNotifications.tsx:33`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiNotifications.tsx:33`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
@@ -10,7 +10,7 @@ Owned locator, expiry, preference/opt-in, dedup/stale delivery.
 
 Open owned attention locator; read current preference; no automatic permission request.
 
-## Driving it with the current scoped harness
+## Historical driver binding (current grant required)
 
 Journey `EXISTING_DEVICE_GATE`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-attention` (observed in current source). Notification flag, exact synthetic locator and separate opt-in/physical device proof or Owner disposition. Core actions share native/live/device QA receipts, not a second matrix.
 

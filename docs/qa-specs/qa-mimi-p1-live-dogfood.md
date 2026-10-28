@@ -6,8 +6,8 @@
 >
 > Nguồn kiểm: [QA Agent framework](../qa-agent-framework.md),
 > [QA framework dùng chung](../qa-framework.md),
-> [Task 058](../../agent-tasks/058-mimi-dogfood-recovery.md) và
-> [Mimi P0 contracts](../mimi-p0-contracts.md).
+> [Task 058](https://github.com/NguyenHaiHung0510/microSched/blob/48dc397663b145dab35994326af007dd0e26dcc7/agent-tasks/058-mimi-dogfood-recovery.md) và
+> [Mimi P0 contracts](../mimi/evidence.md).
 
 ## 1. Outcome và authority boundary
 

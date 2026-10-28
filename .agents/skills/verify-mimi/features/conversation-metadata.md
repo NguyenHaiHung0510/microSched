@@ -1,6 +1,6 @@
 # Conversation creation and rename
 
-Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiControlCenter.tsx:208`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiControlCenter.tsx:208`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
@@ -10,7 +10,7 @@ STANDARD conversation create/title persistence; reopen after reload.
 
 Open Mimi workspace; create a namespaced conversation, rename, reload and reopen its actual ID.
 
-## Driving it with the current scoped harness
+## Historical driver binding (current grant required)
 
 Journey `J1`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-left-rail` (observed in current source). Synthetic session and permitted conversation POST/title PATCH; no provider needed. Core actions share native/live/device QA receipts, not a second matrix.
 

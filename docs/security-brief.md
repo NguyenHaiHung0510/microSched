@@ -1,6 +1,6 @@
 # Application security baseline — microSched and Mimi
 
-Owner-confirmed scope, 2026-10-15. This brief describes the current risk model; it does not change authentication, permissions or product behavior. Read [auth-brief.md](auth-brief.md) for established controls and [devops-brief.md](devops-brief.md) for delivery history. Use the current source and task grant for what is actually shipped.
+Owner-confirmed scope, 2026-10-15. This brief describes the current risk model; it does not change authentication, permissions or product behavior. Read [auth-brief.md](auth-brief.md) for established controls and [operations runbook](operations/runbook.md) for delivery responsibilities. Use the current source and task grant for what is actually shipped.
 
 ## Users and assets
 
