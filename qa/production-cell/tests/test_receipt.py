@@ -10,7 +10,7 @@ from receipt_validation import ReceiptValidationError, validate_receipt_object
 class ReceiptValidationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        schema_path = REPO_ROOT / "agent-tasks/025-qa-receipt.schema.json"
+        schema_path = REPO_ROOT / "qa/production-cell/contracts/qa-receipt.schema.json"
         cls.schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
     def test_green_pass_receipt(self) -> None:

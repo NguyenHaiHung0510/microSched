@@ -1,6 +1,6 @@
 # Tracker editors, records and heatmap — Task090 affected recipe
 
-Source: frontend/src/TrackerScreen.tsx, TrackerHeatmap.tsx, TrackerRecords.tsx, tracker-records.ts; backend/app/web/routers/tracker.py and app/domain/tracker.py in current granted Task090 freeze. Original H14 evidence remains in ../H14-ARCHIVE.md and its original private run, not current acceptance.
+Source: frontend/src/TrackerScreen.tsx, TrackerHeatmap.tsx, TrackerRecords.tsx, tracker-records.ts; backend/app/web/routers/tracker.py and app/domain/tracker.py in current granted Task090 freeze. Original H14 navigation is recoverable with `git show 48dc397663b145dab35994326af007dd0e26dcc7:.agents/skills/verify-microsched/H14-ARCHIVE.md`; private evidence uses the Owner/PM local archive locator in [Verification](../../../../docs/verification/README.md), not current acceptance.
 
 ## Sub-features
 

@@ -1,6 +1,6 @@
 # Task collection review and revision
 
-Source-mapped for Owner192 G2 current binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiCollectionReview.tsx:29`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiCollectionReview.tsx:29`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
 
 ## Sub-features
 
@@ -10,7 +10,7 @@ Selection coverage/counts, global review, revision and atomic confirmation.
 
 Inspect a genuine collection preview, global counts and exact affected fields before any decision.
 
-## Driving it with the current scoped harness
+## Historical driver binding (current grant required)
 
 Journey `J3`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-collection-review` (observed in current source). Native task reads/selection and protected fixture/evaluator; exact target permit for actual mutation. Core actions share native/live/device QA receipts, not a second matrix.
 
