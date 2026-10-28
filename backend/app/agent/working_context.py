@@ -165,6 +165,108 @@ def task_ids(pairs: list[list[dict[str, Any]]]) -> set[str]:
     return ids
 
 
+def deleted_read_authorized(tool, arguments, row):
+    """A deleted snapshot requires an actual explicit deleted read, not a later tombstone."""
+    lifecycle = (arguments.get("filter") or {}).get("lifecycle", "active")
+    explicit = (tool == "task.query.v1" and lifecycle in {"all", "deleted"}) or (
+        tool == "task.read_content.v1" and arguments.get("include_deleted") is True
+    )
+    observed_deleted = row.get("deleted_at") is not None or row.get("lifecycle") == "deleted"
+    return explicit and (observed_deleted or lifecycle == "deleted")
+
+
+def read_requirements(pairs, *, historical=True):
+    ids, active = set(), set()
+    for assistant, result_message in pairs:
+        call = assistant["tool_calls"][0]["function"]
+        arguments, result = json.loads(call["arguments"]), json.loads(result_message["content"])
+        if "error" in result:
+            continue  # Static refusal, not Task data/completeness evidence.
+        if call["name"] == "task.aggregate.v1":
+            if historical:
+                raise ValueError("working_history_unrecheckable_aggregate")
+            continue  # Immediate current-run aggregate remains an authorized read.
+        if historical and isinstance(result.get("selection"), dict):
+            # A selected subset does not prove the source closure of its free
+            # text. Keep the canonical encrypted audit, but do not replay this
+            # opaque historical segment into main/helper/checkpoint context.
+            raise ValueError("working_history_opaque_selection")
+        observed = set()
+        for row in result.get("rows", []):
+            if isinstance(row, dict) and row.get("id"):
+                identity = str(row["id"])
+                observed.add(identity)
+                if not deleted_read_authorized(call["name"], arguments, row):
+                    active.add(identity)
+        for member in (result.get("selection") or {}).get("members", []):
+            identity = str(member["id"])
+            observed.add(identity)
+            if member.get("deleted_read_authorized") is not True:
+                active.add(identity)
+        ids.update(observed)
+    return ids, active
+
+
+async def sources_current(db, ids, active=()):
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.domain.models import Task
+
+    if not ids:
+        return True
+    found = (
+        (
+            await db.execute(
+                select(Task.id).where(
+                    Task.id.in_([UUID(identity) for identity in ids]),
+                    Task.is_private.is_(False),
+                    Task.deleted_at.is_(None)
+                    | Task.id.not_in([UUID(identity) for identity in active]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {str(identity) for identity in found} == set(ids)
+
+
+async def preview_sources_current(db, operations, source_versions):
+    """Frozen raw fields are egress data, never grandfathered by Confirm CAS.
+
+    A restore whose frozen before-state was deleted is different from a stale
+    former-active snapshot. Pure create has no existing target to reauthorize.
+    """
+    ids, active, restoring = set(), set(), set()
+    for operation in operations:
+        args = operation.get("args", {})
+        if operation.get("tool") == "task.collection.v1":
+            for entry in args.get("entries", []):
+                if entry.get("before") is None and entry["command"]["action"] == "create":
+                    continue
+                identity = str(entry["id"])
+                ids.add(identity)
+                if (
+                    entry["command"]["action"] == "restore"
+                    and (entry.get("before") or {}).get("deleted_at") is not None
+                ):
+                    restoring.add(identity)
+                else:
+                    active.add(identity)
+        elif operation.get("tool") != "task.create.v1":
+            return False
+    for key in source_versions:
+        if not key.startswith("task:"):
+            return False
+        identity = key.removeprefix("task:")
+        ids.add(identity)
+        if identity not in restoring:
+            active.add(identity)
+    return await sources_current(db, ids, active)
+
+
 @dataclass
 class WorkingHistory:
     """Ephemeral projection shared by the main request and compaction builder."""
@@ -297,17 +399,22 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
             validate_body(body, user, assistant, max_bytes=settings.mimi_max_payload_bytes)
             if digest(body) != event.payload.get("sha256"):
                 raise ValueError("working_projection_hash_invalid")
-            ids = task_ids(body["pairs"]) | set((body["terminal"] or {}).get("task_ids", []))
+            read_ids, active_ids = read_requirements(body["pairs"])
+            ids = read_ids | set((body["terminal"] or {}).get("task_ids", []))
             if ids:
-                # Recheck only STANDARD/lifecycle eligibility, not current content,
-                # versions or query scope. Historical staleness is not a read grant.
+                # Receipt scalars remain historical truth after soft-delete.
+                # Raw read pairs still require active STANDARD sources. Both
+                # retain the current privacy gate, never restoring deleted content.
                 eligible = (
                     (
                         await db.execute(
                             select(Task.id).where(
                                 Task.id.in_([UUID(identity) for identity in ids]),
                                 Task.is_private.is_(False),
-                                Task.deleted_at.is_(None),
+                                (
+                                    Task.deleted_at.is_(None)
+                                    | Task.id.not_in([UUID(identity) for identity in active_ids])
+                                ),
                             )
                         )
                     )
@@ -487,6 +594,7 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
         )
         by_id = {str(event.id): event for event in events}
         task_refs = set()
+        read_refs = set()
         for ref in refs:
             event = by_id.get(ref["event_id"])
             if (
@@ -521,7 +629,9 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
                     db, conversation_id, event.run_id, body["terminal"]
                 ):
                     return False
-                task_refs.update(task_ids(body["pairs"]))
+                read_ids, active_ids = read_requirements(body["pairs"])
+                read_refs.update(active_ids)
+                task_refs.update(read_ids)
                 task_refs.update((body["terminal"] or {}).get("task_ids", []))
         if task_refs:
             eligible = (
@@ -530,7 +640,10 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
                         select(Task.id).where(
                             Task.id.in_([UUID(identity) for identity in task_refs]),
                             Task.is_private.is_(False),
-                            Task.deleted_at.is_(None),
+                            (
+                                Task.deleted_at.is_(None)
+                                | Task.id.not_in([UUID(identity) for identity in read_refs])
+                            ),
                         )
                     )
                 )
@@ -543,6 +656,106 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
         return False
 
 
+async def preview_lifecycle_context(db, conversation_id, *, dek, settings):
+    """Bounded scalar state only; no frozen payload, nonce, lease or recovery data."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.agent.models import (
+        MimiChangeSet,
+        MimiEvent,
+        MimiExecutionReceipt,
+        MimiMessage,
+        MimiRun,
+    )
+
+    superseded = (
+        select(MimiEvent.id)
+        .where(
+            MimiEvent.run_id == MimiChangeSet.run_id,
+            MimiEvent.kind == "change_set.superseded",
+        )
+        .exists()
+    )
+    rows = (
+        await db.execute(
+            select(
+                MimiChangeSet.id,
+                MimiChangeSet.run_id,
+                MimiChangeSet.state,
+                MimiChangeSet.digest_sha256,
+                MimiChangeSet.expires_at,
+                MimiExecutionReceipt.id.label("receipt_id"),
+                superseded.label("superseded"),
+            )
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .outerjoin(MimiExecutionReceipt, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
+            .where(MimiRun.conversation_id == conversation_id)
+            .order_by(MimiChangeSet.created_at.desc(), MimiChangeSet.id.desc())
+            .limit(21)
+        )
+    ).all()
+    # Rehydrate only validated scalar receipt events independently of the prose
+    # checkpoint frontier. A checkpoint containing a now-ineligible raw read may
+    # be withheld in full; that must not erase otherwise eligible receipt facts.
+    receipt_runs = [row.run_id for row in rows[:20] if row.receipt_id]
+    history = WorkingHistory()
+    if receipt_runs:
+        assistants = (
+            await db.scalars(
+                select(MimiMessage)
+                .where(
+                    MimiMessage.conversation_id == conversation_id,
+                    MimiMessage.run_id.in_(receipt_runs),
+                    MimiMessage.role == "assistant",
+                )
+                .order_by(MimiMessage.sequence)
+                .limit(1001)
+            )
+        ).all()
+        if len(assistants) <= 1000:
+            history = await load_history(
+                db, SimpleNamespace(id=conversation_id), dek, assistants, settings
+            )
+        else:
+            history.gaps.add("working_event_window_exceeded")
+    now = datetime.now(UTC)
+    return {
+        "classification": "historical_state_not_current_read_or_write_authority",
+        "coverage": "partial" if len(rows) > 20 else "complete",
+        "order": "newest_first",
+        "data_as_of": now.isoformat(),
+        "historical_outcomes": [history.outcomes[key] for key in sorted(history.outcomes)],
+        "receipt_history_coverage": "complete"
+        if not history.gaps and len(history.outcomes) == len(receipt_runs) and len(rows) <= 20
+        else "partial",
+        "previews": [
+            {
+                "id": str(row.id),
+                "run_id": str(row.run_id),
+                "digest": row.digest_sha256,
+                "state": row.state,
+                "effective_state": "expired"
+                if row.state == "pending" and row.expires_at <= now
+                else row.state,
+                "expiry": row.expires_at.isoformat(),
+                "receipt_id": str(row.receipt_id) if row.receipt_id else None,
+                "reason": "superseded_by_validated_preview"
+                if row.superseded
+                else "rejected"
+                if row.state == "rejected"
+                else "unknown"
+                if row.state == "stale"
+                else None,
+                "successor_id": None,  # No canonical successor link; never infer one.
+            }
+            for row in rows[:20]
+        ],
+    }
+
+
 def checkpoint_for_egress(checkpoint, allowed):
     if checkpoint is None or allowed:
         return checkpoint
@@ -552,6 +765,10 @@ def checkpoint_for_egress(checkpoint, allowed):
             "Historical working summary withheld: source eligibility or receipt changed. "
             "Available suffix only."
         ),
+        "constraint_ledger": [],
+        "decisions": [],
+        "unresolved": [],
+        "working_sources": [],
     }
 
 

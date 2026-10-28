@@ -1,4 +1,6 @@
 .mimi-workspace-shell { min-width: 0; }
+.mimi-quick-access { position: fixed; z-index: 30; right: max(1rem, env(safe-area-inset-right)); bottom: calc(5rem + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) { .mimi-quick-access { bottom: max(1.5rem, env(safe-area-inset-bottom)); right: max(1.5rem, env(safe-area-inset-right)); } }
 .mimi-workspace-toolbar { min-height: 40px; margin-bottom: 8px; }
 .mimi-workspace-toolbar > div > button { min-height: 32px; }
 .mimi-workspace { display: grid; grid-template-columns: var(--mimi-left) 8px minmax(0, 1fr) 8px var(--mimi-right); width: 100%; min-width: 0; height: max(28rem, calc(100dvh - 13rem)); }
@@ -89,6 +91,9 @@
 .mimi-compact-context li { padding: 8px; font-size: 12px; }
 .mimi-attention { border: 1px solid var(--mimi-decor-border); background: var(--mimi-glass); margin-bottom: 10px; }
 .mimi-side-chat { position: relative; isolation: isolate; background: var(--n-25); border: 1px solid var(--mimi-decor-border); box-shadow: var(--sh-3); }
+/* The dock's unlayered position rule otherwise overrides Dialog's fixed utility,
+   putting a full-height modal below the page and stranding its composer. */
+.mimi-side-chat[data-slot=dialog-content] { position: fixed; inset: 0; }
 .mimi-dock-header { border-bottom: 1px solid var(--mimi-decor-border); background: var(--mimi-glass); border-radius: 16px 16px 0 0; }
 .mimi-chat-dock .mimi-welcome-avatar { width: 140px; height: 140px; }
 .mimi-chat-dock .mimi-dock-linebreak { display: block; }

@@ -1,5 +1,6 @@
 import { ApiError, apiRequest } from '@/api'
 import { publishMimiTaskCommit } from '@/calendar-task-events'
+import type { MimiDecisionTarget } from './mimi-recovery'
 
 export type MimiMessageProvenance = {
   origin: 'model_answer' | 'server_notice' | 'unknown'
@@ -445,8 +446,10 @@ export function fetchMimiCheckpoint(conversationId: string): Promise<MimiCheckpo
   return apiRequest(`/api/mimi/conversations/${conversationId}/context`)
 }
 
-export function fetchMimiConversation(conversationId: string): Promise<MimiConversation> {
-  return apiRequest(`/api/mimi/conversations/${conversationId}`)
+export async function fetchMimiConversation(conversationId: string): Promise<MimiConversation> {
+  const snapshot = await apiRequest<MimiConversation>(`/api/mimi/conversations/${conversationId}`)
+  if (snapshot?.id !== conversationId) throw new Error('Mimi conversation snapshot binding mismatch')
+  return snapshot
 }
 
 export function fetchMimiConversations(state: 'active' | 'archived' | 'all' = 'active', cursor?: string | null): Promise<MimiConversationPage> {
@@ -665,6 +668,11 @@ export async function resumeMimiRun(
   }, onEvent)
 }
 
+export function validateMimiReceipt(change: MimiDecisionTarget, saved: MimiReceipt): void {
+  if (!change.operation?.operation_id || !saved.id || !saved.executed_at || saved.change_set_id !== change.id
+    || saved.digest !== change.digest || saved.operation_id !== change.operation.operation_id) throw new Error('Mimi decision acknowledgment does not match the frozen preview')
+}
+
 export async function decideMimiChangeSet(
   changeSet: MimiChangeSet,
   decision: 'confirm' | 'reject',
@@ -679,6 +687,12 @@ export async function decideMimiChangeSet(
       decision,
     }),
   })
+  if (saved.change_set_id !== changeSet.id
+    || (decision === 'confirm' && !('executed_at' in saved))
+    || (decision === 'reject' && (!('state' in saved) || saved.state !== 'rejected'))) {
+    throw new Error('Mimi decision acknowledgment does not match the frozen preview')
+  }
+  if ('executed_at' in saved) validateMimiReceipt(changeSet, saved)
   if (decision === 'confirm' && 'executed_at' in saved) publishMimiTaskCommit(changeSet, saved)
   return saved
 }
@@ -740,10 +754,11 @@ export type MimiSelection = {
 export function fetchMimiSelection(conversationId: string, selectionId: string): Promise<MimiSelection> {
   return apiRequest(`/api/mimi/conversations/${conversationId}/selections/${selectionId}`)
 }
-export async function recoverMimiReceipt(conversationId: string, change: MimiChangeSet, key: string): Promise<MimiReceipt> {
+export async function recoverMimiReceipt(conversationId: string, change: MimiDecisionTarget, key: string): Promise<MimiReceipt> {
   const params = new URLSearchParams({ digest: change.digest, nonce: change.nonce })
   const receipt = await apiRequest<MimiReceipt>(`/api/mimi/conversations/${conversationId}/change-sets/${change.id}/receipt?${params}`, { headers: { 'Idempotency-Key': key } })
-  publishMimiTaskCommit(change, receipt)
+  validateMimiReceipt(change, receipt)
+  if (change.operation?.tool) publishMimiTaskCommit({ ...change, operation: { operation_id: change.operation.operation_id, tool: change.operation.tool } }, receipt)
   return receipt
 }
 export function prepareMimiUndo(receiptId: string): Promise<MimiConversation> {

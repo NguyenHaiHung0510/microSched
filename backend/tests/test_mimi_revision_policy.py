@@ -43,6 +43,7 @@ def test_v3_greeting_default_locale_and_workflow_are_explicit_policy_contracts()
         "## Workflow and confirmation",
         "## Evidence gaps and limits",
         "## Collection capability and coverage",
+        "## Complete creates, civil dates and historical state",
     ]
     flat = " ".join(text.split())
     assert "A greeting or data in another language does not change" in flat

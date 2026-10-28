@@ -12,7 +12,7 @@ it('reload recovers exactly the original binding and key, never conversation pro
   expect([...store.values()].join('')).not.toContain('SYNTHETIC_PROSE_MUST_NOT_STORE')
   expect(readMimiIntent('owner-conv', [change])?.key).toBe('original-key')
   expect(readMimiIntent('other-conv', [change])).toBeNull()
-  expect(readMimiIntent('owner-conv', [{ ...change, digest: 'superseded' }])).toBeNull()
+  expect(readMimiIntent('owner-conv', [{ ...change, digest: 'superseded' }])?.changeSet).toEqual({id:'c',digest:'digest-a',nonce:'n'})
   clearMimiIntent('owner-conv'); expect(readMimiIntent('owner-conv', [change])).toBeNull()
 })
 

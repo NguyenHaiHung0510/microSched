@@ -29,9 +29,11 @@ from app.agent.loop import (
     ReadProgress,
     StageSink,
     candidate_correction_feedback,
+    candidate_repair_repeated,
     duplicate_read_feedback,
     finalization_messages,
     messages_final_only,
+    restored_candidate_final_reason,
     validate_fanout,
 )
 from app.agent.openrouter import (
@@ -237,6 +239,8 @@ async def run_langgraph(
             except CandidateContractError as error:
                 if not error.correction_ready or messages_final_only(frame["messages"]):
                     raise
+                if candidate_repair_repeated(frame["messages"], error):
+                    frame["final_reason"] = "candidate_no_progress"
                 frame["messages"].append(candidate_correction_feedback(error))
                 return {"phase": "model", "turn": turn, "step": state["step"] + 1}
             except TimeoutError as error:
@@ -475,6 +479,7 @@ async def run_langgraph(
         ):
             raise RouteContractError("mimi_langgraph_restore_frame_invalid")
         frame["messages"] = list(restored.messages)
+        frame["final_reason"] = restored_candidate_final_reason(restored.messages)
         frame["progress"] = ReadProgress(restored.messages)
         frame["seen_calls"] = set(restored.seen_calls)
         frame["last_completion"] = restored.last_completion
