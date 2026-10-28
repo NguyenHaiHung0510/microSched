@@ -63,7 +63,7 @@ function todayLabel(): string {
   }).format(new Date())
 }
 
-function SignedIn({ session }: { session: SessionResponse }) {
+function SignedIn({ session, onLogoutFailure }: { session: SessionResponse; onLogoutFailure: () => void }) {
   const outboxState = useOutbox()
   // 011c §5.1: exactly one deep-linked screen besides the tab block; every tab
   // keeps the URL "/" and activeScreen stays a useState (tabs do NOT own URLs).
@@ -125,6 +125,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
     // symmetric - and it makes the server the single source of truth instead of
     // resting on how the query cache reacts to being invalidated or removed.
     onSuccess: () => { selectMimiConversation(null); window.location.assign('/') },
+    onError: onLogoutFailure,
   })
 
   return (
@@ -169,6 +170,7 @@ function SignedIn({ session }: { session: SessionResponse }) {
 
 function App() {
   const outboxState = useOutbox()
+  const [logoutUnconfirmed, setLogoutUnconfirmed] = useState(false)
   const location = useLocation()
   const session = useQuery({
     queryKey: ['session'],
@@ -190,7 +192,7 @@ function App() {
   // Public content does not mount protected screens. Explicit /home also stays
   // readable during a session/network check and when the Owner is signed in.
   if (isHomepage(location) || loggedOut) {
-    return <HomePage auth={publicAuth} location={location} onRetry={() => void session.refetch()} />
+    return <>{logoutUnconfirmed ? <p role="alert" className="bg-warn-bg p-3 text-sm">Đã khóa nội dung cục bộ. Máy chủ chưa xác nhận đăng xuất; phiên đăng nhập có thể vẫn còn. Bạn có thể đăng nhập hoặc tải lại để kiểm tra.</p> : null}<HomePage auth={publicAuth} location={location} onRetry={() => void session.refetch()} /></>
   }
 
   return (
@@ -236,7 +238,8 @@ function App() {
           ) : null}
 
           {/* Guard on loggedOut too: stale data must never show beside the login screen. */}
-          {session.data && !loggedOut && !session.isError ? <SignedIn session={session.data} /> : null}
+          {logoutUnconfirmed ? <p role="alert" className="mb-3 rounded-lg bg-warn-bg p-3 text-sm">Lần đăng xuất trước chưa được máy chủ xác nhận. Phiên vừa đọc lại từ server là trạng thái hiện tại.</p> : null}
+          {session.data && !loggedOut && !session.isError ? <SignedIn key={outboxState.context.principal} session={session.data} onLogoutFailure={() => setLogoutUnconfirmed(true)} /> : null}
         </div>
         <Toaster />
       </main>

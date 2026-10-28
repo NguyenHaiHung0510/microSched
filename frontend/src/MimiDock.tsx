@@ -12,6 +12,7 @@ import { selectCreatedMimiConversation, useMimiSelection } from '@/mimi-selectio
 import { useMimiConversationList } from '@/mimi-conversation-list'
 import { mimiRunLabel } from '@/mimi-presentation'
 import { focusMimiSurface } from '@/mimi-quick-access'
+import { isMimiSessionCurrent, mimiSessionEpoch } from './mimi-session-boundary'
 import './mimi.css'
 function useDesktopDock() {
   const [desktop, setDesktop] = useState(() => window.matchMedia('(min-width: 1280px)').matches)
@@ -24,6 +25,7 @@ export function MimiDockButton({ open, onToggle }: { open: boolean; onToggle: ()
 export function MimiDock({ open, onOpenChange, onCloseFocus, onOpenTasks, onOpenWorkspace, onOpenConfiguration, width, onWidthChange }: { open: boolean; onOpenChange: (open: boolean) => void; onCloseFocus?: () => void; onOpenTasks: () => void; onOpenWorkspace: () => void; onOpenConfiguration: () => void; width: number; onWidthChange: (width: number) => void }) {
   const desktop = useDesktopDock()
   const client = useQueryClient()
+  const [sessionEpoch] = useState(() => mimiSessionEpoch(client))
   const [selectedId, setSelectedId] = useMimiSelection()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [technicalOpen, setTechnicalOpen] = useState(false)
@@ -41,7 +43,7 @@ export function MimiDock({ open, onOpenChange, onCloseFocus, onOpenTasks, onOpen
     onOpenChange(false)
     if (desktop) requestAnimationFrame(() => onCloseFocus?.())
   }
-  const create = useMutation({ mutationFn: createMimiConversation, onSuccess: (item) => { selectCreatedMimiConversation(client, item); void client.invalidateQueries({ queryKey: ['mimi'] }) } })
+  const create = useMutation({ mutationKey: ['mimi', 'surface'], mutationFn: createMimiConversation, onSuccess: (item) => { if (!isMimiSessionCurrent(client, sessionEpoch)) return; selectCreatedMimiConversation(client, item); void client.invalidateQueries({ queryKey: ['mimi'] }) } })
   const itemClass = 'flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-3 text-sm outline-none focus:bg-muted data-disabled:opacity-50'
   const menu = <DropdownMenu.Root><DropdownMenu.Trigger asChild><Button ref={menuTrigger} size="icon" variant="ghost" aria-label="Tùy chọn side-chat"><MoreVertical className="size-4" /></Button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content align="end" className="z-50 min-w-56 rounded-xl border bg-popover p-1 text-popover-foreground shadow-md"><DropdownMenu.Item className={itemClass} onSelect={onOpenWorkspace}><SquareArrowOutUpRight className="size-4" />Pop-out chat / Workspace</DropdownMenu.Item><DropdownMenu.Item className={itemClass} onSelect={() => setHistoryOpen(true)}><History className="size-4" />Lịch sử hội thoại</DropdownMenu.Item><DropdownMenu.Item className={itemClass} onSelect={() => { if (id) setSelectedId(id); onOpenConfiguration() }}><SlidersHorizontal className="size-4" />Cấu hình Mimi</DropdownMenu.Item><DropdownMenu.Separator className="my-1 border-t" /><DropdownMenu.Item className={itemClass} onSelect={() => setTechnicalOpen(true)}><Wrench className="size-4" />Chi tiết kỹ thuật</DropdownMenu.Item><DropdownMenu.Item disabled={create.isPending} className={itemClass} onSelect={() => create.mutate()}>{create.isPending ? <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" /> : <Plus className="size-4" />}Hội thoại mới</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
   const header = <div className="mimi-dock-header flex min-w-0 items-center justify-between gap-2 px-3 py-2"><div className="flex min-w-0 items-center gap-2"><MimiAvatar size="md" /><p className="truncate text-sm font-bold text-primary">Mimi</p></div><div className="flex shrink-0 items-center">{menu}<Button size="icon" variant="ghost" aria-label="Đóng side-chat" onClick={closeDock}><X className="size-4" /></Button></div></div>

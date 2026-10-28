@@ -25,7 +25,8 @@ async function setup(page: Page) {
   const feedback: Array<Record<string, string>> = []
   const sends: Array<Record<string, string>> = []
   const decisions: Array<Record<string, string>> = []
-  const state = { conversation, feedback, sends, decisions, failFeedback: false, failSnapshot: false, wrongDecisionAck: false, staleAfterDecision: false,
+  const decisionKeys: string[] = []
+  const state = { conversation, feedback, sends, decisions, decisionKeys, denyOldConversation: false, failFeedback: false, failSnapshot: false, failDecision: false, wrongDecisionAck: false, staleAfterDecision: false,
     feedbackGate: null as Promise<void> | null,
     streamResult: null as MimiConversation | null }
   await page.route('**/api/me', route => route.fulfill({ json: { email: 'synthetic@example.test',
@@ -43,9 +44,11 @@ async function setup(page: Page) {
     if (path.endsWith('/decision')) {
       const body = request.postDataJSON()
       decisions.push(body)
+      decisionKeys.push(request.headers()['idempotency-key'])
       const id = path.split('/').at(-2)!
       if (!state.staleAfterDecision) state.conversation = { ...state.conversation, change_sets: state.conversation.change_sets.map(item =>
         item.id === id ? { ...item, state: 'rejected' } : item) }
+      if (state.failDecision) return route.fulfill({ status: 503, json: { detail: 'synthetic_decision_unknown' } })
       return route.fulfill({ json: { change_set_id: state.wrongDecisionAck ? 'wrong-change' : id, state: 'rejected' } })
     }
     if (path.endsWith('/feedback') && request.method() === 'POST') {
@@ -56,13 +59,14 @@ async function setup(page: Page) {
       return route.fulfill({ json: { id: `feedback-${feedback.length}`, ...body, state: 'saved',
         unresolved: true, created_at: timestamp } })
     }
-    if (path.endsWith('/conversations/current') || path.endsWith(`/conversations/${conversationId}`)) {
+    if (path.endsWith('/conversations/current') || path.endsWith(`/conversations/${conversationId}`) || path.endsWith(`/conversations/${state.conversation.id}`)) {
+      if (state.denyOldConversation && path.endsWith(`/conversations/${conversationId}`)) return route.fulfill({ status: 404, json: {detail:'synthetic_not_owned'} })
       return state.failSnapshot
         ? route.fulfill({ status: 503, json: { detail: 'synthetic_snapshot_unavailable' } })
         : route.fulfill({ json: state.conversation })
     }
     if (path.endsWith('/conversations')) return route.fulfill({ json: { items: [{
-      id: conversationId, title: state.conversation.title, sensitivity: 'standard', generation: 1,
+      id: state.conversation.id, title: state.conversation.title, sensitivity: 'standard', generation: 1,
       metadata_version: 1, archived_at: null, updated_at: timestamp,
     }], next_cursor: null } })
     if (path.endsWith('/capabilities')) return route.fulfill({ json: {
@@ -410,4 +414,264 @@ test('small mobile/tablet/desktop shell keeps navigation clear and retains the s
     await page.getByRole('button', { name: 'Đóng side-chat', exact: true }).click()
     await expect(page.getByTestId('mimi-quick-access')).toBeInViewport()
   }
+})
+
+for (const mismatch of ['absent', 'digest', 'nonce'] as const) {
+  test(`FE-2 UNKNOWN remains after dock remount with ${mismatch} target snapshot`, async ({ page }) => {
+    const state = await setup(page)
+    const a = preview('a', 'A đang chờ')
+    state.conversation.change_sets = [a]
+    state.failDecision = true
+    state.staleAfterDecision = true
+    await page.goto('/')
+    await openDock(page)
+    await page.getByRole('button', { name: 'Từ chối', exact: true }).click()
+    await expect(page.getByTestId('mimi-unknown-recovery')).toBeVisible()
+    state.conversation = { ...state.conversation, change_sets: mismatch === 'absent' ? [] : [{ ...a, [mismatch]: 'different' }] }
+    await page.getByRole('button', { name: 'Đóng side-chat', exact: true }).click()
+    await openDock(page)
+    await expect(page.getByTestId('mimi-unknown-recovery')).toBeVisible()
+    await expect(page.getByTestId('mimi-input')).toBeDisabled()
+    await page.getByRole('button', { name: 'Đọc receipt gốc', exact: true }).click()
+    await expect(page.getByTestId('mimi-unknown-recovery')).toContainText('UNKNOWN')
+    expect(state.decisions).toHaveLength(1)
+    state.conversation = { ...state.conversation, change_sets: [{ ...a, state: 'rejected' }] }
+    await page.getByRole('button', { name: 'Đọc receipt gốc', exact: true }).click()
+    await expect(page.getByTestId('mimi-input')).toBeEnabled()
+    expect(state.decisions).toHaveLength(1)
+  })
+}
+
+test('FE-3 exact ACK fence survives stale read and dock remount', async ({ page }) => {
+  const state = await setup(page)
+  state.conversation.change_sets = [preview('a', 'A đã ACK')]
+  state.staleAfterDecision = true
+  await page.goto('/')
+  await openDock(page)
+  await page.getByRole('button', { name: 'Từ chối', exact: true }).click()
+  await expect(page.getByTestId('mimi-preview-refresh')).toBeVisible()
+  await page.getByRole('button', { name: 'Đóng side-chat', exact: true }).click()
+  await openDock(page)
+  await expect(page.getByRole('button', { name: 'Từ chối', exact: true })).toBeDisabled()
+  expect(state.decisions).toHaveLength(1)
+  state.conversation = { ...state.conversation, change_sets: [preview('b', 'B mới hợp lệ')] }
+  await page.getByRole('button', { name: 'Đóng side-chat', exact: true }).click()
+  await openDock(page)
+  await expect(page.getByTestId('mimi-change-set')).toContainText('B mới hợp lệ')
+  await expect(page.getByRole('button', { name: 'Từ chối', exact: true })).toBeEnabled()
+})
+
+test('FE-6 old feedback cannot acknowledge a new UNKNOWN submission on the same target', async ({ page }) => {
+  const state = await setup(page)
+  state.conversation.feedback = [{ id: 'old-feedback', client_id: 'old-key', target_id: finalId,
+    target_type: 'turn', state: 'saved', unresolved: true, created_at: timestamp }]
+  state.failFeedback = true
+  await page.goto('/')
+  await openDock(page)
+  await page.getByRole('button', { name: 'Chưa tốt · câu trả lời 1', exact: true }).click()
+  const dialog = page.getByTestId('mimi-feedback')
+  await dialog.locator('#mimi-feedback').fill('Lần gửi mới chưa có ACK')
+  await dialog.getByRole('button', { name: 'Lưu feedback', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: 'Thử lại feedback đã gửi', exact: true })).toBeEnabled()
+  await expect(dialog.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.')).toBeHidden()
+  await expect(dialog.getByText('Đã có feedback lưu cho mục này.')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', {name:'Đóng side-chat',exact:true}).click()
+  await openDock(page)
+  await page.getByRole('button', {name:'Chưa tốt · câu trả lời 1',exact:true}).click()
+  await expect(dialog.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.')).toBeHidden()
+  state.failFeedback = false
+  await dialog.getByRole('button', { name: 'Thử lại feedback đã gửi', exact: true }).click()
+  await expect(dialog.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.')).toBeVisible()
+  expect(state.feedback[1]).toEqual(state.feedback[0])
+})
+
+test('FE-1 natural composer keeps auto for ordinary chat, invalid B and validated collection replacement B', async ({ page }) => {
+  const state = await setup(page)
+  const a = preview('a', 'A đang giữ nguyên')
+  state.conversation.change_sets = [a]
+  await page.goto('/')
+  await openDock(page)
+  await page.getByTestId('mimi-input').fill('Mình muốn trò chuyện thêm, chưa đổi A')
+  await page.getByTestId('mimi-input').press('Enter')
+  await expect(page.getByTestId('mimi-input')).toHaveValue('')
+  await expect(page.getByTestId('mimi-change-set')).toContainText('A đang giữ nguyên')
+  await page.getByTestId('mimi-input').fill('Phương án sửa chưa hợp lệ')
+  await page.getByTestId('mimi-input').press('Enter')
+  await expect(page.getByTestId('mimi-input')).toHaveValue('')
+  await expect(page.getByTestId('mimi-change-set')).toContainText('A đang giữ nguyên')
+  const b = preview('b', 'B')
+  b.operation = { operation_id: 'op-b', tool: 'task.collection.v1', args: {
+    schema_version: 'mimi.task-collection.v1', selection_id: null, entries: [{ id: 'task-b', before: null,
+      after: { fields: { title: 'B đã materialize' }, children: [] }, reminder_effect: {}, command: { action: 'create',
+        expected_collection_version: null, fields: { title: 'B đã materialize' }, children: [], reminder: {} } }],
+  } }
+  state.streamResult = { ...state.conversation, change_sets: [{ ...a, state: 'stale' }, b] }
+  await page.getByTestId('mimi-input').fill('Đổi phương án A thành B')
+  await page.getByTestId('mimi-input').press('Enter')
+  await expect(page.getByTestId('mimi-change-set')).toContainText('1 Task')
+  expect(state.sends).toHaveLength(3)
+  for (const sent of state.sends) {
+    expect(sent.intent).toBe('auto')
+    expect(sent).not.toHaveProperty('expected_change_set_id')
+    expect(sent).not.toHaveProperty('expected_change_set_digest')
+  }
+  expect(state.decisions).toHaveLength(0)
+})
+
+for (const transition of ['auth-lost', 'failed-logout', 'principal-switch'] as const) {
+  test(`FE-4 ${transition} purges drafts/intent and a late ACK cannot restore the old session`, async ({ page }, info) => {
+    const state = await setup(page)
+    let principal = 'synthetic@example.test'
+    await page.route('**/api/me', route => route.fulfill({ json: { email: principal, expires_at: '2099-01-01T00:00:00Z',
+      private_until: null, private_locked_until: null, pin_is_set: true, pin_is_bootstrap: false, mimi_available: true } }))
+    let release = () => {}
+    state.feedbackGate = new Promise<void>(resolve => { release = resolve })
+    await page.goto('/')
+    await openDock(page)
+    await page.getByRole('button', { name: 'Chưa tốt · câu trả lời 1', exact: true }).click()
+    const dialog = page.getByTestId('mimi-feedback')
+    await dialog.locator('#mimi-feedback').fill('Synthetic feedback trước auth boundary')
+    await dialog.getByRole('button', { name: 'Lưu feedback', exact: true }).click()
+    await expect.poll(() => state.feedback.length).toBe(1)
+    await page.keyboard.press('Escape')
+    if (transition === 'failed-logout') {
+      await page.getByRole('button', { name: 'Đóng side-chat', exact: true }).click()
+      await page.route('**/auth/logout', route => route.fulfill({ status: 503, json: { detail: 'synthetic_logout_failure' } }))
+      await page.getByTestId('app-menu-open').click()
+      const logoutResult = page.waitForResponse(response => response.url().endsWith('/auth/logout'))
+      await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click()
+      await logoutResult
+      await expect(page.getByTestId('app-menu-open')).toBeHidden()
+      await expect(page.getByRole('alert')).toContainText('Máy chủ chưa xác nhận đăng xuất')
+    } else if (transition === 'auth-lost') {
+      await page.evaluate(() => window.dispatchEvent(new Event('microsched:auth-lost')))
+      await expect(page.getByTestId('app-menu-open')).toBeHidden()
+    } else {
+      principal = 'other-synthetic@example.test'
+      state.denyOldConversation = true
+      state.conversation = { ...state.conversation, id: 'other-synthetic-conversation', title: 'Session mới tổng hợp',
+        messages: [{ ...state.conversation.messages[0], id: 'other-answer', content: 'Câu trả lời session mới' }], feedback: [] }
+    }
+    // A visibility refresh reads the synthetic session; no product internals
+    // or persistent browser stores are inspected.
+    const sessionResult = page.waitForResponse(response => response.url().endsWith('/api/me'))
+    await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')))
+    await sessionResult
+    if (transition === 'principal-switch') await expect(page.getByTestId('mimi-side-chat')).toBeHidden()
+    await expect(page.getByTestId('app-menu-open')).toBeVisible()
+    if (!await page.getByTestId('mimi-side-chat').isVisible()) await openDock(page)
+    await page.getByRole('button', { name: 'Chưa tốt · câu trả lời 1', exact: true }).click()
+    await expect(dialog.locator('#mimi-feedback')).toHaveValue('')
+    await dialog.locator('#mimi-feedback').fill('Bản nháp session mới')
+    const settled = page.waitForResponse(response => response.url().endsWith('/feedback'))
+    release()
+    await settled
+    await expect(dialog.locator('#mimi-feedback')).toHaveValue('Bản nháp session mới')
+    await expect(dialog.getByText('Feedback đã được xác nhận và gắn với mục đã chọn.')).toBeHidden()
+    if (transition === 'principal-switch') await expect(page.getByText('Câu trả lời cuối tổng hợp.', {exact:true})).toBeHidden()
+    expect(state.feedback).toHaveLength(1)
+    await page.screenshot({ path: info.outputPath(`auth-${transition}.png`), scale: 'css' })
+  })
+}
+
+test('FE-5 reject recovery mismatched conversation stays UNKNOWN and exact terminal releases the original intent', async ({ page }) => {
+  const state = await setup(page)
+  const a = preview('a', 'A chờ đối soát')
+  state.conversation.change_sets = [a]
+  state.failDecision = true
+  state.staleAfterDecision = true
+  await page.goto('/')
+  await openDock(page)
+  await page.getByRole('button', { name: 'Từ chối', exact: true }).click()
+  await expect(page.getByTestId('mimi-unknown-recovery')).toBeVisible()
+  state.conversation = { ...state.conversation, id: 'wrong-conversation', change_sets: [{ ...a, state: 'rejected' }] }
+  await page.getByRole('button', { name: 'Đọc receipt gốc', exact: true }).click()
+  await expect(page.getByTestId('mimi-unknown-recovery')).toContainText('UNKNOWN')
+  await expect(page.getByTestId('mimi-input')).toBeDisabled()
+  state.conversation = { ...state.conversation, id: conversationId }
+  await page.getByRole('button', { name: 'Đọc receipt gốc', exact: true }).click()
+  await expect(page.getByTestId('mimi-input')).toBeEnabled()
+  expect(state.decisions).toHaveLength(1)
+})
+
+test('FE-4 STANDARD feedback draft survives a private PIN lock and ordinary dock remount', async ({ page }) => {
+  await setup(page)
+  await page.goto('/')
+  await openDock(page)
+  await page.getByRole('button', { name: 'Chưa tốt · câu trả lời 1', exact: true }).click()
+  await page.getByTestId('mimi-feedback').locator('#mimi-feedback').fill('STANDARD draft chỉ khóa PIN')
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Đóng side-chat', exact: true }).click()
+  await page.evaluate(() => window.dispatchEvent(new Event('microsched:private-lock')))
+  await openDock(page)
+  await page.getByRole('button', { name: 'Chưa tốt · câu trả lời 1', exact: true }).click()
+  await expect(page.getByTestId('mimi-feedback').locator('#mimi-feedback')).toHaveValue('STANDARD draft chỉ khóa PIN')
+})
+
+test('FE-2/4 same Owner reauth reconciles the original opaque decision key without snapshot payload or replay', async ({ page }, info) => {
+  const state = await setup(page)
+  const a = preview('a', 'A chưa đối soát')
+  state.conversation.change_sets = [a]
+  state.failDecision = true
+  state.staleAfterDecision = true
+  await page.goto('/')
+  await openDock(page)
+  await page.getByRole('button', { name: 'Xác nhận tạo Task', exact: true }).click()
+  await expect(page.getByTestId('mimi-unknown-recovery')).toBeVisible()
+  const key = state.decisionKeys[0]
+  state.conversation = { ...state.conversation, change_sets: [] }
+  await page.evaluate(() => window.dispatchEvent(new Event('microsched:auth-lost')))
+  await expect(page.getByTestId('app-menu-open')).toBeHidden()
+  const sessionResult = page.waitForResponse(response => response.url().endsWith('/api/me'))
+  await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')))
+  await sessionResult
+  await expect(page.getByTestId('app-menu-open')).toBeVisible()
+  await openDock(page)
+  await expect(page.getByTestId('mimi-unknown-recovery')).toBeVisible()
+  await expect(page.getByTestId('mimi-input')).toBeDisabled()
+  let reads = 0
+  await page.route('**/api/mimi/conversations/*/change-sets/a/receipt?*', route => {
+    const url = new URL(route.request().url())
+    expect(route.request().headers()['idempotency-key']).toBe(key)
+    expect(url.searchParams.get('digest')).toBe(a.digest)
+    expect(url.searchParams.get('nonce')).toBe(a.nonce)
+    reads++
+    return route.fulfill({ json: { id: 'recovered-receipt', change_set_id: a.id, digest: a.digest,
+      operation_id: a.operation.operation_id, task_id: 'task-a', executed_at: timestamp, result: {} } })
+  })
+  await page.getByRole('button', { name: 'Đọc receipt gốc', exact: true }).click()
+  await expect(page.getByTestId('mimi-unknown-recovery')).toContainText('Đã đối chiếu receipt đã lưu')
+  await expect(page.getByTestId('mimi-input')).toBeEnabled()
+  expect(reads).toBe(1)
+  expect(state.decisions).toHaveLength(1)
+  await page.screenshot({ path: info.outputPath('same-owner-recovery.png'), scale:'css' })
+})
+
+test('FE-5 confirm recovery mismatch retains UNKNOWN across remount then only exact receipt releases it', async ({ page }) => {
+  const state = await setup(page)
+  const a = preview('a', 'A receipt đối soát')
+  state.conversation.change_sets = [a]
+  state.failDecision = true
+  state.staleAfterDecision = true
+  await page.goto('/')
+  await openDock(page)
+  await page.getByRole('button', {name:'Xác nhận tạo Task',exact:true}).click()
+  await expect(page.getByTestId('mimi-unknown-recovery')).toBeVisible()
+  state.conversation = {...state.conversation, change_sets:[]}
+  await page.getByRole('button', {name:'Đóng side-chat',exact:true}).click()
+  await openDock(page)
+  let matching = false
+  await page.route('**/api/mimi/conversations/*/change-sets/a/receipt?*',route=>route.fulfill({json:{
+    id:'receipt-a',change_set_id:a.id,digest:matching?a.digest:'different',operation_id:a.operation.operation_id,
+    executed_at:timestamp,result:{},
+  }}))
+  await page.getByRole('button',{name:'Đọc receipt gốc',exact:true}).click()
+  await expect(page.getByTestId('mimi-unknown-recovery')).toContainText('UNKNOWN')
+  await expect(page.getByTestId('mimi-input')).toBeDisabled()
+  matching=true
+  await page.getByRole('button',{name:'Đọc receipt gốc',exact:true}).click()
+  await expect(page.getByTestId('mimi-unknown-recovery')).toContainText('Đã đối chiếu receipt đã lưu')
+  await expect(page.getByTestId('mimi-input')).toBeEnabled()
+  expect(state.decisions).toHaveLength(1)
 })
