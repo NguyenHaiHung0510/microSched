@@ -195,6 +195,7 @@ def test_two_create_undo_cycles_keep_four_receipts_through_reload_compaction_and
                     source_versions={},
                     deadline=datetime.now(UTC) + timedelta(minutes=5),
                 )
+                conv.generation += 1  # reserve the synthetic helper driver's generation
                 db.add(run)
                 await db.flush()
                 await observed_trigger(db, conv, run.id, settings)
