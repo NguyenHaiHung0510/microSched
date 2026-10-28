@@ -55,7 +55,12 @@ class CandidateContractError(RouteContractError):
     def __init__(self, code: str, tool_names: tuple[str, ...], *, issues=()):
         super().__init__(code)
         self.tool_names = tool_names
-        self.issues = tuple(issues)
+        # Feedback is bounded; progress still sees all allowlisted issue metadata,
+        # so a repair beyond the displayed prefix is not mistaken for stagnation.
+        self.issue_signature = hashlib.sha256(
+            json.dumps(issues, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        self.issues = tuple(issues[:32])
         # Only the service can enable feedback after durable accounting.
         self.correction_ready = False
 
@@ -536,7 +541,7 @@ def build_request(
     return request
 
 
-def _candidate_issues(error: ValidationError) -> tuple[dict[str, str], ...] | None:
+def _candidate_issues(error: ValidationError) -> tuple[dict[str, Any], ...] | None:
     """Allowlisted shape/value diagnostics, never validator input, ctx or unknown keys.
 
     Nested Task DTO validation runs inside TaskCommand's after-validator; its
@@ -584,6 +589,8 @@ def _candidate_issues(error: ValidationError) -> tuple[dict[str, str], ...] | No
         "datetime_parsing",
         "datetime_type",
         "task_schedule_invalid",
+        "task_due_triad_must_be_complete",
+        "task_pinned_requires_boolean",
     }
     issues = []
     for issue in error.errors(include_input=False, include_url=False):
@@ -602,6 +609,17 @@ def _candidate_issues(error: ValidationError) -> tuple[dict[str, str], ...] | No
                 return None
         elif code not in allowed_types:
             return None
+        missing = None
+        if code == "task_due_triad_must_be_complete":
+            parts.append("fields")
+            supplied = issue.get("ctx", {}).get("missing_fields")
+            if not isinstance(supplied, list) or any(
+                value not in {"due_precision", "due_on", "due_at"} for value in supplied
+            ):
+                return None
+            missing = sorted(supplied)
+        if code == "task_pinned_requires_boolean":
+            parts.extend(("fields", "pinned"))
         if code == "task_schedule_invalid" and len(parts) == 2 and parts[0] == "entries":
             parts.append("fields")
         if len(parts) >= 3 and parts[0] == "entries" and type(parts[1]) is int:
@@ -632,10 +650,13 @@ def _candidate_issues(error: ValidationError) -> tuple[dict[str, str], ...] | No
             "due_on": "valid civil YYYY-MM-DD with due_precision=date and due_at=null",
             "due_at": "timezone-aware datetime with due_precision=datetime and due_on=null",
             "fields": "complete due_precision/due_on/due_at triad when scheduling",
+            "pinned": "strict boolean true or false; omit to preserve, never null/string/number",
         }.get(parts[-1] if parts else "", "the leased field type/shape; no invented source facts")
         issues.append({"path": path or "entries", "code": code, "expected": expected})
-    # A bounded prefix is enough for one corrective turn; never echo the payload.
-    return tuple(issues[:32])
+        if missing is not None:
+            issues[-1]["missing_fields"] = missing
+    # CandidateContractError bounds wire diagnostics separately from progress.
+    return tuple(issues)
 
 
 def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:

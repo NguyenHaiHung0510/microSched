@@ -165,6 +165,103 @@ def task_ids(pairs: list[list[dict[str, Any]]]) -> set[str]:
     return ids
 
 
+def deleted_read_authorized(tool, arguments, row):
+    """A deleted snapshot requires an actual explicit deleted read, not a later tombstone."""
+    lifecycle = (arguments.get("filter") or {}).get("lifecycle", "active")
+    explicit = (tool == "task.query.v1" and lifecycle in {"all", "deleted"}) or (
+        tool == "task.read_content.v1" and arguments.get("include_deleted") is True
+    )
+    observed_deleted = row.get("deleted_at") is not None or row.get("lifecycle") == "deleted"
+    return explicit and (observed_deleted or lifecycle == "deleted")
+
+
+def read_requirements(pairs, *, historical=True):
+    ids, active = set(), set()
+    for assistant, result_message in pairs:
+        call = assistant["tool_calls"][0]["function"]
+        arguments, result = json.loads(call["arguments"]), json.loads(result_message["content"])
+        if "error" in result:
+            continue  # Static refusal, not Task data/completeness evidence.
+        if call["name"] == "task.aggregate.v1":
+            if historical:
+                raise ValueError("working_history_unrecheckable_aggregate")
+            continue  # Immediate current-run aggregate remains an authorized read.
+        observed = set()
+        for row in result.get("rows", []):
+            if isinstance(row, dict) and row.get("id"):
+                identity = str(row["id"])
+                observed.add(identity)
+                if not deleted_read_authorized(call["name"], arguments, row):
+                    active.add(identity)
+        for member in (result.get("selection") or {}).get("members", []):
+            identity = str(member["id"])
+            observed.add(identity)
+            if member.get("deleted_read_authorized") is not True:
+                active.add(identity)
+        ids.update(observed)
+    return ids, active
+
+
+async def sources_current(db, ids, active=()):
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.domain.models import Task
+
+    if not ids:
+        return True
+    found = (
+        (
+            await db.execute(
+                select(Task.id).where(
+                    Task.id.in_([UUID(identity) for identity in ids]),
+                    Task.is_private.is_(False),
+                    Task.deleted_at.is_(None)
+                    | Task.id.not_in([UUID(identity) for identity in active]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {str(identity) for identity in found} == set(ids)
+
+
+async def preview_sources_current(db, operations, source_versions):
+    """Frozen raw fields are egress data, never grandfathered by Confirm CAS.
+
+    A restore whose frozen before-state was deleted is different from a stale
+    former-active snapshot. Pure create has no existing target to reauthorize.
+    """
+    ids, active, restoring = set(), set(), set()
+    for operation in operations:
+        args = operation.get("args", {})
+        if operation.get("tool") == "task.collection.v1":
+            for entry in args.get("entries", []):
+                if entry.get("before") is None and entry["command"]["action"] == "create":
+                    continue
+                identity = str(entry["id"])
+                ids.add(identity)
+                if (
+                    entry["command"]["action"] == "restore"
+                    and (entry.get("before") or {}).get("deleted_at") is not None
+                ):
+                    restoring.add(identity)
+                else:
+                    active.add(identity)
+        elif operation.get("tool") != "task.create.v1":
+            return False
+    for key in source_versions:
+        if not key.startswith("task:"):
+            return False
+        identity = key.removeprefix("task:")
+        ids.add(identity)
+        if identity not in restoring:
+            active.add(identity)
+    return await sources_current(db, ids, active)
+
+
 @dataclass
 class WorkingHistory:
     """Ephemeral projection shared by the main request and compaction builder."""
@@ -297,7 +394,7 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
             validate_body(body, user, assistant, max_bytes=settings.mimi_max_payload_bytes)
             if digest(body) != event.payload.get("sha256"):
                 raise ValueError("working_projection_hash_invalid")
-            read_ids = task_ids(body["pairs"])
+            read_ids, active_ids = read_requirements(body["pairs"])
             ids = read_ids | set((body["terminal"] or {}).get("task_ids", []))
             if ids:
                 # Receipt scalars remain historical truth after soft-delete.
@@ -311,7 +408,7 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
                                 Task.is_private.is_(False),
                                 (
                                     Task.deleted_at.is_(None)
-                                    | Task.id.not_in([UUID(identity) for identity in read_ids])
+                                    | Task.id.not_in([UUID(identity) for identity in active_ids])
                                 ),
                             )
                         )
@@ -527,8 +624,9 @@ async def working_refs_current(db, conversation_id, refs, dek=None, settings=Non
                     db, conversation_id, event.run_id, body["terminal"]
                 ):
                     return False
-                read_refs.update(task_ids(body["pairs"]))
-                task_refs.update(task_ids(body["pairs"]))
+                read_ids, active_ids = read_requirements(body["pairs"])
+                read_refs.update(active_ids)
+                task_refs.update(read_ids)
                 task_refs.update((body["terminal"] or {}).get("task_ids", []))
         if task_refs:
             eligible = (
@@ -662,6 +760,10 @@ def checkpoint_for_egress(checkpoint, allowed):
             "Historical working summary withheld: source eligibility or receipt changed. "
             "Available suffix only."
         ),
+        "constraint_ledger": [],
+        "decisions": [],
+        "unresolved": [],
+        "working_sources": [],
     }
 
 

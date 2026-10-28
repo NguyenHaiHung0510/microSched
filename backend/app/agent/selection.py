@@ -146,6 +146,11 @@ def bind_selection(candidate: SelectionCandidate, receipts: list[dict]) -> dict[
                 "data_as_of": result.get("data_as_of"),
                 "receipt_event_id": receipt["event_id"],
             }
+            from app.agent.working_context import deleted_read_authorized
+
+            observed[row["id"]]["deleted_read_authorized"] = deleted_read_authorized(
+                receipt["tool"], receipt.get("arguments", {}), row
+            )
         if receipt["tool"] == "task.query.v1":
             args = receipt["arguments"]
             key = digest({k: v for k, v in args.items() if k != "cursor"})
@@ -392,3 +397,23 @@ async def latest_selection(db, conversation_id, dek):
     if digest(body) != event.payload["sha256"]:
         raise HTTPException(409, "selection_hash_invalid")
     return {"event_id": str(event.id), "run_id": str(event.run_id), "snapshot": body}
+
+
+async def selection_for_egress(db, selection):
+    from app.agent.working_context import sources_current
+
+    if selection is None:
+        return None
+    members = selection["snapshot"]["members"]
+    ids = {str(member["id"]) for member in members}
+    active = {
+        str(member["id"]) for member in members if member.get("deleted_read_authorized") is not True
+    }
+    if await sources_current(db, ids, active):
+        return selection
+    return {
+        "event_id": selection["event_id"],
+        "run_id": selection["run_id"],
+        "coverage": "unavailable",
+        "reason": "historical_selection_source_ineligible",
+    }

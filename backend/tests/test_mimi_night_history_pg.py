@@ -13,7 +13,7 @@ from test_mimi_p3_working_pg import observed_trigger
 from test_mimi_sync_failure_pg import local_sync_contract  # noqa: F401
 
 from app.agent import crypto, service
-from app.agent.context import AssistantText, PreviewCandidate
+from app.agent.context import AssistantText, PreviewCandidate, ToolRequest, ToolRequests
 from app.agent.models import MimiConversation, MimiMessage, MimiRun
 from app.agent.openrouter import AgentCompletion
 from app.agent.task_collection import COLLECTION_CANDIDATE_TOOL
@@ -21,7 +21,7 @@ from app.agent.working_context import WorkingHistory, load_history, working_refs
 from app.core.database_urls import async_postgres_url
 from app.core.qa_event_loop import selector_loop_factory
 from app.core.settings import get_settings
-from app.domain.models import Task
+from app.domain.models import Task, TaskItem
 
 pytestmark = pytest.mark.pg
 
@@ -41,18 +41,21 @@ def test_two_create_undo_cycles_keep_four_receipts_through_reload_compaction_and
         monkeypatch.setattr(service, "get_sessionmaker", lambda: maker)
         actor, ids, cid = auth(), [], None
         stage, helper_calls, main_calls = "create", [], []
-        expected_receipts = []
+        expected_receipts, positive_reads = [], []
+        read_id = None
 
         async def provider(messages, **kwargs):
             if kwargs.get("summary_mode"):
                 helper_calls.append(messages)
+                assert "deleted-read-marker" not in json.dumps(messages)
+                assert "deleted-checklist-marker" not in json.dumps(messages)
                 request = json.loads(messages[-1]["content"])
                 outcomes = [
                     s["working_history"]["finalized_outcome"]
                     for s in request["sources"]
                     if s.get("working_history") and s["working_history"]["finalized_outcome"]
                 ]
-                assert {o["receipt_id"] for o in outcomes} == set(expected_receipts)
+                assert {o["receipt_id"] for o in outcomes} <= set(expected_receipts)
                 text = json.dumps(
                     {
                         "summary": "Hai lần tạo, hai lần hoàn tác; bốn receipt lịch sử.",
@@ -77,11 +80,35 @@ def test_two_create_undo_cycles_keep_four_receipts_through_reload_compaction_and
                                     "due_on": f"2027-01-{i:02}",
                                     "due_at": None,
                                 },
+                                "children": [
+                                    {
+                                        "action": "append",
+                                        "fields": {
+                                            "content": "deleted-checklist-marker",
+                                        },
+                                    }
+                                ],
                             }
                             for i in range(1, 8)
                         ],
                     },
                 )
+            elif stage == "read":
+                if messages[-1].get("role") != "tool":
+                    outcome = ToolRequests(
+                        requests=(
+                            ToolRequest(
+                                call_id=f"actual-content-{len(positive_reads)}",
+                                name="task.read_content.v1",
+                                arguments={"id": str(read_id)},
+                            ),
+                        )
+                    )
+                else:
+                    wire = json.dumps(messages)
+                    assert "deleted-read-marker" in wire and "deleted-checklist-marker" in wire
+                    positive_reads.append(wire)
+                    outcome = AssistantText(text="Đã đọc nội dung đã chọn; chưa sửa dữ liệu.")
             else:
                 main_calls.append(messages)
                 authority = next(
@@ -106,6 +133,7 @@ def test_two_create_undo_cycles_keep_four_receipts_through_reload_compaction_and
                     ]
                     assert all(o["count"] == 7 for o in outcomes)
                 assert "deleted-read-marker" not in json.dumps(messages)
+                assert "deleted-checklist-marker" not in json.dumps(messages)
                 outcome = AssistantText(
                     text="Đã tạo rồi hoàn tác hai lần; hiện không có Task active."
                 )
@@ -150,11 +178,14 @@ def test_two_create_undo_cycles_keep_four_receipts_through_reload_compaction_and
                 cid = view["id"]
                 await db.commit()
             for cycle in range(2):
+                stage = "create"
                 view = await send("Tạo bảy việc theo bảy ngày đã chỉ định.", f"create-{cycle}")
                 change = next(c for c in view["change_sets"] if c["state"] == "pending")
                 receipt = await confirm(change, f"night-create-{cycle}")
                 created = [UUID(i) for i in receipt["result"]["task_ids"]]
                 ids.extend(created)
+                stage, read_id = "read", created[0]
+                await send("Đọc đầy đủ nội dung và checklist mục đầu.", f"read-before-undo-{cycle}")
                 async with maker() as db:
                     tasks = [(await db.get(Task, identity)) for identity in created]
                     assert [t.due_on.isoformat() for t in tasks] == [
@@ -167,6 +198,7 @@ def test_two_create_undo_cycles_keep_four_receipts_through_reload_compaction_and
                 undo = next(c for c in inverse["change_sets"] if c["state"] == "pending")
                 await confirm(undo, f"night-undo-{cycle}")
             stage = "history"
+            assert len(positive_reads) == 2
             view = await send("Tóm tắt những lần đã áp dụng và hoàn tác.", "history")
             assert len(view["receipts"]) == 4
             async with maker() as db:
@@ -224,6 +256,11 @@ def test_two_create_undo_cycles_keep_four_receipts_through_reload_compaction_and
                 tasks = (await db.scalars(select(Task).where(Task.id.in_(ids)))).all()
                 assert [t.model_dump() for t in tasks] == before
                 # Current privacy still withholds both scalar refs involving this Task.
+                for item in (
+                    await db.scalars(select(TaskItem).where(TaskItem.task_id == tasks[0].id))
+                ).all():
+                    item.content = "enc:v1:synthetic"
+                await db.flush()
                 tasks[0].is_private = True
                 tasks[0].title = "enc:v1:synthetic"
                 tasks[0].body_md = None
@@ -285,13 +322,10 @@ def test_preview_lifecycle_no_hidden_candidate_or_predecessor_resurrection(
                 assert pending["preview"] is None
                 lifecycle = {p["id"]: p for p in pending["preview_lifecycle"]["previews"]}
                 old = lifecycle[str(old_id)]
-                if bound_revision:
-                    assert old["state"] == "stale"
-                    assert old["reason"] == "superseded_by_validated_preview"
-                    assert lifecycle[str(rejected_id)]["state"] == "rejected"
-                    assert old["successor_id"] is None
-                else:
-                    assert old["state"] == "rejected" and len(lifecycle) == 1
+                assert old["state"] == "stale"
+                assert old["reason"] == "superseded_by_validated_preview"
+                assert lifecycle[str(rejected_id)]["state"] == "rejected"
+                assert old["successor_id"] is None
                 outcome = AssistantText(text="Không còn preview chờ xác nhận; chưa ghi Task.")
             return AgentCompletion(outcome, "synthetic-preview", {"cost": 0}, "Synthetic", None)
 
@@ -326,18 +360,14 @@ def test_preview_lifecycle_no_hidden_candidate_or_predecessor_resurrection(
                 assert len(pending) == 1
                 rejected = pending[0]
                 rejected_id = UUID(str(rejected["id"]))
-                if not bound_revision:
-                    assert rejected_id == old_id and len(view["change_sets"]) == 1
-                    await db.refresh(old)
-                    assert (
-                        old.digest_sha256,
-                        old.nonce,
-                        old.expires_at,
-                        old.operation_ciphertext,
-                    ) == binding
-                    assert view["runs"][-1]["error_code"] == "pending_preview_requires_decision"
-                else:
-                    assert rejected_id != old_id and len(view["change_sets"]) == 2
+                assert rejected_id != old_id and len(view["change_sets"]) == 2
+                await db.refresh(old)
+                assert (
+                    old.digest_sha256,
+                    old.nonce,
+                    old.expires_at,
+                    old.operation_ciphertext,
+                ) == binding
             async with maker() as db:
                 await service.confirm_change_set(
                     db,

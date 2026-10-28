@@ -15,6 +15,7 @@ from uuid import UUID, uuid7
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic_core import PydanticCustomError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -213,7 +214,15 @@ class TaskCommand(BaseModel):
         if set(self.fields) - TASK_FIELDS:
             raise ValueError("task_collection_field_not_authorized")
         if self.fields.keys() & SCHEDULE_FIELDS and not SCHEDULE_FIELDS <= self.fields.keys():
-            raise ValueError("task_due_triad_must_be_complete")
+            raise PydanticCustomError(
+                "task_due_triad_must_be_complete",
+                "task_due_triad_must_be_complete",
+                {"missing_fields": sorted(SCHEDULE_FIELDS - self.fields.keys())},
+            )
+        if "pinned" in self.fields and type(self.fields["pinned"]) is not bool:
+            raise PydanticCustomError(
+                "task_pinned_requires_boolean", "task_pinned_requires_boolean"
+            )
         if self.action == "create":
             if self.id is not None or self.expected_collection_version is not None:
                 raise ValueError("task_create_identity_is_server_owned")

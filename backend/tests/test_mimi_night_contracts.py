@@ -237,3 +237,69 @@ def test_typed_shape_repair_handles_blank_title_schedule_conflict_and_naive_inst
             )
         )
     assert any(issue["path"] == path and issue["expected"] for issue in caught.value.issues)
+
+
+def test_incremental_triad_is_material_progress_in_both_runners(run_runner):  # noqa: F811
+    seen = []
+
+    async def invoke(messages, turn):
+        seen.append(turn)
+        assert not messages_final_only(messages)
+        args = collection(7)
+        for index, entry in enumerate(args["entries"]):
+            entry["fields"]["due_on"] = f"2027-01-{index + 1:02}"
+            if turn == 1:
+                entry["fields"].pop("due_precision")
+            if turn < 3:
+                entry["fields"].pop("due_at")
+        try:
+            return parse_agent_completion(payload([call(COLLECTION_CANDIDATE_TOOL, args)]))
+        except CandidateContractError as error:
+            error.correction_ready = True
+            raise
+
+    result = run_runner(invoke, AsyncMock(), turns=32)
+    assert seen == [1, 2, 3] and len(result.outcome.arguments["entries"]) == 7
+
+
+@pytest.mark.parametrize("pinned", [None, "true", "false", 0, 1])
+def test_pinned_must_be_strict_boolean_at_typed_correction_seam(pinned):
+    with pytest.raises(CandidateContractError) as caught:
+        parse_agent_completion(
+            payload(
+                [
+                    call(
+                        COLLECTION_CANDIDATE_TOOL,
+                        {
+                            "entries": [
+                                {
+                                    "action": "create",
+                                    "fields": {"title": "Synthetic", "pinned": pinned},
+                                }
+                            ],
+                        },
+                    )
+                ]
+            )
+        )
+    assert any(i["path"] == "entries[0].fields.pinned" for i in caught.value.issues)
+
+
+def test_structural_progress_beyond_bounded_feedback_prefix_is_preserved(run_runner):  # noqa: F811
+    async def invoke(messages, turn):
+        assert not messages_final_only(messages)
+        args = collection(40)
+        for index, entry in enumerate(args["entries"]):
+            if turn < 3:
+                entry["fields"].pop("due_at")
+                if turn == 1 or index != 39:
+                    entry["fields"].pop("due_precision")
+        try:
+            return parse_agent_completion(payload([call(COLLECTION_CANDIDATE_TOOL, args)]))
+        except CandidateContractError as error:
+            assert len(error.issues) <= 32
+            error.correction_ready = True
+            raise
+
+    result = run_runner(invoke, AsyncMock(), turns=32)
+    assert result.turns == 3 and len(result.outcome.arguments["entries"]) == 40

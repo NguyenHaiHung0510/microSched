@@ -251,3 +251,21 @@ Validated scalar receipt outcomes for those recent previews are also rehydrated
 independently of the prose checkpoint frontier. A withheld checkpoint containing
 an ineligible raw read therefore does not erase otherwise eligible receipt facts;
 partial coverage and current privacy failures remain explicit.
+
+Before model egress, pending raw operation/selection snapshots must still have
+eligible sources. Ineligible plaintext is withheld while canonical pending and
+receipt identities remain. Current source eligibility is checked again after
+helper I/O and before activating a summary/main dispatch. Historical raw aggregates
+(including zero counts and mixed batches) have no complete source lineage and are
+not replayed or compacted; their canonical conversation/audit stays stored with
+partial coverage. Immediate current-run aggregates remain usable. An explicit
+deleted read whose actual snapshot was already deleted, or a valid restore/undo
+preview frozen from a deleted before-state, keeps its existing STANDARD capability;
+an old formerly-active snapshot does not acquire that capability by becoming deleted.
+
+An ordinary `intent=auto` follow-up can replace the server-observed pending preview
+only with a typed, materialized collection candidate. The server captures exact A
+ID/digest and generation before I/O and rechecks the same pending, unexpired A after
+I/O. Text/read/clarification/invalid/failure retain A. Explicit revision keeps its
+stricter contract; no new client binding fields or natural-language router are used.
+Reject/expiry/other-tab frontier changes block a late B; no predecessor revival.

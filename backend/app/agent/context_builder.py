@@ -59,6 +59,7 @@ def assemble_context(
     selection_context: dict | None = None,
     working_history: dict[str, Any] | None = None,
     preview_lifecycle: dict[str, Any] | None = None,
+    pending_preview_content_available: bool = True,
 ) -> tuple[ContextEnvelope, list[dict[str, Any]]]:
     """Return ephemeral plaintext and provider messages; callers persist only metadata."""
 
@@ -89,7 +90,7 @@ def assemble_context(
         version=pending_preview.digest if pending_preview else None,
         content_sha256=_source_hash(pending_preview_content),
         count=len(pending_preview_content),
-        coverage="complete",
+        coverage="complete" if pending_preview_content_available else "unavailable",
         data_as_of=datetime.now(UTC),
     )
     draft_source = SourceManifest(
@@ -191,6 +192,7 @@ def assemble_context(
         "draft": pending_draft.model_dump(mode="json") if pending_draft else None,
         "preview": pending_preview.model_dump(mode="json") if pending_preview else None,
         "preview_lifecycle": preview_lifecycle,
+        "preview_content_available": pending_preview_content_available,
     }
     selection_source = SourceManifest(
         source_id="task.selection.frozen.v1",
@@ -200,7 +202,9 @@ def assemble_context(
         version=_source_hash(selection_context),
         content_sha256=_source_hash(selection_context),
         count=1 if selection_context else 0,
-        coverage="complete" if selection_context else "unavailable",
+        coverage="complete"
+        if selection_context and "snapshot" in selection_context
+        else "unavailable",
         data_as_of=datetime.now(UTC),
     )
     if selection_context:
@@ -266,8 +270,10 @@ def assemble_context(
             ),
             "preview_revision": (
                 "There is at most one active preview. A revision is bound to its exact ID/digest. "
-                "Only a validated replacement supersedes it. A blocked auto candidate is not a "
-                "second preview. Rejection never revives a predecessor or dispatches a model. "
+                "Only a validated collection replacement supersedes it, including an ordinary "
+                "auto turn bound by the server to that exact observed preview. Ordinary text, "
+                "reads, clarification and failed candidates keep it. Rejection never revives a "
+                "predecessor or dispatches a model. "
                 "Lifecycle state and receipt IDs are historical facts, not execution authority; "
                 "unknown successor links must stay unknown."
             ),

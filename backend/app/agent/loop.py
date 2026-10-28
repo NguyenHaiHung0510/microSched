@@ -171,7 +171,7 @@ def candidate_repair_signature(error):
             {
                 "code": str(error),
                 "tools": sorted(error.tool_names),
-                "issues": error.issues,
+                "issues_sha256": error.issue_signature,
             }
         ).encode()
     ).hexdigest()
