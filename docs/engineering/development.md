@@ -8,7 +8,9 @@ Fresh clone cần Git (kèm Git LFS để tải hai ảnh tài liệu Mimi), Pyt
 git lfs pull
 cd backend
 uv sync --frozen
-Copy-Item .env.example .env
+if (-not (Test-Path -LiteralPath .env)) {
+    Copy-Item -LiteralPath .env.example -Destination .env
+}
 uv run --frozen uvicorn app.main:create_app --factory --reload
 ```
 

@@ -31,10 +31,12 @@ Owner quản lý archive local riêng với INDEX.md, abstract/matrix, report+me
 | Historical group | Scoped conclusion và provenance |
 |---|---|
 | Mimi ordinary, 19Oct | 6 case accepted tích lũy với recovery; Playwright/Chromium synthetic app + model thật; không phải first-pass/all-Mimi certification |
-| Mimi HARD | Benchmark riêng giữ đủ report/gallery/media/backing local, gồm failures/limitations; không trộn vào ordinary score |
+| Mimi HARD | Benchmark riêng giữ toàn bộ report/gallery/media/backing **hiện có (AVAILABLE)** local, gồm failures/limitations; không trộn vào ordinary score |
 | Outbox, 23Oct | 5/5 tích lũy qua các lượt API/IDB/PG/SW; khác mock success và physical quota proof |
 | Responsive/PWA/compact, 25Oct | Viewport/synthetic runtime, safe-update/draft/lock; không đổi thành physical iPhone/Safari |
 | Core/Mimi UI, 26–27Oct | Visible IAB, synthetic app + real API/PG + SDK double; later source delta phải nêu riêng |
+
+Archive HARD có khoảng trống nguồn từ trước cleanup: `STUDY-PLAN-20-ORACLE.json` đã thiếu ở nguồn gốc nên không có bản để bảo tồn. Giữ rõ giới hạn provenance này; AVAILABLE không có nghĩa backing hoàn chỉnh hay HARD PASS, và khoảng trống cũ không tạo product regression hoặc acceptance gate mới.
 
 QA Live là tên chung; provenance vẫn ghi transport thực (IAB/Playwright/Chrome/provider/synthetic). Receipt cũ chứng minh revision/case/config của nó; screenshot cũ không trở thành exact-head runtime proof.
 

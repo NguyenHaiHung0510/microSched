@@ -111,7 +111,7 @@ Mỗi mục dưới đây phải trả về **đạt / không đạt kèm số �
 |---|---|---|---|
 | 1 | Trạng thái hệ thống nhìn thấy được | Mọi hành động async có phản hồi trong ~100ms? Nút có trạng thái đang-chạy? | Bấm rồi đếm; kiểm nút đổi nhãn/`disabled`. Thay đổi **không do người dùng gây ra** phải có `role="status"`/`aria-live` |
 | 2 | Khớp với thế giới thật | Chữ trên màn có phải chữ chủ dùng khi nói không? | Không có từ kỹ thuật lọt ra UI (`payload`, `sync`, `entity`, `slice`, `soft-delete`) |
-| 3 | Người dùng kiểm soát được | Mọi **chế độ** có lối ra **nhìn thấy được**? Mọi hành động phá huỷ có hoàn tác? | Vào chế độ rồi tìm đường ra mà không dùng nút Back của trình duyệt. Xoá phải có toast Hoàn tác **10 giây** (`tracking-brief.md:150`) |
+| 3 | Người dùng kiểm soát được | Mọi **chế độ** có lối ra **nhìn thấy được**? Mọi hành động phá huỷ có hoàn tác? | Vào chế độ rồi tìm đường ra mà không dùng nút Back của trình duyệt. Xoá phải có toast Hoàn tác **10 giây** (quyết định lịch sử: `git show 48dc397663b145dab35994326af007dd0e26dcc7:docs/tracking-brief.md`, dòng 150) |
 | 4 | Nhất quán | Cùng một hành động ở hai màn có trông giống nhau không? | Component đến từ `@/components/ui/*`; không có nút tự vẽ |
 | 5 | Chặn lỗi từ đầu | Nút có bị vô hiệu khi dữ liệu chưa hợp lệ? | Thử submit rỗng / chỉ khoảng trắng. **Ưu tiên hoàn tác hơn hộp xác nhận** |
 | 6 | Nhận ra hơn phải nhớ | Có dòng chữ nào đang **giải thích** thứ mà giao diện tự thể hiện được không? | Xoá thử dòng đó trong devtools: mất thông tin gì không? Không mất ⇒ dòng đó là rác. *(Bug 29/07-④)* |
