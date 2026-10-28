@@ -11,7 +11,7 @@
 
 Hành trình đó bắt đầu từ năm nhất đại học với [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap), một nhật ký học tập dạng CLI viết bằng C++, dùng để ghi lại việc học hằng ngày, lưu ghi chú theo môn hoặc công việc và tự chấm mức độ hài lòng với việc học trong ngày. Tiếp đó là [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian), ứng dụng desktop Python/Flet được vibe-code để quản lý công việc và lịch trình cá nhân, đóng gói thành `.exe` trên Windows. Đến microSched, mình đưa công việc, ghi chú, lịch và tracker vào một ứng dụng web cá nhân, với Mimi hỗ trợ thao tác Task/checklist bằng AI.
 
-Đó là ba thế hệ công cụ cá nhân và cũng là ba chặng trong quá trình học của mình: thực hành lập trình qua một CLI nhỏ, xây ứng dụng desktop cùng AI, rồi phát triển và vận hành một sản phẩm rộng hơn với một nhóm agent được tổ chức và điều phối. Qua từng chặng, tư duy sản phẩm, kỹ năng kỹ thuật và cách mình cộng tác với AI cũng dần trưởng thành hơn. Mình đã dùng microSched trong đời sống thực từ **21 tháng 8 năm 2026** và tiếp tục cải thiện nó từ trải nghiệm sử dụng hằng ngày.
+Đó là ba thế hệ công cụ cá nhân và cũng là ba chặng trong quá trình học của mình: thực hành lập trình qua một CLI nhỏ, xây ứng dụng desktop cùng AI, rồi phát triển và vận hành một sản phẩm rộng hơn với một nhóm agent được tổ chức và điều phối. Qua từng chặng, tư duy sản phẩm, kỹ năng kỹ thuật và cách mình cộng tác với AI cũng dần trưởng thành hơn. Mình đã dùng microSched từ lần triển khai đầu tiên vào **21 tháng 8 năm 2026**, khi chuyển dữ liệu từ VC_QuanLyThoiGian sang, và tiếp tục cải thiện nó từ trải nghiệm sử dụng hằng ngày.
 
 ## Mình dùng microSched cho việc gì?
 
