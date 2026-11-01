@@ -253,7 +253,11 @@ TOOLS += (
     ),
     _typed_tool(
         COLLECTION_CANDIDATE_TOOL,
-        "Propose one bounded STANDARD Task collection with full fields/checklist/reminder effects. "
+        "Propose one bounded STANDARD Task collection with complete requested changes "
+        "and derived effects. "
+        "For title/date-only creates omit body_md and children; do not invent optional extras. "
+        "Preserve user-supplied or explicitly requested generated content, and content copied "
+        "from eligible STANDARD sources as requested. Edits/revisions preserve omitted content. "
         "For N new Tasks submit ONE call with N action=create entries, selection_id=null, "
         "no IDs/versions; server issues IDs. Include every requested Task. "
         "Collection fields allow only title/body_md/status/priority/pinned and "
