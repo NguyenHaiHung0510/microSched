@@ -2,9 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { fetchMimiSelection, recoverMimiReceipt, readMimiDevicePreference, saveMimiDevicePreference, saveMimiConfiguration, type MimiChangeSet } from './mimi-api'
 afterEach(() => vi.unstubAllGlobals())
 it('receipt recovery is a bounded GET bound to original nonce/digest/key; device proof stays out of URL', async () => {
-  const request = vi.fn().mockResolvedValue(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))
+  const request = vi.fn().mockImplementation(async () => new Response('{}', {status:200}))
+    .mockResolvedValueOnce(new Response(JSON.stringify({id:'receipt',change_set_id:'change',digest:'a'.repeat(64),operation_id:'op',executed_at:'2026-10-29T00:00:00Z',result:{}}), { status: 200, headers: { 'Content-Type': 'application/json' } }))
   vi.stubGlobal('fetch', request)
-  const c = { id: 'change', digest: 'a'.repeat(64), nonce: 'nonce' } as MimiChangeSet
+  const c = { id: 'change', digest: 'a'.repeat(64), nonce: 'nonce', operation:{operation_id:'op',tool:'task.create.v1'} } as MimiChangeSet
   await recoverMimiReceipt('conv', c, 'original-key')
   expect(request.mock.calls[0][0]).toContain('/change-sets/change/receipt?digest=')
   expect(request.mock.calls[0][1]).toMatchObject({ headers: { 'Idempotency-Key': 'original-key' } })

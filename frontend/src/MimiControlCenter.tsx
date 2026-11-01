@@ -17,10 +17,12 @@ import { MimiNotifications } from '@/MimiNotifications'
 import { MimiRailResize } from '@/MimiRailResize'
 import { rememberedMimiWidth, rememberMimiWidth, useWideMimi, fitMimiRails, mimiRailMaximum } from '@/mimi-layout'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
+import { isMimiSessionCurrent, mimiSessionEpoch } from './mimi-session-boundary'
 import './mimi.css'
 type WorkspaceDomain = 'tasks' | 'notes' | 'calendar' | 'tracker'
 function ConversationWorkspace({ onOpenDomain, configurationOpen, onConfigurationOpenChange }: { onOpenDomain: (domain: WorkspaceDomain) => void; configurationOpen: boolean; onConfigurationOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient()
+  const [sessionEpoch] = useState(() => mimiSessionEpoch(queryClient))
   const [listState, setListState] = useState<'active' | 'archived'>('active')
   const [selectedId, setSelectedId] = useMimiSelection()
   const [leftOpen, setLeftOpen] = useState(true)
@@ -81,10 +83,10 @@ function ConversationWorkspace({ onOpenDomain, configurationOpen, onConfiguratio
       return next
     })
   }
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: ['mimi'] })
-  const create = useMutation({ mutationFn: () => createMimiConversation(), onSuccess: (item) => { setListState('active'); selectCreatedMimiConversation(queryClient, item); refresh() } })
-  const rename = useMutation({ mutationFn: ({ item, title }: { item: MimiConversationSummary; title: string }) => renameMimiConversation(item, title), onSuccess: () => { setRenameTarget(null); refresh() } })
-  const archive = useMutation({ mutationFn: ({ item, archived }: { item: MimiConversationSummary; archived: boolean }) => setMimiConversationArchived(item, archived), onSuccess: refresh })
+  const refresh = () => { if (isMimiSessionCurrent(queryClient, sessionEpoch)) void queryClient.invalidateQueries({ queryKey: ['mimi'] }) }
+  const create = useMutation({ mutationKey: ['mimi', 'surface'], mutationFn: () => createMimiConversation(), onSuccess: (item) => { if (!isMimiSessionCurrent(queryClient, sessionEpoch)) return; setListState('active'); selectCreatedMimiConversation(queryClient, item); refresh() } })
+  const rename = useMutation({ mutationKey: ['mimi', 'surface'], mutationFn: ({ item, title }: { item: MimiConversationSummary; title: string }) => renameMimiConversation(item, title), onSuccess: () => { setRenameTarget(null); refresh() } })
+  const archive = useMutation({ mutationKey: ['mimi', 'surface'], mutationFn: ({ item, archived }: { item: MimiConversationSummary; archived: boolean }) => setMimiConversationArchived(item, archived), onSuccess: refresh })
 
   function renderConversationRow(item: MimiConversationSummary, isPinned: boolean) {
     const isRunning = item.latest_run_state === 'running' || item.latest_run_state === 'recovering'

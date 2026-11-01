@@ -82,7 +82,10 @@ def finalization_messages(messages, reason, not_run=()):
                     "instruction": (
                         "Return an honest Vietnamese final/partial answer from completed reads. "
                         "Keep exact selection/page/alias obligations and provenance. "
-                        "No more tool calls or proposals."
+                        "No more tool calls or proposals. Rejected candidates created no preview "
+                        "and wrote no Task; preserve the server's pending preview state. When "
+                        "candidate_no_progress, explain the unresolved shape/date limitation; "
+                        "do not claim success or ask the user to repeat the same request as a fix."
                     ),
                 }
             ),
@@ -134,6 +137,8 @@ def candidate_correction_feedback(error: CandidateContractError):
         "content": _canonical_json(
             {
                 "error": {"code": str(error)},
+                "issues": list(error.issues),
+                "repair_signature": candidate_repair_signature(error),
                 "instruction": (
                     "The entire candidate turn was rejected before reads, selections or preview. "
                     "No Task was written; the existing pending preview is unchanged. Correct the "
@@ -143,14 +148,67 @@ def candidate_correction_feedback(error: CandidateContractError):
                     "or versions. Never drop requested Tasks or split confirmation. Complete any "
                     "needed reads/selection in a separate read-only turn before a candidate-only "
                     "turn. Collection fields contain title/body_md/status/priority/pinned and the "
-                    "complete due_precision/due_on/due_at triad when scheduled; checklist ops "
-                    "belong in children, not fields.items. Do not invent IDs or fields. "
+                    "complete due_precision/due_on/due_at triad when scheduled. "
+                    "Use fields.title for every create. For a civil date use due_precision=date, "
+                    "due_on=YYYY-MM-DD, due_at=null; datetime requires a timezone and "
+                    "due_on=null; none uses two null siblings. Never clamp an invalid date: "
+                    "correct serialization from the supplied facts or clarify invalid facts. "
+                    "Checklist operations belong in children, not fields.items. "
+                    "Do not invent IDs or fields. "
                     "A correction consumes a normal model turn under the existing limits. If you "
                     "cannot correct safely, clarify or state the limitation; never claim success."
                 ),
             }
         ),
     }
+
+
+def candidate_repair_signature(error):
+    # A changed title/prose or call ID is not schema progress. Changed issue paths
+    # are progress; a valid candidate is accepted normally, without a retry cap.
+    return hashlib.sha256(
+        _canonical_json(
+            {
+                "code": str(error),
+                "tools": sorted(error.tool_names),
+                "issues_sha256": error.issue_signature,
+            }
+        ).encode()
+    ).hexdigest()
+
+
+def candidate_repair_repeated(messages, error):
+    signature = candidate_repair_signature(error)
+    current = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    for message in messages[current + 1 :]:
+        if message.get("role") != "system":
+            continue
+        try:
+            body = json.loads(message.get("content", ""))
+        except TypeError, ValueError:
+            continue
+        if isinstance(body, dict) and body.get("repair_signature") == signature:
+            return True
+    return False
+
+
+def restored_candidate_final_reason(messages):
+    """Recover only from app-verified same-run system feedback, never user text."""
+    seen = set()
+    current = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    for message in messages[current + 1 :]:
+        if message.get("role") != "system":
+            continue
+        try:
+            body = json.loads(message.get("content", ""))
+        except TypeError, ValueError:
+            continue
+        signature = body.get("repair_signature") if isinstance(body, dict) else None
+        if isinstance(signature, str) and len(signature) == 64:
+            if signature in seen:
+                return "candidate_no_progress"
+            seen.add(signature)
+    return None
 
 
 def _canonical_json(value: Any) -> str:
@@ -228,7 +286,7 @@ async def run_read_loop(
     progress = ReadProgress(messages)
     total_calls = 0
     last_completion: AgentCompletion | None = None
-    final_reason = None
+    final_reason = restored_candidate_final_reason(messages)
     for turn in range(1, limits.max_turns + 1):
         if datetime.now(UTC) >= limits.deadline:
             return LoopResult(
@@ -269,6 +327,8 @@ async def run_read_loop(
         except CandidateContractError as error:
             if not error.correction_ready or messages_final_only(messages):
                 raise
+            if candidate_repair_repeated(messages, error):
+                final_reason = "candidate_no_progress"
             messages.append(candidate_correction_feedback(error))
             continue
         except TimeoutError as error:
