@@ -203,6 +203,9 @@ TOOLS: tuple[dict[str, Any], ...] = (
     _tool(
         CREATE_CANDIDATE_TOOL,
         "Propose exactly one STANDARD Task create in a candidate-only turn. "
+        "Include every required task field; use body_md=null and items=[] when content "
+        "is not requested, and take id from the server authority's reserved_task_id. "
+        "Preserve supplied or requested generated/copied content. "
         "For multiple new Tasks, when leased, use ONE task.collection_candidate.v1 call "
         "with one create entry per Task, not multiple single-create calls. This never writes; "
         "the server freezes a preview for Owner confirmation.",
@@ -255,7 +258,8 @@ TOOLS += (
         COLLECTION_CANDIDATE_TOOL,
         "Propose one bounded STANDARD Task collection with complete requested changes "
         "and derived effects. "
-        "For title/date-only creates omit body_md and children; do not invent optional extras. "
+        "For title/date-only collection creates omit fields.body_md and children; "
+        "do not invent optional extras. "
         "Preserve user-supplied or explicitly requested generated content, and content copied "
         "from eligible STANDARD sources as requested. Edits/revisions preserve omitted content. "
         "For N new Tasks submit ONE call with N action=create entries, selection_id=null, "
