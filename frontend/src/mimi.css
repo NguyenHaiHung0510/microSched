@@ -91,8 +91,8 @@
 .mimi-compact-context li { padding: 8px; font-size: 12px; }
 .mimi-attention { border: 1px solid var(--mimi-decor-border); background: var(--mimi-glass); margin-bottom: 10px; }
 .mimi-side-chat { position: relative; isolation: isolate; background: var(--n-25); border: 1px solid var(--mimi-decor-border); box-shadow: var(--sh-3); }
-/* The dock's unlayered position rule otherwise overrides Dialog's fixed utility,
-   putting a full-height modal below the page and stranding its composer. */
+.mimi-side-chat:not([data-slot=dialog-content]) { position: sticky; }
+/* The dock rule otherwise overrides Dialog's fixed utility at mobile widths. */
 .mimi-side-chat[data-slot=dialog-content] { position: fixed; inset: 0; }
 .mimi-dock-header { border-bottom: 1px solid var(--mimi-decor-border); background: var(--mimi-glass); border-radius: 16px 16px 0 0; }
 .mimi-chat-dock .mimi-welcome-avatar { width: 140px; height: 140px; }

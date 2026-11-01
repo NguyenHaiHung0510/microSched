@@ -36,8 +36,21 @@ export function MimiDock({ open, onOpenChange, onCloseFocus, onOpenTasks, onOpen
   const id = selectedId ?? current.data?.id ?? conversations.items[0]?.id ?? null
   useEffect(() => {
     if (!open) return
-    const frame = requestAnimationFrame(() => focusMimiSurface())
-    return () => cancelAnimationFrame(frame)
+    // The unchanged screen can still be loading when the dock first mounts.
+    // Observe only this opening, then stop as soon as its composer is mounted.
+    // Radix mounts its portal after the parent's effect. Watch that mount too.
+    const ready = () => !!document.querySelector('#mimi-side-chat [data-testid="mimi-input"]')
+    const observer = new MutationObserver(() => {
+      if (!ready()) return
+      focusMimiSurface()
+      observer.disconnect()
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    const frame = requestAnimationFrame(() => {
+      focusMimiSurface()
+      if (ready()) observer.disconnect()
+    })
+    return () => { cancelAnimationFrame(frame); observer.disconnect() }
   }, [open, id])
   function closeDock() {
     onOpenChange(false)
@@ -52,5 +65,5 @@ export function MimiDock({ open, onOpenChange, onCloseFocus, onOpenTasks, onOpen
   if (!open) return null
   const resize = <div className="mimi-dock-resize" role="separator" aria-label="Đổi độ rộng side-chat" aria-orientation="vertical" aria-valuemin={320} aria-valuemax={600} aria-valuenow={width} tabIndex={0} onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); drag.current = { x: event.clientX, width } }} onPointerMove={(event) => { if (drag.current) onWidthChange(Math.max(320, Math.min(600, drag.current.width + drag.current.x - event.clientX))) }} onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }} onLostPointerCapture={() => { drag.current = null }} onKeyDown={(event) => { const next = event.key === 'ArrowLeft' ? width + 16 : event.key === 'ArrowRight' ? width - 16 : event.key === 'Home' ? 320 : event.key === 'End' ? 600 : null; if (next !== null) { event.preventDefault(); onWidthChange(Math.max(320, Math.min(600, next))) } }} />
   if (desktop) return <aside id="mimi-side-chat" data-testid="mimi-side-chat" aria-label="Chat với Mimi" tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && !(event.target as Element).closest('[role="dialog"],[role="menu"]')) { event.preventDefault(); closeDock() } }} className="mimi-side-chat sticky top-4 flex h-[calc(100dvh-2rem)] min-h-0 min-w-0 flex-col rounded-xl">{resize}{header}{create.isError ? <p role="alert" className="p-2 text-xs text-bad">Chưa tạo được hội thoại: {create.error instanceof Error ? create.error.message : 'lỗi chưa rõ'}. Không tự gửi lại.</p> : null}{screen}{history}</aside>
-  return <Dialog open onOpenChange={onOpenChange}><DialogContent id="mimi-side-chat" data-testid="mimi-side-chat" showCloseButton={false} onCloseAutoFocus={event => { event.preventDefault(); onCloseFocus?.() }} className="mimi-side-chat inset-0 flex h-dvh max-h-dvh w-full min-w-0 max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 sm:max-w-full"><DialogHeader className="sr-only"><DialogTitle>Chat với Mimi</DialogTitle><DialogDescription>Hội thoại STANDARD. Đóng side-chat không dừng run.</DialogDescription></DialogHeader>{header}{screen}{history}</DialogContent></Dialog>
+  return <Dialog open onOpenChange={onOpenChange}><DialogContent id="mimi-side-chat" data-testid="mimi-side-chat" showCloseButton={false} onOpenAutoFocus={event => { event.preventDefault(); focusMimiSurface() }} onCloseAutoFocus={event => { event.preventDefault(); onCloseFocus?.() }} className="mimi-side-chat inset-0 flex h-dvh max-h-dvh w-full min-w-0 max-w-full translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 sm:max-w-full"><DialogHeader className="sr-only"><DialogTitle>Chat với Mimi</DialogTitle><DialogDescription>Hội thoại STANDARD. Đóng side-chat không dừng run.</DialogDescription></DialogHeader>{header}{screen}{history}</DialogContent></Dialog>
 }
