@@ -8,10 +8,16 @@ const conversation = {
 
 async function setup(page: Page, available = true, delaySnapshot = false) {
   const context = page.context()
+  // Use the configured CI/builder/reviewer origin, never an arbitrary endpoint.
+  const configuredBaseURL = test.info().project.use.baseURL
+  if (!configuredBaseURL || !/^http:\/\/127\.0\.0\.1:(4173|15211|15212)\/?$/.test(configuredBaseURL)) {
+    throw new Error('Access fixtures require a trusted loopback Playwright baseURL')
+  }
+  const allowedOrigin = new URL(configuredBaseURL).origin
   // Fixture fallthrough cannot reach any backend or external/provider service.
   await context.route('**/*', route => {
     const url = new URL(route.request().url())
-    if (url.origin !== 'http://127.0.0.1:15211') return route.abort('blockedbyclient')
+    if (url.origin !== allowedOrigin) return route.abort('blockedbyclient')
     if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) {
       return route.fulfill({ status: 404, json: { detail: 'synthetic_unsupplied_endpoint' } })
     }
