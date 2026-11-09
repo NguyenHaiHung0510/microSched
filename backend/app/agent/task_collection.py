@@ -15,6 +15,7 @@ from uuid import UUID, uuid7
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic_core import PydanticCustomError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -113,10 +114,85 @@ def _task_fields_json_schema(schema: dict[str, Any]) -> None:
     )
     schema["properties"]["due_precision"] = TypeAdapter(TaskDuePrecision).json_schema()
     schema["properties"]["pinned"] = {"type": "boolean"}
+    # Omission remains valid for undated creates and ordinary edits. Once any
+    # schedule member is supplied, advertise the same complete triad as validation.
+    schema["dependentRequired"] = {
+        key: sorted(SCHEDULE_FIELDS - {key}) for key in sorted(SCHEDULE_FIELDS)
+    }
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {"due_precision": {"const": precision}},
+                "required": ["due_precision"],
+            },
+            "then": {"properties": properties},
+        }
+        for precision, properties in (
+            ("none", {"due_on": {"type": "null"}, "due_at": {"type": "null"}}),
+            ("date", {"due_on": {"type": "string", "format": "date"}, "due_at": {"type": "null"}}),
+            (
+                "datetime",
+                {"due_on": {"type": "null"}, "due_at": {"type": "string", "format": "date-time"}},
+            ),
+        )
+    ]
+
+
+def _task_command_json_schema(schema: dict[str, Any]) -> None:
+    schema["allOf"] = [
+        {
+            "if": {"properties": {"action": {"const": "create"}}, "required": ["action"]},
+            "then": {
+                "required": ["fields"],
+                "properties": {
+                    "fields": {"required": ["title"]},
+                    "id": {"type": "null"},
+                    "expected_collection_version": {"type": "null"},
+                },
+            },
+            "else": {
+                "required": ["id", "expected_collection_version"],
+                "properties": {
+                    "id": {"type": "string", "format": "uuid"},
+                    "expected_collection_version": {"type": "integer", "minimum": 1},
+                },
+            },
+        },
+        {
+            "if": {"properties": {"action": {"const": "soft_delete"}}, "required": ["action"]},
+            "then": {
+                "properties": {
+                    "fields": {"maxProperties": 0},
+                    "children": {"maxItems": 0},
+                    "reminder": {"properties": {"action": {"const": "keep"}}},
+                }
+            },
+        },
+        {
+            "if": {"properties": {"action": {"const": "edit"}}, "required": ["action"]},
+            "then": {
+                "anyOf": [
+                    {"required": ["fields"], "properties": {"fields": {"minProperties": 1}}},
+                    {"required": ["children"], "properties": {"children": {"minItems": 1}}},
+                    {
+                        "required": ["reminder"],
+                        "properties": {
+                            "reminder": {
+                                "required": ["action"],
+                                "properties": {"action": {"enum": ["cancel", "configure"]}},
+                            }
+                        },
+                    },
+                ]
+            },
+        },
+    ]
 
 
 class TaskCommand(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, json_schema_extra=_task_command_json_schema
+    )
     action: Literal["create", "edit", "soft_delete", "restore"]
     id: UUID | None = None
     expected_collection_version: int | None = Field(default=None, ge=1, strict=True)
@@ -138,7 +214,15 @@ class TaskCommand(BaseModel):
         if set(self.fields) - TASK_FIELDS:
             raise ValueError("task_collection_field_not_authorized")
         if self.fields.keys() & SCHEDULE_FIELDS and not SCHEDULE_FIELDS <= self.fields.keys():
-            raise ValueError("task_due_triad_must_be_complete")
+            raise PydanticCustomError(
+                "task_due_triad_must_be_complete",
+                "task_due_triad_must_be_complete",
+                {"missing_fields": sorted(SCHEDULE_FIELDS - self.fields.keys())},
+            )
+        if "pinned" in self.fields and type(self.fields["pinned"]) is not bool:
+            raise PydanticCustomError(
+                "task_pinned_requires_boolean", "task_pinned_requires_boolean"
+            )
         if self.action == "create":
             if self.id is not None or self.expected_collection_version is not None:
                 raise ValueError("task_create_identity_is_server_owned")

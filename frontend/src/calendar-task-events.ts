@@ -25,7 +25,7 @@ function isSignal(value: unknown): value is CommitSignal {
 
 // Called only after the authenticated decision/recovery API returns its durable
 // receipt. Neither preview nor Reject/UNKNOWN is a committed Task projection.
-export function publishMimiTaskCommit(change: MimiChangeSet, receipt: MimiReceipt): void {
+export function publishMimiTaskCommit(change: Pick<MimiChangeSet, 'id' | 'digest'> & { operation: Pick<MimiChangeSet['operation'], 'operation_id' | 'tool'> }, receipt: MimiReceipt): void {
   if (typeof window === 'undefined' || !receipt ||
     !['task.create.v1', 'task.collection.v1'].includes(change.operation.tool) ||
     !receipt.id || !receipt.executed_at || receipt.change_set_id !== change.id ||

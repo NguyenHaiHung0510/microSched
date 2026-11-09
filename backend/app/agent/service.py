@@ -795,7 +795,7 @@ def _compaction_messages(
     if prior is not None:
         safe_prior = checkpoint_for_egress(prior, prior_working_allowed)
         wire_prior = {key: safe_prior[key] for key in ("frontier", "summary", "summary_kind")}
-        if "constraint_ledger" in prior:
+        if "constraint_ledger" in safe_prior:
             wire_prior["constraint_ledger"] = [
                 {
                     "id": entry["id"],
@@ -806,11 +806,11 @@ def _compaction_messages(
                         key: value for key, value in entry["source"].items() if key != "quote"
                     },
                 }
-                for entry in prior["constraint_ledger"]
+                for entry in safe_prior["constraint_ledger"]
                 if entry["status"] == "active"
             ]
         else:
-            wire_prior.update({key: prior.get(key, []) for key in ("decisions", "unresolved")})
+            wire_prior.update({key: safe_prior.get(key, []) for key in ("decisions", "unresolved")})
     return [
         {"role": "system", "content": prompt},
         {
@@ -863,6 +863,10 @@ async def _semantic_checkpoint(
     """One journalled helper call; invalid output cannot advance the frontier."""
     from app.agent.local_budget import account, reserve
 
+    has_working_refs = any(source.working for source in sources) or bool(
+        (prior or {}).get("working_sources")
+    )
+    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped) if has_working_refs else None
     settings = bind_policy(settings, await read_policy(db, settings))
     # Summary keeps the selected route/output policy. Native helpers use provider
     # defaults too; only legacy transports retain their historical helper cap.
@@ -941,6 +945,13 @@ async def _semantic_checkpoint(
     provider_started = False
     try:
         helper = await bind_wire_policy(db, helper)
+        helper_refs = [source.working["ref"] for source in sources if source.working]
+        if not await working_refs_current(db, conversation.id, helper_refs, dek, settings):
+            raise RouteContractError("compaction_working_sources_changed_history_preserved")
+        if prior_working_allowed and not await working_refs_current(
+            db, conversation.id, prior.get("working_sources", []) if prior else [], dek, settings
+        ):
+            raise RouteContractError("compaction_working_sources_changed_history_preserved")
         build_request(messages, settings=helper, summary_mode=True)
         reservation = reserve(helper, messages, agent_contract=False, summary_mode=True)
         call.route = {
@@ -1146,8 +1157,8 @@ async def _semantic_checkpoint(
         str(s.id): s.content_sha256 for s in sources
     }:
         await reject_activation("compaction_sources_changed_history_preserved")
-    working_refs = [source.working["ref"] for source in sources if source.working]
-    if not await working_refs_current(db, conversation.id, working_refs):
+    working_refs = checkpoint.get("working_sources", [])
+    if not await working_refs_current(db, conversation.id, working_refs, dek, settings):
         await reject_activation("compaction_working_sources_changed_history_preserved")
     return checkpoint
 
@@ -1392,9 +1403,7 @@ async def _prepare_context_history(
             content=current_content,
         )
 
-    prior_working_allowed = not (
-        settings or get_settings()
-    ).mimi_working_projection_enabled or await working_refs_current(
+    prior_working_allowed = await working_refs_current(
         db,
         conversation.id,
         prior.get("working_sources", []) if prior else [],
@@ -1586,7 +1595,11 @@ async def _prepare_context_history(
                 pending_draft=pending_draft,
             )
         if not await working_refs_current(
-            db, conversation.id, checkpoint.get("working_sources", [])
+            db,
+            conversation.id,
+            checkpoint.get("working_sources", []),
+            dek,
+            settings or get_settings(),
         ):
             await halt_context("compaction_working_sources_changed_history_preserved")
         sequence = await _append_event(db, run_id, "context.checkpoint.activated", {})
@@ -1612,6 +1625,7 @@ async def _prepare_context_history(
         conversation.context_frontier_sequence = checkpoint["frontier"]
         await db.flush()
         prior, checkpoint_id = checkpoint, event.id
+        prior_working_allowed = True  # full current eligibility was checked immediately above
         rows = rows[compact_count:]
         fits = probe(rows, prior, checkpoint_id)
         wants_compact = False
@@ -2090,6 +2104,13 @@ async def send_message(
         )
         for old_change_set, _ in pending_previews
     ]
+    from app.agent.working_context import preview_sources_current
+
+    preview_source_versions = observed_pending[1].source_versions if observed_pending else {}
+    preview_content_available = await preview_sources_current(
+        db, prior_preview_operations, preview_source_versions
+    )
+    safe_preview_operations = prior_preview_operations if preview_content_available else []
     force_task_tool = payload.intent == "revise_pending_preview"
     if force_task_tool and prior_preview_operations:
         settings = settings.model_copy(
@@ -2219,7 +2240,11 @@ async def send_message(
     working_history = WorkingHistory()
     finalized_working_messages = None
     agent_result_kind: str | None = None
+    lifecycle = None
     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+        from app.agent.working_context import preview_lifecycle_context
+
+        lifecycle = await preview_lifecycle_context(db, conversation.id, dek=dek, settings=settings)
 
         def probe_context(
             history,
@@ -2237,7 +2262,8 @@ async def send_message(
                 transcript_suffix=history,
                 current_user_turn=payload.content,
                 task_context=task_context,
-                pending_preview_content=prior_preview_operations,
+                pending_preview_content=safe_preview_operations,
+                pending_preview_content_available=preview_content_available,
                 pending_preview=(
                     PendingPreview(
                         id=observed_pending[0].id,
@@ -2258,6 +2284,7 @@ async def send_message(
                 remaining_tool_calls=lease.max_tool_calls,
                 pending_draft_content=pending_draft_content,
                 working_history=working_history.metadata(checkpoint_frontier),
+                preview_lifecycle=lifecycle,
             )
             # Exercise the same serialized contract and selected cap as the
             # eventual provider dispatch, including tool/schema/output reserve.
@@ -2317,7 +2344,7 @@ async def send_message(
                 f"Server-reserved task id: {task_id}. Current STANDARD Task context: "
                 + json.dumps(task_context, ensure_ascii=False, default=str)
                 + ". Previous pending preview: "
-                + json.dumps(prior_preview_operations, ensure_ascii=False, default=str)
+                + json.dumps(safe_preview_operations, ensure_ascii=False, default=str)
             ),
         },
         *provider_history,
@@ -2326,9 +2353,12 @@ async def send_message(
     context_envelope = None
     selection_context = None
     if settings.mimi_collection_enabled:
-        from app.agent.selection import latest_selection
+        from app.agent.selection import latest_selection, selection_for_egress
 
         selection_context = await latest_selection(db, conversation.id, dek)
+        safe_selection_context = await selection_for_egress(db, selection_context)
+    else:
+        safe_selection_context = None
     if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
         pending_preview = (
             PendingPreview(
@@ -2350,7 +2380,8 @@ async def send_message(
                 transcript_suffix=provider_history,
                 current_user_turn=payload.content,
                 task_context=task_context,
-                pending_preview_content=prior_preview_operations,
+                pending_preview_content=safe_preview_operations,
+                pending_preview_content_available=preview_content_available,
                 pending_preview=pending_preview,
                 pending_draft=pending_draft,
                 checkpoint=active_constraint_context(checkpoint),
@@ -2361,8 +2392,9 @@ async def send_message(
                 remaining_turns=lease.max_turns,
                 remaining_tool_calls=lease.max_tool_calls,
                 pending_draft_content=pending_draft_content,
-                selection_context=selection_context,
+                selection_context=safe_selection_context,
                 working_history=working_history.metadata(conversation.context_frontier_sequence),
+                preview_lifecycle=lifecycle,
             )
         except ValueError as error:
             run.state = "budget_exceeded"
@@ -2665,6 +2697,13 @@ async def send_message(
                     messages: list[dict[str, Any]], turn: int
                 ) -> AgentCompletion:
                     nonlocal call, settings, context_envelope
+                    context_envelope, rebound = rebind_policy_budget(
+                        context_envelope,
+                        messages,
+                        settings=settings,
+                        remaining_turns=max(0, lease.max_turns - turn + 1),
+                    )
+                    messages[:] = rebound
                     current_run = (
                         await db.execute(
                             select(MimiRun)
@@ -2759,6 +2798,55 @@ async def send_message(
                         from app.agent.local_budget import account, reserve
 
                         settings = await bind_wire_policy(db, settings)
+                        # Recheck at the actual dispatch boundary after awaited I/O.
+                        # Retain canonical snapshots/receipts; never send a formerly
+                        # permitted plaintext source on the strength of immutable CAS.
+                        from app.agent.selection import selection_for_egress
+                        from app.agent.working_context import (
+                            preview_lifecycle_context,
+                            read_requirements,
+                            sources_current,
+                        )
+
+                        if (
+                            await preview_sources_current(
+                                db, prior_preview_operations, preview_source_versions
+                            )
+                            != preview_content_available
+                        ):
+                            raise RouteContractError("context_sources_changed_before_dispatch")
+                        if (
+                            await selection_for_egress(db, selection_context)
+                            != safe_selection_context
+                        ):
+                            raise RouteContractError("context_sources_changed_before_dispatch")
+                        refs = (context_envelope.manifest.working_history or {}).get(
+                            "working_refs", []
+                        )
+                        refs = [*refs, *((checkpoint or {}).get("working_sources", []))]
+                        if not await working_refs_current(db, conversation.id, refs, dek, settings):
+                            raise RouteContractError("context_sources_changed_before_dispatch")
+                        current_lifecycle = await preview_lifecycle_context(
+                            db, conversation.id, dek=dek, settings=settings
+                        )
+                        if current_lifecycle["historical_outcomes"] != (lifecycle or {}).get(
+                            "historical_outcomes", []
+                        ):
+                            raise RouteContractError("context_sources_changed_before_dispatch")
+                        # Current-run read pairs have not been finalized into event
+                        # refs yet. Explicit deleted reads retain their exact scope.
+                        last_user = max(
+                            (i for i, m in enumerate(messages) if m.get("role") == "user"),
+                            default=-1,
+                        )
+                        pairs = [
+                            [a, b]
+                            for a, b in zip(messages[last_user + 1 :], messages[last_user + 2 :])
+                            if a.get("tool_calls") and b.get("role") == "tool"
+                        ]
+                        ids, active_ids = read_requirements(pairs, historical=False)
+                        if not await sources_current(db, ids, active_ids):
+                            raise RouteContractError("context_sources_changed_before_dispatch")
                         context_envelope, refreshed_messages = rebind_policy_budget(
                             context_envelope, messages, settings=settings
                         )
@@ -3268,6 +3356,13 @@ async def send_message(
                 from app.agent.local_budget import account, reserve
 
                 settings = await bind_wire_policy(db, settings)
+                if (
+                    await preview_sources_current(
+                        db, prior_preview_operations, preview_source_versions
+                    )
+                    != preview_content_available
+                ):
+                    raise RouteContractError("context_sources_changed_before_dispatch")
                 build_request(live_messages, settings=settings)
                 reservation = reserve(settings, live_messages, agent_contract=False)
                 stream_buffer: list[str] = []
@@ -3328,6 +3423,13 @@ async def send_message(
                 from app.agent.local_budget import account, reserve
 
                 settings = await bind_wire_policy(db, settings)
+                if (
+                    await preview_sources_current(
+                        db, prior_preview_operations, preview_source_versions
+                    )
+                    != preview_content_available
+                ):
+                    raise RouteContractError("context_sources_changed_before_dispatch")
                 build_request(live_messages, settings=settings)
                 reservation = reserve(settings, live_messages, agent_contract=False)
                 call.route = {**call.route, "dispatch_not_started": False}
@@ -3863,6 +3965,7 @@ async def send_message(
                     MimiChangeSet.id == observed_pending_id,
                     MimiChangeSet.digest_sha256 == observed_pending_digest,
                     MimiChangeSet.state == "pending",
+                    MimiChangeSet.expires_at > datetime.now(UTC),
                 )
                 .with_for_update()
             )
@@ -3889,7 +3992,11 @@ async def send_message(
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
 
-    if current_pending_preview is not None and not force_task_tool:
+    if (
+        current_pending_preview is not None
+        and not force_task_tool
+        and completion.kind != "collection"
+    ):
         run.state = "halted"
         run.error_code = "pending_preview_requires_decision"
         run.completed_at = datetime.now(UTC)

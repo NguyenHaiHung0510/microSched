@@ -111,6 +111,8 @@ TOOLS: tuple[dict[str, Any], ...] = (
     _tool(
         "task.query.v1",
         "Read a bounded page of authorized STANDARD Tasks. "
+        "For list/read-only requests, read and answer; do not propose mutations. "
+        "For restore, query filter.lifecycle=deleted to locate the intended target. "
         "Use title_contains to locate a named Task and include id in the projection. "
         "Use task.read_content.v1 for body/checklist. "
         "Use the returned cursor unchanged with the same filter (including lifecycle), "
@@ -203,6 +205,10 @@ TOOLS: tuple[dict[str, Any], ...] = (
     _tool(
         CREATE_CANDIDATE_TOOL,
         "Propose exactly one STANDARD Task create in a candidate-only turn. "
+        "Do not call for list/read-only requests without a requested change. "
+        "Include every required task field; use body_md=null and items=[] when content "
+        "is not requested, and take id from the server authority's reserved_task_id. "
+        "Preserve supplied or requested generated/copied content. "
         "For multiple new Tasks, when leased, use ONE task.collection_candidate.v1 call "
         "with one create entry per Task, not multiple single-create calls. This never writes; "
         "the server freezes a preview for Owner confirmation.",
@@ -253,7 +259,13 @@ TOOLS += (
     ),
     _typed_tool(
         COLLECTION_CANDIDATE_TOOL,
-        "Propose one bounded STANDARD Task collection with full fields/checklist/reminder effects. "
+        "Propose one bounded STANDARD Task collection with complete requested changes "
+        "and derived effects. "
+        "Do not call for list/read-only requests without a requested change. "
+        "For title/date-only collection creates omit fields.body_md and children; "
+        "do not invent optional extras. "
+        "Preserve user-supplied or explicitly requested generated content, and content copied "
+        "from eligible STANDARD sources as requested. Edits/revisions preserve omitted content. "
         "For N new Tasks submit ONE call with N action=create entries, selection_id=null, "
         "no IDs/versions; server issues IDs. Include every requested Task. "
         "Collection fields allow only title/body_md/status/priority/pinned and "
@@ -264,6 +276,9 @@ TOOLS += (
         "separate read-only turns; never combine a candidate with any other tool call. "
         "Existing targets require the actual selection_id returned by freeze_selection and "
         "exact included target IDs/versions; revisions require fresh current-run reads/selection. "
+        "Restore requires an explicit deleted read and a current-run selection; use action=restore "
+        "with exact id/expected_collection_version, not create or deleted_at fields. "
+        "For a plain restore omit fields/children and leave reminder.action=keep. "
         "Server validates/freezes; text plans never replace preview or execution receipt. "
         "Never executes before explicit confirmation.",
         CollectionCandidate,

@@ -81,7 +81,8 @@ test('confirmation binds digest and nonce while idempotency stays in the header'
   let captured: { path: RequestInfo | URL; init?: RequestInit } | undefined
   globalThis.fetch = async (path, init) => {
     captured = { path, init }
-    return new Response(JSON.stringify({ id: 'receipt-1' }), {
+    return new Response(JSON.stringify({ id: 'receipt-1', change_set_id: 'change-1', digest: 'a'.repeat(64),
+      operation_id: 'operation-1', executed_at: '2026-10-29T00:00:00Z', result: {} }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     })
@@ -90,6 +91,7 @@ test('confirmation binds digest and nonce while idempotency stays in the header'
     id: 'change-1',
     digest: 'a'.repeat(64),
     nonce: '01990000-0000-7000-8000-000000000001',
+    operation: { operation_id: 'operation-1' },
   } as MimiChangeSet
 
   await decideMimiChangeSet(changeSet, 'confirm', 'confirm-client-1')
