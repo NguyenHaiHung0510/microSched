@@ -22,6 +22,8 @@ from app.web.routers.calendar import router as calendar_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
 from app.web.routers.mimi import router as mimi_router
+from app.web.routers.mimi_voice import router as mimi_voice_router
+from app.web.routers.mimi_voice import socket_router as mimi_voice_socket_router
 from app.web.routers.mimi_workflow_pilot import router as mimi_workflow_pilot_router
 from app.web.routers.notes import router as notes_router
 from app.web.routers.private import router as private_router
@@ -51,7 +53,8 @@ async def lifespan(app: FastAPI):
                 await attention_dispatcher.start()
                 app.state.mimi_notification_dispatcher = attention_dispatcher
         settings = get_settings()
-        if settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled:
+        recover_text = settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled
+        if recover_text or settings.mimi_voice_enabled:
             from app.agent.service import reconcile_orphaned_mimi_runs
             from app.core.db import get_sessionmaker
 
@@ -59,7 +62,9 @@ async def lifespan(app: FastAPI):
             if factory is not None:
                 try:
                     async with factory() as recovery_db:
-                        recovered = await reconcile_orphaned_mimi_runs(recovery_db)
+                        recovered = await reconcile_orphaned_mimi_runs(
+                            recovery_db, voice_only=not recover_text
+                        )
                     if recovered:
                         logger.info("mimi_startup_recovered_runs count=%s", recovered)
                 except Exception:
@@ -273,6 +278,7 @@ def create_app() -> FastAPI:
     protected_api.include_router(reminders_router)
     protected_api.include_router(reminder_history_router)
     protected_api.include_router(mimi_router)
+    protected_api.include_router(mimi_voice_router)
     protected_api.include_router(mimi_workflow_pilot_router)
 
     @protected_api.get("/{path:path}", include_in_schema=False)
@@ -281,6 +287,7 @@ def create_app() -> FastAPI:
         raise HTTPException(status_code=404, detail="Not Found")
 
     app.include_router(protected_api)
+    app.include_router(mimi_voice_socket_router)
 
     frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if frontend_dist.is_dir():

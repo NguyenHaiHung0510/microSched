@@ -17,7 +17,7 @@ import { usePreviewExpired } from './mimi-preview-expiry'
 import { MimiRunObservations } from '@/MimiRunObservations'
 import { MimiCheckpointViewer } from './MimiCheckpointViewer'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, CalendarDays, Check, Copy, LoaderCircle, MessageSquareWarning, RotateCcw, Send, Sparkles, Square, X, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { ArrowDown, CalendarDays, Check, Copy, LoaderCircle, MessageSquareWarning, Mic, RotateCcw, Send, Sparkles, Square, X, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MimiAvatar, type MimiState } from '@/components/brand'
@@ -31,6 +31,8 @@ import { MimiResponseTiming } from '@/MimiResponseTiming'
 import { useMimiResponseTiming } from '@/useMimiResponseTiming'
 import { cn } from '@/lib/utils'
 import { isVerifiedServerNotice } from '@/mimi-message-provenance'
+import { MimiVoiceDock } from './MimiVoiceDock'
+import { useMimiVoice } from './useMimiVoice'
 import { ApiError, TimeoutError } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -238,6 +240,7 @@ export function MimiScreen({
   useRetainedMimiFeedback(conversationId)
   const [revisionTarget, setRevisionTarget] = useState<MimiPreviewBinding | null>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
+  const voiceStartRef = useRef<HTMLButtonElement>(null)
   const feedbackOpener = useRef<HTMLElement | null>(null)
   const [online, setOnline] = useState(() => navigator.onLine)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -685,14 +688,22 @@ export function MimiScreen({
     && feedbackAcknowledgment?.targetKey === resolvedFeedbackTargetKey && feedbackAcknowledgment?.mood === feedbackMood)
     || (feedbackMood === 'negative' && !!queryClient.getQueryData<{ saved: boolean }>(['mimi', 'system-negative-feedback-intent', current?.id, selectedSystemNotice?.id])?.saved)
   const runPending = send.isPending || resume.isPending
-  const durableRunActive = !!latestRun && ['accepted', 'building', 'running', 'executing'].includes(latestRun.state)
+  const voiceEnabled = capabilities.data?.voice_enabled === true && current?.sensitivity === 'standard' && !current.archived_at
+  const voice = useMimiVoice(queryClient, sessionEpoch, current?.id, voiceEnabled)
+  const voicePhase = voice.state.phase
+  useEffect(() => {
+    if ((voicePhase === 'ended' || voicePhase === 'error') && document.activeElement === document.body) {
+      voiceStartRef.current?.focus({ preventScroll: true })
+    }
+  }, [voicePhase])
+  const durableRunActive = !!latestRun && latestRun.mode !== 'voice' && ['accepted', 'building', 'running', 'executing'].includes(latestRun.state)
   const runtimeActive = runPending || durableRunActive
   const showWelcome = current?.messages.length === 0 && !runtimeActive
   const cancelRunId = durableRunActive
     ? latestRun?.id ?? null
     : runPending ? activeRunId : null
   const elapsed = useElapsed(runStartedAt ?? (latestRun ? new Date(latestRun.created_at).getTime() : null), runtimeActive)
-  const observedRunId = latestRun?.id
+  const observedRunId = latestRun?.mode === 'voice' ? undefined : latestRun?.id
   const observedRunState = latestRun?.state
 
   useEffect(() => {
@@ -755,7 +766,7 @@ export function MimiScreen({
 
   function submitMessage(event?: React.SyntheticEvent) {
     event?.preventDefault()
-    if (!current || decisionIntent || !draft.trim() || inputOverflow || runtimeActive || !online || (revisionTarget && !activeRevision)) return
+    if (!current || decisionIntent || !draft.trim() || inputOverflow || runtimeActive || voice.active || !online || (revisionTarget && !activeRevision)) return
     const clientId = crypto.randomUUID()
     responseTiming.begin(current.id, clientId, 'send')
     send.mutate({ current, content: draft, clientId, revision: activeRevision, startedAt: Date.now() })
@@ -920,7 +931,7 @@ export function MimiScreen({
         </div>
       ) : null}
 
-      {latestRun && (
+      {latestRun && latestRun.mode !== 'voice' && (
         latestRunCanResume
         || ['retryable', 'deadline_exceeded', 'outcome_unknown'].includes(latestRun.state)
         || (['cancelled', 'halted'].includes(latestRun.state) && latestRun.provider_outcome === 'unknown')
@@ -1000,6 +1011,8 @@ export function MimiScreen({
             {message.role === 'assistant' ? <MimiAvatar className="mimi-answer-avatar" /> : null}
             <div className={message.role === 'assistant' ? 'mimi-answer-column min-w-0' : 'min-w-0'}>
               <div className="mimi-message-body">{message.role === 'user' ? <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p> : <MimiMessageText text={message.content} />}
+                {message.provenance?.source === 'server_verified' && message.provenance.producer_code === 'provider_voice_partial'
+                  ? <p className="text-xs text-muted-foreground">Bản chép lời chưa đầy đủ</p> : null}
                 {message.role === 'assistant' ? <MimiToolActivity events={current.tool_activities ?? current.events} runId={message.run_id} /> : null}
                 <time className="mimi-message-time">{new Date(message.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</time>
               </div>
@@ -1207,7 +1220,9 @@ export function MimiScreen({
             <Button type="button" size="lg" variant="outline" onClick={() => setRevisionTarget(null)}>Hủy sửa</Button>
           </div>
         ) : null}
-        <div className="mimi-composer-surface relative flex flex-col rounded-2xl border border-input focus-within:ring-2 focus-within:ring-ring p-2">
+        {voice.active ? <MimiVoiceDock state={voice.state} mute={voice.mute} stop={voice.stop} /> : null}
+        {voice.state.notice ? <p role="status" className="mb-1 text-xs text-muted-foreground" data-testid="mimi-voice-notice">{voice.state.notice}</p> : null}
+        <div className={cn('mimi-composer-surface relative flex flex-col rounded-2xl border border-input focus-within:ring-2 focus-within:ring-ring p-2', voiceEnabled && !voice.active && 'mimi-composer-with-voice')}>
       <div className="mimi-composer-meta flex min-w-0 items-center gap-1"><MimiConfiguration conversationId={current.id} capabilities={capabilities.data} runtimeActive={runtimeActive} open={settingsOpen} onOpenChange={onSettingsOpenChange} onOpenHub={onOpenConfiguration} /><MimiContextComposition conversation={current} capabilities={capabilities.data} /></div>
           <Textarea
             rows={1}
@@ -1243,11 +1258,14 @@ export function MimiScreen({
           />
           <div className="mimi-composer-footer mt-1 flex items-center justify-between pt-1 text-xs text-muted-foreground">
             {current.archived_at ? <span className="text-xs text-muted-foreground">Hội thoại đã lưu · chỉ xem lại.</span> : null}
+            {voiceEnabled && !voice.active ? <Button ref={voiceStartRef} type="button" variant="outline" className="mimi-voice-start" data-testid="mimi-voice-start"
+              aria-label="Giọng nói" title="Giọng nói · chỉ đọc lịch" disabled={!online || runtimeActive || !!decisionIntent || (!!pendingChangeSet && !pendingPreviewExpired)}
+              onClick={() => voice.start(current.generation)}><Mic aria-hidden="true" />Giọng nói</Button> : null}
             <Button
               type="submit"
               size="sm"
               className="mimi-send min-h-11 min-w-11 rounded-full shrink-0"
-              disabled={!!decisionIntent || !!current.archived_at || !draft.trim() || inputOverflow || runtimeActive || !online || (revisionTarget !== null && !activeRevision)}
+              disabled={!!decisionIntent || !!current.archived_at || !draft.trim() || inputOverflow || runtimeActive || voice.active || !online || (revisionTarget !== null && !activeRevision)}
             >
               {runtimeActive ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Send className="size-3.5" />}
               <span className="sr-only">Gửi</span>

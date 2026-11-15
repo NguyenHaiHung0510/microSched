@@ -939,6 +939,7 @@ dependencies = [
     { name = "sqlmodel" },
     { name = "tzdata" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -967,6 +968,7 @@ requires-dist = [
     { name = "sqlmodel" },
     { name = "tzdata" },
     { name = "uvicorn" },
+    { name = "websockets", specifier = "==16.1.1" },
 ]
 
 [package.metadata.requires-dev]
