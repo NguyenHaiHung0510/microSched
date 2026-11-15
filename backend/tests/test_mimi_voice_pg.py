@@ -5,6 +5,7 @@ import base64
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -15,20 +16,26 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.agent import voice_bridge
 from app.agent.compaction import CALENDAR_HISTORY_MARKER
+from app.agent.models import MimiConversation
+from app.agent.voice_protocol import VoiceError
+from app.agent.voice_store import VoiceStore
 from app.core import crypto
 from app.core.db import get_engine, get_sessionmaker
 from app.core.sessions import hash_session_token
 from app.core.settings import get_settings
 from app.main import create_app
+from app.web.routers import mimi
 
 pytestmark = pytest.mark.pg
 HEADERS = {"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin", "X-Mimi-CSRF": "1"}
 DATE = "2091-09-21"
 
 
-def tool(kind, args):
+def tool(kind, args, *, identity=None):
     return {
-        "toolCall": {"functionCalls": [{"id": kind, "name": f"calendar_{kind}_v1", "args": args}]}
+        "toolCall": {
+            "functionCalls": [{"id": identity or kind, "name": f"calendar_{kind}_v1", "args": args}]
+        }
     }
 
 
@@ -345,6 +352,250 @@ def test_ticket_csrf_origin_session_and_expiry_before_dispatch(runtime, monkeypa
     assert not connections
     assert client.post(path + "/stop", headers=HEADERS, json={}).is_success
     assert client.get(f"/api/mimi/conversations/{cid}").json()["runs"][-1]["state"] == "cancelled"
+
+
+def test_text_fences_lost_ticket_atomically_and_replay_cannot_connect(runtime, monkeypatch):
+    client, sql, ids, connections, _ = runtime
+
+    @asynccontextmanager
+    async def forbidden(*args, **kwargs):
+        connections.append(True)
+        raise AssertionError("unexpected provider invocation")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(voice_bridge, "connect_provider", forbidden)
+    cid, generation = new_conversation(client, ids)
+    tickets, loaded_rows = [], []
+    preflight = mimi.ensure_message_admissible
+
+    async def mint_after_preflight(db, auth, conversation_id, payload):
+        loaded_rows.append(await db.get(MimiConversation, conversation_id))
+        await preflight(db, auth, conversation_id, payload)
+        if not tickets:
+            # A second transaction mints after the synchronous text endpoint
+            # loads generation. Its response is lost to the text client.
+            factory = get_sessionmaker()
+            async with factory() as mint_db:
+                tickets.append(
+                    await VoiceStore.mint(
+                        mint_db,
+                        factory,
+                        get_settings(),
+                        auth,
+                        conversation_id,
+                        generation,
+                    )
+                )
+                await mint_db.commit()
+
+    monkeypatch.setattr(mimi, "ensure_message_admissible", mint_after_preflight)
+    path = f"/api/mimi/conversations/{cid}"
+    payload = {
+        "client_id": "text-after-lost-ack",
+        "content": "Xin chào",
+        "expected_generation": generation,
+    }
+    stale = client.post(path + "/messages", headers=HEADERS, json=payload)
+    assert stale.status_code == 409 and stale.json()["detail"] == "conversation_generation_stale"
+    ticket = tickets[0]
+    run_id = UUID(ticket["run_id"])
+    rows = asyncio.run(sql("SELECT state FROM microsched.mimi_run WHERE id=$1", run_id))
+    assert rows[0]["state"] == "accepted"
+    payload["expected_generation"] = client.get(path).json()["generation"]
+    assert client.post(path + "/messages/stream", headers=HEADERS, json=payload).is_success
+    view = client.get(path).json()
+    assert [row["content"] for row in view["messages"] if row["role"] == "user"] == ["Xin chào"]
+    rows = asyncio.run(
+        sql(
+            "SELECT r.state, r.error_code, r.execution_lease->>'ticket_sha256' AS digest, "
+            "c.state AS call_state, c.route->>'paid_dispatch' AS paid "
+            "FROM microsched.mimi_run r JOIN microsched.mimi_provider_call c ON c.run_id=r.id "
+            "WHERE r.id=$1",
+            run_id,
+        )
+    )
+    assert dict(rows[0]) == {
+        "state": "cancelled",
+        "error_code": "voice_ticket_superseded_by_text",
+        "digest": None,
+        "call_state": "fenced",
+        "paid": "false",
+    }
+    with client.websocket_connect(endpoint(cid, ticket), headers=HEADERS) as socket:
+        socket.send_json({"type": "ticket", "ticket": ticket["ticket"]})
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_json()
+    assert not connections
+
+
+def test_text_cannot_supersede_ticket_after_consume_before_dispatch(runtime, monkeypatch):
+    client, _, ids, _, _ = runtime
+    consumed = Event()
+    release = asyncio.Event()
+
+    async def hold_dispatch(self):
+        consumed.set()
+        await asyncio.wait_for(release.wait(), timeout=5)
+        raise VoiceError("fixture_stopped_before_dispatch")
+
+    monkeypatch.setattr(VoiceStore, "dispatched", hold_dispatch)
+    cid, generation = new_conversation(client, ids)
+    ticket = mint(client, cid, generation)
+    path = f"/api/mimi/conversations/{cid}"
+    with client.websocket_connect(endpoint(cid, ticket), headers=HEADERS) as socket:
+        socket.send_json({"type": "ticket", "ticket": ticket["ticket"]})
+        try:
+            assert consumed.wait(4)
+            response = client.post(
+                path + "/messages/stream",
+                headers=HEADERS,
+                json={
+                    "client_id": "text-vs-consumed-ticket",
+                    "content": "Xin chào",
+                    "expected_generation": client.get(path).json()["generation"],
+                },
+            )
+            assert response.status_code == 409
+            assert response.json()["detail"] == "finish_voice_before_text"
+        finally:
+            client.portal.call(release.set)
+        assert socket.receive_json() == {
+            "type": "ended",
+            "reason": "fixture_stopped_before_dispatch",
+        }
+    assert not client.get(path).json()["messages"]
+
+
+@pytest.mark.parametrize("checkpoint", ["response", "watchdog"])
+def test_calendar_wire_checks_row_and_source_and_closes_stale_context(
+    runtime, monkeypatch, checkpoint
+):
+    client, sql, ids, connections, _ = runtime
+    cid, generation = new_conversation(client, ids)
+    source, target = uuid4(), uuid4()
+    asyncio.run(
+        sql(
+            "INSERT INTO microsched.calendar_source (id,name,kind) VALUES ($1,$2,'manual')",
+            source,
+            f"Voice tool fixture {source}",
+        )
+    )
+    frames, lock_conflicts = [], []
+    original_read = VoiceStore.read_tool
+
+    async def change_after_first_read(self, wire, arguments):
+        result = await original_read(self, wire, arguments)
+        if not frames:
+            await sql(
+                "UPDATE microsched.calendar_event SET title='New version' WHERE id=$1", target
+            )
+        return result
+
+    async def unsolicited_output(queue):
+        await queue.put(
+            {
+                "serverContent": {
+                    "outputTranscription": {"text": "Stale context"},
+                    "turnComplete": True,
+                }
+            }
+        )
+
+    @asynccontextmanager
+    async def fake_connector(settings, *, run_id):
+        queue = asyncio.Queue()
+        connections.append(queue)
+
+        class Fake:
+            async def send(self, raw):
+                value = json.loads(raw)
+                if "setup" in value:
+                    await queue.put({"setupComplete": {}})
+                elif "realtimeInput" in value:
+                    await queue.put(
+                        tool(
+                            "inspect",
+                            {"kind": "event", "id": str(target)},
+                            identity=f"inspect-{len(frames)}",
+                        )
+                    )
+                elif "toolResponse" in value:
+                    response = value["toolResponse"]["functionResponses"][0]
+                    if response["id"] == "inspect-1":
+                        # An independent writer would block on both exact rows
+                        # while the provider coroutine owns the frame.
+                        for table, row_id in (
+                            ("calendar_source", source),
+                            ("calendar_event", target),
+                        ):
+                            try:
+                                await sql(
+                                    f"SELECT id FROM microsched.{table} WHERE id=$1 "
+                                    "FOR NO KEY UPDATE NOWAIT",
+                                    row_id,
+                                )
+                            except asyncpg.LockNotAvailableError:
+                                lock_conflicts.append(table)
+                    frames.append(response)
+                    await queue.put(
+                        {
+                            "serverContent": {
+                                "outputTranscription": {"text": "Grounded response"},
+                                "turnComplete": True,
+                            }
+                        }
+                    )
+
+            async def recv(self):
+                return json.dumps(await queue.get())
+
+        yield Fake()
+
+    monkeypatch.setattr(VoiceStore, "read_tool", change_after_first_read)
+    monkeypatch.setattr(voice_bridge, "connect_provider", fake_connector)
+    try:
+        asyncio.run(
+            sql(
+                "INSERT INTO microsched.calendar_event (id,source_id,title,starts_at,ends_at) "
+                "VALUES ($1,$2,'Old version',now(),now()+interval '1 hour')",
+                target,
+                source,
+            )
+        )
+        ticket = mint(client, cid, generation)
+        with client.websocket_connect(endpoint(cid, ticket), headers=HEADERS) as socket:
+            socket.send_json({"type": "ticket", "ticket": ticket["ticket"]})
+            assert socket.receive_json()["type"] == "ready"
+            for _ in range(2):
+                socket.send_bytes(b"\x00\x00" * 640)
+                assert socket.receive_json()["type"] == "transcript"
+                assert socket.receive_json()["type"] == "transcript_saved"
+                assert socket.receive_json()["type"] == "turn_complete"
+            assert frames[0]["response"]["result"]["error"]["code"] == "calendar_source_changed"
+            assert str(target) not in json.dumps(frames[0]) and "Old version" not in json.dumps(
+                frames[0]
+            )
+            assert frames[1]["response"]["result"]["rows"][0]["title"] == "New version"
+            assert lock_conflicts == ["calendar_source", "calendar_event"]
+            # This writer now commits in the still-open session: no session-long lock.
+            asyncio.run(
+                asyncio.wait_for(
+                    sql(
+                        "UPDATE microsched.calendar_source SET is_visible=false WHERE id=$1", source
+                    ),
+                    timeout=2,
+                )
+            )
+            if checkpoint == "response":
+                client.portal.call(unsolicited_output, connections[0])
+            assert socket.receive_json() == {
+                "type": "ended",
+                "reason": "voice_calendar_context_changed",
+            }
+        history = client.get(f"/api/mimi/conversations/{cid}").json()["messages"]
+        assert [row["content"] for row in history] == ["Grounded response"] * 2
+    finally:
+        asyncio.run(sql("DELETE FROM microsched.calendar_source WHERE id=$1", source))
 
 
 @pytest.mark.parametrize("change", ["archive", "frontier"])

@@ -21,6 +21,7 @@ from app.domain.calendar_read import (
     CalendarKind,
     CalendarReadRequest,
     CalendarReadResult,
+    CalendarVersion,
     calendar_versions,
     inspect_calendar,
     read_calendar_page,
@@ -34,6 +35,7 @@ CALENDAR_READ_MODELS = {
 }
 CALENDAR_READ_TOOLS = frozenset(CALENDAR_READ_MODELS)
 CALENDAR_SOURCE_TYPE = "microsched.calendar.standard"
+CalendarBindings = dict[tuple[CalendarKind, UUID], CalendarVersion]
 
 
 class CalendarCursorError(BaseModel):
@@ -133,24 +135,44 @@ async def execute_calendar_tool(
     return (await execute_calendar_read(db, request, settings=settings)).model_dump(mode="json")
 
 
-async def calendar_pairs_current(db: AsyncSession, pairs: list[list[dict[str, Any]]]) -> bool:
+def calendar_result_bindings(name: str, result: dict[str, Any]) -> CalendarBindings:
+    """Only identity and versions of emitted rows, never requested range or prose."""
+    if name not in CALENDAR_READ_TOOLS or "error" in result:
+        return {}
+    model = CalendarReadResult if name == CALENDAR_READ_TOOL else CalendarInspectResult
+    return {
+        (row.kind, row.id): (
+            row.source_version,
+            (row.source.id, row.source.source_version) if row.kind == "event" else None,
+        )
+        for row in model.model_validate(result).rows
+    }
+
+
+async def calendar_bindings_current(
+    db: AsyncSession, bindings: CalendarBindings, *, lock: bool = False
+) -> bool:
     """Recheck emitted rows only, never range completeness or snapshot stability."""
-    expected: dict[CalendarKind, dict[UUID, tuple[datetime, datetime | None]]] = {}
+    expected: dict[CalendarKind, dict[UUID, CalendarVersion]] = {}
+    for (kind, row_id), version in bindings.items():
+        expected.setdefault(kind, {})[row_id] = version
+    for kind in KINDS:
+        if (versions := expected.get(kind)) and await calendar_versions(
+            db, kind, set(versions), lock=lock
+        ) != versions:
+            return False
+    return True
+
+
+async def calendar_pairs_current(db: AsyncSession, pairs: list[list[dict[str, Any]]]) -> bool:
+    expected: CalendarBindings = {}
     for assistant, result_message in pairs:
         name = assistant["tool_calls"][0]["function"]["name"]
         if name not in CALENDAR_READ_TOOLS:
             continue
-        result = json.loads(result_message["content"])
-        if "error" in result:
-            continue
-        model = CalendarReadResult if name == CALENDAR_READ_TOOL else CalendarInspectResult
-        for row in model.model_validate(result).rows:
-            versions = expected.setdefault(row.kind, {})
-            source_version = row.source.source_version if row.kind == "event" else None
-            version = (row.source_version, source_version)
-            if versions.setdefault(row.id, version) != version:
+        for key, version in calendar_result_bindings(
+            name, json.loads(result_message["content"])
+        ).items():
+            if expected.setdefault(key, version) != version:
                 return False
-    for kind, versions in expected.items():
-        if await calendar_versions(db, kind, set(versions)) != versions:
-            return False
-    return True
+    return await calendar_bindings_current(db, expected)

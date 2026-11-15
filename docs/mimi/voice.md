@@ -13,9 +13,15 @@ Có thể hỏi một ngày, danh sách ngày, khoảng ngày hoặc chi tiết 
 Để chỉnh dữ liệu, kết thúc phiên và quay lại chat text. Voice không tạo preview, không
 gọi text model, và không bật Google Search. Thao tác trên mic gửi audio đến Google;
 app không lưu PCM. Bản chép lời do provider trả về được mã hóa trong chính hội thoại.
-Câu trả lời ngắt giữa chừng có nhãn **Bản chép lời chưa đầy đủ**. Input transcription
-không có ID để khẳng định provider đã ghép từng đoạn input với một câu trả lời cụ thể.
+Lượt provider hoàn tất vẫn có thể chưa phát hết âm thanh, ví dụ khi bạn bấm **Kết thúc**.
+Nếu provider sinh câu trả lời dở dang, bản đã lưu có nhãn **Bản chép lời chưa đầy đủ**.
+Input transcription không có ID để khẳng định provider đã ghép từng đoạn input với
+một câu trả lời cụ thể.
 Các câu trả lời từ run đọc Calendar có cùng quy tắc đọc lại dữ liệu khi đưa vào lịch sử model.
+
+Mimi kiểm lại các mục lịch ngay trước khi gửi kết quả. Nếu phát hiện mục đã gửi thay đổi
+hoặc không còn hiển thị, Mimi kết thúc phiên giọng nói. Một phiên mới có thể đọc lịch
+hiện tại; dữ liệu đã gửi hợp lệ trong phiên trước không thể thu hồi.
 
 Để dùng trên một app instance đã được cho phép, đặt `MIMI_VOICE_ENABLED=true` và
 `MIMI_CALENDAR_READ_ENABLED=true` trong cấu hình backend, cùng `MIMI_GEMINI_API_KEY`

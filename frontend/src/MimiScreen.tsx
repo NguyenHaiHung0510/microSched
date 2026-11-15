@@ -1013,6 +1013,8 @@ export function MimiScreen({
               <div className="mimi-message-body">{message.role === 'user' ? <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p> : <MimiMessageText text={message.content} />}
                 {message.provenance?.source === 'server_verified' && message.provenance.producer_code === 'provider_voice_partial'
                   ? <p className="text-xs text-muted-foreground">Bản chép lời chưa đầy đủ</p> : null}
+                {message.provenance?.source === 'server_verified' && message.provenance.producer_code === 'provider_voice'
+                  ? <p className="text-xs text-muted-foreground">Bản chép lời giọng nói · âm thanh có thể chưa phát hết</p> : null}
                 {message.role === 'assistant' ? <MimiToolActivity events={current.tool_activities ?? current.events} runId={message.run_id} /> : null}
                 <time className="mimi-message-time">{new Date(message.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</time>
               </div>

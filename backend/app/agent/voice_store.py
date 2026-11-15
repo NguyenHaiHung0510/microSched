@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid7
 
@@ -20,7 +21,12 @@ from app.agent.service import (
     _conversation,
     _provider_history,
 )
-from app.agent.tools.calendar_reads import calendar_pairs_current, execute_calendar_tool
+from app.agent.tools.calendar_reads import (
+    CalendarBindings,
+    calendar_bindings_current,
+    calendar_result_bindings,
+    execute_calendar_tool,
+)
 from app.agent.voice_protocol import (
     MAX_CONTEXT_BYTES,
     MAX_TOOL_BYTES,
@@ -54,11 +60,11 @@ def _time(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-async def close_orphaned_voice(db, run, call):
+async def close_orphaned_voice(db, run, call, *, intent_reason="voice_dispatch_not_started"):
     dispatched = call.state != "intent"
     run.state = "outcome_unknown" if dispatched else "cancelled"
     run.provider_outcome = "unknown" if dispatched else None
-    run.error_code = "voice_process_lost" if dispatched else "voice_dispatch_not_started"
+    run.error_code = "voice_process_lost" if dispatched else intent_reason
     run.completed_at = datetime.now(UTC)
     run.execution_lease = {**run.execution_lease, "ticket_sha256": None, "ticket_used": True}
     call.state = "unknown" if dispatched else "fenced"
@@ -79,18 +85,36 @@ async def close_orphaned_voice(db, run, call):
     )
 
 
-async def assert_no_active_voice(db, conversation_id):
-    rows = await db.scalars(
-        select(MimiRun).where(
-            MimiRun.conversation_id == conversation_id,
-            MimiRun.state.in_(("accepted", "running")),
-            MimiRun.execution_lease["mode"].astext == "voice",
-        )
+async def guard_voice_for_text(db, conversation_id, *, new_message=True, supersede=False):
+    """The worker may fence unused tickets under the same parent lock as consume."""
+    stmt = select(MimiRun).where(
+        MimiRun.conversation_id == conversation_id,
+        MimiRun.state.in_(("accepted", "running")),
+        MimiRun.execution_lease["mode"].astext == "voice",
     )
+    if supersede:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    rows = await db.scalars(stmt)
     now = datetime.now(UTC)
     for run in rows:
+        lease = run.execution_lease
+        if new_message and run.state == "accepted" and lease.get("ticket_used") is False:
+            if supersede:
+                call = (
+                    await db.scalars(
+                        select(MimiProviderCall).where(MimiProviderCall.run_id == run.id)
+                    )
+                ).one()
+                if call.state != "intent":
+                    raise HTTPException(status_code=409, detail="finish_voice_before_text")
+                await close_orphaned_voice(
+                    db, run, call, intent_reason="voice_ticket_superseded_by_text"
+                )
+            continue
         if run.deadline > now and (
-            run.state == "running" or _time(run.execution_lease["ticket_expires_at"]) > now
+            run.state == "running"
+            or lease.get("ticket_used")
+            or _time(lease["ticket_expires_at"]) > now
         ):
             raise HTTPException(status_code=409, detail="finish_voice_before_text")
 
@@ -139,9 +163,16 @@ class VoiceStore:
             raise VoiceError("voice_conversation_changed_or_expired")
         return conversation, run
 
-    async def check(self):
+    @staticmethod
+    async def check_calendar(db, bindings: CalendarBindings):
+        if bindings and not await calendar_bindings_current(db, bindings):
+            raise VoiceError("voice_calendar_context_changed")
+
+    async def check(self, bindings: CalendarBindings | None = None):
         async with self.factory() as db:
             await self.boundary(db, lock=False)
+            if bindings:
+                await self.check_calendar(db, bindings)
 
     @classmethod
     async def mint(cls, db, factory, settings, auth, conversation_id, expected_generation):
@@ -336,7 +367,9 @@ class VoiceStore:
             except ValueError:
                 return {"error": {"code": "calendar_arguments_invalid"}, "coverage": "unavailable"}
 
-    async def tool_receipt(self, identity, wire, arguments, result):
+    @asynccontextmanager
+    async def tool_delivery(self, identity, wire, arguments, result, exposed: CalendarBindings):
+        """Caller bounds this transaction and sends inline while row versions are held."""
         if len(encoded(result).encode()) > MAX_TOOL_BYTES:
             result = {
                 "error": {
@@ -348,11 +381,9 @@ class VoiceStore:
         canonical = TOOL_NAMES[wire]
         async with self.factory() as db:
             conversation, _ = await self.boundary(db)
-            pair = [
-                {"tool_calls": [{"function": {"name": canonical}}]},
-                {"content": encoded(result)},
-            ]
-            if not await calendar_pairs_current(db, [pair]):
+            bindings = calendar_result_bindings(canonical, result)
+            if not await calendar_bindings_current(db, bindings, lock=True):
+                bindings = {}
                 result = {
                     "error": {
                         "code": "calendar_source_changed",
@@ -389,8 +420,10 @@ class VoiceStore:
                     aad=crypto.event_content_aad(self.run_id, sequence, "tool.read_result"),
                 ),
             }
+            await self.check_calendar(db, exposed)
+            yield result, bindings
+            await _append_event(db, self.run_id, "voice.tool_sent", {"provider_call_id": identity})
             await db.commit()
-            return result
 
     async def transcript(self, turn: int, input_text: str, output_text: str, *, partial: bool):
         async with self.factory() as db:

@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -45,10 +46,11 @@ class Store:
         await self.open_read.wait()
         return {"date": arguments["date"]}
 
-    async def tool_receipt(self, identity, wire, arguments, result):
-        return result
+    @asynccontextmanager
+    async def tool_delivery(self, identity, wire, arguments, result, exposed):
+        yield result, {}
 
-    async def check(self):
+    async def check(self, bindings=None):
         pass
 
 
@@ -149,6 +151,58 @@ def test_only_named_provider_calls_cancel_and_duplicates_do_not_send():
         assert bridge.store.reads == ["2026-11-16", "2026-11-17"]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ["before_wire", "in_wire"])
+def test_recognized_stop_fences_pending_tools_before_run_teardown(phase):
+    async def scenario():
+        reached = asyncio.Event()
+        release = asyncio.Event()
+
+        class DelayedStore(Store):
+            @asynccontextmanager
+            async def tool_delivery(self, identity, wire, arguments, result, exposed):
+                if phase == "before_wire":
+                    reached.set()
+                    # Even a completed DB boundary that wins cancellation must
+                    # hit the local gate before its result can leave.
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        await release.wait()
+                yield result, {}
+
+        class DelayedProvider(Provider):
+            async def send(self, raw):
+                await super().send(raw)
+                if phase == "in_wire":
+                    reached.set()
+                    await release.wait()
+
+        bridge = VoiceBridge(Browser(), DelayedStore())
+        bridge.provider = DelayedProvider()
+        bridge.store.open_read.set()
+        await bridge.process(
+            {
+                "toolCall": {
+                    "functionCalls": [
+                        {"id": "late", "name": "calendar_read_v1", "args": {"date": "2091-09-21"}}
+                    ]
+                }
+            }
+        )
+        pending = bridge.pending["late"]
+        await reached.wait()
+        await bridge.browser.input.put({"type": "websocket.receive", "text": '{"type":"stop"}'})
+        assert await bridge.browser_loop() == "voice_stopped"
+        # No run() teardown has happened. Even after the read boundary
+        # completes, no *new* frame can be handed off after recognized Stop.
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        assert len(bridge.provider.sent) == int(phase == "in_wire")
+        assert bridge.send_uncertain is (phase == "in_wire")
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=3))
 
 
 @pytest.mark.parametrize(

@@ -495,7 +495,8 @@ async def _append_event(
     await db.flush()
     if (
         kind in {"run.terminal", "change_set.ready"}
-        and payload.get("mode") != "voice" and get_settings().mimi_notifications_enabled
+        and payload.get("mode") != "voice"
+        and get_settings().mimi_notifications_enabled
     ):
         from app.agent.notifications import queue_completion
 
@@ -631,7 +632,9 @@ async def _conversation(
         MimiConversation.owner_id == _owner_id(auth),
     )
     if lock:
-        statement = statement.with_for_update()
+        # The synchronous text route may already have loaded this row during
+        # preflight. Compare against its generation after acquiring the lock.
+        statement = statement.with_for_update().execution_options(populate_existing=True)
     row = (await db.execute(statement)).scalar_one_or_none()
     if row is None:
         raise _not_found()
@@ -1343,9 +1346,9 @@ async def ensure_message_admissible(
         if existing.content_sha256 != hashlib.sha256(payload.content.encode("utf-8")).hexdigest():
             raise _conflict("message_client_id_reused_with_different_content")
         return  # An idempotent replay is not a new context/provider turn.
-    from app.agent.voice_store import assert_no_active_voice
+    from app.agent.voice_store import guard_voice_for_text
 
-    await assert_no_active_voice(db, conversation.id)
+    await guard_voice_for_text(db, conversation.id)
     if (
         payload.expected_generation is not None
         and payload.expected_generation != conversation.generation
@@ -1995,7 +1998,7 @@ async def send_message(
     parent_run_id: UUID | None = None,
 ) -> dict[str, Any]:
     conversation = await _conversation(db, auth, conversation_id, lock=True)
-    from app.agent.voice_store import assert_no_active_voice
+    from app.agent.voice_store import guard_voice_for_text
 
     existing = None
     if record_user_message:
@@ -2011,12 +2014,14 @@ async def send_message(
         if existing.content_sha256 != hashlib.sha256(payload.content.encode("utf-8")).hexdigest():
             raise _conflict("message_client_id_reused_with_different_content")
         return await conversation_view(db, auth, conversation_id)
-    await assert_no_active_voice(db, conversation.id)
     if (
         payload.expected_generation is not None
         and payload.expected_generation != conversation.generation
     ):
         raise _conflict("conversation_generation_stale")
+    await guard_voice_for_text(
+        db, conversation.id, new_message=record_user_message, supersede=record_user_message
+    )
 
     if (
         record_user_message
@@ -5421,9 +5426,9 @@ async def reconcile_orphaned_mimi_runs(db: AsyncSession, *, voice_only: bool = F
                         # than pinning a DB connection during external audio.
                         # A rolling restart must not relabel a live old socket.
                         if run.deadline > datetime.now(UTC) and (
-                            call.state != "intent" or datetime.fromisoformat(
-                                run.execution_lease["ticket_expires_at"]
-                            ) > datetime.now(UTC)
+                            call.state != "intent"
+                            or datetime.fromisoformat(run.execution_lease["ticket_expires_at"])
+                            > datetime.now(UTC)
                         ):
                             continue
                         from app.agent.voice_store import close_orphaned_voice

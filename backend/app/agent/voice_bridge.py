@@ -14,6 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from websockets.asyncio.client import connect
 from websockets.exceptions import SecurityError
 
+from app.agent.tools.calendar_reads import CalendarBindings
 from app.agent.voice_protocol import (
     ENDPOINT,
     MAX_CALLS,
@@ -100,6 +101,9 @@ class VoiceBridge:
         self.browser, self.store = browser, store
         self.send_lock, self.browser_lock = asyncio.Lock(), asyncio.Lock()
         self.pending, self.seen = {}, set()
+        self.exposed_calendar: CalendarBindings = {}
+        self.closing = self.abandoned_tool = self.send_active = self.send_uncertain = False
+        self.tool_wire_id = None
         self.input_text = self.output_text = ""
         self.overlap_input = ""
         self.output_started = self.interrupted_tail = False
@@ -110,13 +114,40 @@ class VoiceBridge:
         self.started = time.monotonic()
         self.provider = None
 
+    def stop_admission(self):
+        if self.closing:
+            return
+        self.closing = True
+        self.send_uncertain |= self.send_active or self.tool_wire_id is not None
+        self.abandoned_tool = bool(self.pending)
+        for task in self.pending.values():
+            if task is not asyncio.current_task():
+                task.cancel()
+
+    async def send_frame(self, raw):
+        # No yield or separate asyncio task between this check and entry into
+        # socket IO. Once entered, a Stop/timeout cannot retract those bytes.
+        if self.closing:
+            raise VoiceError("voice_send_closed")
+        self.send_active = True
+        try:
+            async with asyncio.timeout(5):
+                await self.provider.send(raw)
+        except BaseException:
+            self.send_uncertain = True
+            raise
+        finally:
+            self.send_active = False
+
     async def send(self, value):
         async with self.send_lock:
-            await asyncio.wait_for(self.provider.send(encoded(value)), timeout=5)
+            await self.send_frame(encoded(value))
 
-    async def notify(self, value):
+    async def notify(self, value, *, terminal=False):
         async with self.browser_lock:
-            await asyncio.wait_for(self.browser.send_json(value), timeout=5)
+            if not self.closing or terminal:
+                async with asyncio.timeout(5):
+                    await self.browser.send_json(value)
 
     async def flush(self, *, partial):
         if not self.input_text.strip() and not self.output_text.strip():
@@ -138,42 +169,49 @@ class VoiceBridge:
             async with self.send_lock:
                 # Interruption alone does not cancel tools. Only the exact
                 # provider cancellation ID (or session teardown) removes it.
-                if identity not in self.pending:
+                if self.closing or identity not in self.pending:
                     return
-                result = await self.store.tool_receipt(identity, wire, arguments, result)
-                await self.store.check()
-                await asyncio.wait_for(
-                    self.provider.send(
-                        encoded(
-                            {
-                                "toolResponse": {
-                                    "functionResponses": [
-                                        {
-                                            "id": identity,
-                                            "name": wire,
-                                            "response": {
-                                                "result": result,
-                                                "scheduling": "WHEN_IDLE",
-                                            },
-                                        }
-                                    ]
-                                }
+                async with (
+                    asyncio.timeout(2),
+                    self.store.tool_delivery(
+                        identity, wire, arguments, result, self.exposed_calendar
+                    ) as (result, bindings),
+                ):
+                    raw = encoded(
+                        {
+                            "toolResponse": {
+                                "functionResponses": [
+                                    {
+                                        "id": identity,
+                                        "name": wire,
+                                        "response": {"result": result, "scheduling": "WHEN_IDLE"},
+                                    }
+                                ]
                             }
-                        )
-                    ),
-                    timeout=5,
-                )
-            await self.store.event("voice.tool_sent", {"provider_call_id": identity})
+                        }
+                    )
+                    if self.closing or identity not in self.pending:
+                        raise VoiceError("voice_send_closed")
+                    self.tool_wire_id = identity
+                    await self.send_frame(raw)
+                self.exposed_calendar.update(bindings)
+                self.tool_wire_id = None
         except asyncio.CancelledError:
             raise
         except VoiceError as error:
             self.tool_error = str(error)
+            self.stop_admission()
         except Exception:
             self.tool_error = "voice_tool_failed"
+            self.stop_admission()
         finally:
+            if self.tool_wire_id == identity:
+                self.tool_wire_id = None
             self.pending.pop(identity, None)
 
     async def process(self, event):
+        if self.closing:
+            return
         if "usageMetadata" in event:
             if len(self.usage) >= 256:
                 raise VoiceError("voice_usage_limit")
@@ -188,14 +226,20 @@ class VoiceBridge:
                 raise VoiceError("voice_cancellation_invalid")
             cancelled = []
             for identity in ids:
+                if identity == self.tool_wire_id:
+                    continue  # Already in socket IO; let the bounded receipt settle.
                 task = self.pending.pop(identity, None)
                 if task is not None:
                     task.cancel()
                     cancelled.append(task)
             if cancelled:
                 await asyncio.gather(*cancelled, return_exceptions=True)
+            if self.closing:
+                return
             await self.store.event("voice.tools_cancelled", {"ids": ids})
         if "toolCall" in event:
+            if self.closing:
+                return
             calls = event["toolCall"].get("functionCalls")
             if not isinstance(calls, list) or not calls or len(calls) > MAX_PENDING:
                 raise VoiceError("voice_tool_limit")
@@ -215,8 +259,29 @@ class VoiceBridge:
                 raise VoiceError("voice_provider_content_invalid")
             interrupted = content.get("interrupted") is True
             if interrupted and not self.interrupted_tail:
-                # Browser clears scheduled playback before any database await.
+                # Clearing queued audio must not wait for Calendar or its receipt.
                 await self.notify({"type": "interrupted"})
+            # A provider can start responding before its tool send returns.
+            # Expose none of that response until the encrypted receipt commits.
+            after_tool = self.tool_wire_id is not None
+            if after_tool:
+                async with self.send_lock:
+                    pass
+            if self.closing:
+                return
+            if self.exposed_calendar and (
+                after_tool
+                or (
+                    not self.output_started
+                    and ("modelTurn" in content or "outputTranscription" in content)
+                )
+                or content.get("turnComplete") is True
+                or interrupted
+            ):
+                await self.store.check(self.exposed_calendar.copy())
+                if self.closing:
+                    return
+            if interrupted and not self.interrupted_tail:
                 await self.store.event("voice.interrupted", {"turn": self.turn})
             parts = content.get("modelTurn", {}).get("parts", [])
             if not isinstance(parts, list) or len(parts) > 64:
@@ -232,7 +297,12 @@ class VoiceBridge:
                     if not interrupted and not self.interrupted_tail:
                         self.output_started = True
                         async with self.browser_lock:
-                            await asyncio.wait_for(self.browser.send_bytes(data), timeout=5)
+                            if self.closing:
+                                return
+                            async with asyncio.timeout(5):
+                                await self.browser.send_bytes(data)
+            if self.closing:
+                return
             if not self.interrupted_tail and "outputTranscription" in content:
                 await self.caption(content["outputTranscription"], "output_text", "assistant")
                 self.output_started = True
@@ -278,6 +348,12 @@ class VoiceBridge:
             await self.process(server_event(await self.provider.recv()))
 
     async def browser_loop(self):
+        try:
+            return await self.receive_browser()
+        finally:
+            self.stop_admission()
+
+    async def receive_browser(self):
         while True:
             event = await self.browser.receive()
             if event["type"] == "websocket.disconnect":
@@ -330,18 +406,24 @@ class VoiceBridge:
                 raise VoiceError("voice_browser_message_forbidden")
 
     async def watchdog(self):
-        while True:
-            await asyncio.sleep(2)
-            await self.store.check()
-            if self.tool_error:
-                raise VoiceError(self.tool_error)
+        try:
+            while True:
+                await asyncio.sleep(2)
+                if self.tool_error:
+                    raise VoiceError(self.tool_error)
+                await self.store.check(self.exposed_calendar.copy())
+        finally:
+            self.stop_admission()
 
     async def end_tasks(self, tasks):
+        self.stop_admission()
         all_tasks = [*tasks, *self.pending.values()]
-        self.pending.clear()
-        for task in all_tasks:
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*all_tasks, return_exceptions=True)
+        if all_tasks:
+            # A cancelled upstream waiter must not cancel tool cleanup again.
+            await asyncio.wait(all_tasks)
+            await asyncio.gather(*all_tasks, return_exceptions=True)
 
     async def upstream(self, config, seed):
         async with connect_provider(self.store.settings, run_id=self.store.run_id) as provider:
@@ -383,6 +465,7 @@ class VoiceBridge:
                 for task in tasks:
                     if task.done() and (value := task.result()):
                         reason = value
+                        break
         except VoiceError as error:
             reason = str(error)
         except TimeoutError:
@@ -392,8 +475,13 @@ class VoiceBridge:
         except Exception:
             reason = "voice_connection_failed"  # No raw exceptions, wire, socket repr or key.
         finally:
-            incomplete = self.output_started or bool(self.pending) or self.interrupted_tail
             await self.end_tasks(tasks)
+            incomplete = (
+                self.output_started
+                or self.abandoned_tool
+                or self.interrupted_tail
+                or self.send_uncertain
+            )
             if any(t.strip() for t in (self.input_text, self.overlap_input, self.output_text)):
                 with suppress(Exception), asyncio.timeout(5):
                     self.merge_late_input()
@@ -411,8 +499,9 @@ class VoiceBridge:
                         "input_pcm_bytes": self.input_bytes,
                         "output_pcm_bytes": self.output_bytes,
                         "tool_calls": len(self.seen),
+                        "provider_send_may_have_been_in_flight": self.send_uncertain,
                     },
                 )
             with suppress(Exception):
-                await self.notify({"type": "ended", "reason": reason})
+                await self.notify({"type": "ended", "reason": reason}, terminal=True)
         return reason
