@@ -96,6 +96,16 @@ def usage_sample(value):
     return result
 
 
+def _failure_reason(error: Exception) -> str:
+    if isinstance(error, VoiceError):
+        return str(error)
+    if isinstance(error, TimeoutError):
+        return "voice_time_limit"
+    if isinstance(error, WebSocketDisconnect):
+        return "voice_disconnected"
+    return "voice_connection_failed"  # No raw exceptions, wire, socket repr or key.
+
+
 class VoiceBridge:
     def __init__(self, browser, store):
         self.browser, self.store = browser, store
@@ -111,6 +121,7 @@ class VoiceBridge:
         self.connected, self.ready, self.muted = False, False, False
         self.input_bytes = self.output_bytes = self.transcript_bytes = 0
         self.usage, self.tool_error = [], None
+        self.upstream_failure: str | None = None
         self.started = time.monotonic()
         self.provider = None
 
@@ -356,6 +367,10 @@ class VoiceBridge:
     async def receive_browser(self):
         while True:
             event = await self.browser.receive()
+            if self.closing:
+                # A frame queued during teardown must not obscure the failure
+                # that already closed admission, or be sent to the provider.
+                return self.upstream_failure or self.tool_error
             if event["type"] == "websocket.disconnect":
                 raise VoiceError("voice_disconnected")
             data = event.get("bytes")
@@ -443,6 +458,10 @@ class VoiceBridge:
                 self.ready = True
                 await self.notify({"type": "ready", "run_id": str(self.store.run_id)})
                 await self.provider_loop()
+            except Exception as error:
+                # Record the safe reason before cleanup can yield to the mic.
+                self.upstream_failure = _failure_reason(error)
+                raise
             finally:
                 self.ready = False
                 await self.end_tasks([])  # Fence pending reads before closing upstream.
@@ -466,14 +485,12 @@ class VoiceBridge:
                     if task.done() and (value := task.result()):
                         reason = value
                         break
-        except VoiceError as error:
-            reason = str(error)
-        except TimeoutError:
-            reason = "voice_time_limit"
-        except WebSocketDisconnect, asyncio.CancelledError:
+        except asyncio.CancelledError:
             reason = "voice_disconnected"
-        except Exception:
-            reason = "voice_connection_failed"  # No raw exceptions, wire, socket repr or key.
+        except Exception as error:
+            reason = _failure_reason(error)
+            if reason == "voice_send_closed":
+                reason = self.upstream_failure or self.tool_error or reason
         finally:
             await self.end_tasks(tasks)
             incomplete = (

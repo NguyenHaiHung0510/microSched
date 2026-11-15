@@ -4,12 +4,13 @@ import asyncio
 import base64
 import json
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
+import app.agent.voice_bridge as bridge_module
 from app.agent.voice_bridge import VoiceBridge
 from app.agent.voice_protocol import MODEL, VoiceError, server_event, setup, tool_request
 
@@ -222,5 +223,47 @@ def test_browser_cannot_supply_provider_content_or_unbounded_frames(bad):
         with pytest.raises(VoiceError, match="forbidden|chunk_limit"):
             await bridge.browser_loop()
         assert not bridge.provider.sent and not bridge.store.transcripts
+
+    asyncio.run(scenario())
+
+
+def test_queued_audio_during_provider_cleanup_keeps_original_failure(monkeypatch):
+    async def scenario():
+        browser = Browser()
+        terminal = {}
+
+        class SessionStore(Store):
+            async def dispatched(self):
+                pass
+
+            async def finish(self, **outcome):
+                terminal.update(outcome)
+
+        class FailingProvider(Provider):
+            async def recv(self):
+                if len(browser.frames) == 0:
+                    return '{"setupComplete":{}}'
+                raise VoiceError("voice_provider_event_unsupported")
+
+        provider = FailingProvider()
+
+        @asynccontextmanager
+        async def connector(*_args, **_kwargs):
+            try:
+                yield provider
+            finally:
+                # A still-live microphone can enqueue PCM while the failed
+                # provider connection is waiting for its close handshake.
+                await browser.input.put({"type": "websocket.receive", "bytes": b"\x01\x02"})
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr(bridge_module, "connect_provider", connector)
+        bridge = VoiceBridge(browser, SessionStore())
+        expected = "voice_provider_event_unsupported"
+        assert await bridge.run({}, None, datetime.now(UTC) + timedelta(seconds=2)) == expected
+        assert browser.frames[0]["type"] == "ready"
+        assert browser.frames[-1] == {"type": "ended", "reason": expected}
+        assert terminal["reason"] == expected and terminal["connected"]
+        assert terminal["counters"]["input_pcm_bytes"] == 0 and provider.sent == [{}]
 
     asyncio.run(scenario())
