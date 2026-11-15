@@ -11,6 +11,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agent.compaction import CALENDAR_HISTORY_MARKER
+from app.agent.tools.calendar_reads import CALENDAR_READ_TOOLS
 from app.agent.tools.registry import READ_TOOLS, validate_read_arguments
 
 KIND = "context.working.finalized.v1"
@@ -90,7 +92,11 @@ def projection_body(
         "user": message_ref(user) if user else None,
         "assistant": message_ref(assistant),
         "outcome": outcome,
-        "pairs": exact_pairs(messages, max_bytes=max_bytes),
+        "pairs": [
+            pair
+            for pair in exact_pairs(messages, max_bytes=max_bytes)
+            if pair[0]["tool_calls"][0]["function"]["name"] not in CALENDAR_READ_TOOLS
+        ],
         "terminal": terminal,
     }
     if len(canonical(body).encode()) > max_bytes:
@@ -182,6 +188,10 @@ def read_requirements(pairs, *, historical=True):
         arguments, result = json.loads(call["arguments"]), json.loads(result_message["content"])
         if "error" in result:
             continue  # Static refusal, not Task data/completeness evidence.
+        if call["name"] in CALENDAR_READ_TOOLS:
+            if historical:
+                raise ValueError("working_history_calendar_requires_fresh_read")
+            continue  # Calendar authority and freshness are checked separately.
         if call["name"] == "task.aggregate.v1":
             if historical:
                 raise ValueError("working_history_unrecheckable_aggregate")
@@ -267,6 +277,36 @@ async def preview_sources_current(db, operations, source_versions):
     return await sources_current(db, ids, active)
 
 
+async def calendar_history_sequences(db, conversation_id, rows) -> set[int]:
+    """Use run metadata + allowlisted receipt tool names, never receipt decryption.
+
+    Empty/error pages and inspect count too, even after the flag is disabled.
+    """
+    from sqlalchemy import select
+
+    from app.agent.models import MimiEvent, MimiRun
+
+    run_ids = {row.run_id for row in rows if row.role == "assistant" and row.run_id}
+    if not run_ids:
+        return set()
+    calendar_runs = set(
+        await db.scalars(
+            select(MimiRun.id).where(
+                MimiRun.conversation_id == conversation_id,
+                MimiRun.id.in_(run_ids),
+                select(MimiEvent.id)
+                .where(
+                    MimiEvent.run_id == MimiRun.id,
+                    MimiEvent.kind == "tool.read_result",
+                    MimiEvent.payload["tool"].astext.in_(CALENDAR_READ_TOOLS),
+                )
+                .exists(),
+            )
+        )
+    )
+    return {row.sequence for row in rows if row.role == "assistant" and row.run_id in calendar_runs}
+
+
 @dataclass
 class WorkingHistory:
     """Ephemeral projection shared by the main request and compaction builder."""
@@ -275,6 +315,7 @@ class WorkingHistory:
     refs: dict[int, dict[str, Any]] = field(default_factory=dict)
     gaps: set[str] = field(default_factory=set)
     outcomes: dict[int, dict[str, Any]] = field(default_factory=dict)
+    calendar_sequences: set[int] = field(default_factory=set)
 
     def metadata(self, frontier: int) -> dict[str, Any]:
         refs = [self.refs[key] for key in sorted(self.refs) if key > frontier]
@@ -291,6 +332,9 @@ class WorkingHistory:
         output = []
         seen_ids = set()
         for row, message in zip(rows, decoded, strict=True):
+            if row.sequence in self.calendar_sequences:
+                output.append({"role": "assistant", "content": CALENDAR_HISTORY_MARKER})
+                continue
             pairs = self.by_assistant.get(row.sequence, [])
             # Tool IDs are scoped by provider history, not globally by run. If a
             # provider reused one across turns, omit that whole segment truthfully.
@@ -314,7 +358,7 @@ class WorkingHistory:
         return output
 
     def source(self, sequence: int) -> dict[str, Any] | None:
-        if sequence not in self.refs:
+        if sequence in self.calendar_sequences or sequence not in self.refs:
             return None
         return {
             "ref": self.refs[sequence],
@@ -336,9 +380,16 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
     from app.domain.models import Task
 
     history = WorkingHistory()
+    history.calendar_sequences = await calendar_history_sequences(db, conversation.id, rows)
+    if history.calendar_sequences:
+        history.gaps.add("calendar_history_requires_fresh_read")
     if not settings.mimi_working_projection_enabled:
         return history
-    assistants = {str(row.id): row for row in rows if row.role == "assistant"}
+    assistants = {
+        str(row.id): row
+        for row in rows
+        if row.role == "assistant" and row.sequence not in history.calendar_sequences
+    }
     if not assistants:
         return history
     run_ids = {row.run_id for row in assistants.values() if row.run_id}

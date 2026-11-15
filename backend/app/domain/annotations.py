@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.calendar_membership import annotation_overlap
 from app.domain.models import AuthSession, DayAnnotation
 from app.domain.reading import readable
 
@@ -121,10 +122,7 @@ class AnnotationStore:
     ) -> list[AnnotationRead]:
         """List every annotation whose inclusive range intersects the request."""
         stmt = readable(
-            select(DayAnnotation).where(
-                DayAnnotation.starts_on <= to,
-                DayAnnotation.ends_on >= from_,
-            ),
+            select(DayAnnotation).where(annotation_overlap(from_, to)),
             DayAnnotation,
             auth,
         ).order_by(DayAnnotation.starts_on, DayAnnotation.created_at, DayAnnotation.id)

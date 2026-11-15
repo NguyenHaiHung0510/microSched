@@ -11,6 +11,10 @@ from uuid import UUID
 MAX_CHECKPOINT_CHARS = 8_000
 MAX_EXCERPT_CHARS = 180
 MAX_CONSTRAINTS = 80
+CALENDAR_HISTORY_MARKER = (
+    "[Calendar-derived assistant answer withheld. Read fresh Calendar data; "
+    "this marker provides no current facts or absence evidence.]"
+)
 
 
 def _constraint_id(
@@ -267,6 +271,12 @@ class CheckpointSource:
     content_sha256: str
     content: str
     working: dict[str, Any] | None = None
+    calendar_derived: bool = False
+
+    @property
+    def provider_content(self) -> str:
+        # Hashes still bind the original encrypted UI message, never the marker.
+        return CALENDAR_HISTORY_MARKER if self.calendar_derived else self.content
 
 
 def _digest(value: Any) -> str:
@@ -278,7 +288,8 @@ def _expected_summary(
     sources: list[CheckpointSource], prior: dict[str, Any] | None
 ) -> tuple[str, int]:
     excerpts = [
-        f"{item.role} #{item.sequence}: {item.content[:MAX_EXCERPT_CHARS]}" for item in sources
+        f"{item.role} #{item.sequence}: {item.provider_content[:MAX_EXCERPT_CHARS]}"
+        for item in sources
     ]
     excerpts = [
         text
@@ -319,6 +330,7 @@ def make_checkpoint(
     summary, omitted_chars = _expected_summary(sources, prior)
     checkpoint = {
         "schema_version": "mimi.checkpoint.v1",
+        "calendar_history_policy": 1,
         "frontier": frontier,
         "policy_sha256": policy_sha256,
         "source_refs": refs,
@@ -370,6 +382,13 @@ def validate_checkpoint(
         "pending_preview",
         "pending_draft",
     }
+    if "calendar_history_policy" in checkpoint:
+        required.add("calendar_history_policy")
+        if (
+            type(checkpoint["calendar_history_policy"]) is not int
+            or checkpoint["calendar_history_policy"] != 1
+        ):
+            raise ValueError("checkpoint_calendar_history_policy_invalid")
     if "working_sources" in checkpoint:
         required.update({"working_sources", "working_frontier"})
         expected_working = list(prior.get("working_sources", []) if prior else [])

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 from app.domain.models import Task
 
 MAX_PAGE = 50
@@ -127,17 +127,19 @@ def _query_hash(request: TaskQuery) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _cursor_key() -> bytes:
+def _cursor_key(
+    purpose: bytes = b"microsched.mimi.task-cursor.v1", *, settings: Settings | None = None
+) -> bytes:
     """Derive a domain-separated MAC key; never expose the app master key."""
 
-    raw = get_settings().encryption_master_key
+    raw = (settings or get_settings()).encryption_master_key
     try:
         master = urlsafe_b64decode(raw) if raw else b""
     except (TypeError, ValueError) as error:
         raise RuntimeError("mimi_cursor_key_unavailable") from error
     if len(master) != 32:
         raise RuntimeError("mimi_cursor_key_unavailable")
-    return hmac.digest(master, b"microsched.mimi.task-cursor.v1", "sha256")
+    return hmac.digest(master, purpose, "sha256")
 
 
 def _encode_cursor(request: TaskQuery, row: Task) -> str:

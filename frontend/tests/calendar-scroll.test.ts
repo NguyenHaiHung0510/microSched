@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'vitest'
 
 import type { CalendarEvent } from '../src/calendar-ui'
@@ -114,6 +115,22 @@ test('ⓒ an event crossing midnight appears on both calendar days', () => {
     groups.get('2026-08-16')?.map((entry) => entry.id),
     ['cross'],
   )
+})
+
+test('Calendar matches the server parity fixture across months and exclusive midnight', () => {
+  const fixture = JSON.parse(readFileSync(
+    new URL('../../backend/tests/fixtures/mimi_calendar_membership.json', import.meta.url),
+    'utf8',
+  )) as Array<Pick<CalendarEvent, 'id' | 'starts_at' | 'ends_at' | 'all_day'> & { days: string[] }>
+  for (const { id, starts_at, ends_at, all_day, days } of fixture) {
+    const row = event(id, starts_at, ends_at, { all_day })
+    assert.deepEqual([...eventsByDay([row]).keys()], days)
+    const loadedDays = { from: '2040-08-31', to: '2040-09-01' }
+    assert.deepEqual(
+      [...eventsByDay([row], loadedDays).keys()],
+      days.filter((day) => day >= loadedDays.from && day <= loadedDays.to),
+    )
+  }
 })
 
 test('ⓓ a 20/08-25/08 annotation covers all six days', () => {

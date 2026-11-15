@@ -561,6 +561,20 @@ async def _mark_v2_due_writer(db: AsyncSession) -> None:
     await db.execute(text("SELECT set_config('microsched.task_due_writer', 'v2', true)"))
 
 
+def dated_task_overlap(from_instant: datetime | None, to_instant: datetime | None):
+    """Use the Calendar UI's half-open bounds for both date-only and timed tasks."""
+    precision, _, _ = _schedule_sql(Task)
+    dates = [precision == "date"]
+    instants = [precision == "datetime"]
+    if from_instant is not None:
+        dates.append(Task.due_on >= from_instant.astimezone(VIETNAM_TZ).date())
+        instants.append(Task.due_at >= from_instant)
+    if to_instant is not None:
+        dates.append(Task.due_on < to_instant.astimezone(VIETNAM_TZ).date())
+        instants.append(Task.due_at < to_instant)
+    return or_(and_(*dates), and_(*instants))
+
+
 def _schedule_sql(task_cls: type[Task]):
     """Build the single dual-read SQL representation used by filter/order/cursor."""
     precision = case(
@@ -805,7 +819,6 @@ class TaskStore:
         if now_value.tzinfo is None:
             raise InvalidTaskCursor("now must be timezone-aware")
         from_day = from_instant.astimezone(VIETNAM_TZ).date() if from_instant else None
-        to_day = to_instant.astimezone(VIETNAM_TZ).date() if to_instant else None
         today = now_value.astimezone(VIETNAM_TZ).date()
         visible_private = can_see_private(auth)
         last: dict[str, object] | None = None
@@ -849,15 +862,7 @@ class TaskStore:
                 ),
             )
         else:
-            date_conditions = [precision == "date"]
-            datetime_conditions = [precision == "datetime"]
-            if from_instant is not None and from_day is not None:
-                date_conditions.append(Task.due_on >= from_day)
-                datetime_conditions.append(Task.due_at >= from_instant)
-            if to_instant is not None and to_day is not None:
-                date_conditions.append(Task.due_on < to_day)
-                datetime_conditions.append(Task.due_at < to_instant)
-            stmt = stmt.where(or_(and_(*date_conditions), and_(*datetime_conditions)))
+            stmt = stmt.where(dated_task_overlap(from_instant, to_instant))
         total = int(
             await db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
         )
