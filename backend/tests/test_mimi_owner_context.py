@@ -539,3 +539,136 @@ def test_active_memory_refreshes_deployed_native_prompt_receipts_only():
             envelope.manifest.system_prefix_sha256
             == hashlib.sha256(wire[0]["content"].encode()).hexdigest()
         )
+
+
+# Frozen pre-B2 source 0e0ed187abc39439331a4a244d2c8fa733b2dff8, clock NOW.
+# Synthetic context_for fixture; SHA256 of canonical JSON and exact request bytes.
+PRE_B2_OFF_FIXTURES = {
+    "collection=False,calendar=False": {
+        "manifest_sha256": "16e949ac163f007043e129ffe23bd6ff4e39e994f34c1cfa8414dd3af8cdbc49",
+        "envelope_sha256": "58c9bf2cd005654085806f5300d40636576188d53c1a93fab4a4fbfdb006ded0",
+        "messages_sha256": "3d420fa65b16f414876002a4c0504c46d1e400a0d14cba66537346a696015f0e",
+        "authority_sha256": "1926450d40c46b4606fd879fe654969fd2046d70987b5bfafb060882e545f67d",
+        "request_sha256": "170f8a67ae462562840844f43d605d56401bae1ac3c2431b822bb87a6e6c89dc",
+        "projection_sha256": "bd374b43efce08ebeed3dd817b4d67c9247b7d581e5790434aa08bac76c5e6f8",
+        "serialized_input_bytes": 27759,
+        "bound": 27759,
+    },
+    "collection=False,calendar=True": {
+        "manifest_sha256": "43034c4691542b18a8e416dbf5cebde8f24e36667b58a62ff4385a65d4b96aa3",
+        "envelope_sha256": "03f505b5fdd5ed56d4c0f029fb51f6084d726f0477ef5f7fc7e69f748de2c421",
+        "messages_sha256": "1ca124cf0f9e5df2591f0798395a12b76af8c374f99228973ed0b28b785b1e9c",
+        "authority_sha256": "4c6417b61849b2682ba2e879c9fd3b683a423d634d2ca55b48051260df08b43e",
+        "request_sha256": "b263127ffd69526712766e857e5bb1439d3a65766bc24d8b0f4e1e1db324c7ca",
+        "projection_sha256": "56b7ee3226ca9ea5aa98cabb05008c5abd4e54f99580ac0ad23e55cb36365dd6",
+        "serialized_input_bytes": 31331,
+        "bound": 31331,
+    },
+    "collection=True,calendar=False": {
+        "manifest_sha256": "d7f2ac19fc6a7828acf8a906345ecf40d4c460fcf9e0bc53e44211a9fbdad807",
+        "envelope_sha256": "d1218de66a5dc338c617bfcf1e09994a305ecb8386d73d7d0435d72fbfb5efd2",
+        "messages_sha256": "c21e13b9b07179da11111e950afd90d7c8aca40a336fa8bc8b8bc0c38792c594",
+        "authority_sha256": "13932b0fdb7274120522d76d52658282f2d34ef3d4efd8fcd0d31a9942fb45e0",
+        "request_sha256": "08724ab34ba463b0f12a98144cf7db305bcfb27923862df6e070bf18939872cf",
+        "projection_sha256": "77a598b98b428c19f641efccf4938a615616517230e4ca5befda36647bdcdcdd",
+        "serialized_input_bytes": 39187,
+        "bound": 39187,
+    },
+    "collection=True,calendar=True": {
+        "manifest_sha256": "6f30d1f144ba5ab8b597742ad6f955af2751d97f3ea684ece8fc3b07e03b168f",
+        "envelope_sha256": "24f7546fef6899e110a5863c6adac3c06d812b08a8f6928c7f68dc3033c694d5",
+        "messages_sha256": "ca1f7c04afd5cb88cff54c2c7e2566ee069b7aea3c15e04ea1044efb6e8b4216",
+        "authority_sha256": "6f770f9866c5e63323a71ef6b79b4a775e0a7bb32ae238479ba7e1168a80b213",
+        "request_sha256": "6883e8b4239daf0f9e3eb4c8c9684f7d51588dded10fe563af46c9eb8abd88d6",
+        "projection_sha256": "0a4fc80eafb51d6fb8c1d09670ae7b567ce1fb22cb3e4a9ee7ed36563be53d7a",
+        "serialized_input_bytes": 42759,
+        "bound": 42759,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "collection,calendar", [(False, False), (False, True), (True, False), (True, True)]
+)
+@pytest.mark.parametrize("memory", [None, "", " \r\n\t"], ids=["unset", "empty", "whitespace"])
+def test_memory_off_wire_matches_exact_pre_b2_source_fixture(
+    monkeypatch, collection, calendar, memory
+):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW if tz is not None else NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr("app.agent.context_builder.datetime", FrozenDateTime)
+    selected = settings_for(
+        memory, mimi_collection_enabled=collection, mimi_calendar_read_enabled=calendar
+    )
+    envelope, messages = context_for(selected)
+    projection = input_projection_observation(envelope, messages, settings=selected)
+    authority = json.loads(messages[-2]["content"])
+    expected = PRE_B2_OFF_FIXTURES[f"collection={collection},calendar={calendar}"]
+
+    def digest(value):
+        return hashlib.sha256(
+            json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+            ).encode("utf-8")
+        ).hexdigest()
+
+    assert {
+        "manifest_sha256": envelope.manifest.sha256(),
+        "envelope_sha256": digest(envelope.model_dump(mode="json")),
+        "messages_sha256": digest(messages),
+        "authority_sha256": digest(authority),
+        "request_sha256": digest(build_request(messages, settings=selected, agent_contract=True)),
+        "projection_sha256": digest(projection),
+        "serialized_input_bytes": serialized_input_bytes(
+            messages, agent_contract=True, calendar_enabled=calendar
+        ),
+        "bound": envelope.manifest.budget.serialized_input_upper_bound,
+    } == expected
+    assert projection["request_fingerprint"] == expected["request_sha256"]
+    assert messages_for_evidence(envelope, messages) is messages
+    assert (
+        envelope.manifest.system_prefix_sha256
+        == hashlib.sha256(envelope.policy_text.encode("utf-8")).hexdigest()
+    )
+
+    for dumped in (
+        envelope.manifest.model_dump(),
+        json.loads(envelope.manifest.model_dump_json()),
+        envelope.model_dump()["manifest"],
+        authority["context_manifest"],
+        projection,
+    ):
+        assert "system_prefix_sha256" not in dumped
+        assert "owner_memory" not in dumped
+
+
+@pytest.mark.parametrize("collection", [False, True])
+@pytest.mark.parametrize("calendar", [False, True])
+def test_active_memory_keeps_full_metadata_on_manifest_authority_and_projection(
+    collection, calendar
+):
+    selected = settings_for(mimi_collection_enabled=collection, mimi_calendar_read_enabled=calendar)
+    envelope, messages = context_for(selected)
+    projection = input_projection_observation(envelope, messages, settings=selected)
+    receipt = load_owner_memory(selected).receipt
+    prefix_sha256 = hashlib.sha256(messages[0]["content"].encode("utf-8")).hexdigest()
+    for dumped in (
+        envelope.manifest.model_dump(mode="json"),
+        json.loads(envelope.manifest.model_dump_json()),
+        envelope.model_dump(mode="json")["manifest"],
+        json.loads(messages[-2]["content"])["context_manifest"],
+        projection,
+    ):
+        assert dumped["system_prefix_sha256"] == prefix_sha256
+        assert dumped["owner_memory"] == receipt.model_dump(mode="json")
+        assert "SYNTHETIC_ALPHA" not in json.dumps(dumped)
+    assert receipt.utf8_bytes == len(load_owner_memory(selected).text.get_secret_value().encode())
+    assert messages[0]["content"].endswith(load_owner_memory(selected).text.get_secret_value())
+    assert serialized_input_bytes(messages, agent_contract=True, calendar_enabled=calendar) == (
+        envelope.manifest.budget.serialized_input_upper_bound
+    )
+    assert envelope.checkpoint == CHECKPOINT
+    assert envelope.transcript_suffix == HISTORY
