@@ -573,6 +573,7 @@ def test_bounded_read_completes_then_auto_compacts_next_conversation_turn(
 
     for name, value in {
         "APP_ENV": "production",
+        "ALLOWED_EMAILS": "safe-turn@example.invalid",
         "DATABASE_URL": async_postgres_url(pg_dsn),
         "MIMI_PUBLIC_ORIGIN": "https://alpha.example.invalid",
         "MIMI_RUNNER": runner,
