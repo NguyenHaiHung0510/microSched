@@ -10,6 +10,7 @@ from datetime import datetime
 from app.domain.calendar_read import CalendarInspectRequest, CalendarReadRequest
 
 MODEL = "gemini-3.8-live"
+VOICE_NAME = "Kore"
 ENDPOINT = (
     "wss://generativelanguage.googleapis.com/ws/"
     "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
@@ -108,7 +109,13 @@ def setup(now: datetime) -> dict:
     return {
         "setup": {
             "model": f"models/{MODEL}",
-            "generationConfig": {"responseModalities": ["AUDIO"], "maxOutputTokens": 2048},
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "maxOutputTokens": 2048,
+                "speechConfig": {
+                    "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": VOICE_NAME}},
+                },
+            },
             "inputAudioTranscription": {},
             "outputAudioTranscription": {},
             "systemInstruction": {"parts": [{"text": instruction}]},

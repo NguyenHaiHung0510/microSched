@@ -73,6 +73,9 @@ def test_setup_uses_audio_and_exact_nonblocking_calendar_tools():
     value = setup(datetime.now(UTC))["setup"]
     assert value["model"] == f"models/{MODEL}"
     assert value["generationConfig"]["responseModalities"] == ["AUDIO"]
+    assert value["generationConfig"]["speechConfig"] == {
+        "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}
+    }
     assert value["inputAudioTranscription"] == value["outputAudioTranscription"] == {}
     assert "thinking" not in json.dumps(value) and "proactiveAudio" not in json.dumps(value)
     declared = value["tools"][0]["functionDeclarations"]

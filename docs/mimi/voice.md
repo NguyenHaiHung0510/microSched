@@ -31,8 +31,11 @@ origin. Local Vite proxy hỗ trợ WebSocket. Frontend chỉ phát hiện khả
 `/api/mimi/capabilities`; cấu hình model text hiện tại vẫn dùng cho chat text.
 
 Backend dùng [Google Live v1beta](https://aistudio.google.com/api-reference/live/bidi-generate-content)
-với [`gemini-3.8-live`](https://aistudio.google.com/docs/models/gemini-3.8-live),
-PCM mono 16 kHz đầu vào và 24 kHz đầu ra. Audio còn chờ phát có giới hạn ở browser.
+với [`gemini-3.8-live`](https://aistudio.google.com/docs/models/gemini-3.8-live) và
+giọng dựng sẵn [Kore](https://aistudio.google.com/docs/live-api/capabilities#change-voice-and-language).
+Phiên trả lời bằng audio, tối đa 2.048 token cho mỗi response; mặc định nói tiếng Việt
+và theo ngôn ngữ của người dùng khi đổi ngôn ngữ. Google nhận biết lượt nói tự động.
+Browser gửi PCM mono 16 kHz và phát PCM mono 24 kHz. Audio còn chờ phát có giới hạn.
 Ticket sống 30 giây và dùng một lần; phiên mặc định tối đa 300 giây, có thể cấu hình
 `MIMI_VOICE_MAX_SECONDS` trong khoảng 30–600. Voice gửi một cửa sổ nhỏ gồm các tin
 nhắn gần đây; không đưa nguyên lịch sử dài sang Google. Có giới hạn PCM, số tool
