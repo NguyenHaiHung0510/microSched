@@ -1,12 +1,14 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, type ComponentProps, type RefCallback } from 'react'
 import { Textarea } from '@/components/ui/textarea'
 import { singleLineTitle } from '@/task-title'
 
-export function TaskTitleInput({ id, value, disabled, onChange }: {
+export function TaskTitleInput({ id, value, disabled, onChange, fieldRef, suggestionProps }: {
   id: string
   value: string
   disabled: boolean
   onChange: (value: string) => void
+  fieldRef?: RefCallback<HTMLTextAreaElement>
+  suggestionProps?: Omit<ComponentProps<'textarea'>, 'ref' | 'value' | 'onChange'>
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
@@ -24,17 +26,18 @@ export function TaskTitleInput({ id, value, disabled, onChange }: {
     return () => observer.disconnect()
   }, [value])
   return <Textarea
+    {...suggestionProps}
     id={id}
-    ref={ref}
+    ref={element => { ref.current = element; fieldRef?.(element) }}
     data-testid="task-title-input"
     rows={1}
-    className="min-h-11 resize-none overflow-hidden bg-card [overflow-wrap:anywhere]"
+    className="scroll-mb-24 min-h-11 resize-none overflow-hidden bg-card [overflow-wrap:anywhere]"
     value={singleLineTitle(value)}
     required
     minLength={1}
     disabled={disabled}
-    onCompositionStart={() => { composing.current = true }}
-    onCompositionEnd={() => { composing.current = false }}
+    onCompositionStart={event => { composing.current = true; suggestionProps?.onCompositionStart?.(event) }}
+    onCompositionEnd={event => { composing.current = false; suggestionProps?.onCompositionEnd?.(event) }}
     onChange={event => {
       const input = event.currentTarget
       const next = singleLineTitle(input.value)
@@ -45,7 +48,8 @@ export function TaskTitleInput({ id, value, disabled, onChange }: {
       })
     }}
     onKeyDown={event => {
-      if (event.key !== 'Enter') return
+      suggestionProps?.onKeyDown?.(event)
+      if (event.defaultPrevented || event.key !== 'Enter') return
       if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
       event.preventDefault()
       const form = event.currentTarget.form

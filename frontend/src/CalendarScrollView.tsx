@@ -65,7 +65,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
+import { TaskTitleCombobox } from '@/TaskTitleCombobox'
 import {
   Tooltip,
   TooltipContent,
@@ -731,11 +731,12 @@ export function CalendarScrollView() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <div className="min-w-0 flex-1">
-                      <Input
+                      <TaskTitleCombobox
                         data-testid="calendar-quick-task-input"
                         placeholder="Nhập task nhanh… kéo chip hoặc Enter để lưu vào Hôm nay"
                         value={quickTitle}
-                        onChange={(e) => setQuickTitle(e.target.value)}
+                        onChange={setQuickTitle}
+                        aria-label="Task mới cho Hôm nay"
                         className="h-8 text-xs"
                       />
                     </div>
@@ -974,14 +975,14 @@ export function CalendarScrollView() {
                 data-testid="calendar-agenda-quick-task-bar"
                 className="flex gap-2"
               >
-                <Input
+                <TaskTitleCombobox
                   ref={agendaInputRef}
                   data-testid="calendar-agenda-quick-task-input"
                   placeholder="Thêm task cho ngày này…"
                   aria-label="Task mới cho ngày đã chọn"
                   value={agendaQuickTitle}
                   readOnly={createAgendaTask.isPending}
-                  onChange={(e) => setAgendaQuickTitle(e.target.value)}
+                  onChange={setAgendaQuickTitle}
                   className="min-h-11 h-11 min-w-0 text-base sm:text-sm flex-1"
                 />
                 <Button
