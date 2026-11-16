@@ -689,7 +689,8 @@ export function MimiScreen({
     || (feedbackMood === 'negative' && !!queryClient.getQueryData<{ saved: boolean }>(['mimi', 'system-negative-feedback-intent', current?.id, selectedSystemNotice?.id])?.saved)
   const runPending = send.isPending || resume.isPending
   const voiceEnabled = capabilities.data?.voice_enabled === true && current?.sensitivity === 'standard' && !current.archived_at
-  const voice = useMimiVoice(queryClient, sessionEpoch, current?.id, voiceEnabled)
+  const voiceV2 = capabilities.data?.voice_v2_enabled === true
+  const voice = useMimiVoice(queryClient, sessionEpoch, current?.id, voiceEnabled, voiceV2)
   const voicePhase = voice.state.phase
   useEffect(() => {
     if ((voicePhase === 'ended' || voicePhase === 'error') && document.activeElement === document.body) {
@@ -1222,8 +1223,15 @@ export function MimiScreen({
             <Button type="button" size="lg" variant="outline" onClick={() => setRevisionTarget(null)}>Hủy sửa</Button>
           </div>
         ) : null}
-        {voice.active ? <MimiVoiceDock state={voice.state} mute={voice.mute} stop={voice.stop} /> : null}
+        {voice.active ? <MimiVoiceDock state={voice.state} mute={voice.mute} stop={voice.stop} v2={voiceV2} /> : null}
         {voice.state.notice ? <p role="status" className="mb-1 text-xs text-muted-foreground" data-testid="mimi-voice-notice">{voice.state.notice}</p> : null}
+        {voice.state.actionStatus ? <p role="status" className="mb-1 text-xs text-muted-foreground" data-testid="mimi-voice-action">
+          {voice.state.actionStatus === 'preview' ? 'Mimi đã gửi phương án. Hãy xem bản xem trước và duyệt trên màn hình.'
+            : voice.state.actionStatus === 'applied' ? 'Mimi đã lưu thay đổi. Xem kết quả trong Task hoặc Lịch.'
+              : voice.state.actionStatus === 'undone' ? 'Mimi đã hoàn tác thay đổi. Xem kết quả trong Task hoặc Lịch.'
+                : voice.state.actionStatus === 'rejected' ? 'Chưa áp dụng. Kiểm tra bản xem trước hoặc nói rõ Task và thay đổi bạn muốn.'
+                  : 'Chưa áp dụng. Hãy nói rõ Task và thay đổi bạn muốn; kiểm tra bản xem trước nếu có.'}
+        </p> : null}
         <div className={cn('mimi-composer-surface relative flex flex-col rounded-2xl border border-input focus-within:ring-2 focus-within:ring-ring p-2', voiceEnabled && !voice.active && 'mimi-composer-with-voice')}>
       <div className="mimi-composer-meta flex min-w-0 items-center gap-1"><MimiConfiguration conversationId={current.id} capabilities={capabilities.data} runtimeActive={runtimeActive} open={settingsOpen} onOpenChange={onSettingsOpenChange} onOpenHub={onOpenConfiguration} /><MimiContextComposition conversation={current} capabilities={capabilities.data} /></div>
           <Textarea
@@ -1261,7 +1269,7 @@ export function MimiScreen({
           <div className="mimi-composer-footer mt-1 flex items-center justify-between pt-1 text-xs text-muted-foreground">
             {current.archived_at ? <span className="text-xs text-muted-foreground">Hội thoại đã lưu · chỉ xem lại.</span> : null}
             {voiceEnabled && !voice.active ? <Button ref={voiceStartRef} type="button" variant="outline" className="mimi-voice-start" data-testid="mimi-voice-start"
-              aria-label="Giọng nói" title="Giọng nói · chỉ đọc lịch" disabled={!online || runtimeActive || !!decisionIntent || (!!pendingChangeSet && !pendingPreviewExpired)}
+              aria-label="Giọng nói" title={voiceV2 ? 'Giọng nói Mimi' : 'Giọng nói · chỉ đọc lịch'} disabled={!online || runtimeActive || !!decisionIntent || (!!pendingChangeSet && !pendingPreviewExpired)}
               onClick={() => voice.start(current.generation)}><Mic aria-hidden="true" />Giọng nói</Button> : null}
             <Button
               type="submit"

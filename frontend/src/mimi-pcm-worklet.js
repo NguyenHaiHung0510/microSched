@@ -7,6 +7,11 @@ class MimiPcmCapture extends AudioWorkletProcessor {
     this.weight = 0
     this.frame = new Int16Array(640) // 40 ms at the wire rate.
     this.index = 0
+    this.port.onmessage = ({ data }) => {
+      if (!Number.isSafeInteger(data?.captureReset)) return
+      this.position = this.sum = this.weight = this.index = 0
+      this.port.postMessage({ captureReset: data.captureReset })
+    }
   }
   process(inputs) {
     const channel = inputs[0]?.[0]
