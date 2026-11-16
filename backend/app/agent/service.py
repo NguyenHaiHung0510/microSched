@@ -701,6 +701,18 @@ async def _add_assistant_message(
     )
 
 
+async def add_preview_notice(db, conversation, run_id, dek, content, *, undo=False):
+    """Reuse the two explicit preview producers across Chat and Voice."""
+    if undo:
+        await _add_assistant_message(
+            db, conversation, run_id, dek, content, producer_code="undo_prepared"
+        )
+    else:
+        await _add_assistant_message(
+            db, conversation, run_id, dek, content, producer_code="preview_prepared"
+        )
+
+
 async def create_conversation(
     db: AsyncSession, auth: AuthSession, payload: ConversationCreate
 ) -> dict[str, Any]:
@@ -4201,9 +4213,7 @@ async def send_message(
         if operation_tool == COLLECTION_TOOL
         else "Đã chuẩn bị bản xem trước tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
     )
-    await _add_assistant_message(
-        db, conversation, run_id, dek, assistant, producer_code="preview_prepared"
-    )
+    await add_preview_notice(db, conversation, run_id, dek, assistant)
     await _append_event(
         db,
         run_id,
@@ -4394,10 +4404,11 @@ async def confirm_change_set(
         )
     except ValueError, ValidationError:
         await invalidate_frozen_change_set("change_set_ciphertext_invalid")
+    before_sequence = conversation.next_message_sequence
     if decoded_operation.tool == COLLECTION_TOOL:
         if not get_settings().mimi_collection_enabled:
             raise HTTPException(409, "mimi_collection_feature_disabled")
-        return await _confirm_collection(
+        receipt = await _confirm_collection(
             db,
             auth,
             conversation,
@@ -4408,6 +4419,11 @@ async def confirm_change_set(
             dek,
             invalidate_frozen_change_set,
         )
+        if run.execution_lease.get("mode") == "voice_action":
+            from app.agent.voice_v2_store import advance_voice_after_manual_confirm
+
+            await advance_voice_after_manual_confirm(db, conversation, run, before_sequence)
+        return receipt
 
     # A preview is bound to the versioned Task evidence the model saw. Hold
     # read locks through the domain write so a concurrent edit cannot pass the
@@ -4540,6 +4556,10 @@ async def confirm_change_set(
     )
     db.info[CRON_TIMER_RELOAD_INFO_KEY] = "mimi_task_create"
     await db.flush()
+    if run.execution_lease.get("mode") == "voice_action":
+        from app.agent.voice_v2_store import advance_voice_after_manual_confirm
+
+        await advance_voice_after_manual_confirm(db, conversation, run, before_sequence)
     return _receipt_read(receipt)
 
 
@@ -5831,13 +5851,13 @@ async def prepare_receipt_undo(db, auth, receipt_id):
         ),
     )
     db.add(change)
-    await _add_assistant_message(
+    await add_preview_notice(
         db,
         conversation,
         rid,
         dek,
         "Đã chuẩn bị phương án hoàn tác có kiểm tra phiên bản. Chưa áp dụng.",
-        producer_code="undo_prepared",
+        undo=True,
     )
     await _append_event(
         db,

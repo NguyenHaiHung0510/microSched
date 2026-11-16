@@ -459,7 +459,7 @@ class VoiceStore:
         async with self.factory() as db:
             conversation, run = await self.boundary(db)
             if sources is not None:
-                await sources.check(db, self.settings, detail=True)
+                await sources.check(db, self.settings)
             if turn <= run.execution_lease["last_turn"]:
                 return  # Idempotent server turn, never a client-selected allocation.
             dek = crypto.unwrap_dek(conversation.dek_wrapped)

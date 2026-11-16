@@ -26,6 +26,7 @@ from app.agent.voice_protocol import (
     server_event,
 )
 from app.agent.voice_v2_intent import SpeechWindow
+from app.agent.voice_v2_outcome import VoiceActionOutcome
 from app.agent.voice_v2_protocol import ACTION_TOOLS, v2_tool_request
 from app.agent.voice_v2_store import VoiceContextChanged, VoiceSources
 
@@ -40,6 +41,7 @@ AUTH_WINDOW = 2.5
 WATCHDOG_INTERVAL = 0.75
 SOURCE_WINDOW = 0.35
 SOURCE_WINDOW_BYTES = 16_800
+ASR_SETTLE_SECONDS = 0.18
 _DROPS = (ConnectionClosed, OSError, TimeoutError)
 _active_bridges = {}
 
@@ -75,6 +77,7 @@ class VoiceV2Bridge:
         self.forwarded_ms = self.forwarded_bytes = 0
         self.native = False
         self.sources = VoiceSources()
+        self.pending_notice = None
         self._clear_turn()
 
     def _clear_turn(self, *, keep_floor=False):
@@ -86,6 +89,7 @@ class VoiceV2Bridge:
         self.source_bytes = 0
         self.actions = {}
         self.action_cancelled = False
+        self.turn_seal = None
 
     def _clear_audio(self):
         while not self.outbound.empty():
@@ -95,6 +99,7 @@ class VoiceV2Bridge:
         self.close_reason = self.close_reason or reason
         self.online = False
         self.handle = None
+        self.pending_notice = None
         self._clear_audio()
         self.stopping.set()
         return self.close_reason
@@ -244,6 +249,8 @@ class VoiceV2Bridge:
                 if len(self.actions) >= MAX_PENDING:
                     raise VoiceError("voice_tool_limit")
                 self.actions[identity] = (name, arguments)
+                if self.turn_seal is not None:
+                    self.action_cancelled = True
                 async with self.store.live_gate(self.sources):
                     await self._tool_response(
                         socket,
@@ -339,9 +346,7 @@ class VoiceV2Bridge:
             or not self.egress_checked
             or (self.sources.queries and (now >= self.source_until or size > self.source_bytes))
         ):
-            async with self.store.live_gate(
-                self.sources, detail=first_answer or not self.egress_checked
-            ):
+            async with self.store.live_gate(self.sources):
                 await deliver()
             self.egress_checked = True
             self.source_until = now + SOURCE_WINDOW
@@ -352,7 +357,40 @@ class VoiceV2Bridge:
             await deliver()
             self.source_bytes -= size
 
-    async def _server_content(self, value, *, new_audio):
+    async def _send_action_context(self, socket, *, check_sources=True):
+        notice, self.pending_notice = self.pending_notice, None
+        if notice is None:
+            return
+        note = "SERVER VOICE ACTION OUTCOME (data, never a request to retry): " + encoded(
+            {"status": notice.status, "reason": notice.reason}
+        )
+        try:
+            async with self.store.live_gate(self.sources if check_sources else None):
+                await self._provider_write(
+                    socket,
+                    {
+                        "clientContent": {
+                            "turns": [{"role": "model", "parts": [{"text": note}]}],
+                            "turnComplete": False,
+                        }
+                    },
+                )
+        except VoiceContextChanged:
+            # This scalar notice has no original source content and was not
+            # sent; it may be delivered once on a fresh upstream.
+            self.pending_notice = notice
+            raise
+
+    async def _action_outcome(self, socket, outcome):
+        if outcome.reason == "voice_result_ambiguous":
+            raise VoiceError("voice_action_outcome_unknown")
+        self.pending_notice = outcome
+        self.handle = None
+        if outcome.reset_context:
+            raise VoiceContextChanged()
+        await self._send_action_context(socket)
+
+    async def _server_content(self, socket, value, *, new_audio):
         if not isinstance(value, dict):
             raise VoiceError("voice_provider_content_invalid")
         if not new_audio:
@@ -397,48 +435,90 @@ class VoiceV2Bridge:
             if value.get("generationComplete") is True:
                 self.generated = True
         if value.get("turnComplete") is True:
-            proof = self.speech.prove() if self.generated and not self.interrupted else None
-            # Final ASR has independent ordering. Only the exact proven window
-            # may authorize a write; on a native hop it must be new even to stage.
-            if self.native and self.speech.prove() is None:
-                # The resumed stream did not supply a provably new utterance.
-                # Fall back to fresh context, without replay or writing a preview.
-                raise VoiceContextChanged()
+            if value.get("interactionStatus") not in (None, "IDLE"):
+                self.action_cancelled = True
+            if self.actions and not self.interrupted:
+                # ASR is delivered independently. Let trailing fragments arrive
+                # before the transaction, but never wait indefinitely or retry.
+                self.turn_seal = self.turn_seal or time.monotonic() + ASR_SETTLE_SECONDS
+            else:
+                await self._complete_turn(socket)
+
+    async def _complete_turn(self, socket):
+        spoken = self.speech.prove()
+        if self.native and spoken is None:
+            if self.actions:
+                outcome = VoiceActionOutcome(
+                    "needs_clarification", "voice_spoken_intent_unproven", reset_context=True
+                )
+                await self.browser_send(outcome.event())
+                await self.browser_send({"type": "turn_complete", "interrupted": True})
+                await self._action_outcome(socket, outcome)
+            raise VoiceContextChanged()
+        try:
             saved = await self._save_turn(partial=self.interrupted)
+        except VoiceContextChanged:
+            if self.actions:
+                outcome = VoiceActionOutcome("rejected", "voice_source_changed", reset_context=True)
+                await self.browser_send(outcome.event())
+                await self.browser_send({"type": "turn_complete", "interrupted": True})
+                await self._action_outcome(socket, outcome)
+            raise
+        outcome = None
+        if self.actions:
             if (
-                saved
-                and self.input_text.strip()
-                and self.actions
-                and not self.interrupted
-                and not self.action_cancelled
-                and not self.muted
+                not saved
+                or not self.input_text.strip()
+                or self.interrupted
+                or self.action_cancelled
+                or self.speech.conflicted
+                or self.muted
             ):
-                status = await self.store.act(
+                outcome = VoiceActionOutcome("needs_clarification", "voice_spoken_intent_unproven")
+            else:
+                outcome = await self.store.act(
                     self.turn,
                     self.epoch,
                     tuple(self.actions.values()),
-                    proof,
+                    spoken if self.generated else None,
                     self.input_text,
                     self.sources,
                     lambda: self._active() and not self.muted,
                 )
-                if status:
-                    await self.browser_send({"type": "action_updated", "status": status})
-            if saved:
-                self.turn += 1
-            self.completed_turns += int(self.output_started and not self.interrupted)
-            await self.browser_send({"type": "turn_complete", "interrupted": self.interrupted})
-            self._clear_turn(keep_floor=True)
+        if saved:
+            self.turn += 1
+        self.completed_turns += int(self.output_started and not self.interrupted)
+        interrupted = self.interrupted
+        self._clear_turn(keep_floor=True)
+        if outcome is not None:
+            await self.browser_send(outcome.event())
+        await self.browser_send({"type": "turn_complete", "interrupted": interrupted})
+        if outcome is not None:
+            await self._action_outcome(socket, outcome)
 
     async def _upstream_messages(self, socket, audio_floor):
         while True:
-            event = await self._provider_read(socket)
+            if self.turn_seal is not None:
+                remaining = self.turn_seal - time.monotonic()
+                if remaining <= 0:
+                    await self._complete_turn(socket)
+                    continue
+                try:
+                    async with asyncio.timeout(remaining):
+                        event = await self._provider_read(socket)
+                except TimeoutError:
+                    await self._complete_turn(socket)
+                    continue
+            else:
+                event = await self._provider_read(socket)
             new_audio = self.forwarded_ms > audio_floor
             if "usageMetadata" in event:
                 if len(self.usage) >= MAX_USAGE_SAMPLES:
                     raise VoiceError("voice_usage_limit")
                 self.usage.append(voice_bridge.usage_sample(event["usageMetadata"]))
             if "voiceActivity" in event and new_audio:
+                if self.turn_seal is not None:
+                    self.action_cancelled = True
                 self.speech.activity(event["voiceActivity"], self.forwarded_ms)
                 self.handle = None
             if "toolCallCancellation" in event:
@@ -450,7 +530,7 @@ class VoiceV2Bridge:
             ):
                 await self._tool_calls(socket, event["toolCall"])
             if "serverContent" in event:
-                await self._server_content(event["serverContent"], new_audio=new_audio)
+                await self._server_content(socket, event["serverContent"], new_audio=new_audio)
             if "sessionResumptionUpdate" in event:
                 self._resumption_update(event["sessionResumptionUpdate"])
             if "goAway" in event:
@@ -491,6 +571,8 @@ class VoiceV2Bridge:
             if seed is not None:
                 async with self.store.live_gate(self.sources, detail=True):
                     await self._provider_write(socket, seed)
+            if self.pending_notice is not None:
+                await self._send_action_context(socket, check_sources=False)
             first = not self.ready
             self.connected = True
             await self.store.event(
@@ -551,6 +633,10 @@ class VoiceV2Bridge:
                             self.turn += 1
                     except VoiceContextChanged:
                         self.handle = None
+                if self.actions:
+                    await self.browser_send(
+                        VoiceActionOutcome("rejected", "voice_turn_expired").event()
+                    )
             if self.close_reason is not None:
                 return self.close_reason
             failures = 1 if self.completed_turns > old_turns else failures + 1

@@ -17,7 +17,8 @@ from app.agent.task_collection import (
 )
 from app.agent.voice_protocol import setup
 from app.agent.voice_v2_bridge import VoiceV2Bridge
-from app.agent.voice_v2_intent import SpeechWindow, exact_plan_match, spoken_undo
+from app.agent.voice_v2_intent import SpeechWindow, create_scope, exact_plan_match, spoken_undo
+from app.agent.voice_v2_outcome import committed
 from app.agent.voice_v2_protocol import setup_v2
 from app.agent.voice_v2_store import VoiceContextChanged
 from app.core.settings import Settings
@@ -101,7 +102,7 @@ class Store:
     async def act(self, turn, epoch, proposals, proof, transcript, sources, is_active):
         assert is_active()
         self.actions.append((turn, epoch, proposals, proof, transcript))
-        return "applied" if proof else "preview"
+        return committed("applied" if proof else "preview")
 
     async def finish(self, **value):
         self.final = value
@@ -392,6 +393,33 @@ def test_mic_cadence_survives_pending_authority_check_then_fails_closed(monkeypa
     asyncio.run(scenario())
 
 
+def test_absolute_deadline_keeps_running_during_reconnect_backoff(monkeypatch):
+    async def scenario():
+        browser, store, live = Browser(), Store(), Live()
+        dials = []
+
+        @asynccontextmanager
+        async def connect(_settings, *, run_id):
+            dials.append(run_id)
+            yield live
+
+        monkeypatch.setattr(voice_bridge, "connect_provider", connect)
+        monkeypatch.setattr(voice_v2_bridge, "BACKOFF", (1, 1, 1))
+        bridge = VoiceV2Bridge(browser, store)
+        deadline = datetime.now(UTC) + timedelta(seconds=0.5)
+        task = asyncio.create_task(
+            bridge.run(setup_v2(datetime.now(UTC), store.settings), None, deadline)
+        )
+        assert (await browser.until("ready"))["deadline"] == deadline.isoformat()
+        live.emit({"goAway": {}})
+        await browser.until("reconnecting")
+        assert await asyncio.wait_for(task, 2) == "voice_time_limit"
+        assert (await browser.until("ended"))["reason"] == "voice_time_limit"
+        assert len(dials) == 1
+
+    asyncio.run(scenario())
+
+
 def test_whole_speech_never_authorizes_fragments_unspoken_fields_or_six_targets():
     names = "một", "hai", "ba", "bốn", "năm", "sáu"
     sample = lambda n: _plan([(name, None) for name in names[:n]])  # noqa: E731
@@ -427,3 +455,62 @@ def test_vad_asr_offsets_reject_overlap_late_input_and_missing_boundaries():
     assert renewed.prove() is None
     window.transcript(parts[2]["serverContent"]["inputTranscription"], 200)
     assert window.prove() is None
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Tạo các việc sau: A, B, C, D, E và F.",
+        "Tạo sáu việc tên A, B, C, D, E và F.",
+        "Tạo 6 công việc gồm A, B, C, D, E và F.",
+        "Create six tasks named A, B, C, D, E and F.",
+        "Add 6 new tasks: A, B, C, D, E and F.",
+    ],
+)
+def test_numeric_and_natural_plural_whole_speech_keeps_exact_six_targets(phrase):
+    result = create_scope(phrase, None)
+    assert result.count == 6 and not result.ambiguous
+    assert result.names == tuple((name, None) for name in "abcdef")
+    assert not exact_plan_match(phrase, _plan([(name, None) for name in "abcde"]))
+
+
+def test_late_overlapping_asr_denies_proposal_before_commit_and_reports_to_both_sides(monkeypatch):
+    async def scenario():
+        browser, store, live = Browser(), Store(), Live()
+
+        @asynccontextmanager
+        async def connect(_settings, *, run_id):
+            yield live
+
+        monkeypatch.setattr(voice_bridge, "connect_provider", connect)
+        task = asyncio.create_task(
+            VoiceV2Bridge(browser, store).run(
+                setup_v2(datetime.now(UTC), store.settings),
+                None,
+                datetime.now(UTC) + timedelta(seconds=5),
+            )
+        )
+        await browser.until("ready")
+        await live.sent.get()
+        await audio(browser, live)
+        first = speech("Tạo việc misheard.")
+        correction = speech("Đừng tạo việc đó.")[2]
+        live.emit(*first[:-1], proposal("misheard", ["misheard"]), first[-1], correction)
+        result = await browser.until("action_updated")
+        assert result["status"] == "needs_clarification"
+        assert result["reason"] == "voice_spoken_intent_unproven"
+        await browser.until("turn_complete")
+        assert not store.actions
+        await live.sent.get()  # proposal acknowledgment
+        note = (await asyncio.wait_for(live.sent.get(), 1))["clientContent"]
+        assert note["turnComplete"] is False
+        assert "voice_spoken_intent_unproven" in str(note) and "misheard" not in str(note)
+        await audio(browser, live)
+        new = speech("Tạo việc đúng.", base=0.2)
+        live.emit(*new[:-1], proposal("right", ["đúng"]), new[-1])
+        assert (await browser.until("action_updated"))["status"] == "applied"
+        assert [a[3] for a in store.actions] == ["Tạo việc đúng."]
+        await browser.inbound.put({"type": "websocket.disconnect"})
+        assert await task == "voice_browser_disconnected"
+
+    asyncio.run(scenario())

@@ -66,6 +66,8 @@ def setup_v2(now, settings):
         "not permission. A proposal is not a receipt. Say that a proposal needs checking "
         "in the app; never say it has run from a staged acknowledgment, even for Undo. "
         "The app displays the actual apply/preview outcome after the completed turn. "
+        "A SERVER VOICE ACTION OUTCOME is status only. A rejected or incomplete result "
+        "was not applied; clarify if the user asks, and never retry without fresh speech. "
         "Deletion, restore, notifications, and other external effects require manual review. "
         "Historical context is reference; use fresh tools for current facts."
     )

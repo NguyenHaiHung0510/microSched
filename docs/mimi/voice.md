@@ -77,8 +77,13 @@ một giao dịch, ví dụ: “Tạo việc nộp bài hạn ngày mai” hoặ
 Lệnh 6 Task trở lên tạo một preview cho toàn bộ tập được xác định. Nếu thiếu bằng
 chứng ghép lượt, nội dung khó đối chiếu, nguồn đổi hoặc thao tác có hiệu ứng như
 xóa/khôi phục/nhắc, Mimi không tự ghi; xem preview hợp lệ và Confirm trong app.
+Nếu đề xuất thiếu một phần của danh sách hay sai Task được gọi tên, Mimi yêu cầu
+làm rõ; không tạo preview cho phần thiếu. Luồng nhanh đối chiếu các lệnh nói trực
+tiếp có đích và thay đổi rõ (tên, ngày đơn giản, hoàn thành/mở lại, ưu tiên, đổi
+tên). Những thay đổi cần suy diễn hoặc soạn nội dung vẫn đi qua preview.
 Lệnh “hoàn tác cái vừa làm” chỉ tự áp dụng cho receipt Voice mới nhất đủ điều kiện
-trong cuộc gọi này nếu phiên bản Task chưa đổi; không tìm lùi sang receipt cũ.
+trong cuộc gọi này nếu phiên bản Task chưa đổi, kể cả receipt của preview Voice
+đã Confirm trong app. Mimi không tìm lùi sang receipt cũ.
 
 `GET/PATCH /api/mimi/voice-preferences` dùng session và CSRF khi ghi, với
 `{"fast_apply": true|false}`. Mặc định true; tắt thì thao tác đề xuất đi qua
@@ -89,7 +94,13 @@ Context compression mặc định bật (25.000 xuống 8.000 token); có thể 
 `MIMI_VOICE_V2_COMPRESSION_ENABLED`.
 
 WebSocket báo `reconnecting`, `resumed` (có thêm `context_retained`) và
-`action_updated` với trạng thái `preview`, `applied`, hoặc `undone` sau commit.
+`action_updated` với `status`, mã `reason` và `message` cố định. Các trạng thái
+`preview`, `applied` và `undone` chỉ đến sau commit; `rejected` và
+`needs_clarification` giải thích vì sao ứng dụng không thể báo thành công.
+Lượt tự ghi yêu cầu VAD bắt đầu/kết thúc, timestamp của input transcript khớp
+cửa sổ PCM mới, và lượt trả lời kết thúc không bị ngắt. ASR đến muộn có một cửa
+sổ ngắn để nhận phần đuôi; transcript chồng lấn, transcript cũ hoặc tín hiệu
+thiếu không có quyền tự ghi. Không phụ thuộc trường `finished=true`.
 Browser gửi `{"type":"microphone_lost"}` nếu mất capture ngoài ý muốn.
 Ca v1 dừng sau 34,263 giây có mã gộp browser/provider nên không xác định được
 nguyên nhân vật lý. V2 ghi riêng lý do browser, upstream, mic, deadline và Stop.

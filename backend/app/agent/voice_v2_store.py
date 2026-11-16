@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -23,10 +24,10 @@ from app.agent.selection import (
 )
 from app.agent.service import (
     TOOL_VERSION,
-    _add_assistant_message,
     _append_event,
     _confirm_collection,
     _transaction_lock_key,
+    add_preview_notice,
     freeze_change_set_row,
 )
 from app.agent.task_collection import (
@@ -48,7 +49,14 @@ from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, execute_read_tool
 from app.agent.voice_preferences import voice_preference
 from app.agent.voice_protocol import MAX_TOOL_BYTES, VoiceError, encoded
 from app.agent.voice_store import VoiceStore
-from app.agent.voice_v2_intent import exact_plan_match, normalized, spoken_creates, spoken_undo
+from app.agent.voice_v2_intent import (
+    create_scope,
+    exact_plan_match,
+    normalized,
+    spoken_edit_targets,
+    spoken_undo,
+)
+from app.agent.voice_v2_outcome import VoiceActionOutcome, committed
 from app.agent.voice_v2_protocol import UNDO_TOOL, VOICE_POLICY, v2_tools
 from app.domain.models import Task
 from app.domain.tasks import VIETNAM_TZ
@@ -190,6 +198,63 @@ async def _unique_spoken_targets(db, plan):
     )
 
 
+def _matches_whole_request(tool, plan, transcript, today):
+    if scope := create_scope(transcript, today):
+        if scope.ambiguous:
+            return False
+        if tool == TOOL_VERSION:
+            fields = [plan]
+        else:
+            if any(e.command.action != "create" for e in plan.entries):
+                return False
+            fields = [e.after["fields"] for e in plan.entries]
+        if scope.count is not None and len(fields) != scope.count:
+            return False
+        return scope.names is None or Counter(
+            (normalized(task["title"]), task["due_on"]) for task in fields
+        ) == Counter(scope.names)
+    if (names := spoken_edit_targets(transcript)) is not None:
+        if (
+            tool != COLLECTION_TOOL
+            or not names
+            or any(e.command.action != "edit" or e.before is None for e in plan.entries)
+        ):
+            return False
+        return Counter(normalized(e.before["fields"]["title"]) for e in plan.entries) == Counter(
+            names
+        )
+    return True
+
+
+async def advance_voice_after_manual_confirm(db, conversation, child, before_sequence):
+    """Advance only this active Voice parent after its exact immutable preview is confirmed."""
+    lease = child.execution_lease
+    if lease.get("voice_action_kind") != "preview":
+        return
+    try:
+        parent_id = UUID(lease["voice_parent_run"])
+    except KeyError, TypeError, ValueError:
+        return
+    parent = await db.get(MimiRun, parent_id, with_for_update=True, populate_existing=True)
+    if parent is None or parent.conversation_id != conversation.id or parent.state != "running":
+        return
+    current = parent.execution_lease
+    if (
+        current.get("mode") != "voice"
+        or current.get("voice_protocol") != 2
+        or current.get("stop_requested")
+        or current.get("last_action_turn") != lease.get("voice_turn")
+        or current.get("last_action_status") != "preview"
+        or current.get("next_sequence") != before_sequence
+        or current.get("current_generation") != conversation.generation
+        or current.get("frontier") != conversation.context_frontier_sequence
+        or child.generation + 1 != conversation.generation
+        or parent.deadline <= datetime.now(UTC)
+    ):
+        return
+    parent.execution_lease = {**current, "next_sequence": conversation.next_message_sequence}
+
+
 class VoiceV2Store(VoiceStore):
     @asynccontextmanager
     async def live_gate(self, sources=None, *, detail=False):
@@ -204,7 +269,7 @@ class VoiceV2Store(VoiceStore):
     async def deliver_read(self, identity, name, arguments, epoch, sources):
         async with self.factory() as db:
             conversation, run = await self.boundary(db)
-            await sources.check(db, self.settings, detail=True)
+            await sources.check(db, self.settings)
             dek = crypto.unwrap_dek(conversation.dek_wrapped)
             try:
                 if name not in v2_tools(self.settings):
@@ -222,7 +287,7 @@ class VoiceV2Store(VoiceStore):
                 else:
                     result = await execute_read_tool(db, name, arguments, settings=self.settings)
             except SelectionCorrection as error:
-                result = {"error": error.feedback(), "coverage": "unavailable"}
+                result = error.feedback()
             except ValueError:
                 result = {
                     "error": {"code": "voice_read_arguments_invalid"},
@@ -269,7 +334,7 @@ class VoiceV2Store(VoiceStore):
                 .join(MimiChangeSet, MimiChangeSet.id == MimiExecutionReceipt.change_set_id)
                 .join(MimiRun, MimiRun.id == MimiChangeSet.run_id)
                 .where(MimiRun.conversation_id == conversation.id)
-                .order_by(MimiRun.generation.desc(), MimiExecutionReceipt.id.desc())
+                .order_by(MimiExecutionReceipt.executed_at.desc(), MimiExecutionReceipt.id.desc())
                 .limit(1)
             )
         ).first()
@@ -277,8 +342,11 @@ class VoiceV2Store(VoiceStore):
             raise HTTPException(409, "voice_undo_receipt_missing")
         receipt, action_run = found
         if (
-            action_run.execution_lease.get("voice_parent_run") != str(parent.id)
-            or action_run.execution_lease.get("voice_action_kind") != "applied"
+            action_run.execution_lease.get("mode") != "voice_action"
+            or action_run.execution_lease.get("voice_parent_run") != str(parent.id)
+            or action_run.execution_lease.get("voice_action_kind") not in {"applied", "preview"}
+            or action_run.execution_lease.get("voice_operation") == "undo"
+            or action_run.state != "completed"
             or receipt.result_ciphertext is None
         ):
             raise HTTPException(409, "voice_undo_latest_receipt_not_eligible")
@@ -289,12 +357,17 @@ class VoiceV2Store(VoiceStore):
                 aad=f"mimi-receipt:{conversation.id}:{receipt.id}:recovery",
             )
         )
-        return await freeze_undo(db, receipt.id, recovery)
+        plan = await freeze_undo(db, receipt.id, recovery)
+        original = recovery["plan"]
+        quick_eligible = all(
+            entry["command"]["action"] in {"create", "edit"}
+            and entry["reminder_effect"]["action"] in {"keep", "none"}
+            for entry in original["entries"]
+        )
+        return plan, quick_eligible
 
     async def _prepare(self, db, conversation, parent, dek, proposal, epoch):
         tool, args = proposal
-        if tool == UNDO_TOOL:
-            return COLLECTION_TOOL, await self._latest_inverse(db, conversation, parent, dek)
         if tool == TOOL_VERSION:
             return tool, args
         ids = [entry.id for entry in args.entries if entry.id is not None]
@@ -322,19 +395,30 @@ class VoiceV2Store(VoiceStore):
                 calls, collection_enabled=self.settings.mimi_collection_enabled
             )
         except ValueError:
-            return None
+            return VoiceActionOutcome("needs_clarification", "voice_plan_invalid")
         if proposal is None or not is_active():
-            return None
+            return VoiceActionOutcome("rejected", "voice_turn_expired")
+        if proposal[0] == UNDO_TOOL and not spoken_undo(speech):
+            return VoiceActionOutcome("needs_clarification", "voice_spoken_intent_unproven")
         try:
             return await self._act(turn, epoch, proposal, speech, transcript, sources, is_active)
+        except VoiceContextChanged:
+            return VoiceActionOutcome("rejected", "voice_source_changed", reset_context=True)
         except HTTPException as error:
             if error.status_code not in {404, 409, 422}:
                 raise
-            # Normal stale/selection/undo failures roll back the whole attempt.
-            # Source drift is a separate signal and must invalidate native state.
-            return None
+            if error.status_code == 404:
+                return VoiceActionOutcome("rejected", "voice_action_not_authorized")
+            if proposal[0] == UNDO_TOOL:
+                return VoiceActionOutcome("rejected", "voice_undo_unavailable")
+            code = error.detail
+            if isinstance(code, str) and (
+                "selection" in code or code.startswith("task_collection_source")
+            ):
+                return VoiceActionOutcome("rejected", "voice_selection_stale")
+            return VoiceActionOutcome("rejected", "voice_plan_rejected")
         except ValueError:
-            return None
+            return VoiceActionOutcome("needs_clarification", "voice_plan_invalid")
 
     async def _act(self, turn, epoch, proposal, speech, transcript, sources, is_active):
         async with self.factory() as db:
@@ -345,13 +429,13 @@ class VoiceV2Store(VoiceStore):
             )
             conversation, parent = await self.boundary(db)
             if not is_active() or turn != parent.execution_lease["last_turn"]:
-                return None
+                return VoiceActionOutcome("rejected", "voice_turn_expired")
             if parent.execution_lease.get("last_action_turn") == turn:
-                return parent.execution_lease["last_action_status"]
+                return committed(parent.execution_lease["last_action_status"])
             if await db.scalar(
                 select(MimiExecutionReceipt.id).where(MimiExecutionReceipt.idempotency_key == key)
             ):
-                return None
+                return VoiceActionOutcome("rejected", "voice_result_ambiguous")
             now = datetime.now(UTC)
             if await db.scalar(
                 select(MimiChangeSet.id)
@@ -363,30 +447,30 @@ class VoiceV2Store(VoiceStore):
                 )
                 .limit(1)
             ):
-                return None
+                return VoiceActionOutcome("rejected", "voice_preview_pending")
             dek = crypto.unwrap_dek(conversation.dek_wrapped)
             await sources.check(db, self.settings, detail=True)
             today = now.astimezone(VIETNAM_TZ).date()
-            named_creates = spoken_creates(speech or transcript, today)
-            size = len(proposal[1].entries) if proposal[0] == COLLECTION_TOOL else 1
-            if len(named_creates) > 1 and size != len(named_creates):
-                return None  # Even a manual preview must not freeze a known fragment.
-            tool, plan = await self._prepare(db, conversation, parent, dek, proposal, epoch)
             undo = proposal[0] == UNDO_TOOL
+            if undo:
+                tool = COLLECTION_TOOL
+                plan, inverse_eligible = await self._latest_inverse(db, conversation, parent, dek)
+            else:
+                tool, plan = await self._prepare(db, conversation, parent, dek, proposal, epoch)
+                if not _matches_whole_request(tool, plan, speech or transcript, today):
+                    return VoiceActionOutcome("needs_clarification", "voice_request_incomplete")
             fast = False
             if tool == COLLECTION_TOOL:
                 preference = await voice_preference(db, self.auth, lock=True)
                 if undo:
                     fast = (
                         preference.fast_apply
-                        and spoken_undo(speech)
+                        and inverse_eligible
                         and all(
                             entry.reminder_effect["action"] in {"keep", "none"}
                             for entry in plan.entries
                         )
                     )
-                    if not spoken_undo(speech):
-                        return None  # A tool suggestion cannot target an implicit receipt.
                 else:
                     fast = (
                         preference.fast_apply
@@ -394,7 +478,7 @@ class VoiceV2Store(VoiceStore):
                         and await _unique_spoken_targets(db, plan)
                     )
             if not is_active():
-                return None
+                return VoiceActionOutcome("rejected", "voice_turn_expired")
             expires = now + timedelta(minutes=self.settings.mimi_preview_ttl_minutes)
             status = ("undone" if undo else "applied") if fast else "preview"
             child = MimiRun(
@@ -408,6 +492,7 @@ class VoiceV2Store(VoiceStore):
                     "voice_parent_run": str(parent.id),
                     "voice_turn": turn,
                     "voice_action_kind": status,
+                    "voice_operation": "undo" if undo else "change",
                     "capabilities": [tool],
                     "sensitivity": "standard",
                 },
@@ -435,13 +520,13 @@ class VoiceV2Store(VoiceStore):
                     db, self.auth, conversation, child, change, operation, key, dek, invalidate
                 )
             else:
-                await _add_assistant_message(
+                await add_preview_notice(
                     db,
                     conversation,
                     child.id,
                     dek,
                     "Đã chuẩn bị bản xem trước. Hãy kiểm tra và xác nhận trong ứng dụng.",
-                    producer_code="undo_prepared" if undo else "preview_prepared",
+                    undo=undo,
                 )
                 await _append_event(
                     db,
@@ -457,6 +542,11 @@ class VoiceV2Store(VoiceStore):
                 "next_sequence": conversation.next_message_sequence,
             }
             if not is_active() or parent.deadline <= datetime.now(UTC):
-                return None
-            await db.commit()
-            return status
+                return VoiceActionOutcome("rejected", "voice_turn_expired")
+            try:
+                await db.commit()
+            except Exception:
+                # Commit response loss is indeterminate. The frozen receipt is
+                # the only recovery authority; do not re-execute the request.
+                return VoiceActionOutcome("rejected", "voice_result_ambiguous")
+            return committed(status)

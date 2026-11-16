@@ -44,7 +44,8 @@ def require_voice_v2():
     dependencies=[Depends(require_mimi_workspace_session), Depends(require_voice_v2)],
 )
 async def get_voice_preferences(db=Depends(get_session), auth=Depends(require_session)):
-    return await voice_preference(db, auth)
+    settings = await voice_preference(db, auth)
+    return JSONResponse(settings.model_dump(), headers={"Cache-Control": "no-store"})
 
 
 @router.patch(
@@ -60,7 +61,7 @@ async def patch_voice_preferences(
 ):
     result = await voice_preference(db, auth, change=payload)
     await db.commit()
-    return result
+    return JSONResponse(result.model_dump(), headers={"Cache-Control": "no-store"})
 
 
 @router.post(

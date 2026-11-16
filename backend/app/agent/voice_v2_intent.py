@@ -11,6 +11,30 @@ from app.agent.task_collection import PreparedCollection
 
 FAST_APPLY_MAX = 5
 _SLOP_MS = 300
+_COUNTS = {
+    "a": 1,
+    "an": 1,
+    "one": 1,
+    "một": 1,
+    "two": 2,
+    "hai": 2,
+    "three": 3,
+    "ba": 3,
+    "four": 4,
+    "bốn": 4,
+    "five": 5,
+    "năm": 5,
+    "six": 6,
+    "sáu": 6,
+    "seven": 7,
+    "bảy": 7,
+    "eight": 8,
+    "tám": 8,
+    "nine": 9,
+    "chín": 9,
+    "ten": 10,
+    "mười": 10,
+}
 
 
 def offset_ms(value) -> int | None:
@@ -29,6 +53,7 @@ class SpeechWindow:
     end_ms: int | None = None
     spans: list[tuple[int, int, str]] = field(default_factory=list)
     uncertain: bool = False
+    conflicted: bool = False
 
     def activity(self, event, forwarded_ms):
         if not isinstance(event, dict):
@@ -37,7 +62,7 @@ class SpeechWindow:
         offset = offset_ms(event.get("audioOffset"))
         if offset is None or offset <= self.floor_ms or offset > forwarded_ms:
             self.uncertain = True
-        elif event.get("type") == "ACTIVITY_START" and self.start_ms is None and not self.spans:
+        elif event.get("type") == "ACTIVITY_START" and self.start_ms is None:
             self.start_ms = offset
         elif (
             event.get("type") == "ACTIVITY_END"
@@ -48,6 +73,7 @@ class SpeechWindow:
             self.end_ms = offset
         else:
             self.uncertain = True
+            self.conflicted = True
 
     def transcript(self, event, forwarded_ms):
         start, end = offset_ms(event.get("startOffset")), offset_ms(event.get("endOffset"))
@@ -63,6 +89,7 @@ class SpeechWindow:
             return
         if self.spans and start < self.spans[-1][1]:
             self.uncertain = True
+            self.conflicted = True
             return
         self.spans.append((start, end, text))
 
@@ -95,8 +122,8 @@ def normalized(text: str) -> str:
     return " ".join(unicodedata.normalize("NFC", text).casefold().strip().split())
 
 
-def whole_command(text: str | None) -> str:
-    if not text or len(text) > 1400 or any(c in text for c in '?!“”"'):
+def whole_command(text: str | None, *, limit=1400) -> str:
+    if not text or len(text) > limit or any(c in text for c in '?!“”"'):
         return ""
     value = normalized(text).removesuffix(".")
     value = re.sub(r"^(?:mimi[,:]? |please |hãy )+", "", value)
@@ -155,12 +182,77 @@ def _create_values(label: str, today: date | None):
 
 
 def spoken_creates(text: str | None, today: date | None):
-    create = re.fullmatch(
-        r"(?:tạo (?:công việc|task|việc)|create (?:a )?tasks?)"
-        r"(?: (?:tên|gọi là|named|called))?(?:[ :]+)(.+)",
-        whole_command(text),
+    scope = create_scope(text, today)
+    return list(scope.names or ()) if scope is not None and not scope.ambiguous else []
+
+
+@dataclass(frozen=True)
+class CreateScope:
+    count: int | None
+    names: tuple[tuple[str, str | None], ...] | None
+    ambiguous: bool = False
+
+
+def create_scope(text: str | None, today: date | None) -> CreateScope | None:
+    """Capture a declared count/list independently of the model's proposal size."""
+    value = whole_command(text, limit=16_384)
+    prefix = re.match(r"^(?:tạo|thêm|create|add)\s+", value)
+    if not prefix:
+        return None
+    rest = value[prefix.end() :]
+    header = re.match(
+        r"(?:(các|những|the following|the|\d{1,3}|" + "|".join(_COUNTS) + r")\s+)?"
+        r"(?:new\s+)?(?:công việc|việc|tasks?)\b(.*)$",
+        rest,
     )
-    return [_create_values(label, today) for label in _labels(create[1])] if create else []
+    if not header:
+        return None
+    quantifier, tail = header.groups()
+    count = (
+        int(quantifier)
+        if quantifier and quantifier.isascii() and quantifier.isdigit()
+        else _COUNTS.get(quantifier)
+    )
+    tail = re.sub(
+        r"^[ :]*(?:(?:sau đây|sau|có tên|tên|gọi là|bao gồm|gồm|named|called|as follows)"
+        r"[ :]*)?",
+        "",
+        tail,
+    ).strip()
+    if not tail:
+        return CreateScope(count, None, ambiguous=count is None)
+    # Rich content/generation requires manual review; its declared target count
+    # is still a binding. A named range or ellipsis is not an enumerated set.
+    if re.search(r"\b(?:đến|through|until|vân vân|etc)\b|\.{2,}|…", tail):
+        return CreateScope(count, None, ambiguous=True)
+    if re.search(
+        r"\b(?:mô tả|nội dung|checklist|description|body|với các bước|with steps)\b", tail
+    ):
+        return CreateScope(count, None)
+    labels = _labels(tail)
+    values = tuple(_create_values(label, today) for label in labels)
+    plural = quantifier in {"các", "những", "the following", "the"}
+    ambiguous = (
+        not values
+        or any(not name for name, _ in values)
+        or (count is not None and count != len(values))
+        or (plural and len(values) < 2)
+        or len({title for title, _ in values}) != len(values)
+    )
+    return CreateScope(count or len(values), values, ambiguous)
+
+
+def spoken_edit_targets(text: str | None) -> list[str] | None:
+    value = whole_command(text)
+    for pattern in (
+        r"(?:hoàn thành|complete|mở lại|reopen) "
+        r"(?:(?:các |những |the )?(?:tasks?|việc|công việc) )?(.+)",
+        r"(?:đổi tên|rename)(?: task| việc)? (.+?) (?:thành|to) .+",
+        r"(?:đặt ưu tiên|set priority)(?: task| việc)? (.+?) (?:thành|to) p[123]",
+    ):
+        if match := re.fullmatch(pattern, value):
+            return _labels(match[1])
+    return None
 
 
 def exact_plan_match(
@@ -213,8 +305,14 @@ def exact_plan_match(
             and normalized(fields["title"]) == rename[2]
         )
     for pattern, fields in (
-        (r"(?:hoàn thành|complete) (?:task |việc )?(.+)", {"status": "completed"}),
-        (r"(?:mở lại|reopen) (?:task |việc )?(.+)", {"status": "open"}),
+        (
+            r"(?:hoàn thành|complete) (?:(?:các |những |the )?(?:tasks?|việc|công việc) )?(.+)",
+            {"status": "completed"},
+        ),
+        (
+            r"(?:mở lại|reopen) (?:(?:các |những |the )?(?:tasks?|việc|công việc) )?(.+)",
+            {"status": "open"},
+        ),
     ):
         if match := re.fullmatch(pattern, command):
             return _labels(match[1]) == titles and all(
