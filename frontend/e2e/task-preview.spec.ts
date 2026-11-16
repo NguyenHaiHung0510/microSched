@@ -40,7 +40,14 @@ async function calendar(page: Page) {
 async function shot(page: Page, name: string) { if (process.env.TASK_PREVIEW_EVIDENCE_DIR) await page.screenshot({ path: `${process.env.TASK_PREVIEW_EVIDENCE_DIR}/${name}.png`, animations: 'disabled' }) }
 async function fits(locator: Locator) { return locator.evaluate(node => { const r = node.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight && node.scrollWidth <= node.clientWidth }) }
 
-test.beforeEach(async ({ page }) => { await page.clock.setFixedTime(new Date('2026-10-20T07:00:00Z')) })
+test.beforeEach(async ({ page, taskApi }) => {
+  const now = new Date('2026-10-20T07:00:00Z')
+  // The API's private TTL and browser clock must describe the same instant.
+  // Mixing wall time with October can overflow the browser's timer after 24 days.
+  taskApi.privateNow = () => now.getTime()
+  taskApi.privateUntil = new Date(now.getTime() + 36 * 60_000).toISOString()
+  await page.clock.setFixedTime(now)
+})
 test.afterEach(async ({ previewApi }, info) => {
   await info.attach('synthetic-request-receipt', { body: JSON.stringify(previewApi), contentType: 'application/json' })
   expect(previewApi.errors).toEqual([])

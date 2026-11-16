@@ -50,9 +50,12 @@ async function fits(locator: Locator) {
   })
 }
 
-test.beforeEach(async ({ trackerApi, page }) => {
+test.beforeEach(async ({ trackerApi, taskApi, page }) => {
   seed(trackerApi)
-  await page.clock.setFixedTime(new Date('2026-10-20T05:00:00Z'))
+  const now = new Date('2026-10-20T05:00:00Z')
+  taskApi.privateNow = () => now.getTime()
+  taskApi.privateUntil = new Date(now.getTime() + 36 * 60_000).toISOString()
+  await page.clock.setFixedTime(now)
 })
 
 test.afterEach(async ({ trackerApi }, info) => {

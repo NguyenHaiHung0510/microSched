@@ -30,7 +30,7 @@ export type FixtureTask = {
 
 const past = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
 const future = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString()
-const privateWindow = () => new Date(Date.now() + 36 * 60_000).toISOString()
+const privateWindow = (now = Date.now()) => new Date(now + 36 * 60_000).toISOString()
 
 function randomPin(): string {
   return Array.from({ length: 6 }, () => Math.floor(Math.random() * 10)).join('')
@@ -170,6 +170,7 @@ fixtureTasks.push(
 )
 
 export type TaskApiState = {
+  privateNow(): number
   tasks: FixtureTask[]
   sessionStatus: number
   privateUntil: string | null
@@ -307,6 +308,7 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
   // running in this e2e lane, and every request fails with ECONNREFUSED.
   taskApi: [async ({ page }, use) => {
     const state: TaskApiState = {
+      privateNow: Date.now,
       tasks: cloneTasks(),
       sessionStatus: 200,
       privateUntil: privateWindow(),
@@ -356,7 +358,7 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
       }
 
       if (path === '/api/private/unlock' && method === 'POST') {
-        const now = Date.now()
+        const now = state.privateNow()
         const lockedUntil = state.privateLockedUntil
           ? Date.parse(state.privateLockedUntil)
           : 0
@@ -403,7 +405,7 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
 
         state.wrongPinCount = 0
         state.privateLockedUntil = null
-        state.privateUntil = privateWindow()
+        state.privateUntil = privateWindow(state.privateNow())
         await route.fulfill(jsonResponse({ private_until: state.privateUntil }))
         return
       }
@@ -425,7 +427,7 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
 
       if (path === '/api/tasks/timeline' && method === 'GET') {
         const privateOpen = Boolean(
-          state.privateUntil && Date.parse(state.privateUntil) > Date.now(),
+          state.privateUntil && Date.parse(state.privateUntil) > state.privateNow(),
         )
         const status = url.searchParams.get('status') ?? 'open'
         const from = url.searchParams.get('from')
@@ -498,7 +500,7 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
 
       if (path === '/api/tasks' && method === 'GET') {
         const privateOpen = Boolean(
-          state.privateUntil && Date.parse(state.privateUntil) > Date.now(),
+          state.privateUntil && Date.parse(state.privateUntil) > state.privateNow(),
         )
         const status = url.searchParams.get('status') ?? 'open'
         const from = url.searchParams.get('from')
@@ -559,7 +561,7 @@ export const test = base.extend<{ taskApi: TaskApiState }>({
       const taskMatch = path.match(/^\/api\/tasks\/([^/]+)$/)
       if (taskMatch && method === 'GET') {
         const current = state.tasks.find(entry => entry.id === taskMatch[1])
-        const unlocked = state.privateUntil && Date.parse(state.privateUntil) > Date.now()
+        const unlocked = state.privateUntil && Date.parse(state.privateUntil) > state.privateNow()
         await route.fulfill(current && (!current.is_private || unlocked) ? jsonResponse(current) : {status:404})
         return
       }
