@@ -89,6 +89,9 @@ from app.agent.openrouter import (
 )
 from app.agent.openrouter import complete_stream as openrouter_complete_stream
 from app.agent.openrouter import get_generation as openrouter_get_generation
+from app.agent.owner_workspace import OWNER_WORKSPACE_ID
+from app.agent.owner_workspace import owner_id as _owner_id
+from app.agent.owner_workspace import owner_ids as _owner_ids
 from app.agent.policy import checkpoint_policy_compatible, load_standard_policy
 from app.agent.route_config import (
     PROFILES,
@@ -347,13 +350,6 @@ class ConversationRename(BaseModel):
 
 class ConversationStateChange(BaseModel):
     expected_metadata_version: int = Field(ge=1)
-
-
-def _owner_id(auth: AuthSession) -> UUID:
-    """Derive a stable opaque owner UUID without persisting the login address."""
-    secret = (get_settings().oauth_state_secret or get_settings().app_name).encode("utf-8")
-    digest = hmac.new(secret, auth.user_email.strip().lower().encode("utf-8"), hashlib.sha256)
-    return UUID(bytes=digest.digest()[:16], version=5)
 
 
 def _canonical_digest(value: dict[str, Any]) -> str:
@@ -620,12 +616,22 @@ def _decode_conversation_cursor(value: str) -> tuple[datetime, UUID]:
     return updated_at, conversation_id
 
 
+def _conversation_scope(auth: AuthSession):
+    # STANDARD is the current Mimi contract. Namespace aliases must not expose
+    # PRIVATE history through either conversation or run/receipt locators.
+    return and_(
+        MimiConversation.owner_id.in_(_owner_ids(auth)),
+        MimiConversation.sensitivity == "standard",
+        MimiConversation.is_private.is_(False),
+    )
+
+
 async def _conversation(
     db: AsyncSession, auth: AuthSession, conversation_id: UUID, *, lock: bool = False
 ) -> MimiConversation:
     statement = select(MimiConversation).where(
         MimiConversation.id == conversation_id,
-        MimiConversation.owner_id == _owner_id(auth),
+        _conversation_scope(auth),
     )
     if lock:
         statement = statement.with_for_update()
@@ -692,16 +698,48 @@ async def create_conversation(
 ) -> dict[str, Any]:
     owner_id = _owner_id(auth)
     if payload.client_id is not None:
-        existing = (
-            await db.execute(
-                select(MimiConversation).where(
-                    MimiConversation.owner_id == owner_id,
-                    MimiConversation.client_id == payload.client_id,
+        # Serialize the same client ID across entrances and both flag modes.
+        # Never rewrite a legacy row or coalesce conflicting legacy keys.
+        await db.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    _transaction_lock_key("mimi-conversation", payload.client_id)
                 )
             )
-        ).scalar_one_or_none()
-        if existing is not None:
-            return _conversation_summary(existing, latest_run_state=None)
+        )
+        matches = (
+            (
+                await db.execute(
+                    select(MimiConversation)
+                    .where(
+                        _conversation_scope(auth),
+                        MimiConversation.client_id == payload.client_id,
+                    )
+                    .limit(2)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(matches) > 1:
+            raise _conflict("conversation_client_id_ambiguous_use_conversation_id")
+        if matches:
+            return _conversation_summary(matches[0], latest_run_state=None)
+        # A private row can occupy the write namespace key. A shared row can
+        # reserve it while the flag is off. Check only those exact namespaces,
+        # without loading or returning a hidden conversation.
+        occupied = await db.scalar(
+            select(
+                select(MimiConversation.id)
+                .where(
+                    MimiConversation.owner_id.in_({owner_id, OWNER_WORKSPACE_ID}),
+                    MimiConversation.client_id == payload.client_id,
+                )
+                .exists()
+            )
+        )
+        if occupied:
+            raise _conflict("conversation_client_id_unavailable")
     now = datetime.now(UTC)
     row = MimiConversation(
         id=uuid7(),
@@ -1730,7 +1768,7 @@ async def list_conversations(
         .scalar_subquery()
     )
     statement = select(MimiConversation, latest_run_state.label("latest_run_state")).where(
-        MimiConversation.owner_id == _owner_id(auth)
+        _conversation_scope(auth)
     )
     if state == "active":
         statement = statement.where(MimiConversation.archived_at.is_(None))
@@ -1812,7 +1850,7 @@ async def current_conversation(db: AsyncSession, auth: AuthSession) -> dict[str,
         await db.execute(
             select(MimiConversation.id)
             .where(
-                MimiConversation.owner_id == _owner_id(auth),
+                _conversation_scope(auth),
                 MimiConversation.archived_at.is_(None),
             )
             .order_by(MimiConversation.updated_at.desc(), MimiConversation.id.desc())
@@ -4211,7 +4249,7 @@ async def confirm_change_set(
             .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
             .where(
                 MimiExecutionReceipt.idempotency_key == idempotency_key,
-                MimiConversation.owner_id == _owner_id(auth),
+                _conversation_scope(auth),
             )
         )
     ).first()
@@ -4223,6 +4261,8 @@ async def confirm_change_set(
             or existing_change_set.nonce != payload.nonce
         ):
             raise _conflict("idempotency_key_reused_with_different_digest")
+        if payload.decision != "confirm":
+            raise _conflict("idempotency_key_reused_with_different_decision")
         return _receipt_read(receipt)
 
     if (
@@ -4240,7 +4280,7 @@ async def confirm_change_set(
         .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
         .where(
             MimiChangeSet.id == change_set_id,
-            MimiConversation.owner_id == _owner_id(auth),
+            _conversation_scope(auth),
         )
         .with_for_update()
     )
@@ -5010,7 +5050,7 @@ async def run_events_after(
             .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
             .where(
                 MimiRun.id == run_id,
-                MimiConversation.owner_id == _owner_id(auth),
+                _conversation_scope(auth),
             )
         )
     ).first()
@@ -5053,7 +5093,7 @@ async def prepare_run_resume(
             .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
             .where(
                 MimiRun.id == run_id,
-                MimiConversation.owner_id == _owner_id(auth),
+                _conversation_scope(auth),
             )
             .with_for_update()
         )
@@ -5112,7 +5152,7 @@ async def request_run_pause(db: AsyncSession, auth: AuthSession, run_id: UUID) -
             .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
             .where(
                 MimiRun.id == run_id,
-                MimiConversation.owner_id == _owner_id(auth),
+                _conversation_scope(auth),
             )
             .with_for_update()
         )
@@ -5159,7 +5199,7 @@ async def reconcile_unknown_run(
             .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
             .where(
                 MimiRun.id == run_id,
-                MimiConversation.owner_id == _owner_id(auth),
+                _conversation_scope(auth),
             )
         )
     ).scalar_one_or_none()
@@ -5273,7 +5313,7 @@ async def finish_interrupted_run(
             .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
             .where(
                 MimiRun.id == run_id,
-                MimiConversation.owner_id == _owner_id(auth),
+                _conversation_scope(auth),
             )
             .with_for_update()
         )
@@ -5622,7 +5662,7 @@ async def read_execution_receipt(db, auth, conversation_id, change_set_id, diges
             .where(
                 MimiChangeSet.id == change_set_id,
                 MimiConversation.id == conversation_id,
-                MimiConversation.owner_id == _owner_id(auth),
+                _conversation_scope(auth),
                 MimiConversation.sensitivity == "standard",
                 MimiConversation.is_private.is_(False),
             )
@@ -5646,9 +5686,7 @@ async def prepare_receipt_undo(db, auth, receipt_id):
             .join(MimiChangeSet, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
             .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
             .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
-            .where(
-                MimiExecutionReceipt.id == receipt_id, MimiConversation.owner_id == _owner_id(auth)
-            )
+            .where(MimiExecutionReceipt.id == receipt_id, _conversation_scope(auth))
             .with_for_update()
         )
     ).first()

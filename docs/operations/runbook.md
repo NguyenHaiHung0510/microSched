@@ -23,6 +23,13 @@ GitHub scheduled/community/security-update consumers thường đọc default br
 
 Secrets giữ ngoài Git; runtime chỉ nhận `DATABASE_URL` của role app. Không đưa owner/migrator URL lên Fly. Xem [auth](../auth-brief.md), [security](../security-brief.md) và [.env.example](../../backend/.env.example). Không in secret khi đối chiếu config.
 
+Release preset bật `MIMI_OWNER_WORKSPACE_ENABLED=true` để mọi login đã allowlist
+cùng thấy lịch sử Mimi STANDARD, dùng alias legacy, không migrate/rebind row.
+Local/test mặc định off. [Workspace contract](../mimi/owner-workspace.md) mô tả
+collision/idempotence, cutover và feature-off rollback; flag false chỉ tạm ẩn
+namespace chung/các alias khác. Giữ allowlist và OAuth secret hiện hành; không
+trộn writer trước/sau policy hoặc đổi policy khi còn run đang mở.
+
 ## Backup và recovery
 
 Backup là trách nhiệm Owner vận hành, tách khỏi deploy. Giữ database dump, encryption key và code/config revision tương ứng trong các nơi có kiểm soát truy cập; key cần được bảo quản riêng với dữ liệu mã hóa. Bản dump mà thiếu key có thể không phục hồi được nội dung. Dùng chính sách 3-2-1 và **restore rehearsal** để chứng minh khả năng đọc/giải mã, schema, row counts và quyền app/migrator.

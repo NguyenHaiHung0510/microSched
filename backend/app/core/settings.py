@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     allowed_emails: str = ""
+    # Login identities are entrances to one Owner workspace. False is a
+    # non-destructive compatibility rollback; it never changes stored rows.
+    mimi_owner_workspace_enabled: bool = False
     oauth_state_secret: str | None = None
     private_pin_bootstrap: str | None = None
     # App-held AES-256 key for the encrypted columns; crypto.py validates and uses it.

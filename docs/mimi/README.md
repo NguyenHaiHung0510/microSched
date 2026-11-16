@@ -14,6 +14,7 @@ Source: [service](../../backend/app/agent/service.py), [tool registry](../../bac
 
 | Chủ đề | Maintained contract |
 |---|---|
+| Các login allowlisted cùng workspace, legacy aliases và rollback | [Owner workspace](owner-workspace.md) |
 | Selection, Task/checklist commands, CAS/Confirm/undo, notifications | [Task collection](task-collection.md) |
 | Optional saved STANDARD Calendar reads, coverage, Resume and server executor | [Calendar reads](calendar-read.md) |
 | Gateway policy, bounded retry, unknown/accounting | [Native routing](native-routing.md) |
