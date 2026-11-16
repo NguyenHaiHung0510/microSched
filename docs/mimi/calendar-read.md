@@ -10,6 +10,10 @@ event ending exactly at 00:00 does not occupy the new day.
 existing context-enabled Mimi tool loop when this flag is on. Use explicit opt-in on a synthetic
 QA instance after checking its isolation. Existing text transport, Task tools, and provider
 routing policy remain in place. Turning the flag off withdraws the tools without a schema change.
+The production preset in `fly.toml` enables Calendar reads for the existing STANDARD text chat.
+This release does not enable Voice or change conversation ownership. Roll back by setting
+`MIMI_CALENDAR_READ_ENABLED=false` and deploying the reviewed configuration; encrypted chat
+history and stored calendar data remain intact.
 
 | Tool | Arguments | Evidence |
 |---|---|---|
