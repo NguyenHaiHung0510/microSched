@@ -4,6 +4,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -20,7 +21,7 @@ from app.agent.voice_v2_bridge import VoiceV2Bridge
 from app.agent.voice_v2_intent import SpeechWindow, create_scope, exact_plan_match, spoken_undo
 from app.agent.voice_v2_outcome import committed
 from app.agent.voice_v2_protocol import setup_v2
-from app.agent.voice_v2_store import VoiceContextChanged
+from app.agent.voice_v2_store import VoiceContextChanged, VoiceSources
 from app.core.settings import Settings
 
 PCM = b"\0" * 6400
@@ -416,6 +417,43 @@ def test_absolute_deadline_keeps_running_during_reconnect_backoff(monkeypatch):
         assert await asyncio.wait_for(task, 2) == "voice_time_limit"
         assert (await browser.until("ended"))["reason"] == "voice_time_limit"
         assert len(dials) == 1
+
+    asyncio.run(scenario())
+
+
+def test_source_backed_pcm_burst_does_not_recheck_each_envelope_after_slow_validation(monkeypatch):
+    async def scenario():
+        browser, store = Browser(), Store()
+        now = [1.0]
+        checks = []
+        monkeypatch.setattr(voice_v2_bridge, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+        @asynccontextmanager
+        async def slow_gate(sources):
+            checks.append(sources)
+            now[0] += voice_v2_bridge.SOURCE_WINDOW + 0.10
+            yield
+
+        monkeypatch.setattr(store, "live_gate", slow_gate)
+        bridge = VoiceV2Bridge(browser, store)
+        bridge.deadline = datetime.now(UTC) + timedelta(seconds=3)
+        bridge.authority_until = 10
+        bridge.sources = VoiceSources().plus(
+            "task.aggregate.v1",
+            {"group_by": "status"},
+            {"groups": [{"value": "open", "count": 1}], "coverage": "complete"},
+        )
+        pcm = PCM[:960]
+        await bridge._render([pcm], first_answer=True)
+        for _ in range(6):
+            now[0] += 0.02
+            await bridge._render([pcm], first_answer=False)
+        assert len(checks) == 1
+        assert browser.frames.qsize() == 7
+
+        now[0] += voice_v2_bridge.SOURCE_WINDOW
+        await bridge._render([pcm], first_answer=False)
+        assert checks == [bridge.sources, bridge.sources]
 
     asyncio.run(scenario())
 

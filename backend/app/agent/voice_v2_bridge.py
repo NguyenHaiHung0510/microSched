@@ -347,9 +347,12 @@ class VoiceV2Bridge:
             or (self.sources.queries and (now >= self.source_until or size > self.source_bytes))
         ):
             async with self.store.live_gate(self.sources):
+                # Start the short grant after validation so DB time does not
+                # make every following PCM envelope renew it immediately.
+                checked_at = time.monotonic()
                 await deliver()
             self.egress_checked = True
-            self.source_until = now + SOURCE_WINDOW
+            self.source_until = checked_at + SOURCE_WINDOW
             self.source_bytes = SOURCE_WINDOW_BYTES
         else:
             if now >= self.authority_until:

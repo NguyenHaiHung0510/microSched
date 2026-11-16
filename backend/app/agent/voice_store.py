@@ -458,8 +458,6 @@ class VoiceStore:
     ):
         async with self.factory() as db:
             conversation, run = await self.boundary(db)
-            if sources is not None:
-                await sources.check(db, self.settings)
             if turn <= run.execution_lease["last_turn"]:
                 return  # Idempotent server turn, never a client-selected allocation.
             dek = crypto.unwrap_dek(conversation.dek_wrapped)
@@ -525,6 +523,9 @@ class VoiceStore:
                 "last_turn": turn,
                 "next_sequence": conversation.next_message_sequence,
             }
+            if sources is not None:
+                # No pending transcript/event becomes durable after source drift.
+                await sources.check(db, self.settings)
             await db.commit()
 
     async def finish(self, *, reason, connected, completed_turns, usage, counters):

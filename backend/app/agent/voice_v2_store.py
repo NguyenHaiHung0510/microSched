@@ -40,6 +40,7 @@ from app.agent.task_collection import (
     freeze_undo,
 )
 from app.agent.tools.calendar_reads import (
+    CALENDAR_READ_TOOL,
     CALENDAR_READ_TOOLS,
     CalendarBindings,
     calendar_bindings_current,
@@ -63,6 +64,8 @@ from app.domain.tasks import VIETNAM_TZ
 
 MAX_EXPOSED_ROWS = 2048
 MAX_QUERY_OBSERVATIONS = 256
+MAX_MEMBERSHIP_OBSERVATIONS = 8
+_SET_READS = frozenset({"task.query.v1", "task.aggregate.v1", CALENDAR_READ_TOOL})
 
 
 class VoiceContextChanged(VoiceError):
@@ -77,15 +80,24 @@ def _read_digest(result):
     return digest(value)
 
 
+@dataclass(frozen=True)
+class VoiceReadObservation:
+    name: str
+    arguments: dict
+    digest: str
+    # A list, count, or missing ID can change without changing any returned row.
+    membership: bool
+
+
 @dataclass
 class VoiceSources:
     """What this upstream context has seen; discarded on a fresh context."""
 
     tasks: dict[UUID, tuple] = field(default_factory=dict)
     calendar: CalendarBindings = field(default_factory=dict)
-    queries: dict[str, tuple] = field(default_factory=dict)
+    queries: dict[str, VoiceReadObservation] = field(default_factory=dict)
 
-    async def check(self, db, settings, *, detail=False):
+    async def check_versions(self, db):
         if self.tasks:
             rows = (
                 await db.execute(
@@ -103,14 +115,19 @@ class VoiceSources:
                 raise VoiceContextChanged()
         if not await calendar_bindings_current(db, self.calendar, lock=True):
             raise VoiceContextChanged()
-        if detail:
-            for name, args, expected in self.queries.values():
-                try:
-                    result = await execute_read_tool(db, name, args, settings=settings)
-                except ValueError:
-                    raise VoiceContextChanged() from None
-                if _read_digest(result) != expected:
-                    raise VoiceContextChanged()
+
+    async def check(self, db, settings, *, detail=False):
+        """Check membership at every source gate; replay versioned reads only for full checks."""
+        await self.check_versions(db)
+        for read in self.queries.values():
+            if not (detail or read.membership):
+                continue
+            try:
+                result = await execute_read_tool(db, read.name, read.arguments, settings=settings)
+            except ValueError:
+                raise VoiceContextChanged() from None
+            if _read_digest(result) != read.digest:
+                raise VoiceContextChanged()
 
     def plus(self, name, arguments, result):
         tasks, calendar, queries = self.tasks.copy(), self.calendar.copy(), self.queries.copy()
@@ -130,10 +147,21 @@ class VoiceSources:
                         raise VoiceContextChanged()
             if name != SELECTION_TOOL:
                 key = digest([name, arguments])
-                expected = _read_digest(result)
-                if queries.setdefault(key, (name, arguments, expected))[2] != expected:
+                observed = VoiceReadObservation(
+                    name,
+                    arguments,
+                    _read_digest(result),
+                    name in _SET_READS or not result.get("rows") or bool(result.get("missing_ids")),
+                )
+                if queries.setdefault(key, observed).digest != observed.digest:
                     raise VoiceContextChanged()
-        if len(tasks) + len(calendar) > MAX_EXPOSED_ROWS or len(queries) > MAX_QUERY_OBSERVATIONS:
+        if (
+            len(tasks) + len(calendar) > MAX_EXPOSED_ROWS
+            or len(queries) > MAX_QUERY_OBSERVATIONS
+            or sum(read.membership for read in queries.values()) > MAX_MEMBERSHIP_OBSERVATIONS
+        ):
+            # Retire this context; dropping a binding while the model still
+            # has its result would make later output incorrectly look safe.
             raise VoiceContextChanged()
         return VoiceSources(tasks, calendar, queries)
 
@@ -269,7 +297,7 @@ class VoiceV2Store(VoiceStore):
     async def deliver_read(self, identity, name, arguments, epoch, sources):
         async with self.factory() as db:
             conversation, run = await self.boundary(db)
-            await sources.check(db, self.settings)
+            await sources.check_versions(db)
             dek = crypto.unwrap_dek(conversation.dek_wrapped)
             try:
                 if name not in v2_tools(self.settings):
@@ -296,7 +324,6 @@ class VoiceV2Store(VoiceStore):
             if len(encoded(result).encode()) > MAX_TOOL_BYTES:
                 result = {"error": {"code": "voice_result_limit"}, "coverage": "unavailable"}
             updated = sources.plus(name, arguments, result)
-            await updated.check(db, self.settings)
             sequence = await _append_event(
                 db,
                 run.id,
@@ -321,6 +348,9 @@ class VoiceV2Store(VoiceStore):
                     aad=crypto.event_content_aad(run.id, sequence, "tool.read_result"),
                 ),
             }
+            # Check prior memberships and this result together at delivery.
+            # A rejected tool response and its encrypted receipt both unwind.
+            await updated.check(db, self.settings)
             yield result, updated
             await _append_event(db, run.id, "voice.tool_sent", {"provider_call_id": identity})
             await db.commit()

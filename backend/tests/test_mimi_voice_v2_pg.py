@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+from concurrent.futures import Future
 from contextlib import asynccontextmanager
 from datetime import date
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ from starlette.websockets import WebSocketDisconnect
 from test_mimi_voice_pg import HEADERS, endpoint, mint, new_conversation
 from test_mimi_voice_v2 import PCM, proposal, speech
 
-from app.agent import voice_bridge, voice_v2_store
+from app.agent import voice_bridge, voice_v2_bridge, voice_v2_store
 from app.agent.compaction import VOICE_HISTORY_MARKER
 from app.agent.owner_workspace import OWNER_WORKSPACE_ID
 from app.agent.service import _provider_history
@@ -560,6 +561,100 @@ def test_authorized_read_selection_and_exact_target_edit_in_voice(v2_runtime, mo
     assert f"enc:v1:{rt.stem}" not in json.dumps(replies)
     (receipt,) = snapshot(rt, cid)["receipts"]
     assert receipt["result"]["task_ids"] == [valid_id]
+
+
+@pytest.mark.parametrize("boundary", ["first_answer", "later_audio", "persist", "next_tool"])
+def test_voice_rejects_obsolete_membership_at_source_boundary(v2_runtime, monkeypatch, boundary):
+    rt = v2_runtime
+    empty = boundary == "persist"
+    query = boundary == "later_audio"
+    body = "Synthetic answer from the original membership"
+    obsolete = "Synthetic tail after membership changed"
+    before = None
+    if not empty:
+        created = rt.client.post("/api/tasks", json={"title": f"{rt.stem} original"})
+        assert created.is_success
+        before = UUID(created.json()["id"])
+
+    read_name = "task_query_v1" if empty or query else "task_aggregate_v1"
+    args = {"filter": {"title_contains": rt.stem}}
+    if read_name == "task_aggregate_v1":
+        args["group_by"] = "status"
+    request = tool(read_name, "first", args)
+    first_result = Future()
+    later_results = []
+
+    def observe(response):
+        result = response["response"]["result"]
+        if response["id"] == "first":
+            first_result.set_result(result)
+        else:
+            later_results.append(result)
+
+    def answer(text, *, complete=False):
+        return {"serverContent": {"outputTranscription": {"text": text}, "turnComplete": complete}}
+
+    first = [request]
+    if boundary in {"later_audio", "persist"}:
+        first.append(answer(body))
+    if boundary == "later_audio":
+        # Cross the byte limit on the second caption without a wall-clock sleep.
+        monkeypatch.setattr(voice_v2_bridge, "SOURCE_WINDOW_BYTES", 32)
+    if empty:
+        second = [{"serverContent": {"turnComplete": True}}]
+    elif boundary == "next_tool":
+        second = [
+            tool("task_inspect_batch_v1", "followup", {"ids": [str(before)]}),
+            answer(obsolete, complete=True),
+        ]
+    else:
+        second = [answer(obsolete, complete=True)]
+    cid, issued, _ = start(rt, monkeypatch, first, second, on_tool=observe)
+    with rt.client.websocket_connect(
+        endpoint(cid, issued), headers={"origin": "http://testserver"}
+    ) as ws:
+        ws.send_json({"type": "ticket", "ticket": issued["ticket"]})
+        receive_to(ws, "ready")
+        ws.send_bytes(PCM)
+        original = first_result.result(timeout=3)
+        if "rows" in original:
+            assert len(original["rows"]) == (0 if empty else 1)
+        else:
+            assert original["groups"] == [{"value": "open", "count": 1}]
+        if boundary in {"later_audio", "persist"}:
+            assert receive_to(ws, "transcript")[-1]["text"] == body
+
+        if empty or query:
+            # The matching set changes without touching any previously returned row.
+            assert rt.client.post("/api/tasks", json={"title": f"{rt.stem} new"}).is_success
+        else:
+            # Previously counted Task is now PRIVATE with an opaque test title.
+            changed = asyncio.run(
+                rt.sql(
+                    "update microsched.task set title=$1,is_private=true where id=$2 returning id",
+                    f"enc:v1:{rt.stem}",
+                    before,
+                )
+            )
+            assert [row["id"] for row in changed] == [before]
+
+        ws.send_bytes(PCM)
+        frames = []
+        for _ in range(12):
+            event = ws.receive_json()
+            frames.append(event)
+            if event["type"] in {"reconnecting", "turn_complete", "ended"}:
+                break
+        if frames[-1]["type"] != "ended":
+            ws.send_json({"type": "stop"})
+            receive_to(ws, "ended")
+    # The bridge drops the stale provider context. The caption sent before
+    # drift was valid then, but it must not become an authoritative transcript.
+    view = snapshot(rt, cid)
+    assert not view["messages"], (boundary, frames, view["messages"])
+    assert frames[-1]["type"] == "reconnecting"
+    assert not any(f["type"] == "transcript_saved" or obsolete in f.get("text", "") for f in frames)
+    assert not later_results
 
 
 def test_voice_write_rolls_back_task_and_receipt_together_and_undo_refuses_newer_task(
