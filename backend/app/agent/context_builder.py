@@ -85,7 +85,7 @@ def assemble_context(
         else (policy.text, None)
     )
     prefix_sha256 = hashlib.sha256(prefix_text.encode("utf-8")).hexdigest()
-    tools = tools_for_settings(settings)
+    tools = tools_for_settings(settings, include_chat_undo=True)
     tools_sha256 = registry_hash(tools)
     source = SourceManifest(
         source_id="task.recent.standard.v1" if task_context else "task.reads.demand.v1",

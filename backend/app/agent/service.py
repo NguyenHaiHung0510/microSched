@@ -118,13 +118,20 @@ from app.agent.task_collection import (
     PreparedCollection,
     execute_collection,
     freeze_collection,
+    freeze_undo,
 )
 from app.agent.task_collection import (
     canonical as collection_json,
 )
 from app.agent.tool_activity import tool_activity
 from app.agent.tools.calendar_reads import CALENDAR_READ_TOOLS, calendar_pairs_current
-from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, execute_read_tool
+from app.agent.tools.registry import (
+    CREATE_CANDIDATE_TOOL,
+    READ_TOOLS,
+    UNDO_CANDIDATE_TOOL,
+    UndoCandidate,
+    execute_read_tool,
+)
 from app.agent.working_context import (
     KIND as WORKING_KIND,
 )
@@ -152,6 +159,7 @@ MAX_CONVERSATION_TITLE = 80
 PROVIDER_HISTORY_MESSAGES = 24
 PROVIDER_HISTORY_BYTES = 65_536
 OWNER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+_UNDO_PREVIEW_NOTICE = "Đã chuẩn bị phương án hoàn tác có kiểm tra phiên bản. Chưa áp dụng."
 
 
 class CandidateCorrectionStopped(Exception):
@@ -517,7 +525,7 @@ def _deterministic_turn(
     *,
     awaiting_task_title: bool,
 ) -> tuple[Literal["text", "task"], str | dict[str, Any]]:
-    """Classify the local route without pretending every message is a write intent."""
+    """Deterministic local fixture only; never evidence of live model intent understanding."""
     normalized = " ".join(content.strip().split())
     folded = normalized.casefold().rstrip(".!?")
     greetings = {
@@ -1445,10 +1453,6 @@ async def ensure_message_admissible(
         and payload.expected_generation != conversation.generation
     ):
         raise _conflict("conversation_generation_stale")
-    from app.agent.voice_v2_intent import spoken_undo
-
-    if spoken_undo(payload.content):
-        return
     settings = get_settings()
     settings = bind_policy(settings, await read_policy(db, settings))
     if not (settings.mimi_context_v1_enabled and settings.mimi_live_provider_enabled):
@@ -2133,35 +2137,6 @@ async def send_message(
             conversation, _conversation_title(payload.content)
         )
 
-    from app.agent.voice_v2_intent import spoken_undo
-
-    if record_user_message and spoken_undo(payload.content):
-        from app.agent.receipt_history import latest_receipt
-
-        receipt_id = await latest_receipt(db, conversation.id)
-        try:
-            if receipt_id is None:
-                raise _conflict("receipt_undo_latest_unavailable")
-            async with db.begin_nested():
-                return await prepare_receipt_undo(
-                    db,
-                    auth,
-                    receipt_id,
-                    user_message=payload,
-                    requested_run_id=reserved_run_id,
-                )
-        except HTTPException as error:
-            if not provider_stream or error.status_code not in {404, 409, 410, 422}:
-                raise
-            return await _record_typed_undo_rejection(
-                db,
-                auth,
-                conversation,
-                payload,
-                reserved_run_id,
-                str(error.detail),
-            )
-
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
     settings = get_settings()
     run_config_version = conversation.route_config_version
@@ -2327,7 +2302,12 @@ async def send_message(
                 *(sorted(CALENDAR_READ_TOOLS) if settings.mimi_calendar_read_enabled else ()),
                 CREATE_CANDIDATE_TOOL,
                 *(
-                    (SELECTION_TOOL, COLLECTION_CANDIDATE_TOOL, COLLECTION_TOOL)
+                    (
+                        SELECTION_TOOL,
+                        COLLECTION_CANDIDATE_TOOL,
+                        UNDO_CANDIDATE_TOOL,
+                        COLLECTION_TOOL,
+                    )
                     if settings.mimi_collection_enabled
                     else ()
                 ),
@@ -2721,20 +2701,25 @@ async def send_message(
                     if _canonical_digest(decoded) != previous_call.result.get("result_sha256"):
                         raise _conflict("continuation_provider_terminal_invalid")
                     pending_outcome = TERMINAL_ADAPTER.validate_python(decoded)
-                    if isinstance(pending_outcome, PreviewCandidate):
-                        # Fresh server identity/lease, never copy an old approval.
-                        pending_outcome = pending_outcome.model_copy(
-                            update={
-                                "arguments": {**pending_outcome.arguments, "id": str(task_id)},
-                            }
+                    if not (
+                        isinstance(pending_outcome, PreviewCandidate)
+                        and pending_outcome.tool == UNDO_CANDIDATE_TOOL
+                    ):
+                        # An Undo selector belongs to its original run/receipt context.
+                        if isinstance(pending_outcome, PreviewCandidate):
+                            # Fresh server identity/lease, never copy an old approval.
+                            pending_outcome = pending_outcome.model_copy(
+                                update={
+                                    "arguments": {**pending_outcome.arguments, "id": str(task_id)},
+                                }
+                            )
+                        continuation_completion = AgentCompletion(
+                            outcome=pending_outcome,
+                            response_id=previous_call.result.get("response_id", ""),
+                            usage=previous_call.usage,
+                            provider=previous_call.route.get("actual_provider"),
+                            model=previous_call.route.get("actual_model"),
                         )
-                    continuation_completion = AgentCompletion(
-                        outcome=pending_outcome,
-                        response_id=previous_call.result.get("response_id", ""),
-                        usage=previous_call.usage,
-                        provider=previous_call.route.get("actual_provider"),
-                        model=previous_call.route.get("actual_model"),
-                    )
             run.source_versions = source_versions
             lease = lease.model_copy(update={"source_versions": source_versions})
             run.execution_lease = lease.model_dump(mode="json")
@@ -3565,6 +3550,14 @@ async def send_message(
                         completion = ProviderCompletion(
                             kind="task", task=candidate, text=None, **common
                         )
+                    elif outcome.tool == UNDO_CANDIDATE_TOOL:
+                        try:
+                            undo = UndoCandidate.model_validate(outcome.arguments)
+                        except ValidationError:
+                            raise RouteContractError("provider_undo_candidate_invalid") from None
+                        completion = ProviderCompletion(
+                            kind="undo", task=None, text=None, undo=undo, **common
+                        )
                     else:
                         raise RouteContractError("preview_candidate_tool_invalid")
                 else:
@@ -3968,7 +3961,7 @@ async def send_message(
             if completion.collection is None:
                 raise RouteContractError("provider_collection_result_missing")
             provider_args = completion.collection
-        else:
+        elif completion.kind == "task":
             if completion.task is None:
                 raise RouteContractError("provider_task_result_missing")
             provider_args = completion.task.model_dump(mode="json")
@@ -4098,8 +4091,28 @@ async def send_message(
             )
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
-        assert provider_args is not None
-        operation_args = provider_args
+        if completion.kind == "undo":
+            assert completion.undo is not None
+            try:
+                plan = await _prepare_chat_undo_candidate(
+                    db,
+                    auth,
+                    conversation,
+                    run,
+                    dek,
+                    completion.undo,
+                    lifecycle,
+                    pending_at_accept=observed_pending is not None,
+                )
+            except HTTPException as error:
+                if error.status_code not in {404, 409, 410, 422}:
+                    raise
+                await _finish_chat_undo_rejection(db, conversation, run, dek, str(error.detail))
+                return await conversation_view(db, auth, conversation_id)
+            operation_args = plan.model_dump(mode="json")
+        else:
+            assert provider_args is not None
+            operation_args = provider_args
     else:
         run.state = "running"
         call.state = "succeeded"
@@ -4285,12 +4298,24 @@ async def send_message(
         if operation_tool == COLLECTION_TOOL
         else "Đã chuẩn bị bản xem trước tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
     )
-    await add_preview_notice(db, conversation, run_id, dek, assistant)
+    undo_receipt_id = operation_args.get("undo_receipt_id")
+    await add_preview_notice(
+        db,
+        conversation,
+        run_id,
+        dek,
+        _UNDO_PREVIEW_NOTICE if undo_receipt_id else assistant,
+        undo=bool(undo_receipt_id),
+    )
     await _append_event(
         db,
         run_id,
         "change_set.ready",
-        {"change_set_id": str(change_set_id), "digest": digest},
+        {
+            "change_set_id": str(change_set_id),
+            "digest": digest,
+            **({"undo_receipt_id": undo_receipt_id} if undo_receipt_id else {}),
+        },
     )
     await persist_finalized(
         db,
@@ -5850,64 +5875,78 @@ async def read_execution_receipt(db, auth, conversation_id, change_set_id, diges
     return _receipt_read(receipt)
 
 
-async def _append_typed_undo_message(db, conversation, run_id, dek, payload):
-    sequence = conversation.next_message_sequence
-    content = payload.content
-    db.add(
-        MimiMessage(
-            id=uuid7(),
-            conversation_id=conversation.id,
-            run_id=run_id,
-            client_id=payload.client_id,
-            sequence=sequence,
-            role="user",
-            content_ciphertext=mimi_crypto.seal_content(
-                dek,
-                content,
-                aad=mimi_crypto.message_aad(conversation.id, sequence, "user"),
-            ),
-            content_bytes=len(content.encode()),
-            content_sha256=hashlib.sha256(content.encode()).hexdigest(),
-        )
-    )
-    conversation.next_message_sequence += 1
-    await _append_event(db, run_id, "run.accepted", {"mode": "receipt_undo"})
+async def _prepare_chat_undo_candidate(
+    db, auth, conversation, run, dek, candidate, lifecycle, *, pending_at_accept
+):
+    """Resolve a model selector under the current Chat run and conversation lock."""
+    if run.error_code == "pause_requested":
+        raise _conflict("owner_paused")
+    if run.deadline <= datetime.now(UTC):
+        raise _conflict("deadline_exceeded")
+    if not get_settings().mimi_collection_enabled:
+        raise _conflict("mimi_collection_feature_disabled")
+    lease = run.execution_lease
+    if lease.get("revoked_at") is not None or not {UNDO_CANDIDATE_TOOL, COLLECTION_TOOL}.issubset(
+        lease.get("capabilities", [])
+    ):
+        raise _conflict("receipt_undo_candidate_not_leased")
+    if pending_at_accept:
+        raise _conflict("finish_active_run_before_undo")
+
+    from app.agent.receipt_history import bound_receipt, latest_receipt, recovery_for
+
+    latest = candidate.target == "latest"
+    if latest:
+        receipt_id = await latest_receipt(db, conversation.id)
+        if receipt_id is None:
+            raise _conflict("receipt_undo_latest_unavailable")
+    else:
+        receipt_id = candidate.receipt_id
+        # Only handles actually provided as verified history for this Chat turn
+        # are selectable. Pending state and model/user prose prove no receipt.
+        if not any(
+            fact["receipt_id"] == str(receipt_id)
+            for fact in (lifecycle or {}).get("historical_outcomes", [])
+        ):
+            raise _conflict("receipt_undo_target_not_in_context")
+
+    receipt, change, _, receipt_conversation = await bound_receipt(db, auth, receipt_id)
+    if receipt_conversation.id != conversation.id:
+        raise _conflict("receipt_undo_target_not_in_context")
+    recovery = recovery_for(receipt, change, conversation, dek)
+    if latest and recovery["plan"].get("undo_receipt_id"):
+        raise _conflict("receipt_undo_latest_is_inverse")
+    return await freeze_undo(db, receipt.id, recovery)
 
 
-async def _record_typed_undo_rejection(db, auth, conversation, payload, run_id, reason):
-    now = datetime.now(UTC)
-    run_id = run_id or uuid7()
-    db.add(
-        MimiRun(
-            id=run_id,
-            conversation_id=conversation.id,
-            generation=conversation.generation,
-            state="halted",
-            error_code=reason,
-            deadline=now,
-            completed_at=now,
-            execution_lease={"mode": "receipt_undo", "sensitivity": "standard", "capabilities": []},
-        )
-    )
-    conversation.generation += 1
-    await db.flush()
-    dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
-    await _append_typed_undo_message(db, conversation, run_id, dek, payload)
+async def _finish_chat_undo_rejection(db, conversation, run, dek, reason):
+    run.state = "deadline_exceeded" if reason == "deadline_exceeded" else "halted"
+    run.error_code = reason
+    run.completed_at = datetime.now(UTC)
+    explanation = {
+        "finish_active_run_before_undo": "Hãy xử lý bản xem trước đang chờ duyệt trước.",
+        "receipt_undo_latest_unavailable": "Chưa có thay đổi đã áp dụng trong hội thoại này.",
+        "receipt_undo_latest_is_inverse": "Thay đổi gần nhất đã là một lần hoàn tác.",
+        "receipt_undo_target_not_in_context": (
+            "Không xác định được thay đổi đã áp dụng trong lượt này."
+        ),
+        "undo_post_version_stale": "Dữ liệu đã đổi kể từ lúc áp dụng thay đổi đó.",
+        "owner_paused": "Lượt xử lý đã được dừng.",
+        "deadline_exceeded": "Lượt xử lý đã hết thời gian.",
+    }.get(reason, "Không thể tạo bản xem trước cho thay đổi đã chọn.")
     await _add_assistant_message(
         db,
         conversation,
-        run_id,
+        run.id,
         dek,
-        "Chưa hoàn tác: thay đổi gần nhất không đủ điều kiện, nguồn đã đổi "
-        "hoặc hội thoại đang có thao tác chờ xử lý.",
-        producer_code="local_deterministic_result",
+        "Chưa hoàn tác. " + explanation,
+        producer_code="agent_loop_stop",
     )
-    await _append_event(db, run_id, "run.terminal", {"state": "halted", "error_code": reason})
+    await _append_event(db, run.id, "run.terminal", {"state": run.state, "error_code": reason})
     await db.flush()
-    return await conversation_view(db, auth, conversation.id)
 
 
-async def prepare_receipt_undo(db, auth, receipt_id, *, user_message=None, requested_run_id=None):
+async def prepare_receipt_undo(db, auth, receipt_id):
     if not get_settings().mimi_collection_enabled:
         raise HTTPException(409, "mimi_collection_feature_disabled")
     from app.agent.receipt_history import bound_receipt, recovery_for
@@ -5928,13 +5967,9 @@ async def prepare_receipt_undo(db, auth, receipt_id, *, user_message=None, reque
         raise _conflict("finish_active_run_before_undo")
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
     recovery = recovery_for(receipt, change, conversation, dek)
-    if user_message is not None and recovery["plan"].get("undo_receipt_id"):
-        raise _conflict("receipt_undo_latest_is_inverse")
-    from app.agent.task_collection import freeze_undo
-
     plan = await freeze_undo(db, receipt.id, recovery)
     now = datetime.now(UTC)
-    rid = requested_run_id or uuid7()
+    rid = uuid7()
     generation = conversation.generation
     lease = ExecutionLease(
         lease_id=uuid7(),
@@ -5960,54 +5995,23 @@ async def prepare_receipt_undo(db, auth, receipt_id, *, user_message=None, reque
     db.add(run)
     conversation.generation += 1
     await db.flush()
-    cid = uuid7()
-    nonce = uuid7()
-    operation = ChangeOperation(
-        operation_id=uuid7(),
-        tool=COLLECTION_TOOL,
-        args=plan.model_dump(mode="json"),
-        reversible=True,
-    )
-    frozen = FrozenChangeSet(
-        change_set_id=cid,
-        run_id=rid,
-        operations=(operation,),
-        expires_at=lease.deadline,
-        nonce=nonce,
-        digest_sha256="0" * 64,
-        idempotency_key=f"preview:{cid}",
-    )
-    change = MimiChangeSet(
-        id=cid,
-        run_id=rid,
-        state="pending",
-        digest_sha256=frozen.calculated_digest(),
-        nonce=nonce,
-        expires_at=lease.deadline,
-        policy_version=POLICY_VERSION,
-        operation_ciphertext=mimi_crypto.seal_content(
-            dek,
-            collection_json(operation.model_dump(mode="json")),
-            aad=mimi_crypto.change_set_aad(conversation.id, cid),
-        ),
-    )
-    db.add(change)
-    if user_message is not None:
-        await _append_typed_undo_message(db, conversation, rid, dek, user_message)
-    await add_preview_notice(
-        db,
-        conversation,
+    change, _ = freeze_change_set_row(
+        conversation.id,
         rid,
         dek,
-        "Đã chuẩn bị phương án hoàn tác có kiểm tra phiên bản. Chưa áp dụng.",
-        undo=True,
+        COLLECTION_TOOL,
+        plan.model_dump(mode="json"),
+        lease.deadline,
+        POLICY_VERSION,
     )
+    db.add(change)
+    await add_preview_notice(db, conversation, rid, dek, _UNDO_PREVIEW_NOTICE, undo=True)
     await _append_event(
         db,
         rid,
         "change_set.ready",
         {
-            "change_set_id": str(cid),
+            "change_set_id": str(change.id),
             "digest": change.digest_sha256,
             "undo_receipt_id": str(receipt.id),
         },

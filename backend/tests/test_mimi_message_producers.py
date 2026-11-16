@@ -36,9 +36,9 @@ def test_all_assistant_message_producers_are_explicit_and_awaited():
             while not isinstance(owner, (ast.AsyncFunctionDef, ast.FunctionDef, ast.Module)):
                 owner = parents[owner]
             callsites[(path.relative_to(root).as_posix(), getattr(owner, "name", None), code)] += 1
-    # The shared typed-Undo terminal is a second deliberate use of the local
-    # deterministic producer. Bind every code to its owning function and file;
-    # a total count alone would miss moved or duplicated ownership.
+    # Semantic Undo rejection is a server notice, independent of the labelled
+    # deterministic local fixture. Bind every code to its owning function and
+    # file; a total count alone would miss moved or duplicated ownership.
     expected = Counter(
         {
             ("agent/service.py", "send_message", code): 1
@@ -64,7 +64,7 @@ def test_all_assistant_message_producers_are_explicit_and_awaited():
             ("agent/service.py", "add_preview_notice", "undo_prepared"): 1,
             ("agent/service.py", "add_preview_notice", "preview_prepared"): 1,
             ("agent/service.py", "reconcile_orphaned_mimi_runs", "process_loss_recovery"): 1,
-            ("agent/service.py", "_record_typed_undo_rejection", "local_deterministic_result"): 1,
+            ("agent/service.py", "_finish_chat_undo_rejection", "agent_loop_stop"): 1,
             ("agent/voice_store.py", "transcript", "provider_voice"): 1,
             ("agent/voice_store.py", "transcript", "provider_voice_partial"): 1,
         }

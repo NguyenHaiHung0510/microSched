@@ -131,6 +131,7 @@ async def test_sdk_completion_preserves_full_request_schema_provider_and_cost(ef
         "task.create_candidate.v2",
         "task.freeze_selection.v1",
         "task.collection_candidate.v1",
+        "task.undo_candidate.v1",
     ]
     assert isinstance(result.outcome, AssistantText)
     assert result.outcome.text == "Xin chào"

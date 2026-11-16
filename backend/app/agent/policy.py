@@ -47,7 +47,7 @@ def load_standard_policy(
         calendar_enabled = settings.mimi_calendar_read_enabled
     path = _POLICY_PATH.with_name("mimi-standard-v3.md") if collection_enabled else _POLICY_PATH
     expected_sha256 = (
-        "5aebb79b0c2ad563c0ae05a08deac6f2c34f7673d538be8cb1ddee42ed4cf846"
+        "a4bab324b834676c4bbb632fa4b328a0f8d7d1f39a2f76f04794e324d0f96529"
         if collection_enabled
         else POLICY_SHA256
     )
@@ -90,6 +90,8 @@ def checkpoint_policy_compatible(value: str, *, collection_enabled: bool) -> boo
             "c44ab32f8d41643f219a85cd8dda5371fbdf254410c89f92c281e8a44ea3561e",
             "3c30ed9767edede301f1408614d3a8fb413d3d3e25a8e9c27c9482b1a6ee6f87",
             "f9443f7dec59c73ef92a1feb8af5e4abb87198ab6a676603393c664d60b06c65",
+            "5aebb79b0c2ad563c0ae05a08deac6f2c34f7673d538be8cb1ddee42ed4cf846",
+            "0318b083a95233d5b6aac6c7caac7c8b95e032f2a725db7dfaa82585f369dfcb",
         }
         if collection_enabled
         else set()

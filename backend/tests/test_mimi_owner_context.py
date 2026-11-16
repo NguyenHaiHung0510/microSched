@@ -29,7 +29,7 @@ from app.agent.owner_context import (
     load_owner_memory,
     messages_for_evidence,
 )
-from app.agent.policy import checkpoint_policy_compatible, load_standard_policy
+from app.agent.policy import MimiPolicy, checkpoint_policy_compatible, load_standard_policy
 from app.agent.route_config import DEEPSEEK_MODEL, bind_configuration, default_configuration
 from app.agent.tools.registry import tools_for_settings
 from app.agent.voice_protocol import encoded, setup
@@ -457,15 +457,19 @@ def test_prompt_revision_helper_tracks_memory_without_changing_base_compatibilit
         (True, "099a5728365f411e7c959a14a4375d115bbd68ce9089c97051b901cee54a27cd"),
     ],
 )
-def test_no_memory_keeps_the_legacy_prompt_observation_epoch(collection, legacy_revision):
-    # Actual pre-followup revisions at 442ec89 with the synthetic native settings.
+def test_no_memory_keeps_the_current_policy_prompt_epoch(collection, legacy_revision):
+    # The historical epoch is evidence, not the expected value after an approved policy change.
+    expected = context_revision(
+        settings_for(None, mimi_collection_enabled=collection), 7, CHECKPOINT_ID
+    )
+    assert (expected != legacy_revision) == collection
     for absent in (None, "", " \r\n\t"):
         selected = settings_for(absent, mimi_collection_enabled=collection)
-        assert context_revision(selected, 7, CHECKPOINT_ID) == legacy_revision
+        assert context_revision(selected, 7, CHECKPOINT_ID) == expected
     injected_blank = settings_for(None, mimi_collection_enabled=collection).model_copy(
         update={"mimi_owner_memory_v1": SecretStr(" \t")}
     )
-    assert context_revision(injected_blank, 7, CHECKPOINT_ID) == legacy_revision
+    assert context_revision(injected_blank, 7, CHECKPOINT_ID) == expected
 
 
 @pytest.mark.parametrize(
@@ -591,22 +595,70 @@ PRE_B2_OFF_FIXTURES = {
     "collection,calendar", [(False, False), (False, True), (True, False), (True, True)]
 )
 @pytest.mark.parametrize("memory", [None, "", " \r\n\t"], ids=["unset", "empty", "whitespace"])
-def test_memory_off_wire_matches_exact_pre_b2_source_fixture(
+def test_memory_off_wire_matches_current_policy_and_preserves_historical_evidence(
     monkeypatch, collection, calendar, memory
 ):
+    from app.agent import context_builder, openrouter
+    from app.agent.tools.registry import UNDO_CANDIDATE_TOOL
+
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
             return NOW if tz is not None else NOW.replace(tzinfo=None)
 
-    monkeypatch.setattr("app.agent.context_builder.datetime", FrozenDateTime)
+    monkeypatch.setattr(context_builder, "datetime", FrozenDateTime)
     selected = settings_for(
         memory, mimi_collection_enabled=collection, mimi_calendar_read_enabled=calendar
     )
+    absent = settings_for(
+        None, mimi_collection_enabled=collection, mimi_calendar_read_enabled=calendar
+    )
     envelope, messages = context_for(selected)
+    baseline, baseline_messages = context_for(absent)
     projection = input_projection_observation(envelope, messages, settings=selected)
     authority = json.loads(messages[-2]["content"])
-    expected = PRE_B2_OFF_FIXTURES[f"collection={collection},calendar={calendar}"]
+    policy = load_standard_policy(collection_enabled=collection, calendar_enabled=calendar)
+
+    # Compare every wire/manifest field against absent memory on the SAME current policy.
+    # The pre-B2 fixture below remains historical and must not be regenerated as current.
+    assert envelope == baseline and messages == baseline_messages
+    assert projection == input_projection_observation(baseline, baseline_messages, settings=absent)
+    assert messages[0] == {"role": "system", "content": policy.text}
+    assert envelope.manifest.policy_sha256 == policy.sha256
+    assert envelope.checkpoint == CHECKPOINT and envelope.transcript_suffix == HISTORY
+    assert envelope.manifest.checkpoint_id == CHECKPOINT_ID
+
+    request = build_request(messages, settings=selected, agent_contract=True)
+    assert request == build_request(baseline_messages, settings=absent, agent_contract=True)
+    names = [tool["function"]["name"] for tool in request["tools"]]
+    assert names == [
+        "task.query.v1",
+        "task.aggregate.v1",
+        "task.inspect_batch.v1",
+        "task.read_content.v1",
+        "task.create_candidate.v2",
+        *(
+            ["task.freeze_selection.v1", "task.collection_candidate.v1", UNDO_CANDIDATE_TOOL]
+            if collection
+            else []
+        ),
+        *(["calendar.read.v1", "calendar.inspect.v1"] if calendar else []),
+    ]
+    assert ("### Undo in this Chat" in policy.text) == collection
+    if collection:
+        undo = next(
+            t["function"] for t in request["tools"] if t["function"]["name"] == UNDO_CANDIDATE_TOOL
+        )
+        assert undo["strict"] is True
+        assert undo["parameters"] == {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["target", "receipt_id"],
+            "properties": {
+                "target": {"type": "string", "enum": ["latest", "exact"]},
+                "receipt_id": {"type": ["string", "null"], "format": "uuid"},
+            },
+        }
 
     def digest(value):
         return hashlib.sha256(
@@ -615,25 +667,14 @@ def test_memory_off_wire_matches_exact_pre_b2_source_fixture(
             ).encode("utf-8")
         ).hexdigest()
 
-    assert {
-        "manifest_sha256": envelope.manifest.sha256(),
-        "envelope_sha256": digest(envelope.model_dump(mode="json")),
-        "messages_sha256": digest(messages),
-        "authority_sha256": digest(authority),
-        "request_sha256": digest(build_request(messages, settings=selected, agent_contract=True)),
-        "projection_sha256": digest(projection),
-        "serialized_input_bytes": serialized_input_bytes(
-            messages, agent_contract=True, calendar_enabled=calendar
-        ),
-        "bound": envelope.manifest.budget.serialized_input_upper_bound,
-    } == expected
-    assert projection["request_fingerprint"] == expected["request_sha256"]
+    assert projection["request_fingerprint"] == digest(request)
+    assert serialized_input_bytes(messages, agent_contract=True, calendar_enabled=calendar) == (
+        envelope.manifest.budget.serialized_input_upper_bound
+    )
     assert messages_for_evidence(envelope, messages) is messages
     assert (
-        envelope.manifest.system_prefix_sha256
-        == hashlib.sha256(envelope.policy_text.encode("utf-8")).hexdigest()
+        envelope.manifest.system_prefix_sha256 == hashlib.sha256(policy.text.encode()).hexdigest()
     )
-
     for dumped in (
         envelope.manifest.model_dump(),
         json.loads(envelope.manifest.model_dump_json()),
@@ -641,8 +682,53 @@ def test_memory_off_wire_matches_exact_pre_b2_source_fixture(
         authority["context_manifest"],
         projection,
     ):
-        assert "system_prefix_sha256" not in dumped
-        assert "owner_memory" not in dumped
+        assert "system_prefix_sha256" not in dumped and "owner_memory" not in dumped
+
+    # Counterfactual historical projection removes only the explicit approved Chat
+    # Undo policy/tool delta. All other bytes still have to match the retained fixture.
+    # This preserves the old oracle without claiming that the current policy is pre-B2.
+    def historical_policy(**kwargs):
+        current = load_standard_policy(**kwargs)
+        if not kwargs.get("collection_enabled"):
+            return current
+        head, separator, tail = current.text.partition("\n### Undo in this Chat\n")
+        _, end, suffix = tail.partition("\n## Evidence gaps and limits")
+        assert separator and end
+        text = head + end + suffix
+        old_digest = hashlib.sha256(text.encode()).hexdigest()
+        if not kwargs.get("calendar_enabled"):
+            assert old_digest == "5aebb79b0c2ad563c0ae05a08deac6f2c34f7673d538be8cb1ddee42ed4cf846"
+        return MimiPolicy(policy_id=current.policy_id, sha256=old_digest, text=text)
+
+    def historical_tools(settings, **kwargs):
+        return tools_for_settings(settings)  # Default excludes the new Chat-only Undo tool.
+
+    with monkeypatch.context() as historical:
+        historical.setattr(context_builder, "load_standard_policy", historical_policy)
+        historical.setattr(context_builder, "tools_for_settings", historical_tools)
+        historical.setattr(openrouter, "tools_for_settings", historical_tools)
+        historical.setattr(
+            openrouter,
+            "TOOLS",
+            tuple(t for t in openrouter.TOOLS if t["function"]["name"] != UNDO_CANDIDATE_TOOL),
+        )
+        prior, prior_messages = context_for(absent)
+        prior_authority = json.loads(prior_messages[-2]["content"])
+        prior_projection = input_projection_observation(prior, prior_messages, settings=absent)
+        assert {
+            "manifest_sha256": prior.manifest.sha256(),
+            "envelope_sha256": digest(prior.model_dump(mode="json")),
+            "messages_sha256": digest(prior_messages),
+            "authority_sha256": digest(prior_authority),
+            "request_sha256": digest(
+                build_request(prior_messages, settings=absent, agent_contract=True)
+            ),
+            "projection_sha256": digest(prior_projection),
+            "serialized_input_bytes": serialized_input_bytes(
+                prior_messages, agent_contract=True, calendar_enabled=calendar
+            ),
+            "bound": prior.manifest.budget.serialized_input_upper_bound,
+        } == PRE_B2_OFF_FIXTURES[f"collection={collection},calendar={calendar}"]
 
 
 @pytest.mark.parametrize("collection", [False, True])
