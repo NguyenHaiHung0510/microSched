@@ -511,3 +511,117 @@ test('B3-1 moved-to-Private title disappears before optional source revalidation
     await expect(page.getByRole('listbox')).toHaveCount(0)
   } finally { release?.() }
 })
+
+
+function deferred() {
+  let release!: () => void
+  const wait = new Promise<void>(resolve => { release = resolve })
+  return { wait, release }
+}
+
+for (const cache of ['initial', 'cached'] as const) {
+  test(`B3 stale source race: ${cache} GET sampled before Private cannot offer its title after ACK`, async ({ page, taskApi }, info) => {
+    const task = taskApi.tasks[0]
+    const taskPath = `/api/tasks/${task.id}`
+    const oldSource = deferred()
+    const newSource = deferred()
+    const write = deferred()
+    const staleRequests = new Set<Request>()
+    const outcomes = new Map<Request, 'finished' | 'aborted'>()
+    let hold = cache === 'initial'
+    let freshReads = 0
+    let privatePatch: Request | undefined
+    page.on('requestfinished', request => { if (staleRequests.has(request)) outcomes.set(request, 'finished') })
+    page.on('requestfailed', request => { if (staleRequests.has(request)) outcomes.set(request, 'aborted') })
+    await page.route('**/api/tasks/title-suggestions', async route => {
+      // Freeze the response when the mock server samples it, not when we release it.
+      const sample = task.is_private ? history.filter(row => row.title !== task.title) : history
+      if (task.is_private) {
+        freshReads++
+        await newSource.wait
+      } else if (hold) {
+        staleRequests.add(route.request())
+        await oldSource.wait
+      }
+      try { await route.fulfill({ json: sample }) }
+      catch (error) { if (!route.request().failure()) throw error }
+    })
+    await page.route(url => url.pathname === taskPath, async route => {
+      if (route.request().method() === 'PATCH') {
+        privatePatch = route.request()
+        await write.wait
+      }
+      await route.fallback()
+    })
+    try {
+      await page.goto('/')
+      const input = page.getByTestId('quick-add-input')
+      const staleOption = page.getByRole('option', { name: task.title, exact: true })
+      await input.fill('[TRAINING] upp')
+      if (cache === 'cached') {
+        await expect(staleOption).toBeVisible()
+        hold = true
+        await input.fill('B3 synthetic task to start a cached refetch')
+        await input.press('Enter')
+      }
+      await expect.poll(() => staleRequests.size).toBeGreaterThan(0)
+      await input.fill('')
+      await page.locator(`[data-testid="task-card"][data-task-id="${task.id}"]`).getByTestId('task-edit').click()
+      const dialog = page.getByTestId('task-detail-dialog')
+      await dialog.getByRole('checkbox', { name: 'Riêng tư', exact: true }).check()
+      await dialog.getByRole('button', { name: 'Lưu thay đổi', exact: true }).click()
+      await expect.poll(() => privatePatch?.postDataJSON()).toMatchObject({ is_private: true })
+      await expect.poll(() => pendingRows(page)).toBe(1)
+      expect(task.is_private).toBe(false)
+      if (await dialog.isVisible()) await page.keyboard.press('Escape')
+      await page.getByTestId('outbox-trigger').click({ timeout: 5000 })
+
+      const ack = page.waitForResponse(response => response.request() === privatePatch && response.ok())
+      const canonical = page.waitForResponse(response => task.is_private && response.ok() &&
+        response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/tasks/timeline')
+      write.release()
+      expect(await (await ack).json()).toMatchObject({ id: task.id, is_private: true })
+      await canonical
+      await ackPanel(page, info, () => ({ privateAck: task.is_private, staleGets: staleRequests.size }), async () => {
+        await expect(page.getByTestId('outbox-panel').getByText('Đang đối chiếu dữ liệu vừa gửi…', { exact: true })).toHaveCount(0)
+      })
+      await page.keyboard.press('Escape')
+
+      await page.evaluate(title => {
+        const root = document.documentElement
+        const record = () => {
+          if ([...document.querySelectorAll('[role="option"]')].some(option => option.textContent === title))
+            root.setAttribute('data-stale-title-offered', 'true')
+        }
+        new MutationObserver(record).observe(document.body, { subtree: true, childList: true, characterData: true })
+        record()
+      }, task.title)
+      const staleOffered = async () => await page.locator('html').getAttribute('data-stale-title-offered') === 'true'
+      await input.fill('[TRAINING] upp')
+      await expect(input).toBeFocused()
+      await expect(staleOption).toHaveCount(0)
+      oldSource.release()
+      await expect.poll(() => outcomes.size).toBe(staleRequests.size)
+      await expect.poll(async () => freshReads > 0 || await staleOffered()).toBe(true)
+      expect(await staleOffered(), 'pre-Private response must never reopen the old option').toBe(false)
+      await page.screenshot({ path: info.outputPath('old-response-released.png') })
+
+      newSource.release()
+      await input.fill('[TRAINING] lower')
+      await expect(page.getByRole('option', { name: '[TRAINING] lower body', exact: true })).toBeVisible()
+      await page.screenshot({ path: info.outputPath('fresh-standard-remains-usable.png') })
+      await input.fill('[TRAINING] upp')
+      await expect(staleOption).toHaveCount(0)
+      expect(await staleOffered()).toBe(false)
+      expect(taskApi.count('PATCH', taskPath)).toBe(1)
+    } finally {
+      await info.attach('stale-source-race', { body: JSON.stringify({
+        sampledWhileStandard: staleRequests.size, oldRequests: [...outcomes.values()],
+        hostedPrivate: task.is_private, freshReads, durablePending: await pendingRows(page).catch(() => null),
+      }), contentType: 'application/json' })
+      write.release()
+      oldSource.release()
+      newSource.release()
+    }
+  })
+}

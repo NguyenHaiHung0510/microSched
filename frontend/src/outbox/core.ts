@@ -351,7 +351,13 @@ async function reconcile(row:Command,response:unknown,owner:string,privateAllowe
   const prefix = row.kind.startsWith('entry.')?'tracker':'tasks'
   // Suggestions must become stale immediately (a title may now be Private), but
   // optional source failures/timeouts cannot hold an acknowledged Task barrier.
-  if (prefix==='tasks') void client?.invalidateQueries({queryKey:['tasks','title-suggestions']})
+  if (prefix==='tasks' && client) {
+    const suggestions = {queryKey:['tasks','title-suggestions']}
+    // Invalidation alone reuses an initial in-flight fetch without cached data.
+    // Cancel synchronously so its pre-ACK result cannot make Private titles fresh.
+    void client.cancelQueries(suggestions)
+    void client.invalidateQueries(suggestions)
+  }
   const required = (q:{queryKey:readonly unknown[]}) =>
     (q.queryKey[0]===prefix || prefix==='tasks' && q.queryKey[0]==='calendar') &&
     !(q.queryKey[0]==='tasks' && q.queryKey[1]==='title-suggestions')
