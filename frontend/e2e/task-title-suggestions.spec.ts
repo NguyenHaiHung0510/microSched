@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { expect, test } from './fixtures/tasks'
-import type { Locator, Page } from '@playwright/test'
+import type { Locator, Page, Request } from '@playwright/test'
 
 const today = (offset = 0) => new Date(Date.now() + 7 * 3_600_000 + offset * 86_400_000).toISOString().slice(0, 10)
 const history = [
@@ -33,7 +33,7 @@ test.beforeEach(async ({ page, taskApi }) => {
     expires_at: new Date(Date.now() + 86_400_000).toISOString(), private_until: taskApi.privateUntil,
     private_locked_until: null, pin_is_set: true, pin_is_bootstrap: false, mimi_available: false,
   } }))
-  for (const pattern of ['**/api/calendar/**', '**/api/reminders/**', '**/api/reminder-history**', '**/api/settings**'])
+  for (const pattern of ['**/api/calendar/**', '**/api/reminders/**', '**/api/reminders?**', '**/api/reminder-history**', '**/api/settings**'])
     await page.route(pattern, route => route.fulfill({ json: { items: [] } }))
   await page.route('**/api/tasks/title-suggestions', route => route.fulfill({ json: history }))
 })
@@ -290,4 +290,224 @@ test('invalidated titles stay hidden until the fresh STANDARD source arrives', a
   } finally { release?.() }
   await input.fill('Fresh STANDARD')
   await expect(page.getByRole('option').first()).toHaveText('Fresh STANDARD title')
+})
+
+
+/** Keep the real app/outbox/query cache; only the HTTP boundary is synthetic. */
+function optionalSource(page: Page, mode: 'ok' | '503' | 'held' | 'timeout') {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let reads = 0
+  const started = new WeakMap<Request, number>()
+  const failures: number[] = []
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/api/tasks/title-suggestions')
+      started.set(request, Date.now())
+  })
+  page.on('requestfailed', request => {
+    if (new URL(request.url()).pathname === '/api/tasks/title-suggestions')
+      failures.push(Date.now() - (started.get(request) ?? Date.now()))
+  })
+  const ready = page.route('**/api/tasks/title-suggestions', async route => {
+    reads++
+    if (mode === '503') return route.fulfill({ status: 503, json: { detail: 'Synthetic optional source unavailable' } })
+    if (mode === 'held' || mode === 'timeout') await gate
+    return route.fulfill({ json: history }).catch(() => {})
+  })
+  return { ready, release, reads: () => reads, failures }
+}
+
+async function ackPanel(page: Page, info: import('@playwright/test').TestInfo, server: () => unknown, check: () => Promise<void>) {
+  await expect.poll(() => pendingRows(page)).toBe(0)
+  const panel = page.getByTestId('outbox-panel')
+  await expect(panel.getByText('Đã gửi hết', { exact: true })).toBeVisible()
+  const receipt = { server: server(), durablePending: await pendingRows(page),
+    reconcilingVisible: await panel.getByText('Đang đối chiếu dữ liệu vừa gửi…', { exact: true }).count() }
+  await info.attach('server-ack-vs-reconciliation', { body: JSON.stringify(receipt, null, 2), contentType: 'application/json' })
+  await page.screenshot({ path: info.outputPath('ack-vs-reconciliation.png') })
+  await check()
+  await info.attach('settled-reconciliation', { body: JSON.stringify({ server: server(),
+    durablePending: await pendingRows(page),
+    reconcilingVisible: await panel.getByText('Đang đối chiếu dữ liệu vừa gửi…', { exact: true }).count(),
+  }, null, 2), contentType: 'application/json' })
+  await page.screenshot({ path: info.outputPath('reconciliation-settled.png') })
+}
+
+async function moveTwice(page: Page, taskId: string) {
+  for (let offset = 1; offset <= 2; offset++) {
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${today(offset - 1)}"]`).first().click()
+    const row = page.getByTestId('calendar-day-dialog').locator(`[data-task-id="${taskId}"]`)
+    await row.getByTestId('calendar-task-move').click()
+    const move = page.getByTestId('calendar-move-dialog')
+    await move.getByLabel('Ngày mới').fill(today(offset))
+    await move.getByLabel('Ngày mới').press('Enter')
+    await expect(move).toBeHidden({ timeout: 5_000 })
+    await expect.poll(() => pendingRows(page)).toBe(0)
+  }
+}
+
+for (const mode of ['ok', '503', 'held', 'timeout'] as const) {
+  test(`B3-1 create ACK clears RAM barrier before two day moves (${mode})`, async ({ page, taskApi }, info) => {
+    test.skip(mode === 'timeout' && info.project.name === 'mobile', 'One real 20-second timeout representative; both viewports cover held/503')
+    test.setTimeout(mode === 'timeout' ? 40_000 : 30_000)
+    const source = optionalSource(page, mode)
+    await source.ready
+    let releaseAck!: () => void
+    const ack = new Promise<void>(resolve => { releaseAck = resolve })
+    await page.route('**/api/tasks', async route => {
+      if (route.request().method() === 'POST') await ack
+      return route.fallback()
+    })
+    try {
+      await page.goto('/')
+      await page.getByRole('tab', { name: 'Lịch', exact: true }).click()
+      if (info.project.name === 'mobile') await page.getByTestId('calendar-mode-toggle-agenda').click()
+      const input = page.getByTestId(info.project.name === 'mobile' ? 'calendar-agenda-quick-task-input' : 'calendar-quick-task-input')
+      await input.fill('B3-1 synthetic created task')
+      await expect.poll(source.reads).toBe(1)
+      await input.press('Enter')
+      await expect(page.getByTestId('outbox-trigger')).toBeVisible()
+      await page.getByTestId('outbox-trigger').click()
+      releaseAck()
+      await expect.poll(() => taskApi.tasks.some(row => row.title === 'B3-1 synthetic created task')).toBe(true)
+      const created = taskApi.tasks.find(row => row.title === 'B3-1 synthetic created task')!
+      await ackPanel(page, info, () => ({ id: created.id, title: created.title }), async () => {
+        await expect(page.getByTestId('outbox-panel').getByText('Đang đối chiếu dữ liệu vừa gửi…', { exact: true })).toHaveCount(0)
+      })
+      await page.keyboard.press('Escape')
+      if (mode === 'timeout') await expect.poll(() => source.failures.some(age => age >= 19_000), { timeout: 25_000 }).toBe(true)
+      if (info.project.name === 'mobile') await page.getByTestId('calendar-mode-toggle-grid').click()
+      await moveTwice(page, created.id)
+      expect(created.due_on).toBe(today(2))
+      expect(taskApi.tasks.filter(row => row.id === created.id)).toHaveLength(1)
+      await page.screenshot({ path: info.outputPath('second-move-ack.png') })
+    } finally { releaseAck?.(); source.release() }
+  })
+}
+
+for (const mode of ['ok', '503', 'held'] as const) {
+  test(`B3-1 edit ACK clears RAM barrier before reminder write (${mode})`, async ({ page, taskApi }, info) => {
+    const source = optionalSource(page, mode)
+    await source.ready
+    const task = taskApi.tasks[0]
+    let reminderWrites = 0
+    await page.route('**/api/reminders/source/task/' + task.id, route => route.fulfill({ json: {
+      title: task.title, is_private: false, open: true, anchor_at: null, anchor_day: task.due_on,
+      date_only: true, updated_at: task.updated_at,
+    } }))
+    await page.route('**/api/reminders/task/' + task.id, async route => {
+      if (route.request().method() === 'PUT') {
+        reminderWrites++
+        return route.fulfill({ json: { id: 'synthetic-reminder', revision: 1, ...route.request().postDataJSON() } })
+      }
+      return route.fulfill({ json: { items: [] } })
+    })
+    let releaseAck!: () => void
+    const ack = new Promise<void>(resolve => { releaseAck = resolve })
+    await page.route('**/api/tasks/' + task.id, async route => {
+      if (route.request().method() === 'PATCH') await ack
+      return route.fallback()
+    })
+    try {
+      await page.goto('/')
+      await page.getByTestId('quick-add-input').focus()
+      await expect.poll(source.reads).toBe(1)
+      const card = page.locator(`[data-testid="task-card"][data-task-id="${task.id}"]`)
+      await card.getByTestId('task-edit').click()
+      const dialog = page.getByTestId('task-detail-dialog')
+      await dialog.getByTestId('task-title-input').fill('B3-1 synthetic edited task')
+      await dialog.getByRole('button', { name: 'Lưu thay đổi', exact: true }).click()
+      await page.keyboard.press('Escape')
+      await page.getByTestId('outbox-trigger').click()
+      releaseAck()
+      await expect.poll(() => task.title).toBe('B3-1 synthetic edited task')
+      await ackPanel(page, info, () => ({ id: task.id, title: task.title }), async () => {
+        await expect(page.getByTestId('outbox-panel').getByText('Đang đối chiếu dữ liệu vừa gửi…', { exact: true })).toHaveCount(0)
+      })
+      await page.keyboard.press('Escape')
+      await card.getByTestId('task-title').click()
+      await page.getByTestId('task-detail-dialog').getByTestId('source-reminder').click()
+      const reminder = page.getByTestId('reminder-editor')
+      await reminder.getByRole('button', { name: 'Bật nhắc nhở', exact: true }).click()
+      await reminder.getByTestId('reminder-absolute').fill(`${today(2)}T12:00`)
+      await reminder.getByTestId('reminder-save').click()
+      await expect(reminder).toBeHidden({ timeout: 5_000 })
+      expect(reminderWrites).toBe(1)
+      expect(await pendingRows(page)).toBe(0)
+      await page.screenshot({ path: info.outputPath('edit-then-reminder-ack.png') })
+    } finally { releaseAck?.(); source.release() }
+  })
+}
+
+test('B3-1 required canonical failure retains reconciliation barrier', async ({ page, taskApi }, info) => {
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Lịch', exact: true }).click()
+  if (info.project.name === 'mobile') await page.getByTestId('calendar-mode-toggle-agenda').click()
+  const input = page.getByTestId(info.project.name === 'mobile' ? 'calendar-agenda-quick-task-input' : 'calendar-quick-task-input')
+  let releaseAck!: () => void
+  const ack = new Promise<void>(resolve => { releaseAck = resolve })
+  let canonicalFails = false
+  await page.route('**/api/tasks?**', route => canonicalFails
+    ? route.fulfill({ status: 503, json: { detail: 'Synthetic required read unavailable' } }) : route.fallback())
+  await page.route('**/api/tasks', async route => {
+    if (route.request().method() === 'POST') { await ack; canonicalFails = true }
+    return route.fallback()
+  })
+  try {
+    await input.fill('B3-1 canonical guarded task')
+    await input.press('Enter')
+    await page.getByTestId('outbox-trigger').click()
+    releaseAck()
+    await expect.poll(() => taskApi.tasks.some(row => row.title === 'B3-1 canonical guarded task')).toBe(true)
+    await ackPanel(page, info, () => ({ canonicalFails }), async () => {
+      await expect(page.getByTestId('outbox-panel').getByText('Đang đối chiếu dữ liệu vừa gửi…', { exact: true })).toBeVisible()
+    })
+    await page.keyboard.press('Escape')
+    if (info.project.name === 'mobile') await page.getByTestId('calendar-mode-toggle-grid').click()
+    const created = taskApi.tasks.find(row => row.title === 'B3-1 canonical guarded task')!
+    await page.locator(`[data-testid="calendar-day-cell"][data-day="${today()}"]`).first().click()
+    await page.getByTestId('calendar-day-dialog').locator(`[data-task-id="${created.id}"]`).getByTestId('calendar-task-move').click()
+    const move = page.getByTestId('calendar-move-dialog')
+    await move.getByLabel('Ngày mới').fill(today(1))
+    await move.getByLabel('Ngày mới').press('Enter')
+    await expect(move.getByTestId('calendar-move-error')).toContainText('thay đổi đang chờ')
+    expect(created.due_on).toBe(today())
+  } finally { canonicalFails = false; releaseAck?.() }
+})
+
+
+test('B3-1 moved-to-Private title disappears before optional source revalidation finishes', async ({ page, taskApi }, info) => {
+  const task = taskApi.tasks[0]
+  let reads = 0
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/tasks/title-suggestions', async route => {
+    reads++
+    if (reads > 1) await gate
+    await route.fulfill({ json: task.is_private ? history.filter(row => row.title !== task.title) : history }).catch(() => {})
+  })
+  try {
+    await page.goto('/')
+    const input = page.getByTestId('quick-add-input')
+    await input.fill('[TRAINING] upp')
+    await expect(page.getByRole('option').first()).toHaveText(task.title)
+    await input.press('Escape')
+    await input.fill('')
+    await page.locator(`[data-testid="task-card"][data-task-id="${task.id}"]`).getByTestId('task-edit').click()
+    const dialog = page.getByTestId('task-detail-dialog')
+    await dialog.getByRole('checkbox', { name: 'Riêng tư', exact: true }).check()
+    await dialog.getByRole('button', { name: 'Lưu thay đổi', exact: true }).click()
+    await page.keyboard.press('Escape')
+    await expect.poll(() => task.is_private).toBe(true)
+    await expect.poll(() => pendingRows(page)).toBe(0)
+    await expect.poll(() => reads).toBeGreaterThan(1)
+    await input.fill('[TRAINING] upp')
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+    await page.screenshot({ path: info.outputPath('private-title-invalidated.png') })
+    release()
+    await input.fill('[TRAINING] lower')
+    await expect(page.getByRole('option').first()).toHaveText('[TRAINING] lower body')
+    await input.fill('[TRAINING] upp')
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+  } finally { release?.() }
 })
