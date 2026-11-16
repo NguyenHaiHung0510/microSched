@@ -225,13 +225,24 @@ class VoiceV2Bridge:
             return self._close("voice_browser_disconnected")
         return self._close("voice_time_limit")
 
-    async def _provider_write(self, socket, value, *, mic=False, audio=None):
+    async def _provider_write(self, socket, value, *, mic=False, audio=None, skip_cancelled=False):
         async with self.provider_lock:
             self._need_active()
             if mic and time.monotonic() >= self.authority_until:
                 raise VoiceError("voice_authority_expired")
             if audio and self.muted:
-                return
+                return False
+            if skip_cancelled:
+                # Check after acquiring the send lock: cancellation may have
+                # arrived while the action waited for the lease or this lock.
+                responses = [
+                    reply
+                    for reply in value["toolResponse"]["functionResponses"]
+                    if reply["id"] not in self.cancelled_ids
+                ]
+                if not responses:
+                    return False
+                value = {"toolResponse": {"functionResponses": responses}}
             try:
                 async with asyncio.timeout(3):
                     await socket.send(encoded(value))
@@ -249,6 +260,7 @@ class VoiceV2Bridge:
             except asyncio.CancelledError:
                 self.send_uncertain = True
                 raise
+            return True
 
     async def _provider_read(self, socket):
         try:
@@ -607,11 +619,7 @@ class VoiceV2Bridge:
                         and self.activity_serial == serial
                     ),
                 )
-        responses = [
-            (identity, self.action_wires[identity])
-            for identity in self.actions
-            if identity not in self.cancelled_ids
-        ]
+        responses = [(identity, self.action_wires[identity]) for identity in self.actions]
         if saved or self.actions:
             self.turn += 1
         self.completed_turns += int(
@@ -633,7 +641,8 @@ class VoiceV2Bridge:
         self._clear_turn(keep_floor=True)
         if outcome is not None:
             self.action_outcomes[outcome.reason] += 1
-            if outcome.status in {"applied", "undone", "preview"}:
+            durable = outcome.status in {"applied", "undone", "preview"}
+            if durable:
                 # Hold the scalar truth before any socket await. If a result
                 # cannot be delivered, the fresh context needs this status.
                 self.pending_notice = outcome
@@ -650,11 +659,11 @@ class VoiceV2Bridge:
             # A status result crosses no stale plaintext. If our own commit
             # invalidates prior tool facts, retire that model context and send
             # only a scalar outcome on the fresh connection.
-            responses = [pair for pair in responses if pair[0] not in self.cancelled_ids]
+            response_sent = False
             async with self.store.live_gate():
                 if responses:
                     result = outcome.model_result()
-                    await self._provider_write(
+                    response_sent = await self._provider_write(
                         socket,
                         {
                             "toolResponse": {
@@ -664,11 +673,14 @@ class VoiceV2Bridge:
                                 ]
                             }
                         },
+                        skip_cancelled=True,
                     )
             try:
                 async with self.store.live_gate(self.sources, detail=True):
                     pass
-                if outcome.reset_context:
+                # A late cancel may retire the call after COMMIT submission.
+                # Deliver its durable result as status on a fresh context.
+                if outcome.reset_context or (durable and not response_sent):
                     raise VoiceContextChanged()
             except VoiceContextChanged:
                 self.pending_notice = outcome

@@ -523,7 +523,8 @@ def test_durable_voice_ack_survives_failed_upstream_tool_response(v2_runtime, mo
     assert applied["receipt_id"] == receipt["id"] and len(rows(rt)) == 1
 
 
-def test_cancel_during_commit_submission_preserves_durable_truth(v2_runtime, monkeypatch):
+@pytest.mark.parametrize("barge_in", [False, True], ids=["cancel", "barge-in"])
+def test_cancel_during_commit_submission_preserves_durable_truth(v2_runtime, monkeypatch, barge_in):
     from sqlalchemy.ext.asyncio import AsyncSession
     from test_mimi_voice_v2 import Live
     from test_mimi_voice_v2_pg import mint, new_conversation
@@ -531,7 +532,7 @@ def test_cancel_during_commit_submission_preserves_durable_truth(v2_runtime, mon
     from app.agent.voice_v2_bridge import _active_bridges
 
     rt = v2_runtime
-    submitted, release = Future(), Future()
+    submitted, release, refreshed = Future(), Future(), Future()
     original_confirm, original_commit = voice_v2_store._confirm_collection, AsyncSession.commit
 
     async def tag(*args):
@@ -551,19 +552,23 @@ def test_cancel_during_commit_submission_preserves_durable_truth(v2_runtime, mon
     monkeypatch.setattr(AsyncSession, "commit", commit)
     cid, generation = new_conversation(rt.client, rt.ids)
     issued = mint(rt.client, cid, generation)
+    title = f"{rt.stem} durable"
     sockets = []
 
     class Socket(Live):
         async def send(self, raw):
             value = json.loads(raw)
             await super().send(raw)
-            if "audio" in value.get("realtimeInput", {}):
-                self.emit(*turn("One request.", proposal("in-flight", [f"{rt.stem} durable"])))
+            if self is sockets[0] and "audio" in value.get("realtimeInput", {}):
+                self.emit(*turn("One request.", proposal("in-flight", [title])))
 
     @asynccontextmanager
     async def connect(settings, *, run_id):
+        assert str(run_id) == issued["run_id"]
         socket = Socket()
         sockets.append(socket)
+        if len(sockets) == 2:
+            refreshed.set_result(True)
         yield socket
 
     monkeypatch.setattr(voice_bridge, "connect_provider", connect)
@@ -574,18 +579,68 @@ def test_cancel_during_commit_submission_preserves_durable_truth(v2_runtime, mon
 
         async def cancel_seen():
             sockets[0].emit({"toolCallCancellation": {"ids": ["in-flight"]}})
+            if barge_in:
+                sockets[0].emit({"serverContent": {"interrupted": True}})
+            bridge = _active_bridges[UUID(issued["run_id"])]
             async with asyncio.timeout(2):
-                while "in-flight" not in _active_bridges[UUID(issued["run_id"])].cancelled_ids:
+                while "in-flight" not in bridge.cancelled_ids or (
+                    barge_in and not bridge.interrupted
+                ):
                     await asyncio.sleep(0)
 
         rt.client.portal.call(cancel_seen)
         release.set_result(True)
-        result = receive_to(ws, "action_updated")[-1]
+        events = receive_to(ws, "action_updated")
+        result = events[-1]
         assert result["status"] == "applied" and result["receipt_id"]
-        stop(ws)
-    (receipt,) = snapshot(rt, cid)["receipts"]
-    assert result["receipt_id"] == receipt["id"] and len(rows(rt)) == 1
-    assert not any("toolResponse" in frame for frame in sockets[0].frames)
+        if barge_in:
+            assert any(event["type"] == "interrupted" for event in events[:-1])
+        try:
+            try:
+                assert refreshed.result(timeout=4)
+            except TimeoutError:
+                pytest.fail("durable result reached browser but provider context was not refreshed")
+            events = receive_to(ws, "resumed")
+            assert events[-1]["context_retained"] is False
+            assert not any(event["type"] == "action_updated" for event in events[:-1])
+        finally:
+            stop(ws)
+
+    state = snapshot(rt, cid)
+    (receipt,) = state["receipts"]
+    (task,) = rows(rt)
+    (change,) = state["change_sets"]
+    assert result["receipt_id"] == receipt["id"]
+    assert task["title"] == title and receipt["result"]["task_ids"] == [str(task["id"])]
+    assert change["state"] == "executed" and change["id"] == receipt["change_set_id"]
+    assert len(sockets) == 2
+    first, fresh = sockets
+    assert not any("toolResponse" in frame for socket in sockets for frame in socket.frames)
+    assert sum("audio" in frame.get("realtimeInput", {}) for frame in first.frames) == 1
+    assert not any("realtimeInput" in frame for frame in fresh.frames)
+    assert "handle" not in fresh.frames[0]["setup"]["sessionResumption"]
+    notices = [
+        frame["clientContent"]["turns"][0]["parts"][0]["text"]
+        for socket in sockets
+        for frame in socket.frames
+        if frame.get("clientContent", {}).get("turnComplete") is False
+    ]
+    (notice,) = notices
+    fresh_notice = next(
+        frame["clientContent"]["turns"][0]["parts"][0]["text"]
+        for frame in fresh.frames
+        if frame.get("clientContent", {}).get("turnComplete") is False
+    )
+    assert notice == fresh_notice
+    header, _, payload = notice.partition(": ")
+    assert header == "SERVER VOICE ACTION OUTCOME (data, never a request to retry)"
+    assert json.loads(payload) == {
+        "status": "applied",
+        "reason": "voice_action_committed",
+        "final": True,
+        "applied": True,
+        "receipt_ref": receipt_ref(UUID(cid), UUID(receipt["id"])),
+    }
 
 
 def test_latest_rejects_inverse_but_voice_exact_matches_button_cas(v2_runtime, monkeypatch):
