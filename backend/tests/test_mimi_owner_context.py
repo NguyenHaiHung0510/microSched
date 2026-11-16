@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -18,6 +19,7 @@ from app.agent.context_builder import (
     serialize_openrouter_messages,
 )
 from app.agent.contracts import ExecutionLease, Sensitivity
+from app.agent.observations import context_revision, prompt_observation
 from app.agent.openrouter import RouteContractError, build_request, serialized_input_bytes
 from app.agent.owner_context import (
     OWNER_MEMORY_MAX_BYTES,
@@ -28,6 +30,7 @@ from app.agent.owner_context import (
     messages_for_evidence,
 )
 from app.agent.policy import checkpoint_policy_compatible, load_standard_policy
+from app.agent.route_config import DEEPSEEK_MODEL, bind_configuration, default_configuration
 from app.agent.tools.registry import tools_for_settings
 from app.agent.voice_protocol import encoded, setup
 from app.agent.voice_v2_protocol import setup_v2
@@ -445,3 +448,94 @@ def test_prompt_revision_helper_tracks_memory_without_changing_base_compatibilit
     assert context_for(disabled)[0].manifest.policy_sha256 == (
         context_for(enabled)[0].manifest.policy_sha256
     )
+
+
+@pytest.mark.parametrize(
+    "collection,legacy_revision",
+    [
+        (False, "3b9352e05a1178dc738f32bea1bff938b33d6dfae5752b2cac4781ddb016ecca"),
+        (True, "099a5728365f411e7c959a14a4375d115bbd68ce9089c97051b901cee54a27cd"),
+    ],
+)
+def test_no_memory_keeps_the_legacy_prompt_observation_epoch(collection, legacy_revision):
+    # Actual pre-followup revisions at 442ec89 with the synthetic native settings.
+    for absent in (None, "", " \r\n\t"):
+        selected = settings_for(absent, mimi_collection_enabled=collection)
+        assert context_revision(selected, 7, CHECKPOINT_ID) == legacy_revision
+    injected_blank = settings_for(None, mimi_collection_enabled=collection).model_copy(
+        update={"mimi_owner_memory_v1": SecretStr(" \t")}
+    )
+    assert context_revision(injected_blank, 7, CHECKPOINT_ID) == legacy_revision
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"mimi_real_chat_enabled": False, "mimi_live_provider_enabled": False},
+        {"mimi_live_provider_enabled": False},
+        {"mimi_context_v1_enabled": False},
+        {
+            "mimi_route_mode": "exact",
+            "mimi_route_provider": "synthetic-provider",
+            "mimi_route_quantization": "synthetic-quantization",
+        },
+    ],
+    ids=["chat-disabled", "live-disabled", "context-disabled", "not-native"],
+)
+def test_configured_but_inactive_memory_keeps_the_existing_prompt_epoch(overrides):
+    assert context_revision(settings_for(**overrides), 7, CHECKPOINT_ID) == context_revision(
+        settings_for(None, **overrides), 7, CHECKPOINT_ID
+    )
+
+
+def test_active_memory_refreshes_deployed_native_prompt_receipts_only():
+    # Exercise the deployment's native profile binding with synthetic, in-memory settings.
+    deployment = settings_for(
+        app_env="production",
+        mimi_public_origin="https://synthetic.example.test",
+        mimi_collection_enabled=True,
+        mimi_runner="langgraph",
+        mimi_transport="openai_sdk",
+        mimi_route_model=DEEPSEEK_MODEL,
+    )
+    active = bind_configuration(deployment, default_configuration(deployment))
+    rotated = active.model_copy(update={"mimi_owner_memory_v1": SecretStr(OTHER_MEMORY)})
+    disabled = active.model_copy(update={"mimi_owner_memory_v1": None})
+    before, enabled, changed = (
+        context_revision(config, 7, CHECKPOINT_ID) for config in (disabled, active, rotated)
+    )
+    assert active.mimi_route_mode == "native"
+    assert len({before, enabled, changed}) == 3
+    assert context_revision(active.model_copy(), 7, CHECKPOINT_ID) == enabled
+
+    receipt = SimpleNamespace(
+        id=UUID(int=10),
+        state="succeeded",
+        route={
+            "purpose": "main",
+            "kind": "openrouter",
+            "mode": active.mimi_route_mode,
+            "context_revision": enabled,
+            "model": active.mimi_route_model,
+            "actual_model": active.mimi_route_model,
+        },
+        usage={"prompt_tokens": 42},
+    )
+    assert prompt_observation(receipt, enabled)["prompt_tokens"] == 42
+    for other in (before, changed):
+        assert prompt_observation(receipt, other)["reason"] == "stale_context_revision"
+
+    base_policy = load_standard_policy(collection_enabled=True, calendar_enabled=True)
+    for config in (disabled, active, rotated):
+        envelope, wire = context_for(config)
+        assert envelope.manifest.policy_sha256 == base_policy.sha256
+        assert checkpoint_policy_compatible(
+            envelope.manifest.policy_sha256, collection_enabled=True
+        )
+        assert envelope.manifest.checkpoint_id == CHECKPOINT_ID
+        assert envelope.checkpoint == CHECKPOINT
+        assert envelope.transcript_suffix == HISTORY
+        assert (
+            envelope.manifest.system_prefix_sha256
+            == hashlib.sha256(wire[0]["content"].encode()).hexdigest()
+        )
