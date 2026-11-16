@@ -5,7 +5,7 @@ from uuid import UUID
 
 from cryptography.exceptions import InvalidTag
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.agent import crypto
 from app.agent.contracts import ChangeOperation, FrozenChangeSet
@@ -268,6 +268,58 @@ async def message_receipts(db, conversation, messages, provenance, dek):
     return result
 
 
+async def _committed_tombstones_current(db, auth, conversation, ids, dek):
+    """Allow history only for the exact still-current deletion committed here.
+
+    Looking up the latest receipt for each deleted target never treats a
+    later manual/foreign deletion or an ABA as our earlier committed result.
+    The caller already locked every existing STANDARD target before decrypting.
+    """
+    if not ids:
+        return True
+    state = await locked_state(db, ids)
+    recoveries = {}
+    for identity in ids:
+        latest_id = await db.scalar(
+            select(MimiExecutionReceipt.id)
+            .join(MimiChangeSet, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
+            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
+            .where(
+                MimiRun.conversation_id == conversation.id,
+                or_(
+                    MimiExecutionReceipt.task_id == identity,
+                    MimiExecutionReceipt.result["task_ids"].contains([str(identity)]),
+                ),
+            )
+            .order_by(MimiExecutionReceipt.executed_at.desc(), MimiExecutionReceipt.id.desc())
+            .limit(1)
+        )
+        if latest_id is None:
+            return False
+        if latest_id not in recoveries:
+            receipt, change, _, bound_conversation = await bound_receipt(db, auth, latest_id)
+            recoveries[latest_id] = recovery_for(receipt, change, bound_conversation, dek)
+        recovery = recoveries[latest_id]
+        entries = recovery["plan"]["entries"]
+        post = next(
+            (
+                after
+                for entry, after in zip(entries, recovery["after"], strict=True)
+                if entry["id"] == str(identity)
+                and entry["command"]["action"] == "soft_delete"
+                and after["deleted_at"] is not None
+            ),
+            None,
+        )
+        if (
+            post is None
+            or identity not in state
+            or digest(snapshot(*state[identity])) != digest(post)
+        ):
+            return False
+    return True
+
+
 async def receipt_diff(db, auth, receipt_id):
     from app.core.settings import get_settings
 
@@ -280,21 +332,25 @@ async def receipt_diff(db, auth, receipt_id):
         target_ids = [UUID(value) for value in ids]
     except ValueError, TypeError:
         raise HTTPException(409, "receipt_targets_invalid") from None
-    eligible = set(
-        await db.scalars(
-            select(Task.id)
-            .where(
-                Task.id.in_(target_ids),
-                Task.is_private.is_(False),
-                Task.deleted_at.is_(None),
-            )
+    current = (
+        await db.execute(
+            select(Task.id, Task.deleted_at)
+            .where(Task.id.in_(target_ids), Task.is_private.is_(False))
             .order_by(Task.id)
             .with_for_update()
         )
-    )
-    if eligible != set(target_ids):
+    ).all()
+    if {row.id for row in current} != set(target_ids):
         raise HTTPException(410, "receipt_sources_unavailable")
     dek = crypto.unwrap_dek(conversation.dek_wrapped)
+    if not await _committed_tombstones_current(
+        db,
+        auth,
+        conversation,
+        [row.id for row in current if row.deleted_at is not None],
+        dek,
+    ):
+        raise HTTPException(410, "receipt_sources_unavailable")
     recovery = recovery_for(receipt, change, conversation, dek)
     original = PreparedCollection.model_validate(recovery["plan"])
     if [str(e.id) for e in original.entries] != ids:

@@ -25,6 +25,7 @@ from app.agent.service import (
     TOOL_VERSION,
     _append_event,
     _confirm_collection,
+    _provider_history,
     _transaction_lock_key,
     add_preview_notice,
     freeze_change_set_row,
@@ -311,6 +312,53 @@ async def advance_voice_after_manual_confirm(db, conversation, child, before_seq
 
 
 class VoiceV2Store(VoiceStore):
+    async def fresh_history(self, config):
+        """Rebuild bounded safe conversation context; never replay PCM or actions."""
+        from app.agent.voice_context import bound_voice_history
+        from app.agent.working_context import preview_lifecycle_context
+
+        async with self.factory() as db:
+            conversation, run = await self.boundary(db)
+            dek = crypto.unwrap_dek(conversation.dek_wrapped)
+            history = await _provider_history(db, conversation, dek, voice=True)
+            turns = [
+                {
+                    "role": "model" if message["role"] == "assistant" else "user",
+                    "parts": [{"text": message["content"]}],
+                }
+                for message in history
+            ]
+            lifecycle = await preview_lifecycle_context(
+                db,
+                conversation.id,
+                dek=dek,
+                settings=self.settings,
+            )
+            if lifecycle["previews"]:
+                turns.append(
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "text": "SERVER CONVERSATION STATE (history, not permission): "
+                                + encoded(lifecycle)
+                            }
+                        ],
+                    }
+                )
+            config, seed, included, limited = bound_voice_history(config, turns)
+            await _append_event(
+                db,
+                run.id,
+                "voice.reconnect_history",
+                {
+                    "included_messages": included,
+                    "limited_by_voice_bytes": limited,
+                },
+            )
+            await db.commit()
+            return config, seed
+
     @asynccontextmanager
     async def live_gate(self, sources=None, *, detail=False):
         """Hold the session/frontier and source locks through each actual wire write."""
@@ -441,7 +489,7 @@ class VoiceV2Store(VoiceStore):
             return VoiceActionOutcome("needs_clarification", "voice_plan_invalid")
         if proposal is None or not is_active():
             return VoiceActionOutcome("rejected", "voice_turn_expired")
-        if proposal[0] == UNDO_TOOL and not spoken_undo(speech):
+        if proposal[0] == UNDO_TOOL and not spoken_undo(speech or transcript):
             return VoiceActionOutcome("needs_clarification", "voice_spoken_intent_unproven")
         try:
             return await self._act(
@@ -519,6 +567,7 @@ class VoiceV2Store(VoiceStore):
                 if undo:
                     fast = (
                         preference.fast_apply
+                        and spoken_undo(speech)
                         and inverse_eligible
                         and all(
                             entry.reminder_effect["action"] in {"keep", "none"}

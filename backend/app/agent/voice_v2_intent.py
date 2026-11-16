@@ -54,6 +54,7 @@ class SpeechWindow:
     spans: list[tuple[int | None, int | None, str]] = field(default_factory=list)
     uncertain: bool = False
     conflicted: bool = False
+    final_ambiguous: bool = False
 
     def activity(self, event, forwarded_ms):
         if not isinstance(event, dict):
@@ -108,7 +109,13 @@ class SpeechWindow:
         return self.floor_ms >= 0 and self.start_ms is None
 
     def prove(self) -> str | None:
-        if self.uncertain or self.start_ms is None or self.end_ms is None or not self.spans:
+        if (
+            self.uncertain
+            or self.final_ambiguous
+            or self.start_ms is None
+            or self.end_ms is None
+            or not self.spans
+        ):
             return None
         if self.spans[0][0] is not None and (
             abs(self.spans[0][0] - self.start_ms) > _SLOP_MS

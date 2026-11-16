@@ -26,7 +26,7 @@ from app.agent.voice_protocol import (
     pcm,
     server_event,
 )
-from app.agent.voice_v2_intent import SpeechWindow, normalized
+from app.agent.voice_v2_intent import SpeechWindow, normalized, offset_ms
 from app.agent.voice_v2_outcome import VoiceActionOutcome
 from app.agent.voice_v2_protocol import ACTION_TOOLS, v2_tool_request
 from app.agent.voice_v2_store import VoiceContextChanged, VoiceSources
@@ -44,7 +44,6 @@ SOURCE_WINDOW = 0.35
 SOURCE_WINDOW_BYTES = 16_800
 ASR_SETTLE_SECONDS = 0.18
 ACTION_ASR_WAIT_SECONDS = 2.5
-UNTIMED_REPLAY_SECONDS = 1.0
 _DROPS = (ConnectionClosed, OSError, TimeoutError)
 _active_bridges = {}
 
@@ -82,7 +81,11 @@ class VoiceV2Bridge:
         self.sources = VoiceSources()
         self.pending_notice = None
         self.deferred_events = deque()
-        self.last_action_speech = None
+        self.unsettled_speech = []
+        self.retired_audio_ms = 0
+        self.retired_finals = set()
+        self.asr_history_full = False
+        self.refresh_context_history = False
         self._clear_turn()
 
     def _clear_turn(self, *, keep_floor=False):
@@ -104,6 +107,64 @@ class VoiceV2Bridge:
         self.action_cancelled = False
         self.turn_seal = None
         self.provider_turn_complete = False
+
+    def _remember_final(self, text):
+        identity = hashlib.sha256(normalized(text).encode()).digest()
+        # Same finite scope as MAX_TURNS and the existing 64 ASR spans/turn.
+        # Never evict a replay guard while its call is still active.
+        if len(self.retired_finals) < MAX_TURNS * 64:
+            self.retired_finals.add(identity)
+        else:
+            self.asr_history_full = True
+
+    def _retire_speech(self):
+        speech = self.speech
+        if speech.start_ms is not None:
+            self.retired_audio_ms = self.forwarded_ms
+        if speech.start_ms is not None and (not speech.spans or speech.final_ambiguous):
+            window = (speech.start_ms, speech.end_ms)
+            if window not in self.unsettled_speech:
+                if len(self.unsettled_speech) < MAX_TURNS:
+                    self.unsettled_speech.append(window)
+                else:
+                    self.asr_history_full = True
+        for _, _, text in speech.spans:
+            self._remember_final(text)
+
+    def _track_input_final(self, item):
+        text = item.get("text", "")
+        if not isinstance(text, str):
+            raise VoiceError("voice_provider_transcript_invalid")
+        if not text.strip():
+            return False
+        identity = hashlib.sha256(normalized(text).encode()).digest()
+        timed = "startOffset" in item or "endOffset" in item
+        if self.speech.is_retired(item):
+            if timed:
+                # Exact VAD offsets can settle a previous missing final; no
+                # temporal slop may reassign it to a neighbouring utterance.
+                span = (offset_ms(item.get("startOffset")), offset_ms(item.get("endOffset")))
+                if span in self.unsettled_speech:
+                    self.unsettled_speech.remove(span)
+            elif (
+                self.speech.start_ms is None
+                and len(self.unsettled_speech) == 1
+                and self.forwarded_ms <= self.retired_audio_ms
+                and identity not in self.retired_finals
+            ):
+                # With no newly forwarded PCM, there is no observed new
+                # utterance competing for this single outstanding final.
+                # No VAD START alone is not enough: VAD may itself be delayed.
+                self.unsettled_speech.clear()
+            self._remember_final(text)
+            return False
+        if not timed and (
+            self.unsettled_speech or identity in self.retired_finals or self.asr_history_full
+        ):
+            # The model tool proposal cannot disambiguate its own ASR source.
+            # Keep a full visible preview possible, but grant no automatic write.
+            self.speech.final_ambiguous = True
+        return True
 
     def _clear_audio(self):
         while not self.outbound.empty():
@@ -292,7 +353,16 @@ class VoiceV2Bridge:
                 self.egress_checked = False
 
     def _arm_action(self):
-        if self.actions and (self.speech.prove() is not None or self.action_cancelled):
+        if self.actions and (
+            self.speech.prove() is not None
+            or self.action_cancelled
+            or (
+                self.speech.final_ambiguous
+                and self.speech.spans
+                and self.speech.start_ms is not None
+                and self.speech.end_ms is not None
+            )
+        ):
             now = time.monotonic()
             self.action_deadline = self.action_deadline or now + ACTION_ASR_WAIT_SECONDS
             self.turn_seal = min(self.action_deadline, now + ASR_SETTLE_SECONDS)
@@ -438,7 +508,7 @@ class VoiceV2Bridge:
             if (
                 item is not None
                 and item.get("finished") is not False
-                and not self.speech.is_retired(item)
+                and self._track_input_final(item)
             ):
                 self.input_text = self._caption(item, self.input_text)
                 self.speech.transcript(item, self.forwarded_ms)
@@ -482,16 +552,6 @@ class VoiceV2Bridge:
 
     async def _complete_turn(self, socket):
         spoken = self.speech.prove()
-        if self.actions and spoken is not None and self.speech.spans[0][0] is None:
-            identity = hashlib.sha256(normalized(spoken).encode()).digest()
-            now = time.monotonic()
-            if self.last_action_speech and (
-                self.last_action_speech[0] == identity
-                and now - self.last_action_speech[1] < UNTIMED_REPLAY_SECONDS
-            ):
-                self.action_cancelled = True
-            else:
-                self.last_action_speech = (identity, now)
         try:
             saved = await self._save_turn(partial=self.interrupted)
         except VoiceContextChanged:
@@ -528,6 +588,9 @@ class VoiceV2Bridge:
                         and (spoken is None or not self.speech.uncertain)
                     ),
                 )
+        if outcome is not None and self.speech.final_ambiguous:
+            self.refresh_context_history = True
+            outcome = VoiceActionOutcome(outcome.status, outcome.reason, reset_context=True)
         responses = [
             (identity, self.action_wires[identity])
             for identity in self.actions
@@ -551,6 +614,7 @@ class VoiceV2Bridge:
             )
         )
         interrupted = self.interrupted
+        self._retire_speech()
         self._clear_turn(keep_floor=True)
         if outcome is not None:
             await self.browser_send(outcome.event())
@@ -705,6 +769,11 @@ class VoiceV2Bridge:
         if not self.native:
             self.forwarded_ms = self.forwarded_bytes = 0
             self.sources = VoiceSources()
+            # A fresh upstream never receives/replays the old audio. Pending
+            # finals belong to the retired socket; native resume keeps them.
+            self.unsettled_speech.clear()
+            self.retired_finals.clear()
+            self.asr_history_full = False
         floor = self.forwarded_ms
         self._clear_turn()
         if self.native:
@@ -785,7 +854,12 @@ class VoiceV2Bridge:
             self.epoch += 1
             handle, self.handle = self.handle, None
             try:
-                await self._transport(config, seed if self.epoch == 1 else None, handle)
+                epoch_config, epoch_seed = config, seed if self.epoch == 1 else None
+                if handle is None and self.refresh_context_history:
+                    self.refresh_context_history = False
+                    if refresh := getattr(self.store, "fresh_history", None):
+                        epoch_config, epoch_seed = await refresh(config)
+                await self._transport(epoch_config, epoch_seed, handle)
             except VoiceContextChanged:
                 self.handle = None  # Never send a handle with now-revoked context.
             except (_UpstreamDrop, *_DROPS):

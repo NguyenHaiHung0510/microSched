@@ -124,8 +124,10 @@ chính xác. `messages[].applied_receipt_id` dùng để mở
 `GET /api/mimi/receipts/{receipt_id}/diff`. Kết quả chứa
 `{receipt_id, plan, undo_available, executed_at}`; plan là snapshot thực tế
 trước/sau commit, kể cả khi một chỉnh sửa STANDARD sau đó làm Undo không còn
-khớp phiên bản. Diff không hiện nội dung nguồn hiện là PRIVATE, đã xóa hoặc không
-còn truy cập được. Receipt cũ thiếu recovery trả lỗi rõ ràng; không dựng lại inverse
+khớp phiên bản. Với Task STANDARD đã soft-delete, diff vẫn đọc được nếu snapshot
+hiện tại khớp đúng một lần xóa đã commit bằng receipt trong cùng hội thoại, gồm cả
+receipt gốc và Undo. PRIVATE, nguồn mất hoặc lần xóa không có chứng cứ khớp vẫn bị
+chặn. Receipt cũ thiếu recovery trả lỗi rõ ràng; không dựng lại inverse
 từ trạng thái hiện tại. `POST /api/mimi/receipts/{receipt_id}/undo-preview`
 giữ bước Confirm và CAS. Có thể đọc diff trong lúc gọi; kết thúc Voice trước
 khi mở Undo preview từ UI hoặc gửi lệnh Chat.
@@ -255,3 +257,41 @@ Official wire references checked read-only:
 [Live transcript/voice activity API](https://aistudio.google.com/api-reference/live),
 [Gemini 3.8 asynchronous default and content interruption](https://aistudio.google.com/docs/models/gemini-3.8-live#migrating),
 [Live tool results](https://aistudio.google.com/docs/live-api/tools).
+
+### Kiểm chứng bổ sung — 2026-nov-16
+
+Diff của Undo-create giữ đúng before/after đã commit, kể cả batch có cả Task còn
+hoạt động và tombstone. Việc xem diff không khôi phục hay ghi đè Task. Một lần
+xóa thủ công sau đó, ABA, nguồn mất, đổi PRIVATE hoặc sai hội thoại vẫn không
+cấp quyền đọc. Undo tiếp tục dùng CAS hiện tại.
+
+Input transcription không có thứ tự bảo đảm so với VAD và phản hồi model.
+Nếu một lượt đã đóng còn thiếu final, final không có offsets trong cửa sổ mới
+chỉ cho phép preview đầy đủ, không tự ghi. Final đã thấy ở lượt cũ được giữ dấu
+bằng hash trong phạm vi socket; native resume giữ guard, không hết hiệu lực
+sau một giây. Không có VAD_START không tự chứng minh final cũ nếu PCM mới đã tới.
+Final tới khi chưa có thêm PCM, hoặc offsets xác định đúng cửa sổ cũ, có thể
+giải quyết final còn thiếu. Sau preview mơ hồ, backend dùng nhánh reconnect sẵn
+có để mở upstream mới, nạp lịch sử đã qua source/history guard và trạng thái
+preview; không phát lại audio hay proposal. Socket mới giải phóng debt và
+duplicate guard của socket đã đóng nên lệnh offsetless riêng biệt tiếp theo
+vẫn có thể fast apply. Giới hạn 13 upstream opens và deadline 90 phút giữ nguyên.
+
+Trong cùng socket, một lệnh offsetless giống hệt lệnh cũ vẫn có thể cần preview
+tay: gồm câu Undo lặp lại sau một receipt mới. Preview chọn đúng receipt mới
+nhất, không tự ghi; sau reconnect và Confirm, đường nhanh dùng được cho lượt
+mới. Đây là giới hạn quan sát được, không phải bảo đảm phân biệt nhân quả từ
+ASR không có utterance ID.
+
+Các witness mới dùng bridge/store thật trên PostgreSQL tổng hợp và provider
+double: late final A trong B; replay final cũ; đường offsetless bình thường;
+Undo-create gốc/inverse; mixed batch; PRIVATE/missing/scope và deletion ABA.
+Producer test kiểm đúng số callsite theo file, function và producer code, bao
+gồm callsite thông báo typed Undo. Bằng chứng này chưa xác nhận Gemini thật sẽ
+phát chuỗi sự kiện đối nghịch; actual-provider reachability vẫn UNVERIFIED.
+
+Builder affected checks: **34/34 offline PASS** và **42 ca PG đã đối chiếu**:
+41 ca pass trong batch cuối, một oracle cũ còn chờ tool response từ socket đã
+đóng được sửa sang kiểm durable scalar status ở context mới; retest 3/3 PASS
+(bao gồm recovery và Undo lặp). Ruff, format và diff checks PASS. Đây là builder
+evidence; independent QA, browser, Gemini thật và device vẫn nghiệm thu riêng.
