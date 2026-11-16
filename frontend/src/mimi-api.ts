@@ -12,6 +12,7 @@ export type MimiMessageProvenance = {
 
 export type MimiMessage = {
   provenance?: MimiMessageProvenance
+  applied_receipt_id?: string | null
   id: string
   run_id: string | null
   client_id: string | null
@@ -763,6 +764,31 @@ export type MimiCollectionPlan = {
   entries: MimiCollectionEntry[]
   undo_receipt_id?: string | null
 }
+export type MimiReceiptDiff = {
+  receipt_id: string
+  plan: MimiCollectionPlan
+  undo_available: boolean
+  executed_at: string
+}
+
+export async function fetchMimiReceiptDiff(receiptId: string, signal?: AbortSignal): Promise<MimiReceiptDiff | null> {
+  const diff = await apiRequest<MimiReceiptDiff | null>(`/api/mimi/receipts/${encodeURIComponent(receiptId)}/diff`, {
+    cache: 'no-store', signal,
+  })
+  if (diff === null) return null
+  if (diff?.receipt_id !== receiptId || typeof diff.undo_available !== 'boolean'
+    || typeof diff.executed_at !== 'string' || !Number.isFinite(Date.parse(diff.executed_at))
+    || diff.plan?.schema_version !== 'mimi.task-collection.v1'
+    || !Array.isArray(diff.plan.entries) || !diff.plan.entries.length
+    || !diff.plan.entries.every(entry => typeof entry?.id === 'string'
+      && entry.after?.fields && Array.isArray(entry.after.children)
+      && (entry.before === null || (entry.before?.fields && Array.isArray(entry.before.children)))
+      && entry.command?.reminder && entry.reminder_effect)) {
+    throw new Error('Mimi receipt diff response mismatch')
+  }
+  return diff
+}
+
 export type MimiSelection = {
   selection_id: string
   intent: string
@@ -786,7 +812,7 @@ export async function recoverMimiReceipt(conversationId: string, change: MimiDec
   return receipt
 }
 export function prepareMimiUndo(receiptId: string): Promise<MimiConversation> {
-  return apiRequest(`/api/mimi/receipts/${receiptId}/undo-preview`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}' })
+  return apiRequest(`/api/mimi/receipts/${encodeURIComponent(receiptId)}/undo-preview`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}' })
 }
 export function fetchMimiEvidence(conversationId: string, bundleId: string): Promise<Record<string, unknown>> {
   return apiRequest(`/api/mimi/conversations/${conversationId}/evidence/${bundleId}`)

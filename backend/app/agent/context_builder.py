@@ -22,6 +22,7 @@ from app.agent.context import (
 )
 from app.agent.contracts import ExecutionLease
 from app.agent.openrouter import serialized_input_bytes
+from app.agent.owner_context import compose_owner_prefix
 from app.agent.policy import load_standard_policy
 from app.agent.tools.calendar_reads import CALENDAR_READ_TOOLS, CALENDAR_SOURCE_TYPE
 from app.agent.tools.registry import registry_hash, tools_for_settings
@@ -76,6 +77,14 @@ def assemble_context(
         collection_enabled=settings.mimi_collection_enabled,
         calendar_enabled=settings.mimi_calendar_read_enabled,
     )
+    if lease.sensitivity != "standard":
+        raise ValueError("standard_context_required")
+    prefix_text, owner_memory = (
+        compose_owner_prefix(policy.text, settings)
+        if settings.mimi_route_mode == "native"
+        else (policy.text, None)
+    )
+    prefix_sha256 = hashlib.sha256(prefix_text.encode("utf-8")).hexdigest()
     tools = tools_for_settings(settings)
     tools_sha256 = registry_hash(tools)
     source = SourceManifest(
@@ -125,7 +134,7 @@ def assemble_context(
         eligible_layers=("provider_prompt_prefix",),
         requested_mode="prefix_only",
         cache_key_components=(
-            policy.sha256,
+            prefix_sha256,
             tools_sha256,
             OUTPUT_SCHEMA_SHA256,
             _source_hash(
@@ -175,6 +184,8 @@ def assemble_context(
         run_id=lease.run_id,
         policy_id=policy.policy_id,
         policy_sha256=policy.sha256,
+        system_prefix_sha256=prefix_sha256,
+        owner_memory=owner_memory,
         tool_registry_sha256=tools_sha256,
         output_schema_sha256=OUTPUT_SCHEMA_SHA256,
         sensitivity="standard",
@@ -222,7 +233,7 @@ def assemble_context(
     if selection_context:
         manifest = manifest.model_copy(update={"sources": (*manifest.sources, selection_source)})
     envelope = ContextEnvelope(
-        policy_text=policy.text,
+        policy_text=prefix_text,
         authority=authority,
         manifest=manifest,
         checkpoint=checkpoint,
@@ -639,5 +650,9 @@ def input_projection_observation(
         "working_refs": (envelope.manifest.working_history or {}).get("working_refs", []),
         "model": settings.mimi_route_model,
         "observed_request_at": datetime.now(UTC).isoformat(),
+        "system_prefix_sha256": envelope.manifest.system_prefix_sha256,
+        "owner_memory": envelope.manifest.owner_memory.model_dump(mode="json")
+        if envelope.manifest.owner_memory
+        else None,
         "measurement": "provider_native_input_pending",
     }
