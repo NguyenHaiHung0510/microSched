@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 
 FAST_APPLY_MAX = 5
@@ -83,32 +82,3 @@ class SpeechWindow:
 
     def next(self, retired_through_ms):
         return SpeechWindow(floor_ms=max(self.floor_ms, retired_through_ms, self.end_ms or -1))
-
-
-# Transitional Chat compatibility only. PM owns removal of the two Chat phrase
-# gates in service.py. Voice never imports or calls these legacy helpers.
-def normalized(text: str) -> str:
-    return " ".join(unicodedata.normalize("NFC", text).casefold().strip().split())
-
-
-def whole_command(text: str | None, *, limit=1400) -> str:
-    if not text or len(text) > limit or any(c in text for c in '?!“”"'):
-        return ""
-    value = normalized(text).removesuffix(".")
-    value = re.sub(r"^(?:mimi[,:]? |please |hãy )+", "", value)
-    return value.removesuffix(" giúp tôi").removesuffix(" please")
-
-
-def spoken_undo(text: str | None) -> bool:
-    return whole_command(text) in {
-        "hoàn tác",
-        "hoàn tác cái vừa làm",
-        "hoàn tác lần áp dụng vừa rồi",
-        "hoàn tác thay đổi voice vừa rồi",
-        "undo",
-        "hoàn tác thay đổi vừa rồi",
-        "undo the last change",
-        "undo latest",
-        "undo last voice change",
-        "undo the last voice change",
-    }
