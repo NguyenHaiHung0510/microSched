@@ -18,6 +18,7 @@ from test_reminder_history_pg import settings as settings
 from app.agent.models import MimiNotificationIntent
 from app.core import crypto
 from app.core.database_urls import async_postgres_url
+from app.core.settings import get_settings
 from app.domain import reminder_handled as ack
 from app.domain import reminder_history as history
 from app.domain.models import (
@@ -217,9 +218,65 @@ def test_constraints_reject_untyped_and_duplicate_associations(pg_dsn):
             for values in [{}, {"one_shot_id": one.id}]:
                 with pytest.raises(IntegrityError):
                     async with db.begin_nested():
-                        db.add(ReminderOccurrenceHandled(owner_id=ack._owner_id(auth), **values))
+                        db.add(
+                            ReminderOccurrenceHandled(
+                                owner_id=history.handled_owner_id(auth), **values
+                            )
+                        )
                         await db.flush()
             assert await count(db) == 1
+
+    asyncio.run(scenario())
+
+
+def test_mimi_workspace_shares_intents_without_rebinding_independent_reminder_acks(
+    pg_dsn, monkeypatch
+):
+    async def scenario():
+        async with database(pg_dsn) as (db, _):
+            a = actor()
+            b = a.model_copy(update={"user_email": "history-second@example.test"})
+            monkeypatch.setenv("ALLOWED_EMAILS", f"{a.user_email},{b.user_email}")
+            monkeypatch.setenv("MIMI_OWNER_WORKSPACE_ENABLED", "false")
+            get_settings.cache_clear()
+            a_intent = await intent(db, a, deliveries=0)
+            b_intent = await intent(db, b, deliveries=0)
+            foreign = await intent(db, a, deliveries=0, other_owner=True)
+            mismatch = await intent(db, a, deliveries=0)
+            mismatch.owner_id = b_intent.owner_id
+            await db.flush()
+            one, two = await shot(db, await task(db)), await shot(db, await task(db))
+            old_ack = await ack.mark_handled(db, a, "one_shot", one.id)
+            batch = prepared(selected_refs=[ack.OccurrenceRef(origin="one_shot", id=two.id)])
+            await ack.prepare_batch(db, a, batch)
+
+            mimi = history.HistoryFilter(origin="mimi_intent")
+            assert {
+                i["occurrence_ref"]["id"]
+                for i in (await history.list_history(db, a, mimi))["items"]
+            } == {a_intent.id}
+            monkeypatch.setenv("MIMI_OWNER_WORKSPACE_ENABLED", "true")
+            get_settings.cache_clear()
+            for login in (a, b):
+                result = await history.list_history(db, login, mimi)
+                assert {x["occurrence_ref"]["id"] for x in result["items"]} == {
+                    a_intent.id,
+                    b_intent.id,
+                }
+                assert all(x["body"] == "Synthetic original copy" for x in result["items"])
+            for excluded in (foreign, mismatch):
+                with pytest.raises(HTTPException) as failure:
+                    await ack.mark_handled(db, b, "mimi_intent", excluded.id)
+                assert failure.value.status_code == 404
+            assert await ack.mark_handled(db, a, "one_shot", one.id) == old_ack
+            with pytest.raises(HTTPException) as other_login:
+                await ack.commit_batch(db, b, batch.batch_id)
+            assert other_login.value.status_code == 404
+            assert (await ack.commit_batch(db, a, batch.batch_id))["result"]["new_count"] == 1
+            assert await count(db) == 2
+            # The alias changes disclosed Mimi intents, never their stored owner/receipt IDs.
+            assert a_intent.owner_id == history.handled_owner_id(a)
+            assert b_intent.owner_id == history.handled_owner_id(b)
 
     asyncio.run(scenario())
 

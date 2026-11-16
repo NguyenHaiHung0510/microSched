@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_mimi_collection_service_pg import auth, cleanup, local_contract  # noqa: F401
 
-from app.agent import service
+from app.agent import langgraph_runner, service
 from app.agent.context import PreviewCandidate, ToolRequest, ToolRequests
 from app.agent.models import MimiConversation, MimiEvent
 from app.agent.openrouter import AgentCompletion
@@ -38,11 +38,20 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
 
     app_url = os.environ["MIMI_LANGGRAPH_APP_DATABASE_URL"]
     parsed = make_url(app_url)
-    assert (parsed.host, parsed.port, parsed.database, parsed.username) == (
-        "127.0.0.1",
-        21887,
-        "mimi086_qa",
-        "microsched_app",
+    target = make_url(pg_dsn)
+    assert parsed.host in {"127.0.0.1", "localhost", "::1"}
+    assert parsed.username == "microsched_app"
+    assert (parsed.host, parsed.port, parsed.database) == (
+        target.host,
+        target.port,
+        target.database,
+    )
+    # Bind only this test's already-validated disposable DB. Deployed local
+    # admission stays unchanged; parallel QA must not reuse a fixed old port.
+    monkeypatch.setattr(
+        langgraph_runner,
+        "_authorized_local_database",
+        lambda p: (p.host, p.port, p.database) == (target.host, target.port, target.database),
     )
     monkeypatch.setenv("MIMI_RUNNER", "langgraph")
     monkeypatch.setenv("MIMI_TRANSPORT", "openai_sdk")

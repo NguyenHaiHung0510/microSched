@@ -29,7 +29,8 @@ from sqlalchemy import (
 from app.agent import crypto as mimi_crypto
 from app.agent.models import MimiConversation, MimiNotificationDelivery, MimiNotificationIntent
 from app.agent.notifications import copy_aad
-from app.agent.service import _owner_id
+from app.agent.owner_workspace import legacy_owner_id
+from app.agent.owner_workspace import owner_ids as mimi_owner_ids
 from app.core.settings import get_settings
 from app.domain.models import (
     CalendarEvent,
@@ -87,13 +88,34 @@ def _mimi_enabled():
 
 
 def _fingerprint(auth, filters):
+    mimi_enabled = _mimi_enabled()
+    owner = handled_owner_id(auth)
     value = [
-        str(_owner_id(auth)),
+        str(owner),
         can_see_private(auth),
-        _mimi_enabled(),
+        mimi_enabled,
         filters.model_dump(mode="json"),
     ]
+    if mimi_enabled:
+        aliases = mimi_owner_ids(auth)
+        if aliases != (owner,):
+            value.append([str(identity) for identity in aliases])
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def handled_owner_id(auth):
+    # This independent ACK ledger and its prepared batches retain their
+    # existing per-login contract. Only Mimi's underlying history is aliased.
+    return legacy_owner_id(auth.user_email)
+
+
+def _mimi_history_scope(auth):
+    return (
+        MimiNotificationIntent.owner_id.in_(mimi_owner_ids(auth)),
+        MimiConversation.owner_id == MimiNotificationIntent.owner_id,
+        MimiConversation.is_private.is_(False),
+        MimiConversation.sensitivity == "standard",
+    )
 
 
 def _signature(payload):
@@ -292,10 +314,7 @@ def _projection(auth, now, cutoff):
         q = q.join(c, i.conversation_id == c.id).outerjoin(states, states.c.intent_id == i.id)
         arms.append(
             q.where(
-                i.owner_id == _owner_id(auth),
-                c.owner_id == _owner_id(auth),
-                c.is_private.is_(False),
-                c.sensitivity == "standard",
+                *_mimi_history_scope(auth),
                 i.created_at <= cutoff,
             )
         )
@@ -376,10 +395,7 @@ async def _hydrate(db, auth, rows):
             .join(MimiConversation)
             .where(
                 MimiNotificationIntent.id.in_(mimi_ids),
-                MimiNotificationIntent.owner_id == _owner_id(auth),
-                MimiConversation.owner_id == _owner_id(auth),
-                MimiConversation.is_private.is_(False),
-                MimiConversation.sensitivity == "standard",
+                *_mimi_history_scope(auth),
             )
         )
         mimi = {i.id: (i, c) for i, c in (await db.execute(q)).all()}
@@ -502,7 +518,7 @@ def filtered_query(auth, filters: HistoryFilter, now, cutoff):
         & (h.dispatch_id == p.c.receipt_id)
         | (p.c.origin == "mimi_intent") & (h.mimi_intent_id == p.c.receipt_id)
     )
-    q = select(p, h.handled_at).outerjoin(h, (h.owner_id == _owner_id(auth)) & match)
+    q = select(p, h.handled_at).outerjoin(h, (h.owner_id == handled_owner_id(auth)) & match)
     for name, value in [
         ("origin", filters.origin),
         ("source_kind", filters.source),

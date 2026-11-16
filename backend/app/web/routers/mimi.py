@@ -62,9 +62,12 @@ from app.core.settings import get_settings
 from app.domain.models import AuthSession
 from app.web.acknowledgement import commit_before_ack
 from app.web.deps import get_session, require_session
+from app.web.mimi_auth import require_mimi_workspace_session
 from app.web.mimi_csrf import require_mimi_csrf
 
-router = APIRouter(prefix="/mimi", tags=["mimi"])
+router = APIRouter(
+    prefix="/mimi", tags=["mimi"], dependencies=[Depends(require_mimi_workspace_session)]
+)
 logger = logging.getLogger(__name__)
 Database = Annotated[AsyncSession, Depends(get_session)]
 CurrentSession = Annotated[AuthSession, Depends(require_session)]
