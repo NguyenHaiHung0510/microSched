@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.agent.owner_context import compose_owner_prefix
 from app.agent.policy import load_standard_policy
 from app.agent.task_collection import COLLECTION_CANDIDATE_TOOL
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, tools_for_settings
@@ -99,6 +100,9 @@ def setup_v2(now, settings):
             }
         )
         instruction = instruction.replace(name, _wire(name))
+    # Append after all workflow/tool-name projection: Chat and Live receive
+    # the identical private block, with no history/client-content seed.
+    instruction, _ = compose_owner_prefix(instruction, settings)
     config["systemInstruction"] = {"parts": [{"text": instruction}]}
     config["tools"] = [{"functionDeclarations": declarations}]
     # Keep the conversational Live transcription setup from V1. The wire
