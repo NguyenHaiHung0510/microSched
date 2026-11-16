@@ -312,6 +312,29 @@ test('V2 accepts server action statuses only and teardown cannot publish a late 
   expect(f.deps.socket).toHaveBeenCalledTimes(1)
 })
 
+test('V2 no-write control statuses keep the call open without claiming or invalidating a saved mutation', async () => {
+  const f = await connectV2()
+  const client = new QueryClient()
+  const tasks = ['tasks', 'list'], calendar = ['calendar', 'tasks', 'range']
+  const conversation = ['mimi', 'conversation', 'test-chat']
+  for (const status of ['rejected', 'needs_clarification'] as const) {
+    for (const key of [tasks, calendar, conversation]) client.setQueryData(key, { fixture: 'server state' })
+    f.message({ type: 'action_updated', status, run_id: 'test-run' })
+    expect(f.updates.at(-1)).toMatchObject({ phase: 'listening', actionStatus: status })
+    expect(f.actionUpdated).toHaveBeenLastCalledWith(status)
+    expect(f.socket.close).not.toHaveBeenCalled()
+    expect(f.socket.send.mock.calls).toEqual([['{"type":"ticket","ticket":"v2"}']])
+    await refreshMimiVoiceAction(client, 0, 'test-chat', status)
+    expect(client.getQueryState(conversation)?.isInvalidated).toBe(true)
+    for (const key of [tasks, calendar]) {
+      expect(client.getQueryState(key)?.isInvalidated).toBe(false)
+      expect(client.getQueryData(key)).toEqual({ fixture: 'server state' })
+    }
+  }
+  f.voice.cancel()
+  client.clear()
+})
+
 test('applied, undone and unknown outcomes refresh Tasks and Calendar; preview only refreshes conversation', async () => {
   const client = new QueryClient()
   const conversation = ['mimi', 'conversation', 'test-chat']

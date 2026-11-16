@@ -2,7 +2,7 @@ import { apiRequest } from '@/api'
 import workletUrl from './mimi-pcm-worklet.js?url&no-inline'
 
 export type VoicePhase = 'idle' | 'permission' | 'connecting' | 'listening' | 'speaking' | 'reconnecting' | 'ending' | 'ended' | 'error'
-export type VoiceActionStatus = 'preview' | 'applied' | 'undone'
+export type VoiceActionStatus = 'preview' | 'applied' | 'undone' | 'rejected' | 'needs_clarification'
 export type VoiceState = {
   phase: VoicePhase
   muted: boolean
@@ -353,7 +353,8 @@ export class MimiVoiceSession {
             this.update({ phase: 'listening', actionStatus: null, notice: this.checkSavedNotice(resumeNotice) })
             this.saved(true)
           } else if (this.options.v2 && this.ready && message.type === 'action_updated' &&
-            (message.status === 'preview' || message.status === 'applied' || message.status === 'undone')) {
+            (message.status === 'preview' || message.status === 'applied' || message.status === 'undone' ||
+              message.status === 'rejected' || message.status === 'needs_clarification')) {
             if (message.run_id !== undefined && message.run_id !== this.runId) throw new Error('invalid_session')
             if (!this.ending && this.state.phase !== 'reconnecting') this.update({ actionStatus: message.status })
             this.options.actionUpdated?.(message.status)

@@ -15,7 +15,7 @@ function conversationQueries(conversationId: string) {
 export async function refreshMimiVoiceAction(client: QueryClient, epoch: number, conversationId: string, status: VoiceActionStatus | 'unknown') {
   if (!isMimiSessionCurrent(client, epoch)) return
   const queries = conversationQueries(conversationId)
-  if (status !== 'preview') {
+  if (status === 'applied' || status === 'undone' || status === 'unknown') {
     queries.push({ queryKey: [...CALENDAR_TASKS_KEY] }, { queryKey: ['tasks'] })
   }
   // A cold read started before the action may otherwise publish stale data.
