@@ -486,11 +486,11 @@ class VoiceBridge:
                         reason = value
                         break
         except asyncio.CancelledError:
-            reason = "voice_disconnected"
+            reason = self.upstream_failure or self.tool_error or "voice_disconnected"
         except Exception as error:
-            reason = _failure_reason(error)
-            if reason == "voice_send_closed":
-                reason = self.upstream_failure or self.tool_error or reason
+            # A failed close handshake can replace the exception from the
+            # provider body. Keep its first safe terminal reason if recorded.
+            reason = self.upstream_failure or self.tool_error or _failure_reason(error)
         finally:
             await self.end_tasks(tasks)
             incomplete = (

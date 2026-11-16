@@ -267,3 +267,39 @@ def test_queued_audio_during_provider_cleanup_keeps_original_failure(monkeypatch
         assert terminal["counters"]["input_pcm_bytes"] == 0 and provider.sent == [{}]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("close_error", [RuntimeError, TimeoutError, asyncio.CancelledError])
+def test_provider_cleanup_cannot_replace_a_known_body_failure(monkeypatch, close_error):
+    async def scenario():
+        browser = Browser()
+
+        class SessionStore(Store):
+            async def dispatched(self):
+                pass
+
+            async def finish(self, **outcome):
+                self.outcome = outcome
+
+        class FailingProvider(Provider):
+            async def recv(self):
+                if not browser.frames:
+                    return '{"setupComplete":{}}'
+                raise VoiceError("voice_provider_event_unsupported")
+
+        @asynccontextmanager
+        async def connector(*_args, **_kwargs):
+            try:
+                yield FailingProvider()
+            finally:
+                raise close_error()
+
+        monkeypatch.setattr(bridge_module, "connect_provider", connector)
+        store = SessionStore()
+        bridge = VoiceBridge(browser, store)
+        expected = "voice_provider_event_unsupported"
+        assert await bridge.run({}, None, datetime.now(UTC) + timedelta(seconds=2)) == expected
+        assert store.outcome["reason"] == expected
+        assert browser.frames[-1] == {"type": "ended", "reason": expected}
+
+    asyncio.run(scenario())
