@@ -102,6 +102,15 @@ class ContextManifest(StrictModel):
     route: RouteManifest
     cache: CacheManifest
 
+    @model_serializer(mode="wrap")
+    def omit_inactive_owner_metadata(self, handler):
+        data = handler(self)
+        if self.owner_memory is None:
+            # OFF retains the exact pre-Memory wire and manifest fingerprint.
+            data.pop("system_prefix_sha256", None)
+            data.pop("owner_memory", None)
+        return data
+
     def sha256(self) -> str:
         encoded = json.dumps(
             self.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")

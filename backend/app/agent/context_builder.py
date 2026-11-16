@@ -650,9 +650,13 @@ def input_projection_observation(
         "working_refs": (envelope.manifest.working_history or {}).get("working_refs", []),
         "model": settings.mimi_route_model,
         "observed_request_at": datetime.now(UTC).isoformat(),
-        "system_prefix_sha256": envelope.manifest.system_prefix_sha256,
-        "owner_memory": envelope.manifest.owner_memory.model_dump(mode="json")
-        if envelope.manifest.owner_memory
-        else None,
+        **(
+            {
+                "system_prefix_sha256": envelope.manifest.system_prefix_sha256,
+                "owner_memory": envelope.manifest.owner_memory.model_dump(mode="json"),
+            }
+            if envelope.manifest.owner_memory is not None
+            else {}
+        ),
         "measurement": "provider_native_input_pending",
     }
