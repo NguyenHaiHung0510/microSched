@@ -2,10 +2,9 @@ import { useId, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { fetchMimiVoicePreferences, saveMimiVoicePreferences } from '@/mimi-api'
-import { isMimiSessionCurrent, mimiSessionEpoch } from '@/mimi-session-boundary'
+import { mimiSessionEpoch } from '@/mimi-session-boundary'
+import { MIMI_VOICE_PREFERENCES_KEY as queryKey, publishMimiVoicePreferences } from '@/mimi-voice-preferences'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
-
-const queryKey = ['mimi', 'voice-preferences'] as const
 
 export function MimiVoicePreferences() {
   const client = useQueryClient()
@@ -22,9 +21,7 @@ export function MimiVoicePreferences() {
     mutationKey: queryKey,
     mutationFn: saveMimiVoicePreferences,
     retry: false,
-    onSuccess: confirmed => {
-      if (isMimiSessionCurrent(client, epoch)) client.setQueryData(queryKey, confirmed)
-    },
+    onSuccess: confirmed => publishMimiVoicePreferences(client, epoch, confirmed),
   })
   const failed = preferences.isError || save.isError
   const fastApply = preferences.data?.fast_apply

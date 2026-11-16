@@ -189,7 +189,7 @@ test('V2 mic-off releases capture and playback, and late provider controls canno
   expect(f.updates.at(-1)?.phase).toBe('ended')
 })
 
-test('V2 provider resumption keeps the original live mic and clock without replay and asks to repeat an interrupted turn', async () => {
+test('V2 provider resumption keeps the original live mic and clock without replay and asks to check the saved result', async () => {
   vi.useFakeTimers()
   const f = await connectV2()
   const startedAt = f.updates.at(-1)?.startedAt
@@ -200,8 +200,10 @@ test('V2 provider resumption keeps the original live mic and clock without repla
   expect(f.updates.at(-1)?.phase).toBe('reconnecting')
   f.captures[0].port.onmessage?.({ data: pcm })
   expect(f.socket.send.mock.calls.filter(([data]) => data === pcm)).toHaveLength(1)
-  f.message({ type: 'resumed' })
-  expect(f.updates.at(-1)).toMatchObject({ phase: 'listening', startedAt, notice: expect.stringContaining('nhắc lại') })
+  f.message({ type: 'resumed', context_retained: true })
+  expect(f.updates.at(-1)).toMatchObject({ phase: 'listening', startedAt, notice: expect.stringContaining('kiểm tra') })
+  expect(f.updates.at(-1)?.notice).not.toContain('nhắc lại')
+  expect(f.saved).toHaveBeenCalledWith(true)
   f.captures[0].port.onmessage?.({ data: pcm }) // Old MessagePort task delivered after WS resumed.
   expect(f.socket.send.mock.calls.filter(([data]) => data === pcm)).toHaveLength(1)
   f.captures[0].port.onmessage?.({ data: f.captures[0].port.postMessage.mock.lastCall?.[0] })
@@ -217,7 +219,7 @@ test('V2 overload aborts the affected response visibly and admits audio only aft
   const f = await connectV2()
   for (let i = 0; i < 8; i++) f.message(new ArrayBuffer(240_000))
   expect(f.playback.every(source => source.stop.mock.calls.length === 1)).toBe(true)
-  expect(f.updates.at(-1)?.notice).toContain('nhắc lại')
+  expect(f.updates.at(-1)?.notice).toContain('kết quả đã lưu')
   expect(f.socket.close).not.toHaveBeenCalled()
   const before = f.playback.length
   f.message(new ArrayBuffer(1920))
@@ -310,7 +312,7 @@ test('V2 accepts server action statuses only and teardown cannot publish a late 
   expect(f.deps.socket).toHaveBeenCalledTimes(1)
 })
 
-test('only server-confirmed applied/undone refresh Tasks and Calendar; no cache mutation or unrelated refresh', async () => {
+test('applied, undone and unknown outcomes refresh Tasks and Calendar; preview only refreshes conversation', async () => {
   const client = new QueryClient()
   const conversation = ['mimi', 'conversation', 'test-chat']
   const tasks = ['tasks', 'list']
@@ -321,7 +323,7 @@ test('only server-confirmed applied/undone refresh Tasks and Calendar; no cache 
   expect(client.getQueryState(conversation)?.isInvalidated).toBe(true)
   expect(client.getQueryState(tasks)?.isInvalidated).toBe(false)
   expect(client.getQueryState(calendar)?.isInvalidated).toBe(false)
-  for (const status of ['applied', 'undone'] as const) {
+  for (const status of ['applied', 'undone', 'unknown'] as const) {
     for (const key of [tasks, calendar]) client.setQueryData(key, { fixture: 'server state' })
     await refreshMimiVoiceAction(client, 0, 'test-chat', status)
     for (const key of [tasks, calendar]) {
@@ -331,4 +333,48 @@ test('only server-confirmed applied/undone refresh Tasks and Calendar; no cache 
   }
   for (const key of unrelated) expect(client.getQueryState(key)?.isInvalidated).toBe(false)
   client.clear()
+})
+
+test('V2 socket failure after the turn boundary warns to check for a saved change', async () => {
+  const f = await connectV2()
+  f.message({ type: 'turn_complete' })
+  f.socket.onerror?.()
+  expect(f.updates.at(-1)).toMatchObject({ phase: 'error', notice: expect.stringContaining('kết quả đã lưu') })
+  expect(f.updates.at(-1)?.notice).not.toContain('nhắc lại')
+  expect(f.deps.socket).toHaveBeenCalledTimes(1)
+})
+
+test('V2 clears an action cue on new speech, reconnection and End without suppressing committed events', async () => {
+  const f = await connectV2()
+  f.message({ type: 'action_updated', status: 'applied' })
+  f.message({ type: 'transcript', role: 'user', text: 'Synthetic next utterance' })
+  expect(f.updates.at(-1)?.actionStatus).toBeNull()
+  f.message({ type: 'action_updated', status: 'undone' })
+  f.message({ type: 'reconnecting' })
+  f.message({ type: 'action_updated', status: 'applied' })
+  expect(f.updates.at(-1)?.actionStatus).toBeNull()
+  f.message({ type: 'resumed', context_retained: false })
+  expect(f.updates.at(-1)).toMatchObject({ actionStatus: null, notice: expect.stringContaining('ngữ cảnh') })
+  f.message({ type: 'action_updated', status: 'preview' })
+  f.voice.stop()
+  f.message({ type: 'action_updated', status: 'applied' })
+  expect(f.updates.at(-1)).toMatchObject({ phase: 'ending', actionStatus: null })
+  expect(f.actionUpdated).toHaveBeenCalledTimes(5)
+  f.message({ type: 'ended', reason: 'voice_stopped' })
+  expect(f.updates.at(-1)).toMatchObject({ phase: 'ended', actionStatus: null })
+})
+
+test.each(['collapse', 'stop', 'error'])('V2 %s invalidates read caches even if the committed action event was lost', async exit => {
+  const f = await connectV2()
+  if (exit === 'collapse') f.voice.cancel()
+  if (exit === 'stop') {
+    f.voice.stop()
+    f.message({ type: 'ended', reason: 'voice_stopped' })
+  }
+  if (exit === 'error') f.socket.onerror?.()
+  await vi.waitFor(() => expect(f.saved.mock.calls).toEqual([[true]]))
+  expect(f.actionUpdated).not.toHaveBeenCalled()
+  expect(f.deps.socket).toHaveBeenCalledTimes(1)
+  f.voice.cancel()
+  expect(f.saved).toHaveBeenCalledOnce()
 })

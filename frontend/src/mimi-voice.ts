@@ -26,7 +26,7 @@ const V2_PLAYBACK_LEAD = 2
 const V2_PLAYBACK_CHUNK = OUTPUT_BYTES_PER_SECOND / 2
 const V2_MAX_PLAYING_NODES = 64
 const V2_MAX_QUEUED_FRAMES = 1536
-const REPEAT_TURN = 'Lượt vừa rồi bị gián đoạn. Bạn hãy nhắc lại.'
+const CHECK_SAVED_RESULT = 'Hãy kiểm tra Task hoặc kết quả đã lưu trước khi gửi lại yêu cầu.'
 const CALL_LIMIT = 'Đã hết thời lượng cuộc gọi. Bạn có thể bắt đầu cuộc gọi mới.'
 const CAPTURE_LOST = 'Micro đã ngắt. Bạn có thể tiếp tục bằng tin nhắn.'
 const PLAYBACK_FAILED = 'Không phát được âm thanh. Bạn có thể tiếp tục bằng tin nhắn.'
@@ -78,7 +78,7 @@ export class MimiVoiceSession {
   private playbackBytes = 0
   private dropOutputUntilBoundary = false
   private turnActive = false
-  private repeatAfterResume = false
+  private interruptedBeforeResume = false
   private captureResetSequence = 0
   private pendingCaptureReset: number | null = null
   private captureTimer?: ReturnType<typeof setTimeout>
@@ -91,7 +91,7 @@ export class MimiVoiceSession {
   private conversationId: string
   private generation: number
   private changed: (state: VoiceState) => void
-  private saved: () => void
+  private saved: (reconcileUnknown?: true) => void
   private deps: VoiceDependencies
   private options: VoiceOptions
 
@@ -99,7 +99,7 @@ export class MimiVoiceSession {
     conversationId: string,
     generation: number,
     changed: (state: VoiceState) => void,
-    saved: () => void,
+    saved: (reconcileUnknown?: true) => void,
     deps: VoiceDependencies = dependencies,
     options: VoiceOptions = {},
   ) {
@@ -143,9 +143,13 @@ export class MimiVoiceSession {
   }
 
   private disconnectNotice(fallback: string) {
-    return this.options.v2 && (this.turnActive || this.playing.size || this.playbackBytes || this.repeatAfterResume)
-      ? 'Kết nối đã ngắt giữa lượt. Hãy nhắc lại khi gọi lại hoặc nhắn Mimi.'
+    return this.options.v2 && (this.turnActive || this.playing.size || this.playbackBytes || this.interruptedBeforeResume)
+      ? 'Kết nối đã ngắt giữa lượt.'
       : fallback
+  }
+
+  private checkSavedNotice(notice: string) {
+    return this.options.v2 && this.ready ? `${notice} ${CHECK_SAVED_RESULT}` : notice
   }
 
   private captureStream(stream: MediaStream) {
@@ -308,13 +312,16 @@ export class MimiVoiceSession {
             if (!this.options.v2) this.later(() => this.stop('Phiên giọng nói đã hết thời lượng. Bạn có thể bắt đầu phiên mới.'), ticket.max_seconds * 1000)
           } else if (message.type === 'interrupted') {
             this.clearPlayback()
-            if (this.state.phase !== 'reconnecting') this.update({ phase: 'listening', caption: '' })
+            if (this.state.phase !== 'reconnecting') this.update({ phase: 'listening', caption: '', actionStatus: null })
           } else if (message.type === 'transcript' && ['user', 'assistant'].includes(message.role) && typeof message.text === 'string' && message.text.length <= 16_384) {
             if (this.state.phase === 'reconnecting') return
-            const nextTurn = !this.turnActive && message.role === 'user' && !!message.text.trim()
-            if (nextTurn) this.repeatAfterResume = false
+            const userSpoke = this.options.v2 && message.role === 'user' && !!message.text.trim()
+            const nextTurn = userSpoke && !this.turnActive
+            if (nextTurn) this.interruptedBeforeResume = false
             if (this.options.v2 && message.text.trim()) this.turnActive = true
-            this.update({ caption: message.text, captionRole: message.role, ...(this.options.v2 && nextTurn ? { notice: null } : {}) })
+            // Input fragments have no turn ID; never carry a write cue into user speech.
+            this.update({ caption: message.text, captionRole: message.role,
+              ...(userSpoke ? { actionStatus: null } : {}), ...(nextTurn ? { notice: null } : {}) })
           } else if (message.type === 'transcript_saved') {
             this.update({ caption: '' })
             this.saved()
@@ -325,9 +332,10 @@ export class MimiVoiceSession {
           } else if (this.options.v2 && this.ready && message.type === 'reconnecting') {
             this.pendingCaptureReset = null
             if (this.state.phase === 'reconnecting') return
-            this.repeatAfterResume = this.turnActive || !!this.playing.size || !!this.playbackBytes
+            this.interruptedBeforeResume = this.turnActive || !!this.playing.size || !!this.playbackBytes
             this.clearPlayback()
-            this.update({ phase: 'reconnecting', caption: '', notice: this.repeatAfterResume ? REPEAT_TURN : null })
+            this.update({ phase: 'reconnecting', caption: '', actionStatus: null,
+              notice: this.interruptedBeforeResume ? `Lượt vừa rồi có thể chưa hoàn tất. ${CHECK_SAVED_RESULT}` : CHECK_SAVED_RESULT })
           } else if (this.options.v2 && this.ready && message.type === 'resumed') {
             if (this.state.phase !== 'reconnecting') return
             if (!this.capture || performance.now() - this.lastCaptureAt >= CAPTURE_LOSS_MS) {
@@ -340,16 +348,19 @@ export class MimiVoiceSession {
             const reset = this.pendingCaptureReset = ++this.captureResetSequence
             this.capture.port.postMessage({ captureReset: reset })
             this.later(() => { if (this.pendingCaptureReset === reset) this.fail(CAPTURE_LOST) }, CAPTURE_LOSS_MS)
-            this.update({ phase: 'listening', notice: this.repeatAfterResume
-              ? REPEAT_TURN : 'Đã nối lại. Nếu câu vừa rồi chưa được trả lời, hãy nhắc lại.' })
+            const resumeNotice = message.context_retained === false ? 'Đã nối lại. Một phần ngữ cảnh trước đó có thể thiếu.'
+              : this.interruptedBeforeResume ? 'Đã nối lại. Lượt trước có thể chưa hoàn tất.' : 'Đã nối lại.'
+            this.update({ phase: 'listening', actionStatus: null, notice: this.checkSavedNotice(resumeNotice) })
+            this.saved(true)
           } else if (this.options.v2 && this.ready && message.type === 'action_updated' &&
             (message.status === 'preview' || message.status === 'applied' || message.status === 'undone')) {
             if (message.run_id !== undefined && message.run_id !== this.runId) throw new Error('invalid_session')
-            this.update({ actionStatus: message.status })
+            if (!this.ending && this.state.phase !== 'reconnecting') this.update({ actionStatus: message.status })
             this.options.actionUpdated?.(message.status)
           } else if (message.type === 'ended') {
             const stopped = this.options.v2 ? this.state.notice : null
-            this.finish(message.reason === 'voice_stopped' ? stopped : this.disconnectNotice('Phiên giọng nói đã kết thúc. Bản chép lời có thể chưa đầy đủ; bạn vẫn có thể nhắn Mimi.'))
+            this.finish(message.reason === 'voice_stopped' ? stopped
+              : this.checkSavedNotice(this.disconnectNotice('Phiên giọng nói đã kết thúc. Bản chép lời có thể chưa đầy đủ; bạn vẫn có thể nhắn Mimi.')))
           } else if (message.type !== 'muted') {
             throw new Error('invalid_event')
           }
@@ -382,7 +393,7 @@ export class MimiVoiceSession {
         // Do not disconnect, replay the turn, or queue its tail behind newer audio.
         this.clearPlayback()
         this.dropOutputUntilBoundary = true
-        this.update({ phase: 'listening', notice: 'Âm thanh đến dồn dập nên câu trả lời bị ngắt. Hãy yêu cầu Mimi nhắc lại.' })
+        this.update({ phase: 'listening', notice: this.checkSavedNotice('Âm thanh đến dồn dập nên không phát hết câu trả lời.') })
         return
       }
       this.playbackQueue.push({ data, offset: 0 })
@@ -468,15 +479,17 @@ export class MimiVoiceSession {
   }
   private fail(notice: string) {
     if (this.closed) return
+    const recoveryNotice = this.checkSavedNotice(notice)
     this.dispose(true)
-    this.update({ phase: 'error', notice, caption: '' })
+    this.update({ phase: 'error', notice: recoveryNotice, caption: '', actionStatus: null })
   }
   stop(notice: string | null = null) {
     if (this.closed || this.ending) return
+    if (notice) notice = this.checkSavedNotice(notice)
     if (this.ready && this.socket?.readyState === 1) {
       this.ending = true
       this.releaseAudio()
-      this.update({ phase: 'ending', notice, caption: '' })
+      this.update({ phase: 'ending', notice, caption: '', actionStatus: null })
       try {
         this.socket.send(JSON.stringify({ type: 'stop' }))
         this.later(() => this.finish(notice, true), 5_000)
@@ -487,7 +500,7 @@ export class MimiVoiceSession {
   private finish(notice: string | null, revoke = false) {
     if (this.closed) return
     this.dispose(revoke)
-    this.update({ phase: 'ended', notice, caption: '' })
+    this.update({ phase: 'ended', notice, caption: '', actionStatus: null })
   }
   private releaseAudio() {
     this.clearPlayback()
@@ -497,6 +510,8 @@ export class MimiVoiceSession {
   }
   private dispose(revoke: boolean) {
     if (this.closed) return
+    const reconcileUnknown = this.options.v2 && this.ready
+    const refresh = () => { if (reconcileUnknown) this.saved(true); else this.saved() }
     this.closed = true
     this.controller.abort()
     for (const timer of this.timers) clearTimeout(timer)
@@ -506,8 +521,9 @@ export class MimiVoiceSession {
       this.socket.onmessage = this.socket.onerror = this.socket.onclose = null
       try { this.socket.close(1000) } catch { /* CONNECTING will close in onopen. */ }
     }
-    if (revoke && this.runId) void this.deps.revoke(this.conversationId, this.runId).catch(() => {}).finally(this.saved)
-    else if (this.ticketRequested) this.saved()
+    // A write may have committed even when its action_updated control never arrived.
+    if (revoke && this.runId) void this.deps.revoke(this.conversationId, this.runId).catch(() => {}).finally(refresh)
+    else if (this.ticketRequested) refresh()
     this.ready = false
   }
 }

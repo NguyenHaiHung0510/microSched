@@ -12,10 +12,10 @@ function conversationQueries(conversationId: string) {
   ]
 }
 
-export async function refreshMimiVoiceAction(client: QueryClient, epoch: number, conversationId: string, status: VoiceActionStatus) {
+export async function refreshMimiVoiceAction(client: QueryClient, epoch: number, conversationId: string, status: VoiceActionStatus | 'unknown') {
   if (!isMimiSessionCurrent(client, epoch)) return
   const queries = conversationQueries(conversationId)
-  if (status === 'applied' || status === 'undone') {
+  if (status !== 'preview') {
     queries.push({ queryKey: [...CALENDAR_TASKS_KEY] }, { queryKey: ['tasks'] })
   }
   // A cold read started before the action may otherwise publish stale data.
@@ -49,9 +49,11 @@ export function useMimiVoice(client: QueryClient, epoch: number, conversationId:
       if (session.current !== voice || !isMimiSessionCurrent(client, epoch)) return
       setView({ conversationId, v2, state: next })
       if (next.phase === 'ended' || next.phase === 'error') session.current = null
-    }, () => {
-      if (!isMimiSessionCurrent(client, epoch)) return
-      for (const filter of conversationQueries(conversationId)) void client.invalidateQueries(filter)
+    }, reconcileUnknown => {
+      if (reconcileUnknown) void refreshMimiVoiceAction(client, epoch, conversationId, 'unknown')
+      else if (isMimiSessionCurrent(client, epoch)) {
+        for (const filter of conversationQueries(conversationId)) void client.invalidateQueries(filter)
+      }
     }, undefined, {
       v2,
       actionUpdated: status => { void refreshMimiVoiceAction(client, epoch, conversationId, status) },

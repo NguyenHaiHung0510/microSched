@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, expect, test, vi } from 'vitest'
 import { fetchMimiVoicePreferences, saveMimiVoicePreferences } from './mimi-api'
 import { MimiVoicePreferences } from './MimiVoicePreferences'
+import { MIMI_VOICE_PREFERENCES_KEY, publishMimiVoicePreferences } from './mimi-voice-preferences'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -41,5 +42,31 @@ test('settings show loading or the server preference without preselecting a writ
   expect(view()).toContain('Chưa tải được cấu hình giọng nói.')
   expect(view()).not.toContain('role="switch"')
   expect(view()).toContain('Tải lại')
+  client.clear()
+})
+
+test('a preference GET started before PATCH settled cannot restore the old switch value', async () => {
+  const client = new QueryClient()
+  client.setQueryData(MIMI_VOICE_PREFERENCES_KEY, { fast_apply: true })
+  let replyToGet!: (response: Response) => void
+  let readSignal: AbortSignal | null | undefined
+  const fetch = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>()
+    .mockImplementationOnce((_url, init) => {
+      readSignal = init?.signal
+      return new Promise(resolve => { replyToGet = resolve })
+    })
+    .mockResolvedValueOnce(Response.json({ fast_apply: false }))
+  vi.stubGlobal('fetch', fetch)
+  const read = client.fetchQuery({
+    queryKey: MIMI_VOICE_PREFERENCES_KEY,
+    queryFn: ({ signal }) => fetchMimiVoicePreferences(signal),
+  }).catch(() => undefined)
+  await publishMimiVoicePreferences(client, 0, await saveMimiVoicePreferences(false))
+  // Simulate an older response arriving even when the transport ignored abort.
+  replyToGet(Response.json({ fast_apply: true }))
+  await read
+  expect(client.getQueryData(MIMI_VOICE_PREFERENCES_KEY)).toEqual({ fast_apply: false })
+  expect(readSignal?.aborted).toBe(true)
+  expect(fetch).toHaveBeenCalledTimes(2)
   client.clear()
 })
