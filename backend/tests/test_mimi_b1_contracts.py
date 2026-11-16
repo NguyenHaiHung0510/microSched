@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from test_mimi_voice_v2 import Browser, Live, Store, audio, proposal
+from test_mimi_voice_v2 import PCM, Browser, Live, Store, audio, proposal
 
 from app.agent import voice_bridge
 from app.agent.voice_v2_bridge import VoiceV2Bridge
@@ -178,6 +178,7 @@ def test_receiving_new_input_during_commit_revokes_previous_action(monkeypatch, 
         bridge = VoiceV2Bridge(browser, store)
         bridge.deadline = datetime.now(UTC) + timedelta(seconds=5)
         bridge.forwarded_ms = 200
+        bridge.signal.record(PCM)
         bridge.input_text = "Tạo việc A."
         bridge.speech.activity({"type": "ACTIVITY_START", "audioOffset": "0.01s"}, 200)
         bridge.speech.activity({"type": "ACTIVITY_END", "audioOffset": "0.15s"}, 200)
@@ -233,6 +234,7 @@ def test_ambiguous_commit_never_sends_applied_false_or_success_response():
         bridge.input_text = "Tạo việc A."
         bridge.epoch = 1
         bridge.forwarded_ms = 200
+        bridge.signal.record(PCM)
         bridge.speech.activity({"type": "ACTIVITY_START", "audioOffset": "0.01s"}, 200)
         bridge.speech.activity({"type": "ACTIVITY_END", "audioOffset": "0.15s"}, 200)
         bridge.actions = {"uncertain": ("task.collection_candidate.v1", {})}

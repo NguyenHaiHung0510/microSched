@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -548,8 +549,9 @@ class VoiceV2Store(VoiceStore):
         if bound_conversation.id != conversation.id:
             raise HTTPException(409, "voice_undo_receipt_scope_invalid")
         recovery = recovery_for(receipt, change, bound_conversation, dek)
-        # Latest is never skipped, including when it is itself an Undo.
-        if recovery["plan"].get("undo_receipt_id"):
+        # Match Chat/button exact CAS. Bare latest never follows an inverse
+        # or searches an older receipt; a specifically selected inverse may.
+        if selector["target"] == "latest" and recovery["plan"].get("undo_receipt_id"):
             raise HTTPException(409, "voice_undo_latest_receipt_not_eligible")
         plan = await freeze_undo(db, receipt.id, recovery)
         original_has_effect = any(
@@ -781,17 +783,36 @@ class VoiceV2Store(VoiceStore):
                     "target_count": len(plan.entries) if tool == COLLECTION_TOOL else 1,
                 },
             )
-            if not is_active() or parent.deadline <= datetime.now(UTC):
-                return VoiceActionOutcome("rejected", "voice_turn_expired")
-            try:
-                await db.commit()
-            except Exception:
-                # Commit response loss is indeterminate. The frozen receipt is
-                # the only recovery authority; do not re-execute the request.
-                return VoiceActionOutcome("unknown", "voice_result_ambiguous")
             identity = receipt["id"] if receipt else None
-            return committed(
+            success = committed(
                 status,
                 receipt_id=identity,
                 receipt_ref=receipt_ref(conversation.id, identity) if identity else None,
             )
+            return await _submit_action_commit(db, parent.deadline, is_active, success)
+
+
+async def _submit_action_commit(db, deadline, is_active, success):
+    """Linearize the application decision immediately before COMMIT submission."""
+
+    async def submit():
+        # All SQL/flushes before this point are still rollbackable. No await
+        # between this fence and submitting COMMIT on the same event loop.
+        if not is_active() or deadline <= datetime.now(UTC):
+            return VoiceActionOutcome("rejected", "voice_turn_expired")
+        try:
+            await db.commit()
+        except Exception:
+            # Post-dispatch loss is unknown until the durable receipt is read.
+            return VoiceActionOutcome("unknown", "voice_result_ambiguous")
+        return success
+
+    submitting = asyncio.create_task(submit())
+    try:
+        return await asyncio.shield(submitting)
+    except asyncio.CancelledError:
+        # Stop/disconnect may cancel the caller, not an already submitted
+        # commit. Keep the session open for bounded reconciliation; there is
+        # no resend, and the browser refreshes its own receipt on terminal.
+        await asyncio.gather(asyncio.wait_for(submitting, 5), return_exceptions=True)
+        raise

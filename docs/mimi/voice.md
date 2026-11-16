@@ -85,7 +85,8 @@ Chat giữ quy trình xác nhận riêng.
 
 Undo dùng cùng một typed tool trong cuộc gọi hiện có. `latest` chọn đúng receipt
 mới nhất của hội thoại, gồm Chat và Voice ở các cuộc gọi trước. Nếu receipt đó
-stale, thiếu recovery hoặc đã là inverse, Mimi từ chối; không tìm lùi về nhóm cũ.
+stale, thiếu recovery hoặc đã là inverse, `latest` từ chối và không tìm lùi.
+Undo một inverse chỉ có thể qua receipt được chỉ rõ, với cùng CAS như nút và Chat.
 
 Khi người dùng chỉ rõ một thay đổi cũ, model có thể dùng `receipt_ref` chính xác
 đã được Server đưa vào context/status của hội thoại. Context gần đây chỉ có handle
@@ -103,21 +104,30 @@ trọn nhóm. Không phát lại reminder hay tác động ra ngoài theo lịch
 
 Quyền ghi không phụ thuộc nội dung caption, exact phrase, so tên Task với lời nói
 hoặc hash câu nói. Server bind proposal bằng activity/audio offset đã quan sát,
-turn, transport epoch và tool call ID. Caption đến muộn, thiếu caption hoặc nói lại
-cùng câu không tự cấp hay thu hồi quyền. Nếu thiếu binding quan sát được, Mimi hỏi
-lại; không hỏi model tự xác nhận quyền của chính nó.
+turn, transport epoch và tool call ID. Cần ít nhất một sample PCM khác 0 đã gửi
+trong cửa sổ VAD hiện tại; chỉ giữ dấu có tín hiệu trong cửa sổ giới hạn ở RAM.
+Đây là kiểm tra tín hiệu, không xác thực người nói. Caption đến muộn, thiếu caption
+hoặc nói lại cùng câu không tự cấp hay thu hồi quyền.
 
-Stop, mất mic, disconnect, mute, barge-in và tool cancellation đều chặn lượt chưa
-commit. Tool ID replay/đã hủy không được dùng lại; mixed replay không làm phần còn
-lại của proposal trở thành một yêu cầu mới. Nguồn, quyền và fence được kiểm lại
-trước commit. Sau durable commit, receipt là sự thật dù ACK hoặc kết nối bị mất;
-không tự chạy lại một thao tác có kết quả chưa rõ.
+Gemini Live không đưa input turn ID vào tool call. Ghép theo trật tự sự kiện
+quan sát được khi epoch sạch. Nếu lượt trước bị gián đoạn, bỏ dở hoặc chồng lấn,
+hoặc resumption có dấu hiệu replay, không gán tool ID mới thấy cho lượt kế tiếp;
+Mimi hỏi lại và dùng context mới. Sau tool blocking cần provider terminal sạch
+trước activity tiếp theo. Không thể chứng minh một reorder mà transport không bộc lộ.
+
+Stop, mất mic, disconnect, mute, barge-in và tool cancellation được fence trên
+event loop ngay trước khi gửi COMMIT, sau flush. Sự kiện quan sát trước mốc đó
+làm rollback; sau mốc đó, xác nhận dựa trên receipt, hoặc báo cần đối soát nếu
+ACK không rõ. Tool ID replay/đã hủy không được dùng lại; mixed replay không làm
+phần còn lại trở thành yêu cầu mới. Không tự chạy lại một thao tác chưa rõ kết quả.
 
 Action tools dùng `BLOCKING`. Sau commit mới gửi `applied/undone` cùng receipt về
 browser và kết quả scalar với handle mờ về Gemini. `preview_required` ở tool response
 là preview đang chờ duyệt; browser giữ wire status `preview` để tương thích.
 Confirm thủ công trong cùng cuộc gọi được đồng bộ sau khi đọc thấy receipt đã
-commit, để Mimi không yêu cầu duyệt lần nữa. Mất commit ACK kết thúc với
+commit, để Mimi không yêu cầu duyệt lần nữa. Nếu rớt upstream sau commit nhưng
+trước tool ACK, context mới nhận trạng thái scalar và handle của receipt đã lưu,
+không gửi lại PCM, proposal hoặc payload nguồn. Mất ACK từ DB kết thúc với
 `voice_action_outcome_unknown`; cần đối chiếu receipt trước khi làm lại.
 
 ### Kết nối và context
@@ -145,7 +155,9 @@ Input transcription mặc định giữ shape đã dùng `{}`.
 Opt-in `MIMI_VOICE_V2_INPUT_LANGUAGE_HINTS=true` gửi
 `{"languageCodes":["vi-VN","en-US"]}` chỉ cho V2.
 Đặt `false` hoặc bỏ biến để phiên mới trở lại `{}`; không replay audio khi rollback.
-Nếu setup từ chối hint, tắt flag để thử phiên mới; không tự đổi provider. Theo
+Nếu setup trả từ chối có nêu rõ field hint trước khi nhận audio, cùng cuộc gọi thử
+đúng một setup với `{}`, vẫn Gemini/Kore. Không fallback khi lỗi khác hoặc đã có
+audio; không đổi provider và không phát lại âm thanh. Theo
 [API reference](https://aistudio.google.com/api-reference/live#AudioTranscriptionConfig),
 đây là hint, không phải whitelist.
 [Native audio](https://aistudio.google.com/docs/live-api/capabilities#change-voice-and-language)

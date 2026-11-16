@@ -5,7 +5,9 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from test_mimi_voice_v2 import Browser, Live, Store, audio, proposal, speech
+from test_mimi_voice_v2 import PCM, Browser, Live, Store, audio, proposal, speech
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 from app.agent import voice_bridge
 from app.agent.voice_v2_bridge import VoiceV2Bridge
@@ -206,3 +208,139 @@ def test_vi_en_hint_is_v2_opt_in_and_v1_setup_stays_identical(monkeypatch, enabl
     assert "Vietnamese or English" in prompt
     assert "Never ask for a magic phrase" in prompt
     assert "preview_required" in prompt
+
+
+@pytest.mark.parametrize("outside_window", [False, True])
+def test_valid_vad_without_nonzero_sample_in_its_range_cannot_apply(monkeypatch, outside_window):
+    async def scenario():
+        async with voice(monkeypatch) as (browser, store, live):
+            chunk = bytearray(len(PCM))
+            if outside_window:
+                chunk[2] = 1  # sample 1 is before the VAD window at 10ms.
+            await audio(browser, live, bytes(chunk))
+            start, end, caption, complete = speech("Input caption does not prove audio.")
+            live.emit(start, end, caption, proposal("silent", ["No write"]), complete)
+            assert (await browser.until("action_updated"))["status"] == "needs_clarification"
+            assert not store.actions
+            await browser.until("turn_complete")
+            await live.sent.get()
+            await audio(browser, live)
+            start, end, caption, complete = speech("Fresh audible turn.", base=0.2)
+            live.emit(start, end, caption, proposal("audible", ["Write now"]), complete)
+            assert (await browser.until("action_updated"))["status"] == "applied"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_first_unseen_tool_after_abandoned_or_interrupted_activity_needs_fresh_epoch(
+    monkeypatch, interrupted
+):
+    async def scenario():
+        browser, store = Browser(), Store()
+        first, fresh = Live(), Live()
+        opened = []
+
+        @asynccontextmanager
+        async def connect(_settings, *, run_id):
+            live = first if not opened else fresh
+            opened.append(live)
+            yield live
+
+        monkeypatch.setattr(voice_bridge, "connect_provider", connect)
+        now = datetime.now(UTC)
+        bridge = VoiceV2Bridge(browser, store)
+        task = asyncio.create_task(
+            bridge.run(setup_v2(now, store.settings), None, now + timedelta(seconds=8))
+        )
+        try:
+            await browser.until("ready")
+            await first.sent.get()
+            await audio(browser, first)
+            events = speech("Activity A.", outputs=False)
+            if interrupted:
+                first.emit(*events, {"serverContent": {"interrupted": True, "turnComplete": True}})
+                await browser.until("turn_complete")
+            else:
+                first.emit(events[0])  # missing activity end/terminal before B starts
+            await audio(browser, first)
+            start, end, caption, complete = speech("Activity B.", base=0.2)
+            first.emit(start, end, caption, proposal("unseen-late-from-a", ["Old"]), complete)
+            assert (await browser.until("action_updated"))["status"] == "needs_clarification"
+            assert not store.actions
+            assert not (await browser.until("resumed"))["context_retained"]
+            assert opened == [first, fresh]
+            assert "setup" in await fresh.sent.get()
+            # Reconnect notice, not a replay of the old tool call/audio.
+            assert (await fresh.sent.get())["clientContent"]["turnComplete"] is False
+            await audio(browser, fresh)
+            start, end, caption, complete = speech("Activity C on fresh connection.")
+            fresh.emit(start, end, caption, proposal("fresh", ["C"]), complete)
+            assert (await browser.until("action_updated"))["status"] == "applied"
+            assert len(store.actions) == 1
+        finally:
+            await browser.inbound.put({"type": "websocket.disconnect"})
+            assert await task == "voice_browser_disconnected"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("case", ["fallback", "retry_rejected", "after_audio", "unrelated"])
+def test_language_hint_rejection_falls_back_once_only_before_any_audio(monkeypatch, case):
+    async def scenario():
+        browser, store = Browser(), Store()
+        opened, frames = [], []
+        hint_error = Close(1008, "synthetic languageCodes field unsupported")
+        generic_error = Close(1008, "synthetic invalid tool definition")
+
+        @asynccontextmanager
+        async def connect(_settings, *, run_id):
+            socket = Live()
+            opened.append(socket)
+            if len(opened) == 1 and case != "after_audio":
+                await socket.events.get()
+                socket.emit(
+                    ConnectionClosedError(
+                        generic_error if case == "unrelated" else hint_error, None
+                    )
+                )
+            if len(opened) == 2 and case == "retry_rejected":
+                await socket.events.get()
+                socket.emit(ConnectionClosedError(hint_error, None))
+            yield socket
+            frames.extend(socket.frames)
+
+        monkeypatch.setattr(voice_bridge, "connect_provider", connect)
+        monkeypatch.setenv("MIMI_VOICE_V2_INPUT_LANGUAGE_HINTS", "true")
+        now = datetime.now(UTC)
+        bridge = VoiceV2Bridge(browser, store)
+        task = asyncio.create_task(
+            bridge.run(setup_v2(now, store.settings), None, now + timedelta(seconds=8))
+        )
+        if case in {"fallback", "after_audio"}:
+            await browser.until("ready")
+            sock = opened[-1]
+            await sock.sent.get()
+            await audio(browser, sock)
+            if case == "after_audio":
+                sock.emit(ConnectionClosedError(hint_error, None))
+                assert await task == "voice_provider_setup_rejected"
+            else:
+                await browser.inbound.put({"type": "websocket.disconnect"})
+                assert await task == "voice_browser_disconnected"
+        else:
+            assert await task == "voice_provider_setup_rejected"
+        fallbacks = [event for event in store.events if event[0] == "voice.language_hint_fallback"]
+        assert len(fallbacks) == int(case in {"fallback", "retry_rejected"})
+        assert len(opened) == (1 if case in {"unrelated", "after_audio"} else 2)
+        assert opened[0].frames[0]["setup"]["inputAudioTranscription"]["languageCodes"]
+        if case in {"fallback", "retry_rejected"}:
+            assert opened[1].frames[0]["setup"]["inputAudioTranscription"] == {}
+            assert not any("realtimeInput" in frame for frame in opened[0].frames)
+        assert "field unsupported" not in repr((browser.sent, store.events))
+        assert all(
+            sum("audio" in frame.get("realtimeInput", {}) for frame in sock.frames) <= 1
+            for sock in opened
+        )
+
+    asyncio.run(scenario())

@@ -6,13 +6,53 @@ import re
 from dataclasses import dataclass
 
 FAST_APPLY_MAX = 5
+SAMPLE_RATE = 16_000
+# A finite proof suffix; an older window can still bind if the retained part
+# contains signal. No audio values are retained, only sample-presence bits.
+SIGNAL_WINDOW_SAMPLES = 30 * SAMPLE_RATE
 
 
-def offset_ms(value) -> int | None:
+def _offset_ns(value) -> int | None:
     if not isinstance(value, str) or not re.fullmatch(r"\d{1,6}(?:\.\d{1,9})?s", value):
         return None
     whole, _, fraction = value[:-1].partition(".")
-    return int(whole) * 1000 + int((fraction + "000")[:3])
+    return int(whole) * 1_000_000_000 + int(fraction.ljust(9, "0"))
+
+
+def offset_ms(value) -> int | None:
+    ns = _offset_ns(value)
+    return None if ns is None else ns // 1_000_000
+
+
+def _sample_at_or_after(ns):
+    return (ns * SAMPLE_RATE + 999_999_999) // 1_000_000_000
+
+
+class SignalWindow:
+    def __init__(self, floor=0):
+        self.total = self.floor = floor
+        self._presence = bytearray(SIGNAL_WINDOW_SAMPLES)
+
+    def record(self, pcm):
+        flags = bytes(sample != 0 for sample in memoryview(pcm).cast("H"))
+        index = self.total % SIGNAL_WINDOW_SAMPLES
+        first = min(len(flags), SIGNAL_WINDOW_SAMPLES - index)
+        self._presence[index : index + first] = flags[:first]
+        if first != len(flags):
+            self._presence[: len(flags) - first] = flags[first:]
+        self.total += len(flags)
+
+    def contains(self, start, end):
+        start = max(start, self.floor, self.total - SIGNAL_WINDOW_SAMPLES)
+        end = min(end, self.total)
+        if end <= start:
+            return False
+        index = start % SIGNAL_WINDOW_SAMPLES
+        first = min(end - start, SIGNAL_WINDOW_SAMPLES - index)
+        return (
+            self._presence.find(b"\x01", index, index + first) != -1
+            or self._presence.find(b"\x01", 0, end - start - first) != -1
+        )
 
 
 @dataclass(frozen=True)
@@ -50,16 +90,30 @@ class SpeechWindow:
     end_ms: int | None = None
     uncertain: bool = False
     conflicted: bool = False
+    start_sample: int | None = None
+    end_sample: int | None = None
+
+    def has_signal(self, signal):
+        return (
+            self.start_sample is not None
+            and self.end_sample is not None
+            and signal.contains(self.start_sample, self.end_sample)
+        )
 
     def activity(self, event, forwarded_ms):
         if not isinstance(event, dict):
             self.uncertain = True
             return
-        offset = offset_ms(event.get("audioOffset"))
-        if offset is None or offset <= self.floor_ms or offset > forwarded_ms:
+        ns = _offset_ns(event.get("audioOffset"))
+        if ns is None:
+            self.uncertain = True
+            return
+        offset = ns // 1_000_000
+        if offset <= self.floor_ms or ns > forwarded_ms * 1_000_000:
             self.uncertain = True
         elif event.get("type") == "ACTIVITY_START" and self.start_ms is None:
             self.start_ms = offset
+            self.start_sample = _sample_at_or_after(ns)
         elif (
             event.get("type") == "ACTIVITY_END"
             and self.start_ms is not None
@@ -67,6 +121,7 @@ class SpeechWindow:
             and offset > self.start_ms
         ):
             self.end_ms = offset
+            self.end_sample = _sample_at_or_after(ns)
         else:
             self.uncertain = True
             self.conflicted = True

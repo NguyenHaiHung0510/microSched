@@ -26,7 +26,7 @@ from app.agent.voice_protocol import (
     pcm,
     server_event,
 )
-from app.agent.voice_v2_intent import SpeechWindow
+from app.agent.voice_v2_intent import SAMPLE_RATE, SignalWindow, SpeechWindow
 from app.agent.voice_v2_outcome import VoiceActionOutcome
 from app.agent.voice_v2_protocol import ACTION_TOOLS, v2_tool_request
 from app.agent.voice_v2_store import VoiceContextChanged, VoiceSources
@@ -57,6 +57,19 @@ class _UpstreamDrop(Exception):
     pass
 
 
+class _LanguageHintRejected(Exception):
+    pass
+
+
+def _is_language_hint_rejection(error):
+    close = error.rcvd if isinstance(error, ConnectionClosed) else None
+    return (
+        close is not None
+        and close.code in {1007, 1008}
+        and any(field in close.reason.lower() for field in ("languagecodes", "language_codes"))
+    )
+
+
 class VoiceV2Bridge:
     def __init__(self, browser, store):
         self.browser, self.store = browser, store
@@ -76,8 +89,12 @@ class VoiceV2Bridge:
         self.send_uncertain = False
         self.usage, self.seen = [], set()
         self.handle = None
-        self.forwarded_ms = self.forwarded_bytes = 0
+        self.forwarded_ms = 0
+        self.signal = SignalWindow()
         self.native = False
+        self.epoch_ambiguous = False
+        self.awaiting_provider_boundary = False
+        self.hint_fallback_used = False
         self.sources = VoiceSources()
         self.pending_notice = None
         self.deferred_events = deque()
@@ -208,16 +225,26 @@ class VoiceV2Bridge:
             return self._close("voice_browser_disconnected")
         return self._close("voice_time_limit")
 
-    async def _provider_write(self, socket, value, *, mic=False):
+    async def _provider_write(self, socket, value, *, mic=False, audio=None):
         async with self.provider_lock:
             self._need_active()
             if mic and time.monotonic() >= self.authority_until:
                 raise VoiceError("voice_authority_expired")
+            if audio and self.muted:
+                return
             try:
                 async with asyncio.timeout(3):
                     await socket.send(encoded(value))
-            except _DROPS:
+                if audio:
+                    self.signal.record(audio)
+                    self.forwarded_ms = self.signal.total * 1000 // SAMPLE_RATE
+            except _DROPS as error:
+                if self.ready and _is_language_hint_rejection(error):
+                    raise VoiceError("voice_provider_setup_rejected") from None
                 self.send_uncertain = True
+                if mic:
+                    self.action_cancelled = True
+                    self.epoch_ambiguous = True
                 raise _UpstreamDrop from None
             except asyncio.CancelledError:
                 self.send_uncertain = True
@@ -226,7 +253,9 @@ class VoiceV2Bridge:
     async def _provider_read(self, socket):
         try:
             return server_event(await socket.recv())
-        except _DROPS:
+        except _DROPS as error:
+            if self.ready and _is_language_hint_rejection(error):
+                raise VoiceError("voice_provider_setup_rejected") from None
             raise _UpstreamDrop from None
 
     async def _mic_to_provider(self, socket):
@@ -235,9 +264,6 @@ class VoiceV2Bridge:
             if data:
                 if self.muted:
                     continue
-                self.forwarded_bytes += len(data)
-                self.forwarded_ms += self.forwarded_bytes // 32
-                self.forwarded_bytes %= 32
                 value = {
                     "audio": {
                         "mimeType": "audio/pcm;rate=16000",
@@ -246,7 +272,7 @@ class VoiceV2Bridge:
                 }
             else:
                 value = {"audioStreamEnd": True}
-            await self._provider_write(socket, {"realtimeInput": value}, mic=True)
+            await self._provider_write(socket, {"realtimeInput": value}, mic=True, audio=data)
 
     async def _tool_response(self, socket, identity, wire, result):
         await self._provider_write(
@@ -260,12 +286,17 @@ class VoiceV2Bridge:
             },
         )
 
-    async def _tool_calls(self, socket, envelope):
+    async def _tool_calls(self, socket, envelope, *, new_audio):
         calls = envelope.get("functionCalls") if isinstance(envelope, dict) else None
         if not isinstance(calls, list) or not 1 <= len(calls) <= MAX_PENDING:
             raise VoiceError("voice_tool_limit")
         for call in calls:
             identity, wire, name, arguments = v2_tool_request(call, self.store.settings)
+            if not new_audio:
+                if name in ACTION_TOOLS:
+                    self.epoch_ambiguous = True
+                    self.handle = None
+                continue
             if identity in self.seen:
                 # An exact duplicate is inert. Mixed replay/new calls cannot
                 # silently apply only the surviving fragment of a request.
@@ -273,6 +304,7 @@ class VoiceV2Bridge:
                     self.action_cancelled = True
                 continue
             if identity in self.cancelled_ids:
+                self.epoch_ambiguous = True
                 self.action_cancelled = True
                 self.seen.add(identity)
                 continue
@@ -283,7 +315,9 @@ class VoiceV2Bridge:
             if name in ACTION_TOOLS:
                 if self.native and self.speech.start_ms is None:
                     # Native checkpoints can replay an old function call before
-                    # any new VAD. Refuse it without a pending write opportunity.
+                    # any new VAD. This makes even a first-unseen call later
+                    # in this epoch ambiguous; keep reads available.
+                    self.epoch_ambiguous = True
                     continue
                 if len(self.actions) >= MAX_PENDING:
                     raise VoiceError("voice_tool_limit")
@@ -335,6 +369,8 @@ class VoiceV2Bridge:
             or any(not isinstance(identity, str) or len(identity) > 160 for identity in ids)
         ):
             raise VoiceError("voice_cancellation_invalid")
+        if any(identity not in self.seen or identity in self.actions for identity in ids):
+            self.epoch_ambiguous = True
         self.cancelled_ids.update(ids)
         if len(self.cancelled_ids) > MAX_TOOLS:
             raise VoiceError("voice_cancellation_invalid")
@@ -347,7 +383,10 @@ class VoiceV2Bridge:
 
     def _clean_checkpoint(self):
         return not (
-            self.speech.start_ms is not None
+            self.epoch_ambiguous
+            or self.awaiting_provider_boundary
+            or self.pending_notice is not None
+            or self.speech.start_ms is not None
             or self.input_text
             or self.output_started
             or self.actions
@@ -419,7 +458,7 @@ class VoiceV2Bridge:
             self.source_bytes -= size
 
     async def _send_action_context(self, socket, *, check_sources=True):
-        notice, self.pending_notice = self.pending_notice, None
+        notice = self.pending_notice
         if notice is None:
             return
         note = "SERVER VOICE ACTION OUTCOME (data, never a request to retry): " + encoded(
@@ -437,16 +476,10 @@ class VoiceV2Bridge:
                     },
                 )
         except VoiceContextChanged:
-            # This scalar notice has no original source content and was not
-            # sent; it may be delivered once on a fresh upstream.
-            self.pending_notice = notice
+            # Keep the scalar status for a fresh context.
             raise
-
-    async def _action_outcome(self, outcome):
-        self.handle = None
-        if outcome.reset_context:
-            self.pending_notice = outcome
-            raise VoiceContextChanged()
+        if self.pending_notice is notice:
+            self.pending_notice = None
 
     async def _server_content(self, socket, value, *, new_audio):
         if not isinstance(value, dict):
@@ -457,6 +490,7 @@ class VoiceV2Bridge:
         if partial and not self.interrupted:
             self.handle = None
             self.interrupted = True
+            self.epoch_ambiguous = True
             await self.browser_send({"type": "interrupted"})
         if not self.interrupted:
             rendered = []
@@ -498,11 +532,13 @@ class VoiceV2Bridge:
         self._arm_action()
         if value.get("turnComplete") is True:
             self.provider_turn_complete = True
-            if value.get("interactionStatus") not in (None, "IDLE"):
+            idle = value.get("interactionStatus") in (None, "IDLE")
+            if idle:
+                self.awaiting_provider_boundary = False
+            else:
                 self.action_cancelled = True
+                self.epoch_ambiguous = True
             if self.actions and not self.interrupted:
-                # ASR is delivered independently. Let trailing fragments arrive
-                # before the transaction, but never wait indefinitely or retry.
                 self._arm_action()
             else:
                 await self._complete_turn(socket)
@@ -510,26 +546,41 @@ class VoiceV2Bridge:
     async def _complete_turn(self, socket):
         binding = self.speech.bind(self.epoch, self.turn, self.actions)
         turn, epoch, serial = self.turn, self.epoch, self.activity_serial
+        if self.speech.start_ms is not None and (
+            self.speech.end_ms is None or self.speech.uncertain
+        ):
+            self.epoch_ambiguous = True
+        # The tool call carries no provider audio-turn ID. Never promote a
+        # previously tainted epoch merely because an unseen ID arrives.
+        ambiguous_at_entry = self.epoch_ambiguous or self.unbound_action
         try:
             saved = await self._save_turn(partial=self.interrupted)
         except VoiceContextChanged:
             if self.actions:
                 outcome = VoiceActionOutcome("rejected", "voice_source_changed", reset_context=True)
+                self.handle = None
+                self.pending_notice = outcome
+                self.refresh_context_history = True
                 await self.browser_send(outcome.event())
                 await self.browser_send({"type": "turn_complete", "interrupted": True})
-                await self._action_outcome(outcome)
             raise
         outcome = None
         if self.actions:
+            self.awaiting_provider_boundary |= not self.provider_turn_complete
             if (
                 binding is None
-                or self.unbound_action
+                or ambiguous_at_entry
+                or not self.speech.has_signal(self.signal)
                 or self.interrupted
                 or self.action_cancelled
                 or self.speech.conflicted
                 or self.muted
             ):
-                outcome = VoiceActionOutcome("needs_clarification", "voice_spoken_intent_unproven")
+                outcome = VoiceActionOutcome(
+                    "needs_clarification",
+                    "voice_spoken_intent_unproven",
+                    reset_context=self.epoch_ambiguous,
+                )
             else:
                 if not saved:
                     # Allocate a durable turn even when Gemini emits no caption.
@@ -549,6 +600,8 @@ class VoiceV2Bridge:
                         and not self.action_cancelled
                         and not self.interrupted
                         and not self.speech.uncertain
+                        and self.speech.has_signal(self.signal)
+                        and not self.epoch_ambiguous
                         and self.turn == turn
                         and self.epoch == epoch
                         and self.activity_serial == serial
@@ -580,6 +633,10 @@ class VoiceV2Bridge:
         self._clear_turn(keep_floor=True)
         if outcome is not None:
             self.action_outcomes[outcome.reason] += 1
+            if outcome.status in {"applied", "undone", "preview"}:
+                # Hold the scalar truth before any socket await. If a result
+                # cannot be delivered, the fresh context needs this status.
+                self.pending_notice = outcome
             if outcome.status == "unknown":
                 # The browser's terminal path already refreshes saved results.
                 # A rejected action event would briefly claim "not applied".
@@ -587,11 +644,13 @@ class VoiceV2Bridge:
             self.awaiting_manual |= outcome.status == "preview"
             await self.browser_send(outcome.event())
             if outcome.reset_context:
-                await self.browser_send({"type": "turn_complete", "interrupted": True})
-            await self._action_outcome(outcome)
+                # Send the clarification to the current tool when safe, then
+                # retire this context before accepting another proposal.
+                self.refresh_context_history = True
             # A status result crosses no stale plaintext. If our own commit
             # invalidates prior tool facts, retire that model context and send
             # only a scalar outcome on the fresh connection.
+            responses = [pair for pair in responses if pair[0] not in self.cancelled_ids]
             async with self.store.live_gate():
                 if responses:
                     result = outcome.model_result()
@@ -609,11 +668,15 @@ class VoiceV2Bridge:
             try:
                 async with self.store.live_gate(self.sources, detail=True):
                     pass
+                if outcome.reset_context:
+                    raise VoiceContextChanged()
             except VoiceContextChanged:
                 self.pending_notice = outcome
                 self.refresh_context_history = True
                 await self.browser_send({"type": "turn_complete", "interrupted": interrupted})
                 raise
+            if self.pending_notice is outcome:
+                self.pending_notice = None
         await self.browser_send({"type": "turn_complete", "interrupted": interrupted})
 
     async def _complete_with_live_events(self, socket):
@@ -652,6 +715,7 @@ class VoiceV2Bridge:
                         or event.get("serverContent", {}).get("interrupted") is True
                     ):
                         self.action_cancelled = True
+                        self.epoch_ambiguous = True
                     if "toolCallCancellation" in event:
                         self._cancellations(event["toolCallCancellation"])
                     content = event.get("serverContent")
@@ -710,17 +774,22 @@ class VoiceV2Bridge:
             ):
                 self.action_cancelled = True
                 self.interrupted = True
+                self.epoch_ambiguous = True
                 await self.browser_send({"type": "interrupted"})
                 await self._complete_turn(socket)
             if isinstance(activity, dict) and activity.get("type") == "ACTIVITY_START":
                 self.activity_serial += 1
+                if self.awaiting_provider_boundary or self.speech.start_ms is not None:
+                    self.epoch_ambiguous = True
             self.speech.activity(activity, self.forwarded_ms)
+            if self.speech.conflicted:
+                self.epoch_ambiguous = True
             self._arm_action()
             self.handle = None
         if "toolCallCancellation" in event:
             self._cancellations(event["toolCallCancellation"])
-        if "toolCall" in event and new_audio:
-            await self._tool_calls(socket, event["toolCall"])
+        if "toolCall" in event and (new_audio or self.native):
+            await self._tool_calls(socket, event["toolCall"], new_audio=new_audio)
         if "serverContent" in event:
             await self._server_content(socket, event["serverContent"], new_audio=new_audio)
         if "sessionResumptionUpdate" in event:
@@ -732,9 +801,12 @@ class VoiceV2Bridge:
         self.deferred_events.clear()
         self.native = handle is not None
         if not self.native:
-            self.forwarded_ms = self.forwarded_bytes = 0
+            self.forwarded_ms = 0
             self.sources = VoiceSources()
             # Fresh sockets get a new audio timeline and no old authority.
+            self.epoch_ambiguous = False
+        self.signal = SignalWindow(self.signal.total if self.native else 0)
+        self.awaiting_provider_boundary = False
         floor = self.forwarded_ms
         self._clear_turn()
         if self.native:
@@ -755,7 +827,24 @@ class VoiceV2Bridge:
                         voice_bridge.connect_provider(self.store.settings, run_id=self.store.run_id)
                     )
                     await self._provider_write(socket, setup)
-                event = await asyncio.wait_for(self._provider_read(socket), timeout=10)
+                try:
+                    raw = await asyncio.wait_for(socket.recv(), timeout=10)
+                except ConnectionClosed as error:
+                    close = error.rcvd
+                    if close is not None and close.code in {1007, 1008}:
+                        hint = (
+                            setup["setup"].get("inputAudioTranscription", {}).get("languageCodes")
+                        )
+                        if (
+                            not self.ready
+                            and hint
+                            and not self.hint_fallback_used
+                            and _is_language_hint_rejection(error)
+                        ):
+                            raise _LanguageHintRejected from None
+                        raise VoiceError("voice_provider_setup_rejected") from None
+                    raise
+                event = server_event(raw)
             except _DROPS:
                 raise _UpstreamDrop from None
             if not isinstance(event.get("setupComplete"), dict):
@@ -817,15 +906,24 @@ class VoiceV2Bridge:
             self.epoch += 1
             handle, self.handle = self.handle, None
             try:
-                epoch_config, epoch_seed = config, seed if self.epoch == 1 else None
+                epoch_config, epoch_seed = config, seed if not self.ready else None
                 if handle is None and self.refresh_context_history:
                     self.refresh_context_history = False
                     if refresh := getattr(self.store, "fresh_history", None):
                         epoch_config, epoch_seed = await refresh(config)
                 await self._transport(epoch_config, epoch_seed, handle)
+            except _LanguageHintRejected:
+                self.hint_fallback_used = True
+                config = deepcopy(config)
+                config["setup"]["inputAudioTranscription"] = {}
+                await self.store.event("voice.language_hint_fallback", {"epoch": self.epoch})
+                continue
             except VoiceContextChanged:
                 self.handle = None  # Never send a handle with now-revoked context.
             except (_UpstreamDrop, *_DROPS):
+                if self.pending_notice is not None:
+                    self.handle = None
+                    self.refresh_context_history = True
                 if self.muted:
                     return "voice_provider_disconnected"
                 if self.input_text or self.output_text:
@@ -858,10 +956,10 @@ class VoiceV2Bridge:
         if outcome is None or outcome.receipt_id == self.last_manual_receipt or self.actions:
             return
         # Only a receipt observable in a new transaction reaches this channel.
-        await self.browser_send(outcome.event())
         self.last_manual_receipt = outcome.receipt_id
         self.awaiting_manual = False
         self.pending_notice = outcome
+        await self.browser_send(outcome.event())
         if self.socket is not None:
             try:
                 await self._send_action_context(self.socket, check_sources=False)

@@ -1,7 +1,9 @@
 """Repair74 full socket/store matrix; only the leased disposable synthetic PG."""
 
 import asyncio
+import json
 from concurrent.futures import Future
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 import pytest
@@ -10,7 +12,7 @@ from test_mimi_voice_pg import HEADERS, endpoint
 from test_mimi_voice_v2 import proposal, speech
 from test_mimi_voice_v2_pg import confirm, receive_to, rows, say, snapshot, start, tool, turn
 
-from app.agent import voice_v2_store
+from app.agent import voice_bridge, voice_v2_store
 from app.agent.voice_v2_store import receipt_ref
 
 pytestmark = pytest.mark.pg
@@ -449,3 +451,179 @@ def test_split_plan_has_no_preview_no_fragment_and_no_receipt(v2_runtime, monkey
         stop(ws)
     state = snapshot(rt, cid)
     assert not state["receipts"] and not state["change_sets"] and not rows(rt)
+
+
+def test_zero_pcm_with_provider_vad_has_no_preview_receipt_or_task(v2_runtime, monkeypatch):
+    rt = v2_runtime
+    cid, issued, _ = start(
+        rt,
+        monkeypatch,
+        turn("Fake caption and VAD.", proposal("zero", [f"{rt.stem} zero"])),
+        turn("Fresh activity.", proposal("audible", [f"{rt.stem} audible"]), base=0.2),
+    )
+    with open_voice(rt, issued, cid) as ws:
+        hello(ws, issued)
+        ws.send_bytes(bytes(len(fixtures.PCM)))
+        result = receive_to(ws, "turn_complete")
+        assert [r["status"] for r in result if r["type"] == "action_updated"] == [
+            "needs_clarification"
+        ]
+        state = snapshot(rt, cid)
+        assert not rows(rt) and not state["receipts"] and not state["change_sets"]
+        assert say(ws) == ["applied"]
+        stop(ws)
+    assert len(rows(rt)) == len(snapshot(rt, cid)["receipts"]) == 1
+
+
+def test_durable_voice_ack_survives_failed_upstream_tool_response(v2_runtime, monkeypatch):
+    from test_mimi_voice_v2 import Live
+
+    rt = v2_runtime
+    captured = []
+    batches = iter([turn("Make the task.", proposal("drop-ack", [f"{rt.stem} ack"]))])
+    cid, issued, _ = start(rt, monkeypatch)
+
+    class Socket(Live):
+        async def send(self, raw):
+            value = json.loads(raw)
+            await super().send(raw)
+            if "toolResponse" in value and self is captured[0]:
+                raise OSError("synthetic link dropped at durable tool result")
+            if "audio" in value.get("realtimeInput", {}):
+                self.emit(*next(batches, ()))
+
+    @asynccontextmanager
+    async def connect(settings, *, run_id):
+        assert str(run_id) == issued["run_id"]
+        socket = Socket()
+        captured.append(socket)
+        yield socket
+
+    monkeypatch.setattr(voice_bridge, "connect_provider", connect)
+    with open_voice(rt, issued, cid) as ws:
+        hello(ws, issued)
+        ws.send_bytes(fixtures.PCM)
+        applied = receive_to(ws, "action_updated")[-1]
+        assert applied["status"] == "applied"
+        assert not receive_to(ws, "resumed")[-1]["context_retained"]
+        assert len(captured) == 2
+        notes = [
+            f["clientContent"]
+            for f in captured[1].frames
+            if f.get("clientContent", {}).get("turnComplete") is False
+        ]
+        assert len(notes) == 1
+        assert '"status":"applied"' in str(notes) and "receipt_ref" in str(notes)
+        assert applied["receipt_id"] not in str(notes)
+        assert not any(
+            "realtimeInput" in frame or "toolResponse" in frame for frame in captured[1].frames
+        )
+        stop(ws)
+    (receipt,) = snapshot(rt, cid)["receipts"]
+    assert applied["receipt_id"] == receipt["id"] and len(rows(rt)) == 1
+
+
+def test_cancel_during_commit_submission_preserves_durable_truth(v2_runtime, monkeypatch):
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from test_mimi_voice_v2 import Live
+    from test_mimi_voice_v2_pg import mint, new_conversation
+
+    from app.agent.voice_v2_bridge import _active_bridges
+
+    rt = v2_runtime
+    submitted, release = Future(), Future()
+    original_confirm, original_commit = voice_v2_store._confirm_collection, AsyncSession.commit
+
+    async def tag(*args):
+        result = await original_confirm(*args)
+        args[0].info["fixture_voice_commit_barrier"] = True
+        return result
+
+    async def commit(db):
+        if db.info.pop("fixture_voice_commit_barrier", False):
+            # At the app's commit API entry, delay driver execution so the
+            # provider can cancel after the final fence but before DB ACK.
+            submitted.set_result(True)
+            await asyncio.shield(asyncio.wrap_future(release))
+        await original_commit(db)
+
+    monkeypatch.setattr(voice_v2_store, "_confirm_collection", tag)
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    cid, generation = new_conversation(rt.client, rt.ids)
+    issued = mint(rt.client, cid, generation)
+    sockets = []
+
+    class Socket(Live):
+        async def send(self, raw):
+            value = json.loads(raw)
+            await super().send(raw)
+            if "audio" in value.get("realtimeInput", {}):
+                self.emit(*turn("One request.", proposal("in-flight", [f"{rt.stem} durable"])))
+
+    @asynccontextmanager
+    async def connect(settings, *, run_id):
+        socket = Socket()
+        sockets.append(socket)
+        yield socket
+
+    monkeypatch.setattr(voice_bridge, "connect_provider", connect)
+    with open_voice(rt, issued, cid) as ws:
+        hello(ws, issued)
+        ws.send_bytes(fixtures.PCM)
+        assert submitted.result(timeout=4)
+
+        async def cancel_seen():
+            sockets[0].emit({"toolCallCancellation": {"ids": ["in-flight"]}})
+            async with asyncio.timeout(2):
+                while "in-flight" not in _active_bridges[UUID(issued["run_id"])].cancelled_ids:
+                    await asyncio.sleep(0)
+
+        rt.client.portal.call(cancel_seen)
+        release.set_result(True)
+        result = receive_to(ws, "action_updated")[-1]
+        assert result["status"] == "applied" and result["receipt_id"]
+        stop(ws)
+    (receipt,) = snapshot(rt, cid)["receipts"]
+    assert result["receipt_id"] == receipt["id"] and len(rows(rt)) == 1
+    assert not any("toolResponse" in frame for frame in sockets[0].frames)
+
+
+def test_latest_rejects_inverse_but_voice_exact_matches_button_cas(v2_runtime, monkeypatch):
+    rt = v2_runtime
+    cid, original, _, _ = created(rt, monkeypatch, [f"{rt.stem} exact inverse"])
+    cid, issued, _ = start(
+        rt,
+        monkeypatch,
+        turn("Roll it back.", tool("voice_undo_latest_v1", "inverse", {"target": "latest"})),
+        cid=cid,
+    )
+    with open_voice(rt, issued, cid) as ws:
+        hello(ws, issued)
+        assert say(ws) == ["undone"]
+        stop(ws)
+    inverse = snapshot(rt, cid)["receipts"][-1]
+    assert inverse["id"] != original["id"] and rows(rt)[0]["deleted_at"] is not None
+
+    # The explicit UI comparison is the existing read-only eligibility oracle.
+    diff = rt.client.get(f"/api/mimi/receipts/{inverse['id']}/diff")
+    assert diff.is_success and diff.json()["undo_available"] is True
+    ref = receipt_ref(UUID(cid), UUID(inverse["id"]))
+    cid, issued, _ = start(
+        rt,
+        monkeypatch,
+        turn("Undo latest.", tool("voice_undo_latest_v1", "latest", {"target": "latest"})),
+        turn(
+            "Undo that exact previous inverse.",
+            tool("voice_undo_latest_v1", "exact", {"target": "receipt", "receipt_ref": ref}),
+            base=0.2,
+        ),
+        cid=cid,
+    )
+    with open_voice(rt, issued, cid) as ws:
+        hello(ws, issued)
+        assert say(ws) == ["rejected"]
+        assert len(snapshot(rt, cid)["receipts"]) == 2
+        assert say(ws) == ["undone"]
+        stop(ws)
+    assert len(snapshot(rt, cid)["receipts"]) == 3
+    assert rows(rt)[0]["deleted_at"] is None

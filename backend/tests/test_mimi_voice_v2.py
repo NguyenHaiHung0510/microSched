@@ -24,7 +24,7 @@ from app.agent.voice_v2_protocol import setup_v2
 from app.agent.voice_v2_store import VoiceContextChanged, VoiceSources
 from app.core.settings import Settings
 
-PCM = b"\0" * 6400
+PCM = b"\x01\x00" * 3200
 
 
 class Browser:
@@ -154,8 +154,8 @@ def proposal(identity, titles):
     }
 
 
-async def audio(browser, provider):
-    await browser.inbound.put({"type": "websocket.receive", "bytes": PCM})
+async def audio(browser, provider, data=PCM):
+    await browser.inbound.put({"type": "websocket.receive", "bytes": data})
     return await asyncio.wait_for(provider.sent.get(), timeout=2)
 
 
@@ -208,7 +208,7 @@ def test_setup_keeps_v1_wire_and_leases_only_current_v2_capabilities():
 def test_early_live_drop_resumes_same_mic_without_audio_asr_or_actions_replay(monkeypatch, drop):
     async def scenario():
         browser, store = Browser(), Store()
-        sockets = [Live(), Live()]
+        sockets = [Live(), Live(), Live()]
         opened = []
 
         @asynccontextmanager
@@ -240,21 +240,34 @@ def test_early_live_drop_resumes_same_mic_without_audio_asr_or_actions_replay(mo
         resumed_setup = await sockets[1].sent.get()
         assert resumed_setup["setup"]["sessionResumption"] == {"handle": "only-in-memory"}
         assert len(sockets[1].frames) == 1
-        await audio(browser, sockets[1])
+        # A resumed socket replaying a tool before new mic bytes taints the
+        # epoch. An unseen candidate after fresh VAD must still clarify.
         sockets[1].emit(proposal("old", ["stale"]), speech("tạo task stale")[2])
+        await audio(browser, sockets[1])
         sockets[1].emit(
-            *speech("tạo task mới", base=0.6, outputs=False),
-            proposal("new", ["mới"]),
-            *speech("", outputs=True)[-1:],
+            *speech("lượt còn mơ hồ", base=0.6, outputs=False),
+            proposal("late-unseen", ["stale"]),
+            speech("")[-1],
         )
-        await browser.until("action_updated")
+        assert (await browser.until("action_updated"))["status"] == "needs_clarification"
+        assert not store.actions
+        assert not (await browser.until("resumed"))["context_retained"]
+        assert "setup" in await sockets[2].sent.get()
+        assert (await sockets[2].sent.get())["clientContent"]["turnComplete"] is False
+        await audio(browser, sockets[2])
+        sockets[2].emit(
+            *speech("tạo task mới", outputs=False),
+            proposal("new", ["mới"]),
+            speech("")[-1],
+        )
+        assert (await browser.until("action_updated"))["status"] == "applied"
         assert store.saved[-1][1] == "tạo task mới"
         assert store.actions[0][3].call_ids == ("new",)
         await browser.inbound.put({"type": "websocket.receive", "text": '{"type":"stop"}'})
         assert await asyncio.wait_for(runner, timeout=2) == "voice_stopped"
         assert len(store.actions) == 1
-        assert len(store.saved) == 4
-        assert store.final["counters"]["connection_attempts"] == 2
+        assert len(store.saved) == 5
+        assert store.final["counters"]["connection_attempts"] == 3
         assert "only-in-memory" not in repr((store.events, store.final, browser.sent))
         assert bridge.deadline == absolute
 
