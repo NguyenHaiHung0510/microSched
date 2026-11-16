@@ -338,7 +338,13 @@ class VoiceStore:
                     dek=crypto.unwrap_dek(conversation.dek_wrapped),
                     settings=self.settings,
                 )
-                if lifecycle["previews"]:
+                from app.agent.voice_v2_store import voice_receipt_context
+
+                lifecycle = {
+                    "previews": [{"state": p["effective_state"]} for p in lifecycle["previews"]],
+                    **await voice_receipt_context(db, self.auth, conversation),
+                }
+                if lifecycle["previews"] or lifecycle["recent_receipts"]:
                     turns.append(
                         {
                             "role": "user",
@@ -376,7 +382,20 @@ class VoiceStore:
                     "limited_by_voice_bytes": limited,
                 },
             )
-            run.execution_lease = {**lease, "ticket_used": True, "ticket_sha256": None}
+            run.execution_lease = {
+                **lease,
+                "ticket_used": True,
+                "ticket_sha256": None,
+                **(
+                    {
+                        "voice_receipt_refs": [
+                            row["receipt_ref"] for row in lifecycle["recent_receipts"]
+                        ]
+                    }
+                    if v2
+                    else {}
+                ),
+            }
             call = (
                 await db.scalars(select(MimiProviderCall).where(MimiProviderCall.run_id == run.id))
             ).one()

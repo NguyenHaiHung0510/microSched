@@ -323,30 +323,22 @@ def test_voice_uses_one_existing_preview_when_fast_apply_is_not_authorized(
             "/api/mimi/voice-preferences", json={"fast_apply": False}, headers=CSRF
         ).is_success
     cmd = ("Tạo các việc sau: " if count == 6 else "Tạo việc: ") + ", ".join(names)
-    if count == 6:
-        # An incomplete known fragment produces neither apply nor preview. A
-        # full request split in the same turn freezes exactly one preview.
-        script = [
-            turn(cmd, proposal("first-fragment", names[:5])),
-            turn(cmd, proposal("pack-a", names[:3]), proposal("pack-b", names[3:]), base=0.2),
-        ]
-    else:
-        script = [turn(cmd, proposal("all", names), proven=mode != "ambiguous")]
+    script = [turn(cmd, proposal("all", names), proven=mode != "ambiguous")]
     cid, issued, _ = start(rt, monkeypatch, *script)
     with rt.client.websocket_connect(
         endpoint(cid, issued), headers={"origin": "http://testserver"}
     ) as ws:
         ws.send_json({"type": "ticket", "ticket": issued["ticket"]})
         receive_to(ws, "ready")
-        if count == 6:
-            assert say(ws) == ["needs_clarification"]
-            assert snapshot(rt, cid)["change_sets"] == []
-        assert say(ws) == ["preview"]
+        assert say(ws) == ["needs_clarification" if mode == "ambiguous" else "preview"]
         assert not rows(rt)
         ws.send_json({"type": "stop"})
         receive_to(ws, "ended")
     use(rt, 1)
     view = snapshot(rt, cid)
+    if mode == "ambiguous":
+        assert not view["change_sets"] and not view["receipts"]
+        return
     (preview,) = view["change_sets"]
     assert preview["state"] == "pending" and not view["receipts"]
     path = f"/api/mimi/change-sets/{preview['id']}/decision"
@@ -392,6 +384,8 @@ def test_one_natural_date_manual_voice_receipt_can_be_undone_in_same_call(v2_run
         use(rt, 1)
         response = confirm(rt, preview)
         assert response.is_success, response.text
+        ack = receive_to(ws, "action_updated")[-1]
+        assert ack["status"] == "applied" and ack["receipt_id"] == response.json()["id"]
         assert len(rows(rt)) == 1
         assert rt.client.patch(
             "/api/mimi/voice-preferences", headers=CSRF, json={"fast_apply": True}
@@ -470,7 +464,7 @@ def test_authorized_read_selection_and_exact_target_edit_in_voice(v2_runtime, mo
     )
     hidden_id = str(private["id"])
     replies = {}
-    chosen = [other_id]
+    chosen = [valid_id]
 
     def plan_when_selected(response):
         name = response["name"]
@@ -537,7 +531,6 @@ def test_authorized_read_selection_and_exact_target_edit_in_voice(v2_runtime, mo
         rt,
         monkeypatch,
         lambda: utterance(0.0),
-        lambda: utterance(0.2),
         on_tool=plan_when_selected,
     )
     with rt.client.websocket_connect(
@@ -545,8 +538,6 @@ def test_authorized_read_selection_and_exact_target_edit_in_voice(v2_runtime, mo
     ) as ws:
         ws.send_json({"type": "ticket", "ticket": issued["ticket"]})
         receive_to(ws, "ready")
-        assert say(ws) == ["needs_clarification"]  # typed candidate used a different Task ID
-        assert snapshot(rt, cid)["change_sets"] == []
         assert say(ws) == ["applied"]
         ws.send_json({"type": "stop"})
         receive_to(ws, "ended")
@@ -705,3 +696,35 @@ def test_voice_write_rolls_back_task_and_receipt_together_and_undo_refuses_newer
         ws.send_json({"type": "stop"})
         receive_to(ws, "ended")
     assert len(snapshot(rt, cid)["receipts"]) == 1
+
+
+@pytest.mark.parametrize(("count", "expected"), [(1, "applied"), (5, "applied"), (6, "preview")])
+def test_natural_model_plan_uses_exact_cardinality_without_caption_grammar(
+    v2_runtime, monkeypatch, count, expected
+):
+    rt = v2_runtime
+    titles = [f"{rt.stem} natural {n}" for n in range(count)]
+    seen = []
+    cid, issued, _ = start(
+        rt,
+        monkeypatch,
+        turn("Mimi lên giúp mình nguyên nhóm việc hôm nay nhé.", proposal("natural", titles)),
+        on_tool=lambda response: seen.append(response),
+    )
+    with rt.client.websocket_connect(endpoint(cid, issued), headers=HEADERS) as ws:
+        ws.send_json({"type": "ticket", "ticket": issued["ticket"]})
+        receive_to(ws, "ready")
+        assert say(ws) == [expected]
+        view = snapshot(rt, cid)
+        if expected == "preview":
+            assert rows(rt) == []
+            assert len([c for c in view["change_sets"] if c["state"] == "pending"]) == 1
+            change = [c for c in view["change_sets"] if c["state"] == "pending"][0]
+            assert len(change["operation"]["args"]["entries"]) == count
+        else:
+            assert [r["title"] for r in rows(rt)] == titles
+            assert [c for c in view["change_sets"] if c["state"] == "pending"] == []
+            assert len(seen) == 1 and seen[0]["id"] == "natural"
+        assert len([c for c in view["change_sets"] if c["state"] == "pending"]) <= 1
+        ws.send_json({"type": "stop"})
+        receive_to(ws, "ended")

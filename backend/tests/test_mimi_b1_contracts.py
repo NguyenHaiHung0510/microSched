@@ -13,25 +13,25 @@ from app.agent.voice_v2_intent import SpeechWindow
 from app.agent.voice_v2_protocol import setup_v2
 
 
-def test_actual_final_without_offsets_or_finished_binds_whole_vad():
-    window = SpeechWindow()
-    window.transcript({"text": "Tạo việc A."}, 200)
-    window.activity({"type": "ACTIVITY_START", "audioOffset": "0.01s"}, 200)
-    window.activity({"type": "ACTIVITY_END", "audioOffset": "0.15s"}, 200)
-    assert window.prove() == "Tạo việc A."
-    assert window.next(200).is_retired({"text": "late final"})
-
-
-def test_interim_or_conflicting_final_never_proves_write():
+def test_caption_free_vad_binds_one_structured_turn():
     window = SpeechWindow()
     window.activity({"type": "ACTIVITY_START", "audioOffset": "0.01s"}, 200)
     window.activity({"type": "ACTIVITY_END", "audioOffset": "0.15s"}, 200)
-    window.transcript({"text": "Tạo việc A.", "finished": False}, 200)
-    assert window.prove() is None
-    window.transcript({"text": "Tạo việc A."}, 200)
-    assert window.prove() == "Tạo việc A."
-    window.transcript({"text": "Tạo việc B."}, 200)
-    assert window.prove() is None
+    binding = window.bind(2, 3, ["fresh"])
+    assert binding.matches(3, 2, 1)
+    assert not binding.matches(3, 1, 1)
+    assert not binding.matches(4, 2, 1)
+
+
+def test_interim_final_or_repeated_caption_does_not_change_write_binding():
+    bridge = VoiceV2Bridge(Browser(), Store())
+    bridge.forwarded_ms = 200
+    bridge.speech.activity({"type": "ACTIVITY_START", "audioOffset": "0.01s"}, 200)
+    bridge.speech.activity({"type": "ACTIVITY_END", "audioOffset": "0.15s"}, 200)
+    binding = bridge.speech.bind(1, 1, ["one"])
+    for item in ({"text": "A", "finished": False}, {"text": "B"}, {"text": "B"}):
+        bridge._track_input_final(item)
+        assert bridge.speech.bind(1, 1, ["one"]) == binding
 
 
 def test_blocking_tool_gets_one_actual_result_only_after_delayed_final(monkeypatch):
@@ -134,24 +134,13 @@ def test_setup_and_history_have_independent_bounds_with_b2_memory():
         bound_voice_history(oversized, [])
 
 
-def test_generic_canonical_bracket_prefix_and_literal_fallback():
+def test_titles_are_model_content_and_never_a_voice_permission_comparison():
     from test_mimi_voice_v2 import _plan
 
-    from app.agent.task_collection import COLLECTION_TOOL
-    from app.agent.voice_v2_intent import exact_plan_match
-    from app.agent.voice_v2_store import _matches_whole_request
+    from app.agent.voice_v2_store import automatic_plan
 
-    canonical = _plan([("[TRAINING] alpha", None)])
-    assert exact_plan_match("Tạo task training alpha.", canonical)
-    assert not exact_plan_match('Tạo task "training alpha".', canonical)
-    unsupported = _plan([("Training: alpha", None)])
-    assert not exact_plan_match("Tạo task training alpha.", unsupported)
-    assert _matches_whole_request(
-        COLLECTION_TOOL,
-        unsupported,
-        "Tạo task training alpha.",
-        None,
-    )
+    for title in ("[TRAINING] alpha", "Training: alpha", '"A literal title"'):
+        assert automatic_plan(_plan([(title, None)]))
 
 
 def test_actual_setup_blocks_actions_and_scalar_notices_never_interrupt():
@@ -192,7 +181,7 @@ def test_receiving_new_input_during_commit_revokes_previous_action(monkeypatch, 
         bridge.input_text = "Tạo việc A."
         bridge.speech.activity({"type": "ACTIVITY_START", "audioOffset": "0.01s"}, 200)
         bridge.speech.activity({"type": "ACTIVITY_END", "audioOffset": "0.15s"}, 200)
-        bridge.speech.transcript({"text": bridge.input_text}, 200)
+        bridge.epoch = 1
         bridge.actions = {"action": ("task.collection_candidate.v1", {"entries": []})}
         bridge.action_wires = {"action": "task_collection_candidate_v1"}
 
@@ -242,6 +231,10 @@ def test_ambiguous_commit_never_sends_applied_false_or_success_response():
         bridge = VoiceV2Bridge(Browser(), Store())
         bridge.deadline = datetime.now(UTC) + timedelta(seconds=5)
         bridge.input_text = "Tạo việc A."
+        bridge.epoch = 1
+        bridge.forwarded_ms = 200
+        bridge.speech.activity({"type": "ACTIVITY_START", "audioOffset": "0.01s"}, 200)
+        bridge.speech.activity({"type": "ACTIVITY_END", "audioOffset": "0.15s"}, 200)
         bridge.actions = {"uncertain": ("task.collection_candidate.v1", {})}
         bridge.action_wires = {"uncertain": "task_collection_candidate_v1"}
         bridge.provider_turn_complete = True

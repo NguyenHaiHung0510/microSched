@@ -3,7 +3,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -18,7 +18,7 @@ from app.agent.task_collection import (
 )
 from app.agent.voice_protocol import setup
 from app.agent.voice_v2_bridge import VoiceV2Bridge
-from app.agent.voice_v2_intent import SpeechWindow, create_scope, exact_plan_match, spoken_undo
+from app.agent.voice_v2_intent import SpeechWindow, VoiceTurnBinding
 from app.agent.voice_v2_outcome import committed
 from app.agent.voice_v2_protocol import setup_v2
 from app.agent.voice_v2_store import VoiceContextChanged, VoiceSources
@@ -102,6 +102,7 @@ class Store:
 
     async def act(self, turn, epoch, proposals, proof, transcript, sources, is_active):
         assert is_active()
+        assert isinstance(proof, VoiceTurnBinding)
         self.actions.append((turn, epoch, proposals, proof, transcript))
         return committed("applied" if proof else "preview")
 
@@ -247,7 +248,8 @@ def test_early_live_drop_resumes_same_mic_without_audio_asr_or_actions_replay(mo
             *speech("", outputs=True)[-1:],
         )
         await browser.until("action_updated")
-        assert store.actions[0][3] == "tạo task mới"
+        assert store.actions[0][4] == "tạo task mới"
+        assert store.actions[0][3].call_ids == ("new",)
         await browser.inbound.put({"type": "websocket.receive", "text": '{"type":"stop"}'})
         assert await asyncio.wait_for(runner, timeout=2) == "voice_stopped"
         assert len(store.actions) == 1
@@ -460,61 +462,33 @@ def test_source_backed_pcm_burst_does_not_recheck_each_envelope_after_slow_valid
     asyncio.run(scenario())
 
 
-def test_whole_speech_never_authorizes_fragments_unspoken_fields_or_six_targets():
-    names = "một", "hai", "ba", "bốn", "năm", "sáu"
-    sample = lambda n: _plan([(name, None) for name in names[:n]])  # noqa: E731
-    utterance = lambda n: f"Tạo các việc: {', '.join(names[:n])}."  # noqa: E731
-    # Supported named-list form; check both real counts against the same whole command.
-    full = utterance(6).replace("các ", "")
-    assert exact_plan_match(utterance(5).replace("các ", ""), sample(5))
-    assert not exact_plan_match(full, sample(5))
-    assert not exact_plan_match(full, sample(6))
-    assert not exact_plan_match("Cho tôi xem năm việc.", sample(5))
-    assert not exact_plan_match("Tạo việc một, rồi đừng tạo việc hai.", sample(2))
-    assert not exact_plan_match("Tạo việc một và hai?", sample(2))
-    plan = _plan([("nộp bài", {"due_precision": "date", "due_on": "2091-02-04", "due_at": None})])
-    assert exact_plan_match("Tạo việc nộp bài hạn ngày mai.", plan, today=date(2091, 2, 3))
-    assert exact_plan_match("Tạo việc nộp bài hạn 4/2/2091.", plan)
-    assert not exact_plan_match("Tạo việc nộp bài.", plan)
-    assert spoken_undo("Mimi, hoàn tác cái vừa làm.")
-    assert not spoken_undo("Nếu hoàn tác cái vừa làm thì sao?")
+@pytest.mark.parametrize("count", [1, 5, 6])
+def test_automatic_scope_is_frozen_target_count_and_reversible_effects(count):
+    from app.agent.voice_v2_store import automatic_plan
+
+    plan = _plan([(f"Title {n}", None) for n in range(count)])
+    assert automatic_plan(plan) == (count <= 5)
+    assert automatic_plan(plan, inverse=True) == (count <= 5)
+    changed = plan.entries[0].model_copy(update={"reminder_effect": {"action": "cancel"}})
+    assert not automatic_plan(plan.model_copy(update={"entries": (changed,)}))
 
 
-def test_vad_asr_offsets_reject_overlap_late_input_and_missing_boundaries():
-    parts = speech("Tạo việc A.", outputs=False)
+def test_vad_offsets_reject_retired_and_conflicting_activity_without_reading_captions():
+    start, end, _ = speech("Ignored caption", outputs=False)
     window = SpeechWindow()
-    assert window.prove() is None
-    window.activity(parts[0]["voiceActivity"], 200)
-    window.activity(parts[1]["voiceActivity"], 200)
-    window.transcript(parts[2]["serverContent"]["inputTranscription"], 200)
-    assert window.prove() == "Tạo việc A."
+    assert window.bind(1, 1, ["fresh"]) is None
+    window.activity(start["voiceActivity"], 200)
+    window.activity(end["voiceActivity"], 200)
+    assert window.bind(1, 1, ["fresh"]).matches(1, 1, 1)
     renewed = window.next(200)
-    renewed.activity(parts[0]["voiceActivity"], 400)
-    renewed.activity(parts[1]["voiceActivity"], 400)
-    renewed.transcript(parts[2]["serverContent"]["inputTranscription"], 400)
-    assert renewed.prove() is None
-    window.transcript(parts[2]["serverContent"]["inputTranscription"], 200)
-    assert window.prove() is None
+    renewed.activity(start["voiceActivity"], 400)
+    renewed.activity(end["voiceActivity"], 400)
+    assert renewed.bind(1, 2, ["late"]) is None
+    window.activity(end["voiceActivity"], 200)
+    assert window.bind(1, 1, ["fresh"]) is None
 
 
-@pytest.mark.parametrize(
-    "phrase",
-    [
-        "Tạo các việc sau: A, B, C, D, E và F.",
-        "Tạo sáu việc tên A, B, C, D, E và F.",
-        "Tạo 6 công việc gồm A, B, C, D, E và F.",
-        "Create six tasks named A, B, C, D, E and F.",
-        "Add 6 new tasks: A, B, C, D, E and F.",
-    ],
-)
-def test_numeric_and_natural_plural_whole_speech_keeps_exact_six_targets(phrase):
-    result = create_scope(phrase, None)
-    assert result.count == 6 and not result.ambiguous
-    assert result.names == tuple((name, None) for name in "abcdef")
-    assert not exact_plan_match(phrase, _plan([(name, None) for name in "abcde"]))
-
-
-def test_late_overlapping_asr_denies_proposal_before_commit_and_reports_to_both_sides(monkeypatch):
+def test_late_asr_is_display_only_and_cannot_grant_or_revoke_live_action(monkeypatch):
     async def scenario():
         browser, store, live = Browser(), Store(), Live()
 
@@ -537,19 +511,19 @@ def test_late_overlapping_asr_denies_proposal_before_commit_and_reports_to_both_
         correction = speech("Đừng tạo việc đó.")[2]
         live.emit(*first[:-1], proposal("misheard", ["misheard"]), first[-1], correction)
         result = await browser.until("action_updated")
-        assert result["status"] == "needs_clarification"
-        assert result["reason"] == "voice_spoken_intent_unproven"
+        assert result["status"] == "applied"
+        assert result["reason"] == "voice_action_committed"
         await browser.until("turn_complete")
-        assert not store.actions
+        assert len(store.actions) == 1
         note = (await asyncio.wait_for(live.sent.get(), 1))["toolResponse"]
         result = note["functionResponses"][0]["response"]["result"]
-        assert result["final"] is True and result["applied"] is False
-        assert "voice_spoken_intent_unproven" in str(note) and "misheard" not in str(result)
+        assert result["final"] is True and result["applied"] is True
+        assert "voice_action_committed" in str(note) and "misheard" not in str(result)
         await audio(browser, live)
         new = speech("Tạo việc đúng.", base=0.2)
         live.emit(*new[:-1], proposal("right", ["đúng"]), new[-1])
         assert (await browser.until("action_updated"))["status"] == "applied"
-        assert [a[3] for a in store.actions] == ["Tạo việc đúng."]
+        assert [a[3].call_ids for a in store.actions] == [("misheard",), ("right",)]
         await browser.inbound.put({"type": "websocket.disconnect"})
         assert await task == "voice_browser_disconnected"
 

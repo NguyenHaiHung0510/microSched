@@ -32,6 +32,8 @@ class VoiceActionOutcome:
     status: str
     reason: str
     reset_context: bool = False
+    receipt_id: str | None = None
+    receipt_ref: str | None = None
 
     def event(self):
         return {
@@ -39,10 +41,20 @@ class VoiceActionOutcome:
             "status": self.status,
             "reason": self.reason,
             "message": MESSAGES[self.reason],
+            **({"receipt_id": self.receipt_id} if self.receipt_id else {}),
+        }
+
+    def model_result(self):
+        return {
+            "status": "preview_required" if self.status == "preview" else self.status,
+            "reason": self.reason,
+            "final": True,
+            "applied": self.status in {"applied", "undone"},
+            **({"receipt_ref": self.receipt_ref} if self.receipt_ref else {}),
         }
 
 
-def committed(status):
+def committed(status, *, receipt_id=None, receipt_ref=None):
     return VoiceActionOutcome(
         status,
         {
@@ -50,4 +62,6 @@ def committed(status):
             "undone": "voice_action_undone",
             "preview": "voice_manual_preview",
         }[status],
+        receipt_id=str(receipt_id) if receipt_id else None,
+        receipt_ref=receipt_ref,
     )

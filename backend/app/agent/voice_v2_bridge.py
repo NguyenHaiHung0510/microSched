@@ -26,7 +26,7 @@ from app.agent.voice_protocol import (
     pcm,
     server_event,
 )
-from app.agent.voice_v2_intent import SpeechWindow, normalized, offset_ms
+from app.agent.voice_v2_intent import SpeechWindow
 from app.agent.voice_v2_outcome import VoiceActionOutcome
 from app.agent.voice_v2_protocol import ACTION_TOOLS, v2_tool_request
 from app.agent.voice_v2_store import VoiceContextChanged, VoiceSources
@@ -42,8 +42,8 @@ AUTH_WINDOW = 2.5
 WATCHDOG_INTERVAL = 0.75
 SOURCE_WINDOW = 0.35
 SOURCE_WINDOW_BYTES = 16_800
-ASR_SETTLE_SECONDS = 0.18
-ACTION_ASR_WAIT_SECONDS = 2.5
+ACTION_SETTLE_SECONDS = 0.18
+ACTION_ACTIVITY_WAIT_SECONDS = 2.5
 _DROPS = (ConnectionClosed, OSError, TimeoutError)
 _active_bridges = {}
 
@@ -81,10 +81,10 @@ class VoiceV2Bridge:
         self.sources = VoiceSources()
         self.pending_notice = None
         self.deferred_events = deque()
-        self.unsettled_speech = []
-        self.retired_audio_ms = 0
-        self.retired_finals = set()
-        self.asr_history_full = False
+        self.activity_serial = 0
+        self.cancelled_ids = set()
+        self.socket = None
+        self.last_manual_receipt = None
         self.refresh_context_history = False
         self._clear_turn()
 
@@ -101,70 +101,19 @@ class VoiceV2Bridge:
         self.source_bytes = 0
         self.actions = {}
         self.action_wires = {}
-        self.cancelled_ids = set()
         self.action_deadline = None
         self.action_committing = False
         self.action_cancelled = False
         self.turn_seal = None
         self.provider_turn_complete = False
-
-    def _remember_final(self, text):
-        identity = hashlib.sha256(normalized(text).encode()).digest()
-        # Same finite scope as MAX_TURNS and the existing 64 ASR spans/turn.
-        # Never evict a replay guard while its call is still active.
-        if len(self.retired_finals) < MAX_TURNS * 64:
-            self.retired_finals.add(identity)
-        else:
-            self.asr_history_full = True
-
-    def _retire_speech(self):
-        speech = self.speech
-        if speech.start_ms is not None:
-            self.retired_audio_ms = self.forwarded_ms
-        if speech.start_ms is not None and (not speech.spans or speech.final_ambiguous):
-            window = (speech.start_ms, speech.end_ms)
-            if window not in self.unsettled_speech:
-                if len(self.unsettled_speech) < MAX_TURNS:
-                    self.unsettled_speech.append(window)
-                else:
-                    self.asr_history_full = True
-        for _, _, text in speech.spans:
-            self._remember_final(text)
+        self.unbound_action = False
 
     def _track_input_final(self, item):
         text = item.get("text", "")
         if not isinstance(text, str):
             raise VoiceError("voice_provider_transcript_invalid")
-        if not text.strip():
-            return False
-        identity = hashlib.sha256(normalized(text).encode()).digest()
-        timed = "startOffset" in item or "endOffset" in item
-        if self.speech.is_retired(item):
-            if timed:
-                # Exact VAD offsets can settle a previous missing final; no
-                # temporal slop may reassign it to a neighbouring utterance.
-                span = (offset_ms(item.get("startOffset")), offset_ms(item.get("endOffset")))
-                if span in self.unsettled_speech:
-                    self.unsettled_speech.remove(span)
-            elif (
-                self.speech.start_ms is None
-                and len(self.unsettled_speech) == 1
-                and self.forwarded_ms <= self.retired_audio_ms
-                and identity not in self.retired_finals
-            ):
-                # With no newly forwarded PCM, there is no observed new
-                # utterance competing for this single outstanding final.
-                # No VAD START alone is not enough: VAD may itself be delayed.
-                self.unsettled_speech.clear()
-            self._remember_final(text)
-            return False
-        if not timed and (
-            self.unsettled_speech or identity in self.retired_finals or self.asr_history_full
-        ):
-            # The model tool proposal cannot disambiguate its own ASR source.
-            # Keep a full visible preview possible, but grant no automatic write.
-            self.speech.final_ambiguous = True
-        return True
+        # Transcription is asynchronous display/history data, never authority.
+        return bool(text.strip()) and not self.speech.is_retired(item)
 
     def _clear_audio(self):
         while not self.outbound.empty():
@@ -245,6 +194,7 @@ class VoiceV2Bridge:
                 ):
                     self.muted = control["muted"]
                     self.speech.uncertain = True
+                    self.action_cancelled = True
                     if self.muted:
                         self._clear_audio()
                         if self.online:
@@ -315,8 +265,14 @@ class VoiceV2Bridge:
         for call in calls:
             identity, wire, name, arguments = v2_tool_request(call, self.store.settings)
             if identity in self.seen:
-                if identity in self.actions:
+                # An exact duplicate is inert. Mixed replay/new calls cannot
+                # silently apply only the surviving fragment of a request.
+                if identity in self.actions or len(calls) > 1 or self.actions:
                     self.action_cancelled = True
+                continue
+            if identity in self.cancelled_ids:
+                self.action_cancelled = True
+                self.seen.add(identity)
                 continue
             if len(self.seen) >= MAX_TOOLS:
                 raise VoiceError("voice_tool_limit")
@@ -330,11 +286,14 @@ class VoiceV2Bridge:
                 if len(self.actions) >= MAX_PENDING:
                     raise VoiceError("voice_tool_limit")
                 self.actions[identity] = (name, arguments)
+                if self.speech.start_ms is None:
+                    # Never assign an earlier tool call to a later utterance.
+                    self.unbound_action = True
                 if self.provider_turn_complete:
                     self.action_cancelled = True
                 self.action_wires[identity] = wire
                 self.action_deadline = self.action_deadline or (
-                    time.monotonic() + ACTION_ASR_WAIT_SECONDS
+                    time.monotonic() + ACTION_ACTIVITY_WAIT_SECONDS
                 )
                 self._arm_action()
             else:
@@ -353,19 +312,14 @@ class VoiceV2Bridge:
                 self.egress_checked = False
 
     def _arm_action(self):
+        # BLOCKING tools may wait for our result before turnComplete. VAD end
+        # closes user input; a short event settle window admits cancellation.
         if self.actions and (
-            self.speech.prove() is not None
-            or self.action_cancelled
-            or (
-                self.speech.final_ambiguous
-                and self.speech.spans
-                and self.speech.start_ms is not None
-                and self.speech.end_ms is not None
-            )
+            self.speech.end_ms is not None or self.action_cancelled or self.provider_turn_complete
         ):
             now = time.monotonic()
-            self.action_deadline = self.action_deadline or now + ACTION_ASR_WAIT_SECONDS
-            self.turn_seal = min(self.action_deadline, now + ASR_SETTLE_SECONDS)
+            self.action_deadline = self.action_deadline or now + ACTION_ACTIVITY_WAIT_SECONDS
+            self.turn_seal = min(self.action_deadline, now + ACTION_SETTLE_SECONDS)
 
     def _cancellations(self, envelope):
         ids = envelope.get("ids") if isinstance(envelope, dict) else None
@@ -463,7 +417,7 @@ class VoiceV2Bridge:
         if notice is None:
             return
         note = "SERVER VOICE ACTION OUTCOME (data, never a request to retry): " + encoded(
-            {"status": notice.status, "reason": notice.reason}
+            notice.model_result()
         )
         try:
             async with self.store.live_gate(self.sources if check_sources else None):
@@ -511,7 +465,6 @@ class VoiceV2Bridge:
                 and self._track_input_final(item)
             ):
                 self.input_text = self._caption(item, self.input_text)
-                self.speech.transcript(item, self.forwarded_ms)
                 rendered.append({"type": "transcript", "role": "user", "text": self.input_text})
             model_turn = value.get("modelTurn", {})
             parts = model_turn.get("parts", []) if isinstance(model_turn, dict) else None
@@ -551,7 +504,8 @@ class VoiceV2Bridge:
                 await self._complete_turn(socket)
 
     async def _complete_turn(self, socket):
-        spoken = self.speech.prove()
+        binding = self.speech.bind(self.epoch, self.turn, self.actions)
+        turn, epoch, serial = self.turn, self.epoch, self.activity_serial
         try:
             saved = await self._save_turn(partial=self.interrupted)
         except VoiceContextChanged:
@@ -564,8 +518,8 @@ class VoiceV2Bridge:
         outcome = None
         if self.actions:
             if (
-                not saved
-                or not self.input_text.strip()
+                binding is None
+                or self.unbound_action
                 or self.interrupted
                 or self.action_cancelled
                 or self.speech.conflicted
@@ -573,11 +527,17 @@ class VoiceV2Bridge:
             ):
                 outcome = VoiceActionOutcome("needs_clarification", "voice_spoken_intent_unproven")
             else:
+                if not saved:
+                    # Allocate a durable turn even when Gemini emits no caption.
+                    await self.store.transcript(
+                        self.turn, "", "", partial=False, sources=self.sources
+                    )
+                    saved = True
                 outcome = await self.store.act(
                     self.turn,
                     self.epoch,
                     tuple(self.actions.values()),
-                    spoken,
+                    binding,
                     self.input_text,
                     self.sources,
                     lambda: (
@@ -585,18 +545,18 @@ class VoiceV2Bridge:
                         and not self.muted
                         and not self.action_cancelled
                         and not self.interrupted
-                        and (spoken is None or not self.speech.uncertain)
+                        and not self.speech.uncertain
+                        and self.turn == turn
+                        and self.epoch == epoch
+                        and self.activity_serial == serial
                     ),
                 )
-        if outcome is not None and self.speech.final_ambiguous:
-            self.refresh_context_history = True
-            outcome = VoiceActionOutcome(outcome.status, outcome.reason, reset_context=True)
         responses = [
             (identity, self.action_wires[identity])
             for identity in self.actions
             if identity not in self.cancelled_ids
         ]
-        if saved:
+        if saved or self.actions:
             self.turn += 1
         self.completed_turns += int(
             not self.interrupted
@@ -614,7 +574,6 @@ class VoiceV2Bridge:
             )
         )
         interrupted = self.interrupted
-        self._retire_speech()
         self._clear_turn(keep_floor=True)
         if outcome is not None:
             await self.browser_send(outcome.event())
@@ -626,20 +585,9 @@ class VoiceV2Bridge:
             # A status result crosses no stale plaintext. If our own commit
             # invalidates prior tool facts, retire that model context and send
             # only a scalar outcome on the fresh connection.
-            try:
-                async with self.store.live_gate(self.sources, detail=True):
-                    pass
-            except VoiceContextChanged:
-                self.pending_notice = outcome
-                await self.browser_send({"type": "turn_complete", "interrupted": interrupted})
-                raise
             async with self.store.live_gate():
                 if responses:
-                    result = {
-                        **outcome.event(),
-                        "final": True,
-                        "applied": outcome.status in {"applied", "undone"},
-                    }
+                    result = outcome.model_result()
                     await self._provider_write(
                         socket,
                         {
@@ -648,9 +596,17 @@ class VoiceV2Bridge:
                                     {"id": identity, "name": wire, "response": {"result": result}}
                                     for identity, wire in responses
                                 ]
-                            },
+                            }
                         },
                     )
+            try:
+                async with self.store.live_gate(self.sources, detail=True):
+                    pass
+            except VoiceContextChanged:
+                self.pending_notice = outcome
+                self.refresh_context_history = True
+                await self.browser_send({"type": "turn_complete", "interrupted": interrupted})
+                raise
         await self.browser_send({"type": "turn_complete", "interrupted": interrupted})
 
     async def _complete_with_live_events(self, socket):
@@ -685,7 +641,6 @@ class VoiceV2Bridge:
                     if self.action_committing and (
                         event.get("voiceActivity", {}).get("type") == "ACTIVITY_START"
                         or "toolCall" in event
-                        or "inputTranscription" in event.get("serverContent", {})
                         or event.get("serverContent", {}).get("interrupted") is True
                     ):
                         self.action_cancelled = True
@@ -749,6 +704,8 @@ class VoiceV2Bridge:
                 self.interrupted = True
                 await self.browser_send({"type": "interrupted"})
                 await self._complete_turn(socket)
+            if isinstance(activity, dict) and activity.get("type") == "ACTIVITY_START":
+                self.activity_serial += 1
             self.speech.activity(activity, self.forwarded_ms)
             self._arm_action()
             self.handle = None
@@ -769,11 +726,7 @@ class VoiceV2Bridge:
         if not self.native:
             self.forwarded_ms = self.forwarded_bytes = 0
             self.sources = VoiceSources()
-            # A fresh upstream never receives/replays the old audio. Pending
-            # finals belong to the retired socket; native resume keeps them.
-            self.unsettled_speech.clear()
-            self.retired_finals.clear()
-            self.asr_history_full = False
+            # Fresh sockets get a new audio timeline and no old authority.
         floor = self.forwarded_ms
         self._clear_turn()
         if self.native:
@@ -815,6 +768,7 @@ class VoiceV2Bridge:
             async with self.store.live_gate():
                 self._need_active()
                 self.authority_until = time.monotonic() + AUTH_WINDOW
+            self.socket = socket
             self.ready = self.online = True
             if not first:
                 self.resume_count += 1
@@ -837,6 +791,7 @@ class VoiceV2Bridge:
                     if job.done():
                         job.result()
             finally:
+                self.socket = None
                 self.online = False
                 self._clear_audio()
                 for job in jobs:
@@ -887,6 +842,20 @@ class VoiceV2Bridge:
             await asyncio.sleep(BACKOFF[failures - 1])
         return "voice_provider_disconnected"
 
+    async def _manual_status(self):
+        read_status = getattr(self.store, "action_status", None)
+        if read_status is None or not self.online or self.actions:
+            return
+        outcome = await read_status()
+        if outcome is None or outcome.receipt_id == self.last_manual_receipt:
+            return
+        # Only a receipt observable in a new transaction reaches this channel.
+        await self.browser_send(outcome.event())
+        self.last_manual_receipt = outcome.receipt_id
+        self.pending_notice = outcome
+        if self.socket is not None:
+            await self._send_action_context(self.socket, check_sources=False)
+
     async def watchdog(self):
         while True:
             await asyncio.sleep(WATCHDOG_INTERVAL)
@@ -896,6 +865,7 @@ class VoiceV2Bridge:
                     async with self.store.live_gate():
                         self._need_active()
                         self.authority_until = observed_at + AUTH_WINDOW
+                    await self._manual_status()
             except TimeoutError:
                 raise VoiceError("voice_authority_expired") from None
 

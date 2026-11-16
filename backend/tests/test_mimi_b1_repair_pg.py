@@ -213,56 +213,39 @@ def test_receipt_backed_mixed_batch_tombstone_and_active_diffs(v2_runtime):
     assert len(records) == 2 and sum(row["deleted_at"] is not None for row in records) == 1
 
 
-def test_late_untimed_final_from_unsettled_closed_turn_cannot_apply_new_window(
-    v2_runtime,
-    monkeypatch,
-):
+def test_prior_missing_caption_does_not_disable_a_fresh_structured_turn(v2_runtime, monkeypatch):
     rt = v2_runtime
-    name = f"{rt.stem} stale-a"
+    name = f"{rt.stem} fresh-b"
     prior = [
-        event
-        for event in speech("A had no settled final.")
-        if "inputTranscription" not in event.get("serverContent", {})
+        e for e in speech("No caption A.") if "inputTranscription" not in e.get("serverContent", {})
     ]
-    ambiguous_b = [
+    current = [
         {"voiceActivity": {"type": "ACTIVITY_START", "audioOffset": "0.210s"}},
-        {"serverContent": {"inputTranscription": {"text": f"Tạo việc {name}."}}},
-        proposal("late-a-proposal", [name]),
+        {"serverContent": {"inputTranscription": {"text": "Unlabelled caption."}}},
+        proposal("fresh-proposal", [name]),
         {"voiceActivity": {"type": "ACTIVITY_END", "audioOffset": "0.350s"}},
-        # B's final is not supplied. Neither its VAD end nor the old matching
-        # model proposal identifies which utterance generated the untimed text.
     ]
-    cid, issued, sockets = reconnect_script(rt, monkeypatch, prior, ambiguous_b)
+    cid, issued, sockets = reconnect_script(rt, monkeypatch, prior, current)
     with rt.client.websocket_connect(
         endpoint(cid, issued), headers={"origin": "http://testserver"}
     ) as ws:
         ws.send_json({"type": "ticket", "ticket": issued["ticket"]})
         receive_to(ws, "ready")
         assert say(ws) == []
-        result = say(ws)
+        assert say(ws) == ["applied"]
         state = snapshot(rt, cid)
-        assert result == ["preview"], {"status": result, "receipts": len(state["receipts"])}
-        assert state["receipts"] == []
-        (preview,) = state["change_sets"]
-        assert preview["state"] == "pending"
-        assert preview["operation"]["args"]["entries"][0]["after"]["fields"]["title"] == name
-        assert not asyncio.run(rt.sql("select id from microsched.task where title=$1", name))
-        receive_to(ws, "resumed")
-        # The old socket is retired before it can announce the ambiguous
-        # proposal. The fresh context receives the durable scalar status.
-        assert not any("toolResponse" in frame for frame in sockets[0].sent)
-        status = [
-            frame["clientContent"]
-            for frame in sockets[1].sent
-            if frame.get("clientContent", {}).get("turnComplete") is False
-        ]
-        assert len(status) == 1 and '"status":"preview"' in str(status)
+        assert len(state["receipts"]) == 1
+        assert state["change_sets"][0]["state"] == "executed"
+        assert asyncio.run(rt.sql("select id from microsched.task where title=$1", name))
+        assert len(sockets) == 1
         ws.send_json({"type": "stop"})
         receive_to(ws, "ended")
 
 
 @pytest.mark.parametrize("prior", ["settled", "late_before_new_vad", "known_replay"])
-def test_offsetless_fallback_is_scoped_to_observable_ambiguity(v2_runtime, monkeypatch, prior):
+def test_repeated_or_late_caption_cannot_remove_current_activity_authority(
+    v2_runtime, monkeypatch, prior
+):
     rt = v2_runtime
     name = f"{rt.stem} ordinary-b"
     old_text = f"Tạo việc {rt.stem} retired-a."
@@ -290,11 +273,7 @@ def test_offsetless_fallback_is_scoped_to_observable_ambiguity(v2_runtime, monke
         ws.send_json({"type": "ticket", "ticket": issued["ticket"]})
         receive_to(ws, "ready")
         assert say(ws) == []
-        if prior == "known_replay":
-            import time
-
-            time.sleep(1.05)  # A retired final remains guarded past the former 1s action timer.
-        expected = "applied" if prior == "settled" else "preview"
+        expected = "applied"
         assert say(ws) == [expected]
         state = snapshot(rt, cid)
         assert len(state["receipts"]) == int(expected == "applied")
@@ -351,57 +330,33 @@ def offsetless_batch(text, *calls, base=0.0):
     return [*events[:-1], *calls, events[-1]]
 
 
-def test_ambiguous_preview_retires_upstream_and_next_offsetless_command_is_fast(
-    v2_runtime,
-    monkeypatch,
-):
+def test_unbound_proposal_clarifies_then_a_fresh_bound_command_is_fast(v2_runtime, monkeypatch):
     rt = v2_runtime
-    old_name, new_name = f"{rt.stem} old-a", f"{rt.stem} fresh-c"
-    prior = [
-        e
-        for e in speech("Stable decision A.")
-        if "inputTranscription" not in e.get("serverContent", {})
+    old_name, new_name = f"{rt.stem} unbound", f"{rt.stem} fresh"
+    unbound = [
+        {"serverContent": {"inputTranscription": {"text": "Unbound caption."}}},
+        proposal("unbound", [old_name]),
+        {"serverContent": {"turnComplete": True}},
     ]
-    ambiguous = offsetless_batch(
-        f"Tạo việc {old_name}.",
-        proposal("ambiguous-b", [old_name]),
-        base=0.2,
+    fresh = offsetless_batch(
+        "Please handle this new task.", proposal("fresh", [new_name]), base=0.2
     )
-    fresh = offsetless_batch(f"Tạo việc {new_name}.", proposal("fresh-c", [new_name]))
-    cid, issued, sockets = reconnect_script(rt, monkeypatch, prior, ambiguous, fresh)
+    cid, issued, sockets = reconnect_script(rt, monkeypatch, unbound, fresh)
     with rt.client.websocket_connect(
         endpoint(cid, issued), headers={"origin": "http://testserver"}
     ) as ws:
         ws.send_json({"type": "ticket", "ticket": issued["ticket"]})
         receive_to(ws, "ready")
-        assert say(ws) == []
-        assert say(ws) == ["preview"]
-        resumed = receive_to(ws, "resumed")[-1]
-        assert resumed["context_retained"] is False and len(sockets) == 2
-        # Fresh upstream has setup + guarded history + scalar status only.
-        assert not any(
-            "realtimeInput" in frame or "toolResponse" in frame for frame in sockets[1].sent
-        )
-        seed = next(
-            frame["clientContent"]
-            for frame in sockets[1].sent
-            if frame.get("clientContent", {}).get("turnComplete") is True
-        )
-        assert "SERVER CONVERSATION STATE" in str(seed)
-        assert old_name in str(seed)
-        (change,) = [c for c in snapshot(rt, cid)["change_sets"] if c["state"] == "pending"]
-        assert confirm(rt, change).is_success
+        assert say(ws) == ["needs_clarification"]
+        assert snapshot(rt, cid)["change_sets"] == []
         assert say(ws) == ["applied"]
+        assert len(snapshot(rt, cid)["receipts"]) == 1
+        assert len(sockets) == 1
         ws.send_json({"type": "stop"})
         receive_to(ws, "ended")
-    assert len(snapshot(rt, cid)["receipts"]) == 2
-    for socket in sockets:
-        assert sum("audio" in frame.get("realtimeInput", {}) for frame in socket.sent) == (
-            2 if socket is sockets[0] else 1
-        )
 
 
-def test_second_identical_undo_after_new_receipt_has_manual_preview_and_recovers(
+def test_same_undo_words_after_new_receipt_are_a_new_bound_action(
     v2_runtime,
     monkeypatch,
 ):
@@ -421,15 +376,8 @@ def test_second_identical_undo_after_new_receipt_has_manual_preview_and_recovers
         ws.send_json({"type": "ticket", "ticket": issued["ticket"]})
         receive_to(ws, "ready")
         assert [say(ws) for _ in range(3)] == [["applied"], ["undone"], ["applied"]]
-        latest = snapshot(rt, cid)["receipts"][-1]
-        assert say(ws) == ["preview"]
-        receive_to(ws, "resumed")
-        state = snapshot(rt, cid)
-        assert len(state["receipts"]) == 3
-        (change,) = [c for c in state["change_sets"] if c["state"] == "pending"]
-        assert change["operation"]["args"]["undo_receipt_id"] == latest["id"]
-        assert confirm(rt, change).is_success
+        assert say(ws) == ["undone"]
         assert len(snapshot(rt, cid)["receipts"]) == 4
-        assert len(sockets) == 2
+        assert len(sockets) == 1
         ws.send_json({"type": "stop"})
         receive_to(ws, "ended")
