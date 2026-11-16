@@ -90,6 +90,7 @@ from app.agent.openrouter import (
 )
 from app.agent.openrouter import complete_stream as openrouter_complete_stream
 from app.agent.openrouter import get_generation as openrouter_get_generation
+from app.agent.owner_context import messages_for_evidence
 from app.agent.owner_workspace import OWNER_WORKSPACE_ID
 from app.agent.owner_workspace import owner_id as _owner_id
 from app.agent.owner_workspace import owner_ids as _owner_ids
@@ -367,6 +368,14 @@ def _manifest_receipt(envelope: ContextEnvelope) -> dict[str, Any]:
         "manifest_sha256": manifest.sha256(),
         "policy_id": manifest.policy_id,
         "policy_sha256": manifest.policy_sha256,
+        **(
+            {
+                "system_prefix_sha256": manifest.system_prefix_sha256,
+                "owner_memory": manifest.owner_memory.model_dump(mode="json"),
+            }
+            if manifest.owner_memory is not None
+            else {}
+        ),
         "tool_registry_sha256": manifest.tool_registry_sha256,
         "output_schema_sha256": manifest.output_schema_sha256,
         "checkpoint_id": str(manifest.checkpoint_id) if manifest.checkpoint_id else None,
@@ -2960,7 +2969,7 @@ async def send_message(
                         request_snapshot = {
                             "call_id": str(call.id),
                             "attempt": call.attempt,
-                            "messages": messages,
+                            "messages": messages_for_evidence(context_envelope, messages),
                             "manifest": context_envelope.manifest.model_dump(mode="json"),
                             "route_config": conversation.route_config
                             or default_configuration(settings),
@@ -3046,7 +3055,7 @@ async def send_message(
                         messages[:] = refreshed_messages
                         request_snapshot = {
                             **request_snapshot,
-                            "messages": messages,
+                            "messages": messages_for_evidence(context_envelope, messages),
                             "manifest": context_envelope.manifest.model_dump(mode="json"),
                             "operating_policy_revision": settings.mimi_operating_policy_revision,
                             "price_caps": {
@@ -3460,7 +3469,12 @@ async def send_message(
                         execute_read=execute_agent_read,
                         run_id=run_id,
                         generation=generation,
-                        policy_sha256=context_envelope.manifest.policy_sha256,
+                        policy_sha256=(
+                            context_envelope.manifest.system_prefix_sha256
+                            or context_envelope.manifest.policy_sha256
+                            if context_envelope.manifest.owner_memory is not None
+                            else context_envelope.manifest.policy_sha256
+                        ),
                         tool_registry_sha256=context_envelope.manifest.tool_registry_sha256,
                         output_schema_sha256=context_envelope.manifest.output_schema_sha256,
                         database_url=settings.database_url,

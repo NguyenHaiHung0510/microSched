@@ -30,6 +30,12 @@ collision/idempotence, cutover và feature-off rollback; flag false chỉ tạm 
 namespace chung/các alias khác. Giữ allowlist và OAuth secret hiện hành; không
 trộn writer trước/sau policy hoặc đổi policy khi còn run đang mở.
 
+Release B1+B2 bật `MIMI_VOICE_V2_ENABLED=true` cho ticket mới. Local/test mặc định off.
+Memory đặt ngoài Git bằng `MIMI_OWNER_MEMORY_V1`; nếu không cấu hình, Chat và Voice
+chạy theo prompt sẵn có. Khi cần rút v2, tắt flag trong bản sửa qua release flow
+để ticket mới về v1, và kiểm tra lại readiness. Việc rút v2 không hoàn tác các
+thay đổi đã ghi; dùng receipt tương ứng. Xem [Voice](../mimi/voice.md).
+
 ## Backup và recovery
 
 Backup là trách nhiệm Owner vận hành, tách khỏi deploy. Giữ database dump, encryption key và code/config revision tương ứng trong các nơi có kiểm soát truy cập; key cần được bảo quản riêng với dữ liệu mã hóa. Bản dump mà thiếu key có thể không phục hồi được nội dung. Dùng chính sách 3-2-1 và **restore rehearsal** để chứng minh khả năng đọc/giải mã, schema, row counts và quyền app/migrator.

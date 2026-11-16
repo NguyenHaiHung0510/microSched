@@ -50,10 +50,10 @@ Tắt `MIMI_VOICE_ENABLED` để rút tính năng. Bản chép lời đã lưu v
 migration. Browser có thể phát hiện giới hạn quyền mic hay mạng khác nhau theo thiết
 bị; kết quả đối với model thật và thiết bị vật lý cần được kiểm riêng.
 
-## Voice v2-A (ứng viên local, bật riêng)
+## Voice v2 (B1+B2, bật riêng)
 
-Bật thử trên instance được cấp quyền bằng `MIMI_VOICE_V2_ENABLED=true` cùng các
-điều kiện của v1. Flag mặc định tắt; tắt lại để ticket mới dùng v1. Không cần
+Voice v2 dùng `MIMI_VOICE_V2_ENABLED=true` cùng các điều kiện của v1.
+Preset production của đợt này bật v2; local/test mặc định tắt. Tắt flag để ticket mới dùng v1. Không cần
 migration. Ticket vẫn chỉ dùng một lần, gắn với login session đã tạo nó, kể cả
 khi hai login được phép cùng đọc một hội thoại. Deadline 90 phút tính một lần
 từ lúc cấp ticket, không tăng khi reconnect. `MIMI_VOICE_V2_MAX_SECONDS` nhận
