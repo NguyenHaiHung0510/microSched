@@ -24,6 +24,7 @@ from app.agent import crypto as mimi_crypto
 from app.agent.billing_prices import safe_generation_billing
 from app.agent.compaction import (
     CALENDAR_HISTORY_MARKER,
+    VOICE_HISTORY_MARKER,
     CheckpointSource,
     active_constraint_context,
     make_checkpoint,
@@ -133,6 +134,7 @@ from app.agent.working_context import (
     load_history,
     persist_confirmed,
     persist_finalized,
+    voice_history_sequences,
     working_refs_current,
 )
 from app.core.db import get_engine, get_sessionmaker
@@ -775,7 +777,9 @@ def _conversation_summary(row: MimiConversation, *, latest_run_state: str | None
     }
 
 
-def _history_content(row, conversation_id, dek, calendar_sequences):
+def _history_content(row, conversation_id, dek, calendar_sequences, voice_sequences):
+    if row.sequence in voice_sequences:
+        return VOICE_HISTORY_MARKER
     if row.sequence in calendar_sequences:
         return CALENDAR_HISTORY_MARKER
     return mimi_crypto.open_content(
@@ -818,10 +822,13 @@ async def _provider_history(
         selected.append(row)
         used_bytes += row.content_bytes
     calendar_sequences = await calendar_history_sequences(db, conversation.id, selected)
+    voice_sequences = await voice_history_sequences(db, conversation.id, selected)
     return [
         {
             "role": row.role,
-            "content": _history_content(row, conversation.id, dek, calendar_sequences),
+            "content": _history_content(
+                row, conversation.id, dek, calendar_sequences, voice_sequences
+            ),
         }
         for row in reversed(selected)
     ]
@@ -1490,6 +1497,7 @@ async def _prepare_context_history(
     )
     active_working = await load_history(db, conversation, dek, rows, settings or get_settings())
     calendar_sequences = active_working.calendar_sequences
+    voice_sequences = active_working.voice_sequences
     if not prior_working_allowed:
         active_working.gaps.add("checkpoint_working_history_ineligible")
     if working_history is not None:
@@ -1498,6 +1506,7 @@ async def _prepare_context_history(
         working_history.gaps = active_working.gaps
         working_history.outcomes = active_working.outcomes
         working_history.calendar_sequences = active_working.calendar_sequences
+        working_history.voice_sequences = active_working.voice_sequences
     else:
         working_history = active_working
 
@@ -1505,7 +1514,9 @@ async def _prepare_context_history(
         canonical_messages = [
             {
                 "role": row.role,
-                "content": _history_content(row, conversation.id, dek, calendar_sequences),
+                "content": _history_content(
+                    row, conversation.id, dek, calendar_sequences, voice_sequences
+                ),
             }
             for row in selected_rows
         ]
@@ -1605,6 +1616,7 @@ async def _prepare_context_history(
                     ),
                     working=working_history.source(row.sequence),
                     calendar_derived=row.sequence in calendar_sequences,
+                    voice_derived=row.sequence in voice_sequences,
                 )
                 proposed = [*selected_sources, source]
                 helper_messages = _compaction_messages(
@@ -1648,6 +1660,7 @@ async def _prepare_context_history(
                     ),
                     working=working_history.source(row.sequence),
                     calendar_derived=row.sequence in calendar_sequences,
+                    voice_derived=row.sequence in voice_sequences,
                 )
                 for row in rows[:compact_count]
             ]
@@ -4163,48 +4176,22 @@ async def send_message(
             {"change_set_id": str(old_change_set.id)},
         )
 
-    change_set_id = uuid7()
-    operation_id = uuid7()
-    nonce = uuid7()
     expires_at = now + timedelta(minutes=settings.mimi_preview_ttl_minutes)
     operation_tool = (
         COLLECTION_TOOL
         if operation_args.get("schema_version") == "mimi.task-collection.v1"
         else TOOL_VERSION
     )
-    operation = ChangeOperation(
-        operation_id=operation_id,
-        tool=operation_tool,
-        args=operation_args,
-        expected_entity_version=None,
-        reversible=True,
+    change_set, _ = freeze_change_set_row(
+        conversation.id,
+        run_id,
+        dek,
+        operation_tool,
+        operation_args,
+        expires_at,
+        context_envelope.manifest.policy_id if context_envelope is not None else POLICY_VERSION,
     )
-    frozen = FrozenChangeSet(
-        change_set_id=change_set_id,
-        run_id=run_id,
-        operations=(operation,),
-        expires_at=expires_at,
-        nonce=nonce,
-        digest_sha256="0" * 64,
-        idempotency_key=f"preview:{change_set_id}",
-    )
-    digest = frozen.calculated_digest()
-    change_set = MimiChangeSet(
-        id=change_set_id,
-        run_id=run_id,
-        state="pending",
-        digest_sha256=digest,
-        nonce=nonce,
-        expires_at=expires_at,
-        operation_ciphertext=mimi_crypto.seal_content(
-            dek,
-            json.dumps(operation.model_dump(mode="json"), ensure_ascii=False),
-            aad=mimi_crypto.change_set_aad(conversation.id, change_set_id),
-        ),
-        policy_version=(
-            context_envelope.manifest.policy_id if context_envelope is not None else POLICY_VERSION
-        ),
-    )
+    change_set_id, digest = change_set.id, change_set.digest_sha256
     db.add(change_set)
     run.state = "waiting_confirmation"
 
@@ -4236,6 +4223,35 @@ async def send_message(
     )
     await db.flush()
     return await conversation_view(db, auth, conversation_id)
+
+
+def freeze_change_set_row(conversation_id, run_id, dek, tool, args, expires_at, policy_version):
+    """Seal one typed operation identically for Chat and server-bound Voice."""
+    change_id, nonce = uuid7(), uuid7()
+    operation = ChangeOperation(operation_id=uuid7(), tool=tool, args=args, reversible=True)
+    frozen = FrozenChangeSet(
+        change_set_id=change_id,
+        run_id=run_id,
+        operations=(operation,),
+        expires_at=expires_at,
+        nonce=nonce,
+        digest_sha256="0" * 64,
+        idempotency_key=f"preview:{change_id}",
+    )
+    return MimiChangeSet(
+        id=change_id,
+        run_id=run_id,
+        state="pending",
+        digest_sha256=frozen.calculated_digest(),
+        nonce=nonce,
+        expires_at=expires_at,
+        operation_ciphertext=mimi_crypto.seal_content(
+            dek,
+            json.dumps(operation.model_dump(mode="json"), ensure_ascii=False),
+            aad=mimi_crypto.change_set_aad(conversation_id, change_id),
+        ),
+        policy_version=policy_version,
+    ), operation
 
 
 async def confirm_change_set(

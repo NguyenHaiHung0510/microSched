@@ -121,6 +121,9 @@ class Settings(BaseSettings):
     mimi_collection_enabled: bool = False
     mimi_calendar_read_enabled: bool = False
     mimi_voice_enabled: bool = False
+    mimi_voice_v2_enabled: bool = False
+    mimi_voice_v2_max_seconds: int = Field(default=5_400, ge=30, le=5_400)
+    mimi_voice_v2_compression_enabled: bool = True
     mimi_gemini_api_key: SecretStr | None = Field(default=None, repr=False)
     # A finite session, never an automatic paid reconnect. QA can lower this.
     mimi_voice_max_seconds: int = Field(default=300, ge=30, le=600)

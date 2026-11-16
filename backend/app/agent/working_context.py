@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.agent.compaction import CALENDAR_HISTORY_MARKER
+from app.agent.compaction import CALENDAR_HISTORY_MARKER, VOICE_HISTORY_MARKER
 from app.agent.tools.calendar_reads import CALENDAR_READ_TOOLS
 from app.agent.tools.registry import READ_TOOLS, validate_read_arguments
 
@@ -307,6 +307,27 @@ async def calendar_history_sequences(db, conversation_id, rows) -> set[int]:
     return {row.sequence for row in rows if row.role == "assistant" and row.run_id in calendar_runs}
 
 
+async def voice_history_sequences(db, conversation_id, rows) -> set[int]:
+    """Native Voice v2 context has no safe per-utterance source inventory to replay in Chat."""
+    from sqlalchemy import select
+
+    from app.agent.models import MimiRun
+
+    run_ids = {row.run_id for row in rows if row.role == "assistant" and row.run_id}
+    if not run_ids:
+        return set()
+    voice_runs = set(
+        await db.scalars(
+            select(MimiRun.id).where(
+                MimiRun.conversation_id == conversation_id,
+                MimiRun.id.in_(run_ids),
+                MimiRun.execution_lease["voice_protocol"].astext == "2",
+            )
+        )
+    )
+    return {row.sequence for row in rows if row.role == "assistant" and row.run_id in voice_runs}
+
+
 @dataclass
 class WorkingHistory:
     """Ephemeral projection shared by the main request and compaction builder."""
@@ -316,6 +337,7 @@ class WorkingHistory:
     gaps: set[str] = field(default_factory=set)
     outcomes: dict[int, dict[str, Any]] = field(default_factory=dict)
     calendar_sequences: set[int] = field(default_factory=set)
+    voice_sequences: set[int] = field(default_factory=set)
 
     def metadata(self, frontier: int) -> dict[str, Any]:
         refs = [self.refs[key] for key in sorted(self.refs) if key > frontier]
@@ -332,6 +354,9 @@ class WorkingHistory:
         output = []
         seen_ids = set()
         for row, message in zip(rows, decoded, strict=True):
+            if row.sequence in self.voice_sequences:
+                output.append({"role": "assistant", "content": VOICE_HISTORY_MARKER})
+                continue
             if row.sequence in self.calendar_sequences:
                 output.append({"role": "assistant", "content": CALENDAR_HISTORY_MARKER})
                 continue
@@ -358,7 +383,7 @@ class WorkingHistory:
         return output
 
     def source(self, sequence: int) -> dict[str, Any] | None:
-        if sequence in self.calendar_sequences or sequence not in self.refs:
+        if sequence in self.calendar_sequences | self.voice_sequences or sequence not in self.refs:
             return None
         return {
             "ref": self.refs[sequence],
@@ -380,6 +405,9 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
     from app.domain.models import Task
 
     history = WorkingHistory()
+    history.voice_sequences = await voice_history_sequences(db, conversation.id, rows)
+    if history.voice_sequences:
+        history.gaps.add("voice_history_requires_fresh_read")
     history.calendar_sequences = await calendar_history_sequences(db, conversation.id, rows)
     if history.calendar_sequences:
         history.gaps.add("calendar_history_requires_fresh_read")
@@ -388,7 +416,8 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
     assistants = {
         str(row.id): row
         for row in rows
-        if row.role == "assistant" and row.sequence not in history.calendar_sequences
+        if row.role == "assistant"
+        and row.sequence not in history.calendar_sequences | history.voice_sequences
     }
     if not assistants:
         return history

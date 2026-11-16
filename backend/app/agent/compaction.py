@@ -15,6 +15,10 @@ CALENDAR_HISTORY_MARKER = (
     "[Calendar-derived assistant answer withheld. Read fresh Calendar data; "
     "this marker provides no current facts or absence evidence.]"
 )
+VOICE_HISTORY_MARKER = (
+    "[Voice-derived assistant answer withheld from model history. Read fresh STANDARD "
+    "data before answering; the saved transcript is still visible in the conversation.]"
+)
 
 
 def _constraint_id(
@@ -272,10 +276,13 @@ class CheckpointSource:
     content: str
     working: dict[str, Any] | None = None
     calendar_derived: bool = False
+    voice_derived: bool = False
 
     @property
     def provider_content(self) -> str:
         # Hashes still bind the original encrypted UI message, never the marker.
+        if self.voice_derived:
+            return VOICE_HISTORY_MARKER
         return CALENDAR_HISTORY_MARKER if self.calendar_derived else self.content
 
 

@@ -52,6 +52,8 @@ async def queue_completion(db: AsyncSession, run_id: UUID, sequence: int, kind: 
     if not get_settings().mimi_notifications_enabled:
         return
     run = await db.get(MimiRun, run_id)
+    if run.execution_lease.get("mode") == "voice_action":
+        return  # A Voice receipt/preview is delivered in the owning app.
     conversation = await db.get(MimiConversation, run.conversation_id)
     if conversation.sensitivity != "standard" or conversation.is_private:
         return
