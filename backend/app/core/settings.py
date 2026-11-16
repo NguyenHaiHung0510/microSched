@@ -6,7 +6,7 @@ from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     mimi_route_qualifications_json: str = "[]"
     mimi_collection_enabled: bool = False
     mimi_calendar_read_enabled: bool = False
+    mimi_voice_enabled: bool = False
+    mimi_gemini_api_key: SecretStr | None = Field(default=None, repr=False)
+    # A finite session, never an automatic paid reconnect. QA can lower this.
+    mimi_voice_max_seconds: int = Field(default=300, ge=30, le=600)
     mimi_revision_collection: bool = False
     mimi_notifications_enabled: bool = False
     # Legacy values remain readable for old receipts and explicit rollback tests.

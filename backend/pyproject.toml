@@ -26,6 +26,7 @@ dependencies = [
     # Windows has no system IANA database; ZoneInfo needs this at app runtime.
     "tzdata",
     "uvicorn",
+    "websockets==16.1.1",
 ]
 
 [dependency-groups]

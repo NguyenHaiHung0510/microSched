@@ -22,6 +22,7 @@ from app.domain.tasks import VIETNAM_TZ, dated_task_overlap
 
 CalendarKind = Literal["task", "event", "annotation"]
 CalendarDetailKind = Literal["event", "annotation"]
+CalendarVersion = tuple[datetime, tuple[UUID, datetime] | None]
 KINDS: tuple[CalendarKind, ...] = ("task", "event", "annotation")
 MAX_DAYS = 31
 PAGE_SIZE = 40
@@ -329,14 +330,42 @@ async def inspect_calendar(
 
 
 async def calendar_versions(
-    db: AsyncSession, kind: CalendarKind, ids: set[UUID]
-) -> dict[UUID, tuple[datetime, datetime | None]]:
+    db: AsyncSession, kind: CalendarKind, ids: set[UUID], *, lock: bool = False
+) -> dict[UUID, CalendarVersion]:
     """Recheck version and current visibility before replaying an in-run tool payload."""
     if kind == "event":
         stmt = from_visible_calendar_sources(
-            select(CalendarEvent.id, CalendarEvent.updated_at, CalendarSource.updated_at)
+            select(
+                CalendarEvent.id,
+                CalendarEvent.updated_at,
+                CalendarSource.id,
+                CalendarSource.updated_at,
+            )
         ).where(CalendarEvent.id.in_(ids))
-        return {eid: (version, source) for eid, version, source in (await db.execute(stmt))}
+        if lock:
+            # Import/delete lock parents before touching events. Take the same
+            # order; the final joined read only accepts sources we locked.
+            source_ids = await db.scalars(
+                select(CalendarSource.id)
+                .where(
+                    CalendarSource.id.in_(
+                        select(CalendarEvent.source_id).where(CalendarEvent.id.in_(ids))
+                    )
+                )
+                .order_by(CalendarSource.id)
+                .with_for_update(read=True)
+            )
+            stmt = (
+                stmt.where(CalendarSource.id.in_(source_ids.all()))
+                .order_by(CalendarEvent.id)
+                .with_for_update(read=True, of=CalendarEvent)
+            )
+        return {
+            eid: (version, (source_id, source_version))
+            for eid, version, source_id, source_version in (await db.execute(stmt))
+        }
     model = Task if kind == "task" else DayAnnotation
     stmt = standard_readable(select(model.id, model.updated_at).where(model.id.in_(ids)), model)
+    if lock:
+        stmt = stmt.order_by(model.id).with_for_update(read=True)
     return {eid: (version, None) for eid, version in (await db.execute(stmt))}

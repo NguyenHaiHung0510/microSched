@@ -54,7 +54,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': backendOrigin,
+      '/api': { target: backendOrigin, ws: true },
       '/auth': backendOrigin,
     },
   },

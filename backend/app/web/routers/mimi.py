@@ -87,9 +87,11 @@ async def mimi_capabilities(_session: CurrentSession) -> dict:
     """Expose only non-secret route capability actually configured for this app."""
 
     settings = get_settings()
+    from app.agent.voice_store import voice_available
     from app.agent.workflow_pilot import pilot_available
 
     return {
+        "voice_enabled": voice_available(settings),
         "workflow_pilot_enabled": pilot_available(settings),
         "context_v1_enabled": settings.mimi_context_v1_enabled,
         "live_provider_enabled": settings.mimi_live_provider_enabled,

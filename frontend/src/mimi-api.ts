@@ -23,6 +23,7 @@ export type MimiMessage = {
 
 export type MimiRun = {
   id: string
+  mode?: 'text' | 'voice'
   generation: number
   state: string
   provider_outcome: 'succeeded' | 'failed' | 'unknown' | null
@@ -237,6 +238,7 @@ export type MimiRunObservation = {
 }
 
 export type MimiCapabilities = {
+  voice_enabled?: boolean
   collection_enabled?: boolean
   notifications_enabled?: boolean
   context_v1_enabled: boolean

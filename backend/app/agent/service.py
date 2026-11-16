@@ -493,7 +493,11 @@ async def _append_event(
     sequence = (latest or 0) + 1
     db.add(MimiEvent(run_id=run_id, sequence=sequence, kind=kind, payload=payload))
     await db.flush()
-    if kind in {"run.terminal", "change_set.ready"} and get_settings().mimi_notifications_enabled:
+    if (
+        kind in {"run.terminal", "change_set.ready"}
+        and payload.get("mode") != "voice"
+        and get_settings().mimi_notifications_enabled
+    ):
         from app.agent.notifications import queue_completion
 
         await queue_completion(db, run_id, sequence, kind)
@@ -628,7 +632,9 @@ async def _conversation(
         MimiConversation.owner_id == _owner_id(auth),
     )
     if lock:
-        statement = statement.with_for_update()
+        # The synchronous text route may already have loaded this row during
+        # preflight. Compare against its generation after acquiring the lock.
+        statement = statement.with_for_update().execution_options(populate_existing=True)
     row = (await db.execute(statement)).scalar_one_or_none()
     if row is None:
         raise _not_found()
@@ -1340,6 +1346,9 @@ async def ensure_message_admissible(
         if existing.content_sha256 != hashlib.sha256(payload.content.encode("utf-8")).hexdigest():
             raise _conflict("message_client_id_reused_with_different_content")
         return  # An idempotent replay is not a new context/provider turn.
+    from app.agent.voice_store import guard_voice_for_text
+
+    await guard_voice_for_text(db, conversation.id)
     if (
         payload.expected_generation is not None
         and payload.expected_generation != conversation.generation
@@ -1989,6 +1998,8 @@ async def send_message(
     parent_run_id: UUID | None = None,
 ) -> dict[str, Any]:
     conversation = await _conversation(db, auth, conversation_id, lock=True)
+    from app.agent.voice_store import guard_voice_for_text
+
     existing = None
     if record_user_message:
         existing = (
@@ -2008,6 +2019,9 @@ async def send_message(
         and payload.expected_generation != conversation.generation
     ):
         raise _conflict("conversation_generation_stale")
+    await guard_voice_for_text(
+        db, conversation.id, new_message=record_user_message, supersede=record_user_message
+    )
 
     if (
         record_user_message
@@ -4892,6 +4906,7 @@ async def conversation_view(
         "runs": [
             {
                 "id": row.id,
+                **({"mode": "voice"} if row.execution_lease.get("mode") == "voice" else {}),
                 "generation": row.generation,
                 "state": row.state,
                 "provider_outcome": row.provider_outcome,
@@ -5061,6 +5076,8 @@ async def prepare_run_resume(
     if found is None:
         raise _not_found()
     run, conversation = found
+    if run.execution_lease.get("mode") == "voice":
+        raise _conflict("mimi_voice_has_no_text_resume")
     if run.provider_outcome == "unknown" or run.state == "outcome_unknown":
         raise _conflict("mimi_run_outcome_unknown_reconciliation_required")
     if not (
@@ -5119,6 +5136,8 @@ async def request_run_pause(db: AsyncSession, auth: AuthSession, run_id: UUID) -
     ).scalar_one_or_none()
     if found is None:
         raise _not_found()
+    if found.execution_lease.get("mode") == "voice":
+        raise _conflict("mimi_voice_has_no_text_pause")
     if found.state not in {"accepted", "building", "running"}:
         raise _conflict("mimi_run_not_active_for_pause")
     if not (get_settings().mimi_context_v1_enabled and get_settings().mimi_live_provider_enabled):
@@ -5165,6 +5184,8 @@ async def reconcile_unknown_run(
     ).scalar_one_or_none()
     if run is None:
         raise _not_found()
+    if run.execution_lease.get("mode") == "voice":
+        raise _conflict("mimi_voice_has_no_text_reconciliation")
     if not needs_reconciliation(run):
         raise _conflict(f"mimi_run_{run.state}_does_not_need_reconciliation")
     call = (
@@ -5346,7 +5367,7 @@ async def finish_interrupted_run(
     await db.flush()
 
 
-async def reconcile_orphaned_mimi_runs(db: AsyncSession) -> int:
+async def reconcile_orphaned_mimi_runs(db: AsyncSession, *, voice_only: bool = False) -> int:
     """Classify guarded runs abandoned by a crashed process, never redispatch them.
 
     A live old Fly Machine holds the transaction advisory lock and is left
@@ -5364,6 +5385,8 @@ async def reconcile_orphaned_mimi_runs(db: AsyncSession) -> int:
             MimiRun.state.in_(("accepted", "running")),
             MimiRun.completed_at.is_(None),
         )
+        if voice_only:
+            query = query.where(MimiRun.execution_lease["mode"].astext == "voice")
         if last_id is not None:
             query = query.where(MimiRun.id > last_id)
         ids = (await db.execute(query.order_by(MimiRun.id).limit(100))).scalars().all()
@@ -5397,6 +5420,22 @@ async def reconcile_orphaned_mimi_runs(db: AsyncSession) -> int:
                         )
                     ).scalar_one_or_none()
                     if call is None or call.route.get("run_guard_version") != 1:
+                        continue
+                    if run.execution_lease.get("mode") == "voice":
+                        # Voice is bounded by a durable ticket/deadline rather
+                        # than pinning a DB connection during external audio.
+                        # A rolling restart must not relabel a live old socket.
+                        if run.deadline > datetime.now(UTC) and (
+                            call.state != "intent"
+                            or datetime.fromisoformat(run.execution_lease["ticket_expires_at"])
+                            > datetime.now(UTC)
+                        ):
+                            continue
+                        from app.agent.voice_store import close_orphaned_voice
+
+                        await close_orphaned_voice(db, run, call)
+                        await db.commit()
+                        recovered += 1
                         continue
                     if call.state == "intent":
                         call.state = "fenced"
