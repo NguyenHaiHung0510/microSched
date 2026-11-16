@@ -25,6 +25,11 @@ pytestmark = pytest.mark.pg
 
 
 def test_snapshot_aggregates_beyond_public_limits_and_late_usage_replaces(pg_dsn, monkeypatch):
+    # Both synthetic callers must reach the per-conversation owner check.
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("ALLOWED_EMAILS", "")
+    monkeypatch.setenv("MIMI_OWNER_WORKSPACE_ENABLED", "false")
+    monkeypatch.setenv("MIMI_P0_DISABLE_DOTENV", "1")
     monkeypatch.setenv("ENCRYPTION_MASTER_KEY", base64.urlsafe_b64encode(os.urandom(32)).decode())
     monkeypatch.setenv("OAUTH_STATE_SECRET", "p2-synthetic-only")
     get_settings.cache_clear()
@@ -39,6 +44,8 @@ def test_snapshot_aggregates_beyond_public_limits_and_late_usage_replaces(pg_dsn
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
         other = auth.model_copy(update={"user_email": "other-p2@example.invalid"})
+        owner_id = service._owner_id(auth)
+        assert service._owner_id(other) != owner_id
         conversation_id, unrelated_id = uuid7(), uuid7()
         wrapped = mimi_crypto.create_wrapped_dek()
         dek = mimi_crypto.unwrap_dek(wrapped)
@@ -49,7 +56,7 @@ def test_snapshot_aggregates_beyond_public_limits_and_late_usage_replaces(pg_dsn
                     [
                         MimiConversation(
                             id=identity,
-                            owner_id=service._owner_id(auth),
+                            owner_id=owner_id,
                             sensitivity="standard",
                             dek_wrapped=wrapped,
                             generation=101,

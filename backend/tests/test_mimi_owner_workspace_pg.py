@@ -588,7 +588,18 @@ def test_confirm_receipt_cannot_satisfy_changed_decision_across_logins(pg_dsn):
                         cid,
                         service.MessageCreate(client_id=client_id, content=f"Tạo task {title}"),
                     )
-                    return view["change_sets"][-1]
+                    # Previews in this transaction can share the same created_at.
+                    [message] = [
+                        item
+                        for item in view["messages"]
+                        if item["role"] == "user" and item["client_id"] == client_id
+                    ]
+                    [preview] = [
+                        item
+                        for item in view["change_sets"]
+                        if item["run_id"] == message["run_id"] and item["state"] == "pending"
+                    ]
+                    return preview
 
                 change = await propose("confirm-first")
                 confirm = service.ConfirmationDecision(
@@ -617,6 +628,7 @@ def test_confirm_receipt_cannot_satisfy_changed_decision_across_logins(pg_dsn):
                 )
 
                 second = await propose("reject-first")
+                assert second["id"] != change["id"]
                 reject = service.ConfirmationDecision(
                     digest=second["digest"], nonce=second["nonce"], decision="reject"
                 )
