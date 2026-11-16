@@ -239,6 +239,7 @@ export type MimiRunObservation = {
 
 export type MimiCapabilities = {
   voice_enabled?: boolean
+  voice_v2_enabled?: boolean
   collection_enabled?: boolean
   notifications_enabled?: boolean
   context_v1_enabled: boolean
@@ -373,6 +374,27 @@ const MIMI_WRITE_HEADERS = { 'X-Mimi-CSRF': '1' }
 
 export function fetchMimiCapabilities(): Promise<MimiCapabilities> {
   return apiRequest('/api/mimi/capabilities')
+}
+
+export type MimiVoicePreferences = { fast_apply: boolean }
+
+function readVoicePreferences(value: unknown): MimiVoicePreferences {
+  if (!value || typeof value !== 'object' || !('fast_apply' in value) || typeof value.fast_apply !== 'boolean') {
+    throw new Error('invalid_voice_preferences')
+  }
+  return { fast_apply: value.fast_apply }
+}
+
+export function fetchMimiVoicePreferences(signal?: AbortSignal): Promise<MimiVoicePreferences> {
+  return apiRequest('/api/mimi/voice-preferences', { signal }).then(readVoicePreferences)
+}
+
+export function saveMimiVoicePreferences(fastApply: boolean): Promise<MimiVoicePreferences> {
+  return apiRequest('/api/mimi/voice-preferences', {
+    method: 'PATCH',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({ fast_apply: fastApply }),
+  }).then(readVoicePreferences)
 }
 
 export function fetchMimiConfiguration(conversationId: string): Promise<MimiConversationConfiguration> {
