@@ -53,8 +53,10 @@ def server_event(raw: str | bytes) -> dict:
         "voiceActivity",
         "voiceActivityDetectionSignal",
     }
-    if not isinstance(event, dict) or not event or set(event) - allowed:
+    if not isinstance(event, dict) or set(event) - allowed:
         raise VoiceError("voice_provider_event_unsupported")
+    # A Live envelope can contain no events. It is a no-op after setup;
+    # only setupComplete can still admit microphone input.
     return event
 
 

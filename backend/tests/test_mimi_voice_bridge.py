@@ -84,6 +84,36 @@ def test_setup_uses_audio_and_exact_nonblocking_calendar_tools():
         server_event('{"browserTranscript":{"text":"forged"}}')
 
 
+def test_empty_provider_envelope_does_not_interrupt_the_next_turn():
+    async def scenario():
+        browser, store = Browser(), Store()
+        bridge = VoiceBridge(browser, store)
+
+        class ProviderWithEmptyEnvelope(Provider):
+            events = iter(
+                [
+                    b"{}",
+                    '{"serverContent":{"inputTranscription":{"text":"Ngày mai"}}}',
+                    json.dumps({"serverContent": {"modelTurn": {"parts": [audio(b"\x00\x01")]}}}),
+                    '{"serverContent":{"outputTranscription":{"text":"Có lịch học"}}}',
+                    '{"serverContent":{"turnComplete":true}}',
+                ]
+            )
+
+            async def recv(self):
+                return next(self.events, '{"goAway":{}}')
+
+        bridge.provider = ProviderWithEmptyEnvelope()
+        with pytest.raises(VoiceError, match="voice_provider_session_ending"):
+            await bridge.provider_loop()
+        assert bridge.completed_turns == 1
+        assert store.transcripts == [(1, "Ngày mai", "Có lịch học", False)]
+        assert b"\x00\x01" in browser.frames
+        assert bridge.provider.sent == []
+
+    asyncio.run(scenario())
+
+
 def test_all_audio_parts_and_interruption_keep_new_input_out_of_partial_answer():
     async def scenario():
         browser, store = Browser(), Store()
