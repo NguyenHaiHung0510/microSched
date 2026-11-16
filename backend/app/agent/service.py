@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent import crypto as mimi_crypto
 from app.agent.billing_prices import safe_generation_billing
 from app.agent.compaction import (
+    CALENDAR_HISTORY_MARKER,
     CheckpointSource,
     active_constraint_context,
     make_checkpoint,
@@ -117,12 +118,14 @@ from app.agent.task_collection import (
     canonical as collection_json,
 )
 from app.agent.tool_activity import tool_activity
+from app.agent.tools.calendar_reads import CALENDAR_READ_TOOLS, calendar_pairs_current
 from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, execute_read_tool
 from app.agent.working_context import (
     KIND as WORKING_KIND,
 )
 from app.agent.working_context import (
     WorkingHistory,
+    calendar_history_sequences,
     checkpoint_for_egress,
     load_history,
     persist_confirmed,
@@ -386,6 +389,7 @@ def _manifest_receipt(envelope: ContextEnvelope) -> dict[str, Any]:
         "sources": [
             {
                 "source_id": source.source_id,
+                "source_type": source.source_type,
                 "count": source.count,
                 "coverage": source.coverage,
                 "omitted_fields": source.omitted_fields,
@@ -727,6 +731,16 @@ def _conversation_summary(row: MimiConversation, *, latest_run_state: str | None
     }
 
 
+def _history_content(row, conversation_id, dek, calendar_sequences):
+    if row.sequence in calendar_sequences:
+        return CALENDAR_HISTORY_MARKER
+    return mimi_crypto.open_content(
+        dek,
+        row.content_ciphertext,
+        aad=mimi_crypto.message_aad(conversation_id, row.sequence, row.role),
+    )
+
+
 async def _provider_history(
     db: AsyncSession,
     conversation: MimiConversation,
@@ -759,18 +773,11 @@ async def _provider_history(
             break
         selected.append(row)
         used_bytes += row.content_bytes
+    calendar_sequences = await calendar_history_sequences(db, conversation.id, selected)
     return [
         {
             "role": row.role,
-            "content": mimi_crypto.open_content(
-                dek,
-                row.content_ciphertext,
-                aad=mimi_crypto.message_aad(
-                    conversation.id,
-                    row.sequence,
-                    row.role,
-                ),
-            ),
+            "content": _history_content(row, conversation.id, dek, calendar_sequences),
         }
         for row in reversed(selected)
     ]
@@ -824,7 +831,7 @@ def _compaction_messages(
                             "sequence": source.sequence,
                             "role": source.role,
                             "sha256": source.content_sha256,
-                            "content": source.content,
+                            "content": source.provider_content,
                             "working_history": source.working,
                         }
                         for source in sources
@@ -1193,14 +1200,9 @@ async def _load_active_checkpoint(
                 aad=mimi_crypto.event_content_aad(active.run_id, active.sequence, active.kind),
             )
         )
-        if (
-            prior.get("frontier") != conversation.context_frontier_sequence
-            or not checkpoint_policy_compatible(
-                prior.get("policy_sha256"),
-                collection_enabled=get_settings().mimi_collection_enabled,
-            )
-            or _canonical_digest(prior) != active.payload.get("content_sha256")
-        ):
+        if prior.get("frontier") != conversation.context_frontier_sequence or _canonical_digest(
+            prior
+        ) != active.payload.get("content_sha256"):
             raise _conflict("mimi_active_checkpoint_invalid")
         refs = prior.get("source_refs")
         if not isinstance(refs, list) or len(refs) > 1000:
@@ -1222,6 +1224,35 @@ async def _load_active_checkpoint(
             for ref in refs
         ):
             raise _conflict("mimi_active_checkpoint_source_drift")
+        if prior.get("calendar_history_policy") != 1:
+            # Old free-text summaries cannot be reliably split into Calendar and
+            # general claims. Check metadata across the whole frontier (including
+            # ancestors); never send that summary, even with Calendar flag off.
+            calendar_source = await db.scalar(
+                select(MimiMessage.id)
+                .join(MimiRun, MimiMessage.run_id == MimiRun.id)
+                .join(MimiEvent, MimiEvent.run_id == MimiRun.id)
+                .where(
+                    MimiMessage.conversation_id == conversation.id,
+                    MimiRun.conversation_id == conversation.id,
+                    MimiMessage.role == "assistant",
+                    MimiMessage.sequence <= prior["frontier"],
+                    MimiEvent.kind == "tool.read_result",
+                    MimiEvent.payload["tool"].astext.in_(CALENDAR_READ_TOOLS),
+                )
+                .limit(1)
+            )
+            if calendar_source is not None:
+                raise _conflict(
+                    "mimi_calendar_checkpoint_requires_new_conversation: "
+                    "Checkpoint lịch cũ chưa lọc dữ liệu Calendar. "
+                    "Hãy mở cuộc trò chuyện mới để đọc lại lịch; chat cũ vẫn được giữ."
+                )
+        if not checkpoint_policy_compatible(
+            prior.get("policy_sha256"),
+            collection_enabled=get_settings().mimi_collection_enabled,
+        ):
+            raise _conflict("mimi_active_checkpoint_invalid")
         checkpoint_id = active.id
     return prior, checkpoint_id
 
@@ -1411,6 +1442,7 @@ async def _prepare_context_history(
         settings or get_settings(),
     )
     active_working = await load_history(db, conversation, dek, rows, settings or get_settings())
+    calendar_sequences = active_working.calendar_sequences
     if not prior_working_allowed:
         active_working.gaps.add("checkpoint_working_history_ineligible")
     if working_history is not None:
@@ -1418,6 +1450,7 @@ async def _prepare_context_history(
         working_history.refs = active_working.refs
         working_history.gaps = active_working.gaps
         working_history.outcomes = active_working.outcomes
+        working_history.calendar_sequences = active_working.calendar_sequences
     else:
         working_history = active_working
 
@@ -1425,11 +1458,7 @@ async def _prepare_context_history(
         canonical_messages = [
             {
                 "role": row.role,
-                "content": mimi_crypto.open_content(
-                    dek,
-                    row.content_ciphertext,
-                    aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
-                ),
+                "content": _history_content(row, conversation.id, dek, calendar_sequences),
             }
             for row in selected_rows
         ]
@@ -1528,6 +1557,7 @@ async def _prepare_context_history(
                         aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
                     ),
                     working=working_history.source(row.sequence),
+                    calendar_derived=row.sequence in calendar_sequences,
                 )
                 proposed = [*selected_sources, source]
                 helper_messages = _compaction_messages(
@@ -1570,6 +1600,7 @@ async def _prepare_context_history(
                         aad=mimi_crypto.message_aad(conversation.id, row.sequence, row.role),
                     ),
                     working=working_history.source(row.sequence),
+                    calendar_derived=row.sequence in calendar_sequences,
                 )
                 for row in rows[:compact_count]
             ]
@@ -2148,7 +2179,8 @@ async def send_message(
         run_id=run_id,
         capabilities=(
             (
-                *sorted(READ_TOOLS - {SELECTION_TOOL}),
+                *sorted(READ_TOOLS - {SELECTION_TOOL} - CALENDAR_READ_TOOLS),
+                *(sorted(CALENDAR_READ_TOOLS) if settings.mimi_calendar_read_enabled else ()),
                 CREATE_CANDIDATE_TOOL,
                 *(
                     (SELECTION_TOOL, COLLECTION_CANDIDATE_TOOL, COLLECTION_TOOL)
@@ -2423,14 +2455,25 @@ async def send_message(
                 raise _conflict("continuation_parent_missing")
             if parent.provider_outcome == "unknown" or parent.state == "outcome_unknown":
                 raise _conflict("continuation_parent_unknown")
+            parent_read_conditions = (
+                MimiEvent.run_id == parent_run_id,
+                MimiEvent.kind == "tool.read_result",
+            )
+            calendar_reads_require_refresh = bool(
+                await db.scalar(
+                    select(MimiEvent.id)
+                    .where(
+                        *parent_read_conditions,
+                        MimiEvent.payload["tool"].as_string().in_(sorted(CALENDAR_READ_TOOLS)),
+                    )
+                    .limit(1)
+                )
+            )
             parent_reads = (
                 (
                     await db.execute(
                         select(MimiEvent)
-                        .where(
-                            MimiEvent.run_id == parent_run_id,
-                            MimiEvent.kind == "tool.read_result",
-                        )
+                        .where(*parent_read_conditions)
                         .order_by(MimiEvent.sequence)
                         .limit(lease.max_tool_calls)
                     )
@@ -2440,6 +2483,10 @@ async def send_message(
             )
             restored_count = 0
             for event in parent_reads:
+                if event.payload.get("tool") in CALENDAR_READ_TOOLS:
+                    # A row-by-ID check cannot establish fresh Calendar membership or absence.
+                    # Never carry prior Calendar results into a successor's provider context.
+                    continue
                 sealed = event.payload.get("body_ciphertext")
                 if not isinstance(sealed, str):
                     continue  # Historical metadata-only result is not reusable evidence.
@@ -2511,7 +2558,11 @@ async def send_message(
                     .limit(1)
                 )
             ).scalar_one_or_none()
-            if previous_call and previous_call.state == "succeeded":
+            if (
+                previous_call
+                and previous_call.state == "succeeded"
+                and not calendar_reads_require_refresh
+            ):
                 sealed_terminal = (previous_call.result or {}).get("terminal_ciphertext")
                 if isinstance(sealed_terminal, str):
                     decoded = json.loads(
@@ -2550,6 +2601,11 @@ async def send_message(
                 {
                     "parent_run_id": str(parent_run_id),
                     "read_receipts": restored_count,
+                    **(
+                        {"calendar_refresh_required": True}
+                        if calendar_reads_require_refresh
+                        else {}
+                    ),
                     "fresh_lease": True,
                     "approval_carried": False,
                 },
@@ -2845,7 +2901,9 @@ async def send_message(
                             if a.get("tool_calls") and b.get("role") == "tool"
                         ]
                         ids, active_ids = read_requirements(pairs, historical=False)
-                        if not await sources_current(db, ids, active_ids):
+                        if not await sources_current(
+                            db, ids, active_ids
+                        ) or not await calendar_pairs_current(db, pairs):
                             raise RouteContractError("context_sources_changed_before_dispatch")
                         context_envelope, refreshed_messages = rebind_policy_budget(
                             context_envelope, messages, settings=settings
@@ -3062,6 +3120,11 @@ async def send_message(
                     name: str, arguments: dict[str, Any]
                 ) -> dict[str, Any]:
                     try:
+                        if name in CALENDAR_READ_TOOLS and (
+                            not settings.mimi_calendar_read_enabled
+                            or name not in lease.capabilities
+                        ):
+                            raise RouteContractError("mimi_calendar_read_not_leased")
                         cached = continuation_read_cache.pop(
                             (name, _canonical_digest(arguments)), None
                         )
@@ -3095,7 +3158,12 @@ async def send_message(
                             }
                         else:
                             async with read_factory() as read_db:
-                                result = await execute_read_tool(read_db, name, arguments)
+                                if name in CALENDAR_READ_TOOLS:
+                                    result = await execute_read_tool(
+                                        read_db, name, arguments, settings=settings
+                                    )
+                                else:
+                                    result = await execute_read_tool(read_db, name, arguments)
                     except SelectionCorrection as error:
                         if name != SELECTION_TOOL:
                             raise
@@ -3158,7 +3226,9 @@ async def send_message(
                         # write preview in this P1C-A contract.
                         aggregate_read_seen = True
                     bound_versions: dict[str, str] = {}
-                    for row in () if "error" in result else result.get("rows", []):
+                    calendar_tool = tool_name in CALENDAR_READ_TOOLS
+                    task_rows = () if calendar_tool or "error" in result else result.get("rows", [])
+                    for row in task_rows:
                         if not isinstance(row, dict):
                             raise RouteContractError("task_read_row_invalid")
                         try:
@@ -3234,6 +3304,7 @@ async def send_message(
                             max_tool_calls=lease.max_tool_calls,
                             max_serialized_bytes=settings.mimi_max_payload_bytes,
                             deadline=deadline,
+                            calendar_enabled=settings.mimi_calendar_read_enabled,
                         ),
                         invoke_model=invoke_agent_model,
                         execute_read=execute_agent_read,
@@ -3248,6 +3319,7 @@ async def send_message(
                             max_tool_calls=lease.max_tool_calls,
                             max_serialized_bytes=settings.mimi_max_payload_bytes,
                             deadline=deadline,
+                            calendar_enabled=settings.mimi_calendar_read_enabled,
                         ),
                         invoke_model=invoke_agent_model,
                         execute_read=execute_agent_read,
@@ -3274,6 +3346,14 @@ async def send_message(
                 ).scalar_one()
                 if current_run.error_code == "pause_requested":
                     raise OwnerPauseRequested()
+                if isinstance(outcome, PreviewCandidate) and any(
+                    call["function"]["name"] in CALENDAR_READ_TOOLS
+                    for message in finalized_working_messages
+                    for call in message.get("tool_calls", ())
+                ):
+                    outcome = Blocked(
+                        reason="Lượt đọc Lịch chỉ để trả lời và không tạo đề xuất thay đổi."
+                    )
                 if isinstance(outcome, PreviewCandidate) and aggregate_read_seen:
                     outcome = Blocked(
                         reason=(

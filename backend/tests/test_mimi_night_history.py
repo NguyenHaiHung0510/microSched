@@ -150,7 +150,12 @@ def test_scalar_receipt_and_raw_read_have_distinct_lifecycle_eligibility(
                     return Result([UUID(row[0]) for row in connection.execute(sql)])
                 if entity.__name__ == "MimiEvent":
                     return Result([event])
+                if entity.__name__ == "MimiRun":
+                    return Result([])  # This synthetic history has no Calendar receipts.
                 return Result([receipt])
+
+            async def scalars(self, query):
+                return (await self.execute(query)).scalars().all()
 
             async def get(self, model, key):
                 return assistant if key == assistant.id else user if key == user.id else None

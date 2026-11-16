@@ -276,15 +276,25 @@ function sortedEvents(events: CalendarEvent[]): CalendarEvent[] {
 }
 
 /**
- * Group events by the Vietnam day they occupy. An event crossing midnight
- * belongs to both calendar days it touches.
+ * Group events by the Vietnam days their half-open interval occupies.
+ * In the grid, expand only within the loaded months.
  */
-export function eventsByDay(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
+export function eventsByDay(
+  events: CalendarEvent[],
+  loadedDays?: { from: string; to: string },
+): Map<string, CalendarEvent[]> {
   const groups = new Map<string, CalendarEvent[]>()
   for (const event of dedupeById(events)) {
     const startDay = vnDayKey(event.starts_at)
     const endDay = vnDayKey(event.ends_at)
-    for (const day of new Set([startDay, endDay])) {
+    // Date truncates fractional seconds after milliseconds. Keep the end day
+    // when a PostgreSQL instant falls even one microsecond after midnight.
+    const hasSubMs = /\.\d{3}\d*[1-9]\d*(?=Z|[+-])/i.test(event.ends_at)
+    const endAtMidnight = !hasSubMs && vnDayKey(new Date(Date.parse(event.ends_at) - 1)) !== endDay
+    const first = loadedDays && startDay < loadedDays.from ? loadedDays.from : startDay
+    const occupiedEnd = endAtMidnight ? addVietnamDays(endDay, -1) : endDay
+    const last = loadedDays && occupiedEnd > loadedDays.to ? loadedDays.to : occupiedEnd
+    for (let day = first; day <= last; day = addVietnamDays(day, 1)) {
       const current = groups.get(day) ?? []
       current.push(event)
       groups.set(day, current)

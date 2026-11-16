@@ -443,7 +443,10 @@ export function CalendarScrollView() {
     () => dedupeById(monthEventQueries.flatMap((query) => query.data?.items ?? [])),
     [monthEventQueries],
   )
-  const eventsByDayMap = useMemo(() => eventsByDay(allEvents), [allEvents])
+  const eventsByDayMap = useMemo(
+    () => eventsByDay(allEvents, annotationRange),
+    [allEvents, annotationRange],
+  )
   const annotationsByDayMap = useMemo(
     () => annotationsByDay(annotationsQuery.data?.items ?? []),
     [annotationsQuery.data],

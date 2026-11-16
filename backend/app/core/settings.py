@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     # Empty means no adaptive endpoint is certified. No provider roster.
     mimi_route_qualifications_json: str = "[]"
     mimi_collection_enabled: bool = False
+    mimi_calendar_read_enabled: bool = False
     mimi_revision_collection: bool = False
     mimi_notifications_enabled: bool = False
     # Legacy values remain readable for old receipts and explicit rollback tests.

@@ -86,13 +86,21 @@ def can_see_private(session: AuthSession) -> bool:
 
 def with_privacy_gate(stmt: Select[Any], model: Any, session: AuthSession) -> Select[Any]:
     """Restrict a query to rows visible through this session's private gate."""
+    return _with_privacy_visibility(stmt, model, session)
+
+
+def _with_privacy_visibility(
+    stmt: Select[Any], model: Any, session: AuthSession | None
+) -> Select[Any]:
     gate = _declared_gate(model, "__privacy_gate__")
     if gate is Gate.NONE:
         return stmt
     if gate is Gate.VIA_PARENT:
         raise _via_parent_error(model, "__privacy_gate__", "with_privacy_gate")
     is_private = _gate_column(model, "__privacy_gate__", "is_private")
-    return stmt if can_see_private(session) else stmt.where(is_private.is_(False))
+    if session is not None and can_see_private(session):
+        return stmt
+    return stmt.where(is_private.is_(False))
 
 
 def not_deleted(stmt: Select[Any], model: Any) -> Select[Any]:
@@ -109,3 +117,8 @@ def not_deleted(stmt: Select[Any], model: Any) -> Select[Any]:
 def readable(stmt: Select[Any], model: Any, session: AuthSession) -> Select[Any]:
     """Restrict a parent-entity query by privacy and soft deletion."""
     return not_deleted(with_privacy_gate(stmt, model, session), model)
+
+
+def standard_readable(stmt: Select[Any], model: Any) -> Select[Any]:
+    """Only active STANDARD rows, regardless of any session PIN state."""
+    return not_deleted(_with_privacy_visibility(stmt, model, None), model)

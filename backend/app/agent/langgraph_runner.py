@@ -211,7 +211,9 @@ async def run_langgraph(
                     frame["messages"], frame["final_reason"] or "reserved_final_turn"
                 )
         if (
-            serialized_input_bytes(frame["messages"], agent_contract=True)
+            serialized_input_bytes(
+                frame["messages"], agent_contract=True, calendar_enabled=limits.calendar_enabled
+            )
             > limits.max_serialized_bytes
         ):
             finish_blocked(

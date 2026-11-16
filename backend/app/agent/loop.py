@@ -37,6 +37,7 @@ class LoopLimits:
     max_tool_calls: int
     max_serialized_bytes: int
     deadline: datetime
+    calendar_enabled: bool = False
 
     def __post_init__(self) -> None:
         if min(self.max_turns, self.max_tool_calls, self.max_serialized_bytes) < 1:
@@ -300,7 +301,12 @@ async def run_read_loop(
         if final_reason or total_calls >= limits.max_tool_calls or turn == limits.max_turns:
             if not messages_final_only(messages):
                 messages = finalization_messages(messages, final_reason or "reserved_final_turn")
-        if serialized_input_bytes(messages, agent_contract=True) > limits.max_serialized_bytes:
+        if (
+            serialized_input_bytes(
+                messages, agent_contract=True, calendar_enabled=limits.calendar_enabled
+            )
+            > limits.max_serialized_bytes
+        ):
             return LoopResult(
                 Blocked(reason="Ngữ cảnh vượt giới hạn đã cấp; cần compact hoặc thu hẹp phạm vi."),
                 last_completion,

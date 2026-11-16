@@ -25,7 +25,13 @@ from app.agent.context import (
     parse_terminal_wire,
 )
 from app.agent.task_collection import COLLECTION_CANDIDATE_TOOL, CollectionCandidate
-from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, TOOLS
+from app.agent.tools.registry import (
+    CALENDAR_TOOLS,
+    CREATE_CANDIDATE_TOOL,
+    READ_TOOLS,
+    TOOLS,
+    tools_for_settings,
+)
 from app.core.settings import Settings, get_settings
 from app.domain.tasks import TaskCreate
 
@@ -447,7 +453,11 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
 
 
 def serialized_input_bytes(
-    messages: list[dict[str, Any]], *, agent_contract: bool, summary_mode: bool = False
+    messages: list[dict[str, Any]],
+    *,
+    agent_contract: bool,
+    summary_mode: bool = False,
+    calendar_enabled: bool = False,
 ) -> int:
     """Bound the full model-visible input, including output and tool schemas."""
 
@@ -455,7 +465,8 @@ def serialized_input_bytes(
     if summary_mode:
         payload["response_format"] = COMPACTION_RESPONSE_FORMAT
     else:
-        payload["tools"] = list(TOOLS) if agent_contract else [TASK_CREATE_TOOL]
+        tools = (*TOOLS, *CALENDAR_TOOLS) if calendar_enabled else TOOLS
+        payload["tools"] = list(tools) if agent_contract else [TASK_CREATE_TOOL]
     if agent_contract and not summary_mode:
         payload["response_format"] = AGENT_RESPONSE_FORMAT
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
@@ -479,16 +490,19 @@ def build_request(
         raise RouteContractError("final_answer_conflicts_with_summary")
     if summary_mode and agent_contract:
         raise RouteContractError("summary_mode_conflicts_with_agent_contract")
-    active_tools = [] if summary_mode else (list(TOOLS) if agent_contract else [TASK_CREATE_TOOL])
-    if agent_contract and not route.mimi_collection_enabled:
-        active_tools = [
-            t
-            for t in active_tools
-            if t["function"]["name"] not in {"task.freeze_selection.v1", COLLECTION_CANDIDATE_TOOL}
-        ]
+    active_tools = (
+        []
+        if summary_mode
+        else (list(tools_for_settings(route)) if agent_contract else [TASK_CREATE_TOOL])
+    )
     # Payload resource bound is independent of provider tokens and 100k trigger.
     if (
-        serialized_input_bytes(messages, agent_contract=agent_contract, summary_mode=summary_mode)
+        serialized_input_bytes(
+            messages,
+            agent_contract=agent_contract,
+            summary_mode=summary_mode,
+            calendar_enabled=route.mimi_calendar_read_enabled,
+        )
         > route.mimi_max_payload_bytes
     ):
         raise RouteContractError("payload_bytes_exceeded")
