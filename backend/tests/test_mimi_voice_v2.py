@@ -171,7 +171,9 @@ def test_setup_keeps_v1_wire_and_leases_only_current_v2_capabilities():
     }
     config = setup_v2(now, settings)["setup"]
     assert config["sessionResumption"] == {}
-    assert config["inputAudioTranscription"] == {"wordTimestamp": True}
+    # Gemini Live startup uses the conversational model's standard transcription
+    # configuration, not the word-level option shared with other speech APIs.
+    assert config["inputAudioTranscription"] == old["inputAudioTranscription"] == {}
     assert config["contextWindowCompression"] == {
         "triggerTokens": "25000",
         "slidingWindow": {"targetTokens": "8000"},

@@ -101,7 +101,8 @@ def setup_v2(now, settings):
         instruction = instruction.replace(name, _wire(name))
     config["systemInstruction"] = {"parts": [{"text": instruction}]}
     config["tools"] = [{"functionDeclarations": declarations}]
-    config["inputAudioTranscription"] = {"wordTimestamp": True}
+    # Keep the conversational Live transcription setup from V1. The wire
+    # transcript's utterance offsets are optional; word timestamps are not used.
     config["sessionResumption"] = {}
     if settings.mimi_voice_v2_compression_enabled:
         config["contextWindowCompression"] = {
