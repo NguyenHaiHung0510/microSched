@@ -3,10 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '@/api'
 import { useOutbox } from '@/outbox/view'
 import type { BootstrapSession } from '@/outbox/types'
-import type { TitleHistory } from '@/task-title-suggestions'
-
-// This key is excluded by the existing public-cache allowlist. Never add it there.
-export const TITLE_SUGGESTIONS_KEY = ['tasks', 'title-suggestions'] as const
+import { TITLE_SUGGESTIONS_KEY, type TitleHistory } from '@/task-title-suggestions'
 
 export function useTaskTitleSuggestions(disabled: boolean) {
   const client = useQueryClient()

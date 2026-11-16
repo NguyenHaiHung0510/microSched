@@ -586,6 +586,7 @@ for (const cache of ['initial', 'cached'] as const) {
         await expect(page.getByTestId('outbox-panel').getByText('Đang đối chiếu dữ liệu vừa gửi…', { exact: true })).toHaveCount(0)
       })
       await page.keyboard.press('Escape')
+      await expect(page.getByTestId('outbox-panel')).toBeHidden()
 
       await page.evaluate(title => {
         const root = document.documentElement
@@ -597,6 +598,8 @@ for (const cache of ['initial', 'cached'] as const) {
         record()
       }, task.title)
       const staleOffered = async () => await page.locator('html').getAttribute('data-stale-title-offered') === 'true'
+      // Interact after the modal releases focus instead of racing its close autofocus.
+      await input.click()
       await input.fill('[TRAINING] upp')
       await expect(input).toBeFocused()
       await expect(staleOption).toHaveCount(0)
@@ -625,3 +628,37 @@ for (const cache of ['initial', 'cached'] as const) {
     }
   })
 }
+
+
+test('Task freshness stays live while the optional title source is held or fails', async ({ page, taskApi }, info) => {
+  const source = deferred()
+  let reads = 0
+  await page.route('**/api/tasks/title-suggestions', async route => {
+    reads++
+    await source.wait
+    await route.fulfill({ status: 503, json: { detail: 'Synthetic optional source unavailable' } })
+  })
+  try {
+    await page.goto('/')
+    const task = taskApi.tasks[0]
+    await expect(page.locator(`[data-testid="task-card"][data-task-id="${task.id}"]`)).toBeVisible()
+    expect(reads).toBe(0)
+    const status = page.getByTestId('app-live-status')
+    const input = page.getByTestId('quick-add-input')
+    await input.fill('[TRAINING] upp')
+    await expect.poll(() => reads).toBe(1)
+    await expect.soft(status, 'canonical Task data is live while the optional GET is held')
+      .toHaveAttribute('data-state', 'live', { timeout: 3000 })
+    await evidence(page, info.project.name, 'task-live-optional-held')
+
+    const failure = page.waitForResponse(response => new URL(response.url()).pathname === '/api/tasks/title-suggestions' &&
+      response.status() === 503)
+    source.release()
+    expect(await (await failure).finished()).toBeNull()
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(status, 'the optional 503 does not change canonical Task freshness').toHaveAttribute('data-state', 'live')
+    await expect(input).toHaveValue('[TRAINING] upp')
+    await expect(page.getByRole('option')).toHaveCount(0)
+    await evidence(page, info.project.name, 'task-live-optional-503')
+  } finally { source.release() }
+})

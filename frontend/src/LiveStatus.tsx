@@ -2,6 +2,7 @@ import { onlineManager, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { cn } from '@/lib/utils'
 import { freshnessState, FRESH_WINDOW_MS, type FreshQuery } from '@/freshness'
+import { isTaskTitleSuggestionsQuery } from '@/task-title-suggestions'
 
 const labels = {
   loading: 'Đang tải dữ liệu…',
@@ -16,7 +17,7 @@ export function LiveStatus({ tab }: { tab: 'tasks' | 'notes' | 'tracker' }) {
   const cache = useQueryClient().getQueryCache()
   const subscribe = useCallback((notify: () => void) => cache.subscribe(notify), [cache])
   const snapshot = useCallback(() => JSON.stringify(cache.getAll()
-    .filter((query) => query.getObserversCount() > 0 && (
+    .filter((query) => query.getObserversCount() > 0 && !isTaskTitleSuggestionsQuery(query.queryKey) && (
       query.queryKey[0] === tab || (tab === 'tracker' && query.queryKey[0] === 'subscription')
     ))
     .map((query) => ({ status: query.state.status, updatedAt: query.state.dataUpdatedAt, paused: query.state.fetchStatus === 'paused' }))), [cache, tab])

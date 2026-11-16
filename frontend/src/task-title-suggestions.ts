@@ -1,4 +1,11 @@
 /** Pure, bounded matching over the dedicated STANDARD-only title source. */
+// Keep this key in the Task family for invalidation and privacy purge, but
+// exclude it from canonical Task freshness and ACK reconciliation.
+export const TITLE_SUGGESTIONS_KEY = ['tasks', 'title-suggestions'] as const
+export function isTaskTitleSuggestionsQuery(key: readonly unknown[]): boolean {
+  return TITLE_SUGGESTIONS_KEY.every((part, index) => key[index] === part)
+}
+
 export type TitleHistory = { title: string; count: number }
 type Candidate = TitleHistory & { kind: 'group' | 'title'; normalized: string }
 export type TitleSuggestion = TitleHistory & { kind: 'group' | 'title'; tier: number }
