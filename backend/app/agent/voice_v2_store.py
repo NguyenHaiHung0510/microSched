@@ -189,58 +189,40 @@ class VoiceSources:
 
 def voice_candidate(calls, *, collection_enabled):
     """A whole request is exactly one typed proposal, never a surviving fragment."""
-    if len(calls) > 1:
-        raise ValueError("voice_single_proposal_required")
     if not calls:
         return None
-    candidates, selections = [], set()
-    for name, arguments in calls:
-        if name == UNDO_TOOL and collection_enabled:
-            if not arguments:
-                return UNDO_TOOL, {"target": "latest"}
-            if arguments == {"target": "latest"}:
-                return UNDO_TOOL, arguments
-            if (
-                set(arguments) == {"target", "receipt_ref"}
-                and arguments["target"] == "receipt"
-                and isinstance(arguments["receipt_ref"], str)
-                and len(arguments["receipt_ref"]) == 27
-                and arguments["receipt_ref"].startswith("vr_")
-                and all(c in "0123456789abcdef" for c in arguments["receipt_ref"][3:])
-            ):
-                return UNDO_TOOL, arguments
-            raise ValueError("voice_undo_selector_invalid")
-        if name == COLLECTION_CANDIDATE_TOOL and collection_enabled:
-            candidate = CollectionCandidate.model_validate(arguments)
-            candidates.extend(candidate.entries)
-            if candidate.selection_id:
-                selections.add(candidate.selection_id)
-        elif name == CREATE_CANDIDATE_TOOL and set(arguments) == {"task"}:
-            raw_task = arguments["task"]
-            if not isinstance(raw_task, dict) or "id" in raw_task:
-                raise ValueError("voice_task_identity_invalid")
-            task = validate_task_candidate(raw_task, require_id=False)
-            if not collection_enabled:
-                if len(calls) != 1:
-                    raise ValueError("voice_collection_not_leased")
-                return TOOL_VERSION, task.model_copy(update={"id": uuid7()}).model_dump(mode="json")
-            fields = task.model_dump(mode="json", exclude={"id", "items", "is_private"})
-            candidates.append(
-                TaskCommand(
-                    action="create",
-                    fields=fields,
-                    children=tuple(
-                        {"action": "append", "fields": {"content": c}} for c in task.items
-                    ),
-                )
-            )
-        else:
-            raise ValueError("voice_action_not_leased")
-    if len(selections) > 1:
-        raise ValueError("voice_selection_fragments_do_not_match")
-    return COLLECTION_TOOL, CollectionCandidate(
-        selection_id=next(iter(selections), None), entries=tuple(candidates)
+    if len(calls) != 1:
+        raise ValueError("voice_single_proposal_required")
+    ((name, arguments),) = calls
+    if name == UNDO_TOOL and collection_enabled:
+        if not arguments or arguments == {"target": "latest"}:
+            return UNDO_TOOL, {"target": "latest"}
+        if (
+            set(arguments) == {"target", "receipt_ref"}
+            and arguments["target"] == "receipt"
+            and isinstance(arguments["receipt_ref"], str)
+            and len(arguments["receipt_ref"]) == 27
+            and arguments["receipt_ref"].startswith("vr_")
+            and all(c in "0123456789abcdef" for c in arguments["receipt_ref"][3:])
+        ):
+            return UNDO_TOOL, arguments
+        raise ValueError("voice_undo_selector_invalid")
+    if name == COLLECTION_CANDIDATE_TOOL and collection_enabled:
+        return COLLECTION_TOOL, CollectionCandidate.model_validate(arguments)
+    if name != CREATE_CANDIDATE_TOOL or set(arguments) != {"task"}:
+        raise ValueError("voice_action_not_leased")
+    raw_task = arguments["task"]
+    if not isinstance(raw_task, dict) or "id" in raw_task:
+        raise ValueError("voice_task_identity_invalid")
+    task = validate_task_candidate(raw_task, require_id=False)
+    if not collection_enabled:
+        return TOOL_VERSION, task.model_copy(update={"id": uuid7()}).model_dump(mode="json")
+    entry = TaskCommand(
+        action="create",
+        fields=task.model_dump(mode="json", exclude={"id", "items", "is_private"}),
+        children=tuple({"action": "append", "fields": {"content": c}} for c in task.items),
     )
+    return COLLECTION_TOOL, CollectionCandidate(entries=(entry,))
 
 
 def automatic_plan(plan, *, inverse=False):
@@ -599,7 +581,7 @@ class VoiceV2Store(VoiceStore):
             )
         return COLLECTION_TOOL, await freeze_collection(db, args, covered_versions=bound)
 
-    async def act(self, turn, epoch, calls, binding, transcript, sources, is_active):
+    async def act(self, turn, epoch, calls, binding, sources, is_active):
         """A complete turn owns one opportunity; domain delta and receipt commit together."""
         try:
             proposal = voice_candidate(
@@ -678,7 +660,7 @@ class VoiceV2Store(VoiceStore):
             if await db.scalar(
                 select(MimiExecutionReceipt.id).where(MimiExecutionReceipt.idempotency_key == key)
             ):
-                return VoiceActionOutcome("rejected", "voice_result_ambiguous")
+                return VoiceActionOutcome("unknown", "voice_result_ambiguous")
             now = datetime.now(UTC)
             if await db.scalar(
                 select(MimiChangeSet.id)
@@ -791,7 +773,7 @@ class VoiceV2Store(VoiceStore):
                 {
                     "voice_epoch": epoch,
                     "turn": turn,
-                    "tool_call_ids": list(binding.call_ids),
+                    "tool_call_count": len(binding.call_ids),
                     "audio_start_ms": binding.start_ms,
                     "audio_end_ms": binding.end_ms,
                     "binding": event_binding,
@@ -806,7 +788,7 @@ class VoiceV2Store(VoiceStore):
             except Exception:
                 # Commit response loss is indeterminate. The frozen receipt is
                 # the only recovery authority; do not re-execute the request.
-                return VoiceActionOutcome("rejected", "voice_result_ambiguous")
+                return VoiceActionOutcome("unknown", "voice_result_ambiguous")
             identity = receipt["id"] if receipt else None
             return committed(
                 status,

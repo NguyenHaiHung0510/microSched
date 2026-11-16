@@ -14,7 +14,7 @@ MESSAGES = {
     "voice_preview_pending": "Chưa áp dụng: đang có bản xem trước chờ bạn duyệt trong ứng dụng.",
     "voice_source_changed": "Chưa áp dụng: dữ liệu đã thay đổi. Cần đọc lại trước khi tiếp tục.",
     "voice_undo_unavailable": (
-        "Chưa hoàn tác: thay đổi gần nhất không đủ điều kiện hoặc đã có chỉnh sửa mới hơn."
+        "Chưa hoàn tác: thay đổi được chọn không đủ điều kiện hoặc đã có chỉnh sửa mới hơn."
     ),
     "voice_selection_stale": "Chưa áp dụng: lựa chọn chưa khớp dữ liệu hiện tại. Cần chọn lại.",
     "voice_spoken_intent_unproven": "Chưa áp dụng: chưa rõ lệnh nói hiện tại. Hãy nói lại.",
@@ -49,7 +49,11 @@ class VoiceActionOutcome:
             "status": "preview_required" if self.status == "preview" else self.status,
             "reason": self.reason,
             "final": True,
-            "applied": self.status in {"applied", "undone"},
+            **(
+                {"applied": self.status in {"applied", "undone"}}
+                if self.status != "unknown"
+                else {}
+            ),
             **({"receipt_ref": self.receipt_ref} if self.receipt_ref else {}),
         }
 

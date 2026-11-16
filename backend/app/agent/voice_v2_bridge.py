@@ -7,7 +7,7 @@ import base64
 import hashlib
 import json
 import time
-from collections import deque
+from collections import Counter, deque
 from contextlib import AsyncExitStack, suppress
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -84,7 +84,9 @@ class VoiceV2Bridge:
         self.activity_serial = 0
         self.cancelled_ids = set()
         self.socket = None
+        self.awaiting_manual = False
         self.last_manual_receipt = None
+        self.action_outcomes = Counter()
         self.refresh_context_history = False
         self._clear_turn()
 
@@ -267,7 +269,7 @@ class VoiceV2Bridge:
             if identity in self.seen:
                 # An exact duplicate is inert. Mixed replay/new calls cannot
                 # silently apply only the surviving fragment of a request.
-                if identity in self.actions or len(calls) > 1 or self.actions:
+                if self.speech.start_ms is not None or len(calls) > 1 or self.actions:
                     self.action_cancelled = True
                 continue
             if identity in self.cancelled_ids:
@@ -319,7 +321,11 @@ class VoiceV2Bridge:
         ):
             now = time.monotonic()
             self.action_deadline = self.action_deadline or now + ACTION_ACTIVITY_WAIT_SECONDS
-            self.turn_seal = min(self.action_deadline, now + ACTION_SETTLE_SECONDS)
+            self.turn_seal = min(
+                self.turn_seal or self.action_deadline,
+                self.action_deadline,
+                now + ACTION_SETTLE_SECONDS,
+            )
 
     def _cancellations(self, envelope):
         ids = envelope.get("ids") if isinstance(envelope, dict) else None
@@ -437,8 +443,6 @@ class VoiceV2Bridge:
             raise
 
     async def _action_outcome(self, outcome):
-        if outcome.reason == "voice_result_ambiguous":
-            raise VoiceError("voice_action_outcome_unknown")
         self.handle = None
         if outcome.reset_context:
             self.pending_notice = outcome
@@ -538,7 +542,6 @@ class VoiceV2Bridge:
                     self.epoch,
                     tuple(self.actions.values()),
                     binding,
-                    self.input_text,
                     self.sources,
                     lambda: (
                         self._active()
@@ -576,9 +579,13 @@ class VoiceV2Bridge:
         interrupted = self.interrupted
         self._clear_turn(keep_floor=True)
         if outcome is not None:
+            self.action_outcomes[outcome.reason] += 1
+            if outcome.status == "unknown":
+                # The browser's terminal path already refreshes saved results.
+                # A rejected action event would briefly claim "not applied".
+                raise VoiceError("voice_action_outcome_unknown")
+            self.awaiting_manual |= outcome.status == "preview"
             await self.browser_send(outcome.event())
-            # Ambiguous commit acknowledgement is never an applied=false
-            # response; reconcile from the durable receipt instead.
             if outcome.reset_context:
                 await self.browser_send({"type": "turn_complete", "interrupted": True})
             await self._action_outcome(outcome)
@@ -641,6 +648,7 @@ class VoiceV2Bridge:
                     if self.action_committing and (
                         event.get("voiceActivity", {}).get("type") == "ACTIVITY_START"
                         or "toolCall" in event
+                        or "goAway" in event
                         or event.get("serverContent", {}).get("interrupted") is True
                     ):
                         self.action_cancelled = True
@@ -844,17 +852,23 @@ class VoiceV2Bridge:
 
     async def _manual_status(self):
         read_status = getattr(self.store, "action_status", None)
-        if read_status is None or not self.online or self.actions:
+        if read_status is None or not self.awaiting_manual or not self.online or self.actions:
             return
         outcome = await read_status()
-        if outcome is None or outcome.receipt_id == self.last_manual_receipt:
+        if outcome is None or outcome.receipt_id == self.last_manual_receipt or self.actions:
             return
         # Only a receipt observable in a new transaction reaches this channel.
         await self.browser_send(outcome.event())
         self.last_manual_receipt = outcome.receipt_id
+        self.awaiting_manual = False
         self.pending_notice = outcome
         if self.socket is not None:
-            await self._send_action_context(self.socket, check_sources=False)
+            try:
+                await self._send_action_context(self.socket, check_sources=False)
+            except _UpstreamDrop:
+                # The transport reader owns reconnect; don't retry this send
+                # if the wire acknowledgement was lost.
+                self.refresh_context_history = True
 
     async def watchdog(self):
         while True:
@@ -924,6 +938,7 @@ class VoiceV2Bridge:
                         "input_pcm_bytes": self.input_bytes,
                         "output_pcm_bytes": self.output_bytes,
                         "tool_calls": len(self.seen),
+                        "action_outcome_reasons": dict(self.action_outcomes),
                         "connection_attempts": self.connection_attempts,
                         "resumes": self.resume_count,
                         "protocol_version": 2,

@@ -145,7 +145,7 @@ Input transcription mặc định giữ shape đã dùng `{}`.
 Opt-in `MIMI_VOICE_V2_INPUT_LANGUAGE_HINTS=true` gửi
 `{"languageCodes":["vi-VN","en-US"]}` chỉ cho V2.
 Đặt `false` hoặc bỏ biến để phiên mới trở lại `{}`; không replay audio khi rollback.
-Không tự retry setup bị từ chối hoặc chuyển provider. Theo
+Nếu setup từ chối hint, tắt flag để thử phiên mới; không tự đổi provider. Theo
 [API reference](https://aistudio.google.com/api-reference/live#AudioTranscriptionConfig),
 đây là hint, không phải whitelist.
 [Native audio](https://aistudio.google.com/docs/live-api/capabilities#change-voice-and-language)

@@ -337,7 +337,7 @@ def test_cancel_after_domain_flush_before_commit_rolls_back_receipt_and_task(
     async def delayed(*args):
         result = await original(*args)
         entered.set_result(True)
-        await asyncio.wrap_future(release)
+        await asyncio.shield(asyncio.wrap_future(release))
         return result
 
     monkeypatch.setattr(voice_v2_store, "_confirm_collection", delayed)
@@ -402,10 +402,9 @@ def test_lost_commit_ack_is_unknown_with_one_durable_receipt_and_no_retry(v2_run
     with open_voice(rt, issued, cid) as ws:
         hello(ws, issued)
         ws.send_bytes(fixtures.PCM)
-        event = receive_to(ws, "action_updated")[-1]
-        assert event["reason"] == "voice_result_ambiguous" and "receipt_id" not in event
-        ended = receive_to(ws, "ended")[-1]
-        assert ended["reason"] == "voice_action_outcome_unknown"
+        events = receive_to(ws, "ended")
+        assert events[-1]["reason"] == "voice_action_outcome_unknown"
+        assert not any(event["type"] == "action_updated" for event in events)
     assert len(rows(rt)) == len(snapshot(rt, cid)["receipts"]) == 1
     assert not replies and len(dials) == 1
 

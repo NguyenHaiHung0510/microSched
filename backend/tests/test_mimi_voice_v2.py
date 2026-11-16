@@ -100,10 +100,10 @@ class Store:
     async def transcript(self, turn, user, assistant, *, partial, sources):
         self.saved.append((turn, user, assistant, partial))
 
-    async def act(self, turn, epoch, proposals, proof, transcript, sources, is_active):
+    async def act(self, turn, epoch, proposals, proof, sources, is_active):
         assert is_active()
         assert isinstance(proof, VoiceTurnBinding)
-        self.actions.append((turn, epoch, proposals, proof, transcript))
+        self.actions.append((turn, epoch, proposals, proof))
         return committed("applied" if proof else "preview")
 
     async def finish(self, **value):
@@ -248,7 +248,7 @@ def test_early_live_drop_resumes_same_mic_without_audio_asr_or_actions_replay(mo
             *speech("", outputs=True)[-1:],
         )
         await browser.until("action_updated")
-        assert store.actions[0][4] == "tạo task mới"
+        assert store.saved[-1][1] == "tạo task mới"
         assert store.actions[0][3].call_ids == ("new",)
         await browser.inbound.put({"type": "websocket.receive", "text": '{"type":"stop"}'})
         assert await asyncio.wait_for(runner, timeout=2) == "voice_stopped"

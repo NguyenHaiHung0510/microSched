@@ -51,7 +51,8 @@ def test_voice_does_not_need_caption_to_offer_one_live_action(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_voice_mixed_replay_cannot_apply_surviving_fragment(monkeypatch):
+@pytest.mark.parametrize("split_frames", [False, True])
+def test_voice_mixed_replay_cannot_apply_surviving_fragment(monkeypatch, split_frames):
     async def scenario():
         async with voice(monkeypatch) as (browser, store, live):
             await audio(browser, live)
@@ -63,11 +64,13 @@ def test_voice_mixed_replay_cannot_apply_surviving_fragment(monkeypatch):
 
             await audio(browser, live)
             start, end, caption, complete = speech("Tạo việc B.", base=0.2)
+            replay = proposal("previous", ["A"])
             call = proposal("fragment", ["B"])
-            call["toolCall"]["functionCalls"][:0] = proposal("previous", ["A"])["toolCall"][
-                "functionCalls"
-            ]
-            live.emit(start, end, caption, call, complete)
+            if split_frames:
+                live.emit(start, end, caption, replay, call, complete)
+            else:
+                call["toolCall"]["functionCalls"][:0] = replay["toolCall"]["functionCalls"]
+                live.emit(start, end, caption, call, complete)
             assert (await browser.until("action_updated"))["status"] == "needs_clarification"
             assert len(store.actions) == 1
 

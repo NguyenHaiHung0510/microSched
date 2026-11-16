@@ -240,13 +240,14 @@ def test_ambiguous_commit_never_sends_applied_false_or_success_response():
         bridge.provider_turn_complete = True
 
         async def unknown(*args):
-            return VoiceActionOutcome("rejected", "voice_result_ambiguous")
+            return VoiceActionOutcome("unknown", "voice_result_ambiguous")
 
         bridge.store.act = unknown
         live = Live()
         with pytest.raises(VoiceError, match="voice_action_outcome_unknown"):
             await bridge._complete_turn(live)
         assert not any("toolResponse" in frame for frame in live.frames)
-        assert bridge.browser.sent[-1]["reason"] == "voice_result_ambiguous"
+        assert not any(f["type"] == "action_updated" for f in bridge.browser.sent)
+        assert bridge.action_outcomes["voice_result_ambiguous"] == 1
 
     asyncio.run(run())
