@@ -9,7 +9,7 @@ import time
 from typing import Annotated, Literal
 from uuid import UUID, uuid7
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -773,6 +773,22 @@ async def read_mimi_execution_receipt(
     return await read_execution_receipt(
         db, session, conversation_id, change_set_id, digest, nonce, idempotency_key
     )
+
+
+@router.get(
+    "/receipts/{receipt_id}/diff",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_mimi_receipt_diff(
+    receipt_id: UUID,
+    db: Database,
+    session: CurrentSession,
+    response: Response,
+):
+    from app.agent.receipt_history import receipt_diff
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await receipt_diff(db, session, receipt_id)
 
 
 @router.post(

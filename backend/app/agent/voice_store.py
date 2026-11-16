@@ -215,6 +215,8 @@ class VoiceStore:
             )
         ).all()
         for old in active:
+            if old.state == "waiting_confirmation" and voice_v2_available(settings):
+                continue
             if old.state == "waiting_confirmation" and not await db.scalar(
                 select(MimiChangeSet.id).where(
                     MimiChangeSet.run_id == old.id,
@@ -303,7 +305,10 @@ class VoiceStore:
             ):
                 raise VoiceError("voice_ticket_invalid_or_expired")
             history = await _provider_history(
-                db, conversation, crypto.unwrap_dek(conversation.dek_wrapped)
+                db,
+                conversation,
+                crypto.unwrap_dek(conversation.dek_wrapped),
+                voice=lease.get("voice_protocol") == 2,
             )
             v2 = lease.get("voice_protocol") == 2
             turns = [
@@ -312,7 +317,6 @@ class VoiceStore:
                     "parts": [{"text": m["content"]}],
                 }
                 for m in history
-                if not v2 or m["role"] == "user"
             ]
             if v2:
                 from app.agent.voice_v2_protocol import setup_v2
@@ -324,24 +328,51 @@ class VoiceStore:
             # available in the chat UI but isn't sliced into a misleading quote.
             seed = None
             limited = False
-            while turns:
-                candidate = {"clientContent": {"turns": turns, "turnComplete": True}}
-                if (
-                    len(encoded({"setup": config, "history": candidate}).encode()) + 128
-                    <= MAX_CONTEXT_BYTES
-                ):
-                    seed = candidate
-                    break
-                turns = turns[1:]
-                limited = True
-            if seed is not None:
-                config["setup"]["historyConfig"] = {"initialHistoryInClientContent": True}
+            if v2:
+                from app.agent.voice_context import bound_voice_history, configure_voice_setup
+                from app.agent.working_context import preview_lifecycle_context
+
+                lifecycle = await preview_lifecycle_context(
+                    db,
+                    conversation.id,
+                    dek=crypto.unwrap_dek(conversation.dek_wrapped),
+                    settings=self.settings,
+                )
+                if lifecycle["previews"]:
+                    turns.append(
+                        {
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "text": "SERVER CONVERSATION STATE (history, not permission): "
+                                    + encoded(lifecycle)
+                                }
+                            ],
+                        }
+                    )
+                config, seed, included, limited = bound_voice_history(
+                    configure_voice_setup(config), turns
+                )
+            else:
+                while turns:
+                    candidate = {"clientContent": {"turns": turns, "turnComplete": True}}
+                    if (
+                        len(encoded({"setup": config, "history": candidate}).encode()) + 128
+                        <= MAX_CONTEXT_BYTES
+                    ):
+                        seed = candidate
+                        break
+                    turns = turns[1:]
+                    limited = True
+                if seed is not None:
+                    config["setup"]["historyConfig"] = {"initialHistoryInClientContent": True}
+                included = len(turns)
             await _append_event(
                 db,
                 run.id,
                 "voice.history",
                 {
-                    "included_messages": len(turns),
+                    "included_messages": included,
                     "limited_by_voice_bytes": limited,
                 },
             )
@@ -515,6 +546,16 @@ class VoiceStore:
                     "partial": partial,
                     "provider_call_id": str(call.id),
                     "input_correlation": "provider_does_not_supply_turn_id",
+                    # Only a complete, source-free response from the current
+                    # transport context can provide continuity across calls.
+                    **(
+                        {"history_safe": True}
+                        if sources is not None
+                        and not partial
+                        and not (sources.queries or sources.tasks or sources.calendar)
+                        and "output_message_id" in ids
+                        else {}
+                    ),
                     **ids,
                 },
             )

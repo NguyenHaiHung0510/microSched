@@ -142,9 +142,12 @@ def tool(name, identity, arguments):
     return {"toolCall": {"functionCalls": [{"id": identity, "name": name, "args": arguments}]}}
 
 
-def start(rt, monkeypatch, *turns, on_tool=None):
+def start(rt, monkeypatch, *turns, on_tool=None, cid=None, on_send=None):
     client = rt.client
-    cid, generation = new_conversation(client, rt.ids)
+    if cid is None:
+        cid, generation = new_conversation(client, rt.ids)
+    else:
+        generation = snapshot(rt, cid)["generation"]
     issued = mint(client, cid, generation)
     assert issued["max_seconds"] == 5400
     dials = []
@@ -157,6 +160,8 @@ def start(rt, monkeypatch, *turns, on_tool=None):
 
         async def send(self, raw):
             value = json.loads(raw)
+            if on_send is not None:
+                on_send(value)
             if "audio" in value.get("realtimeInput", {}):
                 batch = next(self.turns, ())
                 if callable(batch):
@@ -302,7 +307,8 @@ def test_voice_apply_whole_five_then_conditional_undo_uses_existing_receipts(
             return await _provider_history(db, conv, unwrap_dek(conv.dek_wrapped))
 
     wire = json.dumps(rt.client.portal.call(projected_history), ensure_ascii=False)
-    assert VOICE_HISTORY_MARKER in wire and "Đã nghe." not in wire
+    # Source-free responses remain available as context across Voice/Chat.
+    assert VOICE_HISTORY_MARKER not in wire and "Đã nghe." in wire
 
 
 @pytest.mark.parametrize("mode", ["six", "ambiguous", "disabled"])

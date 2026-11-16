@@ -308,12 +308,13 @@ async def calendar_history_sequences(db, conversation_id, rows) -> set[int]:
 
 
 async def voice_history_sequences(db, conversation_id, rows) -> set[int]:
-    """Native Voice v2 context has no safe per-utterance source inventory to replay in Chat."""
+    """Replace v2 provider prose unless its exact completed segment was source-free."""
     from sqlalchemy import select
 
-    from app.agent.models import MimiRun
+    from app.agent.models import MimiEvent, MimiRun
 
-    run_ids = {row.run_id for row in rows if row.role == "assistant" and row.run_id}
+    assistants = {str(row.id): row for row in rows if row.role == "assistant" and row.run_id}
+    run_ids = {row.run_id for row in assistants.values()}
     if not run_ids:
         return set()
     voice_runs = set(
@@ -325,7 +326,28 @@ async def voice_history_sequences(db, conversation_id, rows) -> set[int]:
             )
         )
     )
-    return {row.sequence for row in rows if row.role == "assistant" and row.run_id in voice_runs}
+    if not voice_runs:
+        return set()
+    safe_ids = {
+        output_id
+        for run_id, output_id in (
+            await db.execute(
+                select(MimiEvent.run_id, MimiEvent.payload["output_message_id"].astext).where(
+                    MimiEvent.run_id.in_(voice_runs),
+                    MimiEvent.kind == "voice.transcript",
+                    MimiEvent.payload["history_safe"].astext == "true",
+                    MimiEvent.payload["partial"].astext == "false",
+                    MimiEvent.payload["output_message_id"].astext.in_(assistants),
+                )
+            )
+        ).all()
+        if assistants[output_id].run_id == run_id
+    }
+    return {
+        row.sequence
+        for mid, row in assistants.items()
+        if row.run_id in voice_runs and mid not in safe_ids
+    }
 
 
 @dataclass

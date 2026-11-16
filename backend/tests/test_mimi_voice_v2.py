@@ -541,10 +541,10 @@ def test_late_overlapping_asr_denies_proposal_before_commit_and_reports_to_both_
         assert result["reason"] == "voice_spoken_intent_unproven"
         await browser.until("turn_complete")
         assert not store.actions
-        await live.sent.get()  # proposal acknowledgment
-        note = (await asyncio.wait_for(live.sent.get(), 1))["clientContent"]
-        assert note["turnComplete"] is False
-        assert "voice_spoken_intent_unproven" in str(note) and "misheard" not in str(note)
+        note = (await asyncio.wait_for(live.sent.get(), 1))["toolResponse"]
+        result = note["functionResponses"][0]["response"]["result"]
+        assert result["final"] is True and result["applied"] is False
+        assert "voice_spoken_intent_unproven" in str(note) and "misheard" not in str(result)
         await audio(browser, live)
         new = speech("Tạo việc đúng.", base=0.2)
         live.emit(*new[:-1], proposal("right", ["đúng"]), new[-1])

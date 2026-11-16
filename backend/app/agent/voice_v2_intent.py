@@ -47,11 +47,11 @@ def offset_ms(value) -> int | None:
 @dataclass
 class SpeechWindow:
     # A Live tool call and caption are not proof of the audio window. VAD and
-    # timestamped final ASR must agree. All fields are in-memory and per socket.
+    # final ASR must agree. Transcript offsets are optional extra evidence.
     floor_ms: int = -1
     start_ms: int | None = None
     end_ms: int | None = None
-    spans: list[tuple[int, int, str]] = field(default_factory=list)
+    spans: list[tuple[int | None, int | None, str]] = field(default_factory=list)
     uncertain: bool = False
     conflicted: bool = False
 
@@ -76,18 +76,24 @@ class SpeechWindow:
             self.conflicted = True
 
     def transcript(self, event, forwarded_ms):
-        start, end = offset_ms(event.get("startOffset")), offset_ms(event.get("endOffset"))
+        # inputTranscription is final. interimInputTranscription is handled
+        # separately; a compatibility finished=False never grants authority.
+        if event.get("finished") is False:
+            return
         text = event.get("text", "")
-        if (
-            start is None
-            or end is None
-            or not self.floor_ms < start < end <= forwarded_ms
-            or len(self.spans) >= 64
-            or event.get("finished") is False
+        if not isinstance(text, str) or not text.strip():
+            return
+        start, end = offset_ms(event.get("startOffset")), offset_ms(event.get("endOffset"))
+        timed = "startOffset" in event or "endOffset" in event
+        if timed and (
+            start is None or end is None or not self.floor_ms < start < end <= forwarded_ms
         ):
             self.uncertain = True
+            self.conflicted = True
             return
-        if self.spans and start < self.spans[-1][1]:
+        if len(self.spans) >= 64 or (
+            self.spans and (not timed or self.spans[-1][1] is None or start < self.spans[-1][1])
+        ):
             self.uncertain = True
             self.conflicted = True
             return
@@ -95,15 +101,17 @@ class SpeechWindow:
 
     def is_retired(self, event) -> bool:
         end = offset_ms(event.get("endOffset")) if isinstance(event, dict) else None
-        return end is not None and end <= self.floor_ms
+        if end is not None:
+            return end <= self.floor_ms
+        # An unlabelled final arriving between utterances cannot be reassigned
+        # to the next command. First-utterance events may precede VAD.
+        return self.floor_ms >= 0 and self.start_ms is None
 
     def prove(self) -> str | None:
-        if (
-            self.uncertain
-            or self.start_ms is None
-            or self.end_ms is None
-            or not self.spans
-            or abs(self.spans[0][0] - self.start_ms) > _SLOP_MS
+        if self.uncertain or self.start_ms is None or self.end_ms is None or not self.spans:
+            return None
+        if self.spans[0][0] is not None and (
+            abs(self.spans[0][0] - self.start_ms) > _SLOP_MS
             or abs(self.spans[-1][1] - self.end_ms) > _SLOP_MS
             or any(b[0] - a[1] > _SLOP_MS for a, b in zip(self.spans, self.spans[1:]))
         ):
@@ -113,13 +121,29 @@ class SpeechWindow:
     def next(self, retired_through_ms):
         # A delayed transcription from a retired turn can't become fresh.
         end = max(
-            [self.floor_ms, retired_through_ms, self.end_ms or -1, *(s[1] for s in self.spans)]
+            [
+                self.floor_ms,
+                retired_through_ms,
+                self.end_ms or -1,
+                *(s[1] for s in self.spans if s[1] is not None),
+            ]
         )
         return SpeechWindow(floor_ms=end)
 
 
 def normalized(text: str) -> str:
     return " ".join(unicodedata.normalize("NFC", text).casefold().strip().split())
+
+
+def title_matches(spoken: str, candidate: str) -> bool:
+    """Only a canonical bracket prefix may differ; literal punctuation stays exact."""
+    spoken, candidate = normalized(spoken), normalized(candidate)
+    if spoken == candidate:
+        return True
+    if "[" in spoken or "]" in spoken:
+        return False
+    prefix = re.fullmatch(r"\[([^\W_]+(?: [^\W_]+){0,3})\]\s*(.+)", candidate)
+    return bool(prefix and spoken == f"{prefix[1]} {prefix[2]}")
 
 
 def whole_command(text: str | None, *, limit=1400) -> str:
@@ -137,6 +161,9 @@ def spoken_undo(text: str | None) -> bool:
         "hoàn tác lần áp dụng vừa rồi",
         "hoàn tác thay đổi voice vừa rồi",
         "undo",
+        "hoàn tác thay đổi vừa rồi",
+        "undo the last change",
+        "undo latest",
         "undo last voice change",
         "undo the last voice change",
     }
@@ -279,7 +306,7 @@ def exact_plan_match(
             return False
         return all(
             entry.command.action == "create"
-            and normalized(entry.after["fields"]["title"]) == title
+            and title_matches(title, entry.after["fields"]["title"])
             and entry.after["fields"]["due_on"] == due
             and entry.after["fields"]["due_precision"] == ("date" if due else "none")
             and entry.after["fields"]["body_md"] is None

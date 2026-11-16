@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -73,8 +72,33 @@ class VoiceContextChanged(VoiceError):
         super().__init__("voice_source_changed")
 
 
+async def execute_voice_read(db, name, arguments, *, settings):
+    result = await execute_read_tool(db, name, arguments, settings=settings)
+    # Preserve the public Calendar page/cursor contract. An independent bounded
+    # annotation page gives day milestones equal visibility in Voice, even
+    # when the first canonical page is full of Tasks.
+    if (
+        name == CALENDAR_READ_TOOL
+        and result.get("coverage") != "unavailable"
+        and not arguments.get("cursor")
+        and "annotation" in arguments.get("kinds", ("task", "event", "annotation"))
+    ):
+        marks = await execute_read_tool(
+            db,
+            name,
+            {**arguments, "kinds": ["annotation"], "cursor": None},
+            settings=settings,
+        )
+        result = {**result, "day_milestones": marks}
+    return result
+
+
 def _read_digest(result):
     value = {k: v for k, v in result.items() if k != "data_as_of"}
+    if "day_milestones" in value:
+        value["day_milestones"] = {
+            k: v for k, v in value["day_milestones"].items() if k != "data_as_of"
+        }
     if "groups" in value:
         value["groups"] = sorted(value["groups"], key=lambda g: str(g["value"]))
     return digest(value)
@@ -123,7 +147,7 @@ class VoiceSources:
             if not (detail or read.membership):
                 continue
             try:
-                result = await execute_read_tool(db, read.name, read.arguments, settings=settings)
+                result = await execute_voice_read(db, read.name, read.arguments, settings=settings)
             except ValueError:
                 raise VoiceContextChanged() from None
             if _read_digest(result) != read.digest:
@@ -133,7 +157,10 @@ class VoiceSources:
         tasks, calendar, queries = self.tasks.copy(), self.calendar.copy(), self.queries.copy()
         if result.get("coverage") != "unavailable":
             if name in CALENDAR_READ_TOOLS:
-                for key, version in calendar_result_bindings(name, result).items():
+                bindings = calendar_result_bindings(name, result)
+                if "day_milestones" in result:
+                    bindings.update(calendar_result_bindings(name, result["day_milestones"]))
+                for key, version in bindings.items():
                     if calendar.setdefault(key, version) != version:
                         raise VoiceContextChanged()
             elif name != SELECTION_TOOL:
@@ -238,9 +265,9 @@ def _matches_whole_request(tool, plan, transcript, today):
             fields = [e.after["fields"] for e in plan.entries]
         if scope.count is not None and len(fields) != scope.count:
             return False
-        return scope.names is None or Counter(
-            (normalized(task["title"]), task["due_on"]) for task in fields
-        ) == Counter(scope.names)
+        # A complete target count with unsupported naming remains a visible
+        # manual preview. Only exact_plan_match may grant the fast write.
+        return scope.names is None or len(fields) == len(scope.names)
     if (names := spoken_edit_targets(transcript)) is not None:
         if (
             tool != COLLECTION_TOOL
@@ -313,7 +340,7 @@ class VoiceV2Store(VoiceStore):
                         voice_epoch=epoch,
                     )
                 else:
-                    result = await execute_read_tool(db, name, arguments, settings=self.settings)
+                    result = await execute_voice_read(db, name, arguments, settings=self.settings)
             except SelectionCorrection as error:
                 result = error.feedback()
             except ValueError:
@@ -358,35 +385,21 @@ class VoiceV2Store(VoiceStore):
     async def _latest_inverse(self, db, conversation, parent, dek):
         # A newer action or a different Voice call must not retarget bare Undo
         # to an older result. Explicit Chat receipt Undo remains available.
-        found = (
-            await db.execute(
-                select(MimiExecutionReceipt, MimiRun)
-                .join(MimiChangeSet, MimiChangeSet.id == MimiExecutionReceipt.change_set_id)
-                .join(MimiRun, MimiRun.id == MimiChangeSet.run_id)
-                .where(MimiRun.conversation_id == conversation.id)
-                .order_by(MimiExecutionReceipt.executed_at.desc(), MimiExecutionReceipt.id.desc())
-                .limit(1)
-            )
-        ).first()
-        if not found:
+        from app.agent.receipt_history import bound_receipt, latest_receipt, recovery_for
+
+        receipt_id = await latest_receipt(db, conversation.id)
+        if receipt_id is None:
             raise HTTPException(409, "voice_undo_receipt_missing")
-        receipt, action_run = found
-        if (
-            action_run.execution_lease.get("mode") != "voice_action"
-            or action_run.execution_lease.get("voice_parent_run") != str(parent.id)
-            or action_run.execution_lease.get("voice_action_kind") not in {"applied", "preview"}
-            or action_run.execution_lease.get("voice_operation") == "undo"
-            or action_run.state != "completed"
-            or receipt.result_ciphertext is None
-        ):
-            raise HTTPException(409, "voice_undo_latest_receipt_not_eligible")
-        recovery = json.loads(
-            crypto.open_content(
-                dek,
-                receipt.result_ciphertext,
-                aad=f"mimi-receipt:{conversation.id}:{receipt.id}:recovery",
-            )
+        receipt, change, _, bound_conversation = await bound_receipt(
+            db,
+            self.auth,
+            receipt_id,
         )
+        if bound_conversation.id != conversation.id:
+            raise HTTPException(409, "voice_undo_latest_receipt_not_eligible")
+        recovery = recovery_for(receipt, change, conversation, dek)
+        if recovery["plan"].get("undo_receipt_id"):
+            raise HTTPException(409, "voice_undo_latest_receipt_not_eligible")
         plan = await freeze_undo(db, receipt.id, recovery)
         original = recovery["plan"]
         quick_eligible = all(
@@ -431,7 +444,16 @@ class VoiceV2Store(VoiceStore):
         if proposal[0] == UNDO_TOOL and not spoken_undo(speech):
             return VoiceActionOutcome("needs_clarification", "voice_spoken_intent_unproven")
         try:
-            return await self._act(turn, epoch, proposal, speech, transcript, sources, is_active)
+            return await self._act(
+                turn,
+                epoch,
+                proposal,
+                speech,
+                transcript,
+                sources,
+                is_active,
+                single_proposal=len(calls) == 1,
+            )
         except VoiceContextChanged:
             return VoiceActionOutcome("rejected", "voice_source_changed", reset_context=True)
         except HTTPException as error:
@@ -450,7 +472,9 @@ class VoiceV2Store(VoiceStore):
         except ValueError:
             return VoiceActionOutcome("needs_clarification", "voice_plan_invalid")
 
-    async def _act(self, turn, epoch, proposal, speech, transcript, sources, is_active):
+    async def _act(
+        self, turn, epoch, proposal, speech, transcript, sources, is_active, *, single_proposal
+    ):
         async with self.factory() as db:
             key = f"mimi-voice-v2:{self.run_id}:{turn}"
             # Same ordering as a manual Confirm: key, then conversation/run.
@@ -504,6 +528,7 @@ class VoiceV2Store(VoiceStore):
                 else:
                     fast = (
                         preference.fast_apply
+                        and single_proposal
                         and exact_plan_match(speech, plan, today=today)
                         and await _unique_spoken_targets(db, plan)
                     )
