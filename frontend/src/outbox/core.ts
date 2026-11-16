@@ -8,6 +8,7 @@ import type { BootstrapSession } from './types'
 import { maskPrivateQueries } from './private-visibility'
 import { purgeMimiSession } from '../mimi-session-boundary'
 import { fundingReference, needsFunding, withoutFunding } from './funding'
+import { isTaskTitleSuggestionsQuery, TITLE_SUGGESTIONS_KEY } from '@/task-title-suggestions'
 
 type Context = {principal:string;verified:boolean;expires:number;privateUntil:number}
 export type Snapshot = {rows:Command[];context:Context;error:string;capability:string;reconciling:string[];revision:number;admitting:number;authRequired:boolean}
@@ -349,9 +350,20 @@ async function reconcile(row:Command,response:unknown,owner:string,privateAllowe
   reconciling.set(row.aggregate,[...new Map([...prior,row].map(r => [r.id,r])).values()]); publish()
   // No speculative canonical cache merge: projection remains in RAM until a fresh response.
   const prefix = row.kind.startsWith('entry.')?'tracker':'tasks'
-  const active = client?.getQueryCache().findAll({predicate:q =>
-    (q.queryKey[0]===prefix || !row.kind.startsWith('entry.') && q.queryKey[0]==='calendar') && q.isActive()})
-  await client?.invalidateQueries({predicate:q => q.queryKey[0]===prefix || prefix==='tasks' && q.queryKey[0]==='calendar'})
+  // Suggestions must become stale immediately (a title may now be Private), but
+  // optional source failures/timeouts cannot hold an acknowledged Task barrier.
+  if (prefix==='tasks' && client) {
+    const suggestions = {queryKey:TITLE_SUGGESTIONS_KEY}
+    // Invalidation alone reuses an initial in-flight fetch without cached data.
+    // Cancel synchronously so its pre-ACK result cannot make Private titles fresh.
+    void client.cancelQueries(suggestions)
+    void client.invalidateQueries(suggestions)
+  }
+  const required = (q:{queryKey:readonly unknown[]}) =>
+    (q.queryKey[0]===prefix || prefix==='tasks' && q.queryKey[0]==='calendar') &&
+    !isTaskTitleSuggestionsQuery(q.queryKey)
+  const active = client?.getQueryCache().findAll({predicate:q => required(q) && q.isActive()})
+  await client?.invalidateQueries({predicate:required})
   if (context.principal===owner && active?.length && active.every(q => q.state.status==='success' && !q.state.isInvalidated)) {
     reconciling.delete(row.aggregate);publish()
   }

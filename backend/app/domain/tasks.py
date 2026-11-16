@@ -4,7 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
@@ -252,6 +252,13 @@ class TaskRead(BaseModel):
     created_at: datetime | None
     updated_at: datetime | None
     created: bool | None = Field(default=None, exclude=True)
+
+
+class TaskTitleSuggestion(BaseModel):
+    """STANDARD title frequency in a bounded recent sample; no task metadata."""
+
+    title: str
+    count: int = Field(ge=1, le=512)
 
 
 class TaskPage(BaseModel):
@@ -702,6 +709,22 @@ def _ordered(stmt, task_cls: type[Task], bucket: TaskBucket):
 
 class TaskStore:
     """Stateless task persistence; every method joins its request transaction."""
+
+    async def title_suggestions(self, db: AsyncSession) -> list[TaskTitleSuggestion]:
+        """Read title scalars only, even when the caller has unlocked Private.
+
+        Limit rows before counting: DISTINCT would erase the sample distribution.
+        This seam intentionally never uses _task_read, _clear, or checklist reads.
+        """
+        result = await db.execute(
+            select(Task.title)
+            .where(Task.is_private.is_(False), Task.deleted_at.is_(None))
+            .order_by(Task.created_at.desc(), Task.id.desc())
+            .limit(512)
+        )
+        titles = (raw.strip() for raw in result.scalars())
+        counts = Counter(title for title in titles if title and not title.startswith("enc:v1:"))
+        return [TaskTitleSuggestion(title=title, count=count) for title, count in counts.items()]
 
     async def _parent(
         self,
