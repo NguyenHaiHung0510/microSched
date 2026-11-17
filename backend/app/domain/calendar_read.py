@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, computed_field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -145,10 +145,35 @@ CalendarDetail = Annotated[
 ]
 
 
+class CalendarDayFact(BaseModel):
+    date: date
+    iso_weekday: int = Field(ge=1, le=7)
+    weekday_vi: str
+
+    @classmethod
+    def for_day(cls, day: date):
+        weekday = day.isoweekday()
+        return cls(
+            date=day,
+            iso_weekday=weekday,
+            weekday_vi=("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm", "thứ Sáu", "thứ Bảy", "Chủ nhật")[
+                weekday - 1
+            ],
+        )
+
+
+class CalendarFacts(BaseModel):
+    """Civil dates only: no claim that a date has records or complete coverage."""
+
+    timezone: Literal["Asia/Ho_Chi_Minh"] = "Asia/Ho_Chi_Minh"
+    observed_today: CalendarDayFact
+    requested: tuple[CalendarDayFact, ...] = Field(max_length=MAX_DAYS)
+
+
 class CalendarReadResult(BaseModel):
     schema_version: Literal["calendar.read.v1"] = "calendar.read.v1"
     timezone: Literal["Asia/Ho_Chi_Minh"] = "Asia/Ho_Chi_Minh"
-    requested_dates: tuple[date, ...]
+    requested_dates: tuple[date, ...] = Field(max_length=MAX_DAYS)
     kinds: tuple[CalendarKind, ...]
     rows: tuple[CalendarRow, ...] = Field(max_length=PAGE_SIZE)
     count: int = Field(ge=0, le=PAGE_SIZE)
@@ -164,6 +189,15 @@ class CalendarReadResult(BaseModel):
         "description_md",
         "note_md",
     )
+
+    @computed_field
+    @property
+    def calendar_facts(self) -> CalendarFacts:
+        # Recomputed on typed parse; injected facts cannot override civil dates.
+        return CalendarFacts(
+            observed_today=CalendarDayFact.for_day(self.data_as_of.astimezone(VIETNAM_TZ).date()),
+            requested=tuple(CalendarDayFact.for_day(day) for day in self.requested_dates),
+        )
 
 
 class CalendarInspectResult(BaseModel):

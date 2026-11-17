@@ -120,18 +120,41 @@ def test_duplicate_completed_tool_is_inert_even_with_new_audio(monkeypatch):
 
 def test_cancelled_id_remains_retired_across_turns(monkeypatch):
     async def scenario():
-        async with voice(monkeypatch) as (browser, store, live):
-            await audio(browser, live)
-            live.emit(
+        browser, store, opened = Browser(), Store(), []
+
+        @asynccontextmanager
+        async def connect(_settings, *, run_id):
+            live = Live()
+            opened.append(live)
+            yield live
+
+        monkeypatch.setattr(voice_bridge, "connect_provider", connect)
+        now = datetime.now(UTC)
+        runner = asyncio.create_task(
+            VoiceV2Bridge(browser, store).run(
+                setup_v2(now, store.settings), None, now + timedelta(seconds=8)
+            )
+        )
+        try:
+            await browser.until("ready")
+            await opened[0].sent.get()
+            await audio(browser, opened[0])
+            opened[0].emit(
                 {"toolCallCancellation": {"ids": ["retired-before-call"]}},
                 *speech("First read-only turn."),
             )
             await browser.until("turn_complete")
-            await audio(browser, live)
-            start, end, caption, complete = speech("Another turn.", base=0.2)
-            live.emit(start, end, caption, proposal("retired-before-call", ["Task"]), complete)
+            # Owner81: reset proactively at the clean no-write boundary.
+            await browser.until("resumed")
+            await opened[1].sent.get()
+            await audio(browser, opened[1])
+            start, end, caption, complete = speech("Another turn.")
+            opened[1].emit(start, end, caption, proposal("retired-before-call", ["Task"]), complete)
             await browser.until("turn_complete")
-            assert not store.actions
+            assert not store.actions  # Cancelled IDs stay retired across epochs.
+        finally:
+            await browser.inbound.put({"type": "websocket.disconnect"})
+            assert await runner == "voice_browser_disconnected"
 
     asyncio.run(scenario())
 
@@ -261,18 +284,21 @@ def test_first_unseen_tool_after_abandoned_or_interrupted_activity_needs_fresh_e
             if interrupted:
                 first.emit(*events, {"serverContent": {"interrupted": True, "turnComplete": True}})
                 await browser.until("turn_complete")
+                # The clean no-write terminal now resets BEFORE another action.
+                assert not (await browser.until("resumed"))["context_retained"]
             else:
                 first.emit(events[0])  # missing activity end/terminal before B starts
-            await audio(browser, first)
-            start, end, caption, complete = speech("Activity B.", base=0.2)
-            first.emit(start, end, caption, proposal("unseen-late-from-a", ["Old"]), complete)
-            assert (await browser.until("action_updated"))["status"] == "needs_clarification"
+                await audio(browser, first)
+                start, end, caption, complete = speech("Activity B.", base=0.2)
+                first.emit(start, end, caption, proposal("unseen-late-from-a", ["Old"]), complete)
+                assert (await browser.until("action_updated"))["status"] == "needs_clarification"
+                assert not (await browser.until("resumed"))["context_retained"]
             assert not store.actions
-            assert not (await browser.until("resumed"))["context_retained"]
             assert opened == [first, fresh]
             assert "setup" in await fresh.sent.get()
             # Reconnect notice, not a replay of the old tool call/audio.
-            assert (await fresh.sent.get())["clientContent"]["turnComplete"] is False
+            if not interrupted:
+                assert (await fresh.sent.get())["clientContent"]["turnComplete"] is False
             await audio(browser, fresh)
             start, end, caption, complete = speech("Activity C on fresh connection.")
             fresh.emit(start, end, caption, proposal("fresh", ["C"]), complete)

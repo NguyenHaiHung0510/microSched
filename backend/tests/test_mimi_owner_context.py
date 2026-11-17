@@ -684,14 +684,24 @@ def test_memory_off_wire_matches_current_policy_and_preserves_historical_evidenc
     ):
         assert "system_prefix_sha256" not in dumped and "owner_memory" not in dumped
 
-    # Counterfactual historical projection removes only the explicit approved Chat
-    # Undo policy/tool delta. All other bytes still have to match the retained fixture.
+    # Counterfactual projection removes the approved Chat Undo and Owner81
+    # Calendar-facts policy deltas. Retain every historical golden byte/hash.
     # This preserves the old oracle without claiming that the current policy is pre-B2.
     def historical_policy(**kwargs):
+        from app.agent.policy import _CALENDAR_FACTS_POLICY
+
         current = load_standard_policy(**kwargs)
+        text = current.text
+        if kwargs.get("calendar_enabled"):
+            assert text.endswith(_CALENDAR_FACTS_POLICY)
+            text = text.removesuffix(_CALENDAR_FACTS_POLICY)
         if not kwargs.get("collection_enabled"):
-            return current
-        head, separator, tail = current.text.partition("\n### Undo in this Chat\n")
+            return MimiPolicy(
+                policy_id=current.policy_id,
+                sha256=hashlib.sha256(text.encode()).hexdigest(),
+                text=text,
+            )
+        head, separator, tail = text.partition("\n### Undo in this Chat\n")
         _, end, suffix = tail.partition("\n## Evidence gaps and limits")
         assert separator and end
         text = head + end + suffix

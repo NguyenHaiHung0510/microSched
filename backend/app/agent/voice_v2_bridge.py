@@ -53,6 +53,12 @@ def signal_voice_stop(run_id):
         bridge._close("voice_stopped")
 
 
+def signal_voice_manual_confirm(run_id):
+    """Post-commit wake only; the bridge must independently read the receipt."""
+    if (bridge := _active_bridges.get(run_id)) is not None:
+        bridge.manual_wakeup.set()
+
+
 class _UpstreamDrop(Exception):
     pass
 
@@ -103,7 +109,14 @@ class VoiceV2Bridge:
         self.socket = None
         self.awaiting_manual = False
         self.last_manual_receipt = None
+        self.manual_wakeup = asyncio.Event()
+        self.manual_status_lock = asyncio.Lock()
+        self.context_reset = asyncio.Event()
+        self.output_revision = 0
+        self.output_fenced = False
+        self.action_finishing = False
         self.action_outcomes = Counter()
+        self.action_details = Counter()
         self.refresh_context_history = False
         self._clear_turn()
 
@@ -154,10 +167,14 @@ class VoiceV2Bridge:
         if not self._active():
             raise VoiceError(self.close_reason or "voice_time_limit")
 
-    async def browser_send(self, value, *, binary=False, terminal=False):
+    async def browser_send(self, value, *, binary=False, terminal=False, output_revision=None):
         async with self.browser_lock:
             if not terminal:
                 self._need_active()
+            if output_revision is not None and (
+                output_revision != self.output_revision or self.output_fenced
+            ):
+                return  # Check after waiting for the lock, immediately before IO.
             try:
                 async with asyncio.timeout(3):
                     if binary:
@@ -228,6 +245,8 @@ class VoiceV2Bridge:
     async def _provider_write(self, socket, value, *, mic=False, audio=None, skip_cancelled=False):
         async with self.provider_lock:
             self._need_active()
+            if mic and self.output_fenced:
+                return False
             if mic and time.monotonic() >= self.authority_until:
                 raise VoiceError("voice_authority_expired")
             if audio and self.muted:
@@ -441,9 +460,13 @@ class VoiceV2Bridge:
         return True
 
     async def _render(self, rendered, *, first_answer):
+        revision = self.output_revision
+
         async def deliver():
             for payload in rendered:
-                await self.browser_send(payload, binary=isinstance(payload, bytes))
+                await self.browser_send(
+                    payload, binary=isinstance(payload, bytes), output_revision=revision
+                )
 
         size = sum(len(p) if isinstance(p, bytes) else len(encoded(p).encode()) for p in rendered)
         now = time.monotonic()
@@ -498,6 +521,8 @@ class VoiceV2Bridge:
             raise VoiceError("voice_provider_content_invalid")
         if not new_audio:
             return  # No caption/tool/output from a previous connection before new input.
+        if self.output_fenced:
+            return  # The current socket belongs to an obsolete generation.
         partial = value.get("interrupted") is True
         if partial and not self.interrupted:
             self.handle = None
@@ -540,6 +565,8 @@ class VoiceV2Bridge:
                     isinstance(p, bytes) or p.get("role") == "assistant" for p in rendered
                 )
                 await self._render(rendered, first_answer=has_answer and not self.output_started)
+                if self.output_fenced:
+                    return
                 self.output_started |= has_answer
         self._arm_action()
         if value.get("turnComplete") is True:
@@ -592,6 +619,15 @@ class VoiceV2Bridge:
                     "needs_clarification",
                     "voice_spoken_intent_unproven",
                     reset_context=self.epoch_ambiguous,
+                    subreason=(
+                        "activity_tainted_epoch"
+                        if self.epoch_ambiguous
+                        else "activity_cancelled"
+                        if (self.interrupted or self.action_cancelled or self.muted)
+                        else "activity_timing"
+                        if binding is None or self.unbound_action
+                        else "activity_signal"
+                    ),
                 )
             else:
                 if not saved:
@@ -638,9 +674,12 @@ class VoiceV2Bridge:
             )
         )
         interrupted = self.interrupted
+        safe_boundary = self.provider_turn_complete and not self.awaiting_provider_boundary
         self._clear_turn(keep_floor=True)
         if outcome is not None:
             self.action_outcomes[outcome.reason] += 1
+            if outcome.subreason:
+                self.action_details[outcome.subreason] += 1
             durable = outcome.status in {"applied", "undone", "preview"}
             if durable:
                 # Hold the scalar truth before any socket await. If a result
@@ -690,6 +729,12 @@ class VoiceV2Bridge:
             if self.pending_notice is outcome:
                 self.pending_notice = None
         await self.browser_send({"type": "turn_complete", "interrupted": interrupted})
+        if outcome is None and self.epoch_ambiguous and safe_boundary:
+            # No blocking result remains. Retire a read/interrupted context at
+            # its clean terminal before the next utterance has to fail.
+            self.refresh_context_history = True
+            self._retire_context()
+            raise VoiceContextChanged()
 
     async def _complete_with_live_events(self, socket):
         """Keep receiving cancellation/barge-in during transaction awaits.
@@ -701,6 +746,7 @@ class VoiceV2Bridge:
         if not self.actions:
             return await self._complete_turn(socket)
         self.action_committing = True
+        self.action_finishing = True
         finishing = asyncio.create_task(self._complete_turn(socket))
         receiving = None
         try:
@@ -747,6 +793,7 @@ class VoiceV2Bridge:
             if not finishing.done():
                 finishing.cancel()
             await asyncio.gather(finishing, return_exceptions=True)
+            self.action_finishing = False
 
     async def _upstream_messages(self, socket, audio_floor):
         while True:
@@ -771,6 +818,8 @@ class VoiceV2Bridge:
             await self._process_upstream_event(socket, event, audio_floor)
 
     async def _process_upstream_event(self, socket, event, audio_floor):
+        if self.output_fenced:
+            raise VoiceContextChanged()
         new_audio = self.forwarded_ms > audio_floor
         if "usageMetadata" in event:
             if len(self.usage) >= MAX_USAGE_SAMPLES:
@@ -810,6 +859,8 @@ class VoiceV2Bridge:
             raise _UpstreamDrop
 
     async def _transport(self, config, seed, handle):
+        revision = self.output_revision
+        self.context_reset.clear()
         self.deferred_events.clear()
         self.native = handle is not None
         if not self.native:
@@ -877,25 +928,34 @@ class VoiceV2Bridge:
             async with self.store.live_gate():
                 self._need_active()
                 self.authority_until = time.monotonic() + AUTH_WINDOW
-            self.socket = socket
-            self.ready = self.online = True
-            if not first:
-                self.resume_count += 1
-            await self.browser_send(
-                {
-                    "type": "ready",
-                    "run_id": str(self.store.run_id),
-                    "deadline": self.deadline.isoformat(),
-                }
-                if first
-                else {"type": "resumed", "context_retained": self.native}
-            )
+            # Do not publish ready ahead of the receipt transition's playback
+            # stop/reconnecting controls, even if a browser send was delayed.
+            async with self.manual_status_lock:
+                if revision != self.output_revision:
+                    raise VoiceContextChanged()
+                self.socket = socket
+                self.output_fenced = False
+                self.ready = self.online = True
+                if not first:
+                    self.resume_count += 1
+                await self.browser_send(
+                    {
+                        "type": "ready",
+                        "run_id": str(self.store.run_id),
+                        "deadline": self.deadline.isoformat(),
+                    }
+                    if first
+                    else {"type": "resumed", "context_retained": self.native}
+                )
             jobs = [
                 asyncio.create_task(self._mic_to_provider(socket)),
                 asyncio.create_task(self._upstream_messages(socket, floor)),
+                asyncio.create_task(self.context_reset.wait()),
             ]
             try:
                 await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
+                if self.context_reset.is_set():
+                    raise VoiceContextChanged()
                 for job in jobs:
                     if job.done():
                         job.result()
@@ -960,25 +1020,53 @@ class VoiceV2Bridge:
             await asyncio.sleep(BACKOFF[failures - 1])
         return "voice_provider_disconnected"
 
+    def _retire_context(self):
+        self.output_revision += 1
+        self.output_fenced = True
+        self.online = False
+        self.handle = None
+        self._clear_audio()
+        self.context_reset.set()
+
     async def _manual_status(self):
-        read_status = getattr(self.store, "action_status", None)
-        if read_status is None or not self.awaiting_manual or not self.online or self.actions:
-            return
-        outcome = await read_status()
-        if outcome is None or outcome.receipt_id == self.last_manual_receipt or self.actions:
-            return
-        # Only a receipt observable in a new transaction reaches this channel.
-        self.last_manual_receipt = outcome.receipt_id
-        self.awaiting_manual = False
-        self.pending_notice = outcome
-        await self.browser_send(outcome.event())
-        if self.socket is not None:
+        async with self.manual_status_lock:
+            read_status = getattr(self.store, "action_status", None)
+            if (
+                read_status is None
+                or not self.awaiting_manual
+                or self.actions
+                or self.action_finishing
+            ):
+                return
+            outcome = await read_status()
+            if (
+                outcome is None
+                or not outcome.receipt_id
+                or outcome.receipt_id == self.last_manual_receipt
+                or self.actions
+                or self.action_finishing
+            ):
+                return
+            # Observation is the fence, not the wake or HTTP commit timestamp.
+            # No await between verified receipt and retiring old output.
+            self.last_manual_receipt = outcome.receipt_id
+            self.awaiting_manual = False
+            self.pending_notice = outcome
+            self.refresh_context_history = True
+            self._retire_context()
+            await self.browser_send({"type": "interrupted"})
+            await self.browser_send({"type": "reconnecting"})
+            await self.browser_send(outcome.event())
+
+    async def manual_notifications(self):
+        while True:
+            await self.manual_wakeup.wait()
+            self.manual_wakeup.clear()
             try:
-                await self._send_action_context(self.socket, check_sources=False)
-            except _UpstreamDrop:
-                # The transport reader owns reconnect; don't retry this send
-                # if the wire acknowledgement was lost.
-                self.refresh_context_history = True
+                async with asyncio.timeout(AUTH_WINDOW):
+                    await self._manual_status()
+            except TimeoutError:
+                raise VoiceError("voice_authority_expired") from None
 
     async def watchdog(self):
         while True:
@@ -1003,6 +1091,7 @@ class VoiceV2Bridge:
                 jobs = [
                     asyncio.create_task(self.receive_browser()),
                     asyncio.create_task(self.watchdog()),
+                    asyncio.create_task(self.manual_notifications()),
                     asyncio.create_task(self.connect_loop(config, seed)),
                     asyncio.create_task(self.stopping.wait()),
                 ]
@@ -1049,6 +1138,7 @@ class VoiceV2Bridge:
                         "output_pcm_bytes": self.output_bytes,
                         "tool_calls": len(self.seen),
                         "action_outcome_reasons": dict(self.action_outcomes),
+                        "action_detail_reasons": dict(self.action_details),
                         "connection_attempts": self.connection_attempts,
                         "resumes": self.resume_count,
                         "protocol_version": 2,

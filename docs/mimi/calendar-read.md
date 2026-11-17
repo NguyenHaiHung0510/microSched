@@ -6,6 +6,16 @@ deadline and `due_at` belongs to its Vietnam day. An annotation covers both endp
 occupies each Vietnam day intersecting `[starts_at, ends_at)`, including intermediate days; an
 event ending exactly at 00:00 does not occupy the new day.
 
+`calendar.read.v1` additionally returns computed `calendar_facts`: the
+`Asia/Ho_Chi_Minh` timezone, `observed_today` from `data_as_of`, and `requested`
+facts for exactly the requested civil dates (at most 31). Each fact contains
+`date`, `iso_weekday` (Monday=1, Sunday=7) and `weekday_vi`. Chat and Voice use the
+same typed result; for example, 2026-11-18 is Wednesday/ISO 3. These facts do not
+claim saved records, full coverage or multi-day membership; `matched_dates`,
+exclusive event ends and the existing source/version checks still govern reads.
+Invalid cursor/unavailable results do not fabricate date facts. Inspection has
+no requested date scope and does not invent a range of dates for a long event.
+
 `MIMI_CALENDAR_READ_ENABLED` defaults to false. The text route offers these tools only on the
 existing context-enabled Mimi tool loop when this flag is on. Use explicit opt-in on a synthetic
 QA instance after checking its isolation. Existing text transport, Task tools, and provider

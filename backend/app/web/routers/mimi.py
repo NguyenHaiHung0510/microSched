@@ -647,6 +647,11 @@ async def decide_change_set(
             type(error).__name__,
         )
         raise HTTPException(status_code=503, detail="mimi_confirmation_commit_failed") from None
+    from app.agent.voice_v2_bridge import signal_voice_manual_confirm
+    from app.agent.voice_v2_store import VOICE_MANUAL_WAKE_KEY
+
+    if parent_id := db.info.pop(VOICE_MANUAL_WAKE_KEY, None):
+        signal_voice_manual_confirm(parent_id)
     return result
 
 

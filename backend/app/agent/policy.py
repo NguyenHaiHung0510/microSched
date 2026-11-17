@@ -9,6 +9,12 @@ from pathlib import Path
 POLICY_ID = "mimi-standard-v2"
 POLICY_SHA256 = "158ed655d52b157a4884be7ed46d16ecc9efd80370a93ee42fdae5513d24c670"
 _POLICY_PATH = Path(__file__).with_name("policy") / "mimi-standard-v2.md"
+_CALENDAR_FACTS_POLICY = """Use calendar_facts for date/weekday pairs.
+ISO Monday=1 through Sunday=7.
+Never guess weekdays. observed_today is the Vietnam date at data_as_of, not a claim about saved
+records. requested facts cover only requested civil dates; matched_dates still determines
+multi-day membership. Facts do not change coverage, pagination, visibility or write authority.
+"""
 _CALENDAR_POLICY = """## Saved Calendar (only when its read tools are leased)
 For current Calendar questions, including after Resume, read fresh saved data; prior answers
 are historical. Use the server's Asia/Ho_Chi_Minh dates and honor requested_dates,
@@ -67,6 +73,7 @@ def load_standard_policy(
             )
             + "\n"
             + _CALENDAR_POLICY
+            + _CALENDAR_FACTS_POLICY
         )
         policy_id += "+calendar-read-v1"
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -99,6 +106,12 @@ def checkpoint_policy_compatible(value: str, *, collection_enabled: bool) -> boo
     return value in {
         original,
         *previous,
+        # Same saved-data semantics before deterministic weekday facts were added.
+        *(
+            {"de63eda446e4c00ad3ade5bd6f23d8fa3239804650fe61cbe7e8bd2e638edbfc"}
+            if collection_enabled
+            else {"aaad3e2189c5f2b9f3eb21fb53933f736d4eb1ef9f16ab60e6446cf6977feaa7"}
+        ),
         load_standard_policy(collection_enabled=collection_enabled).sha256,
         load_standard_policy(collection_enabled=collection_enabled, calendar_enabled=True).sha256,
     }
