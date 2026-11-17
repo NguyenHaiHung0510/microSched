@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.agent import crypto
+from app.agent.display_time import vietnam_display_time
 from app.agent.models import MimiChangeSet, MimiEvent, MimiExecutionReceipt, MimiRun
 from app.agent.openrouter import validate_task_candidate
 from app.agent.selection import (
@@ -309,7 +310,7 @@ async def voice_receipt_context(db, auth, conversation):
                 "receipt_ref": receipt_ref(conversation.id, identity),
                 "latest": index == 0,
                 "task_count": receipt.result.get("count", 1),
-                "executed_at": receipt.executed_at.isoformat(),
+                "executed_at": vietnam_display_time(receipt.executed_at).isoformat(),
             }
         )
     return {

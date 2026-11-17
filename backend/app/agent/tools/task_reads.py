@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.display_time import vietnam_display_time
 from app.core.settings import Settings, get_settings
 from app.domain.models import Task
 
@@ -188,6 +189,8 @@ def _project(row: Task, projection: tuple[str, ...]) -> dict[str, Any]:
     }
     for field in projection:
         value = getattr(row, field)
+        if field in {"due_at", "completed_at"} and value is not None:
+            value = vietnam_display_time(value)
         data[field] = (
             value.isoformat()
             if isinstance(value, (date, datetime))

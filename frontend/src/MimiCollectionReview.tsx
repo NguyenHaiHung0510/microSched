@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { fetchMimiSelection, type MimiChangeSet, type MimiCollectionPlan } from '@/mimi-api'
 import { collectionConfirmable, collectionConfirmationNotice, collectionCounts } from '@/mimi-collection'
 import { usePreviewExpired } from '@/mimi-preview-expiry'
+import { mimiVietnamTimestamp } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { MimiCollectionFrame, MimiCollectionTable } from '@/MimiCollectionView'
 
@@ -24,11 +25,11 @@ export function MimiCollectionReview({ changeSet, plan, conversationId, pending,
     <p className="rounded-lg bg-muted p-3 text-sm" data-testid="mimi-global-counts">Toàn bộ tập đã chốt: {counts.included} bao gồm · {counts.excluded} loại trừ · {counts.uncertain} chưa chắc · <strong>{counts.affected} Task sẽ thay đổi</strong>.</p>
     <p className="text-xs text-muted-foreground">Tìm kiếm và phân trang chỉ đổi phần đang xem. Xác nhận luôn áp dụng cả {plan.entries.length} Task đã chốt, cùng một giao dịch.</p>
     {selection.data?.explicitly_named_subset ? <p className="text-xs text-warn">Đây là tập được nêu đích danh. Nguồn chưa hoàn tất hoặc các mục ngoài tập này vẫn chưa được kết luận; xác nhận chỉ tác động đúng {plan.entries.length} ID đã chốt.</p> : null}
-    {selection.data ? <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-semibold">Nguồn và lý do chọn / loại trừ</summary><p className="mt-2 text-sm">{selection.data.intent}</p><p className="text-xs">Biến thể: {selection.data.variants_considered.join(', ')} · nguồn lúc {new Date(selection.data.as_of).toLocaleString('vi-VN')}</p><ul className="mt-2 max-h-56 overflow-auto text-xs">{selection.data.members.map((m) => <li key={m.id} className="break-words border-t py-2">{m.classification} · {m.id} · v{m.collection_version} · {m.reason}</li>)}</ul></details> : null}
+    {selection.data ? <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-semibold">Nguồn và lý do chọn / loại trừ</summary><p className="mt-2 text-sm">{selection.data.intent}</p><p className="text-xs">Biến thể: {selection.data.variants_considered.join(', ')} · nguồn lúc {mimiVietnamTimestamp(selection.data.as_of)}</p><ul className="mt-2 max-h-56 overflow-auto text-xs">{selection.data.members.map((m) => <li key={m.id} className="break-words border-t py-2">{m.classification} · {m.id} · v{m.collection_version} · {m.reason}</li>)}</ul></details> : null}
     {selection.isPending && plan.selection_id ? <p role="status">Đang tải tập nguồn đã chốt…</p> : null}
     {selection.isError ? <div role="alert"><p>Chưa đọc được tập nguồn. Chưa thể xác nhận.</p><Button variant="outline" onClick={() => void selection.refetch()}>Đọc lại nguồn</Button></div> : null}
     <MimiCollectionTable plan={plan} selection={selection.data} state={tableState} onStateChange={setTableState} />
-    <p className="text-xs">{expired ? 'Preview đã hết hạn. Cần phương án mới.' : `Hết hạn ${new Date(changeSet.expires_at).toLocaleString('vi-VN')}. Chưa ghi thay đổi.`}</p>
+    <p className="text-xs">{expired ? 'Preview đã hết hạn. Cần phương án mới.' : `Hết hạn ${mimiVietnamTimestamp(changeSet.expires_at)}. Chưa ghi thay đổi.`}</p>
     {confirmationNotice ? <p role="status" className="text-sm" data-testid="mimi-confirmation-preflight">{confirmationNotice}</p> : null}
     {error ? <p role="alert" className="text-sm text-bad">{error}</p> : null}
     <div className="flex flex-wrap gap-2" data-testid="mimi-preview-actions"><Button variant="secondary" disabled={pending || expired} onClick={() => { if (open) { reviseAfterClose.current = true; setOpen(false) } else onRevise() }}>Sửa phương án này</Button><Button disabled={disabled} onClick={() => onDecision('confirm')}><Check />Xác nhận toàn bộ {plan.entries.length} Task</Button><Button variant="outline" disabled={pending || expired} onClick={() => onDecision('reject')}><X />Từ chối</Button></div>

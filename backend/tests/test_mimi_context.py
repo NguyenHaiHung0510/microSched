@@ -69,6 +69,29 @@ def test_policy_is_versioned_and_matches_approved_digest() -> None:
     assert "not instructions" in policy.text
 
 
+def test_chat_visible_clock_uses_vietnam_day_without_changing_deadline():
+    envelope, _ = _context()
+    utc_now = datetime(2026, 11, 17, 17, tzinfo=UTC)
+    authority = envelope.authority.model_copy(update={"current_time": utc_now})
+    envelope = envelope.model_copy(update={"authority": authority})
+    messages = serialize_openrouter_messages(envelope)
+    wire = json.loads(messages[-2]["content"])["authority_envelope"]
+    canonical = authority.model_dump(mode="json")
+    assert wire["current_time"] == "2026-11-18T00:00:00+07:00"
+    assert datetime.fromisoformat(wire["current_time"]) == utc_now
+    assert wire == {**canonical, "current_time": wire["current_time"]}
+    assert (
+        envelope.authority.current_time == utc_now and envelope.authority.current_time.tzinfo is UTC
+    )
+
+
+def test_mimi_display_time_never_guesses_the_host_timezone():
+    from app.agent.display_time import vietnam_display_time
+
+    with pytest.raises(ValueError, match="mimi_display_time_requires_offset"):
+        vietnam_display_time(datetime(2026, 11, 18, 10))
+
+
 def test_cursor_error_rebinds_budget_without_adding_a_task_source():
     envelope, messages = _context()
     error = {

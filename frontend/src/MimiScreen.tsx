@@ -64,6 +64,7 @@ import {
   mimiFeedbackTargets,
   mimiRunIsResumable,
   mimiTerminalRunStage,
+  mimiVietnamTimestamp,
   resolveCancelAcknowledgment,
   mimiTaskScheduleLabel,
   resolveMimiFeedbackTarget,
@@ -96,12 +97,12 @@ function feedbackErrorMessage(error: unknown): string {
 }
 
 function expiryLabel(value: string): string {
-  return new Intl.DateTimeFormat('vi-VN', {
+  return mimiVietnamTimestamp(value, {
     hour: '2-digit',
     minute: '2-digit',
     day: '2-digit',
     month: '2-digit',
-  }).format(new Date(value))
+  })
 }
 
 function useElapsed(startedAt: number | null, active: boolean): number {
@@ -1027,7 +1028,7 @@ export function MimiScreen({
                 {message.provenance?.source === 'server_verified' && message.provenance.producer_code === 'provider_voice'
                   ? <p className="text-xs text-muted-foreground">Bản chép lời giọng nói · âm thanh có thể chưa phát hết</p> : null}
                 {message.role === 'assistant' ? <MimiToolActivity events={current.tool_activities ?? current.events} runId={message.run_id} /> : null}
-                <time className="mimi-message-time">{new Date(message.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</time>
+                <time className="mimi-message-time">{mimiVietnamTimestamp(message.created_at, { hour: '2-digit', minute: '2-digit' })}</time>
               </div>
               {message.role === 'assistant' ? <div className="mimi-answer-actions" aria-label={`Hành động câu trả lời ${message.sequence}`}>
                 <Button type="button" size="icon" variant="ghost" aria-label={`Sao chép câu trả lời ${message.sequence}`} onClick={() => { void navigator.clipboard.writeText(message.content).then(() => toast.success('Đã sao chép', { duration: 2000 })).catch(() => toast.error('Chưa sao chép được', { duration: 2000 })) }}><Copy className="size-4" /></Button>

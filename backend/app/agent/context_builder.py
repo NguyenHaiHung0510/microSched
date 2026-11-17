@@ -21,6 +21,7 @@ from app.agent.context import (
     SourceManifest,
 )
 from app.agent.contracts import ExecutionLease
+from app.agent.display_time import vietnam_display_time
 from app.agent.openrouter import serialized_input_bytes
 from app.agent.owner_context import compose_owner_prefix
 from app.agent.policy import load_standard_policy
@@ -341,11 +342,16 @@ def serialize_openrouter_messages(envelope: ContextEnvelope) -> list[dict[str, A
         "role": "system",
         "content": _canonical_json({"output_contract": envelope.output_contract}),
     }
+    # The model uses this clock to understand civil dates. Keep the canonical
+    # authority, deadline and provenance separate from the displayed offset.
+    displayed_authority = envelope.authority.model_copy(
+        update={"current_time": vietnam_display_time(envelope.authority.current_time)}
+    )
     authority = {
         "role": "system",
         "content": _canonical_json(
             {
-                "authority_envelope": envelope.authority.model_dump(mode="json"),
+                "authority_envelope": displayed_authority.model_dump(mode="json"),
                 "context_manifest": envelope.manifest.model_dump(mode="json"),
                 "pending_state": envelope.pending_state,
             }

@@ -182,6 +182,21 @@ test('reload keeps each notice bound despite a later receipt; duplicate tail sup
   expect(html).toContain('data-testid="mimi-receipt"')
 })
 
+test('message, verified notice and applied receipt render the same Vietnam midnight', () => {
+  vi.stubGlobal('navigator', { onLine: true }); vi.stubGlobal('document', { hidden: false })
+  const instant = '2026-11-18T17:35:06Z'
+  const q = client(), snapshot = screenFixture()
+  snapshot.messages = [
+    { id: 'user-message', run_id: null, client_id: null, sequence: 1, role: 'user', content: 'Lịch ngày mai', created_at: instant },
+    { ...notice(), created_at: instant },
+  ]
+  q.setQueryData(diffKey(), { ...diff(), executed_at: instant })
+  const html = renderScreen(q, snapshot)
+  expect(html).toContain('<time class="mimi-message-time">00:35</time>')
+  const vnLabel = new Date(instant).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
+  expect(html.split(`<time dateTime="${instant}">${vnLabel}</time>`)).toHaveLength(3)
+})
+
 test('Voice 6+ pending preview remains available beside applied history after the Voice run ends', () => {
   vi.stubGlobal('navigator', { onLine: true }); vi.stubGlobal('document', { hidden: false })
   const q = client(), snapshot = screenFixture()

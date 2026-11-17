@@ -12,15 +12,18 @@ from uuid import UUID
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.display_time import vietnam_display_time
 from app.agent.tools.task_reads import _cursor_key
 from app.core.settings import Settings
 from app.domain.calendar_read import (
     KINDS,
+    CalendarEventRow,
     CalendarInspectRequest,
     CalendarInspectResult,
     CalendarKind,
     CalendarReadRequest,
     CalendarReadResult,
+    CalendarTaskRow,
     CalendarVersion,
     calendar_versions,
     inspect_calendar,
@@ -132,7 +135,18 @@ async def execute_calendar_tool(
         request = model.model_validate(arguments)
     except ValidationError as error:
         raise ValueError("mimi_tool_arguments_invalid") from error
-    return (await execute_calendar_read(db, request, settings=settings)).model_dump(mode="json")
+    result = await execute_calendar_read(db, request, settings=settings)
+    payload = result.model_dump(mode="json")
+    if isinstance(result, (CalendarReadResult, CalendarInspectResult)):
+        for row, wire_row in zip(result.rows, payload["rows"], strict=True):
+            # Event detail inherits the same instant fields as the list row.
+            # Keep typed membership, provenance and source versions untouched.
+            if isinstance(row, CalendarEventRow):
+                wire_row["starts_at"] = vietnam_display_time(row.starts_at).isoformat()
+                wire_row["ends_at"] = vietnam_display_time(row.ends_at).isoformat()
+            elif isinstance(row, CalendarTaskRow) and row.due_at is not None:
+                wire_row["due_at"] = vietnam_display_time(row.due_at).isoformat()
+    return payload
 
 
 def calendar_result_bindings(name: str, result: dict[str, Any]) -> CalendarBindings:

@@ -16,6 +16,12 @@ exclusive event ends and the existing source/version checks still govern reads.
 Invalid cursor/unavailable results do not fabricate date facts. Inspection has
 no requested date scope and does not invent a range of dates for a long event.
 
+Chat and Voice show event `starts_at`/`ends_at` on both read and inspect, and
+timed Task `due_at`, in Vietnam time (`+07:00` for current dates) at the
+Mimi tool boundary. Task query/inspect also renders deadlines and completion
+instants in that zone. The same instant is preserved; civil dates, matching,
+row/source versions, pagination and stored values are unchanged.
+
 `MIMI_CALENDAR_READ_ENABLED` defaults to false. The text route offers these tools only on the
 existing context-enabled Mimi tool loop when this flag is on. Use explicit opt-in on a synthetic
 QA instance after checking its isolation. Existing text transport, Task tools, and provider
