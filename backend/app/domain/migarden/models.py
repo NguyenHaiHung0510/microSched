@@ -79,6 +79,9 @@ class ZoneState(UUIDTimestampModel, table=True):
     unidentified_execution: bool = Field(
         default=False, sa_type=Boolean, sa_column_kwargs={"server_default": text("false")}
     )
+    stop_target_boot_id: str | None = Field(default=None, max_length=128)
+    stop_target_epoch: int | None = Field(default=None, sa_type=BigInteger)
+    report_reconciliation: dict | None = document()
     preview: dict | None = document()
 
 
@@ -105,7 +108,7 @@ class CommandRecord(UUIDTimestampModel, table=True):
             "status",
             postgresql_where=text(
                 "status IN ('pending', 'received', 'granted', 'started', 'unknown', "
-                "'stop_requested', 'stop_received')"
+                "'stop_requested', 'stop_received', 'stop_unconfirmed')"
             ),
         ),
         {"schema": SCHEMA},

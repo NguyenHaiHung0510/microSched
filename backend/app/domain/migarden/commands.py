@@ -24,7 +24,7 @@ from app.domain.migarden.wire import (
 
 WAITING = ("pending", "received")
 UNCERTAIN = ("granted", "started", "unknown")
-STOP_PENDING = ("stop_requested", "stop_received")
+STOP_PENDING = ("stop_requested", "stop_received", "stop_unconfirmed")
 
 
 class PreviewInput(WireModel):
@@ -136,8 +136,12 @@ async def start_block_reason(
     if zone.revoked_at is not None:
         return "controller_revoked"
     stop = await latest(db, "stop")
-    if stop and stop.status in STOP_PENDING and stop.boot_id == zone.boot_id:
+    if stop and stop.status in STOP_PENDING:
         return "stop_pending"
+    if zone.report_reconciliation is not None:
+        return "reports_need_reconciliation"
+    if zone.stop_target_boot_id is not None and zone.stop_target_boot_id != zone.boot_id:
+        return "controller_boot_unconfirmed"
     if zone.snapshot is None or zone.snapshot_received_at is None:
         return "device_waiting"
     snapshot = Snapshot.model_validate(zone.snapshot)
@@ -237,14 +241,16 @@ async def confirm(
 async def request_stop(db: AsyncSession, owner: str, clock: Callable[[], datetime]) -> CommandView:
     zone = await lock_zone(db)
     now = clock()
-    if zone.boot_id is None or zone.control_epoch is None:
+    target = zone.stop_target_boot_id or zone.boot_id
+    epoch = zone.stop_target_epoch if zone.stop_target_boot_id else zone.control_epoch
+    if target is None or epoch is None:
         raise Rejected("controller_boot_unknown")
     zone.preview = None
     pending = await waiting_start(db)
     if pending:
         expire_or_cancel(pending, now, cancel="canceled_by_stop")
     existing = await latest(db, "stop")
-    if existing and existing.status in STOP_PENDING and existing.boot_id == zone.boot_id:
+    if existing and existing.status in STOP_PENDING and existing.boot_id == target:
         return command_view(existing, now)
     stop = CommandRecord(
         request_id=str(uuid4()),
@@ -252,8 +258,8 @@ async def request_stop(db: AsyncSession, owner: str, clock: Callable[[], datetim
         status="stop_requested",
         session_owner_id=owner,
         confirmed_at=now,
-        boot_id=zone.boot_id,
-        control_epoch=zone.control_epoch,
+        boot_id=target,
+        control_epoch=epoch,
     )
     db.add(stop)
     return command_view(stop, now)

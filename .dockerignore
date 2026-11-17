@@ -8,6 +8,7 @@ qa
 output
 backend/tests
 backend/scripts/provision_migarden_qa.py
+backend/scripts/prepare_migarden_commission.py
 frontend/e2e
 frontend/integrated
 frontend/output

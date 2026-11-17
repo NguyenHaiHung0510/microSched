@@ -303,6 +303,21 @@ Report = Annotated[
 ]
 
 
+class ExchangeEnvelope(WireModel):
+    """Only used to recover STOP when the bounded report list fails validation.
+
+    Report objects remain opaque here. No receipt or OPEN decision may use this
+    envelope without full ExchangeIn validation and a successful transaction.
+    """
+
+    protocol: Literal["migarden.zone-a.v1"]
+    device_id: Identity
+    boot_id: Identity
+    control_epoch: Sequence
+    snapshot: Snapshot
+    reports: Annotated[list[object], Field(max_length=REPORT_LIMIT)]
+
+
 class ExchangeIn(WireModel):
     protocol: Literal["migarden.zone-a.v1"]
     device_id: Identity

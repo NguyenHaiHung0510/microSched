@@ -75,7 +75,12 @@ async def state(db: AsyncSession, now: datetime) -> StateView:
         snapshot_received_at=zone.snapshot_received_at if zone else None,
         config=config,
         start_block_reason=reason,
-        stop_available=bool(zone and zone.device_id and zone.boot_id and zone.revoked_at is None),
+        stop_available=bool(
+            zone
+            and zone.device_id
+            and (zone.stop_target_boot_id or zone.boot_id)
+            and zone.revoked_at is None
+        ),
         start_request=command_view(last_start, now) if last_start else None,
         stop_request=command_view(last_stop, now) if last_stop else None,
         next_schedule=forecast(config.applied, now),

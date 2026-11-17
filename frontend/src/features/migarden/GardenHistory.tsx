@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { garden, gardenOptions, type HistoryItem } from './api'
-import { duration, explainReason, historyLabel, instantLabel, sources, statusLabels, timeLabel } from './presentation'
+import { garden, gardenOptions, type Command, type HistoryItem } from './api'
+import { duration, explainReason, historyLabel, instantLabel, reconcileRecent, sources, statusLabels, timeLabel } from './presentation'
 
 const results: Record<string, string> = {
   completed: 'Đã kết thúc', stopped: 'Đã dừng theo báo cáo', stop_processed: 'Xử lý Dừng',
@@ -44,7 +44,9 @@ function HistoryList({ items, compact }: { items: HistoryItem[]; compact: boolea
   </ul>
 }
 
-export function GardenHistory({ compact, onNavigate }: { compact: boolean; onNavigate: () => void }) {
+export function GardenHistory({ compact, onNavigate, currentRequests = [] }: {
+  compact: boolean; onNavigate: () => void; currentRequests?: (Command | null)[];
+}) {
   const [filters, setFilters] = useState({ from_day: '', to_day: '', source: 'all', result: 'all' })
   const [cursors, setCursors] = useState<string[]>([])
   const params = new URLSearchParams({ limit: compact ? '4' : '20' })
@@ -92,7 +94,7 @@ export function GardenHistory({ compact, onNavigate }: { compact: boolean; onNav
         <p>Không cập nhật được lịch sử.</p>
         <Button type="button" variant="outline" onClick={() => void query.refetch()}>Thử lại</Button>
       </div>}
-      {query.data && <HistoryList items={query.data.items} compact={compact} />}
+      {query.data && <HistoryList items={compact ? reconcileRecent(query.data.items, currentRequests) : query.data.items} compact={compact} />}
       {!compact && <>
         <p className="text-sm text-muted-foreground">Giờ Hà Nội. Hiển thị phần đã nhận; thiếu báo cáo không chứng minh đã hay chưa tưới.</p>
         <div className="flex flex-wrap justify-between gap-2">

@@ -10,10 +10,11 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.core.db import get_sessionmaker
-from app.core.settings import get_settings
+from app.core.database_urls import async_postgres_url
+from app.core.settings import Settings
 from app.domain.migarden.commands import expire_or_cancel, waiting_start
 from app.domain.migarden.credentials import digest
 from app.domain.migarden.storage import lock_zone
@@ -23,15 +24,35 @@ QA_ID = re.compile(r"qa-[a-z0-9][a-z0-9-]{0,62}")
 QA_DB = re.compile(r"microsched_n01_[a-z0-9_]+")
 
 
-def check_target() -> None:
+def check_target() -> URL:
     # Read the explicit process input first; never fall back to app dotenv for provisioning.
-    url = make_url(os.environ.get("DATABASE_URL", ""))
+    url = make_url(async_postgres_url(os.environ.get("DATABASE_URL", "")))
     if (
         os.environ.get("APP_ENV") != "local"
         or url.host not in {"127.0.0.1", "localhost", "::1"}
         or not QA_DB.fullmatch(url.database or "")
+        or bool(url.query)
     ):
         raise ValueError("explicit local N01 database required")
+    return url
+
+
+def get_sessionmaker(target: URL):
+    # Dedicated factory, never the app's cached engine or dotenv-derived settings.
+    return async_sessionmaker(create_async_engine(target), expire_on_commit=False)
+
+
+def checked_factory():
+    target = check_target()
+    settings = Settings(_env_file=None)
+    effective = make_url(settings.database_url) if settings.database_url else None
+    if settings.is_production or effective != target:
+        raise ValueError("resolved settings differ from the explicit local N01 target")
+    factory = get_sessionmaker(target)
+    engine = factory.kw.get("bind") if factory is not None else None
+    if engine is None or engine.url != target:
+        raise ValueError("resolved factory differs from the explicit local N01 target")
+    return factory
 
 
 def check_path(candidate: Path) -> Path:
@@ -78,12 +99,9 @@ def create_token_file(path: Path, token: str) -> None:
 
 
 async def apply(action: str, device_id: str, path: Path | None) -> None:
-    check_target()
-    if get_settings().is_production or not QA_ID.fullmatch(device_id):
+    factory = checked_factory()
+    if not QA_ID.fullmatch(device_id):
         raise ValueError("local qa-* device identity required")
-    factory = get_sessionmaker()
-    if factory is None:
-        raise ValueError("database unavailable")
     created = False
     try:
         async with factory() as db, db.begin():
@@ -115,6 +133,8 @@ async def apply(action: str, device_id: str, path: Path | None) -> None:
         if created and path is not None:
             path.unlink(missing_ok=True)
         raise
+    finally:
+        await factory.kw["bind"].dispose()
 
 
 def main() -> None:

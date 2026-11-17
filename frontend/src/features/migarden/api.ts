@@ -144,7 +144,7 @@ export function useGardenState() {
       if (query.state.status === 'error') return 30_000
       if (data?.connection === 'unconfigured') return 30_000
       const waiting = ['pending', 'received', 'granted'].includes(data?.start_request?.status ?? '') ||
-        ['stop_requested', 'stop_received'].includes(data?.stop_request?.status ?? '')
+        ['stop_requested', 'stop_received', 'stop_unconfirmed'].includes(data?.stop_request?.status ?? '')
       return data?.snapshot?.active_session || waiting ? 5_000 : 15_000
     },
   })

@@ -1,5 +1,5 @@
 import { ApiError } from '@/api'
-import type { GardenState, HistoryItem, Source } from './api'
+import type { Command, GardenState, HistoryItem, Source } from './api'
 
 export const sources: Record<Source, string> = {
   schedule: 'Theo lịch', remote: 'Từ web', local_button: 'Tại nút',
@@ -61,7 +61,9 @@ const reasonLabels: Record<string, string> = {
   controller_not_ready: 'Controller chưa sẵn sàng. Kiểm tra tại tủ.',
   config_unconfirmed: 'Chưa xác nhận cấu hình Controller đang dùng.',
   start_pending: 'Đang chuyển yêu cầu tưới. Theo dõi kết quả trước khi gửi tiếp.',
-  stop_pending: 'Yêu cầu Dừng đang chờ Controller xử lý.',
+  stop_pending: 'Yêu cầu Dừng chưa được xác nhận xử lý. Tiếp tục đối soát với Controller.',
+  controller_boot_unconfirmed: 'Có báo cáo từ lần khởi động chưa xác lập. Chưa cho phép START từ web.',
+  reports_need_reconciliation: 'Báo cáo cần đối soát; tạm chặn tưới từ web. Dừng vẫn được phép.',
   config_conflict: 'Cấu hình đã thay đổi ở nơi khác. Bản nhập vẫn còn; kiểm tra bản mới rồi lưu lại.',
   preview_missing: 'Bản xem trước không còn hiệu lực. Hãy xem trước lại.',
   preview_expired: 'Bản xem trước đã hết hạn. Hãy xem trước lại.',
@@ -110,6 +112,13 @@ export const statusLabels: Record<string, string> = {
   close_requested: 'Đã yêu cầu tắt đầu ra',
   already_off: 'Đầu ra đã tắt theo báo cáo',
   unconfirmed: 'Chưa xác nhận Dừng',
+}
+export function reconcileRecent(items: HistoryItem[], current: (Command | null)[]): HistoryItem[] {
+  return items.map(item => {
+    if (item.kind !== 'remote_start' && item.kind !== 'remote_stop') return item
+    const command = current.find(value => value?.request_id === item.request_id)
+    return command ? { ...item, result: command.status, reason: command.reason } : item
+  })
 }
 export function historyLabel(item: HistoryItem): string {
   if (item.kind === 'remote_stop' || item.kind === 'stop_processed') return 'Dừng tưới'

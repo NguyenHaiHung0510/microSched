@@ -7,7 +7,12 @@ from pathlib import Path
 
 MARKER = b"N01_" + b"QA_ARTIFACT_CANARY"
 DENIED_DIRECTORIES = {"tests", "e2e", "integrated", "fixtures", ".local", "qa", "test-results"}
-DENIED_FILES = {"provision_migarden_qa.py", "migarden_qa_cell.py", "appcheck.env"}
+DENIED_FILES = {
+    "provision_migarden_qa.py",
+    "prepare_migarden_commission.py",
+    "migarden_qa_cell.py",
+    "appcheck.env",
+}
 
 
 def scan(root: Path) -> list[str]:

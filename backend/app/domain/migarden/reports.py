@@ -2,10 +2,10 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.migarden.commands import UNCERTAIN, WAITING, command_record
+from app.domain.migarden.commands import STOP_PENDING, UNCERTAIN, WAITING, command_record
 from app.domain.migarden.models import CommandRecord, ReportRecord, SessionRecord, ZoneState
 from app.domain.migarden.storage import Rejected
 from app.domain.migarden.wire import (
@@ -110,6 +110,17 @@ async def project(
             return
         status = "stop_unconfirmed" if report.payload.outcome == "unconfirmed" else "stop_confirmed"
         observe_command(command, report, status, report.payload.reason or report.payload.outcome)
+        if status == "stop_confirmed":
+            await db.execute(
+                update(CommandRecord)
+                .where(
+                    CommandRecord.kind == "stop",
+                    CommandRecord.status.in_(STOP_PENDING),
+                    CommandRecord.request_id != command.request_id,
+                    CommandRecord.confirmed_at <= command.confirmed_at,
+                )
+                .values(status="stop_stale", reason="reconciled_by_stop:" + command.request_id)
+            )
         return
 
     if not isinstance(report, (RequestReceivedReport, RequestRejectedReport)):
@@ -127,7 +138,10 @@ async def project(
             observe_command(command, report, "received")
         elif command.status == "stop_requested":
             observe_command(command, report, "stop_received")
-    elif command.status in (*WAITING, "granted", "stop_requested", "stop_received"):
+    elif command.kind == "stop":
+        # A rejection/negative receipt is not positive evidence of processing.
+        observe_command(command, report, "stop_unconfirmed", report.payload.reason)
+    elif command.status in (*WAITING, "granted"):
         observe_command(command, report, "rejected", report.payload.reason)
 
 

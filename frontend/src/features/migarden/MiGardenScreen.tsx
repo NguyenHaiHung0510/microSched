@@ -64,7 +64,6 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
   const display = displayedSession(state, dataAt, now, connected)
   const max = state.config.applied?.policy.max_session_seconds ?? 0
   const canStart = display.fresh && state.start_block_reason === null && Boolean(max)
-  const stopBusy = ['stop_requested', 'stop_received'].includes(state.stop_request?.status ?? '')
   const applyCommand = (key: 'start_request' | 'stop_request', data: Command) => {
     client.setQueryData<GardenState>(['migarden', 'state'], previous => previous ? { ...previous, [key]: data } : previous, { updatedAt: dataAt })
     void client.invalidateQueries({ queryKey: ['migarden'] })
@@ -126,7 +125,7 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
             setOpen(true)
           }}>Tưới ngay</Button>
           <Button type="button" variant="destructive" className="min-h-11"
-            disabled={!online || !state.stop_available || stop.isPending || stopBusy}
+            disabled={!online || !state.stop_available || stop.isPending}
             onClick={() => { setOpen(false); setStopNotice(''); stop.mutate() }}>
             <Square aria-hidden="true" /> {stop.isPending ? 'Đang gửi Dừng…' : 'Dừng tưới'}
           </Button>
@@ -210,7 +209,7 @@ export function MiGardenScreen({ location }: { location: string }) {
   }, [configuration, history])
   const connected = online && !state.isError
   const fresh = data && displayedSession(data, state.dataUpdatedAt, now, connected).fresh
-  const refresh = () => { void state.refetch() }
+  const refresh = () => { void cache.invalidateQueries({ queryKey: ['migarden'] }) }
   return <section aria-labelledby="migarden-title" data-testid="migarden-screen" className="space-y-4">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex min-w-0 flex-wrap items-start gap-x-6 gap-y-3">
@@ -246,7 +245,7 @@ export function MiGardenScreen({ location }: { location: string }) {
           <WaterChart />
           <div className="grid min-w-0 gap-4">
             <NextSchedule next={data.next_schedule} fresh={!!fresh} />
-            <GardenHistory compact onNavigate={() => navigate('/migarden?history=1')} />
+            <GardenHistory compact currentRequests={[data.start_request, data.stop_request]} onNavigate={() => navigate('/migarden?history=1')} />
           </div>
         </div>
       </>}

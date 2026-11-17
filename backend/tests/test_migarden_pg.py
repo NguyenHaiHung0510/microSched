@@ -417,7 +417,20 @@ def test_pg_expiry_unknown_boot_epoch_and_stop_cancellation(run_cell):
         cell.tick()
         res = (await cell.device_post(ref=ref, boot="boot-2")).json()
         assert not res["stops"]
-        assert (await cell.state())["stop_request"]["status"] == "stop_stale"
+        assert (await cell.state())["stop_request"]["status"] == "stop_requested"
+        stop = await cell.stop()
+        stop_id = stop.json()["request_id"]
+        processed = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            boot="boot-2",
+            request_id=stop_id,
+            trigger_source="remote",
+        )
+        assert (
+            await cell.device_post(ref=ref, boot="boot-2", reports=[processed])
+        ).status_code == 200
         key = await cell.preview()
         assert (await cell.confirm(key)).status_code == 200
         cell.tick(46)
@@ -487,7 +500,10 @@ def test_pg_history_midnight_unknown_disposition_and_atomic_ack(run_cell):
         assert await admin.fetchval("SELECT count(*) FROM microsched.migarden_session") == 1
         extra = cell.report("fault", None, {"reason": "sample"})
         changed = stopped | {"payload": {"outcome": "unconfirmed"}}
-        assert (await cell.device_post(ref=ref, reports=[extra, changed])).status_code == 409
+        conflict = await cell.device_post(ref=ref, reports=[extra, changed])
+        assert conflict.status_code == 200
+        assert conflict.json()["acked_event_ids"] == []
+        assert conflict.json()["grants"] == []
         assert not await admin.fetchval(
             "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", extra["event_id"]
         )
@@ -552,5 +568,193 @@ def test_pg_terminal_loss_after_active_snapshot_blocks_start(run_cell):
         )
         assert (await cell.device_post(ref=ref, reports=[terminal])).status_code == 200
         assert (await cell.state())["start_block_reason"] is None
+
+    run_cell(case)
+
+
+@pytest.mark.parametrize("poison_kind", ["schema", "conflict"])
+def test_pg_review_stop_bypasses_poison_without_ack_or_grant(run_cell, poison_kind):
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        key = await cell.preview()
+        await cell.confirm(key)
+        await cell.device_post(ref=ref)
+        existing = cell.report("fault", ref, {"reason": "original"})
+        await cell.device_post(ref=ref, reports=[existing])
+        if poison_kind == "schema":
+            poison = cell.report(
+                "stop_processed",
+                ref,
+                {"outcome": "not-a-wire-outcome"},
+                trigger_source="local_button",
+            )
+        else:
+            poison = existing | {"payload": {"reason": "conflicting-content"}}
+        stop = (await cell.stop()).json()["request_id"]
+        received = cell.report("request_received", ref, {}, request_id=key, trigger_source="remote")
+        for _ in range(2):
+            response = await cell.device_post(ref=ref, reports=[received, poison])
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data["stops"][0]["request_id"] == stop
+            assert data["acked_event_ids"] == data["grants"] == data["candidates"] == []
+            assert not await admin.fetchval(
+                "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", received["event_id"]
+            )
+        closed = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            request_id=stop,
+            trigger_source="remote",
+        )
+        await cell.device_post(ref=ref, epoch=1, reports=[closed])
+        assert (await cell.state())["start_request"]["status"] == "canceled"
+        assert (await cell.state())["stop_request"]["status"] == "stop_confirmed"
+        cell.tick(46)
+        await cell.device_post(ref=ref, epoch=1)
+        assert (await cell.state())["start_block_reason"] == "reports_need_reconciliation"
+
+    run_cell(case)
+
+
+def test_pg_review_unconfirmed_stop_stays_pending_until_positive_correlated_receipt(run_cell):
+    async def case(cell, _, __):
+        ref = await cell.configured()
+        stop = (await cell.stop()).json()["request_id"]
+        unconfirmed = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "unconfirmed"},
+            trigger_source="remote",
+            request_id=stop,
+        )
+        result = await cell.device_post(ref=ref, reports=[unconfirmed])
+        assert result.json()["stops"][0]["request_id"] == stop
+        assert (await cell.state())["stop_request"]["status"] == "stop_unconfirmed"
+        assert (await cell.state())["start_block_reason"] == "stop_pending"
+        cell.tick(60)
+        result = await cell.device_post(ref=ref, epoch=1)
+        assert result.json()["stops"][0]["request_id"] == stop
+        assert (await cell.stop()).json()["request_id"] == stop
+        assert (await cell.state())["start_block_reason"] == "stop_pending"
+        positive = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            trigger_source="remote",
+            request_id=stop,
+        )
+        result = await cell.device_post(ref=ref, epoch=1, reports=[positive])
+        assert result.json()["stops"] == []
+        assert (await cell.state())["start_block_reason"] is None
+
+    run_cell(case)
+
+
+def test_pg_review_new_unknown_boot_stop_is_separate_from_verified_open_boot(run_cell):
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        cell.tick()
+        response = await cell.device_post(
+            ref=ref,
+            boot="boot-new",
+            observed_at=None,
+            time_quality="unknown",
+            ready=False,
+        )
+        assert response.status_code == 200
+        assert await admin.fetchval("SELECT boot_id FROM microsched.migarden_zone") == "boot-1"
+        assert (await cell.state())["start_block_reason"] == "controller_boot_unconfirmed"
+        stop = (await cell.stop()).json()["request_id"]
+        response = await cell.device_post(
+            ref=ref,
+            boot="boot-new",
+            observed_at=None,
+            time_quality="unknown",
+            ready=False,
+        )
+        assert response.json()["stops"][0]["boot_id"] == "boot-new"
+        assert response.json()["stops"][0]["request_id"] == stop
+        assert response.json()["grants"] == response.json()["candidates"] == []
+        response = await cell.device_post(ref=ref, boot="boot-1", epoch=12)
+        assert not response.json()["stops"]
+        assert (
+            await admin.fetchval("SELECT stop_target_boot_id FROM microsched.migarden_zone")
+            == "boot-new"
+        )
+        cell.tick()
+        await cell.device_post(ref=ref, boot="boot-new")
+        assert await admin.fetchval("SELECT boot_id FROM microsched.migarden_zone") == "boot-new"
+        processed = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            boot="boot-new",
+            request_id=stop,
+            trigger_source="remote",
+        )
+        await cell.device_post(ref=ref, boot="boot-new", reports=[processed])
+        assert (await cell.state())["start_block_reason"] is None
+        # Retired boot with a fresh-looking timestamp cannot replace the current one.
+        cell.tick()
+        await cell.device_post(ref=ref, boot="boot-1", epoch=13)
+        assert await admin.fetchval("SELECT boot_id FROM microsched.migarden_zone") == "boot-new"
+        assert (
+            await admin.fetchval("SELECT stop_target_boot_id FROM microsched.migarden_zone")
+            == "boot-new"
+        )
+
+    run_cell(case)
+
+
+def test_pg_review_unknown_snapshot_never_regresses_applied_or_forecast(run_cell):
+    async def case(cell, _, __):
+        ref = await cell.configured()
+        changed = CONFIG | {
+            "expected_config_ref": ref,
+            "schedule": CONFIG["schedule"]
+            | {
+                "recurrence": {"kind": "daily", "at_local_time": "09:00"},
+            },
+        }
+        result = await cell.human.put(OWNER_PATH, json=changed, headers=HUMAN)
+        newer_ref = result.json()["desired"]["config_ref"]
+        cell.tick()
+        report = cell.report("config_applied", newer_ref, {})
+        await cell.device_post(ref=newer_ref, reports=[report])
+        for epoch in (0, 1):
+            cell.tick()
+            await cell.device_post(ref=ref, epoch=epoch, observed_at=None, time_quality="unknown")
+            state = await cell.state()
+            assert state["config"]["applied"]["config_ref"] == newer_ref
+            assert state["next_schedule"]["config_ref"] == newer_ref
+            assert state["start_block_reason"] is not None
+
+    run_cell(case)
+
+
+def test_pg_review_unidentified_execution_is_not_cleared_by_off_ttl_or_unrelated_terminal(run_cell):
+    async def case(cell, _, __):
+        ref = await cell.configured()
+        cell.tick()
+        await cell.device_post(ref=ref, output="on", active_session=None)
+        cell.tick(60)
+        terminal = cell.report(
+            "session_ended",
+            ref,
+            {
+                "started_at": cell.time.now.isoformat(),
+                "ended_at": cell.time.now.isoformat(),
+                "output_duration_seconds": 0,
+                "outcome": "stopped",
+                "reason": "unrelated",
+            },
+            trigger_source="local_button",
+            session_id="unrelated",
+        )
+        await cell.device_post(ref=ref, reports=[terminal])
+        assert (await cell.state())["start_block_reason"] == "unresolved_execution"
+        assert (await cell.stop()).status_code == 200
 
     run_cell(case)

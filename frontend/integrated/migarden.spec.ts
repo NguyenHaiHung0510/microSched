@@ -118,6 +118,8 @@ test('N01 browser: saved/applied, all schedule editors, remote START/STOP, chart
     })], { output: 'on', active_session: active })
     await wide.getByRole('button', { name: 'Cập nhật' }).click()
     await expect(wide.getByTestId('garden-now')).toContainText('Đang tưới')
+    await expect(wide.getByTestId('garden-recent')).toContainText('Có báo cáo đã bắt đầu')
+    await expect(wide.getByTestId('garden-recent')).not.toContainText('Chờ Controller nhận')
     const elapsed = await wide.getByTestId('garden-elapsed').innerText()
     await expect(wide.getByTestId('garden-elapsed')).not.toHaveText(elapsed)
     await wide.screenshot({ path: testInfo.outputPath('Tong-quan-desktop.png'), fullPage: true })

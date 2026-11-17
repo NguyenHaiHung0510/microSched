@@ -71,3 +71,7 @@ Nguồn: Bước 07 §6.4, 54/54 anchor; dùng với Bước 01–10, wire `miga
 | S2-AT-NET02 | NOT_RUN | Phải giữ AP/đứt WAN trước và trong lượt; không lấy app down hoặc browser offline thay. |
 
 Gate riêng: full backend/frontend/hook/migration/runtime-deps/packaging; independent QA; TLS và board thật; AP/WAN; lỗi nguồn/flash; driver/nút/electrical/manual shutoff; contained water/field; physical iPhone; migration/rollout production. Không suy bằng chứng giữa các lớp. Đối chiếu [runbook N01](n01-runbook.vi.md).
+
+## Delta sau Terra review
+
+Các oracle `test_pg_review_*` bổ sung poison schema/conflict với STOP-only response, unconfirmed receipt không mở gate, new unknown boot chỉ là đích STOP và unordered applied không lùi. `test_migarden_review.py` kiểm exact effective DSN trước kết nối; `test_migarden_bootstrap_pg.py` kiểm role/grants thật và FAIL→restore→PASS; `test_migarden_commission_pg.py` rehearsal forward-only trên DB mới. `presentation.test.ts` và hành trình full app kiểm nhãn Gần đây dùng command status mới nhất. Phần hardware/physical/independence của54 hàng giữ nguyên.

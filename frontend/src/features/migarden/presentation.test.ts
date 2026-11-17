@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { GardenState } from './api'
-import { displayedSession, fromLocal, localInput } from './presentation'
+import type { Command, GardenState, HistoryItem } from './api'
+import { displayedSession, fromLocal, localInput, reconcileRecent } from './presentation'
 
 describe('N01 display boundaries', () => {
+  it('projects the latest matching command into recent history while a fetch is in flight', () => {
+    const item = { kind: 'remote_start', request_id: 'same', result: 'pending', reason: null } as HistoryItem
+    const command = { request_id: 'same', status: 'started', reason: null } as Command
+    expect(reconcileRecent([item], [command])[0].result).toBe('started')
+    expect(reconcileRecent([item], [{ ...command, request_id: 'other' }])[0].result).toBe('pending')
+    expect(item.result).toBe('pending')
+  })
+
   it('round-trips civil Hanoi input independent of browser timezone', () => {
     expect(fromLocal('2026-11-18T07:00')).toBe('2026-11-18T00:00:00.000Z')
     expect(localInput('2026-11-18T00:00:00.000Z')).toBe('2026-11-18T07:00')
