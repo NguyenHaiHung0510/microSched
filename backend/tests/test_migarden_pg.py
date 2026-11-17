@@ -146,7 +146,7 @@ def run_cell(pg_dsn, monkeypatch):
     for route in (migarden_device, migarden_human):
         monkeypatch.setattr(route, "now_utc", lambda: clock.now)
 
-    async def run(case):
+    async def run(case, *, raise_app_exceptions):
         admin = await asyncpg.connect(pg_dsn)
         await admin.execute(
             "TRUNCATE microsched.migarden_zone, microsched.migarden_report,"
@@ -171,7 +171,7 @@ def run_cell(pg_dsn, monkeypatch):
             store = PostgresSessionStore(factory, 90)
             token = await store.create("garden-n01@example.test")
             ids.append(token)
-            transport = httpx.ASGITransport(app=app)
+            transport = httpx.ASGITransport(app=app, raise_app_exceptions=raise_app_exceptions)
             async with (
                 httpx.AsyncClient(
                     transport=transport, base_url=ORIGIN, cookies={"ms_session": token}
@@ -188,7 +188,10 @@ def run_cell(pg_dsn, monkeypatch):
             await admin.close()
             get_settings.cache_clear()
 
-    return lambda case: asyncio.run(run(case))
+    def execute(case, *, raise_app_exceptions=True):
+        return asyncio.run(run(case, raise_app_exceptions=raise_app_exceptions))
+
+    return execute
 
 
 def test_pg_owner_cas_applied_and_immutable_role(run_cell):
@@ -457,7 +460,7 @@ def test_pg_expiry_unknown_boot_epoch_and_stop_cancellation(run_cell):
     run_cell(case)
 
 
-def test_pg_history_midnight_unknown_disposition_and_atomic_ack(run_cell):
+def test_pg_history_midnight_unknown_disposition_and_isolated_ack(run_cell):
     async def case(cell, admin, _):
         ref = await cell.configured()
         s, e = "2026-11-17T16:59:30Z", "2026-11-17T17:00:15Z"
@@ -502,10 +505,18 @@ def test_pg_history_midnight_unknown_disposition_and_atomic_ack(run_cell):
         changed = stopped | {"payload": {"outcome": "unconfirmed"}}
         conflict = await cell.device_post(ref=ref, reports=[extra, changed])
         assert conflict.status_code == 200
-        assert conflict.json()["acked_event_ids"] == []
+        assert conflict.json()["acked_event_ids"] == [extra["event_id"]]
         assert conflict.json()["grants"] == []
-        assert not await admin.fetchval(
+        assert await admin.fetchval(
             "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", extra["event_id"]
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT body->'payload'->>'outcome' FROM microsched.migarden_report "
+                "WHERE event_id=$1",
+                stopped["event_id"],
+            )
+            == "already_off"
         )
         daily = (await cell.human.get(ROOT + "/daily", params={"days": 7})).json()["days"]
         assert daily[-2]["local_button_seconds"] == 30 and daily[-1]["local_button_seconds"] == 15
@@ -573,7 +584,7 @@ def test_pg_terminal_loss_after_active_snapshot_blocks_start(run_cell):
 
 
 @pytest.mark.parametrize("poison_kind", ["schema", "conflict"])
-def test_pg_review_stop_bypasses_poison_without_ack_or_grant(run_cell, poison_kind):
+def test_pg_review_stop_bypasses_poison_without_poison_ack_or_grant(run_cell, poison_kind):
     async def case(cell, admin, _):
         ref = await cell.configured()
         key = await cell.preview()
@@ -597,9 +608,14 @@ def test_pg_review_stop_bypasses_poison_without_ack_or_grant(run_cell, poison_ki
             assert response.status_code == 200, response.text
             data = response.json()
             assert data["stops"][0]["request_id"] == stop
-            assert data["acked_event_ids"] == data["grants"] == data["candidates"] == []
-            assert not await admin.fetchval(
-                "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", received["event_id"]
+            assert data["acked_event_ids"] == [received["event_id"]]
+            assert data["grants"] == data["candidates"] == []
+            assert (
+                await admin.fetchval(
+                    "SELECT count(*) FROM microsched.migarden_report WHERE event_id=$1",
+                    received["event_id"],
+                )
+                == 1
             )
         closed = cell.report(
             "stop_processed",
@@ -756,5 +772,343 @@ def test_pg_review_unidentified_execution_is_not_cleared_by_off_ttl_or_unrelated
         await cell.device_post(ref=ref, reports=[terminal])
         assert (await cell.state())["start_block_reason"] == "unresolved_execution"
         assert (await cell.stop()).status_code == 200
+
+    run_cell(case)
+
+
+@pytest.mark.parametrize("poison_kind", ["schema", "conflict"])
+def test_pg_groupfix_positive_stop_receipt_with_poison(run_cell, poison_kind):
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        stop = (await cell.stop()).json()["request_id"]
+        initial = await cell.device_post(ref=ref)
+        assert initial.json()["stops"][0]["request_id"] == stop
+        receipt = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            request_id=stop,
+            trigger_source="remote",
+        )
+        poison = cell.report("fault", ref, {"reason": "fixture"})
+        if poison_kind == "schema":
+            poison["payload"] = {}
+        else:
+            # The immutable event sequence belongs to the configured report.
+            poison["sequence"] = 1
+        for _ in range(2):
+            response = await cell.device_post(ref=ref, epoch=1, reports=[poison, receipt])
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data["acked_event_ids"] == [receipt["event_id"]]
+            assert data["stops"] == data["grants"] == data["candidates"] == []
+            assert data["desired_config"] is None and data["retry_after_seconds"] == 30
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM microsched.migarden_report WHERE event_id=$1",
+                receipt["event_id"],
+            )
+            == 1
+        )
+        assert not await admin.fetchval(
+            "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", poison["event_id"]
+        )
+        state = await cell.state()
+        assert state["stop_request"]["status"] == "stop_confirmed"
+        assert state["start_block_reason"] == "reports_need_reconciliation"
+
+    run_cell(case)
+
+
+def test_pg_groupfix_stop_confirmation_never_reopens(run_cell):
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        stop = (await cell.stop()).json()["request_id"]
+        positive = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "close_requested"},
+            request_id=stop,
+            trigger_source="remote",
+        )
+        response = await cell.device_post(ref=ref, epoch=1, reports=[positive])
+        assert response.json()["acked_event_ids"] == [positive["event_id"]]
+        assert (await cell.state())["stop_request"]["status"] == "stop_confirmed"
+        late = cell.report(
+            "request_rejected",
+            ref,
+            {"reason": "stale_boot"},
+            request_id=stop,
+            trigger_source="remote",
+        )
+        response = await cell.device_post(ref=ref, epoch=1, reports=[late])
+        assert response.json()["acked_event_ids"] == [late["event_id"]]
+        assert response.json()["stops"] == []
+        state = await cell.state()
+        assert state["stop_request"]["status"] == "stop_confirmed"
+        assert state["start_block_reason"] is None
+        assert await admin.fetchval(
+            "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", late["event_id"]
+        )
+
+    run_cell(case)
+
+
+def test_pg_groupfix_retains_all_failed_fingerprints_until_each_proven(run_cell, monkeypatch):
+    from app.domain.migarden import reports
+    from app.domain.migarden.storage import Rejected
+
+    blocked = set()
+    original = reports.project
+
+    async def intermittent(db, report, row, command):
+        if (report.event_id, report.payload.reason) in blocked:
+            raise Rejected("synthetic_unavailable_projection")
+        await original(db, report, row, command)
+
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        first = cell.report("fault", ref, {"reason": "first"})
+        second = cell.report("fault", ref, {"reason": "second"}, boot="boot-backlog")
+        blocked.update({(first["event_id"], "first"), (second["event_id"], "second")})
+        monkeypatch.setattr(reports, "project", intermittent)
+        for report in (first, second):
+            response = await cell.device_post(ref=ref, reports=[report])
+            assert response.json()["acked_event_ids"] == []
+        assert (await cell.state())["start_block_reason"] == "reports_need_reconciliation"
+
+        # An acceptable alternative body under the same ID cannot prove the failed original.
+        alternative = first | {
+            "event_id": second["event_id"],
+            "sequence": second["sequence"],
+            "boot_id": second["boot_id"],
+        }
+        response = await cell.device_post(ref=ref, reports=[alternative])
+        assert response.json()["acked_event_ids"] == [second["event_id"]]
+        blocked.remove((first["event_id"], "first"))
+        response = await cell.device_post(ref=ref, reports=[first])
+        assert response.json()["acked_event_ids"] == [first["event_id"]]
+        assert (await cell.state())["start_block_reason"] == "reports_need_reconciliation"
+        assert await admin.fetchval(
+            "SELECT report_reconciliation IS NOT NULL FROM microsched.migarden_zone"
+        )
+
+    run_cell(case)
+
+
+def test_pg_groupfix_exact_subset_recovery_uses_report_boot_not_packet_boot(run_cell, monkeypatch):
+    from app.domain.migarden import reports
+    from app.domain.migarden.storage import Rejected
+
+    blocked = set()
+    project = reports.project
+
+    async def intermittent(db, report, row, command):
+        if report.event_id in blocked:
+            raise Rejected("synthetic_unavailable_projection")
+        await project(db, report, row, command)
+
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        first = cell.report("fault", ref, {"reason": "first"})
+        second = cell.report("fault", ref, {"reason": "second"}, boot="boot-backlog")
+        blocked.update(event["event_id"] for event in (first, second))
+        monkeypatch.setattr(reports, "project", intermittent)
+        response = await cell.device_post(ref=ref, reports=[first, second])
+        assert response.json()["acked_event_ids"] == []
+        assert (
+            await admin.fetchval(
+                "SELECT jsonb_array_length(report_reconciliation->'entries') "
+                "FROM microsched.migarden_zone"
+            )
+            == 2
+        )
+
+        cell.tick()
+        blocked.remove(first["event_id"])
+        response = await cell.device_post(ref=ref, boot="boot-2", reports=[first])
+        assert response.json()["acked_event_ids"] == [first["event_id"]]
+        assert (await cell.state())["start_block_reason"] == "reports_need_reconciliation"
+        retained = await admin.fetchval(
+            "SELECT report_reconciliation->'entries'->0->>1 FROM microsched.migarden_zone"
+        )
+        assert retained == "boot-backlog"
+
+        cell.tick()
+        blocked.remove(second["event_id"])
+        response = await cell.device_post(ref=ref, boot="boot-2", reports=[second])
+        assert response.json()["acked_event_ids"] == [second["event_id"]]
+        assert (await cell.state())["start_block_reason"] is None
+        assert await admin.fetchval(
+            "SELECT report_reconciliation IS NULL FROM microsched.migarden_zone"
+        )
+
+    run_cell(case)
+
+
+def test_pg_groupfix_conflicting_stop_receipts_cannot_publish_ack(run_cell):
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        key = await cell.preview()
+        await cell.confirm(key)
+        stop = (await cell.stop()).json()["request_id"]
+        unknown = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            request_id="unknown-stop-synthetic",
+            trigger_source="remote",
+        )
+        wrong_boot = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            request_id=stop,
+            boot="boot-unbound",
+            trigger_source="remote",
+        )
+        wrong_kind = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            request_id=key,
+            trigger_source="remote",
+        )
+        good = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            request_id=stop,
+            trigger_source="remote",
+        )
+        bad_ids = [item["event_id"] for item in (unknown, wrong_boot, wrong_kind)]
+        result = (
+            await cell.device_post(ref=ref, reports=[good, wrong_kind, wrong_boot, unknown])
+        ).json()
+        assert result["acked_event_ids"] == [good["event_id"]]
+        assert result["grants"] == result["candidates"] == result["stops"] == []
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM microsched.migarden_report WHERE event_id=ANY($1::text[])",
+                bad_ids,
+            )
+            == 0
+        )
+        state = await cell.state()
+        assert state["stop_request"]["status"] == "stop_confirmed"
+        assert state["start_request"]["status"] == "canceled"
+
+    run_cell(case)
+
+
+def test_pg_groupfix_ambiguous_event_id_is_not_acked(run_cell):
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        first = cell.report("fault", ref, {"reason": "ordinary"})
+        other_body = first | {"payload": {"reason": "different"}}
+        invalid_variant = first | {"payload": {}}
+        unrelated = cell.report("fault", ref, {"reason": "unrelated"})
+        response = await cell.device_post(
+            ref=ref, reports=[first, other_body, invalid_variant, unrelated, unrelated]
+        )
+        assert response.json()["acked_event_ids"] == [unrelated["event_id"]]
+        assert (
+            await admin.fetchval(
+                "SELECT count(*) FROM microsched.migarden_report WHERE event_id=$1",
+                first["event_id"],
+            )
+            == 0
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT jsonb_array_length(report_reconciliation->'entries') "
+                "FROM microsched.migarden_zone"
+            )
+            == 3
+        )
+
+    run_cell(case)
+
+
+def test_pg_groupfix_outer_commit_failure_has_no_wire_ack(run_cell, monkeypatch):
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async def fail_commit(_):
+        raise RuntimeError("synthetic_outer_commit_failure")
+
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        stop = (await cell.stop()).json()["request_id"]
+        receipt = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            request_id=stop,
+            trigger_source="remote",
+        )
+        poison = cell.report("fault", ref, {})
+        with monkeypatch.context() as patch:
+            patch.setattr(AsyncSession, "commit", fail_commit)
+            response = await cell.device_post(ref=ref, epoch=1, reports=[receipt, poison])
+            assert response.status_code == 500
+            assert "acked_event_ids" not in response.text
+        assert not await admin.fetchval(
+            "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", receipt["event_id"]
+        )
+        assert (await cell.state())["stop_request"]["status"] == "stop_requested"
+        response = await cell.device_post(ref=ref, epoch=1, reports=[receipt, poison])
+        assert response.json()["acked_event_ids"] == [receipt["event_id"]]
+        assert (await cell.state())["stop_request"]["status"] == "stop_confirmed"
+
+    run_cell(case, raise_app_exceptions=False)
+
+
+def test_pg_groupfix_ordered_stop_confirmation_preserves_stale_terminal(run_cell):
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        old_stop = (await cell.stop()).json()["request_id"]
+        cell.tick()
+        await cell.device_post(ref=ref, boot="boot-2")
+        stop = (await cell.stop()).json()["request_id"]
+        assert stop != old_stop
+        positive = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "already_off"},
+            boot="boot-2",
+            request_id=stop,
+            trigger_source="remote",
+        )
+        negative = cell.report(
+            "stop_processed",
+            ref,
+            {"outcome": "unconfirmed"},
+            boot="boot-2",
+            request_id=stop,
+            trigger_source="remote",
+        )
+        cell.tick()
+        response = await cell.device_post(
+            ref=ref, boot="boot-2", epoch=1, reports=[negative, positive]
+        )
+        assert response.json()["acked_event_ids"] == [negative["event_id"], positive["event_id"]]
+        assert response.json()["stops"] == []
+        late = cell.report(
+            "request_rejected",
+            ref,
+            {"reason": "stale_boot"},
+            request_id=old_stop,
+            trigger_source="remote",
+        )
+        response = await cell.device_post(ref=ref, boot="boot-2", epoch=1, reports=[late])
+        assert response.json()["acked_event_ids"] == [late["event_id"]]
+        assert response.json()["stops"] == []
+        old = await admin.fetchrow(
+            "SELECT status,reason FROM microsched.migarden_command WHERE request_id=$1", old_stop
+        )
+        assert dict(old) == {"status": "stop_stale", "reason": "reconciled_by_stop:" + stop}
+        state = await cell.state()
+        assert state["stop_request"]["status"] == "stop_confirmed"
+        assert state["start_block_reason"] is None
 
     run_cell(case)

@@ -3,14 +3,12 @@
 from time import monotonic
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
 
 from app.core.settings import get_settings
 from app.domain.migarden.credentials import TOKEN, allows, digest
-from app.domain.migarden.exchange import exchange, stop_only_recovery
-from app.domain.migarden.storage import Rejected, lock_zone, read_zone
-from app.domain.migarden.wire import ExchangeEnvelope, ExchangeIn, ExchangeOut
+from app.domain.migarden.exchange import exchange
+from app.domain.migarden.storage import lock_zone, read_zone
+from app.domain.migarden.wire import ExchangeEnvelope, ExchangeOut
 from app.web.migarden_http import Database, json_body, now_utc, require_enabled, verdict
 
 BODY_LIMIT = 32 * 1024
@@ -56,17 +54,6 @@ async def device_exchange(request: Request, db: Database) -> ExchangeOut:
     zone = await verdict(lambda: lock_zone(db))
     if not allows(zone, token_hash, production) or envelope.device_id != zone.device_id:
         raise unauthorized()
-    try:
-        packet = ExchangeIn.model_validate(envelope.model_dump(mode="json"))
-    except ValidationError:
-        return await stop_only_recovery(db, zone, envelope, now_utc(), "report_schema_invalid")
-    try:
-        async with db.begin_nested():
-            result = await exchange(db, zone, packet, now_utc())
-            await db.flush()
-        return result
-    except Rejected, IntegrityError:
-        # The failed report batch and its snapshot/projections have rolled back.
-        # The outer transaction keeps the target lock and commits only recovery.
-        await db.refresh(zone)
-        return await stop_only_recovery(db, zone, envelope, now_utc(), "report_ingest_conflict")
+    # Database is function-scoped: dependency commit must complete before the
+    # response can publish any ACK for a report savepoint.
+    return await exchange(db, zone, envelope, now_utc())

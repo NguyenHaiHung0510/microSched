@@ -25,6 +25,7 @@ from app.domain.migarden.wire import (
 WAITING = ("pending", "received")
 UNCERTAIN = ("granted", "started", "unknown")
 STOP_PENDING = ("stop_requested", "stop_received", "stop_unconfirmed")
+STOP_TERMINAL = ("stop_confirmed", "stop_stale")
 
 
 class PreviewInput(WireModel):

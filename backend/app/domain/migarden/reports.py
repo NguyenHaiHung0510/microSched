@@ -1,16 +1,27 @@
 """Validate, receipt and project durable device reports without scheduling output."""
 
+from collections import defaultdict
 from datetime import datetime
 
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.migarden.commands import STOP_PENDING, UNCERTAIN, WAITING, command_record
+from app.domain.migarden.commands import (
+    STOP_PENDING,
+    STOP_TERMINAL,
+    UNCERTAIN,
+    WAITING,
+    command_record,
+)
 from app.domain.migarden.models import CommandRecord, ReportRecord, SessionRecord, ZoneState
+from app.domain.migarden.reconciliation import FailureKey, failure_key, wire_identity
 from app.domain.migarden.storage import Rejected
 from app.domain.migarden.wire import (
     CLOCK_LEAD,
     EndedReport,
+    ExchangeEnvelope,
     OccurrenceReport,
     Report,
     RequestReceivedReport,
@@ -35,53 +46,106 @@ def report_result(report: Report) -> str | None:
     return None
 
 
-async def ingest_reports(db: AsyncSession, reports: list[Report], now: datetime) -> list[str]:
-    prepared: list[tuple[Report, ReportRecord]] = []
-    acked: dict[str, None] = {}
-    for report in reports:
-        data = report.model_dump(mode="json")
-        existing = await db.scalar(
-            select(ReportRecord).where(ReportRecord.event_id == report.event_id)
-        )
-        if existing is not None:
-            if existing.body != data:
-                raise Rejected("event_id_conflict")
-        else:
-            collision = await db.scalar(
-                select(ReportRecord.event_id).where(
-                    ReportRecord.boot_id == report.boot_id, ReportRecord.sequence == report.sequence
-                )
-            )
-            if collision is not None:
-                raise Rejected("event_sequence_conflict")
-            observed = report.occurred_at
-            trusted = (
-                observed is not None
-                and report.time_quality != "unknown"
-                and observed <= now + CLOCK_LEAD
-            )
-            row = ReportRecord(
-                event_id=report.event_id,
-                boot_id=report.boot_id,
-                sequence=report.sequence,
-                kind=report.kind,
-                config_ref=report.config_ref,
-                source=report.trigger_source,
-                result=report_result(report),
-                occurred_at=observed,
-                sort_at=observed if trusted else now,
-                received_at=now,
-                body=data,
-            )
-            db.add(row)
-            await db.flush()
-            prepared.append((report, row))
-        acked[report.event_id] = None
+_REPORT = TypeAdapter(Report)
 
-    for report, row in sorted(prepared, key=lambda item: (item[0].boot_id, item[0].sequence)):
-        command = await command_record(db, report.request_id)
-        await project(db, report, row, command)
-    return list(acked)
+
+async def ingest_reports(
+    db: AsyncSession, packet: ExchangeEnvelope, now: datetime
+) -> tuple[list[str], list[FailureKey], list[FailureKey]]:
+    """Isolate each report while holding the Zone lock in the outer transaction."""
+    parsed: dict[FailureKey, Report] = {}
+    by_id: dict[str, set[FailureKey]] = defaultdict(set)
+    by_sequence: dict[tuple[str, int], set[str]] = defaultdict(set)
+    failed: list[FailureKey] = []
+    for item in packet.reports:
+        try:
+            report = _REPORT.validate_python(item)
+        except ValidationError:
+            fields = item if isinstance(item, dict) else {}
+            key = failure_key(item, wire_identity(fields.get("boot_id")), packet.boot_id)
+            failed.append(key)
+            if event_id := wire_identity(fields.get("event_id")):
+                by_id[event_id].add(key)
+        else:
+            key = failure_key(report.model_dump(mode="json"), report.boot_id, packet.boot_id)
+            parsed[key] = report
+            by_id[report.event_id].add(key)
+            by_sequence[(report.boot_id, report.sequence)].add(report.event_id)
+
+    accepted: list[FailureKey] = []
+    acked: set[str] = set()
+    for key, report in sorted(parsed.items(), key=lambda pair: (pair[1].boot_id, pair[1].sequence)):
+        # An ID-only ACK cannot distinguish variants in one exchange. Nor can
+        # two different IDs both be the durable event for the same boot/sequence.
+        if (
+            len(by_id[report.event_id]) > 1
+            or len(by_sequence[(report.boot_id, report.sequence)]) > 1
+        ):
+            failed.append(key)
+            continue
+        try:
+            async with db.begin_nested():
+                await ingest_report(db, report, now)
+                await db.flush()
+        except Rejected, IntegrityError:
+            failed.append(key)
+        else:
+            accepted.append(key)
+            acked.add(report.event_id)
+
+    # Retain input order on the wire. The caller publishes ACKs only after the outer commit.
+    return [event_id for event_id in by_id if event_id in acked], accepted, failed
+
+
+async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None:
+    data = report.model_dump(mode="json")
+    existing = await db.scalar(select(ReportRecord).where(ReportRecord.event_id == report.event_id))
+    if existing is not None:
+        if existing.body != data:
+            raise Rejected("event_id_conflict")
+        if isinstance(report, StopProcessedReport):
+            # A legacy row is not proof of proper STOP correlation.
+            validate_stop_receipt(report, await command_record(db, report.request_id))
+        return
+    collision = await db.scalar(
+        select(ReportRecord.event_id).where(
+            ReportRecord.boot_id == report.boot_id, ReportRecord.sequence == report.sequence
+        )
+    )
+    if collision is not None:
+        raise Rejected("event_sequence_conflict")
+    observed = report.occurred_at
+    trusted = (
+        observed is not None and report.time_quality != "unknown" and observed <= now + CLOCK_LEAD
+    )
+    row = ReportRecord(
+        event_id=report.event_id,
+        boot_id=report.boot_id,
+        sequence=report.sequence,
+        kind=report.kind,
+        config_ref=report.config_ref,
+        source=report.trigger_source,
+        result=report_result(report),
+        occurred_at=observed,
+        sort_at=observed if trusted else now,
+        received_at=now,
+        body=data,
+    )
+    db.add(row)
+    await db.flush()
+    command = await command_record(db, report.request_id)
+    await project(db, report, row, command)
+
+
+def validate_stop_receipt(report: StopProcessedReport, command: CommandRecord | None) -> None:
+    if command is None:
+        if report.trigger_source == "remote":
+            raise Rejected("stop_request_unknown")
+        return
+    if command.kind != "stop" or report.trigger_source != "remote":
+        raise Rejected("stop_request_mismatch")
+    if report.boot_id != command.boot_id:
+        raise Rejected("stop_boot_mismatch")
 
 
 async def project(
@@ -94,21 +158,16 @@ async def project(
         await project_session(db, report, row, command)
         return
 
-    if command is None:
-        if isinstance(report, StopProcessedReport) and report.trigger_source == "remote":
-            raise Rejected("stop_request_unknown")
-        return
-
     if isinstance(report, StopProcessedReport):
-        if command.kind != "stop" or report.trigger_source != "remote":
-            raise Rejected("stop_request_mismatch")
-        # A new-boot off report is not proof that the old-boot packet was processed.
-        # The exchange separately fences old-boot STOP against a closed new boot.
-        if report.boot_id != command.boot_id:
+        validate_stop_receipt(report, command)
+        if command is None or command.status in STOP_TERMINAL:
             return
-        if command.status in ("stop_confirmed", "stop_stale") or not newer(command, report):
+        unconfirmed = report.payload.outcome == "unconfirmed"
+        if unconfirmed and not newer(command, report):
             return
-        status = "stop_unconfirmed" if report.payload.outcome == "unconfirmed" else "stop_confirmed"
+        # Positive processing is stronger than a later-arriving negative receipt,
+        # even when source sequence ordering puts the negative after it.
+        status = "stop_unconfirmed" if unconfirmed else "stop_confirmed"
         observe_command(command, report, status, report.payload.reason or report.payload.outcome)
         if status == "stop_confirmed":
             await db.execute(
@@ -123,10 +182,12 @@ async def project(
             )
         return
 
-    if not isinstance(report, (RequestReceivedReport, RequestRejectedReport)):
+    if command is None or not isinstance(report, (RequestReceivedReport, RequestRejectedReport)):
         return
     if report.trigger_source not in (None, "remote"):
         raise Rejected("request_source_mismatch")
+    if command.kind == "stop" and command.status in STOP_TERMINAL:
+        return
     if report.boot_id != command.boot_id:
         return  # A report may describe a stale packet; it cannot authorize a new boot.
     if command.kind == "start" and report.config_ref != command.config_ref:

@@ -19,11 +19,13 @@ from cryptography import x509
 from sqlalchemy.engine import make_url
 
 from app.domain.migarden.credentials import TOKEN
-from scripts.provision_migarden_qa import CHECKOUT, create_token_file
+from scripts.provision_migarden_qa import CHECKOUT, QA_DB, create_token_file
 
 STATE_KEYS = {"device_id", "device_environment", "token_hash", "revoked_at"}
 SAFE_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$")
 HASH = re.compile(r"^[a-f0-9]{64}$")
+QA_HOSTADDRS = {"127.0.0.1": "127.0.0.1", "localhost": "127.0.0.1", "::1": "::1"}
+QA_LIBPQ_OVERRIDES = ("PGSERVICE", "PGSERVICEFILE", "PGSYSCONFDIR", "PGHOSTADDR", "PGOPTIONS")
 
 
 def sql_text(value: str | None) -> str:
@@ -153,7 +155,25 @@ def private_directory(raw: Path) -> Path:
     return directory
 
 
+def validate_target(environment: str, host: str, port: int, database: str) -> None:
+    if environment not in ("qa", "production"):
+        raise ValueError("invalid target environment")
+    if environment == "qa" and (
+        not isinstance(host, str)
+        or host not in QA_HOSTADDRS
+        or type(port) is not int
+        or not 1 <= port <= 65535
+        or not isinstance(database, str)
+        or len(database) > 63
+        or not QA_DB.fullmatch(database)
+    ):
+        raise ValueError("QA target must be an explicit loopback port and N01 database")
+
+
 def prepare(args) -> None:
+    validate_target(
+        args.environment, args.expected_host, args.expected_port, args.expected_database
+    )
     old = json.loads(args.expected_state_file.read_text(encoding="utf-8"))
     token = secrets.token_urlsafe(32) if args.operation == "issue" else None
     digest = hashlib.sha256(token.encode()).hexdigest() if token else None
@@ -195,24 +215,55 @@ def apply_plan(args) -> None:
     sql = (directory / "binding.sql").read_bytes()
     if hashlib.sha256(sql).hexdigest() != plan["sql_sha256"]:
         raise ValueError("reviewed SQL has changed")
+    environment = plan["environment"]
+    validate_target(
+        environment, plan["expected_host"], plan["expected_port"], plan["expected_database"]
+    )
     raw = os.environ.get("MIGARDEN_COMMISSION_DATABASE_URL", "")
     url = make_url(raw)
+    qa = environment == "qa"
+    port = (5432 if url.port is None else url.port) if not qa else url.port
+    if qa:
+        validate_target(environment, url.host, port, url.database)
     if (
         url.drivername != "postgresql"
         or url.username != "microsched_app"
         or url.host != plan["expected_host"]
-        or (url.port or 5432) != plan["expected_port"]
+        or port != plan["expected_port"]
         or url.database != plan["expected_database"]
         or set(url.query) - {"sslmode", "channel_binding"}
     ):
         raise ValueError("explicit target differs from the reviewed plan")
-    if plan["environment"] == "production" and (
-        url.host in {"127.0.0.1", "localhost", "::1", "db", "host.docker.internal"}
-        or url.query.get("sslmode") not in {"require", "verify-ca", "verify-full"}
-    ):
-        raise ValueError("production plan needs its distinct TLS-protected database")
-    # No dotenv, app factory, redirect, discovery or shell interpolation.
-    with psycopg.connect(raw, autocommit=True, connect_timeout=20) as connection:
+    if qa:
+        if url.query or not url.password or any(os.environ.get(key) for key in QA_LIBPQ_OVERRIDES):
+            raise ValueError(
+                "QA target forbids query options and libpq overrides; supply a password"
+            )
+        # Use the verified endpoint directly. No DNS, service files, .pgpass,
+        # client TLS credentials, or ambient host/port/database selection.
+        connector = psycopg.connect(
+            host=url.host,
+            hostaddr=QA_HOSTADDRS[url.host],
+            port=port,
+            dbname=url.database,
+            user=url.username,
+            password=url.password,
+            sslmode="disable",
+            gssencmode="disable",
+            autocommit=True,
+            connect_timeout=20,
+        )
+    else:
+        if url.host in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+            "db",
+            "host.docker.internal",
+        } or url.query.get("sslmode") not in {"require", "verify-ca", "verify-full"}:
+            raise ValueError("production plan needs its distinct TLS-protected database")
+        connector = psycopg.connect(raw, autocommit=True, connect_timeout=20)
+    with connector as connection:
         connection.execute(sql.decode("ascii"), prepare=False)
 
 

@@ -1,10 +1,7 @@
 """Serialize receipt, snapshot fencing and response decisions under the Zone lock."""
 
-import hashlib
-import json
 from datetime import datetime
 
-from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,15 +18,14 @@ from app.domain.migarden.commands import (
     waiting_start,
 )
 from app.domain.migarden.models import BootRecord, ReportRecord, ZoneState
+from app.domain.migarden.reconciliation import reconcile
 from app.domain.migarden.reports import ingest_reports, observe_active
 from app.domain.migarden.storage import config_record, get_config
 from app.domain.migarden.wire import (
     CLOCK_LEAD,
     HOLDOFF,
     ExchangeEnvelope,
-    ExchangeIn,
     ExchangeOut,
-    Report,
     Snapshot,
 )
 
@@ -47,7 +43,7 @@ def trusted_observation(snapshot: Snapshot, now: datetime) -> bool:
 
 
 async def observe_stop_target(
-    db: AsyncSession, zone: ZoneState, packet: ExchangeEnvelope | ExchangeIn, now: datetime
+    db: AsyncSession, zone: ZoneState, packet: ExchangeEnvelope, now: datetime
 ) -> None:
     # Only STOP uses this target. Unknown clock cannot establish current OPEN boot.
     # Known retired boots cannot replace it; one pending unseen boot is bounded.
@@ -72,7 +68,7 @@ async def observe_stop_target(
 
 
 async def observe_snapshot(
-    db: AsyncSession, zone: ZoneState, packet: ExchangeIn, now: datetime
+    db: AsyncSession, zone: ZoneState, packet: ExchangeEnvelope, now: datetime
 ) -> bool:
     snapshot = packet.snapshot
     payload = snapshot.model_dump(mode="json")
@@ -143,59 +139,35 @@ async def confirm_applied(
         zone.applied_ref, zone.applied_confirmed_at = ref, now
 
 
-def body_fingerprint(value: object) -> str:
-    try:
-        value = TypeAdapter(Report).validate_python(value).model_dump(mode="json")
-    except ValidationError:
-        pass
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-
-
-async def reconcile_ingest(db: AsyncSession, zone: ZoneState, packet: ExchangeIn) -> None:
-    failed = zone.report_reconciliation
-    if failed is None:
-        return
-    received = {body_fingerprint(report.model_dump(mode="json")) for report in packet.reports}
-    missing = set(failed.get("fingerprints", [])) - received
-    if failed.get("boot_id") == packet.boot_id and not missing:
-        # Full validation/projection succeeded in the current transaction.
-        zone.report_reconciliation = None
-
-
-async def stop_only_recovery(
-    db: AsyncSession, zone: ZoneState, packet: ExchangeEnvelope, now: datetime, reason: str
-) -> ExchangeOut:
-    await observe_stop_target(db, zone, packet, now)
-    fingerprints = [body_fingerprint(item) for item in packet.reports]
-    previous = zone.report_reconciliation
-    zone.report_reconciliation = {
-        "reason": reason,
-        "boot_id": packet.boot_id,
-        "at": now.isoformat(),
-        "fingerprints": fingerprints[:16] if previous is None else previous["fingerprints"],
-    }
-    zone.preview = None
-    pending = await waiting_start(db)
-    if pending:
-        expire_or_cancel(pending, now, cancel="reports_need_reconciliation")
-    stopping = await latest(db, "stop")
-    stops = (
-        [stop_message(stopping)]
-        if (stopping and stopping.status in STOP_PENDING and stopping.boot_id == packet.boot_id)
-        else []
-    )
-    return ExchangeOut(server_time=now, stops=stops, retry_after_seconds=30)
-
-
 async def exchange(
-    db: AsyncSession, zone: ZoneState, packet: ExchangeIn, now: datetime
+    db: AsyncSession, zone: ZoneState, packet: ExchangeEnvelope, now: datetime
 ) -> ExchangeOut:
     await observe_stop_target(db, zone, packet, now)
+    await db.flush()  # Flush outer target changes outside report savepoints.
+    acked, accepted, failed = await ingest_reports(db, packet, now)
+    reconciled = reconcile(zone.report_reconciliation, accepted=accepted, failed=failed)
+    if zone.report_reconciliation != reconciled:
+        zone.report_reconciliation = reconciled
+
+    stops = []
+    stopping = await latest(db, "stop")
+    if stopping and stopping.status in STOP_PENDING and stopping.boot_id == packet.boot_id:
+        stops.append(stop_message(stopping))
+
+    pending = await waiting_start(db)
+    if reconciled is not None:
+        zone.preview = None
+        if pending is not None:
+            expire_or_cancel(pending, now, cancel="reports_need_reconciliation")
+
+    if failed:
+        # A poisoned exchange may deliver STOP and ACK committed evidence. It
+        # cannot certify a snapshot, change desired delivery, or offer OPEN.
+        return ExchangeOut(
+            server_time=now, stops=stops, acked_event_ids=acked, retry_after_seconds=30
+        )
+
     current_observation = await observe_snapshot(db, zone, packet, now)
-    acked = await ingest_reports(db, packet.reports, now)
-    await reconcile_ingest(db, zone, packet)
     if current_observation:
         await confirm_applied(db, zone, packet.snapshot, now)
         await observe_active(db, zone, packet.snapshot, packet.boot_id)
@@ -208,16 +180,8 @@ async def exchange(
     ):
         desired = await get_config(db, zone.desired_ref)
 
-    candidates, grants, stops = [], [], []
-    stopping = await latest(db, "stop")
-    if stopping and stopping.status in STOP_PENDING:
-        if stopping.boot_id == packet.boot_id:
-            stops.append(stop_message(stopping))
-        # Boot transition alone leaves the old STOP unconfirmed. A new Owner STOP
-        # binds the observed new target; correlated positive processing is required.
-
-    pending = await waiting_start(db)
-    if pending is not None:
+    candidates, grants = [], []
+    if pending is not None and reconciled is None:
         expire_or_cancel(pending, now)
         if pending.status in WAITING and (not context_matches(pending, zone) or stops):
             expire_or_cancel(

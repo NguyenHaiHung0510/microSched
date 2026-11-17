@@ -9,7 +9,7 @@ Nguồn: Bước 07 §6.4, 54/54 anchor; dùng với Bước 01–10, wire `miga
 | PG-AUTH | Cùng file: `test_pg_auth_origin_scope_body_bounds_and_revoke`. |
 | PG-REMOTE | Cùng file: `test_pg_received_grant_once_stop_and_dedup`. |
 | PG-FENCE | Cùng file: `test_pg_expiry_unknown_boot_epoch_and_stop_cancellation`. |
-| PG-LOG | Cùng file: `test_pg_history_midnight_unknown_disposition_and_atomic_ack`. |
+| PG-LOG | Cùng file: `test_pg_history_midnight_unknown_disposition_and_isolated_ack`. |
 | PG-GAP | Cùng file: `test_pg_terminal_loss_after_active_snapshot_blocks_start`. |
 | UI | [Playwright full app](../../frontend/integrated/migarden.spec.ts) (thiết bị gửi synthetic report vào API thật); [Vitest](../../frontend/src/features/migarden/presentation.test.ts) (giờ Hà Nội, đồng hồ fresh/stale). Đây là các test author, không phải chứng nhận độc lập. |
 
@@ -74,4 +74,4 @@ Gate riêng: full backend/frontend/hook/migration/runtime-deps/packaging; indepe
 
 ## Delta sau Terra review
 
-Các oracle `test_pg_review_*` bổ sung poison schema/conflict với STOP-only response, unconfirmed receipt không mở gate, new unknown boot chỉ là đích STOP và unordered applied không lùi. `test_migarden_review.py` kiểm exact effective DSN trước kết nối; `test_migarden_bootstrap_pg.py` kiểm role/grants thật và FAIL→restore→PASS; `test_migarden_commission_pg.py` rehearsal forward-only trên DB mới. `presentation.test.ts` và hành trình full app kiểm nhãn Gần đây dùng command status mới nhất. Phần hardware/physical/independence của54 hàng giữ nguyên.
+Các oracle `test_pg_review_*` bổ sung poison schema/conflict với STOP-only response, unconfirmed receipt không mở gate, new unknown boot chỉ là đích STOP và unordered applied không lùi. `test_migarden_review.py` kiểm exact effective DSN trước kết nối; `test_migarden_bootstrap_pg.py` kiểm role/grants thật và FAIL→restore→PASS; `test_migarden_commission_pg.py` rehearsal forward-only trên DB mới. `presentation.test.ts` và hành trình full app kiểm nhãn Gần đây dùng command status mới nhất. Các ca `test_pg_groupfix_*` và `test_migarden_reconciliation.py` kiểm recovery từng fingerprint, overflow/legacy giữ chặn, ACK STOP hợp lệ đi cùng report lỗi và sau outer commit, STOP terminal giữ nguyên, và commissioning QA khóa đúng đích trước connect. Các gate hardware, physical và retest độc lập trong 54 hàng giữ nguyên.
