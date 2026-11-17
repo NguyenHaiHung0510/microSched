@@ -7,7 +7,7 @@ import { MimiAppliedReceipt } from './MimiAppliedReceipt'
 import { MimiCollectionEntryDetails } from './MimiCollectionEntryDetails'
 import { MimiScreen } from './MimiScreen'
 import { appliedMimiReceiptId } from './mimi-message-provenance'
-import type { MimiCollectionPlan, MimiConversation, MimiMessage, MimiReceiptDiff } from './mimi-api'
+import type { MimiCollectionPlan, MimiConversation, MimiMessage, MimiReceiptDiff, MimiResponseTiming, MimiRun } from './mimi-api'
 
 const buttons = vi.hoisted(() => [] as Array<ButtonHTMLAttributes<HTMLButtonElement>>)
 vi.mock('@/components/ui/button', async importOriginal => {
@@ -216,7 +216,89 @@ test.each(['workspace', 'dock'] as const)('%s shows a failed confirmation and it
   expect(html).toContain('Dữ liệu nguồn đã thay đổi; Mimi chưa tạo Task.')
   expect(html).toContain('data-testid="mimi-applied-receipt"')
   expect(html).toContain('Chuẩn bị hoàn tác')
+  expect(html).not.toContain('data-testid="mimi-run-outcome"')
   for (const diagnostic of ['Trạng thái lượt chạy', 'mimi-answer-timing', 'E2E', 'phép đo browser', 'USD']) expect(html).not.toContain(diagnostic)
+})
+
+function terminalSnapshot(state: string, providerOutcome: MimiRun['provider_outcome'], error: string | null, outcome: MimiResponseTiming['outcome']): MimiConversation {
+  vi.stubGlobal('navigator', { onLine: true }); vi.stubGlobal('document', { hidden: false })
+  const run = { id: 'last-run', mode: 'text' as const, generation: 1, state, provider_outcome: providerOutcome, error_code: error,
+    resumable: false, deadline: timestamp, created_at: timestamp, completed_at: timestamp }
+  return { ...screenFixture(), receipts: [], runs: [run],
+    messages: [{ id: 'submitted-message', run_id: run.id, client_id: 'submit', sequence: 1, role: 'user', content: 'Lịch ngày mai', created_at: timestamp }],
+    response_timings: { version: 1, scope: 'all_retained_response_segments', provenance: 'client',
+      min_ms: null, avg_ms: null, max_ms: null, observed: 0, eligible: 0, missing: 0, pending: 0,
+      failed: Number(outcome === 'failed'), cancelled: Number(outcome === 'cancelled'), unknown: Number(outcome === 'unknown'),
+      responses: [{ run_id: run.id, target_id: run.id, source_id: 'submit', phase: 'send', response_kind: 'status',
+        outcome, parent_run_id: null, elapsed_ms: null, observation: 'missing', provenance: 'client' }],
+    },
+  }
+}
+
+test.each([
+  ['workspace', 'halted', 'failed', 'worker_failed', 'failed', 'Mimi đã dừng lượt này trước khi trả lời.'],
+  ['dock', 'halted', 'succeeded', 'worker_failed', 'failed', 'Mimi đã dừng lượt này trước khi trả lời.'],
+  ['workspace', 'cancelled', null, 'owner_cancelled', 'cancelled', 'Đã huỷ lượt này.'],
+  ['dock', 'cancelled', 'failed', 'owner_cancelled', 'cancelled', 'Đã huỷ lượt này.'],
+  ['dock', 'budget_exceeded', null, 'compaction_preflight_or_reservation_failed', 'failed', 'Mimi đã dừng vì chưa thể chuẩn bị ngữ cảnh cho lượt này.'],
+] as const)('%s reopens a no-answer %s run with one meaningful result', (variant, state, providerOutcome, error, outcome, label) => {
+  const snapshot = terminalSnapshot(state, providerOutcome, error, outcome)
+  snapshot.messages.unshift({ ...notice(null), id: 'prior-notice', run_id: 'prior-run', sequence: 0 })
+  const html = renderScreen(client(), snapshot, variant)
+  expect(html.match(/data-testid="mimi-run-outcome"/g) ?? []).toHaveLength(1)
+  expect(html).toContain(label)
+  expect(html).toContain('data-mimi-response-id="last-run"')
+  expect(html).not.toMatch(/Trạng thái lượt chạy|E2E|USD|phép đo browser|Reconcile provider|>Tiếp tục</)
+})
+
+test.each(['outcome_unknown', 'cancelled'])('a %s run with unknown provider outcome keeps only Reconcile', state => {
+  const cancelled = state === 'cancelled'
+  const snapshot = terminalSnapshot(state, 'unknown', cancelled ? 'owner_cancelled' : 'worker_failed', cancelled ? 'cancelled' : 'unknown')
+  const html = renderScreen(client(), snapshot)
+  expect(html.match(/Reconcile provider/g)).toHaveLength(1)
+  expect(html).toContain('Kết quả provider chưa xác định nên Mimi không tự gửi lại.')
+  expect(html).not.toMatch(/mimi-run-outcome|data-mimi-response-id="last-run"|>Tiếp tục<|E2E|USD/)
+})
+
+test('a specific provider failure banner stays visible without an extra fallback', () => {
+  const html = renderScreen(client(), terminalSnapshot('halted', 'failed', 'provider_reconciliation_failed', 'failed'))
+  expect(html).toContain('Provider đã dừng và chưa trả kết quả dùng được.')
+  expect(html).not.toMatch(/mimi-run-outcome|data-mimi-response-id="last-run"|E2E|USD/)
+})
+
+test('a known context limit keeps its original notice without an extra fallback', () => {
+  const html = renderScreen(client(), terminalSnapshot('budget_exceeded', null, 'mimi_history_message_exceeds_context_window', 'failed'))
+  expect(html).toContain('data-testid="mimi-context-limit-notice"')
+  expect(html).toContain('Lượt này chưa vừa giới hạn context đã chọn.')
+  expect(html).not.toMatch(/mimi-run-outcome|data-mimi-response-id="last-run"|E2E|USD/)
+})
+
+test('rejecting the preview shows its own decision instead of a generic cancellation', () => {
+  const snapshot = terminalSnapshot('cancelled', 'succeeded', null, 'cancelled')
+  const timing = snapshot.response_timings!
+  timing.responses.push({ ...timing.responses[0], phase: 'confirmation', target_id: 'rejected-preview', source_id: 'rejected-preview', response_kind: 'decision' })
+  const html = renderScreen(client(), snapshot)
+  expect(html).toContain('Kết quả quyết định preview · Đã từ chối')
+  expect(html).toContain('data-mimi-response-id="rejected-preview"')
+  expect(html).not.toMatch(/mimi-run-outcome|data-mimi-response-id="last-run"|E2E|USD/)
+})
+
+test.each(['answer', 'verified notice'] as const)('a %s for the same halted run takes the place of fallback status', kind => {
+  const snapshot = terminalSnapshot('halted', 'failed', 'worker_failed', 'failed')
+  delete snapshot.response_timings
+  const content = kind === 'answer' ? 'Đây là lịch đã đọc.' : 'Mimi không đọc được nguồn.'
+  snapshot.messages.push({ ...notice(null), id: 'real-response', run_id: 'last-run', content,
+    provenance: kind === 'answer' ? undefined : { ...notice().provenance!, producer_code: 'provider_terminal' } })
+  const html = renderScreen(client(), snapshot)
+  expect(html).toContain(content)
+  expect(html).toContain('data-mimi-response-id="real-response"')
+  expect(html).not.toMatch(/mimi-run-outcome|data-mimi-response-id="last-run"|E2E|USD/)
+})
+
+test('a completed run with an unknown diagnostic segment does not claim an outcome in the transcript', () => {
+  const html = renderScreen(client(), terminalSnapshot('completed', 'succeeded', null, 'unknown'))
+  expect(html).toContain('Lịch ngày mai')
+  expect(html).not.toMatch(/mimi-run-outcome|data-mimi-response-id="last-run"|Run đã dừng|Reconcile provider|E2E|USD/)
 })
 
 test('Voice 6+ pending preview remains available beside applied history after the Voice run ends', () => {

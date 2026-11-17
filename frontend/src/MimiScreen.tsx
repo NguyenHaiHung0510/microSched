@@ -893,6 +893,37 @@ export function MimiScreen({
     )
   }
 
+  const runError = latestRun?.error_code
+  const showCompactionRequired = runError === 'mimi_compaction_required_unactivated'
+  const showCompactionFailure = latestRun?.state === 'halted' && runError?.startsWith('compaction_')
+  const showRunRecovery = latestRun && latestRun.mode !== 'voice' && (
+    latestRunCanResume
+    || ['retryable', 'deadline_exceeded', 'outcome_unknown'].includes(latestRun.state)
+    || (['cancelled', 'halted'].includes(latestRun.state) && latestRun.provider_outcome === 'unknown')
+  )
+  const showMissingProviderResult = runError === 'provider_result_unavailable_after_reconcile'
+  const showProviderReconciliationFailure = runError === 'provider_reconciliation_failed'
+  const showStaleSource = runError === 'change_set_source_stale'
+  const showBlockedPreview = blockedNewMimiPreview(current)
+  const latestRunDecisions = current.response_timings?.responses.filter(row =>
+    row.run_id === latestRun?.id && row.phase === 'confirmation' && row.response_kind === 'decision'
+  )
+  const runOutcome = latestRun?.state === 'cancelled' ? 'Đã huỷ lượt này.'
+    : latestRun?.state === 'halted' ? 'Mimi đã dừng lượt này trước khi trả lời.'
+    : latestRun?.state === 'budget_exceeded' ? 'Mimi đã dừng vì chưa thể chuẩn bị ngữ cảnh cho lượt này.'
+    : null
+  // An interrupted text run can have no assistant message. Use its durable state,
+  // and defer to the answer, decision or more specific status when one is already shown.
+  const showRunOutcome = runOutcome !== null && !runtimeActive && latestRun && latestRun.mode !== 'voice'
+    && !showRunRecovery && !showCompactionRequired && !showCompactionFailure
+    && !showMissingProviderResult && !showProviderReconciliationFailure && !showStaleSource && !showBlockedPreview
+    && !latestRunExceedsContext
+    && pendingChangeSet?.run_id !== latestRun.id
+    && !latestRunDecisions?.some(row => row.outcome !== 'pending')
+    && !current.messages.some(message => message.run_id === latestRun.id && message.role === 'assistant')
+    && !(latestReceipt && !latestReceiptHasNotice && current.change_sets.some(change =>
+      change.run_id === latestRun.id && change.id === latestReceipt.change_set_id))
+
   const mimiState: MimiState = runtimeActive
     ? (runStage.includes('thực thi') || runStage.includes('áp dụng') || runStage.includes('đọc dữ liệu') ? 'executing' : 'thinking')
     : (latestRun?.state === 'waiting_confirmation' ? 'ready' : 'idle')
@@ -921,24 +952,20 @@ export function MimiScreen({
         </div>
       ) : null}
 
-      {latestRun?.error_code === 'mimi_compaction_required_unactivated' ? (
+      {showCompactionRequired ? (
         <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">Context cần compact nhưng checkpoint chưa được kích hoạt.</p>
           <p className="mt-1 text-xs">Mimi đã dừng trước khi gọi main và không tự gọi helper lại. Mở hội thoại mới để tiếp tục. Nếu helper trước có outcome unknown, mở lượt đó và Reconcile trước khi xử lý tiếp.</p>
         </div>
       ) : null}
-      {latestRun?.state === 'halted' && latestRun.error_code?.startsWith('compaction_') ? (
+      {showCompactionFailure ? (
         <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">Mimi chưa thu gọn được lịch sử nên lượt này đã dừng.</p>
           <p className="mt-1 text-xs">Lịch sử gốc vẫn được giữ nguyên; Mimi không tự gọi helper lại trên cùng context. Bạn có thể mở hội thoại mới. Nếu kết quả provider chưa rõ, cần Reconcile ở lượt bị lỗi.</p>
         </div>
       ) : null}
 
-      {latestRun && latestRun.mode !== 'voice' && (
-        latestRunCanResume
-        || ['retryable', 'deadline_exceeded', 'outcome_unknown'].includes(latestRun.state)
-        || (['cancelled', 'halted'].includes(latestRun.state) && latestRun.provider_outcome === 'unknown')
-      ) ? (
+      {showRunRecovery ? (
         <div className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">{latestRunCanResume ? 'Run có thể tiếp tục theo trạng thái server.' : 'Run đã dừng tại checkpoint provider.'}</p>
           {latestRunCanResume ? (
@@ -964,19 +991,19 @@ export function MimiScreen({
         </div>
       ) : null}
 
-      {latestRun?.error_code === 'provider_result_unavailable_after_reconcile' ? (
+      {showMissingProviderResult ? (
         <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">Provider đã hoàn tất, nhưng Mimi chưa lấy lại được câu trả lời.</p>
           <p className="mt-1 text-xs">Mimi đã xác minh lượt gọi kết thúc; chưa có nội dung hợp lệ để tiếp tục. Hệ thống không tự gửi lại. Nếu bạn gửi yêu cầu mới, đó là một lượt model mới có thể phát sinh chi phí.</p>
         </div>
       ) : null}
-      {latestRun?.error_code === 'provider_reconciliation_failed' ? (
+      {showProviderReconciliationFailure ? (
         <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm">
           <p className="font-semibold">Provider đã dừng và chưa trả kết quả dùng được.</p>
           <p className="mt-1 text-xs">Mimi không tự gửi lại lượt đã huỷ, bị cắt hoặc thất bại. Bạn có thể điều chỉnh yêu cầu rồi bắt đầu lượt mới.</p>
         </div>
       ) : null}
-      {latestRun?.error_code === 'change_set_source_stale' ? (
+      {showStaleSource ? (
         <div role="alert" className="rounded-lg border border-warn/40 bg-warn-bg p-3 text-sm" data-testid="mimi-source-stale-notice">
           <p className="font-semibold">Dữ liệu nguồn đã thay đổi; Mimi chưa tạo Task.</p>
           <p className="mt-1 text-xs">Phương án cũ đã bị từ chối. Hãy yêu cầu Mimi đọc nguồn mới và chuẩn bị lại đề xuất trước khi xác nhận.</p>
@@ -1043,8 +1070,13 @@ export function MimiScreen({
         </div></div></article> : null}
       </div>
 
-      {current.response_timings?.responses.map(row => {
-        if (row.run_id !== latestRun?.id || row.phase !== 'confirmation' || row.response_kind !== 'decision' || row.outcome === 'pending') return null
+      {showRunOutcome ? (
+        <p role="status" data-testid="mimi-run-outcome" data-mimi-response-id={latestRun.id} className="rounded-lg bg-muted p-3 text-sm">
+          {runOutcome}
+        </p>
+      ) : null}
+      {latestRunDecisions?.map(row => {
+        if (row.outcome === 'pending') return null
         const label = {
           succeeded: 'Đã áp dụng',
           cancelled: 'Đã từ chối',
@@ -1057,7 +1089,7 @@ export function MimiScreen({
       {conversation.isError ? <div role="alert" className="rounded-lg bg-warn-bg p-3 text-sm"><p>Chưa đồng bộ được hội thoại. Đang giữ snapshot trước; kết quả đã ACK không được gửi lại.</p><Button variant="outline" disabled={conversation.isFetching} onClick={() => void conversation.refetch()}>Đọc lại hội thoại</Button></div> : null}
       {previewConflict ? <div role="alert" className="rounded-lg bg-warn-bg p-3 text-sm" data-testid="mimi-preview-conflict"><p>Server trả về nhiều preview đang chờ. Chưa chọn hoặc xác nhận phương án nào; hãy đọc lại trạng thái.</p><Button variant="outline" onClick={() => void conversation.refetch()}>Đọc lại preview</Button></div> : null}
       {previewAwaitingRefresh ? <p role="status" className="text-sm" data-testid="mimi-preview-refresh">Server đã xác nhận quyết định cho phương án này. Đang chờ snapshot mới; không gửi lại thao tác.</p> : null}
-      {blockedNewMimiPreview(current) ? <p role="status" className="rounded-lg bg-warn-bg p-3 text-sm" data-testid="mimi-blocked-new-preview">Yêu cầu vừa rồi chưa tạo preview mới. {pendingChangeSet ? 'Phương án hiển thị vẫn là phương án đang giữ. Chọn “Sửa phương án này” để thay thế đúng phương án đó.' : 'Không có preview mới để duyệt. Từ chối phương án trước không tự tạo lại yêu cầu bị chặn; hãy gửi yêu cầu mới khi bạn muốn.'}</p> : null}
+      {showBlockedPreview ? <p role="status" className="rounded-lg bg-warn-bg p-3 text-sm" data-testid="mimi-blocked-new-preview">Yêu cầu vừa rồi chưa tạo preview mới. {pendingChangeSet ? 'Phương án hiển thị vẫn là phương án đang giữ. Chọn “Sửa phương án này” để thay thế đúng phương án đó.' : 'Không có preview mới để duyệt. Từ chối phương án trước không tự tạo lại yêu cầu bị chặn; hãy gửi yêu cầu mới khi bạn muốn.'}</p> : null}
       {pendingChangeSet ? (
         <ChangeSetPreview
           key={`${pendingChangeSet.id}:${pendingChangeSet.digest}:${pendingChangeSet.nonce}`}
