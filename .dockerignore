@@ -4,6 +4,17 @@
 .playwright-cli
 .local
 agent-tasks
+qa
+output
+backend/tests
+backend/scripts/provision_migarden_qa.py
+frontend/e2e
+frontend/integrated
+frontend/output
+frontend/test-results
+**/*.test.ts
+**/*.test.tsx
+**/*.token
 docs
 scripts
 
