@@ -11,6 +11,7 @@ import pytest
 from fastapi import HTTPException
 from test_mimi_voice_v2 import Browser, Live, Store
 
+from app.agent import voice_bridge
 from app.agent.tools import calendar_reads
 from app.agent.tools.registry import tools_for_settings
 from app.agent.voice_v2_bridge import VoiceV2Bridge, _UpstreamDrop
@@ -236,8 +237,102 @@ def test_c3_notice_a_ack_cannot_clear_newer_notice_b():
                 bridge.pending_notice = newer
                 await super().send(raw)
 
-        await bridge._send_action_context(ReplacingLive())
+        sent = await bridge._send_action_context(ReplacingLive(), revision=bridge.output_revision)
+        assert sent is first
         assert bridge.pending_notice is newer
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("retire_at", ["setup", "send", "before_ready", "send_with_newer_notice"])
+def test_c3_only_current_transport_consumes_committed_notice(monkeypatch, retire_at):
+    async def scenario():
+        browser, store = Browser(), Store()
+        bridge = VoiceV2Bridge(browser, store)
+        bridge.deadline = datetime.now(UTC) + timedelta(seconds=10)
+        bridge.ready, bridge.epoch = True, 2
+        entered, release = asyncio.Event(), asyncio.Event()
+        first = committed("applied", receipt_id="first", receipt_ref="vr_" + "a" * 24)
+        newer = committed("undone", receipt_id="newer", receipt_ref="vr_" + "b" * 24)
+        observed = first if retire_at == "setup" else newer
+        if retire_at != "setup":
+            bridge.pending_notice = first
+
+        async def status():
+            return observed
+
+        store.action_status = status
+
+        class HeldSocket(Live):
+            async def recv(self):
+                if retire_at == "setup":
+                    entered.set()
+                    await release.wait()
+                return await super().recv()
+
+            async def send(self, raw):
+                await super().send(raw)
+                if retire_at in {
+                    "send",
+                    "send_with_newer_notice",
+                } and "clientContent" in json.loads(raw):
+                    entered.set()
+                    await release.wait()
+
+        old, fresh = HeldSocket(), Live()
+        sockets = iter((old, fresh))
+        record_event = store.event
+
+        async def event(kind, data):
+            if retire_at == "before_ready" and data.get("epoch") == 2:
+                entered.set()
+                await release.wait()
+            await record_event(kind, data)
+
+        store.event = event
+
+        @asynccontextmanager
+        async def connect(_settings, *, run_id):
+            assert run_id == store.run_id
+            yield next(sockets)
+
+        monkeypatch.setattr(voice_bridge, "connect_provider", connect)
+        config = setup_v2(datetime.now(UTC), store.settings)
+        opening = asyncio.create_task(bridge._transport(config, None, None))
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            if retire_at in {"setup", "send_with_newer_notice"}:
+                bridge.awaiting_manual = True
+                await bridge._manual_status()
+            else:
+                bridge._retire_context()
+            release.set()
+            with pytest.raises(VoiceContextChanged):
+                await asyncio.wait_for(opening, 2)
+        finally:
+            if not opening.done():
+                opening.cancel()
+                await asyncio.gather(opening, return_exceptions=True)
+
+        expected = newer if retire_at == "send_with_newer_notice" else first
+        assert bridge.pending_notice is expected
+        assert not any(frame["type"] == "resumed" for frame in browser.sent)
+        if retire_at == "setup":
+            assert [set(frame) for frame in old.frames] == [{"setup"}]
+
+        bridge.epoch += 1
+        current = asyncio.create_task(bridge._transport(config, None, None))
+        try:
+            assert (await browser.until("resumed"))["context_retained"] is False
+            assert bridge.pending_notice is None and not store.actions
+            assert [set(frame) for frame in fresh.frames] == [{"setup"}, {"clientContent"}]
+            notice = fresh.frames[1]["clientContent"]
+            assert notice["turnComplete"] is False
+            text = notice["turns"][0]["parts"][0]["text"]
+            assert json.loads(text.split(": ", 1)[1]) == expected.model_result()
+        finally:
+            current.cancel()
+            await asyncio.gather(current, return_exceptions=True)
 
     asyncio.run(scenario())
 
@@ -256,10 +351,10 @@ def test_c3_unknown_status_delivery_keeps_scalar_and_never_replays_action():
 
         old, fresh = LostAcknowledgment(), Live()
         with pytest.raises(_UpstreamDrop):
-            await bridge._send_action_context(old, check_sources=False)
+            await bridge._send_action_context(old, revision=bridge.output_revision)
         assert bridge.pending_notice is notice and bridge.send_uncertain
-        await bridge._send_action_context(fresh, check_sources=False)
-        assert bridge.pending_notice is None and not bridge.store.actions
+        assert await bridge._send_action_context(fresh, revision=bridge.output_revision) is notice
+        assert bridge.pending_notice is notice and not bridge.store.actions
         assert all("clientContent" in f for f in [*old.frames, *fresh.frames])
         # Transport uncertainty permits repeated scalar status, never a second
         # action. Exactly-once model receipt is not a claim of this protocol.

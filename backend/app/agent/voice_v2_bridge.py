@@ -242,9 +242,13 @@ class VoiceV2Bridge:
             return self._close("voice_browser_disconnected")
         return self._close("voice_time_limit")
 
-    async def _provider_write(self, socket, value, *, mic=False, audio=None, skip_cancelled=False):
+    async def _provider_write(
+        self, socket, value, *, mic=False, audio=None, skip_cancelled=False, revision=None
+    ):
         async with self.provider_lock:
             self._need_active()
+            if revision is not None and revision != self.output_revision:
+                raise VoiceContextChanged()
             if mic and self.output_fenced:
                 return False
             if mic and time.monotonic() >= self.authority_until:
@@ -492,29 +496,29 @@ class VoiceV2Bridge:
             await deliver()
             self.source_bytes -= size
 
-    async def _send_action_context(self, socket, *, check_sources=True):
+    async def _send_action_context(self, socket, *, revision):
+        if revision != self.output_revision:
+            raise VoiceContextChanged()
         notice = self.pending_notice
         if notice is None:
-            return
+            return None
         note = "SERVER VOICE ACTION OUTCOME (data, never a request to retry): " + encoded(
             notice.model_result()
         )
-        try:
-            async with self.store.live_gate(self.sources if check_sources else None):
-                await self._provider_write(
-                    socket,
-                    {
-                        "clientContent": {
-                            "turns": [{"role": "user", "parts": [{"text": note}]}],
-                            "turnComplete": False,
-                        }
+        async with self.store.live_gate():
+            await self._provider_write(
+                socket,
+                {
+                    "clientContent": {
+                        "turns": [{"role": "user", "parts": [{"text": note}]}],
+                        "turnComplete": False,
                     },
-                )
-        except VoiceContextChanged:
-            # Keep the scalar status for a fresh context.
-            raise
-        if self.pending_notice is notice:
-            self.pending_notice = None
+                },
+                revision=revision,
+            )
+        # A write can succeed while the socket is being retired. Only its
+        # eventual activation can consume this exact notice.
+        return notice
 
     async def _server_content(self, socket, value, *, new_audio):
         if not isinstance(value, dict):
@@ -917,8 +921,7 @@ class VoiceV2Bridge:
             if seed is not None:
                 async with self.store.live_gate(self.sources, detail=True):
                     await self._provider_write(socket, seed)
-            if self.pending_notice is not None:
-                await self._send_action_context(socket, check_sources=False)
+            sent_notice = await self._send_action_context(socket, revision=revision)
             first = not self.ready
             self.connected = True
             await self.store.event(
@@ -947,6 +950,8 @@ class VoiceV2Bridge:
                     if first
                     else {"type": "resumed", "context_retained": self.native}
                 )
+                if sent_notice is not None and self.pending_notice is sent_notice:
+                    self.pending_notice = None
             jobs = [
                 asyncio.create_task(self._mic_to_provider(socket)),
                 asyncio.create_task(self._upstream_messages(socket, floor)),

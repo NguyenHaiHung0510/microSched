@@ -99,6 +99,9 @@ def checkpoint_policy_compatible(value: str, *, collection_enabled: bool) -> boo
             "f9443f7dec59c73ef92a1feb8af5e4abb87198ab6a676603393c664d60b06c65",
             "5aebb79b0c2ad563c0ae05a08deac6f2c34f7673d538be8cb1ddee42ed4cf846",
             "0318b083a95233d5b6aac6c7caac7c8b95e032f2a725db7dfaa82585f369dfcb",
+            # Exact pre-Undo collection projection with the eafbbd4 Calendar facts overlay.
+            # Same saved-data and checkpoint semantics as its pre-facts predecessor above.
+            "4e36aee3658e1bf42d7ca5dd7c9005f17d3b03481163366c176c287206592c02",
         }
         if collection_enabled
         else set()

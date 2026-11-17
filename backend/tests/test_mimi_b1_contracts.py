@@ -158,7 +158,7 @@ def test_actual_setup_blocks_actions_and_scalar_notices_never_interrupt():
         bridge.deadline = datetime.now(UTC) + timedelta(seconds=5)
         live = Live()
         bridge.pending_notice = committed("applied")
-        await bridge._send_action_context(live, check_sources=False)
+        await bridge._send_action_context(live, revision=bridge.output_revision)
         (note,) = live.frames
         assert note["clientContent"]["turnComplete"] is False
         assert "voice_action_committed" in str(note)
