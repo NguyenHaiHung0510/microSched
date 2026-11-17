@@ -28,7 +28,6 @@ import { unicodeCodepoints } from '@/mimi-operating-policy'
 import { MimiMessageText } from '@/MimiMessageText'
 import { MimiSystemNotice } from '@/MimiSystemNotice'
 import { MimiPositiveSupplement } from '@/MimiPositiveSupplement'
-import { MimiResponseTiming } from '@/MimiResponseTiming'
 import { useMimiResponseTiming } from '@/useMimiResponseTiming'
 import { cn } from '@/lib/utils'
 import { appliedMimiReceiptId, isVerifiedServerNotice } from '@/mimi-message-provenance'
@@ -1044,7 +1043,16 @@ export function MimiScreen({
         </div></div></article> : null}
       </div>
 
-      {current.response_timings?.responses.filter(row => row.run_id === latestRun?.id && ['status', 'decision'].includes(row.response_kind) && row.outcome !== 'pending').map(row => <div key={`${row.phase}:${row.target_id}`} data-mimi-response-id={row.target_id} className="rounded-lg bg-muted p-3 text-sm"><p>{row.phase === 'confirmation' ? 'Kết quả quyết định preview' : 'Trạng thái lượt chạy'} · {mimiTerminalRunStage(latestRun?.state ?? '', latestRun?.provider_outcome ?? null)}</p><MimiResponseTiming conversation={current} targetId={row.target_id} /></div>)}
+      {current.response_timings?.responses.map(row => {
+        if (row.run_id !== latestRun?.id || row.phase !== 'confirmation' || row.response_kind !== 'decision' || row.outcome === 'pending') return null
+        const label = {
+          succeeded: 'Đã áp dụng',
+          cancelled: 'Đã từ chối',
+          failed: 'Chưa áp dụng',
+          unknown: 'Kết quả chưa xác định',
+        }[row.outcome]
+        return <div key={row.target_id} data-mimi-response-id={row.target_id} className="rounded-lg bg-muted p-3 text-sm"><p role="status">Kết quả quyết định preview · {label}</p></div>
+      })}
 
       {conversation.isError ? <div role="alert" className="rounded-lg bg-warn-bg p-3 text-sm"><p>Chưa đồng bộ được hội thoại. Đang giữ snapshot trước; kết quả đã ACK không được gửi lại.</p><Button variant="outline" disabled={conversation.isFetching} onClick={() => void conversation.refetch()}>Đọc lại hội thoại</Button></div> : null}
       {previewConflict ? <div role="alert" className="rounded-lg bg-warn-bg p-3 text-sm" data-testid="mimi-preview-conflict"><p>Server trả về nhiều preview đang chờ. Chưa chọn hoặc xác nhận phương án nào; hãy đọc lại trạng thái.</p><Button variant="outline" onClick={() => void conversation.refetch()}>Đọc lại preview</Button></div> : null}

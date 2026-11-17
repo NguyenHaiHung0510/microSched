@@ -148,9 +148,9 @@ test('executed full detail renderer keeps exact fields/checklist/reminder and us
   expect(JSON.stringify(entry)).toBe(frozen)
 })
 
-function renderScreen(q: QueryClient, conversation: MimiConversation) {
+function renderScreen(q: QueryClient, conversation: MimiConversation, variant: 'workspace' | 'dock' = 'workspace') {
   q.setQueryData(['mimi', 'conversation', conversation.id], conversation)
-  return renderToStaticMarkup(<QueryClientProvider client={q}><MimiScreen conversationId={conversation.id} onOpenTasks={() => {}} /></QueryClientProvider>)
+  return renderToStaticMarkup(<QueryClientProvider client={q}><MimiScreen variant={variant} conversationId={conversation.id} onOpenTasks={() => {}} /></QueryClientProvider>)
 }
 function screenFixture(): MimiConversation {
   return { id: 'conversation-a', sensitivity: 'standard', generation: 1,
@@ -195,6 +195,28 @@ test('message, verified notice and applied receipt render the same Vietnam midni
   expect(html).toContain('<time class="mimi-message-time">00:35</time>')
   const vnLabel = new Date(instant).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
   expect(html.split(`<time dateTime="${instant}">${vnLabel}</time>`)).toHaveLength(3)
+})
+
+test.each(['workspace', 'dock'] as const)('%s shows a failed confirmation and its real error without terminal diagnostics', variant => {
+  vi.stubGlobal('navigator', { onLine: true }); vi.stubGlobal('document', { hidden: false })
+  const q = client(), snapshot = screenFixture()
+  q.setQueryData(diffKey(), diff())
+  snapshot.runs.push({ id: 'failed-run', mode: 'text', generation: 1, state: 'halted', provider_outcome: 'succeeded',
+    deadline: timestamp, error_code: 'change_set_source_stale', created_at: timestamp, completed_at: timestamp })
+  const failed = { run_id: 'failed-run', outcome: 'failed' as const, parent_run_id: null, elapsed_ms: null, observation: 'missing', provenance: 'client' }
+  snapshot.response_timings = { version: 1, scope: 'all_retained_response_segments', provenance: 'client',
+    min_ms: null, avg_ms: null, max_ms: null, observed: 0, eligible: 0, missing: 0,
+    pending: 0, failed: 2, cancelled: 0, unknown: 0, responses: [
+      { ...failed, phase: 'send', source_id: 'submit', target_id: 'failed-run', response_kind: 'status' },
+      { ...failed, phase: 'confirmation', source_id: 'failed-preview', target_id: 'failed-preview', response_kind: 'decision' },
+    ] }
+  const html = renderScreen(q, snapshot, variant)
+  expect(Array.from(html.matchAll(/data-mimi-response-id="([^"]+)"/g), match => match[1])).toEqual(['notice-a', 'failed-preview'])
+  expect(html).toContain('Kết quả quyết định preview · Chưa áp dụng')
+  expect(html).toContain('Dữ liệu nguồn đã thay đổi; Mimi chưa tạo Task.')
+  expect(html).toContain('data-testid="mimi-applied-receipt"')
+  expect(html).toContain('Chuẩn bị hoàn tác')
+  for (const diagnostic of ['Trạng thái lượt chạy', 'mimi-answer-timing', 'E2E', 'phép đo browser', 'USD']) expect(html).not.toContain(diagnostic)
 })
 
 test('Voice 6+ pending preview remains available beside applied history after the Voice run ends', () => {
