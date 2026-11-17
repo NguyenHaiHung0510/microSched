@@ -30,6 +30,8 @@ from app.agent.tools.registry import (
     CREATE_CANDIDATE_TOOL,
     READ_TOOLS,
     TOOLS,
+    UNDO_CANDIDATE_TOOL,
+    UndoCandidate,
     tools_for_settings,
 )
 from app.core.settings import Settings, get_settings
@@ -105,7 +107,7 @@ class ProviderDispatchError(RuntimeError):
 
 @dataclass(frozen=True)
 class ProviderCompletion:
-    kind: Literal["text", "task", "collection"]
+    kind: Literal["text", "task", "collection", "undo"]
     task: TaskCreate | None
     text: str | None
     response_id: str
@@ -114,6 +116,7 @@ class ProviderCompletion:
     model: str | None
     collection: dict[str, Any] | None = None
     dispatch_attempts: list[dict[str, Any]] = field(default_factory=list)
+    undo: UndoCandidate | None = None
 
 
 @dataclass(frozen=True)
@@ -493,7 +496,11 @@ def build_request(
     active_tools = (
         []
         if summary_mode
-        else (list(tools_for_settings(route)) if agent_contract else [TASK_CREATE_TOOL])
+        else (
+            list(tools_for_settings(route, include_chat_undo=True))
+            if agent_contract
+            else [TASK_CREATE_TOOL]
+        )
     )
     # Payload resource bound is independent of provider tokens and 100k trigger.
     if (
@@ -677,6 +684,8 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
     """Validate one model turn before any server-owned read or preview transition."""
 
     native_names: tuple[str, ...] = ()
+    editable_candidates = {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}
+    allowed_tools = READ_TOOLS | editable_candidates | {UNDO_CANDIDATE_TOOL}
     try:
         choices = payload["choices"]
         if not isinstance(choices, list) or len(choices) != 1:
@@ -693,18 +702,14 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
             # Validate every name before decoding any arguments. A malformed
             # candidate must never mask an unauthorized sibling as repairable.
             native_names = tuple(call["function"]["name"] for call in calls)
-            if any(
-                not isinstance(n, str)
-                or n not in READ_TOOLS | {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}
-                for n in native_names
-            ):
+            if any(not isinstance(n, str) or n not in allowed_tools for n in native_names):
                 native_names = ()
                 raise RouteContractError("provider_tool_not_allowed")
             requests: list[ToolRequest] = []
             for index, call in enumerate(calls):
                 function = call["function"]
                 name = function["name"]
-                if name not in READ_TOOLS | {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}:
+                if name not in allowed_tools:
                     raise RouteContractError("provider_tool_not_allowed")
                 arguments = function["arguments"]
                 decoded = json.loads(arguments) if isinstance(arguments, str) else arguments
@@ -717,14 +722,21 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
                         arguments=decoded,
                     )
                 )
-            if any(item.name == COLLECTION_CANDIDATE_TOOL for item in requests):
+            if UNDO_CANDIDATE_TOOL in native_names:
+                if len(requests) != 1:
+                    raise RouteContractError("candidate_cannot_share_tool_turn")
+                undo = UndoCandidate.model_validate(requests[0].arguments)
+                outcome = PreviewCandidate(
+                    tool=UNDO_CANDIDATE_TOOL, arguments=undo.model_dump(mode="json")
+                )
+            elif COLLECTION_CANDIDATE_TOOL in native_names:
                 if len(requests) != 1:
                     raise RouteContractError("candidate_cannot_share_tool_turn")
                 candidate = CollectionCandidate.model_validate(requests[0].arguments)
                 outcome = PreviewCandidate(
                     tool=COLLECTION_CANDIDATE_TOOL, arguments=candidate.model_dump(mode="json")
                 )
-            elif any(item.name == CREATE_CANDIDATE_TOOL for item in requests):
+            elif CREATE_CANDIDATE_TOOL in native_names:
                 if len(requests) != 1:
                     raise RouteContractError("candidate_cannot_share_tool_turn")
                 request = requests[0]
@@ -745,6 +757,11 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
             else:
                 if isinstance(decoded_content, dict) and "kind" in decoded_content:
                     outcome = parse_terminal_wire(decoded_content)
+                    if (
+                        isinstance(outcome, PreviewCandidate)
+                        and outcome.tool == UNDO_CANDIDATE_TOOL
+                    ):
+                        raise RouteContractError("undo_requires_native_tool_call")
                 else:
                     outcome = AssistantText(text=content)
         else:
@@ -757,21 +774,25 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
             model=payload.get("model") if isinstance(payload.get("model"), str) else None,
         )
     except RouteContractError as error:
-        if set(native_names) & {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL} and str(
-            error
-        ) in {
-            "candidate_cannot_share_tool_turn",
-            "candidate_arguments_invalid",
-            "provider_tool_arguments_not_object",
-        }:
+        if (
+            UNDO_CANDIDATE_TOOL not in native_names
+            and editable_candidates.intersection(native_names)
+            and str(error)
+            in {
+                "candidate_cannot_share_tool_turn",
+                "candidate_arguments_invalid",
+                "provider_tool_arguments_not_object",
+            }
+        ):
             raise CandidateContractError(str(error), native_names) from error
         raise
     except (KeyError, TypeError, ValueError, ValidationError) as error:
         issues = _candidate_issues(error) if isinstance(error, ValidationError) else ()
-        if issues is not None and set(native_names) & {
-            CREATE_CANDIDATE_TOOL,
-            COLLECTION_CANDIDATE_TOOL,
-        }:
+        if (
+            issues is not None
+            and UNDO_CANDIDATE_TOOL not in native_names
+            and editable_candidates.intersection(native_names)
+        ):
             raise CandidateContractError(
                 "invalid_agent_terminal_payload", native_names, issues=issues
             ) from error

@@ -12,6 +12,7 @@ export type MimiMessageProvenance = {
 
 export type MimiMessage = {
   provenance?: MimiMessageProvenance
+  applied_receipt_id?: string | null
   id: string
   run_id: string | null
   client_id: string | null
@@ -239,6 +240,7 @@ export type MimiRunObservation = {
 
 export type MimiCapabilities = {
   voice_enabled?: boolean
+  voice_v2_enabled?: boolean
   collection_enabled?: boolean
   notifications_enabled?: boolean
   context_v1_enabled: boolean
@@ -373,6 +375,27 @@ const MIMI_WRITE_HEADERS = { 'X-Mimi-CSRF': '1' }
 
 export function fetchMimiCapabilities(): Promise<MimiCapabilities> {
   return apiRequest('/api/mimi/capabilities')
+}
+
+export type MimiVoicePreferences = { fast_apply: boolean }
+
+function readVoicePreferences(value: unknown): MimiVoicePreferences {
+  if (!value || typeof value !== 'object' || !('fast_apply' in value) || typeof value.fast_apply !== 'boolean') {
+    throw new Error('invalid_voice_preferences')
+  }
+  return { fast_apply: value.fast_apply }
+}
+
+export function fetchMimiVoicePreferences(signal?: AbortSignal): Promise<MimiVoicePreferences> {
+  return apiRequest('/api/mimi/voice-preferences', { signal }).then(readVoicePreferences)
+}
+
+export function saveMimiVoicePreferences(fastApply: boolean): Promise<MimiVoicePreferences> {
+  return apiRequest('/api/mimi/voice-preferences', {
+    method: 'PATCH',
+    headers: MIMI_WRITE_HEADERS,
+    body: JSON.stringify({ fast_apply: fastApply }),
+  }).then(readVoicePreferences)
 }
 
 export function fetchMimiConfiguration(conversationId: string): Promise<MimiConversationConfiguration> {
@@ -741,6 +764,31 @@ export type MimiCollectionPlan = {
   entries: MimiCollectionEntry[]
   undo_receipt_id?: string | null
 }
+export type MimiReceiptDiff = {
+  receipt_id: string
+  plan: MimiCollectionPlan
+  undo_available: boolean
+  executed_at: string
+}
+
+export async function fetchMimiReceiptDiff(receiptId: string, signal?: AbortSignal): Promise<MimiReceiptDiff | null> {
+  const diff = await apiRequest<MimiReceiptDiff | null>(`/api/mimi/receipts/${encodeURIComponent(receiptId)}/diff`, {
+    cache: 'no-store', signal,
+  })
+  if (diff === null) return null
+  if (diff?.receipt_id !== receiptId || typeof diff.undo_available !== 'boolean'
+    || typeof diff.executed_at !== 'string' || !Number.isFinite(Date.parse(diff.executed_at))
+    || diff.plan?.schema_version !== 'mimi.task-collection.v1'
+    || !Array.isArray(diff.plan.entries) || !diff.plan.entries.length
+    || !diff.plan.entries.every(entry => typeof entry?.id === 'string'
+      && entry.after?.fields && Array.isArray(entry.after.children)
+      && (entry.before === null || (entry.before?.fields && Array.isArray(entry.before.children)))
+      && entry.command?.reminder && entry.reminder_effect)) {
+    throw new Error('Mimi receipt diff response mismatch')
+  }
+  return diff
+}
+
 export type MimiSelection = {
   selection_id: string
   intent: string
@@ -764,7 +812,7 @@ export async function recoverMimiReceipt(conversationId: string, change: MimiDec
   return receipt
 }
 export function prepareMimiUndo(receiptId: string): Promise<MimiConversation> {
-  return apiRequest(`/api/mimi/receipts/${receiptId}/undo-preview`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}' })
+  return apiRequest(`/api/mimi/receipts/${encodeURIComponent(receiptId)}/undo-preview`, { method: 'POST', headers: MIMI_WRITE_HEADERS, body: '{}' })
 }
 export function fetchMimiEvidence(conversationId: string, bundleId: string): Promise<Record<string, unknown>> {
   return apiRequest(`/api/mimi/conversations/${conversationId}/evidence/${bundleId}`)

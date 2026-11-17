@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal
+from uuid import UUID
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.selection import SELECTION_TOOL, SelectionCandidate
@@ -41,6 +42,21 @@ READ_TOOLS = frozenset(
 )
 READ_TOOLS = READ_TOOLS | CALENDAR_READ_TOOLS
 CREATE_CANDIDATE_TOOL = "task.create_candidate.v2"
+UNDO_CANDIDATE_TOOL = "task.undo_candidate.v1"
+
+
+class UndoCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    target: Literal["latest", "exact"]
+    receipt_id: UUID | None
+
+    @model_validator(mode="after")
+    def validate_target(self):
+        if (self.target == "exact") != (self.receipt_id is not None):
+            raise ValueError("undo_receipt_target_invalid")
+        return self
+
 
 _FILTER = {
     "type": "object",
@@ -292,6 +308,29 @@ TOOLS += (
         "Never executes before explicit confirmation.",
         CollectionCandidate,
     ),
+    _tool(
+        UNDO_CANDIDATE_TOOL,
+        "Propose a compensating Undo preview only when the user clearly asks to reverse a "
+        "committed Task change in this chat. Never call for a question, quoted example, "
+        "hypothetical, negation, or request to dismiss/revise a pending preview. "
+        "Use target=latest and receipt_id=null for the most recent result, even if it might "
+        "be unavailable; never choose an older receipt as a fallback. If the user selects a "
+        "specific earlier result, use target=exact with its receipt_id from this chat's "
+        "pending_state.preview_lifecycle.historical_outcomes, using time, count and change "
+        "type to disambiguate. If no verified handle uniquely matches, ask or suggest the "
+        "receipt's Undo button. Never guess an ID or reconstruct an inverse with other tools. "
+        "Return one call and no other tool in that turn. The server prepares the inverse; "
+        "Chat always requires the user to review and Confirm before applying it.",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["target", "receipt_id"],
+            "properties": {
+                "target": {"type": "string", "enum": ["latest", "exact"]},
+                "receipt_id": {"type": ["string", "null"], "format": "uuid"},
+            },
+        },
+    ),
 )
 
 # Content continuations and lifecycle fields come from the exact server DTO.
@@ -326,12 +365,16 @@ CALENDAR_TOOLS = (
 )
 
 
-def tools_for_settings(settings):
+def tools_for_settings(settings, *, include_chat_undo: bool = False):
     tools = tuple(
         t
         for t in TOOLS
-        if settings.mimi_collection_enabled
-        or t["function"]["name"] not in {SELECTION_TOOL, COLLECTION_CANDIDATE_TOOL}
+        if (include_chat_undo or t["function"]["name"] != UNDO_CANDIDATE_TOOL)
+        and (
+            settings.mimi_collection_enabled
+            or t["function"]["name"]
+            not in {SELECTION_TOOL, COLLECTION_CANDIDATE_TOOL, UNDO_CANDIDATE_TOOL}
+        )
     )
     return (*tools, *CALENDAR_TOOLS) if settings.mimi_calendar_read_enabled else tools
 

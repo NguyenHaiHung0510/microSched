@@ -17,6 +17,7 @@ COMPACTION_TRIGGER = 272_000
 def context_revision(settings: Settings, config_version: int, checkpoint_id: Any) -> str:
     # Message append and per-request hashes deliberately do not change this epoch.
     from app.agent.context import OUTPUT_SCHEMA_SHA256
+    from app.agent.owner_context import chat_system_prefix_sha256, load_owner_memory
     from app.agent.policy import load_standard_policy
     from app.agent.tools.registry import registry_hash, tools_for_settings
 
@@ -41,6 +42,17 @@ def context_revision(settings: Settings, config_version: int, checkpoint_id: Any
         "compaction_trigger_tokens": settings.mimi_compaction_trigger_tokens,
         # Price/future-input policy revision binds each unsent wire, not past usage.
     }
+    # Preserve the existing epoch byte-for-byte when the private block is
+    # absent or cannot reach the native main Chat wire. This only changes
+    # the lifetime of prompt measurements, never checkpoint compatibility.
+    if (
+        settings.mimi_real_chat_enabled
+        and settings.mimi_live_provider_enabled
+        and settings.mimi_context_v1_enabled
+        and settings.mimi_route_mode == "native"
+        and load_owner_memory(settings) is not None
+    ):
+        value["system_prefix_sha256"] = chat_system_prefix_sha256(settings)
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 

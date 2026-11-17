@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.agent.compaction import CALENDAR_HISTORY_MARKER
+from app.agent.compaction import CALENDAR_HISTORY_MARKER, VOICE_HISTORY_MARKER
 from app.agent.tools.calendar_reads import CALENDAR_READ_TOOLS
 from app.agent.tools.registry import READ_TOOLS, validate_read_arguments
 
@@ -307,6 +307,49 @@ async def calendar_history_sequences(db, conversation_id, rows) -> set[int]:
     return {row.sequence for row in rows if row.role == "assistant" and row.run_id in calendar_runs}
 
 
+async def voice_history_sequences(db, conversation_id, rows) -> set[int]:
+    """Replace v2 provider prose unless its exact completed segment was source-free."""
+    from sqlalchemy import select
+
+    from app.agent.models import MimiEvent, MimiRun
+
+    assistants = {str(row.id): row for row in rows if row.role == "assistant" and row.run_id}
+    run_ids = {row.run_id for row in assistants.values()}
+    if not run_ids:
+        return set()
+    voice_runs = set(
+        await db.scalars(
+            select(MimiRun.id).where(
+                MimiRun.conversation_id == conversation_id,
+                MimiRun.id.in_(run_ids),
+                MimiRun.execution_lease["voice_protocol"].astext == "2",
+            )
+        )
+    )
+    if not voice_runs:
+        return set()
+    safe_ids = {
+        output_id
+        for run_id, output_id in (
+            await db.execute(
+                select(MimiEvent.run_id, MimiEvent.payload["output_message_id"].astext).where(
+                    MimiEvent.run_id.in_(voice_runs),
+                    MimiEvent.kind == "voice.transcript",
+                    MimiEvent.payload["history_safe"].astext == "true",
+                    MimiEvent.payload["partial"].astext == "false",
+                    MimiEvent.payload["output_message_id"].astext.in_(assistants),
+                )
+            )
+        ).all()
+        if assistants[output_id].run_id == run_id
+    }
+    return {
+        row.sequence
+        for mid, row in assistants.items()
+        if row.run_id in voice_runs and mid not in safe_ids
+    }
+
+
 @dataclass
 class WorkingHistory:
     """Ephemeral projection shared by the main request and compaction builder."""
@@ -316,6 +359,7 @@ class WorkingHistory:
     gaps: set[str] = field(default_factory=set)
     outcomes: dict[int, dict[str, Any]] = field(default_factory=dict)
     calendar_sequences: set[int] = field(default_factory=set)
+    voice_sequences: set[int] = field(default_factory=set)
 
     def metadata(self, frontier: int) -> dict[str, Any]:
         refs = [self.refs[key] for key in sorted(self.refs) if key > frontier]
@@ -332,6 +376,9 @@ class WorkingHistory:
         output = []
         seen_ids = set()
         for row, message in zip(rows, decoded, strict=True):
+            if row.sequence in self.voice_sequences:
+                output.append({"role": "assistant", "content": VOICE_HISTORY_MARKER})
+                continue
             if row.sequence in self.calendar_sequences:
                 output.append({"role": "assistant", "content": CALENDAR_HISTORY_MARKER})
                 continue
@@ -358,7 +405,7 @@ class WorkingHistory:
         return output
 
     def source(self, sequence: int) -> dict[str, Any] | None:
-        if sequence in self.calendar_sequences or sequence not in self.refs:
+        if sequence in self.calendar_sequences | self.voice_sequences or sequence not in self.refs:
             return None
         return {
             "ref": self.refs[sequence],
@@ -380,6 +427,9 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
     from app.domain.models import Task
 
     history = WorkingHistory()
+    history.voice_sequences = await voice_history_sequences(db, conversation.id, rows)
+    if history.voice_sequences:
+        history.gaps.add("voice_history_requires_fresh_read")
     history.calendar_sequences = await calendar_history_sequences(db, conversation.id, rows)
     if history.calendar_sequences:
         history.gaps.add("calendar_history_requires_fresh_read")
@@ -388,7 +438,8 @@ async def load_history(db, conversation, dek, rows, settings) -> WorkingHistory:
     assistants = {
         str(row.id): row
         for row in rows
-        if row.role == "assistant" and row.sequence not in history.calendar_sequences
+        if row.role == "assistant"
+        and row.sequence not in history.calendar_sequences | history.voice_sequences
     }
     if not assistants:
         return history

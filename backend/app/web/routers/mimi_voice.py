@@ -13,12 +13,16 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.agent.runtime import admit_run, release_run
 from app.agent.voice_bridge import VoiceBridge
+from app.agent.voice_preferences import VoicePreferences, voice_preference
 from app.agent.voice_protocol import VoiceError
-from app.agent.voice_store import VoiceStore, voice_available
+from app.agent.voice_store import VoiceStore, voice_available, voice_v2_available
+from app.agent.voice_v2_bridge import VoiceV2Bridge, signal_voice_stop
+from app.agent.voice_v2_store import VoiceV2Store
 from app.core.db import get_sessionmaker
 from app.core.sessions import SESSION_COOKIE_NAME
 from app.core.settings import get_settings
 from app.web.deps import get_session, get_session_store, require_session
+from app.web.mimi_auth import require_mimi_workspace_session
 from app.web.mimi_csrf import require_mimi_csrf
 
 router = APIRouter(prefix="/mimi", tags=["mimi"])
@@ -28,6 +32,36 @@ socket_router = APIRouter()
 class VoiceTicketCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_generation: int = Field(ge=1)
+
+
+def require_voice_v2():
+    if not voice_v2_available(get_settings()):
+        raise HTTPException(404, "voice_unavailable")
+
+
+@router.get(
+    "/voice-preferences",
+    dependencies=[Depends(require_mimi_workspace_session), Depends(require_voice_v2)],
+)
+async def get_voice_preferences(db=Depends(get_session), auth=Depends(require_session)):
+    settings = await voice_preference(db, auth)
+    return JSONResponse(settings.model_dump(), headers={"Cache-Control": "no-store"})
+
+
+@router.patch(
+    "/voice-preferences",
+    dependencies=[
+        Depends(require_mimi_workspace_session),
+        Depends(require_voice_v2),
+        Depends(require_mimi_csrf),
+    ],
+)
+async def patch_voice_preferences(
+    payload: VoicePreferences, db=Depends(get_session), auth=Depends(require_session)
+):
+    result = await voice_preference(db, auth, change=payload)
+    await db.commit()
+    return JSONResponse(result.model_dump(), headers={"Cache-Control": "no-store"})
 
 
 @router.post(
@@ -67,6 +101,7 @@ async def stop_voice(conversation_id: UUID, run_id: UUID, auth=Depends(require_s
         await VoiceStore(factory, get_settings(), auth, conversation_id, run_id).stop()
     except VoiceError as error:
         raise HTTPException(401, str(error)) from None
+    signal_voice_stop(run_id)
     return {"stopped": True}
 
 
@@ -110,7 +145,7 @@ async def voice_socket(socket: WebSocket, conversation_id: UUID, run_id: UUID):
         await socket.close(code=1008)
         return
     consumed, admitted = False, False
-    voice = VoiceStore(factory, settings, auth, conversation_id, run_id)
+    voice = VoiceV2Store(factory, settings, auth, conversation_id, run_id)
     try:
         admit_run(run_id)
         admitted = True
@@ -127,13 +162,16 @@ async def voice_socket(socket: WebSocket, conversation_id: UUID, run_id: UUID):
             raise VoiceError("voice_ticket_required")
         config, seed, deadline = await voice.consume(hello["ticket"])
         consumed = True
-        await VoiceBridge(socket, voice).run(config, seed, deadline)
+        bridge = VoiceV2Bridge if voice.protocol_version == 2 else VoiceBridge
+        await bridge(socket, voice).run(config, seed, deadline)
     except Exception, asyncio.CancelledError:
         # No provider wire/exception/socket repr is emitted to logs or client.
         if consumed:
             with suppress(Exception):
                 await voice.finish(
-                    reason="voice_disconnected",
+                    reason="voice_server_error"
+                    if voice.protocol_version == 2
+                    else "voice_disconnected",
                     connected=False,
                     completed_turns=0,
                     usage=[],

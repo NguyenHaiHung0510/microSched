@@ -24,6 +24,7 @@ from app.agent import crypto as mimi_crypto
 from app.agent.billing_prices import safe_generation_billing
 from app.agent.compaction import (
     CALENDAR_HISTORY_MARKER,
+    VOICE_HISTORY_MARKER,
     CheckpointSource,
     active_constraint_context,
     make_checkpoint,
@@ -89,6 +90,7 @@ from app.agent.openrouter import (
 )
 from app.agent.openrouter import complete_stream as openrouter_complete_stream
 from app.agent.openrouter import get_generation as openrouter_get_generation
+from app.agent.owner_context import messages_for_evidence
 from app.agent.owner_workspace import OWNER_WORKSPACE_ID
 from app.agent.owner_workspace import owner_id as _owner_id
 from app.agent.owner_workspace import owner_ids as _owner_ids
@@ -116,13 +118,20 @@ from app.agent.task_collection import (
     PreparedCollection,
     execute_collection,
     freeze_collection,
+    freeze_undo,
 )
 from app.agent.task_collection import (
     canonical as collection_json,
 )
 from app.agent.tool_activity import tool_activity
 from app.agent.tools.calendar_reads import CALENDAR_READ_TOOLS, calendar_pairs_current
-from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, execute_read_tool
+from app.agent.tools.registry import (
+    CREATE_CANDIDATE_TOOL,
+    READ_TOOLS,
+    UNDO_CANDIDATE_TOOL,
+    UndoCandidate,
+    execute_read_tool,
+)
 from app.agent.working_context import (
     KIND as WORKING_KIND,
 )
@@ -133,6 +142,7 @@ from app.agent.working_context import (
     load_history,
     persist_confirmed,
     persist_finalized,
+    voice_history_sequences,
     working_refs_current,
 )
 from app.core.db import get_engine, get_sessionmaker
@@ -149,6 +159,7 @@ MAX_CONVERSATION_TITLE = 80
 PROVIDER_HISTORY_MESSAGES = 24
 PROVIDER_HISTORY_BYTES = 65_536
 OWNER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+_UNDO_PREVIEW_NOTICE = "Đã chuẩn bị phương án hoàn tác có kiểm tra phiên bản. Chưa áp dụng."
 
 
 class CandidateCorrectionStopped(Exception):
@@ -365,6 +376,14 @@ def _manifest_receipt(envelope: ContextEnvelope) -> dict[str, Any]:
         "manifest_sha256": manifest.sha256(),
         "policy_id": manifest.policy_id,
         "policy_sha256": manifest.policy_sha256,
+        **(
+            {
+                "system_prefix_sha256": manifest.system_prefix_sha256,
+                "owner_memory": manifest.owner_memory.model_dump(mode="json"),
+            }
+            if manifest.owner_memory is not None
+            else {}
+        ),
         "tool_registry_sha256": manifest.tool_registry_sha256,
         "output_schema_sha256": manifest.output_schema_sha256,
         "checkpoint_id": str(manifest.checkpoint_id) if manifest.checkpoint_id else None,
@@ -506,7 +525,7 @@ def _deterministic_turn(
     *,
     awaiting_task_title: bool,
 ) -> tuple[Literal["text", "task"], str | dict[str, Any]]:
-    """Classify the local route without pretending every message is a write intent."""
+    """Deterministic local fixture only; never evidence of live model intent understanding."""
     normalized = " ".join(content.strip().split())
     folded = normalized.casefold().rstrip(".!?")
     greetings = {
@@ -699,6 +718,18 @@ async def _add_assistant_message(
     )
 
 
+async def add_preview_notice(db, conversation, run_id, dek, content, *, undo=False):
+    """Reuse the two explicit preview producers across Chat and Voice."""
+    if undo:
+        await _add_assistant_message(
+            db, conversation, run_id, dek, content, producer_code="undo_prepared"
+        )
+    else:
+        await _add_assistant_message(
+            db, conversation, run_id, dek, content, producer_code="preview_prepared"
+        )
+
+
 async def create_conversation(
     db: AsyncSession, auth: AuthSession, payload: ConversationCreate
 ) -> dict[str, Any]:
@@ -775,7 +806,9 @@ def _conversation_summary(row: MimiConversation, *, latest_run_state: str | None
     }
 
 
-def _history_content(row, conversation_id, dek, calendar_sequences):
+def _history_content(row, conversation_id, dek, calendar_sequences, voice_sequences):
+    if row.sequence in voice_sequences:
+        return VOICE_HISTORY_MARKER
     if row.sequence in calendar_sequences:
         return CALENDAR_HISTORY_MARKER
     return mimi_crypto.open_content(
@@ -790,6 +823,8 @@ async def _provider_history(
     conversation: MimiConversation,
     dek: bytes,
     exclude_message_id: UUID | None = None,
+    *,
+    voice: bool = False,
 ) -> list[dict[str, str]]:
     """Return a newest-bounded, complete-message provider history window."""
     rows = (
@@ -814,14 +849,40 @@ async def _provider_history(
     used_bytes = 0
     for row in rows:
         if used_bytes + row.content_bytes > PROVIDER_HISTORY_BYTES:
+            if voice:
+                continue  # Recover smaller complete entries; never slice a message.
             break
         selected.append(row)
         used_bytes += row.content_bytes
     calendar_sequences = await calendar_history_sequences(db, conversation.id, selected)
+    voice_sequences = await voice_history_sequences(db, conversation.id, selected)
+    if voice:
+        source_runs = set(
+            await db.scalars(
+                select(MimiRun.id).where(
+                    MimiRun.conversation_id == conversation.id,
+                    MimiRun.id.in_({row.run_id for row in selected if row.run_id}),
+                    MimiRun.execution_lease["voice_protocol"].astext.is_distinct_from("2"),
+                    select(MimiEvent.id)
+                    .where(
+                        MimiEvent.run_id == MimiRun.id,
+                        MimiEvent.kind == "tool.read_result",
+                    )
+                    .exists(),
+                )
+            )
+        )
+        voice_sequences |= {
+            row.sequence
+            for row in selected
+            if row.role == "assistant" and row.run_id in source_runs
+        }
     return [
         {
             "role": row.role,
-            "content": _history_content(row, conversation.id, dek, calendar_sequences),
+            "content": _history_content(
+                row, conversation.id, dek, calendar_sequences, voice_sequences
+            ),
         }
         for row in reversed(selected)
     ]
@@ -1490,6 +1551,7 @@ async def _prepare_context_history(
     )
     active_working = await load_history(db, conversation, dek, rows, settings or get_settings())
     calendar_sequences = active_working.calendar_sequences
+    voice_sequences = active_working.voice_sequences
     if not prior_working_allowed:
         active_working.gaps.add("checkpoint_working_history_ineligible")
     if working_history is not None:
@@ -1498,6 +1560,7 @@ async def _prepare_context_history(
         working_history.gaps = active_working.gaps
         working_history.outcomes = active_working.outcomes
         working_history.calendar_sequences = active_working.calendar_sequences
+        working_history.voice_sequences = active_working.voice_sequences
     else:
         working_history = active_working
 
@@ -1505,7 +1568,9 @@ async def _prepare_context_history(
         canonical_messages = [
             {
                 "role": row.role,
-                "content": _history_content(row, conversation.id, dek, calendar_sequences),
+                "content": _history_content(
+                    row, conversation.id, dek, calendar_sequences, voice_sequences
+                ),
             }
             for row in selected_rows
         ]
@@ -1605,6 +1670,7 @@ async def _prepare_context_history(
                     ),
                     working=working_history.source(row.sequence),
                     calendar_derived=row.sequence in calendar_sequences,
+                    voice_derived=row.sequence in voice_sequences,
                 )
                 proposed = [*selected_sources, source]
                 helper_messages = _compaction_messages(
@@ -1648,6 +1714,7 @@ async def _prepare_context_history(
                     ),
                     working=working_history.source(row.sequence),
                     calendar_derived=row.sequence in calendar_sequences,
+                    voice_derived=row.sequence in voice_sequences,
                 )
                 for row in rows[:compact_count]
             ]
@@ -2235,7 +2302,12 @@ async def send_message(
                 *(sorted(CALENDAR_READ_TOOLS) if settings.mimi_calendar_read_enabled else ()),
                 CREATE_CANDIDATE_TOOL,
                 *(
-                    (SELECTION_TOOL, COLLECTION_CANDIDATE_TOOL, COLLECTION_TOOL)
+                    (
+                        SELECTION_TOOL,
+                        COLLECTION_CANDIDATE_TOOL,
+                        UNDO_CANDIDATE_TOOL,
+                        COLLECTION_TOOL,
+                    )
                     if settings.mimi_collection_enabled
                     else ()
                 ),
@@ -2629,20 +2701,25 @@ async def send_message(
                     if _canonical_digest(decoded) != previous_call.result.get("result_sha256"):
                         raise _conflict("continuation_provider_terminal_invalid")
                     pending_outcome = TERMINAL_ADAPTER.validate_python(decoded)
-                    if isinstance(pending_outcome, PreviewCandidate):
-                        # Fresh server identity/lease, never copy an old approval.
-                        pending_outcome = pending_outcome.model_copy(
-                            update={
-                                "arguments": {**pending_outcome.arguments, "id": str(task_id)},
-                            }
+                    if not (
+                        isinstance(pending_outcome, PreviewCandidate)
+                        and pending_outcome.tool == UNDO_CANDIDATE_TOOL
+                    ):
+                        # An Undo selector belongs to its original run/receipt context.
+                        if isinstance(pending_outcome, PreviewCandidate):
+                            # Fresh server identity/lease, never copy an old approval.
+                            pending_outcome = pending_outcome.model_copy(
+                                update={
+                                    "arguments": {**pending_outcome.arguments, "id": str(task_id)},
+                                }
+                            )
+                        continuation_completion = AgentCompletion(
+                            outcome=pending_outcome,
+                            response_id=previous_call.result.get("response_id", ""),
+                            usage=previous_call.usage,
+                            provider=previous_call.route.get("actual_provider"),
+                            model=previous_call.route.get("actual_model"),
                         )
-                    continuation_completion = AgentCompletion(
-                        outcome=pending_outcome,
-                        response_id=previous_call.result.get("response_id", ""),
-                        usage=previous_call.usage,
-                        provider=previous_call.route.get("actual_provider"),
-                        model=previous_call.route.get("actual_model"),
-                    )
             run.source_versions = source_versions
             lease = lease.model_copy(update={"source_versions": source_versions})
             run.execution_lease = lease.model_dump(mode="json")
@@ -2877,7 +2954,7 @@ async def send_message(
                         request_snapshot = {
                             "call_id": str(call.id),
                             "attempt": call.attempt,
-                            "messages": messages,
+                            "messages": messages_for_evidence(context_envelope, messages),
                             "manifest": context_envelope.manifest.model_dump(mode="json"),
                             "route_config": conversation.route_config
                             or default_configuration(settings),
@@ -2963,7 +3040,7 @@ async def send_message(
                         messages[:] = refreshed_messages
                         request_snapshot = {
                             **request_snapshot,
-                            "messages": messages,
+                            "messages": messages_for_evidence(context_envelope, messages),
                             "manifest": context_envelope.manifest.model_dump(mode="json"),
                             "operating_policy_revision": settings.mimi_operating_policy_revision,
                             "price_caps": {
@@ -3377,7 +3454,12 @@ async def send_message(
                         execute_read=execute_agent_read,
                         run_id=run_id,
                         generation=generation,
-                        policy_sha256=context_envelope.manifest.policy_sha256,
+                        policy_sha256=(
+                            context_envelope.manifest.system_prefix_sha256
+                            or context_envelope.manifest.policy_sha256
+                            if context_envelope.manifest.owner_memory is not None
+                            else context_envelope.manifest.policy_sha256
+                        ),
                         tool_registry_sha256=context_envelope.manifest.tool_registry_sha256,
                         output_schema_sha256=context_envelope.manifest.output_schema_sha256,
                         database_url=settings.database_url,
@@ -3467,6 +3549,14 @@ async def send_message(
                         candidate = validate_task_candidate(outcome.arguments, require_id=False)
                         completion = ProviderCompletion(
                             kind="task", task=candidate, text=None, **common
+                        )
+                    elif outcome.tool == UNDO_CANDIDATE_TOOL:
+                        try:
+                            undo = UndoCandidate.model_validate(outcome.arguments)
+                        except ValidationError:
+                            raise RouteContractError("provider_undo_candidate_invalid") from None
+                        completion = ProviderCompletion(
+                            kind="undo", task=None, text=None, undo=undo, **common
                         )
                     else:
                         raise RouteContractError("preview_candidate_tool_invalid")
@@ -3871,7 +3961,7 @@ async def send_message(
             if completion.collection is None:
                 raise RouteContractError("provider_collection_result_missing")
             provider_args = completion.collection
-        else:
+        elif completion.kind == "task":
             if completion.task is None:
                 raise RouteContractError("provider_task_result_missing")
             provider_args = completion.task.model_dump(mode="json")
@@ -4001,8 +4091,28 @@ async def send_message(
             )
             await db.flush()
             return await conversation_view(db, auth, conversation_id)
-        assert provider_args is not None
-        operation_args = provider_args
+        if completion.kind == "undo":
+            assert completion.undo is not None
+            try:
+                plan = await _prepare_chat_undo_candidate(
+                    db,
+                    auth,
+                    conversation,
+                    run,
+                    dek,
+                    completion.undo,
+                    lifecycle,
+                    pending_at_accept=observed_pending is not None,
+                )
+            except HTTPException as error:
+                if error.status_code not in {404, 409, 410, 422}:
+                    raise
+                await _finish_chat_undo_rejection(db, conversation, run, dek, str(error.detail))
+                return await conversation_view(db, auth, conversation_id)
+            operation_args = plan.model_dump(mode="json")
+        else:
+            assert provider_args is not None
+            operation_args = provider_args
     else:
         run.state = "running"
         call.state = "succeeded"
@@ -4163,48 +4273,22 @@ async def send_message(
             {"change_set_id": str(old_change_set.id)},
         )
 
-    change_set_id = uuid7()
-    operation_id = uuid7()
-    nonce = uuid7()
     expires_at = now + timedelta(minutes=settings.mimi_preview_ttl_minutes)
     operation_tool = (
         COLLECTION_TOOL
         if operation_args.get("schema_version") == "mimi.task-collection.v1"
         else TOOL_VERSION
     )
-    operation = ChangeOperation(
-        operation_id=operation_id,
-        tool=operation_tool,
-        args=operation_args,
-        expected_entity_version=None,
-        reversible=True,
+    change_set, _ = freeze_change_set_row(
+        conversation.id,
+        run_id,
+        dek,
+        operation_tool,
+        operation_args,
+        expires_at,
+        context_envelope.manifest.policy_id if context_envelope is not None else POLICY_VERSION,
     )
-    frozen = FrozenChangeSet(
-        change_set_id=change_set_id,
-        run_id=run_id,
-        operations=(operation,),
-        expires_at=expires_at,
-        nonce=nonce,
-        digest_sha256="0" * 64,
-        idempotency_key=f"preview:{change_set_id}",
-    )
-    digest = frozen.calculated_digest()
-    change_set = MimiChangeSet(
-        id=change_set_id,
-        run_id=run_id,
-        state="pending",
-        digest_sha256=digest,
-        nonce=nonce,
-        expires_at=expires_at,
-        operation_ciphertext=mimi_crypto.seal_content(
-            dek,
-            json.dumps(operation.model_dump(mode="json"), ensure_ascii=False),
-            aad=mimi_crypto.change_set_aad(conversation.id, change_set_id),
-        ),
-        policy_version=(
-            context_envelope.manifest.policy_id if context_envelope is not None else POLICY_VERSION
-        ),
-    )
+    change_set_id, digest = change_set.id, change_set.digest_sha256
     db.add(change_set)
     run.state = "waiting_confirmation"
 
@@ -4214,14 +4298,24 @@ async def send_message(
         if operation_tool == COLLECTION_TOOL
         else "Đã chuẩn bị bản xem trước tạo Task. Hãy kiểm tra nội dung rồi xác nhận."
     )
-    await _add_assistant_message(
-        db, conversation, run_id, dek, assistant, producer_code="preview_prepared"
+    undo_receipt_id = operation_args.get("undo_receipt_id")
+    await add_preview_notice(
+        db,
+        conversation,
+        run_id,
+        dek,
+        _UNDO_PREVIEW_NOTICE if undo_receipt_id else assistant,
+        undo=bool(undo_receipt_id),
     )
     await _append_event(
         db,
         run_id,
         "change_set.ready",
-        {"change_set_id": str(change_set_id), "digest": digest},
+        {
+            "change_set_id": str(change_set_id),
+            "digest": digest,
+            **({"undo_receipt_id": undo_receipt_id} if undo_receipt_id else {}),
+        },
     )
     await persist_finalized(
         db,
@@ -4236,6 +4330,35 @@ async def send_message(
     )
     await db.flush()
     return await conversation_view(db, auth, conversation_id)
+
+
+def freeze_change_set_row(conversation_id, run_id, dek, tool, args, expires_at, policy_version):
+    """Seal one typed operation identically for Chat and server-bound Voice."""
+    change_id, nonce = uuid7(), uuid7()
+    operation = ChangeOperation(operation_id=uuid7(), tool=tool, args=args, reversible=True)
+    frozen = FrozenChangeSet(
+        change_set_id=change_id,
+        run_id=run_id,
+        operations=(operation,),
+        expires_at=expires_at,
+        nonce=nonce,
+        digest_sha256="0" * 64,
+        idempotency_key=f"preview:{change_id}",
+    )
+    return MimiChangeSet(
+        id=change_id,
+        run_id=run_id,
+        state="pending",
+        digest_sha256=frozen.calculated_digest(),
+        nonce=nonce,
+        expires_at=expires_at,
+        operation_ciphertext=mimi_crypto.seal_content(
+            dek,
+            json.dumps(operation.model_dump(mode="json"), ensure_ascii=False),
+            aad=mimi_crypto.change_set_aad(conversation_id, change_id),
+        ),
+        policy_version=policy_version,
+    ), operation
 
 
 async def confirm_change_set(
@@ -4378,10 +4501,11 @@ async def confirm_change_set(
         )
     except ValueError, ValidationError:
         await invalidate_frozen_change_set("change_set_ciphertext_invalid")
+    before_sequence = conversation.next_message_sequence
     if decoded_operation.tool == COLLECTION_TOOL:
         if not get_settings().mimi_collection_enabled:
             raise HTTPException(409, "mimi_collection_feature_disabled")
-        return await _confirm_collection(
+        receipt = await _confirm_collection(
             db,
             auth,
             conversation,
@@ -4392,6 +4516,11 @@ async def confirm_change_set(
             dek,
             invalidate_frozen_change_set,
         )
+        if run.execution_lease.get("mode") == "voice_action":
+            from app.agent.voice_v2_store import advance_voice_after_manual_confirm
+
+            await advance_voice_after_manual_confirm(db, conversation, run, before_sequence)
+        return receipt
 
     # A preview is bound to the versioned Task evidence the model saw. Hold
     # read locks through the domain write so a concurrent edit cannot pass the
@@ -4476,6 +4605,15 @@ async def confirm_change_set(
         result={"schema_version": "mimi.execution-receipt.v1", "task_id": str(task.id)},
         executed_at=now,
     )
+    if task.created and task_payload.id == task.id:
+        from app.agent.receipt_history import capture_single_create
+
+        recovery = await capture_single_create(db, task.id, task_payload)
+        receipt.result_ciphertext = mimi_crypto.seal_content(
+            dek,
+            collection_json(recovery),
+            aad=f"mimi-receipt:{conversation.id}:{receipt.id}:recovery",
+        )
     db.add(receipt)
     await db.flush()
     db.add(
@@ -4496,19 +4634,19 @@ async def confirm_change_set(
             payload={"receipt_id": str(receipt.id), "digest": change_set.digest_sha256},
         )
     )
-    await _append_event(
-        db,
-        run.id,
-        "change_set.executed",
-        {"receipt_id": str(receipt.id), "task_id": str(task.id)},
-    )
-    await _add_assistant_message(
+    marker = await _add_assistant_message(
         db,
         conversation,
         run.id,
         dek,
         "Đã tạo Task theo phương án bạn xác nhận.",
         producer_code="operation_committed",
+    )
+    await _append_event(
+        db,
+        run.id,
+        "change_set.executed",
+        {"receipt_id": str(receipt.id), "task_id": str(task.id), "message_id": str(marker.id)},
     )
     change_set.state = "executed"
     run.state = "completed"
@@ -4524,6 +4662,10 @@ async def confirm_change_set(
     )
     db.info[CRON_TIMER_RELOAD_INFO_KEY] = "mimi_task_create"
     await db.flush()
+    if run.execution_lease.get("mode") == "voice_action":
+        from app.agent.voice_v2_store import advance_voice_after_manual_confirm
+
+        await advance_voice_after_manual_confirm(db, conversation, run, before_sequence)
     return _receipt_read(receipt)
 
 
@@ -4900,6 +5042,9 @@ async def conversation_view(
     from app.agent.message_provenance import read_message_provenance
 
     provenance = await read_message_provenance(db, conversation, messages, dek)
+    from app.agent.receipt_history import message_receipts
+
+    applied_receipts = await message_receipts(db, conversation, messages, provenance, dek)
     runs_by_id = {run.id: run for run in runs}
     preflight_at = datetime.now(UTC)
 
@@ -4941,7 +5086,12 @@ async def conversation_view(
         "route_config_version": conversation.route_config_version,
         "draft": current_draft.model_dump(mode="json") if current_draft else None,
         "messages": [
-            {**_message_read(row, dek), "provenance": provenance.get(row.id)} for row in messages
+            {
+                **_message_read(row, dek),
+                "provenance": provenance.get(row.id),
+                "applied_receipt_id": applied_receipts.get(row.id),
+            }
+            for row in messages
         ],
         "runs": [
             {
@@ -5658,12 +5808,17 @@ async def _confirm_collection(
             },
         )
     )
-    await _add_assistant_message(
+    marker = await _add_assistant_message(
         db,
         conversation,
         run.id,
         dek,
-        f"Đã áp dụng thay đổi cho {len(plan.entries)} Task. "
+        (
+            f"Đã hoàn tác thay đổi cho {len(plan.entries)} Task."
+            if plan.undo_receipt_id
+            else f"Đã áp dụng thay đổi cho {len(plan.entries)} Task."
+        )
+        + " "
         "Bạn có thể xem receipt và chuẩn bị hoàn tác.",
         producer_code="collection_committed",
     )
@@ -5674,7 +5829,11 @@ async def _confirm_collection(
         db,
         run.id,
         "change_set.executed",
-        {"receipt_id": str(receipt.id), "count": len(plan.entries)},
+        {
+            "receipt_id": str(receipt.id),
+            "count": len(plan.entries),
+            "message_id": str(marker.id),
+        },
     )
     await _append_event(
         db, run.id, "run.terminal", {"state": "completed", "result": "collection_executed"}
@@ -5716,22 +5875,83 @@ async def read_execution_receipt(db, auth, conversation_id, change_set_id, diges
     return _receipt_read(receipt)
 
 
+async def _prepare_chat_undo_candidate(
+    db, auth, conversation, run, dek, candidate, lifecycle, *, pending_at_accept
+):
+    """Resolve a model selector under the current Chat run and conversation lock."""
+    if run.error_code == "pause_requested":
+        raise _conflict("owner_paused")
+    if run.deadline <= datetime.now(UTC):
+        raise _conflict("deadline_exceeded")
+    if not get_settings().mimi_collection_enabled:
+        raise _conflict("mimi_collection_feature_disabled")
+    lease = run.execution_lease
+    if lease.get("revoked_at") is not None or not {UNDO_CANDIDATE_TOOL, COLLECTION_TOOL}.issubset(
+        lease.get("capabilities", [])
+    ):
+        raise _conflict("receipt_undo_candidate_not_leased")
+    if pending_at_accept:
+        raise _conflict("finish_active_run_before_undo")
+
+    from app.agent.receipt_history import bound_receipt, latest_receipt, recovery_for
+
+    latest = candidate.target == "latest"
+    if latest:
+        receipt_id = await latest_receipt(db, conversation.id)
+        if receipt_id is None:
+            raise _conflict("receipt_undo_latest_unavailable")
+    else:
+        receipt_id = candidate.receipt_id
+        # Only handles actually provided as verified history for this Chat turn
+        # are selectable. Pending state and model/user prose prove no receipt.
+        if not any(
+            fact["receipt_id"] == str(receipt_id)
+            for fact in (lifecycle or {}).get("historical_outcomes", [])
+        ):
+            raise _conflict("receipt_undo_target_not_in_context")
+
+    receipt, change, _, receipt_conversation = await bound_receipt(db, auth, receipt_id)
+    if receipt_conversation.id != conversation.id:
+        raise _conflict("receipt_undo_target_not_in_context")
+    recovery = recovery_for(receipt, change, conversation, dek)
+    if latest and recovery["plan"].get("undo_receipt_id"):
+        raise _conflict("receipt_undo_latest_is_inverse")
+    return await freeze_undo(db, receipt.id, recovery)
+
+
+async def _finish_chat_undo_rejection(db, conversation, run, dek, reason):
+    run.state = "deadline_exceeded" if reason == "deadline_exceeded" else "halted"
+    run.error_code = reason
+    run.completed_at = datetime.now(UTC)
+    explanation = {
+        "finish_active_run_before_undo": "Hãy xử lý bản xem trước đang chờ duyệt trước.",
+        "receipt_undo_latest_unavailable": "Chưa có thay đổi đã áp dụng trong hội thoại này.",
+        "receipt_undo_latest_is_inverse": "Thay đổi gần nhất đã là một lần hoàn tác.",
+        "receipt_undo_target_not_in_context": (
+            "Không xác định được thay đổi đã áp dụng trong lượt này."
+        ),
+        "undo_post_version_stale": "Dữ liệu đã đổi kể từ lúc áp dụng thay đổi đó.",
+        "owner_paused": "Lượt xử lý đã được dừng.",
+        "deadline_exceeded": "Lượt xử lý đã hết thời gian.",
+    }.get(reason, "Không thể tạo bản xem trước cho thay đổi đã chọn.")
+    await _add_assistant_message(
+        db,
+        conversation,
+        run.id,
+        dek,
+        "Chưa hoàn tác. " + explanation,
+        producer_code="agent_loop_stop",
+    )
+    await _append_event(db, run.id, "run.terminal", {"state": run.state, "error_code": reason})
+    await db.flush()
+
+
 async def prepare_receipt_undo(db, auth, receipt_id):
     if not get_settings().mimi_collection_enabled:
         raise HTTPException(409, "mimi_collection_feature_disabled")
-    found = (
-        await db.execute(
-            select(MimiExecutionReceipt, MimiChangeSet, MimiRun, MimiConversation)
-            .join(MimiChangeSet, MimiExecutionReceipt.change_set_id == MimiChangeSet.id)
-            .join(MimiRun, MimiChangeSet.run_id == MimiRun.id)
-            .join(MimiConversation, MimiRun.conversation_id == MimiConversation.id)
-            .where(MimiExecutionReceipt.id == receipt_id, _conversation_scope(auth))
-            .with_for_update()
-        )
-    ).first()
-    if found is None:
-        raise _not_found()
-    receipt, _, _, conversation = found
+    from app.agent.receipt_history import bound_receipt, recovery_for
+
+    receipt, change, _, conversation = await bound_receipt(db, auth, receipt_id, lock=True)
     if receipt.result_ciphertext is None:
         raise _conflict("receipt_has_no_durable_inverse")
     if await db.scalar(
@@ -5746,15 +5966,7 @@ async def prepare_receipt_undo(db, auth, receipt_id):
     ):
         raise _conflict("finish_active_run_before_undo")
     dek = mimi_crypto.unwrap_dek(conversation.dek_wrapped)
-    recovery = json.loads(
-        mimi_crypto.open_content(
-            dek,
-            receipt.result_ciphertext,
-            aad=f"mimi-receipt:{conversation.id}:{receipt.id}:recovery",
-        )
-    )
-    from app.agent.task_collection import freeze_undo
-
+    recovery = recovery_for(receipt, change, conversation, dek)
     plan = await freeze_undo(db, receipt.id, recovery)
     now = datetime.now(UTC)
     rid = uuid7()
@@ -5783,52 +5995,23 @@ async def prepare_receipt_undo(db, auth, receipt_id):
     db.add(run)
     conversation.generation += 1
     await db.flush()
-    cid = uuid7()
-    nonce = uuid7()
-    operation = ChangeOperation(
-        operation_id=uuid7(),
-        tool=COLLECTION_TOOL,
-        args=plan.model_dump(mode="json"),
-        reversible=True,
-    )
-    frozen = FrozenChangeSet(
-        change_set_id=cid,
-        run_id=rid,
-        operations=(operation,),
-        expires_at=lease.deadline,
-        nonce=nonce,
-        digest_sha256="0" * 64,
-        idempotency_key=f"preview:{cid}",
-    )
-    change = MimiChangeSet(
-        id=cid,
-        run_id=rid,
-        state="pending",
-        digest_sha256=frozen.calculated_digest(),
-        nonce=nonce,
-        expires_at=lease.deadline,
-        policy_version=POLICY_VERSION,
-        operation_ciphertext=mimi_crypto.seal_content(
-            dek,
-            collection_json(operation.model_dump(mode="json")),
-            aad=mimi_crypto.change_set_aad(conversation.id, cid),
-        ),
-    )
-    db.add(change)
-    await _add_assistant_message(
-        db,
-        conversation,
+    change, _ = freeze_change_set_row(
+        conversation.id,
         rid,
         dek,
-        "Đã chuẩn bị phương án hoàn tác có kiểm tra phiên bản. Chưa áp dụng.",
-        producer_code="undo_prepared",
+        COLLECTION_TOOL,
+        plan.model_dump(mode="json"),
+        lease.deadline,
+        POLICY_VERSION,
     )
+    db.add(change)
+    await add_preview_notice(db, conversation, rid, dek, _UNDO_PREVIEW_NOTICE, undo=True)
     await _append_event(
         db,
         rid,
         "change_set.ready",
         {
-            "change_set_id": str(cid),
+            "change_set_id": str(change.id),
             "digest": change.digest_sha256,
             "undo_receipt_id": str(receipt.id),
         },

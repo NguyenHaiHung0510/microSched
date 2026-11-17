@@ -56,6 +56,10 @@ def voice_available(settings) -> bool:
     )
 
 
+def voice_v2_available(settings) -> bool:
+    return settings.mimi_voice_v2_enabled and voice_available(settings)
+
+
 def _time(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
@@ -123,6 +127,7 @@ class VoiceStore:
     def __init__(self, factory, settings, auth, conversation_id: UUID, run_id: UUID):
         self.factory, self.settings, self.auth = factory, settings, auth
         self.conversation_id, self.run_id = conversation_id, run_id
+        self.protocol_version = 1
 
     async def live_auth(self, db, *, lock=False):
         auth = await db.get(
@@ -145,6 +150,13 @@ class VoiceStore:
         auth = await self.live_auth(db, lock=lock)
         conversation = await _conversation(db, auth, self.conversation_id, lock=lock)
         run = await db.get(MimiRun, self.run_id, with_for_update=lock)
+        if run is not None and run.execution_lease.get("voice_protocol") == 2:
+            if not voice_v2_available(self.settings):
+                raise VoiceError("voice_unavailable")
+            if run.execution_lease.get("stop_requested"):
+                raise VoiceError("voice_stopped")
+            if run.deadline <= datetime.now(UTC):
+                raise VoiceError("voice_time_limit")
         if (
             run is None
             or run.conversation_id != conversation.id
@@ -156,7 +168,12 @@ class VoiceStore:
             or conversation.is_private
             or conversation.sensitivity != "standard"
             or conversation.archived_at is not None
-            or conversation.generation != run.generation + 1
+            or conversation.generation
+            != (
+                run.execution_lease.get("current_generation", run.generation + 1)
+                if run.execution_lease.get("voice_protocol") == 2
+                else run.generation + 1
+            )
             or conversation.context_frontier_sequence != run.execution_lease["frontier"]
             or conversation.next_message_sequence != run.execution_lease["next_sequence"]
         ):
@@ -198,6 +215,8 @@ class VoiceStore:
             )
         ).all()
         for old in active:
+            if old.state == "waiting_confirmation" and voice_v2_available(settings):
+                continue
             if old.state == "waiting_confirmation" and not await db.scalar(
                 select(MimiChangeSet.id).where(
                     MimiChangeSet.run_id == old.id,
@@ -222,12 +241,14 @@ class VoiceStore:
             else:
                 raise HTTPException(409, "finish_active_run_before_voice")
         ticket = secrets.token_urlsafe(32)
+        v2 = voice_v2_available(settings)
+        max_seconds = settings.mimi_voice_v2_max_seconds if v2 else settings.mimi_voice_max_seconds
         run = MimiRun(
             id=run_id,
             conversation_id=conversation.id,
             generation=conversation.generation,
             state="accepted",
-            deadline=now + timedelta(seconds=settings.mimi_voice_max_seconds),
+            deadline=now + timedelta(seconds=max_seconds),
             execution_lease={
                 "mode": "voice",
                 "auth_session_id": str(auth.id),
@@ -239,6 +260,7 @@ class VoiceStore:
                 "last_turn": 0,
                 "capabilities": sorted(TOOL_NAMES.values()),
                 "sensitivity": "standard",
+                **({"voice_protocol": 2} if v2 else {}),
             },
         )
         conversation.generation += 1
@@ -265,7 +287,7 @@ class VoiceStore:
             "ticket": ticket,
             "run_id": str(run.id),
             "expires_in": TICKET_SECONDS,
-            "max_seconds": settings.mimi_voice_max_seconds,
+            "max_seconds": max_seconds,
         }
 
     async def consume(self, ticket: str):
@@ -283,8 +305,12 @@ class VoiceStore:
             ):
                 raise VoiceError("voice_ticket_invalid_or_expired")
             history = await _provider_history(
-                db, conversation, crypto.unwrap_dek(conversation.dek_wrapped)
+                db,
+                conversation,
+                crypto.unwrap_dek(conversation.dek_wrapped),
+                voice=lease.get("voice_protocol") == 2,
             )
+            v2 = lease.get("voice_protocol") == 2
             turns = [
                 {
                     "role": "model" if m["role"] == "assistant" else "user",
@@ -292,38 +318,90 @@ class VoiceStore:
                 }
                 for m in history
             ]
-            config = setup(datetime.now(VIETNAM_TZ))
+            if v2:
+                from app.agent.voice_v2_protocol import setup_v2
+
+                config = setup_v2(datetime.now(VIETNAM_TZ), self.settings)
+            else:
+                config = setup(datetime.now(VIETNAM_TZ))
             # Bound complete messages only; an oversized recent message stays
             # available in the chat UI but isn't sliced into a misleading quote.
             seed = None
             limited = False
-            while turns:
-                candidate = {"clientContent": {"turns": turns, "turnComplete": True}}
-                if (
-                    len(encoded({"setup": config, "history": candidate}).encode()) + 128
-                    <= MAX_CONTEXT_BYTES
-                ):
-                    seed = candidate
-                    break
-                turns = turns[1:]
-                limited = True
-            if seed is not None:
-                config["setup"]["historyConfig"] = {"initialHistoryInClientContent": True}
+            if v2:
+                from app.agent.voice_context import bound_voice_history, configure_voice_setup
+                from app.agent.working_context import preview_lifecycle_context
+
+                lifecycle = await preview_lifecycle_context(
+                    db,
+                    conversation.id,
+                    dek=crypto.unwrap_dek(conversation.dek_wrapped),
+                    settings=self.settings,
+                )
+                from app.agent.voice_v2_store import voice_receipt_context
+
+                lifecycle = {
+                    "previews": [{"state": p["effective_state"]} for p in lifecycle["previews"]],
+                    **await voice_receipt_context(db, self.auth, conversation),
+                }
+                if lifecycle["previews"] or lifecycle["recent_receipts"]:
+                    turns.append(
+                        {
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "text": "SERVER CONVERSATION STATE (history, not permission): "
+                                    + encoded(lifecycle)
+                                }
+                            ],
+                        }
+                    )
+                config, seed, included, limited = bound_voice_history(
+                    configure_voice_setup(config), turns
+                )
+            else:
+                while turns:
+                    candidate = {"clientContent": {"turns": turns, "turnComplete": True}}
+                    if (
+                        len(encoded({"setup": config, "history": candidate}).encode()) + 128
+                        <= MAX_CONTEXT_BYTES
+                    ):
+                        seed = candidate
+                        break
+                    turns = turns[1:]
+                    limited = True
+                if seed is not None:
+                    config["setup"]["historyConfig"] = {"initialHistoryInClientContent": True}
+                included = len(turns)
             await _append_event(
                 db,
                 run.id,
                 "voice.history",
                 {
-                    "included_messages": len(turns),
+                    "included_messages": included,
                     "limited_by_voice_bytes": limited,
                 },
             )
-            run.execution_lease = {**lease, "ticket_used": True, "ticket_sha256": None}
+            run.execution_lease = {
+                **lease,
+                "ticket_used": True,
+                "ticket_sha256": None,
+                **(
+                    {
+                        "voice_receipt_refs": [
+                            row["receipt_ref"] for row in lifecycle["recent_receipts"]
+                        ]
+                    }
+                    if v2
+                    else {}
+                ),
+            }
             call = (
                 await db.scalars(select(MimiProviderCall).where(MimiProviderCall.run_id == run.id))
             ).one()
             call.request_fingerprint = _canonical_digest({"setup": config, "history": seed})
             await db.commit()
+            self.protocol_version = 2 if v2 else 1
             return config, seed, run.deadline
 
     async def dispatched(self):
@@ -425,7 +503,9 @@ class VoiceStore:
             await _append_event(db, self.run_id, "voice.tool_sent", {"provider_call_id": identity})
             await db.commit()
 
-    async def transcript(self, turn: int, input_text: str, output_text: str, *, partial: bool):
+    async def transcript(
+        self, turn: int, input_text: str, output_text: str, *, partial: bool, sources=None
+    ):
         async with self.factory() as db:
             conversation, run = await self.boundary(db)
             if turn <= run.execution_lease["last_turn"]:
@@ -485,6 +565,16 @@ class VoiceStore:
                     "partial": partial,
                     "provider_call_id": str(call.id),
                     "input_correlation": "provider_does_not_supply_turn_id",
+                    # Only a complete, source-free response from the current
+                    # transport context can provide continuity across calls.
+                    **(
+                        {"history_safe": True}
+                        if sources is not None
+                        and not partial
+                        and not (sources.queries or sources.tasks or sources.calendar)
+                        and "output_message_id" in ids
+                        else {}
+                    ),
                     **ids,
                 },
             )
@@ -493,6 +583,9 @@ class VoiceStore:
                 "last_turn": turn,
                 "next_sequence": conversation.next_message_sequence,
             }
+            if sources is not None:
+                # No pending transcript/event becomes durable after source drift.
+                await sources.check(db, self.settings)
             await db.commit()
 
     async def finish(self, *, reason, connected, completed_turns, usage, counters):

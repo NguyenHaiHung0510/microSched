@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     mimi_real_chat_enabled: bool = False
     mimi_live_provider_enabled: bool = False
     mimi_context_v1_enabled: bool = False
+    # Private deployment input only; never part of settings dumps or UI config.
+    mimi_owner_memory_v1: SecretStr | None = Field(
+        default=None, repr=False, exclude=True, frozen=True
+    )
     # Code rollback ignores the versioned events; existing retention is unchanged.
     mimi_working_projection_enabled: bool = True
     # Alpha can explicitly select LangGraph; feature flags remain dark by default.
@@ -121,6 +125,9 @@ class Settings(BaseSettings):
     mimi_collection_enabled: bool = False
     mimi_calendar_read_enabled: bool = False
     mimi_voice_enabled: bool = False
+    mimi_voice_v2_enabled: bool = False
+    mimi_voice_v2_max_seconds: int = Field(default=5_400, ge=30, le=5_400)
+    mimi_voice_v2_compression_enabled: bool = True
     mimi_gemini_api_key: SecretStr | None = Field(default=None, repr=False)
     # A finite session, never an automatic paid reconnect. QA can lower this.
     mimi_voice_max_seconds: int = Field(default=300, ge=30, le=600)
@@ -390,6 +397,22 @@ class Settings(BaseSettings):
         if value.startswith(("postgres://", "postgresql://")):
             return async_postgres_url(value)
         return value
+
+    @field_validator("mimi_owner_memory_v1")
+    @classmethod
+    def bounded_owner_memory(cls, value: SecretStr | None) -> SecretStr | None:
+        from app.agent.owner_context import validate_owner_memory
+
+        return validate_owner_memory(value)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def protect_owner_memory_input(cls, value, handler):
+        # Seal before any field/model validation. Otherwise an unrelated
+        # configuration error can echo the original private input dictionary.
+        if isinstance(value, dict) and isinstance(value.get("mimi_owner_memory_v1"), str):
+            value = {**value, "mimi_owner_memory_v1": SecretStr(value["mimi_owner_memory_v1"])}
+        return handler(value)
 
 
 @lru_cache

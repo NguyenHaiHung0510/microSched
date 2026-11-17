@@ -130,3 +130,32 @@ def test_policy_preserves_applicable_user_roles_without_promoting_embedded_data(
     assert wire[4]["role"] == "assistant"
     assert "unsupported old claim" not in wire[0]["content"]
     assert wire[-1]["content"] == "Làm theo ràng buộc trước."
+
+
+def test_semantic_chat_undo_is_native_manual_and_inside_chat_workflow_only():
+    text = load_standard_policy(collection_enabled=True).text
+    flat = " ".join(text.split())
+    assert "Interpret a request to undo semantically" in flat
+    assert (
+        "Questions, hypothetical examples, quotations and negated requests do not request a change"
+        in flat
+    )
+    assert "task.undo_candidate.v1 alone in a native tool call" in flat
+    assert "target=latest and receipt_id=null" in flat
+    assert "target=exact" in flat and "preview_lifecycle.historical_outcomes" in flat
+    assert "Chat never auto-applies Undo" in flat
+    assert text.index("## Workflow and confirmation") < text.index("### Undo in this Chat")
+    assert text.index("### Undo in this Chat") < text.index("## Evidence gaps and limits")
+
+
+def test_undo_policy_retains_preceding_checkpoint_history_with_and_without_calendar():
+    from app.agent.policy import checkpoint_policy_compatible
+
+    for calendar in (False, True):
+        current = load_standard_policy(collection_enabled=True, calendar_enabled=calendar)
+        head, separator, tail = current.text.partition("\n### Undo in this Chat\n")
+        _, end, suffix = tail.partition("\n## Evidence gaps and limits")
+        assert separator and end
+        prior = hashlib.sha256((head + end + suffix).encode()).hexdigest()
+        assert current.sha256 != prior
+        assert checkpoint_policy_compatible(prior, collection_enabled=True)

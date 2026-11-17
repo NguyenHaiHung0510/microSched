@@ -79,7 +79,7 @@ class SelectionCandidate(BaseModel):
 
 
 async def read_receipts(
-    db: AsyncSession, conversation_id: UUID, dek: bytes, run_id: UUID
+    db: AsyncSession, conversation_id: UUID, dek: bytes, run_id: UUID, *, voice_epoch=None
 ) -> list[dict]:
     events = (
         await db.scalars(
@@ -89,6 +89,9 @@ async def read_receipts(
                 MimiRun.conversation_id == conversation_id,
                 MimiRun.id == run_id,
                 MimiEvent.kind == "tool.read_result",
+                MimiEvent.payload["voice_epoch"].astext == str(voice_epoch)
+                if voice_epoch is not None
+                else True,
             )
             .order_by(MimiEvent.created_at, MimiEvent.sequence)
             .limit(1001)
@@ -310,14 +313,22 @@ async def persist_selection(
     dek: bytes,
     arguments: dict,
     append_event,
+    *,
+    voice_epoch=None,
 ) -> dict:
     candidate = SelectionCandidate.model_validate(arguments)
-    selection = bind_selection(candidate, await read_receipts(db, conversation_id, dek, run_id))
+    selection = bind_selection(
+        candidate, await read_receipts(db, conversation_id, dek, run_id, voice_epoch=voice_epoch)
+    )
     sequence = await append_event(
         db,
         run_id,
         "selection.frozen",
-        {"selection_id": selection["selection_id"], "sha256": digest(selection)},
+        {
+            "selection_id": selection["selection_id"],
+            "sha256": digest(selection),
+            **({"voice_epoch": voice_epoch} if voice_epoch is not None else {}),
+        },
     )
     event = (
         await db.scalars(
