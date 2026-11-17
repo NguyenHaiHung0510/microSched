@@ -4,6 +4,7 @@ import asyncio
 import json
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
+from datetime import datetime
 from uuid import UUID
 
 import pytest
@@ -277,6 +278,19 @@ def test_explicit_older_receipt_three_does_not_undo_newer_seven(v2_runtime, monk
             value not in str(seed)
             for value in (old["id"], latest["id"], *old["result"]["task_ids"])
         )
+        label = "SERVER CONVERSATION STATE (history, not permission): "
+        (lifecycle,) = [
+            json.loads(p["text"].removeprefix(label))
+            for frame in seed
+            for member in frame["clientContent"]["turns"]
+            for p in member["parts"]
+            if p.get("text", "").startswith(label)
+        ]
+        by_ref = {row["receipt_ref"]: row for row in lifecycle["recent_receipts"]}
+        opened_at = by_ref[ref]["executed_at"]
+        assert opened_at.endswith("+07:00")
+        assert datetime.fromisoformat(opened_at) == datetime.fromisoformat(old["executed_at"])
+        assert by_ref[ref]["latest"] is False and by_ref[ref]["task_count"] == 3
         assert say(ws) == ["undone"]
         stop(ws)
     state = snapshot(rt, cid)

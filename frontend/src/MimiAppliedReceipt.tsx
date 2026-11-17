@@ -4,6 +4,7 @@ import { ApiError } from '@/api'
 import { Button } from '@/components/ui/button'
 import { fetchMimiReceiptDiff } from '@/mimi-api'
 import { MimiCollectionFrame, MimiCollectionTable } from '@/MimiCollectionView'
+import { mimiVietnamTimestamp } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 function unavailableMessage(error: unknown) {
@@ -33,7 +34,7 @@ export function MimiAppliedReceipt({ conversationId, messageId, receiptId, undoP
       <summary className="cursor-pointer text-sm font-semibold">Xem thay đổi</summary>
       <div className="mt-3 space-y-3" data-receipt-id={receiptId}>
         {query.isPending || query.isFetching ? <p role="status" className="text-sm">Đang đọc thay đổi đã lưu…</p> : diff ? <>
-          <p className="rounded-lg bg-muted p-3 text-sm">{diff.plan.entries.length} Task đã thay đổi · <time dateTime={diff.executed_at}>{new Date(diff.executed_at).toLocaleString('vi-VN')}</time>. Chỉ đọc; đây là nội dung tại lúc áp dụng.</p>
+          <p className="rounded-lg bg-muted p-3 text-sm">{diff.plan.entries.length} Task đã thay đổi · <time dateTime={diff.executed_at}>{mimiVietnamTimestamp(diff.executed_at)}</time>. Chỉ đọc; đây là nội dung tại lúc áp dụng.</p>
           <MimiCollectionTable key={receiptId} plan={diff.plan} executed />
           {diff.undo_available ? <Button variant="outline" disabled={undoPending || undoDisabled} onClick={() => onUndo(receiptId)}>Chuẩn bị hoàn tác</Button> : <p className="text-xs text-muted-foreground">Biên nhận này hiện không có hoàn tác.</p>}
           <p className="text-xs text-muted-foreground">Hoàn tác tạo preview mới có kiểm tra phiên bản; cần xác nhận riêng.</p>

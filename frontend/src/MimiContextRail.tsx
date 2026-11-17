@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { MimiConversation } from '@/mimi-api'
-import { mimiRunLabel, mimiTaskScheduleLabel } from '@/mimi-presentation'
+import { mimiRunLabel, mimiTaskScheduleLabel, mimiVietnamTimestamp } from '@/mimi-presentation'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 
 type Domain = 'tasks' | 'notes' | 'calendar' | 'tracker'
@@ -57,7 +57,7 @@ function ContextPanel({ onOpenDomain, compact = false }: { onOpenDomain: (domain
   ]
   if (context.isPending) return <p role="status" className="py-8 text-center text-sm text-muted-foreground">Đang mở dữ liệu microSched…</p>
   if (context.isError) return <div className="space-y-3"><p role="alert" className="text-sm text-bad">Không tải được context rail.</p><Button variant="outline" onClick={() => void context.refetch()}>Thử lại</Button></div>
-  return <div className="space-y-4">{groups.filter((group) => !compact || group.domain === 'tasks' || group.domain === 'calendar').map(({ domain, label, icon: Icon, items, title }) => <section key={domain} aria-labelledby={`mimi-context-${domain}`} className="space-y-2"><div className="flex items-center justify-between gap-2"><h4 id={`mimi-context-${domain}`} className="flex items-center gap-2 text-sm font-extrabold"><Icon className="size-4 text-primary" aria-hidden="true" />{label}</h4><Button size="sm" variant="ghost" onClick={() => onOpenDomain(domain)}>Mở đầy đủ</Button></div>{items.length ? <ul className="space-y-1.5">{items.slice(0, 3).map((item, index) => <li key={text(item.id, `${domain}-${index}`)} className="rounded-lg bg-muted/60 p-2.5 text-sm"><p className="line-clamp-2 font-semibold">{title(item)}</p>{domain === 'calendar' && item.starts_at ? <p className="mt-1 text-xs text-muted-foreground">{new Date(String(item.starts_at)).toLocaleString('vi-VN')}</p> : null}</li>)}</ul> : <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">Chưa có dữ liệu trong phạm vi này.</p>}</section>)}</div>
+  return <div className="space-y-4">{groups.filter((group) => !compact || group.domain === 'tasks' || group.domain === 'calendar').map(({ domain, label, icon: Icon, items, title }) => <section key={domain} aria-labelledby={`mimi-context-${domain}`} className="space-y-2"><div className="flex items-center justify-between gap-2"><h4 id={`mimi-context-${domain}`} className="flex items-center gap-2 text-sm font-extrabold"><Icon className="size-4 text-primary" aria-hidden="true" />{label}</h4><Button size="sm" variant="ghost" onClick={() => onOpenDomain(domain)}>Mở đầy đủ</Button></div>{items.length ? <ul className="space-y-1.5">{items.slice(0, 3).map((item, index) => <li key={text(item.id, `${domain}-${index}`)} className="rounded-lg bg-muted/60 p-2.5 text-sm"><p className="line-clamp-2 font-semibold">{title(item)}</p>{domain === 'calendar' && item.starts_at ? <p className="mt-1 text-xs text-muted-foreground">{mimiVietnamTimestamp(String(item.starts_at))}</p> : null}</li>)}</ul> : <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">Chưa có dữ liệu trong phạm vi này.</p>}</section>)}</div>
 }
 
 function PreviewPanel({ conversation }: { conversation: MimiConversation | null | undefined }) {
@@ -65,7 +65,7 @@ function PreviewPanel({ conversation }: { conversation: MimiConversation | null 
   const expired = usePreviewExpired(pending?.expires_at ?? '')
   if (!pending) return <div className="py-8 text-center"><ReceiptText className="mx-auto mb-2 size-7 text-muted-foreground" /><p className="font-semibold">Không có preview chờ duyệt</p><p className="mt-1 text-xs text-muted-foreground">Preview mới sẽ mở ở đây mà không che transcript.</p></div>
   if (pending.operation.tool === 'task.collection.v1') return <div className="space-y-3 text-sm"><Badge>{expired ? 'Preview hết hạn' : 'Chờ bạn duyệt'}</Badge><p>{pending.operation.args.entries.length} Task trong tập đã chốt.</p><p className="text-xs">Mở “Xem và duyệt” dưới transcript để xem đầy đủ nội dung, checklist và reminder. Rail không thay đổi phạm vi xác nhận.</p><p className="break-all text-xs">Digest {pending.digest}</p></div>
-  return <div className="space-y-3"><div className="flex flex-wrap gap-2"><Badge role="status" aria-live="polite">{expired ? 'Preview đã hết hạn' : 'Chờ xác nhận'}</Badge><Badge variant="outline">{pending.operation.tool}</Badge></div><div className="rounded-lg bg-primary/5 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Thay đổi đề xuất</p><p className="mt-1 font-bold">{pending.operation.args.title}</p></div><dl className="space-y-2 text-xs"><div><dt className="font-semibold">Lịch Task</dt><dd>{mimiTaskScheduleLabel(pending.operation.args)}</dd></div><div><dt className="font-semibold">Preview hết hạn</dt><dd>{new Date(pending.expires_at).toLocaleString('vi-VN')}</dd></div><div><dt className="font-semibold">Digest</dt><dd className="break-all font-mono">{pending.digest}</dd></div><div><dt className="font-semibold">Quyền ghi</dt><dd>{expired ? 'Preview hết hạn, cần yêu cầu phương án mới.' : 'Chưa ghi gì khi bạn chưa xác nhận.'}</dd></div></dl></div>
+  return <div className="space-y-3"><div className="flex flex-wrap gap-2"><Badge role="status" aria-live="polite">{expired ? 'Preview đã hết hạn' : 'Chờ xác nhận'}</Badge><Badge variant="outline">{pending.operation.tool}</Badge></div><div className="rounded-lg bg-primary/5 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Thay đổi đề xuất</p><p className="mt-1 font-bold">{pending.operation.args.title}</p></div><dl className="space-y-2 text-xs"><div><dt className="font-semibold">Lịch Task</dt><dd>{mimiTaskScheduleLabel(pending.operation.args)}</dd></div><div><dt className="font-semibold">Preview hết hạn</dt><dd>{mimiVietnamTimestamp(pending.expires_at)}</dd></div><div><dt className="font-semibold">Digest</dt><dd className="break-all font-mono">{pending.digest}</dd></div><div><dt className="font-semibold">Quyền ghi</dt><dd>{expired ? 'Preview hết hạn, cần yêu cầu phương án mới.' : 'Chưa ghi gì khi bạn chưa xác nhận.'}</dd></div></dl></div>
 }
 
 function RunPanel({ conversation }: { conversation: MimiConversation | null | undefined }) {
@@ -82,8 +82,8 @@ function RunPanel({ conversation }: { conversation: MimiConversation | null | un
   return <div className="space-y-3">
     <div className="flex items-center justify-between gap-2"><Badge variant="outline">{mimiRunLabel(run.state)}</Badge><span className="text-xs text-muted-foreground">Run {run.generation}</span></div>
     <dl className="grid gap-2 text-xs">
-      <div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Bắt đầu</dt><dd>{new Date(run.created_at).toLocaleString('vi-VN')}</dd></div>
-      <div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Deadline</dt><dd>{new Date(run.deadline).toLocaleString('vi-VN')}</dd></div>
+      <div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Bắt đầu</dt><dd>{mimiVietnamTimestamp(run.created_at)}</dd></div>
+      <div className="rounded-lg bg-muted/60 p-3"><dt className="font-semibold">Deadline</dt><dd>{mimiVietnamTimestamp(run.deadline)}</dd></div>
     </dl>
     <MimiRunObservations observation={conversation?.run_observations?.[run.id]} calls={runCalls} />
     <details className="rounded-lg border p-3 text-xs" data-testid="mimi-context-inspector">
@@ -97,7 +97,7 @@ function RunPanel({ conversation }: { conversation: MimiConversation | null | un
       </dl>
       <div className="mt-3 space-y-2">
         <p className="font-semibold">Nguồn được đưa vào model</p>
-        {sources.length ? <ul className="space-y-1">{sources.map((source, index) => <li key={`${String(source.source_id)}-${index}`} className="rounded-lg bg-muted/60 p-2"><p className="font-medium break-all">{String(source.source_id)}</p><p>{String(source.coverage)} · {String(source.count)} mục · {source.data_as_of ? new Date(String(source.data_as_of)).toLocaleString('vi-VN') : 'không có mốc nguồn'}</p>{Array.isArray(source.omitted_fields) && source.omitted_fields.length ? <p className="text-muted-foreground">Không gửi: {source.omitted_fields.join(', ')}</p> : null}</li>)}</ul> : <p className="text-muted-foreground">Chưa có manifest nguồn.</p>}
+        {sources.length ? <ul className="space-y-1">{sources.map((source, index) => <li key={`${String(source.source_id)}-${index}`} className="rounded-lg bg-muted/60 p-2"><p className="font-medium break-all">{String(source.source_id)}</p><p>{String(source.coverage)} · {String(source.count)} mục · {source.data_as_of ? mimiVietnamTimestamp(String(source.data_as_of)) : 'không có mốc nguồn'}</p>{Array.isArray(source.omitted_fields) && source.omitted_fields.length ? <p className="text-muted-foreground">Không gửi: {source.omitted_fields.join(', ')}</p> : null}</li>)}</ul> : <p className="text-muted-foreground">Chưa có manifest nguồn.</p>}
       </div>
     </details>
     <ol className="space-y-2">{events.slice(-8).map((event) => <li key={event.id} className="flex items-center gap-2 text-xs"><CheckCircle2 className="size-3.5 text-primary" /><span>{event.kind}</span></li>)}</ol>

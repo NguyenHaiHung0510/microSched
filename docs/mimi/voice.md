@@ -125,10 +125,27 @@ Action tools dùng `BLOCKING`. Sau commit mới gửi `applied/undone` cùng rec
 browser và kết quả scalar với handle mờ về Gemini. `preview_required` ở tool response
 là preview đang chờ duyệt; browser giữ wire status `preview` để tương thích.
 Confirm thủ công trong cùng cuộc gọi được đồng bộ sau khi đọc thấy receipt đã
-commit, để Mimi không yêu cầu duyệt lần nữa. Nếu rớt upstream sau commit nhưng
+commit. HTTP Confirm đánh thức đúng bridge sau commit; watchdog hiện có vẫn là
+fallback. Khi bridge xác thực receipt, nó chặn output generation cũ, gửi event
+dừng playback và nối context mới với scalar committed status. Âm thanh đã nghe
+trước mốc quan sát không thể thu hồi. Lệnh mới cần PCM/VAD mới sau resumed; không
+gửi lại proposal hoặc tool response của preview đã ACK. Nếu rớt upstream sau commit nhưng
 trước tool ACK, context mới nhận trạng thái scalar và handle của receipt đã lưu,
 không gửi lại PCM, proposal hoặc payload nguồn. Mất ACK từ DB kết thúc với
 `voice_action_outcome_unknown`; cần đối chiếu receipt trước khi làm lại.
+
+Rejection có `detail.code` và `detail.next_step` theo vocabulary scalar hữu hạn:
+shape/thiếu dữ kiện phương án/nhiều proposal, receipt missing/not-exposed/stale/
+latest-inverse, timing/signal/tainted-epoch/cancel. Thiếu field của proposal không
+tự chứng minh người dùng đã bỏ sót dữ kiện. Không gửi raw input, exception hay
+caption vào detail và không tự sửa/gửi lại plan. Lượt không write bị tainted chỉ
+reset chủ động sau terminal sạch; BLOCKING tool vẫn nhận kết quả trước terminal
+khi cần, không đợi terminal để gây deadlock. Thiếu boundary vẫn fail-safe.
+
+Scalar status gửi thành công chỉ chứng minh transport write; nếu ACK không rõ,
+delivery là unknown và context mới có thể nhận lại cùng logical status. Không
+cam kết provider nhận exactly-once; domain mutation/receipt vẫn idempotent và
+không retry write.
 
 ### Kết nối và context
 

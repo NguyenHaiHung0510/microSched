@@ -151,12 +151,14 @@ def start(rt, monkeypatch, *turns, on_tool=None, cid=None, on_send=None):
     issued = mint(client, cid, generation)
     assert issued["max_seconds"] == 5400
     dials = []
+    remaining_turns = iter(turns)
 
     class Live:
         def __init__(self):
             self.events = asyncio.Queue()
             self.events.put_nowait({"setupComplete": {}})
-            self.turns = iter(turns)
+            # An epoch refresh must not replay an already consumed audio script.
+            self.turns = remaining_turns
 
         async def send(self, raw):
             value = json.loads(raw)
@@ -371,7 +373,8 @@ def test_one_natural_date_manual_voice_receipt_can_be_undone_in_same_call(v2_run
         rt,
         monkeypatch,
         turn(f"Tạo việc {title} hạn 3/4/2091.", create),
-        turn("Hoàn tác cái vừa làm.", undo, base=0.2),
+        # Manual Confirm retires the old socket; the fresh audio timeline is 0.
+        turn("Hoàn tác cái vừa làm.", undo),
     )
     with rt.client.websocket_connect(
         endpoint(cid, issued), headers={"origin": "http://testserver"}
@@ -386,6 +389,7 @@ def test_one_natural_date_manual_voice_receipt_can_be_undone_in_same_call(v2_run
         assert response.is_success, response.text
         ack = receive_to(ws, "action_updated")[-1]
         assert ack["status"] == "applied" and ack["receipt_id"] == response.json()["id"]
+        assert receive_to(ws, "resumed")[-1]["context_retained"] is False
         assert len(rows(rt)) == 1
         assert rt.client.patch(
             "/api/mimi/voice-preferences", headers=CSRF, json={"fast_apply": True}

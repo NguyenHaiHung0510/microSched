@@ -4,7 +4,7 @@ import asyncio
 import json
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
-from uuid import uuid7
+from uuid import UUID, uuid7
 
 import pytest
 from pydantic import ValidationError
@@ -13,11 +13,25 @@ from app.agent.context_builder import assemble_context, rebind_after_read
 from app.agent.contracts import ExecutionLease, Sensitivity
 from app.agent.openrouter import build_request, serialized_input_bytes
 from app.agent.service import _manifest_receipt
-from app.agent.tools.calendar_reads import CALENDAR_READ_TOOL, CALENDAR_READ_TOOLS
+from app.agent.tools import calendar_reads
+from app.agent.tools.calendar_reads import (
+    CALENDAR_INSPECT_TOOL,
+    CALENDAR_READ_TOOL,
+    CALENDAR_READ_TOOLS,
+    calendar_result_bindings,
+)
 from app.agent.tools.registry import execute_read_tool, validate_read_arguments
+from app.agent.voice_v2_store import execute_voice_read
 from app.agent.working_context import projection_body, validate_body
 from app.core.settings import Settings
-from app.domain.calendar_read import CalendarReadRequest, CalendarReadResult
+from app.domain.calendar_read import (
+    CalendarEventDetail,
+    CalendarEventRow,
+    CalendarInspectResult,
+    CalendarReadRequest,
+    CalendarReadResult,
+    CalendarTaskRow,
+)
 
 
 @pytest.mark.parametrize(
@@ -65,6 +79,106 @@ def test_calendar_dispatch_is_disabled_before_any_database_access():
 
     with pytest.raises(ValueError, match="mimi_calendar_read_disabled"):
         asyncio.run(execute_read_tool(NoDatabase(), CALENDAR_READ_TOOL, args, settings=settings))
+
+
+@pytest.mark.parametrize("tool", [CALENDAR_READ_TOOL, CALENDAR_INSPECT_TOOL])
+def test_mimi_calendar_wire_localizes_schedule_only_on_both_transports(monkeypatch, tool):
+    async def scenario():
+        vn_day = date(2026, 11, 18)
+        midnight = datetime(2026, 11, 17, 17, tzinfo=UTC)
+        version = midnight - timedelta(hours=1)
+        event = CalendarEventRow(
+            id=UUID(int=1),
+            source_version=version,
+            matched_dates=(vn_day,),
+            title="Synthetic event",
+            starts_at=midnight + timedelta(hours=10),
+            ends_at=midnight + timedelta(days=1, microseconds=1),
+            all_day=False,
+            source={
+                "id": UUID(int=2),
+                "name": "Synthetic source",
+                "kind": "manual",
+                "source_version": version,
+            },
+        )
+        task = CalendarTaskRow(
+            id=UUID(int=3),
+            source_version=version,
+            matched_dates=(vn_day,),
+            title="Synthetic timed task",
+            status="open",
+            due_precision="datetime",
+            due_on=None,
+            due_at=midnight,
+        )
+        civil = task.model_copy(
+            update={
+                "id": UUID(int=4),
+                "due_precision": "date",
+                "due_at": None,
+                "due_on": vn_day,
+            }
+        )
+        if tool == CALENDAR_INSPECT_TOOL:
+            detail = CalendarEventDetail.model_validate(
+                {
+                    **event.model_dump(),
+                    "matched_dates": [],
+                    "location": None,
+                    "description_md": None,
+                }
+            )
+            model = CalendarInspectResult(
+                rows=(detail,),
+                count=1,
+                coverage="complete",
+                data_as_of=midnight,
+            )
+            args = {"kind": "event", "id": str(event.id)}
+        else:
+            model = CalendarReadResult(
+                requested_dates=(vn_day,),
+                kinds=("event", "task"),
+                rows=(event, task, civil),
+                count=3,
+                coverage="complete",
+                has_more=False,
+                continued=False,
+                next_cursor=None,
+                data_as_of=midnight,
+            )
+            args = {"date": str(vn_day), "kinds": ["event", "task"]}
+
+        async def read(*_args, **_kwargs):
+            return model
+
+        monkeypatch.setattr(calendar_reads, "execute_calendar_read", read)
+        settings = Settings(_env_file=None, mimi_calendar_read_enabled=True)
+        canonical = model.model_dump(mode="json")
+        chat = await execute_read_tool(None, tool, args, settings=settings)
+        voice = await execute_voice_read(None, tool, args, settings=settings)
+        assert voice == chat
+        row = chat["rows"][0]
+        assert row["starts_at"] == "2026-11-18T10:00:00+07:00"
+        assert row["ends_at"] == "2026-11-19T00:00:00.000001+07:00"
+        assert datetime.fromisoformat(row["starts_at"]) == event.starts_at
+        assert datetime.fromisoformat(row["ends_at"]) == event.ends_at
+        assert row["matched_dates"] == canonical["rows"][0]["matched_dates"]
+        assert row["source"] == canonical["rows"][0]["source"]
+        assert row["source_version"] == canonical["rows"][0]["source_version"]
+        assert chat["data_as_of"] == canonical["data_as_of"]
+        assert calendar_result_bindings(tool, chat) == calendar_result_bindings(tool, canonical)
+        assert type(model).model_validate(chat).model_dump(mode="json") == chat
+        if tool == CALENDAR_READ_TOOL:
+            assert chat["rows"][1]["due_at"] == "2026-11-18T00:00:00+07:00"
+            assert datetime.fromisoformat(chat["rows"][1]["due_at"]) == task.due_at
+            assert chat["rows"][2] == canonical["rows"][2]
+            assert chat["calendar_facts"] == canonical["calendar_facts"]
+            assert chat["calendar_facts"]["requested"][0]["iso_weekday"] == 3
+        assert model.model_dump(mode="json") == canonical
+
+    asyncio.run(scenario())
 
 
 def test_openrouter_offer_is_opt_in_and_context_records_calendar_not_task():

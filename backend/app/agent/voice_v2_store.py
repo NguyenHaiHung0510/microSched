@@ -10,9 +10,11 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid7
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.agent import crypto
+from app.agent.display_time import vietnam_display_time
 from app.agent.models import MimiChangeSet, MimiEvent, MimiExecutionReceipt, MimiRun
 from app.agent.openrouter import validate_task_candidate
 from app.agent.selection import (
@@ -60,6 +62,28 @@ MAX_EXPOSED_ROWS = 2048
 MAX_QUERY_OBSERVATIONS = 256
 MAX_MEMBERSHIP_OBSERVATIONS = 8
 _SET_READS = frozenset({"task.query.v1", "task.aggregate.v1", CALENDAR_READ_TOOL})
+VOICE_MANUAL_WAKE_KEY = "mimi_voice_manual_confirm_parent"
+
+
+def _plan_subreason(error):
+    if error.args == ("voice_single_proposal_required",):
+        return "multiple_proposals"
+    if isinstance(error, ValidationError) and all(
+        item["type"] == "missing" for item in error.errors(include_input=False)
+    ):
+        return "insufficient_data"
+    return "invalid_shape"
+
+
+def _undo_subreason(code):
+    # Match exact known server codes. Unknown detail never crosses the boundary.
+    return {
+        "voice_undo_receipt_missing": "receipt_missing",
+        "voice_undo_receipt_not_exposed": "receipt_not_exposed",
+        "voice_undo_receipt_ambiguous": "receipt_not_exposed",
+        "undo_post_version_stale": "receipt_stale",
+        "voice_undo_latest_receipt_not_eligible": "latest_inverse",
+    }.get(code if isinstance(code, str) else None, "receipt_unavailable")
 
 
 class VoiceContextChanged(VoiceError):
@@ -286,7 +310,7 @@ async def voice_receipt_context(db, auth, conversation):
                 "receipt_ref": receipt_ref(conversation.id, identity),
                 "latest": index == 0,
                 "task_count": receipt.result.get("count", 1),
-                "executed_at": receipt.executed_at.isoformat(),
+                "executed_at": vietnam_display_time(receipt.executed_at).isoformat(),
             }
         )
     return {
@@ -336,7 +360,15 @@ async def advance_voice_after_manual_confirm(db, conversation, child, before_seq
         "last_action_receipt": str(receipt_id) if receipt_id else None,
         "manual_action_receipt": str(receipt_id) if receipt_id else None,
         "manual_action_status": "undone" if lease.get("voice_operation") == "undo" else "applied",
+        "voice_receipt_refs": (
+            [*current.get("voice_receipt_refs", ())[-19:], receipt_ref(conversation.id, receipt_id)]
+            if receipt_id is not None
+            else current.get("voice_receipt_refs", [])
+        ),
     }
+    if receipt_id is not None:
+        # The router consumes this hint only AFTER the transaction commits.
+        db.info[VOICE_MANUAL_WAKE_KEY] = parent.id
 
 
 class VoiceV2Store(VoiceStore):
@@ -416,7 +448,14 @@ class VoiceV2Store(VoiceStore):
         async with self.factory() as db:
             conversation, parent = await self.boundary(db)
             identity = parent.execution_lease.get("manual_action_receipt")
-            if not identity:
+            if (
+                not identity
+                or parent.execution_lease.get("last_action_receipt") != identity
+                or parent.execution_lease.get("last_action_status")
+                != parent.execution_lease.get("manual_action_status")
+            ):
+                # A newer action/preview supersedes the parent status slot.
+                # Never report an older manual receipt as that newer result.
                 return None
             from app.agent.receipt_history import bound_receipt
 
@@ -424,19 +463,12 @@ class VoiceV2Store(VoiceStore):
             if bound_conversation.id != conversation.id:
                 return None
             ref = receipt_ref(conversation.id, receipt.id)
-            if ref not in parent.execution_lease.get("voice_receipt_refs", ()):
-                parent.execution_lease = {
-                    **parent.execution_lease,
-                    "voice_receipt_refs": [
-                        *parent.execution_lease.get("voice_receipt_refs", ())[-19:],
-                        ref,
-                    ],
-                }
-                await db.commit()
             return committed(
                 parent.execution_lease["manual_action_status"],
                 receipt_id=receipt.id,
-                receipt_ref=receipt_ref(conversation.id, receipt.id),
+                receipt_ref=(
+                    ref if ref in parent.execution_lease.get("voice_receipt_refs", ()) else None
+                ),
             )
 
     @asynccontextmanager
@@ -589,14 +621,18 @@ class VoiceV2Store(VoiceStore):
             proposal = voice_candidate(
                 calls, collection_enabled=self.settings.mimi_collection_enabled
             )
-        except ValueError:
-            return VoiceActionOutcome("needs_clarification", "voice_plan_invalid")
+        except ValueError as error:
+            return VoiceActionOutcome(
+                "needs_clarification", "voice_plan_invalid", subreason=_plan_subreason(error)
+            )
         if proposal is None or not is_active():
             return VoiceActionOutcome("rejected", "voice_turn_expired")
         if not isinstance(binding, VoiceTurnBinding) or not binding.matches(
             turn, epoch, len(calls)
         ):
-            return VoiceActionOutcome("needs_clarification", "voice_spoken_intent_unproven")
+            return VoiceActionOutcome(
+                "needs_clarification", "voice_spoken_intent_unproven", subreason="activity_timing"
+            )
         try:
             return await self._act(
                 turn,
@@ -614,15 +650,19 @@ class VoiceV2Store(VoiceStore):
             if error.status_code == 404:
                 return VoiceActionOutcome("rejected", "voice_action_not_authorized")
             if proposal[0] == UNDO_TOOL:
-                return VoiceActionOutcome("rejected", "voice_undo_unavailable")
+                return VoiceActionOutcome(
+                    "rejected", "voice_undo_unavailable", subreason=_undo_subreason(error.detail)
+                )
             code = error.detail
             if isinstance(code, str) and (
                 "selection" in code or code.startswith("task_collection_source")
             ):
                 return VoiceActionOutcome("rejected", "voice_selection_stale")
             return VoiceActionOutcome("rejected", "voice_plan_rejected")
-        except ValueError:
-            return VoiceActionOutcome("needs_clarification", "voice_plan_invalid")
+        except ValueError as error:
+            return VoiceActionOutcome(
+                "needs_clarification", "voice_plan_invalid", subreason=_plan_subreason(error)
+            )
 
     async def _act(self, turn, epoch, proposal, binding, sources, is_active):
         async with self.factory() as db:

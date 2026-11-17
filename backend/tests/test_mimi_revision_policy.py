@@ -159,3 +159,24 @@ def test_undo_policy_retains_preceding_checkpoint_history_with_and_without_calen
         prior = hashlib.sha256((head + end + suffix).encode()).hexdigest()
         assert current.sha256 != prior
         assert checkpoint_policy_compatible(prior, collection_enabled=True)
+
+
+@pytest.mark.parametrize(
+    "collection,predecessor",
+    [
+        (False, "aaad3e2189c5f2b9f3eb21fb53933f736d4eb1ef9f16ab60e6446cf6977feaa7"),
+        (True, "0318b083a95233d5b6aac6c7caac7c8b95e032f2a725db7dfaa82585f369dfcb"),
+        (True, "de63eda446e4c00ad3ade5bd6f23d8fa3239804650fe61cbe7e8bd2e638edbfc"),
+        (True, "4e36aee3658e1bf42d7ca5dd7c9005f17d3b03481163366c176c287206592c02"),
+    ],
+)
+def test_calendar_checkpoint_precursors_remain_exact_and_mode_bound(collection, predecessor):
+    from app.agent.policy import checkpoint_policy_compatible
+
+    assert checkpoint_policy_compatible(predecessor, collection_enabled=collection)
+    assert not checkpoint_policy_compatible(predecessor, collection_enabled=not collection)
+    for calendar in (False, True):
+        current = load_standard_policy(collection_enabled=collection, calendar_enabled=calendar)
+        assert checkpoint_policy_compatible(current.sha256, collection_enabled=collection)
+    other_digest = hashlib.sha256(b"unapproved policy").hexdigest()
+    assert not checkpoint_policy_compatible(other_digest, collection_enabled=collection)

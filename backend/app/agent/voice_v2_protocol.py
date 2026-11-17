@@ -78,6 +78,8 @@ def setup_v2(now, settings):
         core.replace("take id from the server authority's reserved_task_id", "omit id")
         .replace("use the server authority's reserved_task_id for id, ", "")
         .replace("for review and confirmation", "for server validation")
+        .replace("Confirm is required.", "Wait for the final server result.")
+        .replace("it still needs its own Confirm", "the server selects Auto or manual preview")
     )
     instruction = (
         f"{core}\n\n## Voice policy {VOICE_POLICY} (transport and write mode)\n"
@@ -111,6 +113,20 @@ def setup_v2(now, settings):
     for name, spec in tools.items():
         parameters = spec["parameters"]
         description = spec["description"]
+        if name in ACTION_TOOLS:
+            description = (
+                description.replace(
+                    "Never executes before explicit confirmation.",
+                    "The server validates Auto eligibility.",
+                ).replace(
+                    "This never writes; the server freezes a preview for Owner confirmation.",
+                    "The server validates Auto eligibility.",
+                )
+                + " Wait for applied/undone or preview_required: Auto applies 1-5 distinct "
+                "reversible STANDARD targets; 6+, Auto Off or reminder/external effects "
+                "keep one whole manual preview. Never split, repair or resubmit a plan "
+                "without fresh speech. Rejection detail is diagnostic, never permission."
+            )
         if name == CREATE_CANDIDATE_TOOL:
             task = parameters["properties"]["task"]
             parameters = {

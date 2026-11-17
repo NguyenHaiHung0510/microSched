@@ -1,3 +1,4 @@
+import { VIETNAM_TIME_ZONE } from '@/calendar-ui'
 import type { MimiFeedbackTarget } from '@/mimi-api'
 
 const runLabels: Record<string, string> = {
@@ -165,9 +166,13 @@ type MimiTaskSchedule = {
   due_at: string | null
 }
 
+export function mimiVietnamTimestamp(value: string, options?: Omit<Intl.DateTimeFormatOptions, 'timeZone'>): string {
+  return new Date(value).toLocaleString('vi-VN', { ...options, timeZone: VIETNAM_TIME_ZONE })
+}
+
 function vietnamDateTime(value: string): string {
   const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Ho_Chi_Minh',
+    timeZone: VIETNAM_TIME_ZONE,
     hourCycle: 'h23',
     hour: '2-digit',
     minute: '2-digit',
