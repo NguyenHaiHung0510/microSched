@@ -100,7 +100,7 @@ test('N01 browser: saved/applied, all schedule editors, remote START/STOP, chart
     await expect(wide.getByRole('heading', { name: 'Xác nhận tưới Khu A' })).toBeVisible()
     expect((await exchange()).candidates).toEqual([])
     await wide.getByRole('button', { name: 'Xác nhận tưới', exact: true }).click()
-    await expect(wide.getByText('Chờ Controller nhận', { exact: false })).toBeVisible()
+    await expect(wide.getByTestId('garden-now')).toContainText('Chờ Controller nhận')
     response = await exchange()
     const start = response.candidates[0]
     expect(start.duration_seconds).toBe(45)
