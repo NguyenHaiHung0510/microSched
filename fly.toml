@@ -10,6 +10,8 @@ swap_size_mb = 512
 [env]
   APP_ENV = 'production'
   ENABLE_INPROCESS_CRON = 'true'
+  MIGARDEN_ENABLED = 'true'
+  MIGARDEN_PUBLIC_ORIGIN = 'https://microsched.fly.dev'
   MIMI_PUBLIC_ORIGIN = 'https://microsched.fly.dev'
   MIMI_REAL_CHAT_ENABLED = 'true'
   MIMI_LIVE_PROVIDER_ENABLED = 'true'
