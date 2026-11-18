@@ -203,6 +203,7 @@ class HistoryView(WireModel):
 
 
 class HistoryFilter(WireModel):
+    view: Literal["events", "sessions"] = "events"
     limit: int = Field(default=20, ge=1, le=50)
     cursor: str | None = Field(default=None, max_length=384)
     from_day: date | None = None
@@ -218,6 +219,7 @@ class HistoryFilter(WireModel):
             "skipped",
             "started",
             "stop_processed",
+            "recovered",
         ]
         | None
     ) = None
@@ -226,14 +228,10 @@ class HistoryFilter(WireModel):
 Cursor = tuple[datetime, str, str]
 
 
-def decode_cursor(value: str) -> Cursor:
+def decode_cursor(value: str, groups: tuple[str, ...] = ("c", "r", "s", "t")) -> Cursor:
     try:
         timestamp, group, key = json.loads(base64.b64decode(value, altchars=b"-_", validate=True))
-        if (
-            group not in ("c", "r", "s", "t")
-            or not isinstance(key, str)
-            or not 1 <= len(key) <= 128
-        ):
+        if group not in groups or not isinstance(key, str) or not 1 <= len(key) <= 128:
             raise ValueError
         return TypeAdapter(UTCDateTime).validate_python(timestamp), group, key
     except (TypeError, ValueError, ValidationError, binascii.Error) as error:
@@ -271,13 +269,32 @@ def bound_history(
     return query.order_by(ordered_at.desc(), key.desc()).limit(criteria.limit + 1)
 
 
-async def history(db: AsyncSession, criteria: HistoryFilter, now: datetime) -> HistoryView:
+def validate_history_dates(criteria: HistoryFilter) -> None:
     if (
         (criteria.from_day and criteria.from_day.year in {1, 9999})
         or (criteria.to_day and criteria.to_day.year in {1, 9999})
         or (criteria.from_day and criteria.to_day and criteria.from_day > criteria.to_day)
     ):
         raise Rejected("invalid_date_range", 422)
+
+
+def history_command_status(now: datetime):
+    return case(
+        (and_(CommandRecord.status.in_(WAITING), CommandRecord.expires_at <= now), "expired"),
+        (and_(CommandRecord.status == "granted", CommandRecord.expires_at <= now), "unknown"),
+        (
+            and_(
+                CommandRecord.status.in_(STOP_PENDING),
+                CommandRecord.confirmed_at <= now - HOLDOFF,
+            ),
+            "stop_unconfirmed",
+        ),
+        else_=CommandRecord.status,
+    )
+
+
+async def history(db: AsyncSession, criteria: HistoryFilter, now: datetime) -> HistoryView:
+    validate_history_dates(criteria)
     cursor = decode_cursor(criteria.cursor) if criteria.cursor else None
     merged: list[tuple[Cursor, HistoryItem]] = []
 
@@ -290,25 +307,7 @@ async def history(db: AsyncSession, criteria: HistoryFilter, now: datetime) -> H
     if criteria.source in (None, "remote"):
         query = select(CommandRecord)
         if requested:
-            status = case(
-                (
-                    and_(CommandRecord.status.in_(WAITING), CommandRecord.expires_at <= now),
-                    "expired",
-                ),
-                (
-                    and_(CommandRecord.status == "granted", CommandRecord.expires_at <= now),
-                    "unknown",
-                ),
-                (
-                    and_(
-                        CommandRecord.status.in_(STOP_PENDING),
-                        CommandRecord.confirmed_at <= now - HOLDOFF,
-                    ),
-                    "stop_unconfirmed",
-                ),
-                else_=CommandRecord.status,
-            )
-            query = query.where(status.in_(selected))
+            query = query.where(history_command_status(now).in_(selected))
         for row in (
             await db.scalars(
                 bound_history(

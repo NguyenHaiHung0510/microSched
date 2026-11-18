@@ -3,7 +3,7 @@ import { Activity, CloudUpload, ListTodo, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { discardRejected, effectivePrivate, known, retry, unlocked } from '@/outbox/core'
-import { useOutbox, useDerivedPending } from '@/outbox/view'
+import { useOutbox } from '@/outbox/view'
 import { snapshotAt } from '@/outbox/public-cache'
 import type { Fields } from '@/outbox/protocol'
 
@@ -61,10 +61,5 @@ export function OfflineCoverage() {
   if(navigator.onLine&&!state.context.principal)return null
   return !navigator.onLine?<p role="status" data-testid="offline-coverage" className="text-sm text-muted-foreground">
     Đang ngoại tuyến · Dữ liệu đã tải chỉ một phần{snapshotAt?' · '+new Date(snapshotAt).toLocaleString('vi-VN'):''}. Đăng nhập/mở khoá và các phần chưa hỗ trợ cần kết nối.
-  </p>:null
-}
-export function DerivedPendingNotice() {
-  return useDerivedPending()?<p role="status" data-testid="derived-pending" className="rounded-lg bg-warn-bg p-3 text-sm text-warn">
-    Đang chờ cập nhật · Biểu đồ/báo cáo là lần xác nhận cuối; các bản ghi đang chờ chưa phải tổng đã đối chiếu.
   </p>:null
 }

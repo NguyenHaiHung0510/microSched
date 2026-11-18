@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useIsMutating, useMutation, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, RotateCcw, Save, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { garden, type Bundle, type Config, type ConfigView, type Recurrence } from './api'
+import { garden, gardenConfigMutation, type Bundle, type Config, type ConfigView, type Recurrence } from './api'
 import { duration, errorText, explainReason, fromLocal, instantLabel, localInput } from './presentation'
 
 const patterns = {
@@ -123,19 +123,23 @@ export function Configuration({ config, connected, onSaved }: {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [validation, setValidation] = useState('')
   const saving = useRef(false)
+  const queryClient = useQueryClient()
+  const pending = useIsMutating({ mutationKey: gardenConfigMutation }) > 0
+  const saveInFlight = () => saving.current || queryClient.isMutating({ mutationKey: gardenConfigMutation }) > 0
   const baseline = formFrom(config.desired, initial)
   const ref = config.desired?.config_ref ?? null
   const value = draft?.value ?? baseline
   const dirty = Boolean(draft && JSON.stringify(draft.value) !== JSON.stringify(draft.baseline))
   const conflict = Boolean(draft && draft.ref !== ref)
   const write = useMutation({
+    mutationKey: gardenConfigMutation,
     mutationFn: ({ bundle, expected }: { bundle: Bundle; expected: string | null }) => garden.save(bundle, expected),
     retry: false, networkMode: 'always',
     onSuccess: result => { setDraft(null); setValidation(''); onSaved(result) },
     onSettled: () => { saving.current = false },
   })
   function edit<K extends keyof Form>(key: K, newValue: Form[K]) {
-    if (saving.current) return
+    if (saveInFlight()) return
     setDraft(prior => ({ baseline: prior?.baseline ?? baseline, ref: prior ? prior.ref : ref,
       value: { ...(prior?.value ?? baseline), [key]: newValue } }))
     setValidation('')
@@ -143,7 +147,7 @@ export function Configuration({ config, connected, onSaved }: {
   }
   return <form className="space-y-4" data-update-dirty={dirty ? 'true' : undefined} onSubmit={event => {
     event.preventDefault()
-    if (saving.current || conflict) return
+    if (saveInFlight() || conflict) return
     try {
       const bundle = bundleFrom(value)
       saving.current = true
@@ -158,44 +162,44 @@ export function Configuration({ config, connected, onSaved }: {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex min-h-11 items-center gap-4">
-            <Checkbox id="garden-enabled" className="size-6" checked={value.enabled} disabled={write.isPending} onCheckedChange={v => edit('enabled', v === true)} />
+            <Checkbox id="garden-enabled" className="size-6" checked={value.enabled} disabled={pending} onCheckedChange={v => edit('enabled', v === true)} />
             <label htmlFor="garden-enabled" className="cursor-pointer py-2 font-bold">Bật lịch</label>
           </div>
           <p className="text-sm text-muted-foreground">Giờ Hà Nội (UTC+7). Các thay đổi lịch có hiệu lực sau khi ESP32 áp dụng.</p>
           <div className="grid gap-3 sm:grid-cols-2">
-            <DateField id="garden-effective" label="Có hiệu lực từ" value={value.effective} change={v => edit('effective', v)} disabled={write.isPending} />
-            <DateField id="garden-until" label="Kết thúc hiệu lực (tùy chọn)" value={value.until} change={v => edit('until', v)} disabled={write.isPending} required={false} />
+            <DateField id="garden-effective" label="Có hiệu lực từ" value={value.effective} change={v => edit('effective', v)} disabled={pending} />
+            <DateField id="garden-until" label="Kết thúc hiệu lực (tùy chọn)" value={value.until} change={v => edit('until', v)} disabled={pending} required={false} />
           </div>
           <div className="grid gap-1">
             <label htmlFor="garden-kind">Lặp lại</label>
-            <Select value={value.kind} disabled={write.isPending} onValueChange={v => edit('kind', v as Form['kind'])}>
-              <SelectTrigger id="garden-kind" size="lg" className="w-full text-base" disabled={write.isPending}><SelectValue /></SelectTrigger>
+            <Select value={value.kind} disabled={pending} onValueChange={v => edit('kind', v as Form['kind'])}>
+              <SelectTrigger id="garden-kind" size="lg" className="w-full text-base" disabled={pending}><SelectValue /></SelectTrigger>
               <SelectContent>{Object.entries(patterns).map(([type, label]) => <SelectItem value={type} key={type}>{label}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-          {value.kind === 'once' && <DateField id="garden-once" label="Ngày và giờ tưới" value={value.at} change={v => edit('at', v)} disabled={write.isPending} />}
+          {value.kind === 'once' && <DateField id="garden-once" label="Ngày và giờ tưới" value={value.at} change={v => edit('at', v)} disabled={pending} />}
           {value.kind === 'interval' && <>
-            <DateField id="garden-anchor" label="Mốc đầu chu kỳ" value={value.anchor} change={v => edit('anchor', v)} disabled={write.isPending} />
+            <DateField id="garden-anchor" label="Mốc đầu chu kỳ" value={value.anchor} change={v => edit('anchor', v)} disabled={pending} />
             <label htmlFor="garden-interval" className="grid gap-1">Lặp mỗi (phút)
               <Input id="garden-interval" className="min-h-11 text-base" type="number" min={1} max={2147483647}
-                required value={value.interval} disabled={write.isPending} onChange={event => edit('interval', event.target.value)} />
+                required value={value.interval} disabled={pending} onChange={event => edit('interval', event.target.value)} />
             </label>
           </>}
           {(value.kind === 'daily' || value.kind === 'weekly') && <label htmlFor="garden-time" className="grid min-w-0 gap-1">
             Giờ tưới<Input id="garden-time" className="min-h-11 w-full text-base" type="time" required
-              value={value.localTime} disabled={write.isPending} onChange={event => edit('localTime', event.target.value)} />
+              value={value.localTime} disabled={pending} onChange={event => edit('localTime', event.target.value)} />
           </label>}
           {value.kind === 'weekly' && <fieldset className="space-y-1">
             <legend>Thứ trong tuần</legend>
             <div className="flex flex-wrap gap-2">
-              {weekdays.map((label, i) => <Button key={label} type="button" className="min-h-11 min-w-11" aria-pressed={value.weekdays.includes(i + 1)} disabled={write.isPending}
+              {weekdays.map((label, i) => <Button key={label} type="button" className="min-h-11 min-w-11" aria-pressed={value.weekdays.includes(i + 1)} disabled={pending}
                 variant={value.weekdays.includes(i + 1) ? 'selected' : 'outline'} onClick={() => edit('weekdays',
                   value.weekdays.includes(i + 1) ? value.weekdays.filter(day => day !== i + 1) : [...value.weekdays, i + 1].sort())}>
                 {label}
               </Button>)}
             </div>
           </fieldset>}
-          <DurationField id="garden-watering" label="Thời lượng mỗi lần" value={value.watering} change={v => edit('watering', v)} disabled={write.isPending} />
+          <DurationField id="garden-watering" label="Thời lượng mỗi lần" value={value.watering} change={v => edit('watering', v)} disabled={pending} />
           <p className="rounded-lg bg-accent p-3 font-bold text-accent-foreground">
             {value.enabled ? patterns[value.kind] + (value.kind === 'daily' || value.kind === 'weekly' ? ' lúc ' + value.localTime : '') +
               (Number(value.watering) > 0 ? ' · ' + duration(Math.round(Number(value.watering) * 60)) : '') : 'Lịch đang tạm dừng trong bản này'}
@@ -207,9 +211,9 @@ export function Configuration({ config, connected, onSaved }: {
           <h3 className="flex items-center gap-2 text-lg font-extrabold"><SlidersHorizontal aria-hidden="true" className="size-5 text-primary" /> Nút tại tủ và giới hạn tưới</h3>
         </CardHeader>
         <CardContent className="space-y-3">
-          <DurationField id="garden-manual" label="Thời lượng nút START" value={value.manual} change={v => edit('manual', v)} disabled={write.isPending} />
-          <DurationField id="garden-run-max" label="Tối đa mỗi lượt" value={value.perRun} change={v => edit('perRun', v)} disabled={write.isPending} />
-          <DurationField id="garden-window-max" label="Tổng tối đa" value={value.total} change={v => edit('total', v)} disabled={write.isPending} />
+          <DurationField id="garden-manual" label="Thời lượng nút START" value={value.manual} change={v => edit('manual', v)} disabled={pending} />
+          <DurationField id="garden-run-max" label="Tối đa mỗi lượt" value={value.perRun} change={v => edit('perRun', v)} disabled={pending} />
+          <DurationField id="garden-window-max" label="Tổng tối đa" value={value.total} change={v => edit('total', v)} disabled={pending} />
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2">
             <span>Trong bất kỳ</span><strong>3 giờ nào</strong>
           </div>
@@ -223,12 +227,12 @@ export function Configuration({ config, connected, onSaved }: {
     </p>}
     <div className="flex flex-wrap items-center justify-end gap-2 border-t border-muted pt-3">
       {!connected && <p className="mr-auto text-sm text-muted-foreground">Mất kết nối với web. Chưa lưu thay đổi.</p>}
-      <Button type="button" variant="outline" className="min-h-11" disabled={write.isPending || !draft} onClick={() => {
-        if (saving.current) return
+      <Button type="button" variant="outline" className="min-h-11" disabled={pending || !draft} onClick={() => {
+        if (saveInFlight()) return
         setDraft(null); setValidation(''); write.reset()
       }}><RotateCcw aria-hidden="true" /> {conflict ? 'Dùng bản đã lưu' : 'Đặt lại thay đổi'}</Button>
-      <Button type="submit" className="min-h-11" disabled={!connected || write.isPending || conflict || (!dirty && Boolean(config.desired))}>
-        <Save aria-hidden="true" /> {write.isPending ? 'Đang lưu…' : 'Lưu cấu hình'}
+      <Button type="submit" className="min-h-11" disabled={!connected || pending || conflict || (!dirty && Boolean(config.desired))}>
+        <Save aria-hidden="true" /> {pending ? 'Đang lưu…' : 'Lưu cấu hình'}
       </Button>
     </div>
   </form>

@@ -22,6 +22,16 @@ export function LiveStatus({ tab }: { tab: 'tasks' | 'notes' | 'tracker' }) {
     ))
     .map((query) => ({ status: query.state.status, updatedAt: query.state.dataUpdatedAt, paused: query.state.fetchStatus === 'paused' }))), [cache, tab])
   const serialized = useSyncExternalStore(subscribe, snapshot)
+  return <FreshnessBadge serialized={serialized} />
+}
+
+export function PrimaryLiveStatus({ query }: { query: { status: string; dataUpdatedAt: number; fetchStatus: string } }) {
+  return <FreshnessBadge garden serialized={JSON.stringify([{
+    status: query.status, updatedAt: query.dataUpdatedAt, paused: query.fetchStatus === 'paused',
+  }])} />
+}
+
+function FreshnessBadge({ serialized, garden = false }: { serialized: string; garden?: boolean }) {
   const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline())
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
   const [now, setNow] = useState(() => Date.now())
@@ -42,9 +52,10 @@ export function LiveStatus({ tab }: { tab: 'tasks' | 'notes' | 'tracker' }) {
   const state = freshnessState(JSON.parse(serialized) as FreshQuery[], now, online, visible)
   return (
     <span data-testid="app-live-status" data-state={state} role="status"
+      title={garden ? 'Độ mới dữ liệu web, không phải trạng thái ESP32' : undefined}
       className={cn('inline-flex max-w-full items-center gap-1.5 text-xs font-semibold', state === 'live' ? 'text-ok' : state === 'error' ? 'text-bad' : 'text-muted-foreground')}>
       <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', state === 'live' ? 'bg-ok' : state === 'error' ? 'bg-bad' : 'bg-muted-foreground')} />
-      {labels[state]}
+      {garden ? <>Web · {labels[state]}</> : labels[state]}
     </span>
   )
 }

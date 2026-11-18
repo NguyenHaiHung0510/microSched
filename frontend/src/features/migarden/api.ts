@@ -106,6 +106,17 @@ export type HistoryItem = {
   scheduled_at: string | null
 }
 export type HistoryView = { items: HistoryItem[]; next_cursor: string | null; coverage: 'partial' }
+export type TimelineItem = HistoryItem & {
+  started_at: string | null
+  ended_at: string | null
+  evidence: HistoryItem[]
+}
+export type HistoryTimeline = {
+  items: TimelineItem[]
+  next_cursor: string | null
+  coverage: 'partial'
+  totals: { recorded_seconds: number | null; schedule_seconds: number | null; remote_seconds: number | null; local_button_seconds: number | null } | null
+}
 export type DailyPoint = {
   day: string
   schedule_seconds: number | null
@@ -116,6 +127,7 @@ export type DailyPoint = {
 export type DailyView = { days: DailyPoint[]; forecast: Forecast }
 
 const root = '/api/migarden'
+export const gardenConfigMutation = ['migarden', 'save-config'] as const
 function read<T>(path: string, signal?: AbortSignal) {
   return apiRequest<T>(root + path, { signal, cache: 'no-store' })
 }
@@ -137,6 +149,8 @@ export const garden = {
   daily: (days: 7 | 30, signal?: AbortSignal) => read<DailyView>('/daily?days=' + days, signal),
   history: (params: URLSearchParams, signal?: AbortSignal) =>
     read<HistoryView>('/history?' + params.toString(), signal),
+  timeline: (params: URLSearchParams, signal?: AbortSignal) =>
+    read<HistoryTimeline>('/history?' + params.toString(), signal),
 }
 export const gardenOptions = { retry: false, staleTime: 0, gcTime: 0, refetchIntervalInBackground: false }
 function subscribeVisibility(listener: () => void) {
