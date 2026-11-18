@@ -8,8 +8,10 @@ import { Input } from '@/components/ui/input'
 import { navigate, queryParams } from '@/lib/route'
 import { cn } from '@/lib/utils'
 import { garden, useGardenState, type Command, type Forecast, type GardenState, type Preview } from './api'
+import { PrimaryLiveStatus } from '@/LiveStatus'
 import { Configuration, ConfigStatus } from './Configuration'
-import { GardenHistory } from './GardenHistory'
+import { GardenHistory, GardenRecent } from './GardenHistory'
+import { useGardenTimeline } from './historyQuery'
 import { WaterChart } from './WaterChart'
 import { displayedSession, duration, errorText, explainReason, instantLabel, sources, statusLabels, stopwatch, timeLabel } from './presentation'
 import './garden.css'
@@ -193,13 +195,24 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
   </>
 }
 
-export function MiGardenScreen({ location }: { location: string }) {
+const gardenTabs = [
+  { id: 'overview', label: 'Tổng quan', target: '/migarden' },
+  { id: 'history', label: 'Lịch sử', target: '/migarden?tab=history' },
+  { id: 'config', label: 'Cấu hình', target: '/migarden?tab=config' },
+] as const
+
+export function MiGardenScreen({ location, leave, configVersion }: {
+  location: string; leave: (action: () => void) => void; configVersion: number;
+}) {
   const route = queryParams(location)
   const configuration = route.get('tab') === 'config'
-  const history = !configuration && route.get('history') === '1'
+  const history = !configuration && (route.get('tab') === 'history' || !route.has('tab') && route.get('history') === '1')
+  const current = configuration ? 'config' : history ? 'history' : 'overview'
+  const go = (target: string) => leave(() => navigate(target))
   const [now, setNow] = useState(() => Date.now())
   const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline())
   const state = useGardenState(!history)
+  const timeline = useGardenTimeline(history)
   const cache = useQueryClient()
   const data = state.data
   useEffect(() => {
@@ -216,39 +229,42 @@ export function MiGardenScreen({ location }: { location: string }) {
         <div><h2 id="migarden-title" className="text-3xl font-extrabold tracking-tight">miGarden</h2>
           <p className="text-base text-muted-foreground">Khu A</p></div>
         <nav className="flex flex-wrap gap-2" aria-label="Mục trong miGarden">
-          <Button variant={configuration ? 'outline' : 'selected'} aria-current={!configuration ? 'page' : undefined}
-            className="min-h-11" onClick={() => navigate('/migarden')}>Tổng quan</Button>
-          <Button variant={configuration ? 'selected' : 'outline'} aria-current={configuration ? 'page' : undefined}
-            className="min-h-11" onClick={() => navigate('/migarden?tab=config')}>Cấu hình</Button>
+          {gardenTabs.map(tab => <Button key={tab.id} type="button"
+            variant={current === tab.id ? 'selected' : 'outline'} aria-current={current === tab.id ? 'page' : undefined}
+            className="min-h-11" onClick={() => { if (current !== tab.id) go(tab.target) }}>{tab.label}</Button>)}
         </nav>
       </div>
-      {configuration && data && <ConfigStatus config={data.config} />}
-      <Button type="button" variant="ghost" className="min-h-11" onClick={refresh} disabled={!online || state.isFetching}>
-        <RefreshCw aria-hidden="true" /> Cập nhật
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <PrimaryLiveStatus query={history ? timeline.query : state} />
+        {configuration && data && <ConfigStatus config={data.config} />}
+        <Button type="button" variant="ghost" className="min-h-11" onClick={refresh}
+          disabled={!online || (history ? timeline.badRange || timeline.query.isFetching : state.isFetching)}>
+          <RefreshCw aria-hidden="true" /> Cập nhật
+        </Button>
+      </div>
     </header>
-    {state.isPending && <p role="status">Đang tải trạng thái Khu A…</p>}
-    {state.isError && <p role="alert" className="rounded-lg bg-warn-bg p-3">
+    {!history && state.isPending && <p role="status">Đang tải trạng thái Khu A…</p>}
+    {!history && state.isError && <p role="alert" className="rounded-lg bg-warn-bg p-3">
       Không đọc được trạng thái mới. {data ? 'Đang hiển thị báo cáo cuối đã nhận.' : 'Dùng Cập nhật để thử lại.'}
     </p>}
     {data && <>
       <div hidden={!configuration}>
-        <Configuration config={data.config} connected={connected} onSaved={config => {
+        <Configuration key={configVersion} config={data.config} connected={connected} onSaved={config => {
           cache.setQueryData<GardenState>(['migarden', 'state'], old => old ? { ...old, config } : old, { updatedAt: state.dataUpdatedAt })
           void cache.invalidateQueries({ queryKey: ['migarden'] })
         }} />
       </div>
-      {history && <GardenHistory compact={false} onNavigate={() => navigate('/migarden', { replace: true })} />}
       {!configuration && !history && <>
         <OverviewStatus state={data} dataAt={state.dataUpdatedAt} now={now} online={online} connected={connected} refresh={refresh} />
         <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,2.1fr)_minmax(17rem,1fr)]">
           <WaterChart />
           <div className="grid min-w-0 gap-4">
             <NextSchedule next={data.next_schedule} fresh={!!fresh} />
-            <GardenHistory compact currentRequests={[data.start_request, data.stop_request]} onNavigate={() => navigate('/migarden?history=1')} />
+            <GardenRecent currentRequests={[data.start_request, data.stop_request]} onNavigate={() => go('/migarden?tab=history')} />
           </div>
         </div>
       </>}
     </>}
+    {history && <GardenHistory timeline={timeline} />}
   </section>
 }

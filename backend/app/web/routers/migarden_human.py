@@ -14,6 +14,7 @@ from app.domain.migarden.commands import (
     request_stop,
 )
 from app.domain.migarden.configuration import ConfigView, SaveConfig, read_config, save_config
+from app.domain.migarden.history_timeline import TimelineView, timeline
 from app.domain.migarden.queries import DailyView, HistoryFilter, HistoryView, StateView, daily
 from app.domain.migarden.queries import history as query_history
 from app.domain.migarden.queries import state as query_state
@@ -85,8 +86,11 @@ async def stop(request: Request, db: Database, owner: Owner) -> CommandView:
 
 
 @router.get("/history")
-async def history(criteria: Annotated[HistoryFilter, Query()], db: Database) -> HistoryView:
-    return await verdict(lambda: query_history(db, criteria, now_utc()))
+async def history(
+    criteria: Annotated[HistoryFilter, Query()], db: Database
+) -> HistoryView | TimelineView:
+    query = timeline if criteria.view == "sessions" else query_history
+    return await verdict(lambda: query(db, criteria, now_utc()))
 
 
 @router.get("/daily")
