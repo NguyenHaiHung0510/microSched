@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { APP_SCREENS, type AppScreen } from '@/app-navigation'
 
-export function DomainNavigation({current,mimiAvailable,onSelect}:{current:AppScreen;mimiAvailable:boolean;onSelect:(screen:AppScreen)=>void}) {
+export function DomainNavigation({current,mimiAvailable,onSelect}:{current:AppScreen|null;mimiAvailable:boolean;onSelect:(screen:AppScreen)=>void}) {
   return <nav aria-label="Nội dung ứng dụng" className="app-domain-navigation fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background px-2 pb-[env(safe-area-inset-bottom)] shadow-2 lg:static lg:z-auto lg:min-w-0 lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none">
     <div role="tablist" aria-label="Chọn nội dung" onKeyDown={event=>{
       const keys=['ArrowLeft','ArrowRight','Home','End'];if(!keys.includes(event.key))return
@@ -14,12 +14,12 @@ export function DomainNavigation({current,mimiAvailable,onSelect}:{current:AppSc
       const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length
       event.preventDefault();tabs[next]?.focus();tabs[next]?.click()
     }} className="grid grid-cols-5 gap-1 lg:flex lg:justify-center">
-      {APP_SCREENS.map(({id,label,icon:Icon})=><Button key={id} role="tab" aria-selected={current===id} aria-controls="app-domain-panel" tabIndex={current===id?0:-1} disabled={id==='mimi'&&!mimiAvailable} title={id==='mimi'&&!mimiAvailable?'Mimi chưa bật trong phiên này':undefined} size="lg" variant={current===id?'selected':'ghost'} className="h-auto min-h-14 min-w-0 flex-col gap-1 px-1 py-2 text-xs lg:min-h-12 lg:px-3" onClick={()=>onSelect(id)}><Icon className="size-5" aria-hidden="true"/><span className="max-w-full whitespace-normal">{label}</span></Button>)}
+      {APP_SCREENS.map(({id,label,icon:Icon})=><Button key={id} role="tab" aria-selected={current===id} aria-controls="app-domain-panel" tabIndex={current===id||(current===null&&id==='tasks')?0:-1} disabled={id==='mimi'&&!mimiAvailable} title={id==='mimi'&&!mimiAvailable?'Mimi chưa bật trong phiên này':undefined} size="lg" variant={current===id?'selected':'ghost'} className="h-auto min-h-14 min-w-0 flex-col gap-1 px-1 py-2 text-xs lg:min-h-12 lg:px-3" onClick={()=>onSelect(id)}><Icon className="size-5" aria-hidden="true"/><span className="max-w-full whitespace-normal">{label}</span></Button>)}
     </div>
   </nav>
 }
 
-export function ApplicationMenu({current,mimiAvailable,onSelect,onChat,onPin,onHome,onSubscription,onLogout,loggingOut}:{current:AppScreen;mimiAvailable:boolean;onSelect:(screen:AppScreen)=>void;onChat:()=>void;onPin:()=>void;onHome:()=>void;onSubscription:()=>void;onLogout:()=>void;loggingOut:boolean}) {
+export function ApplicationMenu({current,mimiAvailable,migardenAvailable,onGarden,onSelect,onChat,onPin,onHome,onSubscription,onLogout,loggingOut}:{current:AppScreen|null;mimiAvailable:boolean;migardenAvailable?:boolean;onGarden?:()=>void;onSelect:(screen:AppScreen)=>void;onChat:()=>void;onPin:()=>void;onHome:()=>void;onSubscription:()=>void;onLogout:()=>void;loggingOut:boolean}) {
   const [open,setOpen]=useState(false)
   const trigger=useRef<HTMLButtonElement>(null)
   const afterClose=useRef<(()=>void)|null>(null)
@@ -30,7 +30,11 @@ export function ApplicationMenu({current,mimiAvailable,onSelect,onChat,onPin,onH
       <DialogHeader><DialogTitle>Ứng dụng</DialogTitle><DialogDescription>Đi tới nội dung và tuỳ chọn của microSched.</DialogDescription></DialogHeader>
       <div className="grid gap-1">
         {APP_SCREENS.map(({id,label,icon:Icon})=><Button key={id} type="button" variant={current===id?'selected':'ghost'} disabled={id==='mimi'&&!mimiAvailable} className="h-auto min-h-11 justify-start gap-3 whitespace-normal text-left" onClick={()=>choose(()=>onSelect(id))}><Icon className="size-5 shrink-0" aria-hidden="true"/><span className="flex-1">{label}</span><ChevronRight className="size-4" aria-hidden="true"/></Button>)}
-        <Button data-testid="migarden-placeholder" type="button" variant="ghost" disabled className="h-auto min-h-11 justify-start gap-3 text-left disabled:opacity-100"><Leaf className="size-5 text-muted-foreground" aria-hidden="true"/><span className="flex-1 text-muted-foreground">miGarden</span><Badge variant="secondary">Sắp có</Badge></Button>
+        {migardenAvailable && onGarden
+          ? <Button data-testid="migarden-open" type="button" variant={current===null?'selected':'ghost'} onClick={()=>choose(onGarden)} className="min-h-11 justify-start gap-3">
+            <Leaf aria-hidden="true" className="size-5"/><span className="flex-1 text-left">miGarden</span><ChevronRight className="size-4" aria-hidden="true"/>
+          </Button>
+          : <Button data-testid="migarden-placeholder" type="button" variant="ghost" disabled className="h-auto min-h-11 justify-start gap-3 text-left disabled:opacity-100"><Leaf className="size-5 text-muted-foreground" aria-hidden="true"/><span className="flex-1 text-muted-foreground">miGarden</span><Badge variant="secondary">Sắp có</Badge></Button>}
       </div>
       <div className="grid gap-1 border-t pt-3">
         {mimiAvailable?<Button data-testid="mimi-dock-open" aria-controls="mimi-side-chat" variant="ghost" className="min-h-11 justify-start gap-3" onClick={()=>choose(onChat)}><MessagesSquare aria-hidden="true"/>Chat với Mimi</Button>:null}

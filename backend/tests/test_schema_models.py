@@ -11,6 +11,7 @@ from sqlalchemy import CheckConstraint, Text
 from sqlmodel import SQLModel
 
 import app.agent.models  # noqa: F401 - Mimi keeps its bounded ledger in this module
+import app.domain.migarden.models  # noqa: F401 - register the Zone A adapter
 import app.domain.models  # noqa: F401 - importing registers every table
 from app.domain.models import Gate
 
@@ -35,6 +36,12 @@ EXPECTED_TABLES = {
     "one_shot_reminder",
     "tracker_reminder_batch",
     "tracker_reminder_batch_item",
+    "migarden_boot",
+    "migarden_command",
+    "migarden_config",
+    "migarden_report",
+    "migarden_session",
+    "migarden_zone",
     "mimi_conversation",
     "mimi_message",
     "mimi_run",

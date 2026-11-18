@@ -29,6 +29,7 @@ import { TasksScreen } from '@/TasksScreen'
 import { TrackerScreen } from '@/TrackerScreen'
 import { cn } from '@/lib/utils'
 import { LiveStatus } from '@/LiveStatus'
+import { MiGardenScreen } from '@/features/migarden/MiGardenScreen'
 import HomePage from '@/HomePage'
 import { ReminderCenter } from '@/ReminderCenter'
 import { MimiControlCenter } from '@/MimiControlCenter'
@@ -42,6 +43,7 @@ type SessionResponse = PrivateSessionState & {
   signed_in_at: string | null
   expires_at: string
   mimi_available: boolean
+  migarden_available?: boolean
 }
 
 async function fetchSession(): Promise<SessionResponse> {
@@ -77,6 +79,7 @@ function SignedIn({ session, onLogoutFailure }: { session: SessionResponse; onLo
   const [mimiDockWidth, setMimiDockWidth] = useState(400)
   const [mimiConfigurationOpen, setMimiConfigurationOpen] = useState(false)
 
+  const isGardenRoute = location.split('?')[0] === '/migarden'
   const isMimiRoute = location.split('?')[0] === '/mimi'
   const attentionLocator = isMimiRoute ? queryParams(location).get('attention') : null
   const attentionLink = useQuery({ queryKey: ['mimi', 'attention-link', attentionLocator], queryFn: () => resolveMimiAttention(attentionLocator!), enabled: !!attentionLocator, retry: false, ...NO_POLLING_QUERY_OPTIONS })
@@ -139,17 +142,19 @@ function SignedIn({ session, onLogoutFailure }: { session: SessionResponse; onLo
             <h1><Button asChild data-testid="app-logo-button" variant="ghost" size="lg" className="min-h-11 px-0 text-lg font-extrabold tracking-tight text-primary hover:bg-transparent hover:text-primary lg:text-xl" aria-label="Về trang Task mặc định"><a href="/" onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();goToDefaultScreen()}}>microSched</a></Button></h1>
             <p className="hidden text-xs capitalize text-muted-foreground lg:block">{todayLabel()}</p>
           </div>
-          <DomainNavigation current={currentTab} mimiAvailable={session.mimi_available} onSelect={selectTab}/>
+          <DomainNavigation current={isGardenRoute ? null : currentTab} mimiAvailable={session.mimi_available} onSelect={selectTab}/>
           <div data-testid="app-header-actions" className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1">
             <ReminderCenter/>
             <OutboxPanel compact/>
             <PrivateGate session={session} compact manageOpen={pinManageOpen} onManageOpenChange={setPinManageOpen}/>
-            <ApplicationMenu current={currentTab} mimiAvailable={session.mimi_available} onSelect={selectTab} onChat={openMimi} onPin={()=>setPinManageOpen(true)} onHome={()=>leave(()=>window.location.assign('/home'))} onSubscription={()=>leave(()=>navigate('/subscription'))} onLogout={()=>leave(()=>logout.mutate())} loggingOut={logout.isPending}/>
+            <ApplicationMenu current={isGardenRoute ? null : currentTab} migardenAvailable={session.migarden_available === true} onGarden={()=>leave(()=>navigate('/migarden'))} mimiAvailable={session.mimi_available} onSelect={selectTab} onChat={openMimi} onPin={()=>setPinManageOpen(true)} onHome={()=>leave(()=>window.location.assign('/home'))} onSubscription={()=>leave(()=>navigate('/subscription'))} onLogout={()=>leave(()=>logout.mutate())} loggingOut={logout.isPending}/>
           </div>
         </header>
         <div className={cn('px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-4 sm:px-5 lg:pb-6',currentTab==='mimi'&&'pt-0')}>
-          {currentTab!=='calendar'&&currentTab!=='mimi'&&!location.startsWith('/subscription')&&!location.startsWith('/reminder-confirm')?<div className="mb-2"><LiveStatus key={currentTab} tab={currentTab}/></div>:null}
-          {location.startsWith('/subscription')?<SubscriptionScreen/>:location.startsWith('/reminder-confirm')?<ReminderConfirmScreen key={reminderDispatchKey}/>:<div id="app-domain-panel" role="tabpanel">
+          {!isGardenRoute&&currentTab!=='calendar'&&currentTab!=='mimi'&&!location.startsWith('/subscription')&&!location.startsWith('/reminder-confirm')?<div className="mb-2"><LiveStatus key={currentTab} tab={currentTab}/></div>:null}
+          {isGardenRoute
+            ? session.migarden_available ? <MiGardenScreen location={location}/> : <p role="status">miGarden chưa bật.</p>
+            : location.startsWith('/subscription')?<SubscriptionScreen/>:location.startsWith('/reminder-confirm')?<ReminderConfirmScreen key={reminderDispatchKey}/>:<div id="app-domain-panel" role="tabpanel">
             {currentTab==='tasks'?<TasksScreen/>:null}
             {currentTab==='notes'?<NotesScreen/>:null}
             {currentTab==='calendar'?<CalendarScreen/>:null}

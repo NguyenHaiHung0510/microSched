@@ -5,6 +5,7 @@ import os
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -80,6 +81,28 @@ class Settings(BaseSettings):
     private_pin_bootstrap: str | None = None
     # App-held AES-256 key for the encrypted columns; crypto.py validates and uses it.
     encryption_master_key: str | None = None
+
+    # Dark until migration + commissioning. A device credential has its own scope.
+    migarden_enabled: bool = False
+    migarden_public_origin: str | None = None
+
+    @field_validator("migarden_public_origin")
+    @classmethod
+    def validate_migarden_origin(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        origin = urlsplit(value)
+        if (
+            origin.scheme not in {"http", "https"}
+            or not origin.hostname
+            or origin.username
+            or origin.password
+            or origin.path not in {"", "/"}
+            or origin.query
+            or origin.fragment
+        ):
+            raise ValueError("MIGARDEN_PUBLIC_ORIGIN must be an HTTP(S) origin")
+        return value.rstrip("/")
 
     enable_inprocess_cron: bool = False
     vapid_private_key: str | None = None
@@ -277,6 +300,14 @@ class Settings(BaseSettings):
                         "when enable_inprocess_cron is True in production"
                     )
                 )
+        if (
+            self.is_production
+            and self.migarden_enabled
+            and not (
+                self.migarden_public_origin and self.migarden_public_origin.startswith("https://")
+            )
+        ):
+            raise ValueError("MIGARDEN_ENABLED in production requires an HTTPS origin")
         if self.is_production and self.mimi_real_chat_enabled and not self.mimi_public_origin:
             raise ValueError(
                 "MIMI_PUBLIC_ORIGIN is required when Mimi real chat is enabled in production"

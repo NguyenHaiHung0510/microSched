@@ -26,6 +26,7 @@ RUN cd backend && uv sync --frozen --no-dev --no-install-project
 
 COPY backend/ ./backend/
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist/
+RUN cd backend && python -m scripts.check_migarden_release --app-root /app
 
 RUN groupadd --system microsched \
     && useradd --system --gid microsched --home-dir /app --no-create-home microsched \

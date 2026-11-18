@@ -21,6 +21,8 @@ from app.web.routers.auth import router as auth_router
 from app.web.routers.calendar import router as calendar_router
 from app.web.routers.health import router as health_router
 from app.web.routers.me import router as me_router
+from app.web.routers.migarden_device import router as migarden_device_router
+from app.web.routers.migarden_human import router as migarden_human_router
 from app.web.routers.mimi import router as mimi_router
 from app.web.routers.mimi_voice import router as mimi_voice_router
 from app.web.routers.mimi_voice import socket_router as mimi_voice_socket_router
@@ -266,6 +268,7 @@ def create_app() -> FastAPI:
     # what makes it reachable, so a new slice cannot ship without the guard.
     protected_api = APIRouter(prefix="/api", dependencies=[Depends(require_session)])
     protected_api.include_router(me_router)
+    protected_api.include_router(migarden_human_router)
     protected_api.include_router(private_router)
     protected_api.include_router(tasks_router)
     protected_api.include_router(notes_router)
@@ -286,6 +289,7 @@ def create_app() -> FastAPI:
         """Keep unknown API paths out of the SPA fallback."""
         raise HTTPException(status_code=404, detail="Not Found")
 
+    app.include_router(migarden_device_router)
     app.include_router(protected_api)
     app.include_router(mimi_voice_socket_router)
 

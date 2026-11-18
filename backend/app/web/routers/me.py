@@ -25,6 +25,7 @@ class SessionInfo(BaseModel):
     pin_is_set: bool
     pin_is_bootstrap: bool
     mimi_available: bool
+    migarden_available: bool
 
 
 @router.get("/me")
@@ -43,6 +44,7 @@ async def read_me(
         private_locked_until=private.locked_until,
         pin_is_set=private.pin_is_set,
         pin_is_bootstrap=private.pin_is_bootstrap,
+        migarden_available=settings.migarden_enabled,
         mimi_available=(
             not settings.is_production
             or (settings.mimi_real_chat_enabled and settings.mimi_live_provider_enabled)
