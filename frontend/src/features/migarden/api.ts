@@ -1,5 +1,7 @@
 import { apiRequest } from '@/api'
+import { useEffect, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { gardenPresenceHeaders, listenGardenActivity } from './presence'
 
 export type Source = 'schedule' | 'remote' | 'local_button'
 export type Recurrence =
@@ -128,24 +130,35 @@ export const garden = {
   preview: (duration_seconds: number) => mutate<Preview>('/start/preview', { duration_seconds }),
   confirm: (preview_id: string) => mutate<Command>('/start/confirm', { preview_id }),
   stop: () => mutate<Command>('/stop', {}),
-  state: (signal?: AbortSignal) => read<GardenState>('/state', signal),
+  state: (signal?: AbortSignal) => apiRequest<GardenState>(root + '/state', {
+    signal, cache: 'no-store',
+    headers: gardenPresenceHeaders(),
+  }),
   daily: (days: 7 | 30, signal?: AbortSignal) => read<DailyView>('/daily?days=' + days, signal),
   history: (params: URLSearchParams, signal?: AbortSignal) =>
     read<HistoryView>('/history?' + params.toString(), signal),
 }
 export const gardenOptions = { retry: false, staleTime: 0, gcTime: 0, refetchIntervalInBackground: false }
-export function useGardenState() {
+function subscribeVisibility(listener: () => void) {
+  window.addEventListener('visibilitychange', listener, true)
+  return () => window.removeEventListener('visibilitychange', listener, true)
+}
+export function gardenStateInterval(data: GardenState | undefined, status: string, visible: boolean) {
+  if (!visible) return false
+  if (status === 'error' || data?.connection === 'unconfigured') return 30_000
+  return 1_000
+}
+export function useGardenState(controlPage = true) {
+  useEffect(listenGardenActivity, [])
+  const visible = useSyncExternalStore(subscribeVisibility,
+    () => document.visibilityState === 'visible', () => false)
   return useQuery({
     queryKey: ['migarden', 'state'],
     queryFn: ({ signal }) => garden.state(signal),
     ...gardenOptions,
-    refetchInterval: query => {
-      const data = query.state.data
-      if (query.state.status === 'error') return 30_000
-      if (data?.connection === 'unconfigured') return 30_000
-      const waiting = ['pending', 'received', 'granted'].includes(data?.start_request?.status ?? '') ||
-        ['stop_requested', 'stop_received', 'stop_unconfirmed'].includes(data?.stop_request?.status ?? '')
-      return data?.snapshot?.active_session || waiting ? 5_000 : 15_000
-    },
+    enabled: visible,
+    refetchInterval: query => controlPage
+      ? gardenStateInterval(query.state.data, query.state.status, visible)
+      : visible ? 30_000 : false,
   })
 }

@@ -199,7 +199,7 @@ export function MiGardenScreen({ location }: { location: string }) {
   const history = !configuration && route.get('history') === '1'
   const [now, setNow] = useState(() => Date.now())
   const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline())
-  const state = useGardenState()
+  const state = useGardenState(!history)
   const cache = useQueryClient()
   const data = state.data
   useEffect(() => {

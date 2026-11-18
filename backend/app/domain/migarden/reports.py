@@ -17,6 +17,7 @@ from app.domain.migarden.commands import (
 )
 from app.domain.migarden.models import CommandRecord, ReportRecord, SessionRecord, ZoneState
 from app.domain.migarden.reconciliation import FailureKey, failure_key, wire_identity
+from app.domain.migarden.recovery import RECOVERED, is_recovery, session_settled, validate_recovery
 from app.domain.migarden.storage import Rejected
 from app.domain.migarden.wire import (
     CLOCK_LEAD,
@@ -85,7 +86,7 @@ async def ingest_reports(
             continue
         try:
             async with db.begin_nested():
-                await ingest_report(db, report, now)
+                await ingest_report(db, report, now, packet)
                 await db.flush()
         except Rejected, IntegrityError:
             failed.append(key)
@@ -97,7 +98,9 @@ async def ingest_reports(
     return [event_id for event_id in by_id if event_id in acked], accepted, failed
 
 
-async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None:
+async def ingest_report(
+    db: AsyncSession, report: Report, now: datetime, packet: ExchangeEnvelope
+) -> None:
     data = report.model_dump(mode="json")
     existing = await db.scalar(select(ReportRecord).where(ReportRecord.event_id == report.event_id))
     if existing is not None:
@@ -118,6 +121,9 @@ async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None
     trusted = (
         observed is not None and report.time_quality != "unknown" and observed <= now + CLOCK_LEAD
     )
+    recovered_command = (
+        await validate_recovery(db, report, packet, now) if is_recovery(report) else None
+    )
     row = ReportRecord(
         event_id=report.event_id,
         boot_id=report.boot_id,
@@ -125,7 +131,7 @@ async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None
         kind=report.kind,
         config_ref=report.config_ref,
         source=report.trigger_source,
-        result=report_result(report),
+        result="recovered" if is_recovery(report) else report_result(report),
         occurred_at=observed,
         sort_at=observed if trusted else now,
         received_at=now,
@@ -133,6 +139,10 @@ async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None
     )
     db.add(row)
     await db.flush()
+    if is_recovery(report):
+        if recovered_command is not None:
+            recovered_command.status, recovered_command.reason = "recovered", RECOVERED
+        return
     command = await command_record(db, report.request_id)
     await project(db, report, row, command)
 
@@ -221,6 +231,8 @@ async def observe_active(
             zone.unidentified_execution = True
         return
     if await find_session(db, active.session_id) is not None:
+        if await session_settled(db, active.session_id):
+            zone.unidentified_execution = True
         return
     command = await command_record(db, active.request_id)
     if active.trigger_source == "remote" and (
@@ -318,6 +330,22 @@ async def project_session(
 
     payload = report.payload
     start = payload.started_at
+    if await session_settled(db, session.session_id):
+        if isinstance(report, StartedReport) and (
+            report.boot_id != session.boot_id
+            or start != session.started_at
+            or payload.duration_seconds != session.planned_duration_seconds
+        ):
+            raise Rejected("settled_interruption_conflict")
+        if isinstance(report, EndedReport) and (
+            payload.outcome != session.outcome
+            or payload.reason != session.reason
+            or payload.output_duration_seconds != session.output_duration_seconds
+            or payload.ended_at != session.ended_at
+            or start != session.started_at
+        ):
+            raise Rejected("settled_interruption_conflict")
+        return  # Late original evidence must not reopen or rewrite the settled uncertainty.
     if not recovery and session.boot_id != report.boot_id:
         if session.outcome == "unknown" and session.started_event_id is None:
             session.boot_id = report.boot_id

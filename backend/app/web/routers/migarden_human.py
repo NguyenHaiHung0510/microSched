@@ -29,6 +29,7 @@ from app.web.migarden_http import (
     require_enabled,
     verdict,
 )
+from app.web.migarden_presence import mark_present
 
 router = APIRouter(
     prefix="/migarden",
@@ -39,8 +40,11 @@ Owner = Annotated[AuthSession, Depends(require_session)]
 
 
 @router.get("/state")
-async def state(db: Database) -> StateView:
-    return await query_state(db, now_utc())
+async def state(request: Request, db: Database) -> StateView:
+    result = await query_state(db, now_utc())
+    if request.headers.get("x-migarden-visible") == "1":
+        mark_present(request)
+    return result
 
 
 @router.get("/config")
@@ -51,25 +55,33 @@ async def config(db: Database) -> ConfigView:
 @router.put("/config")
 async def put_config(request: Request, db: Database) -> ConfigView:
     form = await json_body(request, SaveConfig, 4096)
-    return await verdict(lambda: save_config(db, form, now_utc()))
+    result = await verdict(lambda: save_config(db, form, now_utc()))
+    mark_present(request)
+    return result
 
 
 @router.post("/start/preview")
 async def preview(request: Request, db: Database, owner: Owner) -> Preview:
     form = await json_body(request, PreviewInput, 1024)
-    return await verdict(lambda: prepare(db, str(owner.id), form, now_utc))
+    result = await verdict(lambda: prepare(db, str(owner.id), form, now_utc))
+    mark_present(request)
+    return result
 
 
 @router.post("/start/confirm")
 async def confirm_start(request: Request, db: Database, owner: Owner) -> CommandView:
     form = await json_body(request, ConfirmInput, 1024)
-    return await verdict(lambda: confirm(db, str(owner.id), form, now_utc))
+    result = await verdict(lambda: confirm(db, str(owner.id), form, now_utc))
+    mark_present(request)
+    return result
 
 
 @router.post("/stop")
 async def stop(request: Request, db: Database, owner: Owner) -> CommandView:
     await json_body(request, Empty, 1024)
-    return await verdict(lambda: request_stop(db, str(owner.id), now_utc))
+    result = await verdict(lambda: request_stop(db, str(owner.id), now_utc))
+    mark_present(request)
+    return result
 
 
 @router.get("/history")

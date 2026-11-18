@@ -29,10 +29,13 @@ function HistoryList({ items, compact }: { items: HistoryItem[]; compact: boolea
             {item.duration_seconds !== null && ' · ' + duration(item.duration_seconds)}
             {item.kind === 'session_ended' && item.duration_seconds === null && ' · Không đủ dữ liệu thời lượng'}
           </p>
+          {item.kind === 'recovered' && <p className="text-sm text-muted-foreground">
+            {explainReason(item.reason)}
+          </p>}
           {!compact && <div className="mt-1 space-y-0.5 text-sm">
             {item.scheduled_at && <p>Kỳ dự kiến: {instantLabel(item.scheduled_at)}</p>}
             {item.received_at && <p>Web nhận: {instantLabel(item.received_at)}</p>}
-            {item.planned_duration_seconds !== null && <p>Thời lượng đã chốt: {duration(item.planned_duration_seconds)}</p>}
+            {item.planned_duration_seconds !== null && <p>Thời lượng dự kiến: {duration(item.planned_duration_seconds)}</p>}
             {item.config_ref && (item.config_known
               ? <p className="break-all text-muted-foreground">Bản cấu hình: {item.config_ref}</p>
               : <p>Thiếu bản cấu hình gốc.</p>)}

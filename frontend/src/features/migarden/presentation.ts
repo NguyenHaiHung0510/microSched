@@ -78,6 +78,8 @@ const reasonLabels: Record<string, string> = {
   new_boot_reported_off: 'Controller đã khởi động lại và báo đầu ra tắt; chưa xác nhận lệnh Dừng cũ.',
   close_requested: 'Controller đã yêu cầu tắt đầu ra.',
   already_off: 'Controller báo đầu ra đã tắt.',
+  REBOOT_INTERRUPTED: 'Lượt tưới bị ngắt khi Controller khởi động lại; chưa rõ thời lượng thực tế.',
+  REBOOT_INTERRUPTED_RECOVERED: 'Đã đối soát lượt bị ngắt sau khởi động lại. Lượt cũ không chạy lại; thời lượng thực tế vẫn chưa rõ.',
 }
 export function explainReason(code: string | null | undefined): string | null {
   return code ? (reasonLabels[code] ?? code) : null
@@ -112,6 +114,7 @@ export const statusLabels: Record<string, string> = {
   close_requested: 'Đã yêu cầu tắt đầu ra',
   already_off: 'Đầu ra đã tắt theo báo cáo',
   unconfirmed: 'Chưa xác nhận Dừng',
+  recovered: 'Đã đối soát sau khởi động lại',
 }
 export function reconcileRecent(items: HistoryItem[], current: (Command | null)[]): HistoryItem[] {
   return items.map(item => {
@@ -121,6 +124,7 @@ export function reconcileRecent(items: HistoryItem[], current: (Command | null)[
   })
 }
 export function historyLabel(item: HistoryItem): string {
+  if (item.kind === 'recovered') return 'Phục hồi sau khởi động lại'
   if (item.kind === 'remote_stop' || item.kind === 'stop_processed') return 'Dừng tưới'
   if (item.kind === 'session_started' || item.kind === 'remote_start') return 'Bắt đầu tưới'
   if (item.kind === 'session_ended') return 'Kết quả lượt tưới'

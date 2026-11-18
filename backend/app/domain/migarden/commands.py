@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.migarden.models import CommandRecord, SessionRecord, ZoneState
+from app.domain.migarden.recovery import settlement_exists
 from app.domain.migarden.storage import Rejected, get_config, lock_zone
 from app.domain.migarden.wire import (
     CLOCK_LEAD,
@@ -153,7 +154,10 @@ async def start_block_reason(
     unresolved_command = await open_command(db, "start", UNCERTAIN)
     unresolved_session = await db.scalar(
         select(SessionRecord.session_id)
-        .where((SessionRecord.outcome.is_(None)) | (SessionRecord.outcome == "unknown"))
+        .where(
+            (SessionRecord.outcome.is_(None)) | (SessionRecord.outcome == "unknown"),
+            ~settlement_exists(),
+        )
         .limit(1)
     )
     if zone.unidentified_execution or unresolved_command or unresolved_session:
