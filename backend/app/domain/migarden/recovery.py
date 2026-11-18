@@ -8,9 +8,15 @@ from datetime import datetime
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.migarden.models import BootRecord, CommandRecord, ReportRecord, SessionRecord
-from app.domain.migarden.storage import Rejected, read_zone
-from app.domain.migarden.wire import CLOCK_LEAD, HOLDOFF, ExchangeEnvelope, FaultReport, Report
+from app.domain.migarden.models import CommandRecord, ReportRecord, SessionRecord
+from app.domain.migarden.storage import Rejected
+from app.domain.migarden.wire import (
+    CLOCK_LEAD,
+    EndedReport,
+    FaultReport,
+    Report,
+    StartedReport,
+)
 
 INTERRUPTED = "REBOOT_INTERRUPTED"
 RECOVERED = "REBOOT_INTERRUPTED_RECOVERED"
@@ -56,36 +62,53 @@ async def session_settled(db: AsyncSession, session_id: str) -> bool:
     )
 
 
+def has_interruption_terminal(session: SessionRecord) -> bool:
+    return (
+        session.ended_event_id is not None
+        and session.outcome == "unknown"
+        and session.reason == INTERRUPTED
+    )
+
+
+async def validate_late_interruption_evidence(
+    db: AsyncSession, session: SessionRecord, report: StartedReport | EndedReport
+) -> None:
+    terminal = await db.scalar(
+        select(ReportRecord).where(ReportRecord.event_id == session.ended_event_id)
+    )
+    if terminal is None or report.request_id != session.request_id:
+        raise Rejected("interruption_evidence_conflict")
+    if isinstance(report, EndedReport):
+        if report.payload.model_dump(mode="json") != terminal.body["payload"]:
+            raise Rejected("interruption_evidence_conflict")
+        return
+
+    # An ended-only local row initially knows the terminal's boot, not the
+    # original START boot. A valid delayed START can remain raw evidence; it
+    # must never reopen the session or replace any terminal/projection fields.
+    expected_duration = session.planned_duration_seconds
+    if (
+        (expected_duration is not None and report.boot_id != session.boot_id)
+        or (expected_duration is not None and report.payload.duration_seconds != expected_duration)
+        or (session.started_at is not None and report.payload.started_at != session.started_at)
+        or report.sequence >= terminal.sequence
+        or (
+            report.time_quality != "unknown"
+            and terminal.body.get("time_quality") != "unknown"
+            and report.occurred_at is not None
+            and terminal.occurred_at is not None
+            and report.occurred_at > terminal.occurred_at
+        )
+    ):
+        raise Rejected("interruption_evidence_conflict")
+
+
 async def validate_recovery(
-    db: AsyncSession, report: Report, packet: ExchangeEnvelope, now: datetime
+    db: AsyncSession, report: Report, now: datetime
 ) -> CommandRecord | None:
-    zone = await read_zone(db)
-    snapshot = packet.snapshot
-    observed = snapshot.observed_at
-    if (
-        zone is None
-        or report.boot_id != packet.boot_id
-        or snapshot.time_quality == "unknown"
-        or observed is None
-        or not now - HOLDOFF <= observed <= now + CLOCK_LEAD
-        or snapshot.output != "off"
-        or snapshot.active_session is not None
-        or (zone.boot_id == packet.boot_id and packet.control_epoch < (zone.control_epoch or 0))
-        or (zone.last_observed_at is not None and observed < zone.last_observed_at)
-    ):
-        raise Rejected("recovery_context_unconfirmed")
-    if packet.boot_id != zone.boot_id and (
-        await db.scalar(select(BootRecord.boot_id).where(BootRecord.boot_id == packet.boot_id))
-        or (zone.last_observed_at is not None and observed <= zone.last_observed_at)
-    ):
-        raise Rejected("recovery_boot_stale")
-    if (
-        packet.boot_id == zone.boot_id
-        and observed == zone.last_observed_at
-        and packet.control_epoch == zone.control_epoch
-        and snapshot.model_dump(mode="json") != zone.snapshot
-    ):
-        raise Rejected("recovery_snapshot_unordered")
+    # An authenticated durable event keeps the producing boot even when uploaded
+    # after another reboot or a later local START. It is historical settlement,
+    # never authority for OPEN or for the envelope's live observation.
     session = await db.scalar(
         select(SessionRecord).where(SessionRecord.session_id == report.session_id)
     )
@@ -115,11 +138,20 @@ async def validate_recovery(
         or payload.get("outcome") != "unknown"
         or payload.get("reason") != INTERRUPTED
         or payload.get("output_duration_seconds") is not None
-        or (report.boot_id == terminal.boot_id and report.sequence <= terminal.sequence)
+        # The firmware journal sequence is durable across boots. A boot name
+        # is not a clock, and rewriting the marker for its upload boot loses proof.
+        or report.sequence <= terminal.sequence
         or (
-            report.occurred_at is not None
+            report.time_quality != "unknown"
+            and body["time_quality"] != "unknown"
+            and report.occurred_at is not None
             and terminal.occurred_at is not None
             and report.occurred_at < terminal.occurred_at
+        )
+        or (
+            report.time_quality != "unknown"
+            and report.occurred_at is not None
+            and report.occurred_at > now + CLOCK_LEAD
         )
     ):
         raise Rejected("recovery_terminal_mismatch")

@@ -17,7 +17,14 @@ from app.domain.migarden.commands import (
 )
 from app.domain.migarden.models import CommandRecord, ReportRecord, SessionRecord, ZoneState
 from app.domain.migarden.reconciliation import FailureKey, failure_key, wire_identity
-from app.domain.migarden.recovery import RECOVERED, is_recovery, session_settled, validate_recovery
+from app.domain.migarden.recovery import (
+    RECOVERED,
+    has_interruption_terminal,
+    is_recovery,
+    session_settled,
+    validate_late_interruption_evidence,
+    validate_recovery,
+)
 from app.domain.migarden.storage import Rejected
 from app.domain.migarden.wire import (
     CLOCK_LEAD,
@@ -86,7 +93,7 @@ async def ingest_reports(
             continue
         try:
             async with db.begin_nested():
-                await ingest_report(db, report, now, packet)
+                await ingest_report(db, report, now)
                 await db.flush()
         except Rejected, IntegrityError:
             failed.append(key)
@@ -98,9 +105,7 @@ async def ingest_reports(
     return [event_id for event_id in by_id if event_id in acked], accepted, failed
 
 
-async def ingest_report(
-    db: AsyncSession, report: Report, now: datetime, packet: ExchangeEnvelope
-) -> None:
+async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None:
     data = report.model_dump(mode="json")
     existing = await db.scalar(select(ReportRecord).where(ReportRecord.event_id == report.event_id))
     if existing is not None:
@@ -121,9 +126,7 @@ async def ingest_report(
     trusted = (
         observed is not None and report.time_quality != "unknown" and observed <= now + CLOCK_LEAD
     )
-    recovered_command = (
-        await validate_recovery(db, report, packet, now) if is_recovery(report) else None
-    )
+    recovered_command = await validate_recovery(db, report, now) if is_recovery(report) else None
     row = ReportRecord(
         event_id=report.event_id,
         boot_id=report.boot_id,
@@ -317,6 +320,10 @@ async def project_session(
     ):
         raise Rejected("session_context_conflict")
 
+    if has_interruption_terminal(session):
+        await validate_late_interruption_evidence(db, session, report)
+        return
+
     if session.request_id is None and report.request_id is not None:
         other = await db.scalar(
             select(SessionRecord.session_id).where(
@@ -330,22 +337,6 @@ async def project_session(
 
     payload = report.payload
     start = payload.started_at
-    if await session_settled(db, session.session_id):
-        if isinstance(report, StartedReport) and (
-            report.boot_id != session.boot_id
-            or start != session.started_at
-            or payload.duration_seconds != session.planned_duration_seconds
-        ):
-            raise Rejected("settled_interruption_conflict")
-        if isinstance(report, EndedReport) and (
-            payload.outcome != session.outcome
-            or payload.reason != session.reason
-            or payload.output_duration_seconds != session.output_duration_seconds
-            or payload.ended_at != session.ended_at
-            or start != session.started_at
-        ):
-            raise Rejected("settled_interruption_conflict")
-        return  # Late original evidence must not reopen or rewrite the settled uncertainty.
     if not recovery and session.boot_id != report.boot_id:
         if session.outcome == "unknown" and session.started_event_id is None:
             session.boot_id = report.boot_id

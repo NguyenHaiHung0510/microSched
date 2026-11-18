@@ -114,9 +114,10 @@ def test_pg_recovery_specific_interruption_allows_only_new_intent(run_cell, sour
         "request_id",
         "config_ref",
         "trigger_source",
-        "boot_id",
+        "crossboot_sequence",
         "sequence",
         "occurred_at",
+        "future",
         "terminal",
     ],
 )
@@ -130,11 +131,15 @@ def test_pg_recovery_mismatch_is_not_acknowledged_or_settled(run_cell, mismatch)
             "request_id": "different-request",
             "config_ref": "different-config",
             "trigger_source": "remote",
-            "boot_id": "boot-1",
             "sequence": terminal["sequence"] - 1,
             "occurred_at": "2026-11-17T00:00:00Z",
+            "future": "2027-01-01T00:00:00Z",
         }
-        if mismatch != "terminal":
+        if mismatch == "crossboot_sequence":
+            recovered.update(boot_id="claimed-prior-boot", sequence=terminal["sequence"] - 1)
+        elif mismatch == "future":
+            recovered["occurred_at"] = changes[mismatch]
+        elif mismatch != "terminal":
             recovered[mismatch] = changes[mismatch]
         result = (await cell.device_post(ref=ref, boot="boot-recovery", reports=[recovered])).json()
         assert result["acked_event_ids"] == result["grants"] == result["candidates"] == []
@@ -347,9 +352,9 @@ def test_pg_recovery_outer_commit_failure_retains_both_fences(run_cell, monkeypa
     run_cell(case, raise_app_exceptions=False)
 
 
-@pytest.mark.parametrize("boundary", ["active", "stale", "epoch", "unknown_clock"])
-def test_pg_recovery_requires_current_fresh_off_context(run_cell, boundary):
-    async def case(cell, _, __):
+@pytest.mark.parametrize("boundary", ["active", "stale", "epoch", "unknown_clock", "storage"])
+def test_pg_historical_recovery_does_not_certify_current_control_state(run_cell, boundary):
+    async def case(cell, admin, _):
         ref, _, recovered = await interrupted(cell)
         changes = {}
         epoch = 0
@@ -359,13 +364,29 @@ def test_pg_recovery_requires_current_fresh_off_context(run_cell, boundary):
             changes["observed_at"] = "2026-11-17T00:00:00Z"
         elif boundary == "epoch":
             await cell.device_post(ref=ref, boot="boot-recovery", epoch=2)
-        else:
+        elif boundary == "unknown_clock":
             changes.update(observed_at=None, time_quality="unknown")
+        else:
+            changes.update(ready=False, blocked_reason="STORAGE_FAULT")
+        saved_epoch = await admin.fetchval("SELECT control_epoch FROM microsched.migarden_zone")
         response = await cell.device_post(
             ref=ref, boot="boot-recovery", epoch=epoch, reports=[recovered], **changes
         )
-        assert response.json()["acked_event_ids"] == []
-        assert (await cell.state())["start_block_reason"] == "reports_need_reconciliation"
+        assert response.json()["acked_event_ids"] == [recovered["event_id"]]
+        assert response.json()["grants"] == response.json()["candidates"] == []
+        state = await cell.state()
+        if boundary == "epoch":
+            assert (
+                await admin.fetchval("SELECT control_epoch FROM microsched.migarden_zone")
+                == saved_epoch
+            )
+            assert not response.json()["grants"]
+        else:
+            assert state["start_block_reason"] in (
+                "busy",
+                "clock_or_observation_untrusted",
+                "controller_not_ready",
+            )
 
     run_cell(case)
 
@@ -378,5 +399,217 @@ def test_pg_recovery_never_clears_unidentified_execution(run_cell):
         assert result.json()["acked_event_ids"] == [recovered["event_id"]]
         assert (await cell.state())["start_block_reason"] == "unresolved_execution"
         assert await admin.fetchval("SELECT unidentified_execution FROM microsched.migarden_zone")
+
+    run_cell(case)
+
+
+def test_pg_recovery_accepts_delayed_original_start_as_raw_evidence(run_cell):
+    async def case(cell, admin, _):
+        ref = await cell.configured()
+        origin = cell.time.now.isoformat()
+        cell.tick()
+        identity = dict(
+            session_id="late-original", request_id="late-button", trigger_source="local_button"
+        )
+        old_start = cell.report(
+            "session_started", ref, {"started_at": origin, "duration_seconds": 45}, **identity
+        )
+        old_start["occurred_at"] = origin
+        terminal = cell.report(
+            "session_ended",
+            ref,
+            {
+                "started_at": origin,
+                "ended_at": None,
+                "output_duration_seconds": None,
+                "reason": "REBOOT_INTERRUPTED",
+                "outcome": "unknown",
+            },
+            boot="boot-new",
+            **identity,
+        )
+        result = await cell.device_post(ref=ref, boot="boot-new", reports=[terminal])
+        assert result.json()["acked_event_ids"] == [terminal["event_id"]]
+        cell.tick()
+        marker = cell.report(
+            "recovered",
+            ref,
+            {"reason": "REBOOT_INTERRUPTED_RECOVERED"},
+            boot="boot-new",
+            **identity,
+        )
+        result = await cell.device_post(ref=ref, boot="boot-new", reports=[marker])
+        assert result.json()["acked_event_ids"] == [marker["event_id"]]
+        assert (await cell.state())["start_block_reason"] is None
+        cell.tick()
+        result = await cell.device_post(ref=ref, boot="boot-new", reports=[old_start])
+        assert result.json()["acked_event_ids"] == [old_start["event_id"]]
+        assert await admin.fetchval(
+            "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", old_start["event_id"]
+        )
+        assert (
+            await admin.fetchval(
+                "SELECT ended_event_id FROM microsched.migarden_session WHERE session_id=$1",
+                terminal["session_id"],
+            )
+            == terminal["event_id"]
+        )
+        assert (await cell.state())["start_block_reason"] is None
+
+    run_cell(case)
+
+
+def test_pg_recovery_preserves_unknown_against_conflict_before_marker(run_cell):
+    async def case(cell, admin, _):
+        ref, terminal, _ = await interrupted(cell)
+        ended = cell.report(
+            "session_ended",
+            ref,
+            terminal["payload"]
+            | {
+                "outcome": "completed",
+                "reason": None,
+                "ended_at": cell.time.now.isoformat(),
+                "output_duration_seconds": 45,
+            },
+            session_id=terminal["session_id"],
+            request_id=terminal["request_id"],
+            trigger_source=terminal["trigger_source"],
+        )
+        result = await cell.device_post(ref=ref, boot="boot-recovery", reports=[ended])
+        row = await admin.fetchrow(
+            "SELECT outcome,output_duration_seconds FROM microsched.migarden_session "
+            "WHERE session_id=$1",
+            terminal["session_id"],
+        )
+        assert tuple(row) == ("unknown", None)
+        assert result.json()["acked_event_ids"] == []
+
+    run_cell(case)
+
+
+@pytest.mark.parametrize("source", ["local_button", "remote"])
+def test_pg_recovered_first_delivery_after_another_reboot(run_cell, source):
+    async def case(cell, admin, _):
+        ref, terminal, proof_b = await interrupted(cell, source)
+        assert not await admin.fetchval(
+            "SELECT 1 FROM microsched.migarden_report WHERE event_id=$1", proof_b["event_id"]
+        )
+        cell.tick(60)
+        await cell.device_post(ref=ref, boot="boot-C")
+        cell.tick()
+        result = (await cell.device_post(ref=ref, boot="boot-C", reports=[proof_b])).json()
+        assert result["acked_event_ids"] == [proof_b["event_id"]]
+        assert result["grants"] == result["candidates"] == []
+        state = await cell.state()
+        assert state["start_block_reason"] is None
+        assert await admin.fetchval("SELECT boot_id FROM microsched.migarden_zone") == "boot-C"
+        assert (
+            await admin.fetchval(
+                "SELECT output_duration_seconds FROM microsched.migarden_session "
+                "WHERE session_id=$1",
+                terminal["session_id"],
+            )
+            is None
+        )
+
+    run_cell(case)
+
+
+@pytest.mark.parametrize("source", ["local_button", "remote"])
+def test_pg_recovered_first_delivery_while_new_local_session_is_active(run_cell, source):
+    async def case(cell, admin, _):
+        ref, terminal, recovered = await interrupted(cell, source)
+        cell.tick()
+        start = cell.time.now.isoformat()
+        new_context = dict(
+            session_id="new-local-after-settlement",
+            request_id="new-local-request",
+            trigger_source="local_button",
+        )
+        started = cell.report(
+            "session_started",
+            ref,
+            {"started_at": start, "duration_seconds": 45},
+            boot="boot-recovery",
+            **new_context,
+        )
+        active = new_context | dict(
+            config_ref=ref, duration_seconds=45, elapsed_seconds=0, started_at=start
+        )
+        result = (
+            await cell.device_post(
+                ref=ref,
+                boot="boot-recovery",
+                reports=[recovered, started],
+                output="on",
+                active_session=active,
+            )
+        ).json()
+        assert result["acked_event_ids"] == [recovered["event_id"], started["event_id"]]
+        assert result["grants"] == result["candidates"] == []
+        assert (await cell.state())["start_block_reason"] == "busy"
+        cell.tick(3)
+        ended = cell.report(
+            "session_ended",
+            ref,
+            {
+                "started_at": start,
+                "ended_at": cell.time.now.isoformat(),
+                "output_duration_seconds": 3,
+                "outcome": "stopped",
+                "reason": "local_stop",
+            },
+            boot="boot-recovery",
+            **new_context,
+        )
+        result = (await cell.device_post(ref=ref, boot="boot-recovery", reports=[ended])).json()
+        assert result["acked_event_ids"] == [ended["event_id"]]
+        assert (await cell.state())["start_block_reason"] is None
+        assert (
+            await admin.fetchval(
+                "SELECT outcome FROM microsched.migarden_session WHERE session_id=$1",
+                terminal["session_id"],
+            )
+            == "unknown"
+        )
+
+    run_cell(case)
+
+
+def test_pg_historical_recovery_never_promotes_retired_envelope_or_clears_other_command(run_cell):
+    async def case(cell, admin, _):
+        ref, _, proof = await interrupted(cell, "remote")
+        await admin.execute(
+            "INSERT INTO microsched.migarden_command "
+            "(request_id,kind,status,session_owner_id,confirmed_at,config_ref,boot_id,"
+            "control_epoch,grant_id) "
+            "SELECT 'another-unknown',kind,'unknown',session_owner_id,confirmed_at,"
+            "config_ref,boot_id,"
+            "control_epoch,'another-grant' FROM microsched.migarden_command WHERE request_id=$1",
+            proof["request_id"],
+        )
+        cell.tick()
+        await cell.device_post(ref=ref, boot="boot-current-C", epoch=3)
+        before = await admin.fetchrow(
+            "SELECT boot_id,control_epoch,snapshot FROM microsched.migarden_zone"
+        )
+        cell.tick()
+        result = (
+            await cell.device_post(ref=ref, boot="boot-recovery", reports=[proof], output="on")
+        ).json()
+        assert result["acked_event_ids"] == [proof["event_id"]]
+        assert result["grants"] == result["candidates"] == []
+        after = await admin.fetchrow(
+            "SELECT boot_id,control_epoch,snapshot FROM microsched.migarden_zone"
+        )
+        assert dict(after) == dict(before)
+        assert (
+            await admin.fetchval(
+                "SELECT status FROM microsched.migarden_command WHERE request_id='another-unknown'"
+            )
+            == "unknown"
+        )
+        assert (await cell.state())["start_block_reason"] == "unresolved_execution"
 
     run_cell(case)
