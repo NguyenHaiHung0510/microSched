@@ -344,9 +344,16 @@ async def history(db: AsyncSession, criteria: HistoryFilter, now: datetime) -> H
 
     trusted = ReportRecord.body["time_quality"].as_string() != "unknown"
     query = select(ReportRecord).where(
-        ReportRecord.kind.in_(HISTORY_KINDS),
+        or_(
+            ReportRecord.kind.in_(HISTORY_KINDS),
+            and_(ReportRecord.kind == "recovered", ReportRecord.result == "recovered"),
+        ),
         # Known remote actions are already represented by their command row.
-        or_(ReportRecord.source != "remote", ReportRecord.source.is_(None)),
+        or_(
+            ReportRecord.source != "remote",
+            ReportRecord.source.is_(None),
+            ReportRecord.kind == "recovered",
+        ),
     )
     if criteria.source:
         query = query.where(ReportRecord.source == criteria.source)

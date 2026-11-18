@@ -10,6 +10,7 @@ from app.domain.migarden.exchange import exchange
 from app.domain.migarden.storage import lock_zone, read_zone
 from app.domain.migarden.wire import ExchangeEnvelope, ExchangeOut
 from app.web.migarden_http import Database, json_body, now_utc, require_enabled, verdict
+from app.web.migarden_presence import hint_idle
 
 BODY_LIMIT = 32 * 1024
 BURST = 24
@@ -56,4 +57,5 @@ async def device_exchange(request: Request, db: Database) -> ExchangeOut:
         raise unauthorized()
     # Database is function-scoped: dependency commit must complete before the
     # response can publish any ACK for a report savepoint.
-    return await exchange(db, zone, envelope, now_utc())
+    result = await exchange(db, zone, envelope, now_utc())
+    return await hint_idle(request, db, envelope, result, zone)

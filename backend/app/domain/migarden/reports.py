@@ -17,6 +17,14 @@ from app.domain.migarden.commands import (
 )
 from app.domain.migarden.models import CommandRecord, ReportRecord, SessionRecord, ZoneState
 from app.domain.migarden.reconciliation import FailureKey, failure_key, wire_identity
+from app.domain.migarden.recovery import (
+    RECOVERED,
+    has_interruption_terminal,
+    is_recovery,
+    session_settled,
+    validate_late_interruption_evidence,
+    validate_recovery,
+)
 from app.domain.migarden.storage import Rejected
 from app.domain.migarden.wire import (
     CLOCK_LEAD,
@@ -118,6 +126,7 @@ async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None
     trusted = (
         observed is not None and report.time_quality != "unknown" and observed <= now + CLOCK_LEAD
     )
+    recovered_command = await validate_recovery(db, report, now) if is_recovery(report) else None
     row = ReportRecord(
         event_id=report.event_id,
         boot_id=report.boot_id,
@@ -125,7 +134,7 @@ async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None
         kind=report.kind,
         config_ref=report.config_ref,
         source=report.trigger_source,
-        result=report_result(report),
+        result="recovered" if is_recovery(report) else report_result(report),
         occurred_at=observed,
         sort_at=observed if trusted else now,
         received_at=now,
@@ -133,6 +142,10 @@ async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None
     )
     db.add(row)
     await db.flush()
+    if is_recovery(report):
+        if recovered_command is not None:
+            recovered_command.status, recovered_command.reason = "recovered", RECOVERED
+        return
     command = await command_record(db, report.request_id)
     await project(db, report, row, command)
 
@@ -221,6 +234,8 @@ async def observe_active(
             zone.unidentified_execution = True
         return
     if await find_session(db, active.session_id) is not None:
+        if await session_settled(db, active.session_id):
+            zone.unidentified_execution = True
         return
     command = await command_record(db, active.request_id)
     if active.trigger_source == "remote" and (
@@ -304,6 +319,10 @@ async def project_session(
         or (session.request_id and report.request_id and session.request_id != report.request_id)
     ):
         raise Rejected("session_context_conflict")
+
+    if has_interruption_terminal(session):
+        await validate_late_interruption_evidence(db, session, report)
+        return
 
     if session.request_id is None and report.request_id is not None:
         other = await db.scalar(
