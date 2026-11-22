@@ -18,10 +18,11 @@ from app.domain.migarden.commands import (
     latest,
     start_block_reason,
 )
-from app.domain.migarden.configuration import ConfigView, read_config
+from app.domain.migarden.configuration import ConfigView, ScheduleProjection, read_config
+from app.domain.migarden.health import latest_health
 from app.domain.migarden.models import CommandRecord, ConfigRecord, ReportRecord, SessionRecord
 from app.domain.migarden.schedule import ONE_DAY, Forecast, day_start, forecast, local_day
-from app.domain.migarden.storage import Rejected, get_config, read_zone
+from app.domain.migarden.storage import Rejected, read_zone
 from app.domain.migarden.wire import (
     BINDING,
     HOLDOFF,
@@ -51,11 +52,12 @@ class StateView(WireModel):
     start_request: CommandView | None = None
     stop_request: CommandView | None = None
     next_schedule: Forecast
+    health: dict | None = None
 
 
 async def state(db: AsyncSession, now: datetime) -> StateView:
     zone = await read_zone(db)
-    config = await read_config(db, zone)
+    config = await read_config(db, zone, now)
     reason = await start_block_reason(db, zone, now)
     last_start = await latest(db, "start") if zone else None
     last_stop = await latest(db, "stop") if zone else None
@@ -84,6 +86,7 @@ async def state(db: AsyncSession, now: datetime) -> StateView:
         start_request=command_view(last_start, now) if last_start else None,
         stop_request=command_view(last_stop, now) if last_stop else None,
         next_schedule=forecast(config.applied, now),
+        health=await latest_health(db),
     )
 
 
@@ -98,6 +101,7 @@ class DailyPoint(WireModel):
 class DailyView(WireModel):
     days: list[DailyPoint]
     forecast: Forecast
+    schedule_projection: ScheduleProjection | None = None
 
 
 def allocate_reported(
@@ -162,7 +166,7 @@ async def daily(db: AsyncSession, days: int, now: datetime) -> DailyView:
                 bucket = buckets[day]
                 bucket[session.source] = bucket.get(session.source, 0) + seconds
     zone = await read_zone(db)
-    applied = await get_config(db, zone.applied_ref) if zone else None
+    config = await read_config(db, zone, now)
     return DailyView(
         days=[
             DailyPoint(
@@ -174,7 +178,8 @@ async def daily(db: AsyncSession, days: int, now: datetime) -> DailyView:
             )
             for day, source in buckets.items()
         ],
-        forecast=forecast(applied, now),
+        forecast=forecast(config.applied, now),
+        schedule_projection=config.schedule_projection,
     )
 
 
@@ -204,6 +209,7 @@ class HistoryView(WireModel):
 
 class HistoryFilter(WireModel):
     view: Literal["events", "sessions"] = "events"
+    category: Literal["all", "watering", "configuration"] = "watering"
     limit: int = Field(default=20, ge=1, le=50)
     cursor: str | None = Field(default=None, max_length=384)
     from_day: date | None = None

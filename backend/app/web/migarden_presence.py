@@ -8,12 +8,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.migarden.commands import start_block_reason
 from app.domain.migarden.models import ZoneState
 from app.domain.migarden.wire import ExchangeEnvelope, ExchangeOut
+from app.web.migarden_quiet import gate
 
 LEASE_SECONDS = 30
 
 
-def mark_present(request: Request) -> None:
+def mark_present(request: Request, seconds: float = 300) -> None:
     request.app.state.migarden_present_until = monotonic() + LEASE_SECONDS
+    gate(request).present(seconds)
+
+
+def read_presence_seconds(request: Request) -> int:
+    # Older clients only get the short foreground lease. A modern client sends
+    # the remaining window from its actual last input, never a new 300s per poll.
+    value = request.headers.get("x-migarden-active-for", "")
+    if value.isascii() and value.isdecimal() and len(value) <= 3:
+        return min(300, int(value))
+    return LEASE_SECONDS
 
 
 async def hint_idle(

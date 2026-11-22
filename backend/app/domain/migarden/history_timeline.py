@@ -23,9 +23,10 @@ from app.domain.migarden.queries import (
     validate_history_dates,
 )
 from app.domain.migarden.schedule import ONE_DAY, day_start
+from app.domain.migarden.versions import config_events
 from app.domain.migarden.wire import WireModel
 
-TIMELINE_GROUPS = ("c", "h", "r")
+TIMELINE_GROUPS = ("a", "c", "h", "r", "v")
 STOP_RECEIPTS = ("close_requested", "already_off")
 MEASURED_OUTCOMES = ("completed", "stopped", "fault")
 
@@ -317,9 +318,15 @@ async def history_totals(db: AsyncSession, criteria: HistoryFilter) -> HistoryTo
 async def timeline(db: AsyncSession, criteria: HistoryFilter, now: datetime) -> TimelineView:
     validate_history_dates(criteria)
     cursor = decode_cursor(criteria.cursor, TIMELINE_GROUPS) if criteria.cursor else None
-    merged = await session_rows(db, criteria, cursor)
-    merged += await command_rows(db, criteria, cursor, now)
-    merged += await separate_reports(db, criteria, cursor)
+    merged = []
+    if criteria.category != "configuration":
+        merged = await session_rows(db, criteria, cursor)
+        merged += await command_rows(db, criteria, cursor, now)
+        merged += await separate_reports(db, criteria, cursor)
+    merged += [
+        (key, TimelineItem.model_validate(item.model_dump()))
+        for key, item in await config_events(db, criteria, cursor)
+    ]
     merged.sort(key=lambda pair: pair[0], reverse=True)
     page = merged[: criteria.limit]
     refs = {item.config_ref for _, item in page if item.config_ref}

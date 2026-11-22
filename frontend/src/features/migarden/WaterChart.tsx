@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { garden, gardenOptions, type DailyPoint } from './api'
 import { dayLabel, duration } from './presentation'
+import { humanActive } from '@/human-activity'
 
 const series = [
   { key: 'schedule_seconds', label: 'Theo lịch', cls: 'garden-schedule' },
@@ -21,9 +22,11 @@ export function WaterChart() {
   const [table, setTable] = useState(false)
   const daily = useQuery({
     queryKey: ['migarden', 'daily', days], queryFn: ({ signal }) => garden.daily(days, signal),
-    ...gardenOptions, refetchInterval: query => query.state.status === 'error' ? 60_000 : 30_000,
+    ...gardenOptions, refetchInterval: query => !humanActive() ? false : query.state.status === 'error' ? 60_000 : 30_000,
   })
-  const forecast = daily.data?.forecast
+  const projection = daily.data?.schedule_projection
+  const forecast = projection ? projection.possible_previous_run ? projection.last_confirmed : projection.saved : daily.data?.forecast
+  const possible = projection?.possible_previous_run
   const hasForecast = forecast?.status === 'scheduled' && forecast.day !== null
   const points = daily.data?.days ?? []
   const maxMinutes = Math.max(15, Math.ceil(Math.max(0, ...points.map(total), forecast?.day_total_seconds ?? 0) / 300) * 5)
@@ -85,7 +88,7 @@ export function WaterChart() {
           {series.map(source => <span key={source.key} className="inline-flex items-center gap-1.5">
             <i className={cn('size-3 rounded-sm', source.cls)} aria-hidden="true" />{source.label}
           </span>)}
-          <span className="inline-flex items-center gap-1.5"><i className="garden-forecast size-3 rounded-sm" aria-hidden="true" />Dự kiến</span>
+          <span className="inline-flex items-center gap-1.5"><i className="garden-forecast size-3 rounded-sm" aria-hidden="true" />{possible ? 'Có thể chạy theo bản trước' : 'Dự kiến'}</span>
           <span className="inline-flex items-center gap-1.5"><i className="garden-missing size-3 rounded-sm" aria-hidden="true" />Thiếu dữ liệu</span>
         </div>
         {picked && <p role="status" className="rounded-lg bg-muted p-2 text-sm">
@@ -93,7 +96,7 @@ export function WaterChart() {
             series.map(source => source.label + ': ' + (picked[source.key] == null ? 'chưa rõ' : duration(picked[source.key]!))).join(' · ')}
         </p>}
         {selected === 'forecast' && hasForecast && <p role="status" className="rounded-lg bg-accent p-2 text-sm">
-          {dayLabel(forecast!.day!)} · {duration(forecast!.day_total_seconds!)} theo lịch đã áp dụng. Tới giờ, Controller vẫn kiểm giới hạn.
+          {dayLabel(forecast!.day!)} · {duration(forecast!.day_total_seconds!)} {possible ? 'có thể vẫn chạy theo bản ESP xác nhận trước; bản mới chưa được xác nhận.' : 'theo bản đã lưu. Tới giờ, Controller vẫn kiểm giới hạn.'}
         </p>}
         <p className="text-sm text-muted-foreground">Thời gian đầu ra từ các lượt đã kết thúc được báo về. Có thể còn thiếu báo cáo.</p>
         <Button type="button" className="min-h-11" variant="ghost" aria-expanded={table} onClick={() => setTable(!table)}>

@@ -116,7 +116,7 @@ async def create_or_update_role(
 
 async def protect_migarden_appendonly(connection: asyncpg.Connection) -> None:
     """Bootstrap may run again after 0021; never restore update/delete to receipts."""
-    for table in ("migarden_config", "migarden_report", "migarden_boot"):
+    for table in ("migarden_config", "migarden_report", "migarden_boot", "migarden_health"):
         if await connection.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{SCHEMA}.{table}"):
             await connection.execute(
                 f"REVOKE UPDATE, DELETE, TRUNCATE ON {SCHEMA}.{table} FROM {APP_ROLE}"

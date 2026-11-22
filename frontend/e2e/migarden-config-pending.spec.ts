@@ -129,7 +129,7 @@ for (const pattern of ['once', 'daily', 'weekly', 'interval'] as const) {
     await respond(200, 11)
     await expect(duration).toHaveValue('11')
     await expect(recurrence).toBeEnabled()
-    await expect(page.getByText('Đã lưu · Chờ ESP32 áp dụng', { exact: true })).toBeVisible()
+    await expect(page.getByText('Đã lưu tạm dừng · Chờ ESP xác nhận', { exact: true }).first()).toBeVisible()
     await expect(editor.getByRole('button', { name: 'Lưu cấu hình', exact: true })).toBeDisabled()
   })
 }

@@ -121,11 +121,17 @@ async def confirm_applied(
     db: AsyncSession, zone: ZoneState, snapshot: Snapshot, now: datetime
 ) -> None:
     ref = snapshot.applied_config_ref
+    candidate = await config_record(db, ref) if ref else None
+    previous = await config_record(db, zone.applied_ref) if zone.applied_ref else None
     if (
         ref is None
         or ref == zone.applied_ref
         or not trusted_observation(snapshot, now)
-        or await config_record(db, ref) is None
+        or candidate is None
+        or (
+            previous is not None
+            and (candidate.saved_at, candidate.id) < (previous.saved_at, previous.id)
+        )
     ):
         return
     # An unordered snapshot never establishes applied. Current ordered snapshot

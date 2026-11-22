@@ -1,6 +1,6 @@
 """Coherent desired/applied configuration with an immutable history of content."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -8,12 +8,20 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.migarden.models import ConfigRecord, ReportRecord, ZoneState
+from app.domain.migarden.schedule import Forecast, forecast
 from app.domain.migarden.storage import Rejected, config_record, get_config, lock_zone
 from app.domain.migarden.wire import BundleContent, ConfigurationBundle, Identity, WireModel
 
 
 class SaveConfig(BundleContent):
     expected_config_ref: Identity | None
+
+
+class ScheduleProjection(WireModel):
+    saved: Forecast
+    last_confirmed: Forecast
+    application_status: Literal["not_saved", "pending", "applied", "rejected"]
+    possible_previous_run: bool
 
 
 class ConfigView(WireModel):
@@ -23,9 +31,31 @@ class ConfigView(WireModel):
     applied_confirmed_at: datetime | None = None
     application_status: Literal["not_saved", "pending", "applied", "rejected"] = "not_saved"
     reason: str | None = None
+    schedule_projection: ScheduleProjection | None = None
 
 
-async def read_config(db: AsyncSession, zone: ZoneState | None) -> ConfigView:
+async def read_config(
+    db: AsyncSession, zone: ZoneState | None, now: datetime | None = None
+) -> ConfigView:
+    view = await _read_config(db, zone)
+    now = now or datetime.now(UTC)
+    saved, confirmed = forecast(view.desired, now), forecast(view.applied, now)
+    projection = ScheduleProjection(
+        saved=saved,
+        last_confirmed=confirmed,
+        application_status=view.application_status,
+        possible_previous_run=bool(
+            view.desired
+            and view.applied
+            and view.desired.schedule != view.applied.schedule
+            and view.application_status != "applied"
+            and confirmed.status == "scheduled"
+        ),
+    )
+    return view.model_copy(update={"schedule_projection": projection})
+
+
+async def _read_config(db: AsyncSession, zone: ZoneState | None) -> ConfigView:
     if zone is None:
         return ConfigView()
     applied = await get_config(db, zone.applied_ref)
@@ -71,4 +101,4 @@ async def save_config(db: AsyncSession, form: SaveConfig, now: datetime) -> Conf
         db.add(row)
         await db.flush()
         zone.desired_ref = ref
-    return await read_config(db, zone)
+    return await read_config(db, zone, now)

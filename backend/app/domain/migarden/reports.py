@@ -148,6 +148,8 @@ async def ingest_report(db: AsyncSession, report: Report, now: datetime) -> None
         return
     command = await command_record(db, report.request_id)
     await project(db, report, row, command)
+    if isinstance(report, EndedReport):
+        db.info["migarden_new_terminal"] = True
 
 
 def validate_stop_receipt(report: StopProcessedReport, command: CommandRecord | None) -> None:

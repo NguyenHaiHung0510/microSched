@@ -32,7 +32,7 @@ export function MimiDock({ open, onOpenChange, onCloseFocus, onOpenTasks, onOpen
   const menuTrigger = useRef<HTMLButtonElement>(null)
   const drag = useRef<{ x: number; width: number } | null>(null)
   const current = useQuery({ queryKey: ['mimi', 'current'], queryFn: fetchCurrentMimiConversation, enabled: open, ...NO_POLLING_QUERY_OPTIONS })
-  const conversations = useMimiConversationList('all')
+  const conversations = useMimiConversationList('all', open)
   const id = selectedId ?? current.data?.id ?? conversations.items[0]?.id ?? null
   useEffect(() => {
     if (!open) return

@@ -61,7 +61,12 @@ def test_bootstrap_migration_bootstrap_preserves_appendonly(pg_dsn):
                     await app.fetchval(
                         "SELECT has_table_privilege($1, $2)", "microsched." + table, privilege
                     )
-                    for table in ("migarden_config", "migarden_report", "migarden_boot")
+                    for table in (
+                        "migarden_config",
+                        "migarden_report",
+                        "migarden_boot",
+                        "migarden_health",
+                    )
                     for privilege in ("UPDATE", "DELETE", "TRUNCATE")
                 ]
             finally:
@@ -72,21 +77,22 @@ def test_bootstrap_migration_bootstrap_preserves_appendonly(pg_dsn):
             await migrate("0020")
             await bootstrap(values)
             await migrate("head")
-            assert await privileges() == [False] * 9
+            assert await privileges() == [False] * 12
             # Intentional local violation: reproduce the historical broad grant.
             admin = await asyncpg.connect(values["NEON_OWNER_URL"])
             try:
                 await admin.execute(
                     "GRANT UPDATE, DELETE ON microsched.migarden_config, "
-                    "microsched.migarden_report, microsched.migarden_boot TO microsched_app"
+                    "microsched.migarden_report, microsched.migarden_boot, "
+                    "microsched.migarden_health TO microsched_app"
                 )
             finally:
                 await admin.close()
             assert any(await privileges()), "intended violation must be detectable"
             await bootstrap(values)
-            assert await privileges() == [False] * 9
+            assert await privileges() == [False] * 12
             await bootstrap(values)
-            assert await privileges() == [False] * 9
+            assert await privileges() == [False] * 12
         finally:
             await conn.execute(
                 "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 "

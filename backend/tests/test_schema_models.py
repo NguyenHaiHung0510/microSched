@@ -39,6 +39,7 @@ EXPECTED_TABLES = {
     "migarden_boot",
     "migarden_command",
     "migarden_config",
+    "migarden_health",
     "migarden_report",
     "migarden_session",
     "migarden_zone",
