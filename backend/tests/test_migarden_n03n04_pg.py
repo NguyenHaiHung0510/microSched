@@ -218,7 +218,7 @@ def test_known_db_fault_retries_within_sixty_seconds_and_recovers_ack(run_cell, 
             with monkeypatch.context() as patch:
                 patch.setattr(AsyncSession, "commit", fail_commit)
                 assert (await post(cell, ref, reports=[report])).status_code == 500
-            assert quiet.retry_at - clock[0] == delay
+            assert quiet.retry_at == clock[0] + delay
             assert (await post(cell, ref, reports=[report])).status_code == 202
             clock[0] += delay
         response = await post(cell, ref, reports=[report])
