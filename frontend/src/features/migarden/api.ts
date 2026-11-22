@@ -35,7 +35,7 @@ export type ConfigView = {
   schedule_projection?: ScheduleProjection
 }
 export type ScheduleProjection = { saved: Forecast; last_confirmed: Forecast; application_status: ConfigView['application_status']; possible_previous_run: boolean }
-export type Health = { received_at: string; sample: { build_id: string; boot_id: string; sampled_at: string | null; time_quality: string; uptime_seconds: number; reset_reason: number | null; free_heap: number; minimum_heap: number; wifi_phase: string; sync_status: string; pending_reports: number; evidence_gaps: number } }
+export type Health = { sample_id: string; received_at: string; sample: { build_id: string; boot_id: string; sampled_at: string | null; time_quality: string; uptime_seconds: number; reset_reason: number | null; free_heap: number; minimum_heap: number; wifi_phase: string; sync_status: string; pending_reports: number; evidence_gaps: number } }
 export type Version = { config_ref: string; saved_at: string; bundle: Config; is_saved?: boolean; is_last_confirmed?: boolean }
 export type VersionDetail = Version & { previous_ref: string | null; previous_bundle: Config | null; schedule_changed: boolean; last_confirmed_ref: string | null; evidence: { event_id: string; kind: string; boot_id: string; sequence: number; applied_at: string | null; occurred_at: string | null; received_at: string; time_quality: string; reason: string | null }[] }
 export type Session = {

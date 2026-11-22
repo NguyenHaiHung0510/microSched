@@ -18,6 +18,8 @@ const results: Record<string, string> = {
   recovered: 'Đã đối soát',
 }
 const sourceIcons = { schedule: CalendarDays, remote: Laptop, local_button: Hand }
+const scheduleEdits = new Set(['schedule_saved', 'schedule_changed', 'schedule_paused', 'schedule_resumed'])
+const configReports = new Set(['config_applied', 'config_rejected'])
 const preciseTime = new Intl.DateTimeFormat('vi-VN', {
   timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
 })
@@ -25,6 +27,8 @@ const preciseTime = new Intl.DateTimeFormat('vi-VN', {
 const eventTime = (item: HistoryItem) => item.time_quality === 'unknown' ? null : item.occurred_at
 
 function resultLabel(item: TimelineItem) {
+  if (scheduleEdits.has(item.kind)) return 'Đã lưu'
+  if (item.kind === 'config_applied') return 'ESP xác nhận'
   if (item.kind === 'remote_stop' || item.kind === 'stop_processed') {
     const result = item.evidence.find(event => event.kind === 'stop_processed')?.result ?? item.result
     if (result === 'already_off') return 'Dừng khi đầu ra đã tắt'
@@ -38,13 +42,15 @@ function resultLabel(item: TimelineItem) {
   return item.result ? results[item.result] ?? statusLabels[item.result] ?? item.result : 'Chưa rõ'
 }
 
-function SourceLabel({ source }: { source: HistoryItem['source'] }) {
+function SourceLabel({ source, kind }: Pick<HistoryItem, 'source' | 'kind'>) {
+  if (scheduleEdits.has(kind)) return <span>Web</span>
+  if (configReports.has(kind)) return <span>ESP32</span>
   const Icon = source ? sourceIcons[source] : CircleHelp
   return <span className="inline-flex items-center gap-1.5"><Icon className="size-4 shrink-0 text-primary" aria-hidden="true" />{source ? sources[source] : 'Chưa rõ nguồn'}</span>
 }
 
 function ResultLabel({ item }: { item: TimelineItem }) {
-  const success = item.result === 'completed'
+  const success = item.result === 'completed' || item.kind === 'config_applied' || scheduleEdits.has(item.kind)
   const stopped = item.result === 'stopped' || item.kind === 'remote_stop' || item.kind === 'stop_processed'
   const Icon = success ? Check : stopped ? Square : CircleHelp
   return <Badge variant="secondary" className={cn('h-auto max-w-full whitespace-normal px-2 py-1', success && 'bg-ok-bg text-ok', stopped && 'bg-bad-bg text-bad')}>
@@ -57,6 +63,13 @@ function Moment({ at }: { at: string | null }) {
     <span className="font-semibold">{preciseTime.format(new Date(at))}</span>{' '}
     <span className="text-xs text-muted-foreground">{instantLabel(at).split(' · ')[0]}</span>
   </time> : <span className="text-muted-foreground">—</span>
+}
+
+function TimelineMoment({ item }: { item: TimelineItem }) {
+  const occurred = eventTime(item)
+  return configReports.has(item.kind) && !occurred && item.received_at
+    ? <><span className="mr-1 text-xs text-muted-foreground">Server nhận</span><Moment at={item.received_at} /></>
+    : <Moment at={occurred} />
 }
 
 function TimelineDetails({ item }: { item: TimelineItem }) {
@@ -74,7 +87,7 @@ function TimelineDetails({ item }: { item: TimelineItem }) {
       <p className="font-bold">{historyLabel(event)}</p>
       <p>{eventTime(event) ? instantLabel(eventTime(event)!) : 'Chưa rõ giờ nguồn'}</p>
       {event.received_at && <p className="text-muted-foreground">Web nhận: {instantLabel(event.received_at)}</p>}
-      {event.result && <p>{statusLabels[event.result] ?? results[event.result] ?? event.result}</p>}
+      {event.result && <p>{event.result === 'applied' ? 'ESP xác nhận' : statusLabels[event.result] ?? results[event.result] ?? event.result}</p>}
       {event.reason && <p className="break-words">{explainReason(event.reason)}</p>}
     </div>)}
     {item.reason && item.kind === 'session' && <p className="break-words">{explainReason(item.reason)}</p>}
@@ -179,8 +192,8 @@ export function GardenHistory({ timeline, onVersion }: { timeline: GardenTimelin
               {item.kind === 'session' ? <>
                 <td className="px-3 py-2"><Moment at={item.started_at} /></td>
                 <td className="px-3 py-2"><Moment at={item.ended_at} /></td>
-              </> : <td colSpan={2} className="px-3 py-2"><span className="mr-2 font-semibold">{historyLabel(item)}</span><Moment at={eventTime(item)} /></td>}
-              <td className="px-3 py-2"><SourceLabel source={item.source} /></td>
+              </> : <td colSpan={2} className="px-3 py-2"><span className="mr-2 font-semibold">{historyLabel(item)}</span><TimelineMoment item={item} /></td>}
+              <td className="px-3 py-2"><SourceLabel source={item.source} kind={item.kind} /></td>
               <td className="px-3 py-2">{item.duration_seconds === null ? '—' : duration(item.duration_seconds)}</td>
               <td className="px-3 py-2"><ResultLabel item={item} /></td>
               <td className="px-3 py-2"><Button type="button" variant="ghost" className="min-h-11" onClick={e => openDetail(item, e.currentTarget)}>Chi tiết</Button>{item.config_ref && item.config_known && <Button variant="outline" className="min-h-11" onClick={() => onVersion(item.config_ref!)}>Xem phiên bản</Button>}</td>
@@ -192,10 +205,10 @@ export function GardenHistory({ timeline, onVersion }: { timeline: GardenTimelin
             onClick={e => openDetail(item, e.currentTarget)}>
             <span className="min-w-0 space-y-1">
               <span className="block font-bold">
-                {item.kind === 'session' ? <><Moment at={item.started_at} /> – <Moment at={item.ended_at} /></> : <>{historyLabel(item)} · <Moment at={eventTime(item)} /></>}
+                {item.kind === 'session' ? <><Moment at={item.started_at} /> – <Moment at={item.ended_at} /></> : <>{historyLabel(item)} · <TimelineMoment item={item} /></>}
               </span>
               <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <SourceLabel source={item.source} /> · {item.duration_seconds === null ? '—' : duration(item.duration_seconds)}
+                <SourceLabel source={item.source} kind={item.kind} /> · {item.duration_seconds === null ? '—' : duration(item.duration_seconds)}
               </span>
             </span>
             <span className="flex min-w-0 items-center gap-1"><ResultLabel item={item} /><ChevronRight aria-hidden="true" className="shrink-0" /></span>

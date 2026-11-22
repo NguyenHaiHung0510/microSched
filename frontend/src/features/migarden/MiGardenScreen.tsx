@@ -269,7 +269,7 @@ export function MiGardenScreen({ location, leave, configVersion }: {
           <WaterChart />
           <div className="grid min-w-0 gap-4">
             <NextSchedule next={data.next_schedule} fresh={!!fresh} config={data.config} />
-            <GardenHealth state={data} now={now} />
+            <GardenHealth state={data} dataAt={state.dataUpdatedAt} now={now} />
             <GardenRecent currentRequests={[data.start_request, data.stop_request]} onNavigate={() => go('/migarden?tab=history')} />
           </div>
         </div>

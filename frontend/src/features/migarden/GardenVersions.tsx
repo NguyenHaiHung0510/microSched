@@ -59,8 +59,9 @@ export function GardenVersions({ selected, onSelect }: { selected: string | null
           <ul className="space-y-2 text-sm">{data.evidence.map(event => <li key={event.event_id} className="rounded-lg border border-border p-2">
             <p className="font-semibold">{event.kind === 'config_applied' ? 'ESP xác nhận áp dụng' : 'ESP từ chối'}</p>
             <p>Giờ ESP áp dụng: {event.applied_at ? instantLabel(event.applied_at) : 'Chưa rõ'}</p>
+            {event.kind === 'config_applied' && !event.applied_at && event.occurred_at && <p>Giờ bo báo (chưa xác minh) · {instantLabel(event.occurred_at)}</p>}
             <p>Server nhận: {instantLabel(event.received_at)}</p>
-            <p>Chất lượng giờ: {event.time_quality}</p>
+            <p>Chất lượng đồng hồ bo báo · {event.time_quality}</p>
             {event.reason && <p>{explainReason(event.reason)}</p>}
           </li>)}</ul>
         </>}

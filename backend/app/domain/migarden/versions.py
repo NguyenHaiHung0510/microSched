@@ -1,5 +1,7 @@
 """Read-only immutable configuration evidence and schedule-change timeline."""
 
+from datetime import datetime
+
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +16,7 @@ from app.domain.migarden.queries import (
     validate_history_dates,
 )
 from app.domain.migarden.storage import Rejected, config_record, read_zone
+from app.domain.migarden.wire import CLOCK_LEAD
 
 
 def schedule_versions():
@@ -31,6 +34,17 @@ def changed_refs():
     return select(versions.c.config_ref).where(
         versions.c.schedule.is_distinct_from(versions.c.previous)
     )
+
+
+def trusted_config_time(report: ReportRecord) -> datetime | None:
+    observed = report.occurred_at
+    if (
+        observed is not None
+        and report.body["time_quality"] != "unknown"
+        and observed <= report.received_at + CLOCK_LEAD
+    ):
+        return observed
+    return None
 
 
 async def version_detail(db: AsyncSession, ref: str) -> dict:
@@ -75,8 +89,8 @@ async def version_detail(db: AsyncSession, ref: str) -> dict:
                 "kind": report.kind,
                 "boot_id": report.boot_id,
                 "sequence": report.sequence,
-                "applied_at": report.occurred_at
-                if report.kind == "config_applied" and report.body["time_quality"] != "unknown"
+                "applied_at": trusted_config_time(report)
+                if report.kind == "config_applied"
                 else None,
                 "occurred_at": report.occurred_at,
                 "received_at": report.received_at,
@@ -195,11 +209,11 @@ async def config_events(
                 group="a",
                 key=ReportRecord.event_id,
                 ordered_at=ReportRecord.sort_at,
-                event_at=ReportRecord.occurred_at,
-                trusted_time=ReportRecord.body["time_quality"].as_string() != "unknown",
+                event_at=ReportRecord.sort_at,
             )
         )
     ).all():
+        observed = trusted_config_time(row)
         result.append(
             (
                 (row.sort_at, "a", row.event_id),
@@ -209,9 +223,9 @@ async def config_events(
                     source=None,
                     result="rejected" if row.kind == "config_rejected" else "applied",
                     reason=row.body["payload"].get("reason"),
-                    occurred_at=row.occurred_at,
+                    occurred_at=observed,
                     received_at=row.received_at,
-                    time_quality=row.body["time_quality"],
+                    time_quality=row.body["time_quality"] if observed is not None else "unknown",
                     config_ref=row.config_ref,
                     config_known=True,
                 ),

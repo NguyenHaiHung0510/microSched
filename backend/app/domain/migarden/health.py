@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import Field, ValidationError
-from sqlalchemy import select
+from sqlalchemy import String, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,11 +62,13 @@ async def ingest_health(
         pass
 
 
+def health_evidence(row: HealthRecord) -> dict:
+    return {"sample_id": str(row.id), "received_at": row.received_at, "sample": row.sample}
+
+
 async def latest_health(db: AsyncSession) -> dict | None:
     row = await db.scalar(select(HealthRecord).order_by(HealthRecord.hour_start.desc()).limit(1))
-    if row is None:
-        return None
-    return {"received_at": row.received_at, "sample": row.sample}
+    return health_evidence(row) if row is not None else None
 
 
 async def health_history(db: AsyncSession, criteria) -> dict:
@@ -86,7 +88,7 @@ async def health_history(db: AsyncSession, criteria) -> dict:
                 criteria,
                 cursor,
                 group="h",
-                key=HealthRecord.boot_id,
+                key=HealthRecord.id.cast(String),
                 ordered_at=HealthRecord.received_at,
                 event_at=HealthRecord.received_at,
             )
@@ -101,8 +103,8 @@ async def health_history(db: AsyncSession, criteria) -> dict:
     if criteria.to_day:
         boots = boots.where(BootRecord.first_seen_at < day_start(criteria.to_day + ONE_DAY))
     return {
-        "items": [{"received_at": row.received_at, "sample": row.sample} for row in page],
-        "next_cursor": encode_cursor((page[-1].received_at, "h", page[-1].boot_id))
+        "items": [health_evidence(row) for row in page],
+        "next_cursor": encode_cursor((page[-1].received_at, "h", str(page[-1].id)))
         if len(rows) > len(page)
         else None,
         "boots": [

@@ -1,6 +1,7 @@
 """Synthetic PostgreSQL oracles for idle SQL, telemetry and immutable trace."""
 
-from datetime import timedelta
+import json
+from datetime import timedelta, timezone
 
 import pytest
 from sqlalchemy import event
@@ -376,5 +377,71 @@ def test_pending_off_shared_projection_versions_pagination_policy_only_and_late_
         policy_detail = (await cell.human.get(ROOT + "/config/versions/" + ref3)).json()
         assert policy_detail["schedule_changed"] is False
         assert (await cell.human.get(ROOT + "/config/versions/missing-version")).status_code == 404
+
+    run_cell(case)
+
+
+def test_config_trace_preserves_raw_future_clock_without_claiming_application_time(run_cell):
+    async def case(cell, _, __):
+        ref = await cell.configured()
+        cell.tick()
+        reported = cell.time.now + timedelta(days=2)
+        future = cell.report("config_applied", ref, {}) | {"occurred_at": reported.isoformat()}
+        response = await cell.device_post(ref=ref, reports=[future])
+        assert future["event_id"] in response.json()["acked_event_ids"]
+        data = (await cell.human.get(ROOT + "/config/versions/" + ref)).json()
+        evidence = next(item for item in data["evidence"] if item["event_id"] == future["event_id"])
+        assert evidence["occurred_at"] is not None
+        assert evidence["applied_at"] is None
+        assert evidence["received_at"] is not None
+
+        timezone_vn = timezone(timedelta(hours=7))
+        criteria = {"view": "sessions", "category": "configuration"}
+        event_id = "a:" + future["event_id"]
+        today = cell.time.now.astimezone(timezone_vn).date().isoformat()
+        events = (
+            await cell.human.get(
+                ROOT + "/history", params=criteria | {"from_day": today, "to_day": today}
+            )
+        ).json()
+        event = next(item for item in events["items"] if item["id"] == event_id)
+        assert event["occurred_at"] is None and event["received_at"] is not None
+        other = reported.astimezone(timezone_vn).date().isoformat()
+        events = (
+            await cell.human.get(
+                ROOT + "/history", params=criteria | {"from_day": other, "to_day": other}
+            )
+        ).json()
+        assert all(item["id"] != event_id for item in events["items"])
+
+    run_cell(case)
+
+
+def test_health_history_retains_each_row_when_receive_times_tie(run_cell):
+    async def case(cell, admin, _):
+        await admin.execute("TRUNCATE microsched.migarden_health")
+        now = cell.time.now
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        for offset in range(3):
+            await admin.execute(
+                "INSERT INTO microsched.migarden_health "
+                "(zone_id,hour_start,received_at,boot_id,sample) "
+                "VALUES ('zone-a',$1,$2,'boot-1',$3::jsonb)",
+                hour - timedelta(hours=offset),
+                now,
+                json.dumps(health(cell, uptime_seconds=1200 + offset)),
+            )
+        payload = (await cell.human.get(ROOT + "/health", params={"limit": 1})).json()
+        samples = []
+        while True:
+            samples.extend(row["sample"]["uptime_seconds"] for row in payload["items"])
+            cursor = payload["next_cursor"]
+            if cursor is None:
+                break
+            assert len(samples) <= 3
+            payload = (
+                await cell.human.get(ROOT + "/health", params={"limit": 1, "cursor": cursor})
+            ).json()
+        assert sorted(samples) == [1200, 1201, 1202]
 
     run_cell(case)
