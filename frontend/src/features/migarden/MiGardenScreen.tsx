@@ -13,24 +13,32 @@ import { Configuration, ConfigStatus } from './Configuration'
 import { GardenHistory, GardenRecent } from './GardenHistory'
 import { useGardenTimeline } from './historyQuery'
 import { WaterChart } from './WaterChart'
+import { ScheduleTrace } from './ScheduleTrace'
+import { GardenVersions } from './GardenVersions'
+import { GardenHealth } from './GardenHealth'
+import type { ConfigView } from './api'
 import { displayedSession, duration, errorText, explainReason, instantLabel, sources, statusLabels, stopwatch, timeLabel } from './presentation'
 import './garden.css'
 
-function NextSchedule({ next, fresh }: { next: Forecast; fresh: boolean }) {
+function NextSchedule({ next, fresh, config }: { next: Forecast; fresh: boolean; config: ConfigView }) {
+  const projection = config.schedule_projection
+  const possible = projection?.possible_previous_run
+  next = projection ? (possible ? projection.last_confirmed : projection.saved) : next
   const empty = {
     no_applied_config: 'Chưa có lịch được ESP32 xác nhận.',
     paused: 'Lịch đã áp dụng đang tạm dừng.',
     no_future_occurrence: 'Không còn lượt sắp tới trong khoảng hiệu lực.',
     scheduled: '',
   }[next.status]
-  return <Card>
+  return <Card data-testid="garden-next-schedule">
     <CardHeader><h3 className="text-xl font-extrabold">Lượt sắp tới</h3></CardHeader>
     <CardContent className="space-y-2">
+      <ScheduleTrace config={config} />
       {next.next_at && next.duration_seconds !== null
         ? <div className="flex items-center gap-3 rounded-lg bg-accent p-3">
           <CalendarDays className="size-6 shrink-0 text-primary" aria-hidden="true" />
           <div><time className="text-xl font-extrabold tabular-nums" dateTime={next.next_at}>{instantLabel(next.next_at)}</time>
-            <p className="text-sm">{duration(next.duration_seconds)} · Theo lịch</p></div>
+            <p className="text-sm">{possible ? 'Có thể vẫn tưới · ' : ''}{duration(next.duration_seconds)} · {possible ? 'Theo bản ESP xác nhận gần nhất' : 'Theo lịch'}</p></div>
         </div>
         : <p>{empty}</p>}
       {next.next_at && <p className="text-sm text-muted-foreground">
@@ -220,7 +228,7 @@ export function MiGardenScreen({ location, leave, configVersion }: {
     const id = window.setInterval(() => { if (!document.hidden) setNow(Date.now()) }, 1000)
     return () => window.clearInterval(id)
   }, [configuration, history])
-  const connected = online && !state.isError
+  const connected = online && !state.isError && !state.isFetching
   const fresh = data && displayedSession(data, state.dataUpdatedAt, now, connected).fresh
   const refresh = () => { void cache.invalidateQueries({ queryKey: ['migarden'] }) }
   return <section aria-labelledby="migarden-title" data-testid="migarden-screen" className="space-y-4">
@@ -249,6 +257,7 @@ export function MiGardenScreen({ location, leave, configVersion }: {
     </p>}
     {data && <>
       <div hidden={!configuration}>
+        {configuration && data.config.desired && <div className="mb-3 space-y-2"><ScheduleTrace config={data.config} /><Button variant="outline" onClick={() => go('/migarden?tab=history&version=' + encodeURIComponent(data.config.desired!.config_ref))}>Xem bản đã lưu</Button>{data.config.applied && <Button variant="ghost" onClick={() => go('/migarden?tab=history&version=' + encodeURIComponent(data.config.applied!.config_ref))}>Xem bản ESP xác nhận gần nhất</Button>}</div>}
         <Configuration key={configVersion} config={data.config} connected={connected} onSaved={config => {
           cache.setQueryData<GardenState>(['migarden', 'state'], old => old ? { ...old, config } : old, { updatedAt: state.dataUpdatedAt })
           void cache.invalidateQueries({ queryKey: ['migarden'] })
@@ -259,12 +268,13 @@ export function MiGardenScreen({ location, leave, configVersion }: {
         <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,2.1fr)_minmax(17rem,1fr)]">
           <WaterChart />
           <div className="grid min-w-0 gap-4">
-            <NextSchedule next={data.next_schedule} fresh={!!fresh} />
+            <NextSchedule next={data.next_schedule} fresh={!!fresh} config={data.config} />
+            <GardenHealth state={data} now={now} />
             <GardenRecent currentRequests={[data.start_request, data.stop_request]} onNavigate={() => go('/migarden?tab=history')} />
           </div>
         </div>
       </>}
     </>}
-    {history && <GardenHistory timeline={timeline} />}
+    {history && <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]"><GardenHistory timeline={timeline} onVersion={ref => go('/migarden?tab=history&version=' + encodeURIComponent(ref))} /><GardenVersions selected={route.get('version')} onSelect={ref => go('/migarden?tab=history&version=' + encodeURIComponent(ref))} /></div>}
   </section>
 }

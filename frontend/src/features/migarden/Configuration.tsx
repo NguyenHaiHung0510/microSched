@@ -102,7 +102,7 @@ function DateField({ id, label, value, change, disabled, required = true }: {
 
 export function ConfigStatus({ config }: { config: ConfigView }) {
   const heading = {
-    not_saved: 'Chưa lưu cấu hình', pending: 'Đã lưu · Chờ ESP32 áp dụng',
+    not_saved: 'Chưa lưu cấu hình', pending: config.desired?.schedule.enabled === false ? 'Đã lưu tạm dừng · Chờ ESP xác nhận' : 'Đã lưu · Chờ ESP32 áp dụng',
     rejected: 'ESP32 báo chưa áp dụng được', applied: 'ESP32 đã xác nhận áp dụng',
   }[config.application_status]
   return <div role="status" className="max-w-full space-y-0.5 text-sm">

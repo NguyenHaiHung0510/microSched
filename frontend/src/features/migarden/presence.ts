@@ -1,4 +1,5 @@
 /** One pending activity signal per tab, consumed once by the next visible state read. */
+import { humanRemainingSeconds } from '@/human-activity'
 let pending = false
 
 export function markGardenActivity() {
@@ -8,7 +9,7 @@ export function markGardenActivity() {
 export function gardenPresenceHeaders(): Record<string, string> {
   if (!pending || typeof document === 'undefined' || document.visibilityState !== 'visible') return {}
   pending = false
-  return { 'X-MiGarden-Visible': '1' }
+  return { 'X-MiGarden-Visible': '1', 'X-MiGarden-Active-For': String(humanRemainingSeconds()) }
 }
 
 export function listenGardenActivity() {

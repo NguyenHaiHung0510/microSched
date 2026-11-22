@@ -14,11 +14,13 @@ from app.domain.migarden.commands import (
     request_stop,
 )
 from app.domain.migarden.configuration import ConfigView, SaveConfig, read_config, save_config
+from app.domain.migarden.health import health_history
 from app.domain.migarden.history_timeline import TimelineView, timeline
 from app.domain.migarden.queries import DailyView, HistoryFilter, HistoryView, StateView, daily
 from app.domain.migarden.queries import history as query_history
 from app.domain.migarden.queries import state as query_state
 from app.domain.migarden.storage import read_zone
+from app.domain.migarden.versions import version_detail, version_list
 from app.domain.migarden.wire import Empty
 from app.domain.models import AuthSession
 from app.web.deps import require_session
@@ -30,7 +32,8 @@ from app.web.migarden_http import (
     require_enabled,
     verdict,
 )
-from app.web.migarden_presence import mark_present
+from app.web.migarden_presence import mark_present, read_presence_seconds
+from app.web.migarden_quiet import gate
 
 router = APIRouter(
     prefix="/migarden",
@@ -44,13 +47,33 @@ Owner = Annotated[AuthSession, Depends(require_session)]
 async def state(request: Request, db: Database) -> StateView:
     result = await query_state(db, now_utc())
     if request.headers.get("x-migarden-visible") == "1":
-        mark_present(request)
+        gate(request).remember_zone(await read_zone(db))
+        mark_present(request, read_presence_seconds(request))
     return result
 
 
 @router.get("/config")
 async def config(db: Database) -> ConfigView:
-    return await read_config(db, await read_zone(db))
+    return await read_config(db, await read_zone(db), now_utc())
+
+
+@router.get("/config/versions")
+async def versions(criteria: Annotated[HistoryFilter, Query()], db: Database) -> dict:
+    return await verdict(lambda: version_list(db, criteria))
+
+
+@router.get("/config/versions/{config_ref}")
+async def version(config_ref: str, db: Database) -> dict:
+    if len(config_ref) > 128:
+        from fastapi import HTTPException
+
+        raise HTTPException(422, "invalid_config_ref")
+    return await verdict(lambda: version_detail(db, config_ref))
+
+
+@router.get("/health")
+async def health(criteria: Annotated[HistoryFilter, Query()], db: Database) -> dict:
+    return await verdict(lambda: health_history(db, criteria))
 
 
 @router.put("/config")

@@ -1,5 +1,13 @@
 import { ApiError } from '@/api'
-import type { Command, GardenState, HistoryItem, Source } from './api'
+import type { Command, GardenState, HistoryItem, Source, Schedule } from './api'
+
+export function scheduleLabel(schedule: Schedule) {
+  const r = schedule.recurrence
+  const when = r.kind === 'daily' ? `Hằng ngày · ${r.at_local_time}`
+    : r.kind === 'weekly' ? `Thứ ISO ${r.days_of_week.join(', ')} · ${r.at_local_time}`
+      : r.kind === 'once' ? `Một lần · ${instantLabel(r.at)}` : `Mỗi ${r.interval_minutes} phút từ ${instantLabel(r.anchor_at)}`
+  return `${schedule.enabled ? when : 'Tạm dừng'} · ${duration(schedule.duration_seconds)}`
+}
 
 export const sources: Record<Source, string> = {
   schedule: 'Theo lịch', remote: 'Từ web', local_button: 'Tại nút',
@@ -124,6 +132,8 @@ export function reconcileRecent(items: HistoryItem[], current: (Command | null)[
   })
 }
 export function historyLabel(item: HistoryItem): string {
+  const configLabels: Record<string, string> = { schedule_saved: 'Đã lưu lịch', schedule_changed: 'Đã đổi lịch', schedule_paused: 'Đã lưu tạm dừng', schedule_resumed: 'Đã lưu bật lại lịch', config_applied: 'ESP xác nhận áp dụng lịch', config_rejected: 'ESP từ chối bản lịch' }
+  if (configLabels[item.kind]) return configLabels[item.kind]
   if (item.kind === 'recovered') return 'Phục hồi sau khởi động lại'
   if (item.kind === 'remote_stop' || item.kind === 'stop_processed') return 'Dừng tưới'
   if (item.kind === 'session_started' || item.kind === 'remote_start') return 'Bắt đầu tưới'

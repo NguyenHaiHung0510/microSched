@@ -95,6 +95,23 @@ class BootRecord(UUIDTimestampModel, table=True):
     first_seen_at: datetime = timestamp(optional=False)
 
 
+class HealthRecord(UUIDTimestampModel, table=True):
+    __privacy_gate__: ClassVar[Gate] = Gate.NONE
+    __delete_gate__: ClassVar[Gate] = Gate.NONE
+    __tablename__ = "migarden_health"
+    __table_args__ = (
+        UniqueConstraint("zone_id", "hour_start", name="uq_migarden_health_zone_hour"),
+        CheckConstraint("zone_id = 'zone-a'", name="single_binding"),
+        {"schema": SCHEMA},
+    )
+
+    zone_id: str = Field(max_length=32)
+    hour_start: datetime = timestamp(optional=False)
+    received_at: datetime = timestamp(optional=False)
+    boot_id: str = Field(max_length=128)
+    sample: dict = document(optional=False)
+
+
 class CommandRecord(UUIDTimestampModel, table=True):
     __privacy_gate__: ClassVar[Gate] = Gate.NONE
     __delete_gate__: ClassVar[Gate] = Gate.NONE

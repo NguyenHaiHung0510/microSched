@@ -114,7 +114,7 @@ export function GardenRecent({ onNavigate, currentRequests }: {
     </CardContent>
   </Card>
 }
-export function GardenHistory({ timeline }: { timeline: GardenTimelineModel }) {
+export function GardenHistory({ timeline, onVersion }: { timeline: GardenTimelineModel; onVersion: (ref: string) => void }) {
   const { filters, query, update, badRange } = timeline
   const [filterOpen, setFilterOpen] = useState(false)
   const [selected, setSelected] = useState<TimelineItem | null>(null)
@@ -129,6 +129,7 @@ export function GardenHistory({ timeline }: { timeline: GardenTimelineModel }) {
       <h3 className="flex items-center gap-2 text-xl font-extrabold" ref={heading} tabIndex={-1}>
         <CalendarDays aria-hidden="true" className="size-5 text-primary" />Lịch sử tưới
       </h3>
+      <Button variant="outline" onClick={() => { document.getElementById('garden-versions')?.scrollIntoView({ block: 'start' }); document.querySelector<HTMLElement>('#garden-versions h3')?.focus({ preventScroll: true }) }}>Phiên bản lịch</Button>
       {query.data && <div className="space-y-1 text-sm">
         {totals && totals.recorded_seconds !== null ? <>
           <p><strong>{duration(totals.recorded_seconds)}</strong> đã ghi nhận</p>
@@ -140,6 +141,7 @@ export function GardenHistory({ timeline }: { timeline: GardenTimelineModel }) {
       </div>}
     </CardHeader>
     <CardContent className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2"><p className="text-sm text-muted-foreground">Mặc định 7 ngày gần nhất · Giờ Hà Nội</p><Select value={filters.category} onValueChange={value => update('category', value)}><SelectTrigger aria-label="Loại sự kiện" className="min-h-11 w-auto"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả sự kiện</SelectItem><SelectItem value="watering">Tưới</SelectItem><SelectItem value="configuration">Thay đổi lịch</SelectItem></SelectContent></Select></div>
       <Button type="button" variant="outline" className="min-h-11 w-full justify-between lg:hidden" aria-expanded={filterOpen}
         aria-controls="garden-history-filters" onClick={() => setFilterOpen(!filterOpen)}>
         <span className="flex items-center gap-2"><Filter aria-hidden="true" />Bộ lọc</span><ChevronDown aria-hidden="true" />
@@ -181,7 +183,7 @@ export function GardenHistory({ timeline }: { timeline: GardenTimelineModel }) {
               <td className="px-3 py-2"><SourceLabel source={item.source} /></td>
               <td className="px-3 py-2">{item.duration_seconds === null ? '—' : duration(item.duration_seconds)}</td>
               <td className="px-3 py-2"><ResultLabel item={item} /></td>
-              <td className="px-3 py-2"><Button type="button" variant="ghost" className="min-h-11" onClick={e => openDetail(item, e.currentTarget)}>Chi tiết</Button></td>
+              <td className="px-3 py-2"><Button type="button" variant="ghost" className="min-h-11" onClick={e => openDetail(item, e.currentTarget)}>Chi tiết</Button>{item.config_ref && item.config_known && <Button variant="outline" className="min-h-11" onClick={() => onVersion(item.config_ref!)}>Xem phiên bản</Button>}</td>
             </tr>)}</tbody>
           </table>
         </div>
@@ -198,6 +200,7 @@ export function GardenHistory({ timeline }: { timeline: GardenTimelineModel }) {
             </span>
             <span className="flex min-w-0 items-center gap-1"><ResultLabel item={item} /><ChevronRight aria-hidden="true" className="shrink-0" /></span>
           </Button>
+          {item.config_ref && item.config_known && <Button variant="outline" className="mb-2 ml-3 min-h-11" onClick={() => onVersion(item.config_ref!)}>Xem phiên bản</Button>}
         </li>)}</ul>
       </>}
       <p className="text-sm text-muted-foreground">Giờ Hà Nội. Tổng là thời lượng đã ghi nhận của các lượt kết thúc trong khoảng lọc, trên mọi trang; thiếu báo cáo không chứng minh đã hay chưa tưới.</p>
@@ -218,6 +221,7 @@ export function GardenHistory({ timeline }: { timeline: GardenTimelineModel }) {
           <DialogHeader><DialogTitle>{detail?.kind === 'session' ? 'Chi tiết lượt tưới' : detail && historyLabel(detail)}</DialogTitle>
             <DialogDescription>{detail && resultLabel(detail)} · Khu A</DialogDescription></DialogHeader>
           {detail && <TimelineDetails item={detail} />}
+          {detail?.config_ref && detail.config_known && <Button variant="outline" onClick={() => { setSelected(null); onVersion(detail.config_ref!) }}>Xem phiên bản</Button>}
         </DialogContent>
       </Dialog>
     </CardContent>

@@ -312,6 +312,8 @@ class ExchangeEnvelope(WireModel):
     control_epoch: Sequence
     snapshot: Snapshot
     reports: Annotated[list[object], Field(max_length=REPORT_LIMIT)]
+    # Optional transport extension; validated independently from control/report data.
+    health: object | None = None
 
 
 class ExchangeIn(WireModel):

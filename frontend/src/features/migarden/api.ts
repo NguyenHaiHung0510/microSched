@@ -2,6 +2,7 @@ import { apiRequest } from '@/api'
 import { useEffect, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { gardenPresenceHeaders, listenGardenActivity } from './presence'
+import { humanActive, useHumanActive } from '@/human-activity'
 
 export type Source = 'schedule' | 'remote' | 'local_button'
 export type Recurrence =
@@ -31,7 +32,12 @@ export type ConfigView = {
   applied_confirmed_at: string | null
   application_status: 'not_saved' | 'pending' | 'applied' | 'rejected'
   reason: string | null
+  schedule_projection?: ScheduleProjection
 }
+export type ScheduleProjection = { saved: Forecast; last_confirmed: Forecast; application_status: ConfigView['application_status']; possible_previous_run: boolean }
+export type Health = { received_at: string; sample: { build_id: string; boot_id: string; sampled_at: string | null; time_quality: string; uptime_seconds: number; reset_reason: number | null; free_heap: number; minimum_heap: number; wifi_phase: string; sync_status: string; pending_reports: number; evidence_gaps: number } }
+export type Version = { config_ref: string; saved_at: string; bundle: Config; is_saved?: boolean; is_last_confirmed?: boolean }
+export type VersionDetail = Version & { previous_ref: string | null; previous_bundle: Config | null; schedule_changed: boolean; last_confirmed_ref: string | null; evidence: { event_id: string; kind: string; boot_id: string; sequence: number; applied_at: string | null; occurred_at: string | null; received_at: string; time_quality: string; reason: string | null }[] }
 export type Session = {
   session_id: string
   request_id: string | null
@@ -81,6 +87,7 @@ export type GardenState = {
   start_request: Command | null
   stop_request: Command | null
   next_schedule: Forecast
+  health?: Health | null
 }
 export type Preview = {
   preview_id: string
@@ -124,7 +131,7 @@ export type DailyPoint = {
   local_button_seconds: number | null
   coverage: 'unknown' | 'partial'
 }
-export type DailyView = { days: DailyPoint[]; forecast: Forecast }
+export type DailyView = { days: DailyPoint[]; forecast: Forecast; schedule_projection?: ScheduleProjection }
 
 const root = '/api/migarden'
 export const gardenConfigMutation = ['migarden', 'save-config'] as const
@@ -151,6 +158,9 @@ export const garden = {
     read<HistoryView>('/history?' + params.toString(), signal),
   timeline: (params: URLSearchParams, signal?: AbortSignal) =>
     read<HistoryTimeline>('/history?' + params.toString(), signal),
+  versions: (params: URLSearchParams, signal?: AbortSignal) => read<{ items: Version[]; next_cursor: string | null }>('/config/versions?' + params, signal),
+  version: (ref: string, signal?: AbortSignal) => read<VersionDetail>('/config/versions/' + encodeURIComponent(ref), signal),
+  health: (params: URLSearchParams, signal?: AbortSignal) => read<{ items: Health[]; boots: { boot_id: string; first_seen_at: string }[]; next_cursor: string | null }>('/health?' + params, signal),
 }
 export const gardenOptions = { retry: false, staleTime: 0, gcTime: 0, refetchIntervalInBackground: false }
 function subscribeVisibility(listener: () => void) {
@@ -158,7 +168,7 @@ function subscribeVisibility(listener: () => void) {
   return () => window.removeEventListener('visibilitychange', listener, true)
 }
 export function gardenStateInterval(data: GardenState | undefined, status: string, visible: boolean) {
-  if (!visible) return false
+  if (!visible || !humanActive()) return false
   if (status === 'error' || data?.connection === 'unconfigured') return 30_000
   return 1_000
 }
@@ -166,13 +176,14 @@ export function useGardenState(controlPage = true) {
   useEffect(listenGardenActivity, [])
   const visible = useSyncExternalStore(subscribeVisibility,
     () => document.visibilityState === 'visible', () => false)
+  const active = useHumanActive()
   return useQuery({
     queryKey: ['migarden', 'state'],
     queryFn: ({ signal }) => garden.state(signal),
     ...gardenOptions,
-    enabled: visible,
+    enabled: visible && active,
     refetchInterval: query => controlPage
       ? gardenStateInterval(query.state.data, query.state.status, visible)
-      : visible ? 30_000 : false,
+      : visible && active ? 30_000 : false,
   })
 }

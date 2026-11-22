@@ -1,0 +1,174 @@
+[
+  {
+    "name": "old_request",
+    "valid": true,
+    "legacy_valid": true,
+    "document": {
+      "protocol": "migarden.zone-a.v1",
+      "device_id": "qa-controller-a",
+      "boot_id": "boot-1",
+      "control_epoch": 0,
+      "snapshot": {
+        "observed_at": "2026-11-18T00:00:00Z",
+        "time_quality": "synced",
+        "output": "off",
+        "active_session": null,
+        "applied_config_ref": "cfg-1",
+        "ready": true,
+        "blocked_reason": null
+      },
+      "reports": []
+    }
+  },
+  {
+    "name": "old_response",
+    "valid": true,
+    "legacy_valid": true,
+    "document": {
+      "protocol": "migarden.zone-a.v1",
+      "server_time": "2026-11-18T00:00:00Z",
+      "desired_config": {
+        "config_ref": "cfg-1",
+        "zone_id": "zone-a",
+        "binding_ref": "zone-a-v1",
+        "policy": {
+          "manual_duration_seconds": 900,
+          "max_session_seconds": 1800,
+          "window_seconds": 10800,
+          "max_window_seconds": 7200
+        },
+        "schedule": {
+          "enabled": false,
+          "effective_from": "2026-11-18T00:00:00Z",
+          "effective_until": null,
+          "duration_seconds": 900,
+          "recurrence": {
+            "kind": "daily",
+            "at_local_time": "07:00"
+          }
+        }
+      },
+      "candidates": [],
+      "grants": [],
+      "stops": [],
+      "acked_event_ids": [],
+      "retry_after_seconds": null
+    }
+  },
+  {
+    "name": "negotiated_health",
+    "valid": true,
+    "legacy_valid": false,
+    "document": {
+      "protocol": "migarden.zone-a.v1",
+      "device_id": "qa-controller-a",
+      "boot_id": "boot-1",
+      "control_epoch": 0,
+      "snapshot": {
+        "observed_at": "2026-11-18T00:00:00Z",
+        "time_quality": "synced",
+        "output": "off",
+        "active_session": null,
+        "applied_config_ref": "cfg-1",
+        "ready": true,
+        "blocked_reason": null
+      },
+      "reports": [],
+      "health": {
+        "build_id": "synthetic-n03n04",
+        "boot_id": "boot-1",
+        "sampled_at": "2026-11-18T00:00:00Z",
+        "time_quality": "synced",
+        "uptime_seconds": 12345,
+        "reset_reason": 1,
+        "free_heap": 180000,
+        "minimum_heap": 150000,
+        "wifi_phase": "CONNECTED",
+        "sync_status": "OK",
+        "pending_reports": 0,
+        "evidence_gaps": 0
+      }
+    }
+  },
+  {
+    "name": "negotiated_response",
+    "valid": true,
+    "legacy_valid": false,
+    "document": {
+      "protocol": "migarden.zone-a.v1",
+      "server_time": "2026-11-18T00:00:00Z",
+      "desired_config": {
+        "config_ref": "cfg-1",
+        "zone_id": "zone-a",
+        "binding_ref": "zone-a-v1",
+        "policy": {
+          "manual_duration_seconds": 900,
+          "max_session_seconds": 1800,
+          "window_seconds": 10800,
+          "max_window_seconds": 7200
+        },
+        "schedule": {
+          "enabled": false,
+          "effective_from": "2026-11-18T00:00:00Z",
+          "effective_until": null,
+          "duration_seconds": 900,
+          "recurrence": {
+            "kind": "daily",
+            "at_local_time": "07:00"
+          }
+        }
+      },
+      "candidates": [],
+      "grants": [],
+      "stops": [],
+      "acked_event_ids": [],
+      "retry_after_seconds": null,
+      "extension": "quiet-health-v1"
+    }
+  },
+  {
+    "name": "neutral_wait",
+    "valid": true,
+    "legacy_valid": false,
+    "document": {
+      "protocol": "migarden.wait.v1",
+      "retry_after_seconds": 5
+    }
+  },
+  {
+    "name": "wait_cannot_ack",
+    "valid": false,
+    "legacy_valid": false,
+    "document": {
+      "protocol": "migarden.wait.v1",
+      "retry_after_seconds": 5,
+      "acked_event_ids": [
+        "fake"
+      ]
+    }
+  },
+  {
+    "name": "health_invalid_optional",
+    "valid": false,
+    "legacy_valid": false,
+    "document": {
+      "protocol": "migarden.zone-a.v1",
+      "device_id": "qa-controller-a",
+      "boot_id": "boot-1",
+      "control_epoch": 0,
+      "snapshot": {
+        "observed_at": "2026-11-18T00:00:00Z",
+        "time_quality": "synced",
+        "output": "off",
+        "active_session": null,
+        "applied_config_ref": "cfg-1",
+        "ready": true,
+        "blocked_reason": null
+      },
+      "reports": [],
+      "health": {
+        "invalid": "optional"
+      }
+    }
+  }
+]
