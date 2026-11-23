@@ -120,6 +120,41 @@ test('A228 keeps output and receipt through in-flight/error GET; errors still gu
   await expect(page.getByTestId('garden-now').locator('time').first()).toHaveAttribute('dateTime', receipt!)
 })
 
+for (const failure of ['offline', '503'] as const) {
+  test('A228 ON elapsed uses the last report on ' + failure, async ({ page }) => {
+    const cell = await fixture(page)
+    await open(page)
+    await cell.report('on')
+    cell.state = {
+      ...cell.state, start_block_reason: 'busy',
+      snapshot: { ...cell.state.snapshot!, active_session: {
+        session_id: 'synthetic-running', request_id: null, trigger_source: 'schedule',
+        started_at: at(), duration_seconds: 900, elapsed_seconds: 7, config_ref: 'synthetic-config',
+      } },
+    }
+    await tick(page, 1000)
+    await expect(headline(page)).toHaveText('Đang tưới')
+    const elapsed = page.getByTestId('garden-elapsed')
+    await expect(elapsed).not.toHaveText('00:07 / 15:00')
+    if (failure === 'offline') {
+      cell.hold()
+      await page.context().setOffline(true)
+      await tick(page, 0)
+      await expect(page.getByText(/Web mất kết nối/)).toBeVisible()
+    } else {
+      cell.error()
+      await tick(page, 1000)
+      await expect(page.getByText(/Không đọc được trạng thái mới/)).toBeVisible()
+    }
+    await expect(start(page)).toBeDisabled()
+    await expect(headline(page)).toHaveText('Đầu ra bật')
+    await expect(elapsed).toHaveText('00:07 / 15:00')
+    await expect(page.getByTestId('garden-now')).toContainText('Lần cuối đã báo')
+    await tick(page, 3000)
+    await expect(elapsed).toHaveText('00:07 / 15:00')
+  })
+}
+
 test('A228 exactly 15s expires locally once without a network wake; START/Preview/Confirm gate and STOP works', async ({ page }) => {
   const cell = await fixture(page)
   await open(page)

@@ -76,6 +76,7 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
   const device = state.snapshot
   const active = device?.active_session
   const display = displayedSession(state, dataAt, now, true)
+  const live = display.live && connected && human
   const max = state.config.applied?.policy.max_session_seconds ?? 0
   const canStart = online && connected && human && display.fresh && device?.output === 'off' && !active && state.start_block_reason === null && Boolean(max)
   const applyCommand = (key: 'start_request' | 'stop_request', data: Command) => patchGardenState(client, stateKey, { [key]: data })
@@ -105,12 +106,12 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
       refresh()
     },
   })
-  const liveAt = display.live && active?.started_at ? timeLabel(active.started_at) : null
+  const liveAt = live && active?.started_at ? timeLabel(active.started_at) : null
   const headline = display.fresh && device?.output === 'off' ? 'Đầu ra tắt'
-    : display.fresh && device?.output === 'on' ? 'Đang tưới' : 'Chưa rõ trạng thái'
+    : display.fresh && device?.output === 'on' ? (live ? 'Đang tưới' : 'Đầu ra bật') : 'Chưa rõ trạng thái'
   const confirmed = state.confirmedOutput
   return <>
-    <div className={cn('rounded-xl border px-4 py-3', display.live ? 'border-primary/25 bg-accent' : 'border-muted bg-background')}
+    <div className={cn('rounded-xl border px-4 py-3', live ? 'border-primary/25 bg-accent' : 'border-muted bg-background')}
       data-testid="garden-now">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
@@ -121,9 +122,9 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
           {active && <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 sm:border-l sm:border-muted sm:pl-4">
             <span>{sources[active.trigger_source]}</span>
             {active.started_at && <span>Bắt đầu {liveAt ?? timeLabel(active.started_at)}</span>}
-            <span>{display.live ? 'Đã chạy ' : 'Lần cuối đã báo '}
+            <span>{live ? 'Đã chạy ' : 'Lần cuối đã báo '}
               <strong className="text-lg tabular-nums text-primary" data-testid="garden-elapsed">
-                {stopwatch(display.elapsed)} / {stopwatch(active.duration_seconds)}
+                {stopwatch(live ? display.elapsed : active.elapsed_seconds)} / {stopwatch(active.duration_seconds)}
               </strong>
             </span>
           </div>}
@@ -143,12 +144,12 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
       </div>
       <div className="mt-2 space-y-1 text-sm">
         {state.snapshot_received_at && <p className="text-muted-foreground">
-          Báo cáo cuối lúc <time dateTime={state.snapshot_received_at}>{instantLabel(state.snapshot_received_at)}</time>
+          {display.fresh ? 'Đồng bộ' : 'Báo cáo cuối lúc'} <time dateTime={state.snapshot_received_at}>{instantLabel(state.snapshot_received_at)}</time>
         </p>}
         {(!display.fresh || device?.output === 'unknown' || !device) && <p data-testid="garden-last-confirmed">
           {confirmed ? <>Lần cuối xác nhận: {confirmed.output === 'on' ? 'Đầu ra bật' : 'Đầu ra tắt'} · <time dateTime={confirmed.receivedAt}>{instantLabel(confirmed.receivedAt)}</time></> : 'Chưa có xác nhận đầu ra'}
         </p>}
-        {(!canStart && !display.live) && <p>{!online ? 'Web mất kết nối; không xếp lệnh tưới chờ gửi.' :
+        {(!canStart && !live) && <p>{!online ? 'Web mất kết nối; không xếp lệnh tưới chờ gửi.' :
           explainReason(state.start_block_reason) ?? (display.fresh ? '' : 'Chờ báo cáo mới trước khi tưới từ web.')}</p>}
         {device?.blocked_reason && !device.ready && <p className="break-words">{explainReason(device.blocked_reason)}</p>}
         {(state.start_request || state.stop_request) && <div role="status" className="space-y-1">
