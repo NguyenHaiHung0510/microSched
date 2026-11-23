@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { garden, gardenOptions, type GardenState, type Health } from './api'
+import { garden, gardenOptions, gardenKey, type GardenState, type Health } from './api'
 import { defaultHistoryFilters } from './historyQuery'
+import { gardenServerNow } from './liveReading'
 import { instantLabel } from './presentation'
 
 function trustedSampleAt({ received_at, sample }: Health) {
@@ -24,12 +25,12 @@ export function GardenHealth({ state, dataAt, now }: { state: GardenState; dataA
   const dates = defaultHistoryFilters()
   const params = new URLSearchParams({ from_day: dates.from_day, to_day: dates.to_day, limit: '12' })
   if (cursors.length) params.set('cursor', cursors.at(-1)!)
-  const history = useQuery({ queryKey: ['migarden', 'health', params.toString()], queryFn: ({ signal }) => garden.health(params, signal), enabled: open, ...gardenOptions })
+  const history = useQuery({ queryKey: gardenKey('health', params.toString()), queryFn: ({ signal }) => garden.health(params, signal), enabled: open, ...gardenOptions })
   const health = state.health
 
   const sample = health?.sample
   const sampledAt = health && trustedSampleAt(health)
-  const serverNow = Date.parse(state.server_time) + Math.max(0, now - dataAt)
+  const serverNow = gardenServerNow(state, dataAt, now)
   const sampleAge = Math.max(0, Math.floor((serverNow - (sampledAt ? Date.parse(sampledAt) : NaN)) / 60_000))
   const ageLabel = sampleAge >= 60 ? `${Math.floor(sampleAge / 60)} giờ ${sampleAge % 60} phút` : `${sampleAge} phút`
   return <Card className="min-w-0" data-testid="garden-health">

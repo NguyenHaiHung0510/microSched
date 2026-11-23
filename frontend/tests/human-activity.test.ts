@@ -37,3 +37,31 @@ it('defaults to seven calendar days including today at the UTC+7 boundary', () =
   expect(defaultHistoryFilters(new Date('2026-11-22T16:59:59Z'))).toMatchObject({ from_day: '2026-11-16', to_day: '2026-11-22', category: 'all' })
   expect(defaultHistoryFilters(new Date('2026-11-22T17:00:00Z'))).toMatchObject({ from_day: '2026-11-17', to_day: '2026-11-23' })
 })
+
+
+it('A228 retains other-feature invalidation on return while miGarden deduplicates its in-flight GET', async () => {
+  vi.useFakeTimers()
+  environmentManager.setIsServer(() => false)
+  focusManager.setFocused(true)
+  const target = new EventTarget()
+  vi.stubGlobal('window', target)
+  vi.stubGlobal('document', { visibilityState: 'visible' })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const stop = startHumanActivity(client)
+  const signals: Record<string, AbortSignal[]> = { tasks: [], migarden: [] }
+  const observers = Object.keys(signals).map(family => {
+    const key = [family, 'synthetic-revalidation']
+    client.setQueryData(key, 1)
+    return new QueryObserver(client, { queryKey: key, queryFn: ({ signal }) => { signals[family].push(signal); return new Promise(() => undefined) } })
+  })
+  const unsub = observers.map(observer => observer.subscribe(() => undefined))
+  try {
+    await vi.advanceTimersByTimeAsync(HUMAN_IDLE_MS + 1)
+    target.dispatchEvent(new Event('pointerdown'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(signals.tasks).toHaveLength(2)
+    expect(signals.tasks[0].aborted).toBe(true)
+    expect(signals.migarden).toHaveLength(1)
+    expect(signals.migarden[0].aborted).toBe(false)
+  } finally { for (const off of unsub) off(); stop(); client.clear() }
+})

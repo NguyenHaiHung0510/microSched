@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { garden, gardenConfigMutation, type Bundle, type Config, type ConfigView, type Recurrence } from './api'
+import { garden, gardenConfigMutation, gardenKey, type Bundle, type Config, type ConfigView, type Recurrence } from './api'
 import { duration, errorText, explainReason, fromLocal, instantLabel, localInput } from './presentation'
 
 const patterns = {
@@ -117,13 +117,14 @@ export function ConfigStatus({ config }: { config: ConfigView }) {
 }
 
 export function Configuration({ config, connected, onSaved }: {
-  config: ConfigView; connected: boolean; onSaved: (value: ConfigView) => void;
+  config: ConfigView; connected: boolean; onSaved: (value: ConfigView) => Promise<void>;
 }) {
   const [initial] = useState(() => localInput(new Date().toISOString()))
   const [draft, setDraft] = useState<Draft | null>(null)
   const [validation, setValidation] = useState('')
   const saving = useRef(false)
   const queryClient = useQueryClient()
+  const stateKey = gardenKey('state')
   const pending = useIsMutating({ mutationKey: gardenConfigMutation }) > 0
   const saveInFlight = () => saving.current || queryClient.isMutating({ mutationKey: gardenConfigMutation }) > 0
   const baseline = formFrom(config.desired, initial)
@@ -135,7 +136,8 @@ export function Configuration({ config, connected, onSaved }: {
     mutationKey: gardenConfigMutation,
     mutationFn: ({ bundle, expected }: { bundle: Bundle; expected: string | null }) => garden.save(bundle, expected),
     retry: false, networkMode: 'always',
-    onSuccess: result => { setDraft(null); setValidation(''); onSaved(result) },
+    onMutate: () => queryClient.cancelQueries({ queryKey: stateKey, exact: true }),
+    onSuccess: async result => { await onSaved(result); setDraft(null); setValidation('') },
     onSettled: () => { saving.current = false },
   })
   function edit<K extends keyof Form>(key: K, newValue: Form[K]) {

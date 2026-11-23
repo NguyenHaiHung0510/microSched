@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { garden, gardenOptions, type Bundle } from './api'
+import { garden, gardenOptions, gardenKey, type Bundle } from './api'
 import { duration, explainReason, instantLabel, scheduleLabel } from './presentation'
 
 function contentRows(bundle: Bundle): Record<string, string> {
@@ -21,8 +21,8 @@ export function GardenVersions({ selected, onSelect }: { selected: string | null
   const heading = useRef<HTMLHeadingElement>(null)
   const params = new URLSearchParams({ limit: '10' })
   if (cursors.length) params.set('cursor', cursors.at(-1)!)
-  const versions = useQuery({ queryKey: ['migarden', 'versions', params.toString()], queryFn: ({ signal }) => garden.versions(params, signal), ...gardenOptions })
-  const detail = useQuery({ queryKey: ['migarden', 'version', selected], queryFn: ({ signal }) => garden.version(selected!, signal), enabled: !!selected, ...gardenOptions })
+  const versions = useQuery({ queryKey: gardenKey('versions', params.toString()), queryFn: ({ signal }) => garden.versions(params, signal), ...gardenOptions })
+  const detail = useQuery({ queryKey: gardenKey('version', selected), queryFn: ({ signal }) => garden.version(selected!, signal), enabled: !!selected, ...gardenOptions })
   useEffect(() => { if (selected) { heading.current?.scrollIntoView({ block: 'nearest' }); heading.current?.focus({ preventScroll: true }) } }, [selected])
   const data = detail.data
   const fields = data ? contentRows(data.bundle) : {}

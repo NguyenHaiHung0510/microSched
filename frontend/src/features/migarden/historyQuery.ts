@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { garden, gardenOptions } from './api'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { garden, gardenOptions, gardenKey } from './api'
 import { localInput } from './presentation'
 import { humanActive } from '@/human-activity'
 
@@ -14,6 +14,7 @@ export function defaultHistoryFilters(now = new Date()) {
 }
 
 export function useGardenTimeline(active: boolean) {
+  const client = useQueryClient()
   const [filters, setFilters] = useState(defaultHistoryFilters)
   const [cursors, setCursors] = useState<string[]>([])
   const params = new URLSearchParams({ view: 'sessions' })
@@ -21,8 +22,18 @@ export function useGardenTimeline(active: boolean) {
   if (cursors.length) params.set('cursor', cursors[cursors.length - 1])
   const badRange = !!(filters.from_day && filters.to_day && filters.from_day > filters.to_day)
   const query = useQuery({
-    queryKey: ['migarden', 'history', params.toString()],
-    queryFn: ({ signal }) => garden.timeline(params, signal),
+    queryKey: gardenKey('history', params.toString()),
+    queryFn: async ({ signal }) => {
+      const data = await garden.timeline(params, signal)
+      signal.throwIfAborted()
+      // Apply/reject evidence is not fully exposed by StateView. The selected
+      // version joins the existing 15s timeline read; no new polling timer.
+      if (humanActive()) void client.refetchQueries({
+        queryKey: gardenKey('version'), type: 'active',
+        predicate: query => query.state.fetchStatus === 'idle' && Date.now() - query.state.dataUpdatedAt >= 15_000,
+      }, { cancelRefetch: false })
+      return data
+    },
     ...gardenOptions, enabled: active && !badRange, refetchInterval: historyPoll,
   })
   return {

@@ -1,8 +1,9 @@
 import { apiRequest } from '@/api'
-import { useEffect, useSyncExternalStore } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { gardenPresenceHeaders, listenGardenActivity } from './presence'
 import { humanActive, useHumanActive } from '@/human-activity'
+import { acceptGardenReading, invalidateGardenDependencies, type GardenReading } from './liveReading'
 
 export type Source = 'schedule' | 'remote' | 'local_button'
 export type Recurrence =
@@ -163,9 +164,8 @@ export const garden = {
   health: (params: URLSearchParams, signal?: AbortSignal) => read<{ items: Health[]; boots: { boot_id: string; first_seen_at: string }[]; next_cursor: string | null }>('/health?' + params, signal),
 }
 export const gardenOptions = { retry: false, staleTime: 0, gcTime: 0, refetchIntervalInBackground: false }
-function subscribeVisibility(listener: () => void) {
-  window.addEventListener('visibilitychange', listener, true)
-  return () => window.removeEventListener('visibilitychange', listener, true)
+export function gardenKey(family: string, ...parts: unknown[]) {
+  return ['migarden', family, ...parts] as const
 }
 export function gardenStateInterval(data: GardenState | undefined, status: string, visible: boolean) {
   if (!visible || !humanActive()) return false
@@ -174,16 +174,23 @@ export function gardenStateInterval(data: GardenState | undefined, status: strin
 }
 export function useGardenState(controlPage = true) {
   useEffect(listenGardenActivity, [])
-  const visible = useSyncExternalStore(subscribeVisibility,
-    () => document.visibilityState === 'visible', () => false)
   const active = useHumanActive()
+  const client = useQueryClient()
+  const key = gardenKey('state')
   return useQuery({
-    queryKey: ['migarden', 'state'],
-    queryFn: ({ signal }) => garden.state(signal),
+    queryKey: key,
+    queryFn: async ({ signal }) => {
+      const state = await garden.state(signal)
+      signal.throwIfAborted()
+      const previous = client.getQueryData<GardenReading>(key)
+      const next = acceptGardenReading(previous, state, Date.now())
+      invalidateGardenDependencies(client, previous, next)
+      return next
+    },
     ...gardenOptions,
-    enabled: visible && active,
+    enabled: active,
     refetchInterval: query => controlPage
-      ? gardenStateInterval(query.state.data, query.state.status, visible)
-      : visible && active ? 30_000 : false,
+      ? gardenStateInterval(query.state.data, query.state.status, active)
+      : active ? 30_000 : false,
   })
 }

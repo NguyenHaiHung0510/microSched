@@ -1,4 +1,5 @@
 import { ApiError } from '@/api'
+import { gardenServerNow, OUTPUT_FRESH_MS } from './liveReading'
 import type { Command, GardenState, HistoryItem, Source, Schedule } from './api'
 
 export function scheduleLabel(schedule: Schedule) {
@@ -41,17 +42,15 @@ export function fromLocal(value: string): string {
 
 export function displayedSession(state: GardenState, received: number, now: number, online: boolean) {
   const session = state.snapshot?.active_session
-  const snapshotAgeAtLoad = state.snapshot_received_at
-    ? Date.parse(state.server_time) - Date.parse(state.snapshot_received_at) : Infinity
-  const observedAge = state.snapshot?.observed_at
-    ? Date.parse(state.server_time) - Date.parse(state.snapshot.observed_at) : Infinity
-  const age = Math.max(0, now - received)
-  const fresh = online && state.connection === 'fresh' && snapshotAgeAtLoad + age <= 45_000
+  const serverNow = gardenServerNow(state, received, now)
+  const snapshotAge = state.snapshot_received_at ? serverNow - Date.parse(state.snapshot_received_at) : Infinity
+  const observedAge = state.snapshot?.observed_at ? serverNow - Date.parse(state.snapshot.observed_at) : Infinity
+  const fresh = online && state.connection === 'fresh' && snapshotAge >= 0 && snapshotAge < OUTPUT_FRESH_MS
   const live = fresh && Boolean(session) && state.snapshot?.output === 'on' &&
-    state.snapshot.time_quality !== 'unknown' && observedAge + age <= 45_000
+    state.snapshot.time_quality !== 'unknown' && observedAge <= 45_000
   const reported = session?.elapsed_seconds ?? 0
   const elapsed = live && session
-    ? Math.max(reported, Math.min(session.duration_seconds, reported + Math.floor(Math.max(0, observedAge + age) / 1000)))
+    ? Math.max(reported, Math.min(session.duration_seconds, reported + Math.floor(Math.max(0, observedAge) / 1000)))
     : reported
   return { fresh, live, elapsed }
 }
