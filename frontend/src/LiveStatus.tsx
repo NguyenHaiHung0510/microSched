@@ -1,5 +1,6 @@
 import { onlineManager, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useHumanActive } from '@/human-activity'
 import { cn } from '@/lib/utils'
 import { freshnessState, FRESH_WINDOW_MS, type FreshQuery } from '@/freshness'
 import { isTaskTitleSuggestionsQuery } from '@/task-title-suggestions'
@@ -32,6 +33,8 @@ export function PrimaryLiveStatus({ query }: { query: { status: string; dataUpda
 }
 
 function FreshnessBadge({ serialized, garden = false }: { serialized: string; garden?: boolean }) {
+  const human = useHumanActive()
+  const active = !garden || human
   const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline())
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
   const [now, setNow] = useState(() => Date.now())
@@ -45,11 +48,11 @@ function FreshnessBadge({ serialized, garden = false }: { serialized: string; ga
     const deadline = Math.min(...queries.filter((query) => query.updatedAt > 0).map((query) => query.updatedAt + FRESH_WINDOW_MS))
     // One local expiry timeout per data snapshot, no network request or repeating clock.
     const timer = window.setTimeout(() => setNow(Date.now()), 0)
-    const expiry = Number.isFinite(deadline) && deadline > Date.now() && visible
+    const expiry = Number.isFinite(deadline) && deadline > Date.now() && visible && active
       ? window.setTimeout(() => setNow(Date.now()), deadline - Date.now() + 1) : undefined
     return () => { window.clearTimeout(timer); window.clearTimeout(expiry) }
-  }, [serialized, visible])
-  const state = freshnessState(JSON.parse(serialized) as FreshQuery[], now, online, visible)
+  }, [serialized, visible, active])
+  const state = !active && online ? 'paused' : freshnessState(JSON.parse(serialized) as FreshQuery[], now, online, visible)
   return (
     <span data-testid="app-live-status" data-state={state} role="status"
       title={garden ? 'Độ mới dữ liệu web, không phải trạng thái ESP32' : undefined}

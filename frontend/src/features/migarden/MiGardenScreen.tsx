@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { navigate, queryParams } from '@/lib/route'
 import { cn } from '@/lib/utils'
-import { garden, useGardenState, type Command, type Forecast, type GardenState, type Preview } from './api'
+import { garden, gardenKey, useGardenState, type Command, type Forecast, type Preview } from './api'
 import { PrimaryLiveStatus } from '@/LiveStatus'
 import { Configuration, ConfigStatus } from './Configuration'
 import { GardenHistory, GardenRecent } from './GardenHistory'
@@ -18,6 +18,8 @@ import { GardenVersions } from './GardenVersions'
 import { GardenHealth } from './GardenHealth'
 import type { ConfigView } from './api'
 import { displayedSession, duration, errorText, explainReason, instantLabel, sources, statusLabels, stopwatch, timeLabel } from './presentation'
+import { useHumanActive, useHumanInputAt } from '@/human-activity'
+import { gardenServerNow, OUTPUT_FRESH_MS, patchGardenState, refreshGarden, type GardenReading } from './liveReading'
 import './garden.css'
 
 function NextSchedule({ next, fresh, config }: { next: Forecast; fresh: boolean; config: ConfigView }) {
@@ -59,9 +61,11 @@ function RequestStatus({ command }: { command: Command | null }) {
 }
 
 function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
-  state: GardenState; dataAt: number; now: number; online: boolean; connected: boolean; refresh: () => void;
+  state: GardenReading; dataAt: number; now: number; online: boolean; connected: boolean; refresh: () => void;
 }) {
   const client = useQueryClient()
+  const stateKey = gardenKey('state')
+  const human = useHumanActive()
   const opener = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const [minutes, setMinutes] = useState('')
@@ -71,24 +75,22 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
   const [stopNotice, setStopNotice] = useState('')
   const device = state.snapshot
   const active = device?.active_session
-  const display = displayedSession(state, dataAt, now, connected)
+  const display = displayedSession(state, dataAt, now, true)
+  const live = display.live && connected && human
   const max = state.config.applied?.policy.max_session_seconds ?? 0
-  const canStart = display.fresh && state.start_block_reason === null && Boolean(max)
-  const applyCommand = (key: 'start_request' | 'stop_request', data: Command) => {
-    client.setQueryData<GardenState>(['migarden', 'state'], previous => previous ? { ...previous, [key]: data } : previous, { updatedAt: dataAt })
-    void client.invalidateQueries({ queryKey: ['migarden'] })
-  }
+  const canStart = online && connected && human && display.fresh && device?.output === 'off' && !active && state.start_block_reason === null && Boolean(max)
+  const applyCommand = (key: 'start_request' | 'stop_request', data: Command) => patchGardenState(client, stateKey, { [key]: data })
   const getPreview = useMutation({
     mutationFn: garden.preview, retry: false, networkMode: 'always',
     onMutate: () => Date.now(),
     onSuccess: (record, _minutes, at) => {
-      setPreview({ record, localExpires: (at ?? Date.now()) + 45_000 })
+      setPreview({ record, localExpires: Math.min((at ?? Date.now()) + 45_000, Date.now() + Math.max(0, Date.parse(record.expires_at) - gardenServerNow(state, dataAt, Date.now()))) })
     },
     onError: error => { setFormError(errorText(error, 'Không lấy được bản xem trước. Kiểm tra kết nối và thử lại.')); refresh() },
   })
   const confirm = useMutation({
     mutationFn: garden.confirm, retry: false, networkMode: 'always',
-    onSuccess: data => { applyCommand('start_request', data); setOpen(false); setStartNotice('') },
+    onSuccess: async data => { await applyCommand('start_request', data); setOpen(false); setStartNotice('') },
     onError: error => {
       const detail = 'Chưa xác nhận kết quả gửi. Xem trạng thái trước khi gửi yêu cầu mới.'
       setFormError(errorText(error, detail))
@@ -98,32 +100,31 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
   })
   const stop = useMutation({
     mutationFn: garden.stop, retry: false, networkMode: 'always',
-    onSuccess: data => { setStopNotice(''); setStartNotice(''); applyCommand('stop_request', data) },
+    onSuccess: async data => { setStopNotice(''); setStartNotice(''); await applyCommand('stop_request', data) },
     onError: error => {
       setStopNotice(errorText(error, 'Chưa xác nhận gửi được Dừng. Kiểm tra tại tủ nếu cần dừng ngay.'))
       refresh()
     },
   })
-  const liveAt = display.live && active?.started_at ? timeLabel(active.started_at) : null
-  const headline = display.live ? 'Đang tưới'
-    : active || device?.output === 'on' ? 'Lần cuối xác nhận đang tưới'
-      : !display.fresh ? state.connection === 'unconfigured' ? 'Chưa kết nối Controller'
-        : state.connection === 'waiting' ? 'Đang chờ Controller' : 'Chưa rõ trạng thái hiện tại'
-        : device?.output === 'off' ? 'Đầu ra đang tắt theo báo cáo' : 'Chưa rõ trạng thái đầu ra'
+  const liveAt = live && active?.started_at ? timeLabel(active.started_at) : null
+  const headline = display.fresh && device?.output === 'off' ? 'Đầu ra tắt'
+    : display.fresh && device?.output === 'on' ? (live ? 'Đang tưới' : 'Đầu ra bật') : 'Chưa rõ trạng thái'
+  const confirmed = state.confirmedOutput
   return <>
-    <div className={cn('rounded-xl border px-4 py-3', display.live ? 'border-primary/25 bg-accent' : 'border-muted bg-background')}
+    <div className={cn('rounded-xl border px-4 py-3', live ? 'border-primary/25 bg-accent' : 'border-muted bg-background')}
       data-testid="garden-now">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
-          <p className="flex items-center gap-2 text-base font-extrabold lg:text-lg">
+          <p data-testid="garden-output" className="flex items-center gap-2 text-base font-extrabold lg:text-lg">
             <Droplet aria-hidden="true" className="size-5 shrink-0 text-primary" />
-            {headline}{active && <span className="font-normal">· {sources[active.trigger_source]}</span>}
+            {headline}
           </p>
           {active && <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 sm:border-l sm:border-muted sm:pl-4">
+            <span>{sources[active.trigger_source]}</span>
             {active.started_at && <span>Bắt đầu {liveAt ?? timeLabel(active.started_at)}</span>}
-            <span>{display.live ? 'Đã chạy ' : 'Lần cuối đã báo '}
+            <span>{live ? 'Đã chạy ' : 'Lần cuối đã báo '}
               <strong className="text-lg tabular-nums text-primary" data-testid="garden-elapsed">
-                {stopwatch(display.elapsed)} / {stopwatch(active.duration_seconds)}
+                {stopwatch(live ? display.elapsed : active.elapsed_seconds)} / {stopwatch(active.duration_seconds)}
               </strong>
             </span>
           </div>}
@@ -143,9 +144,12 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
       </div>
       <div className="mt-2 space-y-1 text-sm">
         {state.snapshot_received_at && <p className="text-muted-foreground">
-          {display.fresh ? 'Đồng bộ' : 'Báo cáo cuối lúc'} {instantLabel(state.snapshot_received_at)}
+          {display.fresh ? 'Đồng bộ' : 'Báo cáo cuối lúc'} <time dateTime={state.snapshot_received_at}>{instantLabel(state.snapshot_received_at)}</time>
         </p>}
-        {(!canStart && !display.live) && <p>{!online ? 'Web mất kết nối; không xếp lệnh tưới chờ gửi.' :
+        {(!display.fresh || device?.output === 'unknown' || !device) && <p data-testid="garden-last-confirmed">
+          {confirmed ? <>Lần cuối xác nhận: {confirmed.output === 'on' ? 'Đầu ra bật' : 'Đầu ra tắt'} · <time dateTime={confirmed.receivedAt}>{instantLabel(confirmed.receivedAt)}</time></> : 'Chưa có xác nhận đầu ra'}
+        </p>}
+        {(!canStart && !live) && <p>{!online ? 'Web mất kết nối; không xếp lệnh tưới chờ gửi.' :
           explainReason(state.start_block_reason) ?? (display.fresh ? '' : 'Chờ báo cáo mới trước khi tưới từ web.')}</p>}
         {device?.blocked_reason && !device.ready && <p className="break-words">{explainReason(device.blocked_reason)}</p>}
         {(state.start_request || state.stop_request) && <div role="status" className="space-y-1">
@@ -175,13 +179,14 @@ function OverviewStatus({ state, dataAt, now, online, connected, refresh }: {
             <Button type="button" variant="outline" onClick={() => { setPreview(null); setFormError('') }} disabled={confirm.isPending}>
               Đổi thời lượng
             </Button>
-            <Button type="button" disabled={confirm.isPending || !online || !display.fresh || now >= preview.localExpires}
-              onClick={() => { setFormError(''); confirm.mutate(preview.record.preview_id) }}>
+            <Button type="button" disabled={confirm.isPending || !canStart || now >= preview.localExpires}
+              onClick={() => { if (!canStart || Date.now() >= preview.localExpires || !displayedSession(state, dataAt, Date.now(), connected).fresh) return; setFormError(''); confirm.mutate(preview.record.preview_id) }}>
               {confirm.isPending ? 'Đang gửi…' : 'Xác nhận tưới'}
             </Button>
           </DialogFooter>
         </> : <form className="space-y-3" onSubmit={event => {
           event.preventDefault()
+          if (!canStart || !displayedSession(state, dataAt, Date.now(), connected).fresh) return
           const seconds = Number(minutes) * 60
           if (seconds < 15 || seconds > max || seconds % 15 !== 0) { setFormError('Chọn thời lượng hợp lệ, theo bước 15 giây.'); return }
           setFormError(''); getPreview.mutate(seconds)
@@ -217,20 +222,31 @@ export function MiGardenScreen({ location, leave, configVersion }: {
   const history = !configuration && (route.get('tab') === 'history' || !route.has('tab') && route.get('history') === '1')
   const current = configuration ? 'config' : history ? 'history' : 'overview'
   const go = (target: string) => leave(() => navigate(target))
-  const [now, setNow] = useState(() => Date.now())
+  const [tick, setNow] = useState(() => Date.now())
+  const active = useHumanActive()
+  const inputAt = useHumanInputAt()
+  const now = active ? Math.max(tick, inputAt) : tick
+  const stateKey = gardenKey('state')
   const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline())
   const state = useGardenState(!history)
   const timeline = useGardenTimeline(history)
   const cache = useQueryClient()
   const data = state.data
   useEffect(() => {
-    if (configuration || history) return
+    if (configuration || history || !active) return
     const id = window.setInterval(() => { if (!document.hidden) setNow(Date.now()) }, 1000)
     return () => window.clearInterval(id)
-  }, [configuration, history])
-  const connected = online && !state.isError && !state.isFetching
+  }, [configuration, history, active])
+  useEffect(() => {
+    if (configuration || history || !active || !data?.snapshot_received_at) return
+    const remaining = OUTPUT_FRESH_MS - (gardenServerNow(data, state.dataUpdatedAt, Date.now()) - Date.parse(data.snapshot_received_at))
+    if (remaining <= 0) return
+    const timer = window.setTimeout(() => setNow(Date.now()), remaining)
+    return () => window.clearTimeout(timer)
+  }, [configuration, history, active, data, state.dataUpdatedAt])
+  const connected = online && !state.isError
   const fresh = data && displayedSession(data, state.dataUpdatedAt, now, connected).fresh
-  const refresh = () => { void cache.invalidateQueries({ queryKey: ['migarden'] }) }
+  const refresh = () => refreshGarden(cache)
   return <section aria-labelledby="migarden-title" data-testid="migarden-screen" className="space-y-4">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex min-w-0 flex-wrap items-start gap-x-6 gap-y-3">
@@ -255,13 +271,11 @@ export function MiGardenScreen({ location, leave, configVersion }: {
     {!history && state.isError && <p role="alert" className="rounded-lg bg-warn-bg p-3">
       Không đọc được trạng thái mới. {data ? 'Đang hiển thị báo cáo cuối đã nhận.' : 'Dùng Cập nhật để thử lại.'}
     </p>}
+    {!history && !data && <p>Chưa có xác nhận đầu ra</p>}
     {data && <>
       <div hidden={!configuration}>
         {configuration && data.config.desired && <div className="mb-3 space-y-2"><ScheduleTrace config={data.config} /><Button variant="outline" onClick={() => go('/migarden?tab=history&version=' + encodeURIComponent(data.config.desired!.config_ref))}>Xem bản đã lưu</Button>{data.config.applied && <Button variant="ghost" onClick={() => go('/migarden?tab=history&version=' + encodeURIComponent(data.config.applied!.config_ref))}>Xem bản ESP xác nhận gần nhất</Button>}</div>}
-        <Configuration key={configVersion} config={data.config} connected={connected} onSaved={config => {
-          cache.setQueryData<GardenState>(['migarden', 'state'], old => old ? { ...old, config } : old, { updatedAt: state.dataUpdatedAt })
-          void cache.invalidateQueries({ queryKey: ['migarden'] })
-        }} />
+        <Configuration key={configVersion} config={data.config} connected={connected} onSaved={config => patchGardenState(cache, stateKey, { config })} />
       </div>
       {!configuration && !history && <>
         <OverviewStatus state={data} dataAt={state.dataUpdatedAt} now={now} online={online} connected={connected} refresh={refresh} />

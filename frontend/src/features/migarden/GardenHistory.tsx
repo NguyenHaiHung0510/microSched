@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import { garden, gardenOptions, type Command, type HistoryItem, type TimelineItem } from './api'
+import { garden, gardenOptions, gardenKey, type Command, type HistoryItem, type TimelineItem } from './api'
 import { historyPoll, type GardenTimelineModel } from './historyQuery'
 import { duration, explainReason, historyLabel, instantLabel, reconcileRecent, sources, statusLabels, timeLabel } from './presentation'
 
@@ -99,7 +99,7 @@ export function GardenRecent({ onNavigate, currentRequests }: {
   onNavigate: () => void; currentRequests: (Command | null)[];
 }) {
   const query = useQuery({
-    queryKey: ['migarden', 'history', 'limit=4'],
+    queryKey: gardenKey('history', 'limit=4'),
     queryFn: ({ signal }) => garden.history(new URLSearchParams({ limit: '4' }), signal),
     ...gardenOptions, refetchInterval: historyPoll,
   })

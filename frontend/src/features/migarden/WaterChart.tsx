@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { garden, gardenOptions, type DailyPoint } from './api'
+import { garden, gardenOptions, gardenKey, type DailyPoint } from './api'
 import { dayLabel, duration } from './presentation'
 import { humanActive } from '@/human-activity'
 
@@ -21,7 +21,7 @@ export function WaterChart() {
   const [selected, choose] = useState<string | null>(null)
   const [table, setTable] = useState(false)
   const daily = useQuery({
-    queryKey: ['migarden', 'daily', days], queryFn: ({ signal }) => garden.daily(days, signal),
+    queryKey: gardenKey('daily', days), queryFn: ({ signal }) => garden.daily(days, signal),
     ...gardenOptions, refetchInterval: query => !humanActive() ? false : query.state.status === 'error' ? 60_000 : 30_000,
   })
   const projection = daily.data?.schedule_projection

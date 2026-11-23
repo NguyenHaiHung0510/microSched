@@ -1,7 +1,8 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
 async function fixture(page: Page, confirmed = false, sampledAt?: string) {
-  const stamp = () => new Date().toISOString()
+  let browserAt = Date.now()
+  const stamp = () => new Date(browserAt).toISOString()
   const old = { config_ref: 'synthetic-old-on', zone_id: 'zone-a', binding_ref: 'zone-a-v1', policy: { manual_duration_seconds: 900, max_session_seconds: 1800, max_window_seconds: 7200, window_seconds: 10800 }, schedule: { enabled: true, effective_from: '2026-11-01T00:00:00Z', effective_until: null, duration_seconds: 60, recurrence: { kind: 'daily', at_local_time: '17:20' } } }
   const saved = { ...old, config_ref: 'synthetic-new-off', schedule: { ...old.schedule, enabled: false } }
   const paused = { status: 'paused', config_ref: saved.config_ref, next_at: null, day: null, duration_seconds: null, day_total_seconds: null }
@@ -13,6 +14,7 @@ async function fixture(page: Page, confirmed = false, sampledAt?: string) {
   let pending: Route | undefined
   const state = () => ({ zone_id: 'zone-a', binding_ref: 'zone-a-v1', server_time: stamp(), connection: 'fresh', last_seen_at: stamp(), snapshot_received_at: stamp(), snapshot: { observed_at: stamp(), time_quality: 'synced', output: 'off', active_session: null, applied_config_ref: confirmed ? saved.config_ref : old.config_ref, ready: true, blocked_reason: null }, config: config(), start_block_reason: confirmed ? null : 'config_not_applied', stop_available: true, start_request: null, stop_request: null, next_schedule: confirmed ? paused : on, health: sampledAt ? { sample_id: 'synthetic-sample', received_at: stamp(), sample: { build_id: 'synthetic-release', boot_id: 'boot-demo', sampled_at: sampledAt, time_quality: 'synced', uptime_seconds: 12000, reset_reason: 1, free_heap: 180000, minimum_heap: 150000, wifi_phase: 'CONNECTED', sync_status: 'OK', pending_reports: 0, evidence_gaps: 0 } } : null })
   await page.route('**/api/**', async route => {
+    browserAt = await page.evaluate(() => Date.now())
     const url = new URL(route.request().url()), path = url.pathname
     calls.push(path + url.search)
     if (path === '/api/me') return route.fulfill({ json: { email: 'synthetic@example.test', signed_in_at: stamp(), expires_at: '2099-01-01T00:00:00Z', private_until: null, private_locked_until: null, pin_is_set: true, pin_is_bootstrap: false, mimi_available: true, migarden_available: true } })
@@ -60,6 +62,7 @@ test('N03 visible idle quiets all read timers, closed Mimi list stays quiet, res
   await expect(page.getByRole('button', { name: 'Tưới ngay', exact: true })).toBeEnabled()
   await page.clock.fastForward(301_000)
   await page.waitForTimeout(20)
+  await expect(page.getByTestId('app-live-status')).toHaveText('Web · Tạm dừng cập nhật')
   const settled = cell.calls.length
   await page.clock.fastForward(350_000)
   await page.waitForTimeout(20)
@@ -80,4 +83,21 @@ test('N04 shows how old an ESP sample is separately from when the server receive
   const health = page.getByTestId('garden-health')
   await expect(health).toContainText('Server nhận mẫu')
   await expect(health).toContainText(/Tuổi mẫu.*(?:180 phút|3 giờ)/)
+})
+
+
+test('A228 matching background GET preserves the accepted output label and START', async ({ page }) => {
+  await page.clock.install()
+  const cell = await fixture(page, true)
+  await page.goto('/migarden')
+  const title = page.getByTestId('garden-now').locator('p').first()
+  await expect(page.getByRole('button', { name: 'Tưới ngay', exact: true })).toBeEnabled()
+  const accepted = await title.innerText()
+  const before = cell.calls.filter(call => call === '/api/migarden/state').length
+  cell.hold()
+  await page.clock.runFor(1000)
+  await expect.poll(() => cell.calls.filter(call => call === '/api/migarden/state').length).toBeGreaterThan(before)
+  await expect.soft(title).toHaveText(accepted)
+  await expect(page.getByRole('button', { name: 'Tưới ngay', exact: true })).toBeEnabled()
+  await cell.release()
 })

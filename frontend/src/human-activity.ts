@@ -10,6 +10,7 @@ export function humanActive() {
   return (typeof document === 'undefined' || document.visibilityState === 'visible') && Date.now() - lastInput < HUMAN_IDLE_MS
 }
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
+export function useHumanInputAt() { return useSyncExternalStore(subscribe, () => lastInput, () => 0) }
 export function useHumanActive() { return useSyncExternalStore(subscribe, humanActive, () => false) }
 export function startHumanActivity(client: QueryClient) {
   let timer: ReturnType<typeof setTimeout>
@@ -25,7 +26,8 @@ export function startHumanActivity(client: QueryClient) {
     if (returning) {
       // Every open read view revalidates its authenticated API. Never manufacture
       // fresh data or change outbox/reminder/Mimi execution lifecycles here.
-      void client.invalidateQueries({ type: 'active', predicate: query => query.options.queryFn !== undefined })
+      void client.invalidateQueries({ type: 'active', predicate: query => query.queryKey[0] !== 'migarden' && query.options.queryFn !== undefined })
+      void client.refetchQueries({ type: 'active', predicate: query => query.queryKey[0] === 'migarden' && query.options.queryFn !== undefined }, { cancelRefetch: false })
     }
     notify()
   }

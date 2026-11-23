@@ -28,8 +28,8 @@ describe('N01 display boundaries', () => {
       },
     } as GardenState
     expect(displayedSession(state, 1_000, 3_000, true)).toEqual({ fresh: true, live: true, elapsed: 11 })
-    expect(displayedSession(state, 1_000, 20_000, true)).toEqual({ fresh: true, live: true, elapsed: 15 })
-    expect(displayedSession(state, 1_000, 47_000, true)).toEqual({ fresh: false, live: false, elapsed: 7 })
+    expect(displayedSession(state, 1_000, 14_999, true)).toEqual({ fresh: true, live: true, elapsed: 15 })
+    expect(displayedSession(state, 1_000, 15_000, true)).toEqual({ fresh: false, live: false, elapsed: 7 })
     expect(displayedSession(state, 1_000, 3_000, false)).toEqual({ fresh: false, live: false, elapsed: 7 })
   })
 })
