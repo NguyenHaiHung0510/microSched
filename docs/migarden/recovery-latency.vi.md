@@ -1,6 +1,6 @@
 # Phục hồi lượt bị ngắt và nhịp đồng bộ miGarden
 
-Lượt bị ngắt khi Controller khởi động lại vẫn có kết quả **chưa rõ**, thời lượng thực tế **NULL**. Khi Controller đã đối soát an toàn lượt đó, app có thể cho phép **một yêu cầu tưới mới**; không chạy lại lệnh cũ. Phần này triển khai trên schema `0022`, không thêm migration hoặc đổi wire `migarden.zone-a.v1`.
+Lượt bị ngắt khi Controller khởi động lại vẫn có kết quả **chưa rõ**, thời lượng thực tế **NULL**. Khi Controller đã đối soát an toàn lượt đó, app có thể cho phép **một yêu cầu tưới mới**; không chạy lại lệnh cũ. Recovery dùng dữ liệu có từ schema `0022`. V2.1.0 thêm health trên `0023` và negotiate quiet/health trong wire `migarden.zone-a.v1`.
 
 ## Bằng chứng phục hồi cho đúng một lượt
 
@@ -14,17 +14,19 @@ Retry cùng ID/nội dung không nhân effect. Cùng ID khác nội dung hoặc 
 
 **Thứ tự rollout:** giao app đọc được marker này trước, rồi parent mới cho firmware mới phát marker. Server cũ chỉ hiểu generic `recovered` có thể ACK mà không phục hồi admission. Firmware phải giữ bằng chứng reboot và accounting bền; app không dựng lại provenance đã mất trong journal cũ. Nếu không chứng minh đúng nguyên nhân, giữ blocked và đối soát riêng. Không reset history/journal/credentials để phục hồi.
 
-## Lease hoạt động hữu hạn
+## Nhịp v2.1.0 và N03 quiet
 
-UI vẫn dùng Tổng quan/Cấu hình và trạng thái pending/confirmed hiện có. State poll là 1 giây khi trang điều khiển đang hiển thị; background tạm dừng, lỗi và chưa cấu hình dùng 30 giây. Query key chung giữ dedup giữa consumer; một request bị treo không tạo hàng đợi poll. Không tự retry mutation hoặc coi receipt là đang tưới.
+UI dùng Tổng quan, Cấu hình và Lịch sử, với trạng thái pending/confirmed theo từng biên nhận. State poll là 1 giây trên trang điều khiển khi đang có hoạt động người dùng, 30 giây khi lỗi hoặc chưa cấu hình. Background/hết cửa sổ hoạt động dừng poll. Query key chung giữ dedup giữa consumer; một request bị treo không tạo hàng đợi poll. Không tự retry mutation hoặc coi receipt là đang tưới.
 
-Khi mở/quay lại miGarden hoặc có thao tác pointer/keyboard/focus, UI gửi **một lần** header `X-MiGarden-Visible: 1` trong state GET kế tiếp. Poll tự động về sau không lặp header. State GET thành công có signal, hoặc action điều khiển/cấu hình hợp lệ, gia hạn một lease trong memory app process trong 30 giây. Không có signal mới thì lease hết hạn dù tab vẫn mở và polling. Không lưu identifier/session riêng vào lease; restart process mất lease và về nhịp gốc.
+Khi mở/quay lại miGarden hoặc có thao tác pointer/keyboard/focus, UI gửi một lần `X-MiGarden-Visible: 1` cùng `X-MiGarden-Active-For` trong state GET kế tiếp. Signal mang thời gian hoạt động còn lại, tối đa 5 phút. State GET có signal hoặc action hợp lệ cập nhật cửa sổ hiện diện và lease foreground 30 giây trong memory app process. Poll về sau không tự gia hạn. Restart process làm mất lease.
 
-Trong lease, chỉ exchange hợp lệ và thật sự idle mới nhận `retry_after_seconds=2`: không reports/ACKs/desired config/candidate/grant/STOP, không inflight, reconciliation hoặc uncertainty. Active vẫn theo nhịp firmware 5 giây; hết lease, idle về 15 giây. Response đã có retry/backoff, poison path, auth failure và report drain không bị thay bằng hint. Firmware phải phân biệt hint idle với error backoff để event mới vẫn đánh thức/drain ngay.
+Với firmware v1 gốc, lease chỉ gợi ý 2 giây cho exchange hợp lệ và thật sự idle. Nhịp gốc 15 giây idle/5 giây active do firmware giữ. Với `quiet-health-v1`, app giảm lượt chạm DB khi context giữ nguyên, đầu ra off, không có phiên/report và đã qua cửa sổ hiện diện cũng như tail 10 phút sau phiên. Reconcile lại trong cửa sổ 6 giờ. HTTP 202 gợi ý thử lại sau 5 giây và không mang ACK, config, grant hay freshness. Authoritative exchange thành công mặc định gợi ý 2 giây nếu chưa có retry hint khác. Work mới đi qua exchange có kiểm chứng, giữ bounded backoff khi lỗi. Health tùy chọn không đánh thức DB khi idle và không tham gia control.
 
-**Giới hạn latency:** mở trang không đánh thức Controller trước exchange kế tiếp. Lệnh đầu có thể còn chờ phần còn lại của nhịp idle 15 giây; hint 2 giây chỉ có hiệu lực sau khi firmware nhận được nó. Nhịp UI 1 giây rút ngắn bước hiển thị báo cáo, không chứng minh radio, GPIO, van hoặc flow nhanh tương ứng. Không thêm push/queue/service để đưa ra một lời hứa instant.
+**Giới hạn latency:** mở trang chỉ tác động từ exchange kế tiếp. Nhịp UI rút ngắn bước hiển thị báo cáo. Thời gian tại radio, GPIO, van và dòng nước cần đo riêng.
 
-Về số request lý thuyết: trong 30 giây lease có tối đa khoảng 15 idle exchange, so với khoảng 2 ở nhịp 15 giây. Tab điều khiển hiển thị liên tục có khoảng 60 state GET/phút, trước các request history/chart; thao tác liên tục có thể gia hạn lease liên tục. Đây là phép tính cấu hình, không phải measurement hoặc bảo đảm quota/chi phí Neon. Tài nguyên thực và topology process là gate release của parent. Lease là best-effort trong một app process, không đồng bộ giữa nhiều instance. Rollback riêng latency trả polling UI về 5/15 giây và bỏ hint; không thay wire hay xóa ledger.
+**Trạng thái UI:** lượt đọc lỗi hoặc dữ liệu cũ giữ báo cáo đã xác minh. Khi mất kết nối, thời lượng hiển thị dừng ở mẫu đã báo và START từ web bị chặn. Sau 15 giây freshness của snapshot, trạng thái hiện tại chuyển sang chưa rõ và UI giữ mốc xác nhận cuối. Đồng hồ chỉ được ngoại suy trong chế độ live dựa trên snapshot đủ điều kiện.
+
+Lease và quiet gate là best-effort trong một app process. Đo resource và chi phí theo exact candidate và workload thực tế. Rollback dùng app/firmware tương thích và giữ ledger, schema cùng biên nhận.
 
 ## Bằng chứng và giới hạn
 
