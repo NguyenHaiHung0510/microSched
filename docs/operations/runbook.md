@@ -8,7 +8,7 @@ Tài liệu này mô tả cơ chế repo hiện có và trách nhiệm vận hà
 2. [CI](../../.github/workflows/ci.yml) giữ **Backend checks**, **Frontend checks**, **Repository hooks**, **Migration QA**, **Production dependency check**, cùng Secret scan/Frontend e2e và các gate configured khác. Required status/ruleset là cấu hình sống, cần query mới trước merge.
 3. Executor có quyền merge dùng exact-head compare-and-swap (`gh pr merge --match-head-commit <head>`); drift phải reconcile. [Deploy workflow](../../.github/workflows/deploy.yml) chạy khi push `develop`, không chờ một lượt push CI thứ hai. Merge có thể kích hoạt deploy; một quyền viết docs không tự cấp quyền merge.
 4. Docker multi-stage build frontend bằng Node 24 và runtime Python 3.14 với `uv sync --frozen --no-dev`. Một process không-root phục vụ app. Không có Alembic trong bước deploy.
-5. Sau khi production được xác minh và release được duyệt, PR qualified revision vào `main`, rồi tag/release theo quyền của release executor. `main` là release label; không force-reset để đuổi kịp `develop`. Changelog v2.0 là nội dung mốc sản phẩm, không tự chứng minh tag đã tồn tại.
+5. Sau khi production được xác minh và release được duyệt, PR qualified revision vào `main`, rồi tag/release theo quyền của release executor. `main` là release label; không force-reset để đuổi kịp `develop`. Xem [Changelog](../../CHANGELOG.md) để đối chiếu phạm vi bản phát hành và ghi nhận tag bằng receipt riêng.
 
 GitHub scheduled/community/security-update consumers thường đọc default branch; kiểm branch thực của mỗi consumer trước khi tuyên bố đã kích hoạt. Dependabot version-update `target-branch` và security-update default-branch behavior khác nhau. Workflow/default-branch changes cần đến `main` qua release flow phù hợp.
 
@@ -30,11 +30,19 @@ collision/idempotence, cutover và feature-off rollback; flag false chỉ tạm 
 namespace chung/các alias khác. Giữ allowlist và OAuth secret hiện hành; không
 trộn writer trước/sau policy hoặc đổi policy khi còn run đang mở.
 
-Release B1+B2 bật `MIMI_VOICE_V2_ENABLED=true` cho ticket mới. Local/test mặc định off.
+Preset v2.1.0 trong [fly.toml](../../fly.toml) bật `MIMI_CALENDAR_READ_ENABLED`, `MIMI_VOICE_ENABLED` và `MIMI_VOICE_V2_ENABLED`. Hỗ trợ v1/v2 dùng chung hội thoại STANDARD, với v2 chọn cho ticket đủ điều kiện khi flag bật. Local/test mặc định off.
 Memory đặt ngoài Git bằng `MIMI_OWNER_MEMORY_V1`; nếu không cấu hình, Chat và Voice
 chạy theo prompt sẵn có. Khi cần rút v2, tắt flag trong bản sửa qua release flow
 để ticket mới về v1, và kiểm tra lại readiness. Việc rút v2 không hoàn tác các
 thay đổi đã ghi; dùng receipt tương ứng. Xem [Voice](../mimi/voice.md).
+
+## miGarden v2.1.0
+
+Mốc app `366265714abecd3d4d1f73025f81d338c602da39` và source firmware `9ee5047b81e9de9764921be4122a3ac0117e429c` trên `miGarden/develop` (PR #6). Khi qualification, ghi riêng exact app SHA, firmware source/build, wire negotiation, schema và readiness. Cho app nhận marker recovery trước khi firmware phát marker. Dùng [runbook miGarden](../migarden/n01-runbook.vi.md) cho cutover và rollback.
+
+Wire v1 có extension tùy chọn cho N03 quiet và ESP32 health. Trong quiet, HTTP 202 là tín hiệu chờ, không cấp grant, ACK hay freshness. Khi đang có người thao tác, báo cáo mới hoặc phiên active, app tiếp tục đồng bộ theo contract. Khi web lỗi, trạng thái hiển thị dựa trên báo cáo đã xác minh đến hạn freshness. Đối chiếu timestamp và receipt, rồi kiểm tại tủ nếu cần xác nhận đầu ra.
+
+Qualification app, tích hợp firmware, thử khô, thử nước có kiểm soát và nghiệm thu hiện trường có receipt theo từng phạm vi. Controller vẫn sở hữu STOP, an toàn và lịch local. Xác minh trạng thái tại nguồn trước khi ngắt adapter; lịch local có thể tiếp tục chạy.
 
 ## Backup và recovery
 
@@ -46,7 +54,7 @@ Khi phục hồi: xác định revision và backup đích, dừng writer theo ma
 
 ## Migration và rollback
 
-Schema changes có lane riêng: review migration/DDL, một Alembic head, intentional-DROP guard, PG drift/round-trip/grants, backup identifier/time và restore rehearsal trước production. [Data model](../engineering/data-model.md) và [0017 safety card](../migrations/0017-mimi-task-collection-plan.md) mô tả các bất biến hiện có. Các script bootstrap/verify trong [backend/scripts](../../backend/scripts) là công cụ privileged có phạm vi cụ thể, không phải startup routine.
+Schema changes có lane riêng: review migration/DDL, một Alembic head, intentional-DROP guard, PG drift/round-trip/grants, backup identifier/time và restore rehearsal trước production. [Data model](../engineering/data-model.md) và [0017 safety card](../migrations/0017-mimi-task-collection-plan.md) mô tả các bất biến hiện có. Schema miGarden v2.1.0 đi tiến qua `0021 → 0022 → 0023` trước khi dùng app candidate. Giữ các bảng và evidence khi rollback app/flag sang cấu hình tương thích. Các script bootstrap/verify trong [backend/scripts](../../backend/scripts) là công cụ privileged có phạm vi cụ thể, không phải startup routine.
 
 Rollback application về revision/config đã biết tương thích. Nếu schema mới có tombstone/receipt/notification data, app cũ có thể chỉ được dùng **read-only**; không giả định rollback code cho phép writer cũ. Ưu tiên roll-forward hoặc feature-off đã được kiểm chứng trong plan của revision. Không bỏ dữ liệu để làm downgrade xanh. Mỗi schema operation giữ actor/grant/target/command/exit và catalog evidence riêng; successful deploy không chứng minh migration đã chạy.
 

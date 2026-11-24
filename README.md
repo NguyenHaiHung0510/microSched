@@ -9,7 +9,7 @@ English | [Tiếng Việt](README.vi.md)
 
 **microSched** is my all-in-one personal app and personal software laboratory—the third and most mature version so far in my journey of building personal tools.
 
-That journey started in my first year at university with [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap), a C++ command-line study journal for recording daily learning, keeping notes by subject or task, and rating my satisfaction with each day's work. It continued with [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian), a vibe-coded Python/Flet desktop app for managing personal tasks and schedules, packaged as a Windows `.exe`. Today, microSched brings tasks, notes, calendars and trackers into a personal web app, with Mimi adding AI assistance for Task/checklist work.
+That journey started in my first year at university with [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap), a C++ command-line study journal for recording daily learning, keeping notes by subject or task, and rating my satisfaction with each day's work. It continued with [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian), a vibe-coded Python/Flet desktop app for managing personal tasks and schedules, packaged as a Windows `.exe`. Today, microSched brings tasks, notes, calendars and trackers into a personal web app, with Mimi for AI assistance and miGarden for my balcony watering system.
 
 These are three generations of personal tools and three stages in my learning: practicing programming through a small CLI, building a desktop app with AI, and developing and operating a broader product with a coordinated team of agents. Each stage reflects growth in my product thinking, engineering and collaboration with AI. I have been using microSched since its first deployment on **21 August 2026**, when I moved my data over from VC_QuanLyThoiGian, and continue to improve it based on real-world feedback.
 
@@ -22,7 +22,8 @@ microSched brings my tasks, notes, calendar and trackers together in a PWA built
 - **Tracking:** grouped trackers, timestamped entries, funding/income capture, VND reports and subscription renewals.
 - **Responsive PWA:** shared navigation, compact content, offline public bootstrap and a durable outbox for **11 Task/checklist/Entry commands**. Other domains still need a connection; pending local admission and server confirmation are distinct states.
 - **Privacy:** Google OAuth allowlist, opaque server-side sessions, private display unlock and application encryption boundaries.
-- **Mimi:** Task/checklist reading, proposals, review/revision and explicit confirmation are delivered. Mimi as a whole remains in development; see its [PARTIAL technical README](docs/mimi/README.md).
+- **Mimi** helps me work with tasks and checklists through chat or voice. I can review a proposed change before confirming it. Mimi can also read the calendar entries covered by its current contract. [Mimi technical documentation](docs/mimi/README.md)
+- **miGarden** lets me set watering schedules, start or stop watering, and see watering history and ESP32 health for Zone A. The IoT setup is in place. Once the house renovation is done, I’ll run the water line along the balcony railing to the pots. [miGarden system repository](https://github.com/NguyenHaiHung0510/miGarden) · [microSched integration notes](docs/migarden/n01-status.md)
 
 ## What I learn by building it
 

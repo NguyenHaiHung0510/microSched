@@ -1,6 +1,12 @@
-# N01 · Gói app để integration/review
+# miGarden trong microSched v2.1.0
 
-T1 app lead, requested/effective pin `gpt-6.1-sol/max`, làm trực tiếp trong `feat/104-migarden-n01`. Base `79d324fb5ee244a7e01d44d223d8b598e7a80dd8`. Freeze ban đầu `ccfc458b7377e778822fffefc2b99cde48cc8dc4`; bản sửa review là commit chứa tài liệu này và được bind exact SHA vào artifact checksum ở handback. `0021` ban đầu giữ nguyên; bản sửa thêm `0022`. Không push protected branches, merge, production apply hoặc thao tác thiết bị.
+App `366265714abecd3d4d1f73025f81d338c602da39` tích hợp Khu A trong điều hướng chung với Tổng quan, Cấu hình, Lịch sử và ESP32 health. App giữ yêu cầu, desired/applied config, version trace và bằng chứng. Controller chạy lịch local, chốt an toàn và điều khiển đầu ra. [Adapter](n01-api.md) · [Phục hồi và đồng bộ](recovery-latency.vi.md)
+
+Source firmware `9ee5047b81e9de9764921be4122a3ac0117e429c` đã vào `miGarden/develop` qua PR #6. Wire `migarden.zone-a.v1` có extension tùy chọn `quiet-health-v1`. Schema app đi qua `0021–0023`. Readiness, thử khô, thử nước có kiểm soát và nghiệm thu tưới tại hiện trường theo các receipt riêng cho từng mốc. [Runbook](n01-runbook.vi.md)
+
+## Hồ sơ app N01 ban đầu
+
+T1 app lead, requested/effective pin `gpt-6.1-sol/max`, làm trực tiếp trong `feat/104-migarden-n01`. Base `79d324fb5ee244a7e01d44d223d8b598e7a80dd8`. Freeze ban đầu `ccfc458b7377e778822fffefc2b99cde48cc8dc4`; bản sửa review N01 được bind exact SHA vào artifact checksum ở handback ban đầu. `0021` ban đầu giữ nguyên; bản sửa thêm `0022`. Không push protected branches, merge, production apply hoặc thao tác thiết bị.
 
 Tổng quan/Cấu hình theo ảnh C/E đã chọn, trong app shell hiện có. FastAPI human router tách bearer device router, PostgreSQL/SQLModel config/command/report/session, immutable refs/CAS và Alembic. Controller vẫn chịu clock, safety/journal/budget/deadline/STOP và output. [API](n01-api.md), [54 ca](n01-qa-matrix.md), [run/release/provision/rollback](n01-runbook.vi.md).
 

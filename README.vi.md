@@ -5,11 +5,11 @@
 [![CI](https://github.com/NguyenHaiHung0510/microSched/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/NguyenHaiHung0510/microSched/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/NguyenHaiHung0510/microSched)](https://github.com/NguyenHaiHung0510/microSched/releases/latest)
 
-[Xem microSched](https://microsched.fly.dev/home) · [Tài liệu kỹ thuật](docs/project-guide.md) · [Changelog](CHANGELOG.md)
+[Xem microSched](https://microsched.fly.dev/home?lang=vi) · [Tài liệu kỹ thuật](docs/project-guide.md) · [Changelog](CHANGELOG.md)
 
 **microSched** là ứng dụng cá nhân all-in-one và phòng thử nghiệm phần mềm của mình — phiên bản thứ ba, cũng là phiên bản trưởng thành nhất trong hành trình tự xây công cụ cho bản thân đến hiện tại.
 
-Hành trình đó bắt đầu từ năm nhất đại học với [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap), một nhật ký học tập dạng CLI viết bằng C++, dùng để ghi lại việc học hằng ngày, lưu ghi chú theo môn hoặc công việc và tự chấm mức độ hài lòng với việc học trong ngày. Tiếp đó là [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian), ứng dụng desktop Python/Flet được vibe-code để quản lý công việc và lịch trình cá nhân, đóng gói thành `.exe` trên Windows. Đến microSched, mình đưa công việc, ghi chú, lịch và tracker vào một ứng dụng web cá nhân, với Mimi hỗ trợ thao tác Task/checklist bằng AI.
+Hành trình đó bắt đầu từ năm nhất đại học với [Code_HoTro_HocTap](https://github.com/NguyenHaiHung0510/Code_HoTro_HocTap), một nhật ký học tập dạng CLI viết bằng C++, dùng để ghi lại việc học hằng ngày, lưu ghi chú theo môn hoặc công việc và tự chấm mức độ hài lòng với việc học trong ngày. Tiếp đó là [VC_QuanLyThoiGian](https://github.com/NguyenHaiHung0510/VC_QuanLyThoiGian), ứng dụng desktop Python/Flet được vibe-code để quản lý công việc và lịch trình cá nhân, đóng gói thành `.exe` trên Windows. Đến microSched, mình đưa công việc, ghi chú, lịch và tracker vào một ứng dụng web cá nhân, cùng Mimi để hỗ trợ công việc và miGarden để quản lý hệ tưới ban công.
 
 Đó là ba thế hệ công cụ cá nhân và cũng là ba chặng trong quá trình học của mình: thực hành lập trình qua một CLI nhỏ, xây ứng dụng desktop cùng AI, rồi phát triển và vận hành một sản phẩm rộng hơn với một nhóm agent được tổ chức và điều phối. Qua từng chặng, tư duy sản phẩm, kỹ năng kỹ thuật và cách mình cộng tác với AI cũng dần trưởng thành hơn. Mình đã dùng microSched từ lần triển khai đầu tiên vào **21 tháng 8 năm 2026**, khi chuyển dữ liệu từ VC_QuanLyThoiGian sang, và tiếp tục cải thiện nó từ trải nghiệm sử dụng hằng ngày.
 
@@ -22,7 +22,8 @@ microSched gom công việc, ghi chú, lịch và các tracker của mình vào 
 - **Theo dõi:** nhóm tracker, entry theo thời điểm, ghi khoản thu/nguồn tiền, báo cáo VND và gia hạn subscription.
 - **Responsive PWA:** navigation chung, nội dung compact, public bootstrap offline và durable outbox cho **11 command Task/checklist/Entry**. Các domain khác vẫn cần mạng; lưu vào hàng đợi local khác với server đã xác nhận.
 - **Riêng tư:** Google OAuth allowlist, opaque session server-side, private display unlock và ranh giới mã hóa của ứng dụng.
-- **Mimi:** đã có năng lực đọc Task/checklist, đề xuất, review/revision và explicit Confirm. Toàn bộ module Mimi vẫn đang phát triển; xem [README kỹ thuật PARTIAL](docs/mimi/README.md).
+- **Mimi** giúp mình làm việc với Task và checklist qua chat hoặc giọng nói. Mình có thể xem đề xuất trước khi xác nhận. Mimi cũng đọc được những mục Lịch nằm trong phạm vi hỗ trợ hiện tại. [Tài liệu kỹ thuật Mimi](docs/mimi/README.md)
+- **miGarden** giúp mình đặt lịch, bật hoặc dừng tưới, xem lịch sử và theo dõi sức khỏe ESP32 ở Khu A. Phần IoT đã chạy. Sau khi sửa nhà xong, mình sẽ đi ống nước dọc lan can tới các chậu. [Repo hệ thống miGarden](https://github.com/NguyenHaiHung0510/miGarden) · [Tích hợp trong microSched](docs/migarden/n01-status.md)
 
 ## Mình học gì qua việc xây dựng dự án?
 
