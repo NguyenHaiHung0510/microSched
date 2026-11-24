@@ -8,7 +8,7 @@ dependencies = [
     "alembic>=1.19.0",
     "argon2-cffi>=25.1.0",
     "asyncpg>=0.31.0",
-    "authlib>=1.6.0",
+    "authlib>=1.9.1",
     "cryptography>=50.0.0",
     "fastapi",
     # Runtime, not just test tooling: authlib.integrations.starlette_client imports
@@ -36,6 +36,13 @@ dev = [
 ]
 prototype = [
     # Compatibility group for historical QA invocations; runtime owns delivery.
+]
+
+[tool.uv]
+# Keep patched minimums for indirect runtime dependencies.
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "joserfc>=1.7.5",
 ]
 
 [tool.ruff]
