@@ -14,7 +14,10 @@ Source: [service](../../backend/app/agent/service.py), [tool registry](../../bac
 
 | Chủ đề | Maintained contract |
 |---|---|
+| Các login allowlisted cùng workspace, legacy aliases và rollback | [Owner workspace](owner-workspace.md) |
 | Selection, Task/checklist commands, CAS/Confirm/undo, notifications | [Task collection](task-collection.md) |
+| Optional saved STANDARD Calendar reads, coverage, Resume and server executor | [Calendar reads](calendar-read.md) |
+| Duplex mic/speaker in the same STANDARD conversation, read-only Calendar | [Voice](voice.md) |
 | Gateway policy, bounded retry, unknown/accounting | [Native routing](native-routing.md) |
 | Collection/context/Resume semantics và required qualification | [Operating contract](operating-contract.md) |
 | Context composition/telemetry và dated illustrations | [Context](context.md) |

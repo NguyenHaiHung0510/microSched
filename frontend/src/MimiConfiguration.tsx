@@ -18,6 +18,7 @@ import {
 } from '@/mimi-api'
 import { NO_POLLING_QUERY_OPTIONS } from '@/query-polling'
 import { MimiOperatingPolicyPanel } from '@/MimiOperatingPolicyPanel'
+import { MimiVoicePreferences } from '@/MimiVoicePreferences'
 
 function ModelProfileDetails({ profiles }: { profiles: MimiModelProfile[] }) {
   if (profiles.length === 0) return null
@@ -137,6 +138,7 @@ export function MimiConfiguration({
   return (
     <Dialog open={open ?? internalOpen} onOpenChange={handleOpenChange}>{surface === 'quick' ? <DialogTrigger asChild><Button type="button" size="sm" variant="ghost" className="mimi-model-chip mb-1 max-w-full justify-start gap-1.5 text-xs" data-testid="mimi-route-settings" aria-label="Cấu hình model và effort"><SlidersHorizontal className="size-3.5" /><span className="truncate">{selectedProfile?.label ?? 'Model theo server'} · {selection?.effort ?? capabilities?.requested_effort ?? 'chưa rõ'}</span><ChevronDown className="size-3" /></Button></DialogTrigger> : null}<DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>{surface === 'hub' ? 'Cấu hình Mimi · Workspace' : 'Model và mức suy luận'}</DialogTitle><DialogDescription>Áp dụng cho lượt chạy tiếp theo; giữ đúng model và effort đã chọn.</DialogDescription></DialogHeader>{surface === 'hub' ? <p className="text-sm font-semibold">{conversation?.title ?? 'Hội thoại đang chọn'}</p> : null}{enabled && (activeRunId || runtimeActive) ? <p role="status" className="text-xs" data-testid="mimi-next-run-notice">Run đang hoạt động · cấu hình mới áp dụng từ lượt sau</p> : null}
 
+      {surface === 'hub' && (open ?? internalOpen) && capabilities?.voice_v2_enabled === true ? <MimiVoicePreferences /> : null}
       {!enabled ? (
         <div className="space-y-3 pb-2 pt-1">
           <p className="text-sm text-muted-foreground">

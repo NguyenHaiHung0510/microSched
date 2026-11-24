@@ -25,7 +25,15 @@ from app.agent.context import (
     parse_terminal_wire,
 )
 from app.agent.task_collection import COLLECTION_CANDIDATE_TOOL, CollectionCandidate
-from app.agent.tools.registry import CREATE_CANDIDATE_TOOL, READ_TOOLS, TOOLS
+from app.agent.tools.registry import (
+    CALENDAR_TOOLS,
+    CREATE_CANDIDATE_TOOL,
+    READ_TOOLS,
+    TOOLS,
+    UNDO_CANDIDATE_TOOL,
+    UndoCandidate,
+    tools_for_settings,
+)
 from app.core.settings import Settings, get_settings
 from app.domain.tasks import TaskCreate
 
@@ -52,9 +60,15 @@ class RouteContractError(ValueError):
 class CandidateContractError(RouteContractError):
     """A wholly rejected native candidate turn; never a partial proposal/read."""
 
-    def __init__(self, code: str, tool_names: tuple[str, ...]):
+    def __init__(self, code: str, tool_names: tuple[str, ...], *, issues=()):
         super().__init__(code)
         self.tool_names = tool_names
+        # Feedback is bounded; progress still sees all allowlisted issue metadata,
+        # so a repair beyond the displayed prefix is not mistaken for stagnation.
+        self.issue_signature = hashlib.sha256(
+            json.dumps(issues, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        self.issues = tuple(issues[:32])
         # Only the service can enable feedback after durable accounting.
         self.correction_ready = False
 
@@ -93,7 +107,7 @@ class ProviderDispatchError(RuntimeError):
 
 @dataclass(frozen=True)
 class ProviderCompletion:
-    kind: Literal["text", "task", "collection"]
+    kind: Literal["text", "task", "collection", "undo"]
     task: TaskCreate | None
     text: str | None
     response_id: str
@@ -102,6 +116,7 @@ class ProviderCompletion:
     model: str | None
     collection: dict[str, Any] | None = None
     dispatch_attempts: list[dict[str, Any]] = field(default_factory=list)
+    undo: UndoCandidate | None = None
 
 
 @dataclass(frozen=True)
@@ -441,7 +456,11 @@ def _provider_policy(settings: Settings) -> dict[str, Any]:
 
 
 def serialized_input_bytes(
-    messages: list[dict[str, Any]], *, agent_contract: bool, summary_mode: bool = False
+    messages: list[dict[str, Any]],
+    *,
+    agent_contract: bool,
+    summary_mode: bool = False,
+    calendar_enabled: bool = False,
 ) -> int:
     """Bound the full model-visible input, including output and tool schemas."""
 
@@ -449,7 +468,8 @@ def serialized_input_bytes(
     if summary_mode:
         payload["response_format"] = COMPACTION_RESPONSE_FORMAT
     else:
-        payload["tools"] = list(TOOLS) if agent_contract else [TASK_CREATE_TOOL]
+        tools = (*TOOLS, *CALENDAR_TOOLS) if calendar_enabled else TOOLS
+        payload["tools"] = list(tools) if agent_contract else [TASK_CREATE_TOOL]
     if agent_contract and not summary_mode:
         payload["response_format"] = AGENT_RESPONSE_FORMAT
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
@@ -473,16 +493,23 @@ def build_request(
         raise RouteContractError("final_answer_conflicts_with_summary")
     if summary_mode and agent_contract:
         raise RouteContractError("summary_mode_conflicts_with_agent_contract")
-    active_tools = [] if summary_mode else (list(TOOLS) if agent_contract else [TASK_CREATE_TOOL])
-    if agent_contract and not route.mimi_collection_enabled:
-        active_tools = [
-            t
-            for t in active_tools
-            if t["function"]["name"] not in {"task.freeze_selection.v1", COLLECTION_CANDIDATE_TOOL}
-        ]
+    active_tools = (
+        []
+        if summary_mode
+        else (
+            list(tools_for_settings(route, include_chat_undo=True))
+            if agent_contract
+            else [TASK_CREATE_TOOL]
+        )
+    )
     # Payload resource bound is independent of provider tokens and 100k trigger.
     if (
-        serialized_input_bytes(messages, agent_contract=agent_contract, summary_mode=summary_mode)
+        serialized_input_bytes(
+            messages,
+            agent_contract=agent_contract,
+            summary_mode=summary_mode,
+            calendar_enabled=route.mimi_calendar_read_enabled,
+        )
         > route.mimi_max_payload_bytes
     ):
         raise RouteContractError("payload_bytes_exceeded")
@@ -535,10 +562,130 @@ def build_request(
     return request
 
 
+def _candidate_issues(error: ValidationError) -> tuple[dict[str, Any], ...] | None:
+    """Allowlisted shape/value diagnostics, never validator input, ctx or unknown keys.
+
+    Nested Task DTO validation runs inside TaskCommand's after-validator; its
+    locations need the wire's fields component. Authorization/identity errors
+    deliberately remain fatal instead of turning into correction authority.
+    """
+    allowed_parts = {
+        "entries",
+        "fields",
+        "title",
+        "body_md",
+        "status",
+        "priority",
+        "pinned",
+        "due_precision",
+        "due_on",
+        "due_at",
+        "children",
+        "content",
+        "position",
+        "is_completed",
+        "reminder",
+        "configuration",
+        "action",
+        "selection_id",
+    }
+    allowed_types = {
+        "missing",
+        "string_type",
+        "dict_type",
+        "tuple_type",
+        "too_short",
+        "too_long",
+        "literal_error",
+        "bool_parsing",
+        "bool_type",
+        "int_type",
+        "int_parsing",
+        "greater_than_equal",
+        "date_from_datetime_parsing",
+        "date_from_datetime_inexact",
+        "date_parsing",
+        "date_type",
+        "datetime_from_date_parsing",
+        "datetime_parsing",
+        "datetime_type",
+        "task_schedule_invalid",
+        "task_due_triad_must_be_complete",
+        "task_pinned_requires_boolean",
+    }
+    issues = []
+    for issue in error.errors(include_input=False, include_url=False):
+        parts = list(issue["loc"])
+        if any(not (type(p) is int or p in allowed_parts) for p in parts):
+            return None
+        code = issue["type"]
+        if code == "value_error":
+            reason = str(issue.get("ctx", {}).get("error", ""))
+            if reason == "title must not be blank" and parts and parts[-1] == "title":
+                code = "nonempty_title_required"
+            elif reason == "task_due_triad_must_be_complete":
+                code = reason
+                parts.append("fields")
+            else:
+                return None
+        elif code not in allowed_types:
+            return None
+        missing = None
+        if code == "task_due_triad_must_be_complete":
+            parts.append("fields")
+            supplied = issue.get("ctx", {}).get("missing_fields")
+            if not isinstance(supplied, list) or any(
+                value not in {"due_precision", "due_on", "due_at"} for value in supplied
+            ):
+                return None
+            missing = sorted(supplied)
+        if code == "task_pinned_requires_boolean":
+            parts.extend(("fields", "pinned"))
+        if code == "task_schedule_invalid" and len(parts) == 2 and parts[0] == "entries":
+            parts.append("fields")
+        if len(parts) >= 3 and parts[0] == "entries" and type(parts[1]) is int:
+            if parts[2] in {
+                "title",
+                "body_md",
+                "status",
+                "priority",
+                "pinned",
+                "due_precision",
+                "due_on",
+                "due_at",
+            }:
+                parts.insert(2, "fields")
+        if "children" in parts:
+            child = parts.index("children")
+            if len(parts) > child + 2 and parts[child + 2] in {
+                "content",
+                "position",
+                "is_completed",
+            }:
+                parts.insert(child + 2, "fields")
+        path = "".join(
+            f"[{p}]" if type(p) is int else ("." if n else "") + p for n, p in enumerate(parts)
+        )
+        expected = {
+            "title": "nonempty fields.title for each create; preserve the full requested set",
+            "due_on": "valid civil YYYY-MM-DD with due_precision=date and due_at=null",
+            "due_at": "timezone-aware datetime with due_precision=datetime and due_on=null",
+            "fields": "complete due_precision/due_on/due_at triad when scheduling",
+            "pinned": "strict boolean true or false; omit to preserve, never null/string/number",
+        }.get(parts[-1] if parts else "", "the leased field type/shape; no invented source facts")
+        issues.append({"path": path or "entries", "code": code, "expected": expected})
+        if missing is not None:
+            issues[-1]["missing_fields"] = missing
+    # CandidateContractError bounds wire diagnostics separately from progress.
+    return tuple(issues)
+
+
 def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
     """Validate one model turn before any server-owned read or preview transition."""
 
     native_names: tuple[str, ...] = ()
+    editable_candidates = {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}
+    allowed_tools = READ_TOOLS | editable_candidates | {UNDO_CANDIDATE_TOOL}
     try:
         choices = payload["choices"]
         if not isinstance(choices, list) or len(choices) != 1:
@@ -555,18 +702,14 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
             # Validate every name before decoding any arguments. A malformed
             # candidate must never mask an unauthorized sibling as repairable.
             native_names = tuple(call["function"]["name"] for call in calls)
-            if any(
-                not isinstance(n, str)
-                or n not in READ_TOOLS | {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}
-                for n in native_names
-            ):
+            if any(not isinstance(n, str) or n not in allowed_tools for n in native_names):
                 native_names = ()
                 raise RouteContractError("provider_tool_not_allowed")
             requests: list[ToolRequest] = []
             for index, call in enumerate(calls):
                 function = call["function"]
                 name = function["name"]
-                if name not in READ_TOOLS | {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}:
+                if name not in allowed_tools:
                     raise RouteContractError("provider_tool_not_allowed")
                 arguments = function["arguments"]
                 decoded = json.loads(arguments) if isinstance(arguments, str) else arguments
@@ -579,14 +722,21 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
                         arguments=decoded,
                     )
                 )
-            if any(item.name == COLLECTION_CANDIDATE_TOOL for item in requests):
+            if UNDO_CANDIDATE_TOOL in native_names:
+                if len(requests) != 1:
+                    raise RouteContractError("candidate_cannot_share_tool_turn")
+                undo = UndoCandidate.model_validate(requests[0].arguments)
+                outcome = PreviewCandidate(
+                    tool=UNDO_CANDIDATE_TOOL, arguments=undo.model_dump(mode="json")
+                )
+            elif COLLECTION_CANDIDATE_TOOL in native_names:
                 if len(requests) != 1:
                     raise RouteContractError("candidate_cannot_share_tool_turn")
                 candidate = CollectionCandidate.model_validate(requests[0].arguments)
                 outcome = PreviewCandidate(
                     tool=COLLECTION_CANDIDATE_TOOL, arguments=candidate.model_dump(mode="json")
                 )
-            elif any(item.name == CREATE_CANDIDATE_TOOL for item in requests):
+            elif CREATE_CANDIDATE_TOOL in native_names:
                 if len(requests) != 1:
                     raise RouteContractError("candidate_cannot_share_tool_turn")
                 request = requests[0]
@@ -607,6 +757,11 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
             else:
                 if isinstance(decoded_content, dict) and "kind" in decoded_content:
                     outcome = parse_terminal_wire(decoded_content)
+                    if (
+                        isinstance(outcome, PreviewCandidate)
+                        and outcome.tool == UNDO_CANDIDATE_TOOL
+                    ):
+                        raise RouteContractError("undo_requires_native_tool_call")
                 else:
                     outcome = AssistantText(text=content)
         else:
@@ -619,28 +774,28 @@ def parse_agent_completion(payload: dict[str, Any]) -> AgentCompletion:
             model=payload.get("model") if isinstance(payload.get("model"), str) else None,
         )
     except RouteContractError as error:
-        if set(native_names) & {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL} and str(
-            error
-        ) in {
-            "candidate_cannot_share_tool_turn",
-            "candidate_arguments_invalid",
-            "provider_tool_arguments_not_object",
-        }:
+        if (
+            UNDO_CANDIDATE_TOOL not in native_names
+            and editable_candidates.intersection(native_names)
+            and str(error)
+            in {
+                "candidate_cannot_share_tool_turn",
+                "candidate_arguments_invalid",
+                "provider_tool_arguments_not_object",
+            }
+        ):
             raise CandidateContractError(str(error), native_names) from error
         raise
     except (KeyError, TypeError, ValueError, ValidationError) as error:
-        shape_error = not isinstance(error, ValidationError) or all(
-            (
-                issue["type"] in {"missing", "string_type", "dict_type", "tuple_type", "too_short"}
-                or (
-                    issue["type"] == "value_error"
-                    and str(issue.get("ctx", {}).get("error")) == "task_due_triad_must_be_complete"
-                )
-            )
-            for issue in error.errors(include_input=False)
-        )
-        if shape_error and set(native_names) & {CREATE_CANDIDATE_TOOL, COLLECTION_CANDIDATE_TOOL}:
-            raise CandidateContractError("invalid_agent_terminal_payload", native_names) from error
+        issues = _candidate_issues(error) if isinstance(error, ValidationError) else ()
+        if (
+            issues is not None
+            and UNDO_CANDIDATE_TOOL not in native_names
+            and editable_candidates.intersection(native_names)
+        ):
+            raise CandidateContractError(
+                "invalid_agent_terminal_payload", native_names, issues=issues
+            ) from error
         raise RouteContractError("invalid_agent_terminal_payload") from error
 
 

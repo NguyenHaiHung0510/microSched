@@ -3,9 +3,17 @@ import { test } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { TaskForm } from '../src/TaskForm'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactElement } from 'react'
+
+function renderForm(form: ReactElement): string {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  try { return renderToStaticMarkup(<QueryClientProvider client={client}>{form}</QueryClientProvider>) }
+  finally { client.clear() }
+}
 
 test('task form renders the complete edit surface with existing values', () => {
-  const html = renderToStaticMarkup(
+  const html = renderForm(
     <TaskForm
       initial={{
         title: 'Chuẩn bị họp',
@@ -33,7 +41,7 @@ test('task form renders the complete edit surface with existing values', () => {
 })
 
 test('pending task form disables submit and exposes its progress label', () => {
-  const html = renderToStaticMarkup(
+  const html = renderForm(
     <TaskForm
       initial={{
         title: 'Không nhân đôi',
@@ -55,7 +63,7 @@ test('pending task form disables submit and exposes its progress label', () => {
 })
 
 test('new task form defaults to a date without rendering a time input', () => {
-  const html = renderToStaticMarkup(
+  const html = renderForm(
     <TaskForm
       submitLabel="Tạo task"
       pending={false}

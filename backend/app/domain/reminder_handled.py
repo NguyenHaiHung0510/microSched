@@ -11,7 +11,6 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 
 from app.agent.models import MimiConversation, MimiNotificationIntent
-from app.agent.service import _owner_id
 from app.domain.models import (
     AuthSession,
     CalendarEvent,
@@ -24,7 +23,13 @@ from app.domain.models import (
     Task,
     Tracker,
 )
-from app.domain.reminder_history import HistoryFilter, Origin, _projection, filtered_query
+from app.domain.reminder_history import (
+    HistoryFilter,
+    Origin,
+    _projection,
+    filtered_query,
+    handled_owner_id,
+)
 
 COLUMN = {
     "one_shot": "one_shot_id",
@@ -82,7 +87,7 @@ class PrepareHandled(BaseModel):
 
 async def current_auth(db, auth):
     if auth.id:
-        owner = _owner_id(auth)
+        owner = handled_owner_id(auth)
         live = (
             await db.scalars(
                 select(AuthSession)
@@ -91,7 +96,7 @@ async def current_auth(db, auth):
                 .execution_options(populate_existing=True)
             )
         ).one_or_none()
-        if live is None or live.expires_at <= datetime.now(UTC) or _owner_id(live) != owner:
+        if live is None or live.expires_at <= datetime.now(UTC) or handled_owner_id(live) != owner:
             raise HTTPException(401, "Not authenticated")
         auth.private_until = live.private_until
     return auth
@@ -163,7 +168,7 @@ async def mark_handled(db, auth, origin: Origin, receipt_id: UUID):
     refs = [{"origin": origin, "id": str(receipt_id)}]
     if await visible_targets(db, auth, refs, lock=True) is None:
         raise HTTPException(404, "History occurrence unavailable")
-    owner = _owner_id(auth)
+    owner = handled_owner_id(auth)
     await insert_handled(db, owner, refs, datetime.now(UTC))
     model = ReminderOccurrenceHandled
     row = (
@@ -218,7 +223,7 @@ async def batch_response(db, auth, row):
 
 async def prepare_batch(db, auth, payload: PrepareHandled, *, now=None):
     await current_auth(db, auth)
-    owner = _owner_id(auth)
+    owner = handled_owner_id(auth)
     filters = payload.filter
     if filters.day_from and filters.day_to and filters.day_from > filters.day_to:
         raise HTTPException(422, "history_filter_invalid")
@@ -279,7 +284,7 @@ async def commit_batch(db, auth, batch_id, *, now=None):
             select(ReminderHandledBatch)
             .where(
                 ReminderHandledBatch.id == batch_id,
-                ReminderHandledBatch.owner_id == _owner_id(auth),
+                ReminderHandledBatch.owner_id == handled_owner_id(auth),
             )
             .with_for_update()
         )

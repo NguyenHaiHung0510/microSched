@@ -5,6 +5,7 @@ import './index.css'
 import App from './App.tsx'
 import { startOutbox } from './outbox/core'
 import { APP_QUERY_DEFAULTS } from './query-polling.ts'
+import { startHumanActivity } from './human-activity'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -13,6 +14,7 @@ const queryClient = new QueryClient({
     queries: APP_QUERY_DEFAULTS,
   },
 })
+startHumanActivity(queryClient)
 
 void startOutbox(queryClient).finally(() => createRoot(document.getElementById('root')!).render(
   <StrictMode>

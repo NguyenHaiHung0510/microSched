@@ -79,7 +79,7 @@ class SelectionCandidate(BaseModel):
 
 
 async def read_receipts(
-    db: AsyncSession, conversation_id: UUID, dek: bytes, run_id: UUID
+    db: AsyncSession, conversation_id: UUID, dek: bytes, run_id: UUID, *, voice_epoch=None
 ) -> list[dict]:
     events = (
         await db.scalars(
@@ -89,6 +89,9 @@ async def read_receipts(
                 MimiRun.conversation_id == conversation_id,
                 MimiRun.id == run_id,
                 MimiEvent.kind == "tool.read_result",
+                MimiEvent.payload["voice_epoch"].astext == str(voice_epoch)
+                if voice_epoch is not None
+                else True,
             )
             .order_by(MimiEvent.created_at, MimiEvent.sequence)
             .limit(1001)
@@ -146,6 +149,11 @@ def bind_selection(candidate: SelectionCandidate, receipts: list[dict]) -> dict[
                 "data_as_of": result.get("data_as_of"),
                 "receipt_event_id": receipt["event_id"],
             }
+            from app.agent.working_context import deleted_read_authorized
+
+            observed[row["id"]]["deleted_read_authorized"] = deleted_read_authorized(
+                receipt["tool"], receipt.get("arguments", {}), row
+            )
         if receipt["tool"] == "task.query.v1":
             args = receipt["arguments"]
             key = digest({k: v for k, v in args.items() if k != "cursor"})
@@ -305,14 +313,22 @@ async def persist_selection(
     dek: bytes,
     arguments: dict,
     append_event,
+    *,
+    voice_epoch=None,
 ) -> dict:
     candidate = SelectionCandidate.model_validate(arguments)
-    selection = bind_selection(candidate, await read_receipts(db, conversation_id, dek, run_id))
+    selection = bind_selection(
+        candidate, await read_receipts(db, conversation_id, dek, run_id, voice_epoch=voice_epoch)
+    )
     sequence = await append_event(
         db,
         run_id,
         "selection.frozen",
-        {"selection_id": selection["selection_id"], "sha256": digest(selection)},
+        {
+            "selection_id": selection["selection_id"],
+            "sha256": digest(selection),
+            **({"voice_epoch": voice_epoch} if voice_epoch is not None else {}),
+        },
     )
     event = (
         await db.scalars(
@@ -392,3 +408,44 @@ async def latest_selection(db, conversation_id, dek):
     if digest(body) != event.payload["sha256"]:
         raise HTTPException(409, "selection_hash_invalid")
     return {"event_id": str(event.id), "run_id": str(event.run_id), "snapshot": body}
+
+
+async def selection_for_egress(db, selection):
+    from app.agent.working_context import sources_current
+
+    if selection is None:
+        return None
+    members = selection["snapshot"]["members"]
+    ids = {str(member["id"]) for member in members}
+    active = {
+        str(member["id"]) for member in members if member.get("deleted_read_authorized") is not True
+    }
+    if await sources_current(db, ids, active):
+        # Member eligibility is not lineage for model-written reason/intent/
+        # variants: those may quote unclassified or earlier read sources. Keep
+        # only fixed scalar bindings here; the encrypted canonical snapshot and
+        # immediate current-run tool result are unchanged.
+        scalar_fields = {
+            "id",
+            "classification",
+            "collection_version",
+            "source_version",
+            "deleted_read_authorized",
+        }
+        return {
+            "event_id": selection["event_id"],
+            "run_id": selection["run_id"],
+            "selection_id": selection["snapshot"]["selection_id"],
+            "members": [
+                {key: value for key, value in member.items() if key in scalar_fields}
+                for member in members
+            ],
+            "coverage": "unavailable",
+            "reason": "historical_selection_free_text_withheld",
+        }
+    return {
+        "event_id": selection["event_id"],
+        "run_id": selection["run_id"],
+        "coverage": "unavailable",
+        "reason": "historical_selection_source_ineligible",
+    }

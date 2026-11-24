@@ -21,8 +21,11 @@ from app.agent.context import (
     SourceManifest,
 )
 from app.agent.contracts import ExecutionLease
+from app.agent.display_time import vietnam_display_time
 from app.agent.openrouter import serialized_input_bytes
+from app.agent.owner_context import compose_owner_prefix
 from app.agent.policy import load_standard_policy
+from app.agent.tools.calendar_reads import CALENDAR_READ_TOOLS, CALENDAR_SOURCE_TYPE
 from app.agent.tools.registry import registry_hash, tools_for_settings
 from app.core.settings import Settings
 
@@ -33,6 +36,14 @@ def _canonical_json(value: Any) -> str:
 
 def _source_hash(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _context_input_bytes(messages, envelope: ContextEnvelope) -> int:
+    return serialized_input_bytes(
+        messages,
+        agent_contract=True,
+        calendar_enabled=not CALENDAR_READ_TOOLS.isdisjoint(envelope.authority.allowed_tools),
+    )
 
 
 def assemble_context(
@@ -58,11 +69,24 @@ def assemble_context(
     pending_draft_content: str | None = None,
     selection_context: dict | None = None,
     working_history: dict[str, Any] | None = None,
+    preview_lifecycle: dict[str, Any] | None = None,
+    pending_preview_content_available: bool = True,
 ) -> tuple[ContextEnvelope, list[dict[str, Any]]]:
     """Return ephemeral plaintext and provider messages; callers persist only metadata."""
 
-    policy = load_standard_policy(collection_enabled=settings.mimi_collection_enabled)
-    tools = tools_for_settings(settings)
+    policy = load_standard_policy(
+        collection_enabled=settings.mimi_collection_enabled,
+        calendar_enabled=settings.mimi_calendar_read_enabled,
+    )
+    if lease.sensitivity != "standard":
+        raise ValueError("standard_context_required")
+    prefix_text, owner_memory = (
+        compose_owner_prefix(policy.text, settings)
+        if settings.mimi_route_mode == "native"
+        else (policy.text, None)
+    )
+    prefix_sha256 = hashlib.sha256(prefix_text.encode("utf-8")).hexdigest()
+    tools = tools_for_settings(settings, include_chat_undo=True)
     tools_sha256 = registry_hash(tools)
     source = SourceManifest(
         source_id="task.recent.standard.v1" if task_context else "task.reads.demand.v1",
@@ -88,7 +112,7 @@ def assemble_context(
         version=pending_preview.digest if pending_preview else None,
         content_sha256=_source_hash(pending_preview_content),
         count=len(pending_preview_content),
-        coverage="complete",
+        coverage="complete" if pending_preview_content_available else "unavailable",
         data_as_of=datetime.now(UTC),
     )
     draft_source = SourceManifest(
@@ -111,7 +135,7 @@ def assemble_context(
         eligible_layers=("provider_prompt_prefix",),
         requested_mode="prefix_only",
         cache_key_components=(
-            policy.sha256,
+            prefix_sha256,
             tools_sha256,
             OUTPUT_SCHEMA_SHA256,
             _source_hash(
@@ -161,6 +185,8 @@ def assemble_context(
         run_id=lease.run_id,
         policy_id=policy.policy_id,
         policy_sha256=policy.sha256,
+        system_prefix_sha256=prefix_sha256,
+        owner_memory=owner_memory,
         tool_registry_sha256=tools_sha256,
         output_schema_sha256=OUTPUT_SCHEMA_SHA256,
         sensitivity="standard",
@@ -189,6 +215,8 @@ def assemble_context(
     pending_state = {
         "draft": pending_draft.model_dump(mode="json") if pending_draft else None,
         "preview": pending_preview.model_dump(mode="json") if pending_preview else None,
+        "preview_lifecycle": preview_lifecycle,
+        "preview_content_available": pending_preview_content_available,
     }
     selection_source = SourceManifest(
         source_id="task.selection.frozen.v1",
@@ -198,13 +226,15 @@ def assemble_context(
         version=_source_hash(selection_context),
         content_sha256=_source_hash(selection_context),
         count=1 if selection_context else 0,
-        coverage="complete" if selection_context else "unavailable",
+        coverage="complete"
+        if selection_context and "snapshot" in selection_context
+        else "unavailable",
         data_as_of=datetime.now(UTC),
     )
     if selection_context:
         manifest = manifest.model_copy(update={"sources": (*manifest.sources, selection_source)})
     envelope = ContextEnvelope(
-        policy_text=policy.text,
+        policy_text=prefix_text,
         authority=authority,
         manifest=manifest,
         checkpoint=checkpoint,
@@ -262,6 +292,15 @@ def assemble_context(
                 "it is not an empty read result. Report absence only from an actual read result "
                 "with sufficient coverage. Conversation checkpoint recall does not query Tasks."
             ),
+            "preview_revision": (
+                "There is at most one active preview. A revision is bound to its exact ID/digest. "
+                "Only a validated collection replacement supersedes it, including an ordinary "
+                "auto turn bound by the server to that exact observed preview. Ordinary text, "
+                "reads, clarification and failed candidates keep it. Rejection never revives a "
+                "predecessor or dispatches a model. "
+                "Lifecycle state and receipt IDs are historical facts, not execution authority; "
+                "unknown successor links must stay unknown."
+            ),
             "text_example": (
                 "Natural Vietnamese reply"
                 if settings.mimi_text_response_format == "natural"
@@ -274,7 +313,7 @@ def assemble_context(
     # manifest's own byte-count digits have reached a fixed point.
     for _ in range(4):
         messages = serialize_openrouter_messages(envelope)
-        exact_bytes = serialized_input_bytes(messages, agent_contract=True)
+        exact_bytes = _context_input_bytes(messages, envelope)
         if exact_bytes <= envelope.manifest.budget.serialized_input_upper_bound:
             break
         budget = ContextBudget.model_validate(
@@ -288,7 +327,7 @@ def assemble_context(
         raise ValueError("context_bound_did_not_converge")
     messages = serialize_openrouter_messages(envelope)
     if (
-        serialized_input_bytes(messages, agent_contract=True)
+        _context_input_bytes(messages, envelope)
         > envelope.manifest.budget.serialized_input_upper_bound
     ):
         raise ValueError("context_bound_did_not_cover_final_serialization")
@@ -303,11 +342,16 @@ def serialize_openrouter_messages(envelope: ContextEnvelope) -> list[dict[str, A
         "role": "system",
         "content": _canonical_json({"output_contract": envelope.output_contract}),
     }
+    # The model uses this clock to understand civil dates. Keep the canonical
+    # authority, deadline and provenance separate from the displayed offset.
+    displayed_authority = envelope.authority.model_copy(
+        update={"current_time": vietnam_display_time(envelope.authority.current_time)}
+    )
     authority = {
         "role": "system",
         "content": _canonical_json(
             {
-                "authority_envelope": envelope.authority.model_dump(mode="json"),
+                "authority_envelope": displayed_authority.model_dump(mode="json"),
                 "context_manifest": envelope.manifest.model_dump(mode="json"),
                 "pending_state": envelope.pending_state,
             }
@@ -377,12 +421,20 @@ def rebind_after_read(
     if "error" not in result:
         source = SourceManifest(
             source_id=f"{tool_name}:{_source_hash(call_id)[:12]}",
-            source_type="microsched.task.standard",
+            source_type=(
+                CALENDAR_SOURCE_TYPE
+                if tool_name in CALENDAR_READ_TOOLS
+                else "microsched.task.standard"
+            ),
             query={"tool": tool_name, "arguments_sha256": _source_hash(arguments)},
             projection=tuple(arguments.get("projection") or result.get("projection") or ()),
-            version=_source_hash([row.get("source_version") for row in rows])
-            if isinstance(rows, list)
-            else _source_hash(result),
+            version=(
+                _source_hash({k: v for k, v in result.items() if k != "data_as_of"})
+                if tool_name in CALENDAR_READ_TOOLS
+                else _source_hash([row.get("source_version") for row in rows])
+                if isinstance(rows, list)
+                else _source_hash(result)
+            ),
             content_sha256=_source_hash(result),
             count=count,
             coverage=result.get("coverage", "unavailable"),
@@ -409,7 +461,7 @@ def rebind_after_read(
     for _ in range(4):
         rebound = list(messages)
         rebound[authority_position] = serialize_openrouter_messages(updated)[-2]
-        exact_bytes = serialized_input_bytes(rebound, agent_contract=True)
+        exact_bytes = _context_input_bytes(rebound, updated)
         if exact_bytes <= updated.manifest.budget.serialized_input_upper_bound:
             return updated, rebound
         next_budget = ContextBudget.model_validate(
@@ -424,12 +476,25 @@ def rebind_after_read(
 
 
 def rebind_policy_budget(
-    envelope: ContextEnvelope, messages: list[dict[str, Any]], *, settings: Settings
+    envelope: ContextEnvelope,
+    messages: list[dict[str, Any]],
+    *,
+    settings: Settings,
+    remaining_turns: int | None = None,
+    remaining_tool_calls: int | None = None,
 ) -> tuple[ContextEnvelope, list[dict[str, Any]]]:
-    """Refresh only server policy revision before the next unsent wire."""
+    """Refresh policy and actual allowances before every unsent model wire."""
+    turns = envelope.authority.remaining_turns if remaining_turns is None else remaining_turns
+    calls = (
+        envelope.authority.remaining_tool_calls
+        if remaining_tool_calls is None
+        else remaining_tool_calls
+    )
     if (
         envelope.manifest.budget.operating_policy_revision
         == settings.mimi_operating_policy_revision
+        and turns == envelope.authority.remaining_turns
+        and calls == envelope.authority.remaining_tool_calls
     ):
         return envelope, messages
     prior_authority = serialize_openrouter_messages(envelope)[-2]
@@ -440,15 +505,25 @@ def rebind_policy_budget(
         update={
             "operating_policy_revision": settings.mimi_operating_policy_revision,
             "serialized_input_upper_bound": 0,
+            "remaining_turns": turns,
+            "remaining_tool_calls": calls,
         }
     )
     updated = envelope.model_copy(
-        update={"manifest": envelope.manifest.model_copy(update={"budget": budget})}
+        update={
+            "authority": envelope.authority.model_copy(
+                update={
+                    "remaining_turns": turns,
+                    "remaining_tool_calls": calls,
+                }
+            ),
+            "manifest": envelope.manifest.model_copy(update={"budget": budget}),
+        }
     )
     for _ in range(4):
         rebound = list(messages)
         rebound[positions[0]] = serialize_openrouter_messages(updated)[-2]
-        bound = serialized_input_bytes(rebound, agent_contract=True)
+        bound = _context_input_bytes(rebound, updated)
         if bound <= updated.manifest.budget.serialized_input_upper_bound:
             return updated, rebound
         budget = updated.manifest.budget.model_copy(update={"serialized_input_upper_bound": bound})
@@ -581,5 +656,13 @@ def input_projection_observation(
         "working_refs": (envelope.manifest.working_history or {}).get("working_refs", []),
         "model": settings.mimi_route_model,
         "observed_request_at": datetime.now(UTC).isoformat(),
+        **(
+            {
+                "system_prefix_sha256": envelope.manifest.system_prefix_sha256,
+                "owner_memory": envelope.manifest.owner_memory.model_dump(mode="json"),
+            }
+            if envelope.manifest.owner_memory is not None
+            else {}
+        ),
         "measurement": "provider_native_input_pending",
     }

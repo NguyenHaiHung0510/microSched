@@ -48,6 +48,7 @@ import { sessionQuerySpec } from '@/calendar-queries'
 import { uuidv7 } from '@/lib/uuidv7'
 import { taskRefetchInterval } from '@/query-polling'
 import { TaskForm } from '@/TaskForm'
+import { TaskTitleCombobox } from '@/TaskTitleCombobox'
 import { ReminderButton } from '@/ReminderEditor'
 import {
   type TaskFilter,
@@ -569,7 +570,7 @@ export function TasksScreen() {
       <section aria-labelledby="quick-add-heading">
         <h2 className="sr-only" id="quick-add-heading">Thêm task</h2>
         <form className="flex gap-2" onSubmit={quickAdd}>
-          <Input data-testid="quick-add-input" ref={quickInputRef} className="h-11 flex-1 rounded-lg bg-card px-4 shadow-1" aria-label="Thêm task nhanh" placeholder="Thêm việc rồi lưu…" value={quickTitle} onChange={(event) => setQuickTitle(event.target.value)} />
+          <TaskTitleCombobox data-testid="quick-add-input" ref={quickInputRef} className="h-11 flex-1 rounded-lg bg-card px-4 shadow-1" aria-label="Thêm task nhanh" placeholder="Thêm việc rồi lưu…" value={quickTitle} onChange={setQuickTitle} />
           <Button data-testid="quick-add-submit" className="h-11 rounded-lg px-5" size="lg" type="submit" disabled={!quickTitle.trim() || create.isPending}>{create.isPending ? 'Đang thêm…' : 'Thêm'}</Button>
         </form>
         {create.isError && create.variables?.source === 'quick' ? (
@@ -1463,14 +1464,14 @@ export function LegacyTasksScreen() {
           Thêm task
         </h2>
         <form className="flex gap-2" onSubmit={quickAdd}>
-          <Input
+          <TaskTitleCombobox
             data-testid="quick-add-input"
             ref={quickInputRef}
             className="h-11 flex-1 rounded-lg bg-card px-4 shadow-1"
             aria-label="Thêm task nhanh"
             placeholder="Thêm việc rồi lưu…"
             value={quickTitle}
-            onChange={(event) => setQuickTitle(event.target.value)}
+            onChange={setQuickTitle}
           />
           <Button
             data-testid="quick-add-submit"

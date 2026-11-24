@@ -151,6 +151,8 @@ def test_task_due_filter_uses_owner_calendar_day(pg_dsn) -> None:
                 await db.execute(text("SET LOCAL microsched.task_due_writer = 'v2'"))
                 before_midnight = Task(
                     title=f"{prefix}-before",
+                    status="completed",
+                    completed_at=datetime(2026, 9, 22, 17, 1, tzinfo=UTC),
                     due_precision="datetime",
                     due_at=datetime(2026, 9, 22, 16, 59, tzinfo=UTC),
                 )
@@ -174,13 +176,35 @@ def test_task_due_filter_uses_owner_calendar_day(pg_dsn) -> None:
                             title_contains=prefix,
                             due_from=date(2026, 9, 22),
                             due_through=date(2026, 9, 22),
-                        )
+                        ),
+                        projection=("title", "due_on", "due_at", "completed_at"),
                     ),
                 )
                 assert {row["title"] for row in result["rows"]} == {
                     f"{prefix}-before",
                     f"{prefix}-date",
                 }
+                by_title = {row["title"]: row for row in result["rows"]}
+                before = by_title[before_midnight.title]
+                assert before["due_at"] == "2026-09-22T23:59:00+07:00"
+                assert before["completed_at"] == "2026-09-23T00:01:00+07:00"
+                assert before["source_version"] == before_midnight.updated_at.isoformat()
+                assert before["id"] == str(before_midnight.id)
+                civil = by_title[calendar_day.title]
+                assert civil["due_on"] == "2026-09-22" and civil["due_at"] is None
+                inspected = await inspect_tasks(
+                    db,
+                    TaskInspectBatch(
+                        ids=(before_midnight.id, after_midnight.id),
+                        projection=("title", "due_on", "due_at", "completed_at"),
+                    ),
+                )
+                assert inspected["rows"][0] == before
+                after = inspected["rows"][1]
+                assert after["due_at"] == "2026-09-23T00:00:00+07:00"
+                assert datetime.fromisoformat(after["due_at"]) == after_midnight.due_at
+                assert after["source_version"] == after_midnight.updated_at.isoformat()
+                assert after["collection_version"] == after_midnight.collection_version
         finally:
             if owned_ids:
                 async with maker() as db:

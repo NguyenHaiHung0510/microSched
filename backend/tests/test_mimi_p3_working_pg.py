@@ -763,9 +763,20 @@ def test_unavailable_projection_keeps_canonical_answer_and_never_replays_effects
 
 
 @pytest.mark.usefixtures("local_sync_contract")
-def test_historical_selection_is_visible_but_cannot_authorize_new_preview(pg_dsn, monkeypatch):
+@pytest.mark.parametrize("runner", ["current", "langgraph"])
+def test_historical_selection_is_visible_but_cannot_authorize_new_preview(
+    pg_dsn, monkeypatch, runner
+):
     from app.agent.context import PreviewCandidate
 
+    monkeypatch.setenv("MIMI_RUNNER", runner)
+    if runner == "langgraph":
+        real_graph = langgraph_runner.run_langgraph
+
+        async def graph(*args, **kwargs):
+            return await real_graph(*args, **kwargs, checkpointer_for_test=InMemorySaver())
+
+        monkeypatch.setattr(service, "_run_langgraph_agent", graph)
     monkeypatch.setenv("MIMI_COLLECTION_ENABLED", "1")
     monkeypatch.setenv("MIMI_ROUTE_MODEL", "deepseek/deepseek-v4.1-flash-1017")
     get_settings.cache_clear()
@@ -778,11 +789,30 @@ def test_historical_selection_is_visible_but_cannot_authorize_new_preview(pg_dsn
         ids = []
         calls = []
         frozen = None
+        selection_binding = {}
+        title = "synthetic-historical-query-" + uuid4().hex
+        opaque = "synthetic-opaque-selection-" + uuid4().hex
 
         async def provider(messages, **kwargs):
             nonlocal frozen
             calls.append(messages)
             if len(calls) == 1:
+                outcome = ToolRequests(
+                    requests=(
+                        ToolRequest(
+                            call_id="independent-query",
+                            name="task.query.v1",
+                            arguments={
+                                "filter": {"title_contains": title},
+                                "projection": ["id", "title"],
+                            },
+                        ),
+                    )
+                )
+            elif len(calls) == 2:
+                assert json.loads(messages[-1]["content"])["rows"][0]["title"] == title
+                outcome = AssistantText(text="Đã đọc query độc lập; chưa ghi.")
+            elif len(calls) == 3:
                 outcome = ToolRequests(
                     requests=(
                         ToolRequest(
@@ -792,34 +822,76 @@ def test_historical_selection_is_visible_but_cannot_authorize_new_preview(pg_dsn
                         ),
                     )
                 )
-            elif len(calls) == 2:
+            elif len(calls) == 4:
+                # Fresh current-run evidence still permits freezing a selection.
+                assert messages[-1]["tool_call_id"] == "fresh-read"
+                assert json.loads(messages[-1]["content"])["rows"][0]["title"] == title
                 outcome = ToolRequests(
                     requests=(
                         ToolRequest(
                             call_id="old-selection",
                             name="task.freeze_selection.v1",
                             arguments={
-                                "intent": "Task được chỉ tên",
-                                "variants_considered": ["exact ID"],
+                                "intent": opaque,
+                                "variants_considered": [opaque],
                                 "explicitly_named_subset": True,
                                 "members": [
                                     {
                                         "id": str(ids[0]),
                                         "classification": "included",
-                                        "reason": "Phạm vi synthetic",
+                                        "reason": opaque,
                                     }
                                 ],
                             },
                         ),
                     )
                 )
-            elif len(calls) == 3:
+            elif len(calls) == 5:
                 frozen = json.loads(messages[-1]["content"])["selection"]
+                assert frozen["intent"] == frozen["members"][0]["reason"] == opaque
                 outcome = AssistantText(
                     text="Đã đọc và chốt phạm vi lịch sử; chưa tạo preview hay ghi."
                 )
             else:
-                assert len([m for m in messages if m["role"] == "tool"]) == 2
+                assert len(calls) == 6
+                # F1 withholds the whole opaque selection-bearing segment, not
+                # an independent finalized query whose sources remain eligible.
+                tools = [m for m in messages if m["role"] == "tool"]
+                assert [m["tool_call_id"] for m in tools] == ["independent-query"]
+                assert json.loads(tools[0]["content"])["rows"][0]["title"] == title
+                assert opaque not in json.dumps(messages)
+                data = next(
+                    json.loads(m["content"].split("\n", 1)[1])
+                    for m in messages
+                    if (m.get("content") or "").startswith("SERVER-PROVIDED REFERENCE DATA")
+                )
+                historical = next(
+                    x["selection"] for x in data["domain_evidence"] if "selection" in x
+                )
+                assert historical["selection_id"] == frozen["selection_id"]
+                assert historical["run_id"] == selection_binding["run_id"]
+                assert historical["event_id"] == selection_binding["event_id"]
+                assert historical["members"] == [
+                    {
+                        "id": str(ids[0]),
+                        "classification": "included",
+                        "collection_version": frozen["members"][0]["collection_version"],
+                        "source_version": frozen["members"][0]["source_version"],
+                        "deleted_read_authorized": False,
+                    }
+                ]
+                assert historical["coverage"] == "unavailable"
+                assert historical["reason"] == "historical_selection_free_text_withheld"
+                assert "snapshot" not in historical and "intent" not in historical
+                authority = next(
+                    json.loads(m["content"])
+                    for m in messages
+                    if m["role"] == "system" and "authority_envelope" in m["content"]
+                )
+                history = authority["context_manifest"]["working_history"]
+                assert history["coverage"] == "partial"
+                assert "working_projection_invalid_or_ineligible" in history["gaps"]
+                assert len(history["working_refs"]) == 1
                 outcome = PreviewCandidate(
                     tool="task.collection_candidate.v1",
                     arguments={
@@ -847,7 +919,7 @@ def test_historical_selection_is_visible_but_cannot_authorize_new_preview(pg_dsn
         monkeypatch.setattr(service, "openrouter_complete", provider)
         try:
             async with maker() as db:
-                task = Task(title="Synthetic historical authority")
+                task = Task(title=title)
                 db.add(task)
                 await db.flush()
                 ids = [task.id]
@@ -857,7 +929,7 @@ def test_historical_selection_is_visible_but_cannot_authorize_new_preview(pg_dsn
                 await db.commit()
                 await db.refresh(task)
                 before = task.model_dump()
-            for turn in (1, 2):
+            for turn in (1, 2, 3):
                 async with maker() as db:
                     view = await service.send_message(
                         db,
@@ -869,7 +941,22 @@ def test_historical_selection_is_visible_but_cannot_authorize_new_preview(pg_dsn
                             expected_generation=turn,
                         ),
                     )
+                    if turn < 3:
+                        assert view["runs"][-1]["state"] == "completed"
+                    if turn == 2:
+                        run_id = UUID(str(view["runs"][-1]["id"]))
+                        event = (
+                            await db.scalars(
+                                select(MimiEvent).where(
+                                    MimiEvent.run_id == run_id,
+                                    MimiEvent.kind == "selection.frozen",
+                                )
+                            )
+                        ).one()
+                        selection_binding = {"run_id": str(run_id), "event_id": str(event.id)}
+                    assert not view["change_sets"] and not view["receipts"]
                     await db.commit()
+            assert len(calls) == 6
             assert view["runs"][-1]["state"] == "halted"
             assert (
                 view["runs"][-1]["error_code"]

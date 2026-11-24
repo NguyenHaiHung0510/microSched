@@ -12,6 +12,8 @@ from app.agent import crypto
 from app.agent.tools.task_reads import TaskQuery
 
 TOOLS = {
+    "calendar.read.v1": "Đọc lịch",
+    "calendar.inspect.v1": "Đọc chi tiết lịch",
     "task.query.v1": "Đọc Task",
     "task.aggregate.v1": "Thống kê Task",
     "task.inspect_batch.v1": "Đối chiếu Task",

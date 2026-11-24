@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { TaskTitleInput } from '@/TaskTitleInput'
+import { TaskTitleCombobox } from '@/TaskTitleCombobox'
 import {
   canSubmitTask,
   type TaskDuePrecision,
@@ -468,12 +469,18 @@ export function TaskForm({
     <form className="space-y-4" onSubmit={submit}>
       <div className="block space-y-1.5 text-sm font-semibold">
         <label htmlFor={titleId}>Tiêu đề</label>
-        <TaskTitleInput
+        {taskId ? <TaskTitleInput
           id={titleId}
           value={title}
           disabled={pending || childPending}
           onChange={setTitle}
-        />
+        /> : <TaskTitleCombobox
+          multiline
+          id={titleId}
+          value={title}
+          disabled={pending || childPending}
+          onChange={setTitle}
+        />}
       </div>
 
       <label className="block space-y-1.5 text-sm font-semibold">

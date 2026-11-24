@@ -6,7 +6,9 @@ import { canonical, decode, hash, KINDS, retryDelay, route, TOMBSTONES, validate
 import { offlineBootstrap, purgePublicCache, restorePublicQueries, saveBootstrap } from './public-cache'
 import type { BootstrapSession } from './types'
 import { maskPrivateQueries } from './private-visibility'
+import { purgeMimiSession } from '../mimi-session-boundary'
 import { fundingReference, needsFunding, withoutFunding } from './funding'
+import { isTaskTitleSuggestionsQuery, TITLE_SUGGESTIONS_KEY } from '@/task-title-suggestions'
 
 type Context = {principal:string;verified:boolean;expires:number;privateUntil:number}
 export type Snapshot = {rows:Command[];context:Context;error:string;capability:string;reconciling:string[];revision:number;admitting:number;authRequired:boolean}
@@ -99,6 +101,7 @@ export async function bindSession(session:BootstrapSession, expectedEpoch = auth
   const principal = session.offline_bootstrap ? session.principal! : await hash(session.email.trim().toLowerCase())
   if(expectedEpoch !== authEpoch) throw new UnauthenticatedError('Session generation changed')
   if(previous && previous!==principal) {
+    if (client) purgeMimiSession(client)
     authEpoch++; expectedEpoch++
     channel?.postMessage({type:'principal',principal})
   }
@@ -125,6 +128,7 @@ export async function sessionRequest():Promise<BootstrapSession> {
     return {...session,private_until:unlocked()?new Date(context.privateUntil).toISOString():null}
   } catch (error) {
     if (error instanceof UnauthenticatedError) {
+      if (client) purgeMimiSession(client)
       context.verified = false; lockLocal(); await purgePublicCache().catch(() => {}); throw error
     }
     if (error instanceof ApiError) throw error
@@ -135,9 +139,10 @@ export async function sessionRequest():Promise<BootstrapSession> {
   }
 }
 export async function logoutBoundary() {
+  if (client) purgeMimiSession(client)
   authEpoch++;authHeld=true
   context = {principal:'',verified:false,expires:0,privateUntil:0}
-  confirmed.clear();cancelled.clear();reconciling.clear();lockLocal();await purgePublicCache().catch(() => {})
+  confirmed.clear();cancelled.clear();reconciling.clear();lockLocal();publish({authRequired:true});await purgePublicCache().catch(() => {})
 }
 async function inspectLegacy():Promise<boolean> {
   const names = await indexedDB.databases()
@@ -160,6 +165,7 @@ export async function startOutbox(queryClient:QueryClient):Promise<void> {
       channel = new BroadcastChannel('microsched-outbox-v1')
       channel.onmessage = event => {
         if (event.data?.type === 'principal' && event.data.principal!==context.principal) {
+          if (client) purgeMimiSession(client)
           authEpoch++;generation++;capable=false;context.verified=false;authHeld=true
           lockLocal(false);confirmed.clear();cancelled.clear()
           client?.removeQueries({predicate:q => q.queryKey[0]!=='session'})
@@ -180,7 +186,7 @@ export async function startOutbox(queryClient:QueryClient):Promise<void> {
       if (path === '/api/private/lock') { lockRequested=false;lockLocal() }
       if (path === '/api/private/unlock') { lockRequested=false;privateEpoch++;checkedGeneration=-1; wake() }
     })
-    window.addEventListener('microsched:auth-lost',() => { authEpoch++;authHeld=true;context.verified=false;capable=false;lockLocal();void purgePublicCache().catch(() => {});publish({capability:'Cần đăng nhập lại',authRequired:true}) })
+    window.addEventListener('microsched:auth-lost',() => { if (client) purgeMimiSession(client);authEpoch++;authHeld=true;context.verified=false;capable=false;lockLocal();void purgePublicCache().catch(() => {});publish({capability:'Cần đăng nhập lại',authRequired:true}) })
     window.addEventListener('microsched:private-lock',event => {
       if ((event as CustomEvent<{requested?:boolean}>).detail?.requested) lockRequested=true
       lockLocal()
@@ -344,9 +350,20 @@ async function reconcile(row:Command,response:unknown,owner:string,privateAllowe
   reconciling.set(row.aggregate,[...new Map([...prior,row].map(r => [r.id,r])).values()]); publish()
   // No speculative canonical cache merge: projection remains in RAM until a fresh response.
   const prefix = row.kind.startsWith('entry.')?'tracker':'tasks'
-  const active = client?.getQueryCache().findAll({predicate:q =>
-    (q.queryKey[0]===prefix || !row.kind.startsWith('entry.') && q.queryKey[0]==='calendar') && q.isActive()})
-  await client?.invalidateQueries({predicate:q => q.queryKey[0]===prefix || prefix==='tasks' && q.queryKey[0]==='calendar'})
+  // Suggestions must become stale immediately (a title may now be Private), but
+  // optional source failures/timeouts cannot hold an acknowledged Task barrier.
+  if (prefix==='tasks' && client) {
+    const suggestions = {queryKey:TITLE_SUGGESTIONS_KEY}
+    // Invalidation alone reuses an initial in-flight fetch without cached data.
+    // Cancel synchronously so its pre-ACK result cannot make Private titles fresh.
+    void client.cancelQueries(suggestions)
+    void client.invalidateQueries(suggestions)
+  }
+  const required = (q:{queryKey:readonly unknown[]}) =>
+    (q.queryKey[0]===prefix || prefix==='tasks' && q.queryKey[0]==='calendar') &&
+    !isTaskTitleSuggestionsQuery(q.queryKey)
+  const active = client?.getQueryCache().findAll({predicate:q => required(q) && q.isActive()})
+  await client?.invalidateQueries({predicate:required})
   if (context.principal===owner && active?.length && active.every(q => q.state.status==='success' && !q.state.isInvalidated)) {
     reconciling.delete(row.aggregate);publish()
   }

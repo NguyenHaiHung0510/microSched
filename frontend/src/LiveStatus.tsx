@@ -1,7 +1,9 @@
 import { onlineManager, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useHumanActive } from '@/human-activity'
 import { cn } from '@/lib/utils'
 import { freshnessState, FRESH_WINDOW_MS, type FreshQuery } from '@/freshness'
+import { isTaskTitleSuggestionsQuery } from '@/task-title-suggestions'
 
 const labels = {
   loading: 'Đang tải dữ liệu…',
@@ -16,11 +18,23 @@ export function LiveStatus({ tab }: { tab: 'tasks' | 'notes' | 'tracker' }) {
   const cache = useQueryClient().getQueryCache()
   const subscribe = useCallback((notify: () => void) => cache.subscribe(notify), [cache])
   const snapshot = useCallback(() => JSON.stringify(cache.getAll()
-    .filter((query) => query.getObserversCount() > 0 && (
+    .filter((query) => query.getObserversCount() > 0 && !isTaskTitleSuggestionsQuery(query.queryKey) && (
       query.queryKey[0] === tab || (tab === 'tracker' && query.queryKey[0] === 'subscription')
     ))
     .map((query) => ({ status: query.state.status, updatedAt: query.state.dataUpdatedAt, paused: query.state.fetchStatus === 'paused' }))), [cache, tab])
   const serialized = useSyncExternalStore(subscribe, snapshot)
+  return <FreshnessBadge serialized={serialized} />
+}
+
+export function PrimaryLiveStatus({ query }: { query: { status: string; dataUpdatedAt: number; fetchStatus: string } }) {
+  return <FreshnessBadge garden serialized={JSON.stringify([{
+    status: query.status, updatedAt: query.dataUpdatedAt, paused: query.fetchStatus === 'paused',
+  }])} />
+}
+
+function FreshnessBadge({ serialized, garden = false }: { serialized: string; garden?: boolean }) {
+  const human = useHumanActive()
+  const active = !garden || human
   const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline())
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
   const [now, setNow] = useState(() => Date.now())
@@ -34,16 +48,17 @@ export function LiveStatus({ tab }: { tab: 'tasks' | 'notes' | 'tracker' }) {
     const deadline = Math.min(...queries.filter((query) => query.updatedAt > 0).map((query) => query.updatedAt + FRESH_WINDOW_MS))
     // One local expiry timeout per data snapshot, no network request or repeating clock.
     const timer = window.setTimeout(() => setNow(Date.now()), 0)
-    const expiry = Number.isFinite(deadline) && deadline > Date.now() && visible
+    const expiry = Number.isFinite(deadline) && deadline > Date.now() && visible && active
       ? window.setTimeout(() => setNow(Date.now()), deadline - Date.now() + 1) : undefined
     return () => { window.clearTimeout(timer); window.clearTimeout(expiry) }
-  }, [serialized, visible])
-  const state = freshnessState(JSON.parse(serialized) as FreshQuery[], now, online, visible)
+  }, [serialized, visible, active])
+  const state = !active && online ? 'paused' : freshnessState(JSON.parse(serialized) as FreshQuery[], now, online, visible)
   return (
     <span data-testid="app-live-status" data-state={state} role="status"
+      title={garden ? 'Độ mới dữ liệu web, không phải trạng thái ESP32' : undefined}
       className={cn('inline-flex max-w-full items-center gap-1.5 text-xs font-semibold', state === 'live' ? 'text-ok' : state === 'error' ? 'text-bad' : 'text-muted-foreground')}>
       <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', state === 'live' ? 'bg-ok' : state === 'error' ? 'bg-bad' : 'bg-muted-foreground')} />
-      {labels[state]}
+      {garden ? <>Web · {labels[state]}</> : labels[state]}
     </span>
   )
 }

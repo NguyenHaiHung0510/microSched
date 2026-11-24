@@ -1,0 +1,35 @@
+/* The existing app tokens supply all source and forecast styling. */
+.garden-schedule { background-color: var(--ok); }
+.garden-remote { background-color: var(--rose-700); }
+.garden-local { background-color: var(--warn); }
+.garden-forecast {
+  border: 1px solid var(--primary);
+  background: repeating-linear-gradient(135deg, var(--accent) 0 4px, var(--primary) 4px 5px, var(--accent) 5px 8px);
+}
+.garden-missing { background: var(--muted); min-height: .4rem; border: 1px dashed var(--input); }
+.garden-zero { border-bottom: 2px solid var(--ok); }
+.garden-chart-columns, .garden-chart-axis { --garden-chart-height: clamp(9rem, 19vw, 16rem); }
+.garden-chart-columns {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  column-gap: .15rem;
+  background:
+    linear-gradient(var(--n-200), var(--n-200)) 0 0 / 100% 1px,
+    linear-gradient(var(--n-200), var(--n-200)) 0 calc(var(--garden-chart-height) / 2) / 100% 1px,
+    linear-gradient(var(--n-300), var(--n-300)) 0 var(--garden-chart-height) / 100% 1px;
+  background-repeat: no-repeat;
+}
+.garden-chart-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: max-content;
+  height: var(--garden-chart-height);
+  text-align: end;
+  font-size: .75rem;
+}
+.garden-bar { height: var(--garden-chart-height); display: flex; align-items: end; }
+@media (max-width: 639px) {
+  .garden-chart-columns { column-gap: 0; }
+}

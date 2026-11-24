@@ -23,6 +23,7 @@ from app.domain.tasks import (
     TaskRead,
     TaskStore,
     TaskTimeline,
+    TaskTitleSuggestion,
     TaskUpdate,
 )
 from app.web.deps import get_session, require_outbox_session
@@ -152,6 +153,15 @@ async def create_task(
         raise _private_locked() from error
     response.status_code = status.HTTP_201_CREATED if task.created else status.HTTP_200_OK
     return task
+
+
+@router.get("/tasks/title-suggestions", response_model=list[TaskTitleSuggestion])
+async def task_title_suggestions(
+    session: CurrentSession, db: Database, response: Response
+) -> list[TaskTitleSuggestion]:
+    """Offer only STANDARD titles; Private unlock never broadens this source."""
+    response.headers["Cache-Control"] = "no-store"
+    return await store.title_suggestions(db)
 
 
 @router.get("/tasks/{task_id}", response_model=TaskRead)
