@@ -6,6 +6,11 @@
 
 Google OAuth/OIDC login-only (`openid email profile`), Authlib, verified identity và allowlist server-side. Không có public signup/password-login thay thế. Lỗi identity/allowlist phải fail closed; không đưa identifier thật vào URL lỗi/log/fixture. Thêm Calendar OAuth scopes là grant riêng, không suy từ quyền login.
 
+Các danh tính được allowlist là cửa vào cùng ứng dụng một Owner. Mimi có
+[workspace chung và alias lịch sử](mimi/owner-workspace.md) qua feature flag;
+không chuyển/copy row lịch sử hay chia sẻ private unlock giữa session. Flag
+không thêm identity hoặc thay thế login/session/CSRF gates.
+
 Cookie login chứa opaque random token, DB chỉ giữ token digest; HttpOnly/Secure/SameSite=Lax theo production settings. Server-side session có rolling90days; logout/thu hồi invalidates session. Cookie OAuth handshake riêng `ms_oauth_state`, TTL300s và clear sau callback; không dùng signed handshake cookie làm login session. APP_ENV production thiếu OAUTH_STATE_SECRET từ chối khởi động; local fallback không nới production guard.
 
 Source: [oauth](../backend/app/web/oauth.py), [auth router](../backend/app/web/routers/auth.py), [session store](../backend/app/core/sessions.py), [settings](../backend/app/core/settings.py), [main](../backend/app/main.py).

@@ -43,6 +43,7 @@ def test_v3_greeting_default_locale_and_workflow_are_explicit_policy_contracts()
         "## Workflow and confirmation",
         "## Evidence gaps and limits",
         "## Collection capability and coverage",
+        "## Complete creates, civil dates and historical state",
     ]
     flat = " ".join(text.split())
     assert "A greeting or data in another language does not change" in flat
@@ -129,3 +130,53 @@ def test_policy_preserves_applicable_user_roles_without_promoting_embedded_data(
     assert wire[4]["role"] == "assistant"
     assert "unsupported old claim" not in wire[0]["content"]
     assert wire[-1]["content"] == "Làm theo ràng buộc trước."
+
+
+def test_semantic_chat_undo_is_native_manual_and_inside_chat_workflow_only():
+    text = load_standard_policy(collection_enabled=True).text
+    flat = " ".join(text.split())
+    assert "Interpret a request to undo semantically" in flat
+    assert (
+        "Questions, hypothetical examples, quotations and negated requests do not request a change"
+        in flat
+    )
+    assert "task.undo_candidate.v1 alone in a native tool call" in flat
+    assert "target=latest and receipt_id=null" in flat
+    assert "target=exact" in flat and "preview_lifecycle.historical_outcomes" in flat
+    assert "Chat never auto-applies Undo" in flat
+    assert text.index("## Workflow and confirmation") < text.index("### Undo in this Chat")
+    assert text.index("### Undo in this Chat") < text.index("## Evidence gaps and limits")
+
+
+def test_undo_policy_retains_preceding_checkpoint_history_with_and_without_calendar():
+    from app.agent.policy import checkpoint_policy_compatible
+
+    for calendar in (False, True):
+        current = load_standard_policy(collection_enabled=True, calendar_enabled=calendar)
+        head, separator, tail = current.text.partition("\n### Undo in this Chat\n")
+        _, end, suffix = tail.partition("\n## Evidence gaps and limits")
+        assert separator and end
+        prior = hashlib.sha256((head + end + suffix).encode()).hexdigest()
+        assert current.sha256 != prior
+        assert checkpoint_policy_compatible(prior, collection_enabled=True)
+
+
+@pytest.mark.parametrize(
+    "collection,predecessor",
+    [
+        (False, "aaad3e2189c5f2b9f3eb21fb53933f736d4eb1ef9f16ab60e6446cf6977feaa7"),
+        (True, "0318b083a95233d5b6aac6c7caac7c8b95e032f2a725db7dfaa82585f369dfcb"),
+        (True, "de63eda446e4c00ad3ade5bd6f23d8fa3239804650fe61cbe7e8bd2e638edbfc"),
+        (True, "4e36aee3658e1bf42d7ca5dd7c9005f17d3b03481163366c176c287206592c02"),
+    ],
+)
+def test_calendar_checkpoint_precursors_remain_exact_and_mode_bound(collection, predecessor):
+    from app.agent.policy import checkpoint_policy_compatible
+
+    assert checkpoint_policy_compatible(predecessor, collection_enabled=collection)
+    assert not checkpoint_policy_compatible(predecessor, collection_enabled=not collection)
+    for calendar in (False, True):
+        current = load_standard_policy(collection_enabled=collection, calendar_enabled=calendar)
+        assert checkpoint_policy_compatible(current.sha256, collection_enabled=collection)
+    other_digest = hashlib.sha256(b"unapproved policy").hexdigest()
+    assert not checkpoint_policy_compatible(other_digest, collection_enabled=collection)

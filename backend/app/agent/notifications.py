@@ -26,6 +26,7 @@ from app.agent.models import (
     MimiNotificationIntent,
     MimiRun,
 )
+from app.agent.owner_workspace import related_owner_ids
 from app.core.settings import get_settings
 from app.domain.models import PushSubscription
 from app.domain.push import ProviderWorkTracker, send_push_detailed
@@ -51,6 +52,8 @@ async def queue_completion(db: AsyncSession, run_id: UUID, sequence: int, kind: 
     if not get_settings().mimi_notifications_enabled:
         return
     run = await db.get(MimiRun, run_id)
+    if run.execution_lease.get("mode") == "voice_action":
+        return  # A Voice receipt/preview is delivered in the owning app.
     conversation = await db.get(MimiConversation, run.conversation_id)
     if conversation.sensitivity != "standard" or conversation.is_private:
         return
@@ -187,7 +190,7 @@ async def read_preference(db, owner_id, payload: DevicePreferenceProof):
             select(MimiDevicePreference).where(MimiDevicePreference.subscription_id == sub.id)
         )
     ).one_or_none()
-    if pref is not None and pref.owner_id != owner_id:
+    if pref is not None and pref.owner_id not in related_owner_ids(owner_id):
         raise HTTPException(404, "Mimi device not found")
     return {
         "subscription_id": str(sub.id),
@@ -214,7 +217,7 @@ async def set_preference(db, owner_id, payload):
         )
         db.add(pref)
     else:
-        if pref.owner_id != owner_id:
+        if pref.owner_id not in related_owner_ids(owner_id):
             raise HTTPException(404, "Mimi device not found")
         if pref.revision != payload.expected_revision:
             raise HTTPException(409, "mimi_device_preference_stale")
@@ -228,7 +231,7 @@ async def list_attention(db, owner_id):
     rows = (
         await db.scalars(
             select(MimiNotificationIntent)
-            .where(MimiNotificationIntent.owner_id == owner_id)
+            .where(MimiNotificationIntent.owner_id.in_(related_owner_ids(owner_id)))
             .order_by(MimiNotificationIntent.created_at.desc())
             .limit(50)
         )
@@ -238,7 +241,7 @@ async def list_attention(db, owner_id):
         conversation = await db.get(MimiConversation, r.conversation_id)
         if (
             conversation is None
-            or conversation.owner_id != owner_id
+            or conversation.owner_id != r.owner_id
             or conversation.is_private
             or conversation.sensitivity != "standard"
         ):
@@ -266,8 +269,13 @@ async def acknowledge(db, owner_id, intent_id):
     row = (
         await db.scalars(
             select(MimiNotificationIntent)
+            .join(MimiConversation, MimiNotificationIntent.conversation_id == MimiConversation.id)
             .where(
-                MimiNotificationIntent.id == intent_id, MimiNotificationIntent.owner_id == owner_id
+                MimiNotificationIntent.id == intent_id,
+                MimiNotificationIntent.owner_id.in_(related_owner_ids(owner_id)),
+                MimiConversation.owner_id == MimiNotificationIntent.owner_id,
+                MimiConversation.sensitivity == "standard",
+                MimiConversation.is_private.is_(False),
             )
             .with_for_update()
         )
@@ -286,8 +294,8 @@ async def resolve_locator(db, owner_id, locator):
             .join(MimiConversation, MimiNotificationIntent.conversation_id == MimiConversation.id)
             .where(
                 MimiNotificationIntent.locator == locator,
-                MimiNotificationIntent.owner_id == owner_id,
-                MimiConversation.owner_id == owner_id,
+                MimiNotificationIntent.owner_id.in_(related_owner_ids(owner_id)),
+                MimiConversation.owner_id == MimiNotificationIntent.owner_id,
                 MimiConversation.sensitivity == "standard",
                 MimiConversation.is_private.is_(False),
             )

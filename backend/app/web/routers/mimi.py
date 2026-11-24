@@ -9,7 +9,7 @@ import time
 from typing import Annotated, Literal
 from uuid import UUID, uuid7
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,9 +62,12 @@ from app.core.settings import get_settings
 from app.domain.models import AuthSession
 from app.web.acknowledgement import commit_before_ack
 from app.web.deps import get_session, require_session
+from app.web.mimi_auth import require_mimi_workspace_session
 from app.web.mimi_csrf import require_mimi_csrf
 
-router = APIRouter(prefix="/mimi", tags=["mimi"])
+router = APIRouter(
+    prefix="/mimi", tags=["mimi"], dependencies=[Depends(require_mimi_workspace_session)]
+)
 logger = logging.getLogger(__name__)
 Database = Annotated[AsyncSession, Depends(get_session)]
 CurrentSession = Annotated[AuthSession, Depends(require_session)]
@@ -87,9 +90,12 @@ async def mimi_capabilities(_session: CurrentSession) -> dict:
     """Expose only non-secret route capability actually configured for this app."""
 
     settings = get_settings()
+    from app.agent.voice_store import voice_available, voice_v2_available
     from app.agent.workflow_pilot import pilot_available
 
     return {
+        "voice_enabled": voice_available(settings),
+        "voice_v2_enabled": voice_v2_available(settings),
         "workflow_pilot_enabled": pilot_available(settings),
         "context_v1_enabled": settings.mimi_context_v1_enabled,
         "live_provider_enabled": settings.mimi_live_provider_enabled,
@@ -641,6 +647,11 @@ async def decide_change_set(
             type(error).__name__,
         )
         raise HTTPException(status_code=503, detail="mimi_confirmation_commit_failed") from None
+    from app.agent.voice_v2_bridge import signal_voice_manual_confirm
+    from app.agent.voice_v2_store import VOICE_MANUAL_WAKE_KEY
+
+    if parent_id := db.info.pop(VOICE_MANUAL_WAKE_KEY, None):
+        signal_voice_manual_confirm(parent_id)
     return result
 
 
@@ -767,6 +778,22 @@ async def read_mimi_execution_receipt(
     return await read_execution_receipt(
         db, session, conversation_id, change_set_id, digest, nonce, idempotency_key
     )
+
+
+@router.get(
+    "/receipts/{receipt_id}/diff",
+    dependencies=[Depends(require_mimi_available)],
+)
+async def read_mimi_receipt_diff(
+    receipt_id: UUID,
+    db: Database,
+    session: CurrentSession,
+    response: Response,
+):
+    from app.agent.receipt_history import receipt_diff
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await receipt_diff(db, session, receipt_id)
 
 
 @router.post(

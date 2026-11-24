@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ics import ParseReport, parse_ics
+from app.domain.calendar_membership import event_overlap, from_visible_calendar_sources
 from app.domain.models import AuthSession, CalendarEvent, CalendarSource
 from app.domain.reading import readable
 
@@ -420,17 +421,12 @@ class CalendarStore:
     ) -> list[EventRead]:
         """List every event whose interval intersects the requested range."""
         stmt = readable(
-            select(CalendarEvent).where(
-                CalendarEvent.starts_at < to,
-                CalendarEvent.ends_at > from_,
-            ),
+            select(CalendarEvent).where(event_overlap(from_, to)),
             CalendarEvent,
             auth,
         )
         if not include_hidden_sources:
-            stmt = stmt.join(CalendarSource, CalendarSource.id == CalendarEvent.source_id).where(
-                CalendarSource.is_visible.is_(True)
-            )
+            stmt = from_visible_calendar_sources(stmt)
         stmt = stmt.order_by(CalendarEvent.starts_at, CalendarEvent.id)
         return [self._event_read(event) for event in (await db.execute(stmt)).scalars()]
 

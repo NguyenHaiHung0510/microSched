@@ -5,8 +5,9 @@ import os
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -73,10 +74,35 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     allowed_emails: str = ""
+    # Login identities are entrances to one Owner workspace. False is a
+    # non-destructive compatibility rollback; it never changes stored rows.
+    mimi_owner_workspace_enabled: bool = False
     oauth_state_secret: str | None = None
     private_pin_bootstrap: str | None = None
     # App-held AES-256 key for the encrypted columns; crypto.py validates and uses it.
     encryption_master_key: str | None = None
+
+    # Dark until migration + commissioning. A device credential has its own scope.
+    migarden_enabled: bool = False
+    migarden_public_origin: str | None = None
+
+    @field_validator("migarden_public_origin")
+    @classmethod
+    def validate_migarden_origin(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        origin = urlsplit(value)
+        if (
+            origin.scheme not in {"http", "https"}
+            or not origin.hostname
+            or origin.username
+            or origin.password
+            or origin.path not in {"", "/"}
+            or origin.query
+            or origin.fragment
+        ):
+            raise ValueError("MIGARDEN_PUBLIC_ORIGIN must be an HTTP(S) origin")
+        return value.rstrip("/")
 
     enable_inprocess_cron: bool = False
     vapid_private_key: str | None = None
@@ -89,6 +115,10 @@ class Settings(BaseSettings):
     mimi_real_chat_enabled: bool = False
     mimi_live_provider_enabled: bool = False
     mimi_context_v1_enabled: bool = False
+    # Private deployment input only; never part of settings dumps or UI config.
+    mimi_owner_memory_v1: SecretStr | None = Field(
+        default=None, repr=False, exclude=True, frozen=True
+    )
     # Code rollback ignores the versioned events; existing retention is unchanged.
     mimi_working_projection_enabled: bool = True
     # Alpha can explicitly select LangGraph; feature flags remain dark by default.
@@ -116,6 +146,14 @@ class Settings(BaseSettings):
     # Empty means no adaptive endpoint is certified. No provider roster.
     mimi_route_qualifications_json: str = "[]"
     mimi_collection_enabled: bool = False
+    mimi_calendar_read_enabled: bool = False
+    mimi_voice_enabled: bool = False
+    mimi_voice_v2_enabled: bool = False
+    mimi_voice_v2_max_seconds: int = Field(default=5_400, ge=30, le=5_400)
+    mimi_voice_v2_compression_enabled: bool = True
+    mimi_gemini_api_key: SecretStr | None = Field(default=None, repr=False)
+    # A finite session, never an automatic paid reconnect. QA can lower this.
+    mimi_voice_max_seconds: int = Field(default=300, ge=30, le=600)
     mimi_revision_collection: bool = False
     mimi_notifications_enabled: bool = False
     # Legacy values remain readable for old receipts and explicit rollback tests.
@@ -262,6 +300,14 @@ class Settings(BaseSettings):
                         "when enable_inprocess_cron is True in production"
                     )
                 )
+        if (
+            self.is_production
+            and self.migarden_enabled
+            and not (
+                self.migarden_public_origin and self.migarden_public_origin.startswith("https://")
+            )
+        ):
+            raise ValueError("MIGARDEN_ENABLED in production requires an HTTPS origin")
         if self.is_production and self.mimi_real_chat_enabled and not self.mimi_public_origin:
             raise ValueError(
                 "MIMI_PUBLIC_ORIGIN is required when Mimi real chat is enabled in production"
@@ -382,6 +428,22 @@ class Settings(BaseSettings):
         if value.startswith(("postgres://", "postgresql://")):
             return async_postgres_url(value)
         return value
+
+    @field_validator("mimi_owner_memory_v1")
+    @classmethod
+    def bounded_owner_memory(cls, value: SecretStr | None) -> SecretStr | None:
+        from app.agent.owner_context import validate_owner_memory
+
+        return validate_owner_memory(value)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def protect_owner_memory_input(cls, value, handler):
+        # Seal before any field/model validation. Otherwise an unrelated
+        # configuration error can echo the original private input dictionary.
+        if isinstance(value, dict) and isinstance(value.get("mimi_owner_memory_v1"), str):
+            value = {**value, "mimi_owner_memory_v1": SecretStr(value["mimi_owner_memory_v1"])}
+        return handler(value)
 
 
 @lru_cache

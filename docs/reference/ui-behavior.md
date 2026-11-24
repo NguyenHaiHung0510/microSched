@@ -4,7 +4,9 @@ Contract kỹ thuật của các UI096/097/098 và Mimi feedback hiện có; [Ap
 
 ## Shell, content và reader
 
-Responsive five-domain navigation, một accessible app menu, compact header/private/queue và bốn vùng Tracker. Safe automatic PWA update không thêm routine banner; defer cho draft/mutation/admission/storage/transport boundaries, không clear/persist private drafts hoặc đổi outbox protocol bytes.
+Khi bật miGarden, laptop có sáu lối tắt và điện thoại có năm (miGarden thay chỗ Task); menu Ứng dụng vẫn mở cả sáu. Trang mặc định sau đăng nhập và logo mở Tổng quan miGarden; Task có đường `/tasks` riêng. Tắt miGarden giữ năm lối tắt cũ và mặc định Task. Link sâu giữ nguyên; Lịch sử chọn bằng `/migarden?tab=history` hoặc alias cũ `?history=1`. Badge Web đọc query chính của subtab, không thay nhịp poll hoặc chứng minh ESP đang sẵn sàng.
+
+Shell giữ một menu Ứng dụng, compact header/private/queue và bốn vùng Tracker. Safe automatic PWA update không thêm routine banner; defer cho draft/mutation/admission/storage/transport boundaries, không clear/persist private drafts hoặc đổi outbox protocol bytes.
 
 Notes hai cột desktop/một mobile, pinned-first trong filter/sort/local find; body/checklist/reflection preview có full expansion/detail. Preview body6lines, first reflection4, first3 unfinished items×4lines; disclosed completed items vẫn clamp; full collapse reset disclosure. Stored text giữ nguyên.
 

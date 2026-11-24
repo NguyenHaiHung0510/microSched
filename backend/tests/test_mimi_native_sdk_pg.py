@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_mimi_collection_service_pg import auth, cleanup, local_contract  # noqa: F401
 
-from app.agent import service
+from app.agent import langgraph_runner, service
 from app.agent.context import PreviewCandidate, ToolRequest, ToolRequests
 from app.agent.models import MimiConversation, MimiEvent
 from app.agent.openrouter import AgentCompletion
@@ -22,7 +22,14 @@ pytestmark = pytest.mark.pg
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monkeypatch, streaming):
+@pytest.mark.parametrize("owner_memory", [None, "SYNTHETIC_B12_PRIVATE_GUIDANCE_20261116"])
+def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(
+    pg_dsn, monkeypatch, streaming, owner_memory
+):
+    if owner_memory is not None:
+        monkeypatch.setenv("MIMI_OWNER_MEMORY_V1", owner_memory)
+    else:
+        monkeypatch.delenv("MIMI_OWNER_MEMORY_V1", raising=False)
     monkeypatch.setenv("MIMI_LIVE_PROVIDER_ENABLED", "1")
     monkeypatch.setenv("MIMI_CONTEXT_V1_ENABLED", "1")
     monkeypatch.setenv("MIMI_STANDARD_API_KEY", "synthetic-never-sent")
@@ -38,11 +45,20 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
 
     app_url = os.environ["MIMI_LANGGRAPH_APP_DATABASE_URL"]
     parsed = make_url(app_url)
-    assert (parsed.host, parsed.port, parsed.database, parsed.username) == (
-        "127.0.0.1",
-        21887,
-        "mimi086_qa",
-        "microsched_app",
+    target = make_url(pg_dsn)
+    assert parsed.host in {"127.0.0.1", "localhost", "::1"}
+    assert parsed.username == "microsched_app"
+    assert (parsed.host, parsed.port, parsed.database) == (
+        target.host,
+        target.port,
+        target.database,
+    )
+    # Bind only this test's already-validated disposable DB. Deployed local
+    # admission stays unchanged; parallel QA must not reuse a fixed old port.
+    monkeypatch.setattr(
+        langgraph_runner,
+        "_authorized_local_database",
+        lambda p: (p.host, p.port, p.database) == (target.host, target.port, target.database),
     )
     monkeypatch.setenv("MIMI_RUNNER", "langgraph")
     monkeypatch.setenv("MIMI_TRANSPORT", "openai_sdk")
@@ -301,6 +317,11 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
                 assert len(wires) == 3 and all(
                     w["messages"][:2] == wires[0]["messages"][:2] for w in wires
                 )
+                for wire in wires:
+                    prefix = wire["messages"][0]["content"]
+                    assert prefix.count("<owner_memory_v1>") == int(owner_memory is not None)
+                    if owner_memory is not None:
+                        assert prefix.count(owner_memory) == 1
                 replay = await service.send_message(
                     db,
                     actor,
@@ -373,6 +394,15 @@ def test_actual_sdk_langgraph_pg_collection_confirm_and_idempotency(pg_dsn, monk
                     UUID(feedback["evidence_bundle_ids"][0]),
                 )
                 assert len(bundle["content"]["request_contexts"]) == 3
+                for captured in bundle["content"]["request_contexts"]:
+                    body = captured["body"]
+                    assert "<owner_memory_v1>" not in body["messages"][0]["content"]
+                    if owner_memory is not None:
+                        assert owner_memory not in json.dumps(body, ensure_ascii=False)
+                        assert body["manifest"]["owner_memory"]["version"] == "mimi-owner-memory.v1"
+                    else:
+                        assert "owner_memory" not in body["manifest"]
+                        assert "system_prefix_sha256" not in body["manifest"]
                 assert (
                     bundle["content"]["request_contexts"][0]["body"]["manifest"]["policy_id"]
                     == "mimi-standard-v3"

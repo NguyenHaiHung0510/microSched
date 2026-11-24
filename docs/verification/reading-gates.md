@@ -23,6 +23,8 @@ Mỗi model table=True khai trực tiếp cả `__privacy_gate__` và `__delete_
 | MimiMessage/Run/Event/ProviderCall/ChangeSet/ExecutionReceipt/RefreshMarker/Feedback/Evidence/NotificationIntent/NotificationDelivery | VIA_PARENT (conversation/causal owner) | NONE |
 | CalendarSource/Event, TrackerGroup, AppSetting, AuditLog, PushSubscription, ReminderDispatch, TrackerReminderBatch/Item, AuthSession, ReminderHandledBatch, MimiDevicePreference | NONE | NONE |
 
+Các bảng miGarden (Boot, Command, Config, Report, Session, Zone) khai `NONE` trên hai trục: dữ liệu chỉ qua router Owner hoặc exchange với credential của Controller; không mang private-item hoặc tombstone semantics.
+
 Registry giúp đọc source; tests tự enumerate models, không tin danh sách chép tay. Thêm bảng/cột phải cập nhật metadata/migration/caller/reference cùng nhau. NONE không bỏ authentication hoặc domain-specific authorization.
 
 ## Verification obligations

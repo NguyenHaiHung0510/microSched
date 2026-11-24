@@ -11,13 +11,14 @@ export function mergeMimiConversationPages(pages: MimiConversationPage[]) {
   })
 }
 
-export function useMimiConversationList(state: 'active' | 'archived' | 'all') {
+export function useMimiConversationList(state: 'active' | 'archived' | 'all', enabled = true) {
   const query = useInfiniteQuery({
     queryKey: ['mimi', 'conversations', 'paged', state],
     queryFn: ({ pageParam }) => fetchMimiConversations(state, pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     ...NO_POLLING_QUERY_OPTIONS,
+    enabled,
   })
   return { ...query, items: mergeMimiConversationPages(query.data?.pages ?? []) }
 }

@@ -8,7 +8,9 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_serializer, model_validator
+
+from app.agent.owner_context import OwnerMemoryReceipt
 
 
 class StrictModel(BaseModel):
@@ -80,7 +82,10 @@ class ContextManifest(StrictModel):
     generation: int = Field(ge=1)
     run_id: UUID
     policy_id: str
+    # Base policy compatibility remains independent from the composed prompt.
     policy_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    system_prefix_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    owner_memory: OwnerMemoryReceipt | None = None
     tool_registry_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     output_schema_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     sensitivity: Literal["standard"]
@@ -96,6 +101,15 @@ class ContextManifest(StrictModel):
     budget: ContextBudget
     route: RouteManifest
     cache: CacheManifest
+
+    @model_serializer(mode="wrap")
+    def omit_inactive_owner_metadata(self, handler):
+        data = handler(self)
+        if self.owner_memory is None:
+            # OFF retains the exact pre-Memory wire and manifest fingerprint.
+            data.pop("system_prefix_sha256", None)
+            data.pop("owner_memory", None)
+        return data
 
     def sha256(self) -> str:
         encoded = json.dumps(
@@ -121,7 +135,7 @@ class AuthorityEnvelope(StrictModel):
 class ContextEnvelope(StrictModel):
     """One assembled turn; plaintext is ephemeral and never a JSONB receipt."""
 
-    policy_text: str
+    policy_text: str = Field(repr=False)
     authority: AuthorityEnvelope
     manifest: ContextManifest
     checkpoint: str | dict[str, Any] | None
@@ -130,6 +144,13 @@ class ContextEnvelope(StrictModel):
     domain_evidence: tuple[dict[str, Any], ...]
     current_user_turn: str
     output_contract: dict[str, Any]
+
+    @model_serializer(mode="wrap")
+    def redact_private_prefix(self, handler):
+        data = handler(self)
+        if self.manifest.owner_memory is not None:
+            data.pop("policy_text", None)
+        return data
 
     @model_validator(mode="after")
     def bind_authority_to_manifest(self) -> ContextEnvelope:

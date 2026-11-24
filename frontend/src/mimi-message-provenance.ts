@@ -18,6 +18,16 @@ export function isVerifiedServerNotice(message: MimiMessage): boolean {
     && Number.isSafeInteger(proof.event_sequence) && Number(proof.event_sequence) > 0
 }
 
+/** Receipt identity comes only from the applied notice in the current snapshot. */
+export function appliedMimiReceiptId(message: MimiMessage): string | null {
+  const { applied_receipt_id: receiptId, provenance } = message
+  return isVerifiedServerNotice(message)
+    && (provenance?.producer_code === 'collection_committed' || provenance?.producer_code === 'operation_committed')
+    && typeof receiptId === 'string' && receiptId.trim() !== ''
+    ? receiptId
+    : null
+}
+
 /** Preserve stored history; correct only the two known server preview templates. */
 export function systemNoticeText(message: MimiMessage): string {
   if (!isVerifiedServerNotice(message) || message.provenance?.producer_code !== 'preview_prepared') return message.content

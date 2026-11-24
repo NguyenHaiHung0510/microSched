@@ -1,3 +1,5 @@
+import { humanActive } from './human-activity'
+
 export const TASK_REFETCH_MS = 1_000
 export const STANDARD_REFETCH_MS = 15_000
 
@@ -19,7 +21,7 @@ export const NO_POLLING_QUERY_OPTIONS = Object.freeze({
 
 export function pollWhileHealthy(intervalMs: number) {
   return (query: QueryWithStatus): number | false =>
-    query.state.status === 'error' ? false : intervalMs
+    query.state.status === 'error' || !humanActive() ? false : intervalMs
 }
 
 export const taskRefetchInterval = pollWhileHealthy(TASK_REFETCH_MS)

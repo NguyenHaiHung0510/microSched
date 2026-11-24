@@ -224,3 +224,56 @@ explains a retained stale preview; its frozen payload and persisted expiry stay
 unchanged. A later race still yields authoritative POST refusal. The client only
 clears a known frontier-refusal intent after a matching ID/digest/nonce terminal
 server snapshot; receipt absence or a transport error remains UNKNOWN/no replay.
+
+## Create repair and historical state
+
+Create advertisement requires `fields.title`; edit omission still preserves fields.
+Scheduling requires the complete triad, with civil dates distinct from timezone-aware
+instants. Independent creates with supplied facts need no selection/read. The policy
+checks item count and each corresponding date; general natural-language completeness
+still requires actual-model acceptance, not a schema-validity claim.
+
+Known shape/calendar errors return bounded allowlisted wire paths after the existing
+durable known-cost accounting gate. A repeated unresolved issue signature after
+actionable feedback reserves a no-tools final answer within the existing run bound;
+changed issues and valid repairs continue without a new correction cap. Every model
+wire receives current remaining allowances. Unauthorized fields/tools, unknown
+dispatch/cost and final-only violations retain their existing fail/reconcile gates.
+
+Scalar execution receipts retain history after soft-delete, while raw historical
+read pairs still require active STANDARD sources. Both retain current privacy and
+receipt/event binding checks, including checkpoint egress. Task projections always
+include lifecycle/deleted_at. Recent preview lifecycle exposes only bounded scalar
+IDs, digest/state/expiry and receipt references. It does not restore content or grant
+execution; only a canonical superseded event establishes that reason, and absent
+successor links stay unknown. Reject never revives a predecessor or replays a call.
+Validated scalar receipt outcomes for those recent previews are also rehydrated
+independently of the prose checkpoint frontier. A withheld checkpoint containing
+an ineligible raw read therefore does not erase otherwise eligible receipt facts;
+partial coverage and current privacy failures remain explicit.
+
+Before model egress, pending raw operation/selection snapshots must still have
+eligible sources. Ineligible plaintext is withheld while canonical pending and
+receipt identities remain. Current source eligibility is checked again after
+helper I/O and before activating a summary/main dispatch. Historical raw aggregates
+(including zero counts and mixed batches) have no complete source lineage and are
+not replayed or compacted; their canonical conversation/audit stays stored with
+partial coverage. Immediate current-run aggregates remain usable. An explicit
+deleted read whose actual snapshot was already deleted, or a valid restore/undo
+preview frozen from a deleted before-state, keeps its existing STANDARD capability;
+an old formerly-active snapshot does not acquire that capability by becoming deleted.
+
+An ordinary `intent=auto` follow-up can replace the server-observed pending preview
+only with a typed, materialized collection candidate. The server captures exact A
+ID/digest and generation before I/O and rechecks the same pending, unexpired A after
+I/O. Text/read/clarification/invalid/failure retain A. Explicit revision keeps its
+stricter contract; no new client binding fields or natural-language router are used.
+Reject/expiry/other-tab frontier changes block a late B; no predecessor revival.
+
+Historical selection reason/intent/variants/query text has opaque source lineage:
+selected member eligibility cannot authorize prose copied from an unclassified
+read source. Historical context therefore exposes only eligible scalar bindings
+and member metadata with unavailable free-text coverage. Finalized working segments
+containing opaque selection results are withheld from replay/compaction. Canonical
+encrypted snapshots/audits remain intact; immediate current-run read/selection,
+Confirm, and independently eligible query evidence keep their existing semantics.

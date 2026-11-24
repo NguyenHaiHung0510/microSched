@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agent import workflow_pilot as pilot
-from app.agent.service import _owner_id
+from app.agent.owner_workspace import legacy_owner_id
 from app.agent.workflow_probe.contracts import ProbeBlocked
 from app.core.settings import get_settings
 from app.domain.models import AuthSession
 from app.web.deps import require_session
+from app.web.mimi_auth import require_mimi_workspace_session
 from app.web.mimi_csrf import require_mimi_csrf
 
 
@@ -21,7 +22,9 @@ def require_pilot():
 
 
 router = APIRouter(
-    prefix="/mimi/workflow-pilot", tags=["mimi-pilot"], dependencies=[Depends(require_pilot)]
+    prefix="/mimi/workflow-pilot",
+    tags=["mimi-pilot"],
+    dependencies=[Depends(require_pilot), Depends(require_mimi_workspace_session)],
 )
 Session = Annotated[AuthSession, Depends(require_session)]
 
@@ -78,6 +81,11 @@ async def guarded(coroutine):
         raise HTTPException(409, str(error)) from None
 
 
+def _pilot_owner(session):
+    # The experimental pilot store is separate from the Mimi conversation ledger.
+    return str(legacy_owner_id(session.user_email))
+
+
 @router.get("/tasks")
 async def tasks(request: Request, _session: Session):
     return {"items": await store(request).choices()}
@@ -85,7 +93,7 @@ async def tasks(request: Request, _session: Session):
 
 @router.get("/runs")
 async def runs(request: Request, session: Session):
-    owner = str(_owner_id(session))
+    owner = _pilot_owner(session)
     current = store(request)
     return {
         "items": [
@@ -103,12 +111,10 @@ async def create_run(request: Request, payload: CreateRun, session: Session):
         current = store(request)
         async with current.invocation(payload.run_id):
             await pilot.create(
-                current, payload.run_id, str(_owner_id(session)), payload.engine, payload.task_ids
+                current, payload.run_id, _pilot_owner(session), payload.engine, payload.task_ids
             )
         return await pilot.status_view(
-            pilot.PilotWorkflow(
-                current, payload.run_id, str(_owner_id(session)), policy=pilot.POLICY
-            )
+            pilot.PilotWorkflow(current, payload.run_id, _pilot_owner(session), policy=pilot.POLICY)
         )
 
     return await guarded(invoke())
@@ -118,9 +124,7 @@ async def create_run(request: Request, payload: CreateRun, session: Session):
 async def get_run(request: Request, run_id: UUID, session: Session):
     return await guarded(
         pilot.status_view(
-            pilot.PilotWorkflow(
-                store(request), run_id, str(_owner_id(session)), policy=pilot.POLICY
-            )
+            pilot.PilotWorkflow(store(request), run_id, _pilot_owner(session), policy=pilot.POLICY)
         )
     )
 
@@ -129,9 +133,7 @@ async def get_run(request: Request, run_id: UUID, session: Session):
 async def advance_run(request: Request, run_id: UUID, payload: AdvanceRun, session: Session):
     async def invoke():
         current = store(request)
-        workflow = pilot.PilotWorkflow(
-            current, run_id, str(_owner_id(session)), policy=pilot.POLICY
-        )
+        workflow = pilot.PilotWorkflow(current, run_id, _pilot_owner(session), policy=pilot.POLICY)
         await current.load(run_id, owner=workflow.owner)
         async with current.invocation(run_id):
             await pilot.advance(

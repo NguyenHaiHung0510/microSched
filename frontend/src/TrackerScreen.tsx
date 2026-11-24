@@ -104,7 +104,6 @@ function reportMonthLabel(month: string, months: 1 | 3 | 6 | 12): string {
   return `${monthLabel(shiftMonth(month, 1 - months))} – ${monthLabel(month)}`
 }
 
-import { DerivedPendingNotice } from '@/OutboxPanel'
 import { useDerivedPending } from '@/outbox/view'
 
 export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean }) {
@@ -609,7 +608,6 @@ export function TrackerScreen({ privateUnlocked }: { privateUnlocked: boolean })
       </section>
       <section id="tracker-region-report" data-testid="tracker-region-report" role="tabpanel" aria-labelledby="tracker-tab-report" hidden={region!=='report'} className="space-y-5">
       {/* 1. Tài chính tháng X năm Y lên đầu */}
-      <DerivedPendingNotice />
       <Card data-testid="tracker-finance-overview" className="gap-3 p-4 shadow-1 ring-0 bg-gradient-to-br from-brand-50/60 to-card border-brand-200">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 basis-full space-y-1 sm:basis-0 sm:flex-1">

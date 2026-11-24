@@ -19,6 +19,8 @@ MAX_MESSAGES = 100
 MAX_CIPHERTEXT = 16_384
 PRODUCERS = {
     "provider_text": "model_answer",
+    "provider_voice": "model_answer",
+    "provider_voice_partial": "model_answer",
     "agent_loop_stop": "server_notice",
     "context_budget_stop": "server_notice",
     "checkpoint_unknown": "server_notice",
@@ -52,14 +54,26 @@ def binding_hash(conversation_id, run_id, message_id, sequence):
     return hashlib.sha256(json.dumps(value, separators=(",", ":")).encode()).hexdigest()
 
 
-def valid_call(call, run_id):
-    return (
+def valid_call(call, run_id, producer_code="provider_text"):
+    bound = (
         call is not None
         and call.run_id == run_id
-        and call.state == "succeeded"
         and isinstance(call.route, dict)
         and call.route.get("purpose", "main") == "main"
     )
+    if not bound:
+        return False
+    if producer_code in {"provider_voice", "provider_voice_partial"}:
+        # A received transcript is attributable even if a later disconnect makes
+        # the whole continuous connection's outcome unknown. Text proof retains
+        # its original succeeded-only contract.
+        return (
+            call.route.get("transport") == "google_live"
+            and call.state in {"dispatched", "succeeded", "unknown"}
+            and isinstance(call.result, dict)
+            and call.result.get("transcripts_received") is True
+        )
+    return call.state == "succeeded"
 
 
 async def append_message(
@@ -79,7 +93,7 @@ async def append_message(
         raise ValueError("message_provenance_run_binding_invalid")
     if origin == "model_answer":
         call = await db.get(MimiProviderCall, provider_call_id) if provider_call_id else None
-        if not valid_call(call, run_id):
+        if not valid_call(call, run_id, producer_code):
             raise ValueError("message_provenance_provider_binding_invalid")
     elif provider_call_id is not None:
         raise ValueError("server_notice_cannot_borrow_provider_call")
@@ -275,7 +289,7 @@ async def read_message_provenance(db, conversation, messages, dek):
             continue
         event, body = match
         if body["origin"] == "model_answer" and not valid_call(
-            call_map.get(body["provider_call_id"]), message.run_id
+            call_map.get(body["provider_call_id"]), message.run_id, body["producer_code"]
         ):
             continue
         result[message.id] = {

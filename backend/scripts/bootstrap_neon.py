@@ -114,6 +114,15 @@ async def create_or_update_role(
         )
 
 
+async def protect_migarden_appendonly(connection: asyncpg.Connection) -> None:
+    """Bootstrap may run again after 0021; never restore update/delete to receipts."""
+    for table in ("migarden_config", "migarden_report", "migarden_boot", "migarden_health"):
+        if await connection.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{SCHEMA}.{table}"):
+            await connection.execute(
+                f"REVOKE UPDATE, DELETE, TRUNCATE ON {SCHEMA}.{table} FROM {APP_ROLE}"
+            )
+
+
 async def bootstrap(values: dict[str, str]) -> float:
     """Create the extension, roles, schema ownership, and default app grants."""
     owner_url = values["NEON_OWNER_URL"]
@@ -146,9 +155,12 @@ async def bootstrap(values: dict[str, str]) -> float:
         await owner.execute(f"REVOKE ALL ON SCHEMA {SCHEMA} FROM PUBLIC")
         await owner.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
         await owner.execute(f"GRANT USAGE ON SCHEMA {SCHEMA} TO {APP_ROLE}")
-        await owner.execute(
-            f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {SCHEMA} TO {APP_ROLE}"
-        )
+        async with owner.transaction():
+            await owner.execute(
+                f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
+                f"IN SCHEMA {SCHEMA} TO {APP_ROLE}"
+            )
+            await protect_migarden_appendonly(owner)
         await owner.execute(f"ALTER ROLE {APP_ROLE} SET search_path = {SCHEMA}, public")
         await owner.execute(f"ALTER ROLE {MIGRATOR_ROLE} SET search_path = public")
     finally:

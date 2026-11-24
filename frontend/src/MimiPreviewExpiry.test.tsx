@@ -19,8 +19,11 @@ test('expired preview disables every obsolete action and gives a next step', () 
   expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(3)
 })
 test('fresh preview keeps the explicit decisions usable until the expiry boundary', () => {
-  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-02T16:00:00Z'))
-  const html = renderToStaticMarkup(<ChangeSetPreview changeSet={preview('2026-10-02T16:00:01Z')} pending={false} error={null} onDecision={() => {}} onRevise={() => {}} />)
+  const expires = '2026-10-02T17:00:01Z'
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-02T17:00:00Z'))
+  const html = renderToStaticMarkup(<ChangeSetPreview changeSet={preview(expires)} pending={false} error={null} onDecision={() => {}} onRevise={() => {}} />)
+  const label = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }).format(new Date(expires))
+  expect(html).toContain(`<dd>${label}</dd>`)
   expect(html).not.toContain('Preview đã hết hạn')
   expect(html.match(/<button[^>]*disabled=""/g) ?? []).toHaveLength(0)
 })

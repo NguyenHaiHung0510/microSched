@@ -6,6 +6,7 @@ import { saveMimiFeedback, type MimiFeedback } from '@/mimi-api'
 import { acknowledgeSupplement, draftKey, emptyDraft, supplementIntent, verifySupplementAck, type SupplementDraft, type SupplementIntent } from '@/mimi-positive-supplement'
 import { POSITIVE_SUPPLEMENT_LIMIT } from '@/mimi-owner-feedback'
 import { unicodeCodepoints } from '@/mimi-operating-policy'
+import { isMimiSessionCurrent, mimiSessionEpoch } from './mimi-session-boundary'
 
 
 type Props = { conversationId: string; targetId: string; onLater?: () => void }
@@ -16,6 +17,7 @@ export function MimiPositiveSupplement(props: Props) {
 
 function SupplementEditor({ conversationId, targetId, onLater }: Props) {
   const client = useQueryClient()
+  const [epoch] = useState(() => mimiSessionEpoch(client))
   const key = draftKey(conversationId, targetId)
   // Memory-only query data survives dialog/target changes; never browser persistence.
   useQuery({ queryKey: key, queryFn: emptyDraft, initialData: emptyDraft, enabled: false, gcTime: Infinity })
@@ -33,17 +35,20 @@ function SupplementEditor({ conversationId, targetId, onLater }: Props) {
     if (next && next !== liveDraft.current) { liveDraft.current = next; setDraft(next) }
   }), [client, conversationId, targetId])
   const update = (change: (old: SupplementDraft) => SupplementDraft) => {
+    if (!isMimiSessionCurrent(client, epoch)) return
     const next = change(liveDraft.current)
     liveDraft.current = next
     setDraft(next)
     client.setQueryData<SupplementDraft>(key, next)
   }
   const send = useMutation({
+    mutationKey: ['mimi', 'feedback-supplement'],
     mutationFn: async (intent: SupplementIntent): Promise<MimiFeedback> => {
       const saved = await saveMimiFeedback(intent.conversationId, { target_type: 'turn', target_id: intent.targetId }, intent.comment, intent.expected ?? '', intent.clientId)
       return verifySupplementAck(saved, intent)
     },
     onSuccess: (_saved, intent) => {
+      if (!isMimiSessionCurrent(client, epoch)) return
       client.setQueryData<SupplementDraft>(draftKey(intent.conversationId, intent.targetId), (old) => acknowledgeSupplement(old ?? emptyDraft(), intent))
       void client.invalidateQueries({ queryKey: ['mimi'] })
     },

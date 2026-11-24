@@ -13,6 +13,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent import crypto as mimi_crypto
+from app.agent import langgraph_runner
 from app.agent.langgraph_runner import checkpoint_thread_id, run_langgraph
 from app.agent.loop import LoopLimits
 from app.agent.models import MimiConversation, MimiEvent, MimiRun
@@ -27,18 +28,23 @@ PLAINTEXT = "synthetic payload must remain encrypted"
 
 
 @pytest.fixture
-def app_database_url(monkeypatch):
+def app_database_url(monkeypatch, pg_dsn):
     value = os.environ.get("MIMI_LANGGRAPH_APP_DATABASE_URL")
     if not value:
         pytest.skip("MIMI_LANGGRAPH_APP_DATABASE_URL is unset")
     url = make_url(value)
+    target = make_url(pg_dsn)
     if (
         url.host not in {"127.0.0.1", "localhost", "::1"}
-        or (url.port, url.database)
-        not in {(55478, "microsched_mimi078"), (21886, "microsched_mimi086"), (21887, "mimi086_qa")}
+        or (url.host, url.port, url.database) != (target.host, target.port, target.database)
         or url.username != "microsched_app"
     ):
         pytest.fail("refusing LangGraph persistence proof outside the authorized local QA database")
+    monkeypatch.setattr(
+        langgraph_runner,
+        "_authorized_local_database",
+        lambda p: (p.host, p.port, p.database) == (target.host, target.port, target.database),
+    )
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("OAUTH_STATE_SECRET", "synthetic-langgraph-pg-test")
     monkeypatch.setenv(
