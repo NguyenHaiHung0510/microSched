@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
-import { ArrowDown, ArrowRight, Code2, Leaf, ListTodo, NotebookPen, CalendarDays, Activity, GitBranch, CheckCheck, BookOpen } from 'lucide-react'
+import { Activity, ArrowDown, ArrowRight, ArrowUpRight, BookOpen, CalendarDays, CheckCheck, Code2, GitBranch, Leaf, ListTodo, NotebookPen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { homepageLoginHref, type PublicAuthState } from '@/public-navigation'
+import { queryParams } from '@/lib/route'
+import { creatorIntro, homepageHref, homepageView, homepageViews, type HomepageView, type PublicLanguage } from '@/public-home'
+import { homepageLoginHref, isHomepage, type PublicAuthState } from '@/public-navigation'
+import { PublicAbout, PublicGarden, PublicMimi } from '@/PublicProjectViews'
 import { PublicShowcase } from '@/PublicShowcase'
 import './public-pages.css'
 
 export const REPOSITORY_URL = 'https://github.com/NguyenHaiHung0510/microSched'
 export const CREATOR_URL = 'https://github.com/NguyenHaiHung0510'
-type Language = 'vi' | 'en'
+const MIMI_DOCS_URL = `${REPOSITORY_URL}/blob/develop/docs/mimi/README.md`
+type Language = PublicLanguage
 
 const copy = {
   vi: {
@@ -34,17 +38,17 @@ const copy = {
     methodBody: 'Mình dùng dự án để tìm hiểu harness engineering: tổ chức công việc với AI agents sao cho có mục tiêu rõ ràng và kiểm tra được kết quả. Mình xác định mục tiêu và phạm vi; agent điều phối có thể trực tiếp làm hoặc chia những phần việc cụ thể cho agent khác. Review độc lập, kiểm thử và ghi lại quyết định giúp mình xem thay đổi có đáp ứng yêu cầu hay không. Mình muốn xây dựng một cách làm vẫn hữu ích khi model và công cụ thay đổi.',
     methodSteps: ['Làm rõ mục tiêu', 'Làm việc đúng phạm vi', 'Review và kiểm thử', 'Ghi lại điều đã học'],
     stack: 'React · FastAPI · PostgreSQL',
-    futureLabel: 'NHỮNG DỰ ĐỊNH TIẾP THEO', futureTitle: 'Những điều mình muốn làm tiếp.', futureStatus: 'Đang tìm hiểu và thiết kế',
-    futureIntro: 'Mình đang thiết kế ba dự án kết nối với microSched, từ những gì đang học ở trường và những thứ muốn tự làm để dùng.',
-    futures: [
-      ['Mimi', 'Trợ lý trong microSched', 'Mình muốn có một trợ lý làm việc được với task, note, tracker và tài liệu ngay trong app. Mimi sẽ thực hiện thao tác trong phạm vi được cho phép, với bước xác nhận phù hợp.'],
-      ['microLink', 'Kết nối coding agent với microSched', 'Mình muốn coding agent có thể đọc và cập nhật dữ liệu microSched ngay từ môi trường đang dùng, hiện là Codex. microLink sẽ kết nối hai bên qua MCP, với các công cụ có phạm vi rõ ràng.'],
-      ['miGarden', 'Theo dõi và tưới hoa', 'Mình thích trồng hoa và muốn theo dõi từng chậu, rồi điều khiển tưới từ microSched. Phần cứng, kết nối chập chờn và nước khiến đây là một dự án đầy tham vọng, với không ít điều có thể hỏng. Mình muốn bắt đầu bằng một mô hình thử nghiệm nhỏ, học từ những lần thất bại và tiếp tục hoàn thiện thành một hệ thống mình có thể sử dụng và tin cậy.'],
-    ],
-    ambition: 'Mình muốn hoàn thành những phiên bản đầu tiên thật chỉn chu trong kỳ học này, rồi tiếp tục phát triển sau khi kết thúc môn học. Nếu miGarden làm được như dự định, mình còn mong Mimi có thể gợi ý cách chăm hoa và thực hiện yêu cầu tưới sau khi được mình duyệt.',
+    futureLabel: 'MIMI VÀ MIGARDEN', futureTitle: 'Từ màn hình ra đời sống.', futureStatus: 'Đã có trong microSched',
+    futureIntro: 'Mình mở rộng microSched từ hai việc mình hay làm: sắp xếp công việc và chăm cây ngoài ban công.',
+    futures: {
+      mimi: ['Trợ lý trong microSched', 'Mimi giúp mình xử lý Task ngay trong app. Mình đã dùng Mimi để đổi tiêu đề cho 68 Task qua ba lượt và tạo Task ngay trong chat.'],
+      migarden: ['Theo dõi và tưới cây ngoài ban công', 'Phần IoT ở Khu A đã xong. Mình có thể xem trạng thái và điều khiển tưới từ web.'],
+    },
+    futureOpen: 'Xem',
+    ambition: 'Nhà mình đang sửa. Khi sửa xong, mình còn cần đi ống nước quanh lan can tới các chậu cây ở Khu A.',
     footerTitle: 'Bạn muốn tìm hiểu thêm?',
     footerText: 'Mình chia sẻ mã nguồn và tài liệu kỹ thuật trên GitHub. Bạn có thể tìm hiểu cách mình xây ứng dụng hoặc làm theo hướng dẫn để tự chạy một bản.',
-    creator: 'Một chút về mình', creatorNote: 'Mình là sinh viên PTIT, đang học AI engineering.',
+    creator: 'Một chút về mình',
     qa: 'Bản xem thử local · Dữ liệu mẫu', qaOpen: 'Vào app với dữ liệu mẫu',
   },
   en: {
@@ -71,20 +75,38 @@ const copy = {
     methodBody: 'Alongside learning to build software, I’m exploring harness engineering by organizing work with AI coding agents and checking the results. I set the goals and scope; a coordinating agent can implement changes or delegate focused tasks. Independent reviews, tests and a record of decisions help me check results and learn from them. I want that way of working to stay useful as models and tools change.',
     methodSteps: ['Clarify the goal', 'Work within scope', 'Review and test', 'Record what I learned'],
     stack: 'React · FastAPI · PostgreSQL',
-    futureLabel: 'WHAT COMES NEXT', futureTitle: 'Beyond the screen, closer to everyday life.', futureStatus: 'Being explored and designed',
-    futureIntro: 'I’m designing three projects around microSched, connecting what I’m learning with things I want to do in everyday life.',
-    futures: [
-      ['Mimi', 'An assistant inside the app', 'I’m designing an assistant to work with my tasks, notes, trackers and documents inside microSched, and carry out actions within its permissions and with appropriate confirmation.'],
-      ['microLink', 'Connecting coding agents to microSched', 'I’m designing an MCP connection from the coding-agent environment I use, currently Codex, to microSched, with scoped tools for reading and updating app data.'],
-      ['miGarden', 'A balcony garden meets IoT', 'I enjoy growing flowers and want to monitor individual pots and, eventually, control watering through microSched. I plan to start with a few pots and work through challenges with sensors, networks and watering controls.'],
-    ],
-    ambition: 'My goal is to build solid first versions this semester and keep developing them beyond the coursework. Further ahead, if miGarden succeeds, I’d love Mimi to help with flower care, from suggestions to carrying out watering requests I’ve approved.',
+    futureLabel: 'MIMI AND MIGARDEN', futureTitle: 'Beyond the screen, closer to everyday life.', futureStatus: 'In use in microSched',
+    futureIntro: 'I extended microSched around two things I do regularly: organizing my work and looking after the plants on my balcony.',
+    futures: {
+      mimi: ['An assistant inside the app', 'Mimi helps me work with tasks inside microSched. I’ve used it to rename 68 tasks in three rounds and to create tasks right in chat.'],
+      migarden: ['Monitoring and watering my balcony plants', 'The IoT work for Zone A is done. I can monitor it and control watering from the web.'],
+    },
+    futureOpen: 'Explore',
+    ambition: 'My house is being renovated. Once that’s done, I still need to run the water line along the balcony railing to the plants in Zone A.',
     footerTitle: 'Open source. An ongoing story.',
     footerText: 'I share the source code and technical documentation on GitHub so you can explore how I built the app or follow the setup instructions to run your own instance.',
-    creator: 'About me', creatorNote: 'I’m a PTIT student, learning AI engineering.',
+    creator: 'About me',
     qa: 'Local preview · Sample data', qaOpen: 'Open app with sample data',
   },
 }
+
+const journeySources: Record<string, { href: string; vi: string; en: string } | undefined> = {
+  '01': {
+    href: `${CREATOR_URL}/Code_HoTro_HocTap`,
+    vi: 'Mã nguồn bản dòng lệnh trên GitHub',
+    en: 'Command-line source on GitHub',
+  },
+  '02': {
+    href: `${CREATOR_URL}/VC_QuanLyThoiGian`,
+    vi: 'Mã nguồn bản desktop trên GitHub',
+    en: 'Desktop app source on GitHub',
+  },
+}
+
+const featureIcons = [ListTodo, NotebookPen, CalendarDays, Activity]
+const views = Object.keys(homepageViews) as HomepageView[]
+const futureProjects = ['mimi', 'migarden'] as const
+const methodIcons = [BookOpen, GitBranch, CheckCheck, Leaf]
 
 function usePublicLanguage() {
   const [language, updateLanguage] = useState<Language>(() => new URLSearchParams(window.location.search).get('lang') === 'vi' ? 'vi' : 'en')
@@ -125,71 +147,133 @@ export function DeniedPage() {
   </div>
 }
 
-export default function HomePage({ auth, location, onRetry }: { auth: PublicAuthState; location: string; onRetry: () => void }) {
-  const { language, setLanguage } = usePublicLanguage()
+function PublicMicroSched({ language, auth }: { language: PublicLanguage; auth: PublicAuthState }) {
   const c = copy[language]
-  const featureIcons = [ListTodo, NotebookPen, CalendarDays, Activity]
-  const methodIcons = [BookOpen, GitBranch, CheckCheck, Leaf]
+  return <>
+    <section className="public-hero public-container" aria-labelledby="public-title">
+      <p className="public-eyebrow">{c.eyebrow}</p>
+      <div className="public-hero-copy">
+        <h1 id="public-title">{c.heading}</h1>
+        <div className="public-hero-intro">
+          <p>{c.intro}</p>
+          <div className="public-actions">
+            <Button asChild size="lg"><a href="#everyday">{c.explore}<ArrowDown aria-hidden="true" /></a></Button>
+            <Button asChild variant="ghost" size="lg"><a href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer">{c.source}<ArrowRight aria-hidden="true" /></a></Button>
+          </div>
+          <p className="public-access">{c.access}</p>
+          {auth === 'unknown' && <p role="status" className="public-access">{c.unknown}</p>}
+        </div>
+      </div>
+      <PublicShowcase language={language} />
+      {import.meta.env.DEV && <aside className="public-qa"><span>{c.qa}</span><Button asChild variant="outline" size="lg"><a href="/auth/dev-session" data-testid="qa-dev-login-link">{c.qaOpen}</a></Button></aside>}
+    </section>
+    <section id="everyday" className="public-section public-container" aria-labelledby="everyday-title">
+      <h2 id="everyday-title">{c.everyday}</h2>
+      <div className="public-features">{c.features.map(([title, body], i) => {
+        const Icon = featureIcons[i]
+        return <div className="public-feature" key={title}><Icon className="public-feature-icon" aria-hidden="true" /><div><h3>{title}</h3><p>{body}</p></div></div>
+      })}</div>
+    </section>
+    <section className="public-section public-container public-editorial" aria-labelledby="journey-title">
+      <div><p className="public-eyebrow">{c.journeyLabel}</p><h2 id="journey-title">{c.journeyTitle}</h2><p>{c.journeyIntro}</p></div>
+      <ol className="public-journey">{c.chapters.map(([number, tech, title, body]) => {
+        const source = journeySources[number]
+        return <li key={number}>
+          <span className="public-chapter-number" aria-hidden="true">{number}</span>
+          <div>
+            <p className="public-tech">{tech}</p>
+            <h3>{title}</h3>
+            <p>{body}</p>
+            {source && <a href={source.href} target="_blank" rel="noopener noreferrer" className="public-text-link">
+              {source[language]}<ArrowUpRight aria-hidden="true" size={16} />
+            </a>}
+          </div>
+        </li>
+      })}</ol>
+    </section>
+    <section className="public-section public-container public-method" aria-labelledby="method-title">
+      <div className="public-editorial"><div><p className="public-eyebrow">{c.methodLabel}</p><h2 id="method-title">{c.methodTitle}</h2></div><div><p>{c.methodBody}</p><p className="public-stack"><Code2 size={18} aria-hidden="true" />{c.stack}</p></div></div>
+      <ol className="public-method-steps">{c.methodSteps.map((step, i) => { const Icon = methodIcons[i]; return <li key={step}><Icon aria-hidden="true" /><span>{step}</span></li> })}</ol>
+    </section>
+    <section className="public-future" aria-labelledby="future-title">
+      <div className="public-container">
+        <div className="public-editorial"><div><p className="public-eyebrow">{c.futureLabel}</p><h2 id="future-title">{c.futureTitle}</h2></div><div><p>{c.futureIntro}</p><p className="public-status"><span aria-hidden="true" />{c.futureStatus}</p></div></div>
+        <div className="public-future-projects">{futureProjects.map(item => {
+          const name = homepageViews[item][language]
+          const [title, body] = c.futures[item]
+          return <article key={item}>
+            <h3>{name}</h3>
+            <div>
+              <h4>{title}</h4>
+              <p>{body}</p>
+              <a href={homepageHref(language, item)} className="public-text-link">{c.futureOpen} {name}<ArrowRight aria-hidden="true" size={16} /></a>
+            </div>
+          </article>
+        })}</div>
+        <p className="public-ambition">{c.ambition}</p>
+      </div>
+    </section>
+  </>
+}
+
+export default function HomePage({ auth, location, onRetry }: { auth: PublicAuthState; location: string; onRetry: () => void }) {
+  const params = queryParams(location)
+  const language = params.get('lang') === 'vi' ? 'vi' : 'en'
+  const vi = language === 'vi'
+  const view = isHomepage(location) ? homepageView(params.get('view')) : 'microsched'
+  const c = copy[language]
+  params.set('lang', vi ? 'en' : 'vi')
+
   useEffect(() => {
-    document.title = language === 'vi' ? 'microSched — Một ứng dụng riêng' : 'microSched — A personal app'
-    return () => { document.title = 'microSched' }
-  }, [language])
+    document.documentElement.lang = language
+    document.title = view === 'microsched'
+      ? vi ? 'microSched — Một ứng dụng riêng' : 'microSched — A personal app'
+      : `${homepageViews[view][language]} — microSched`
+    return () => {
+      document.documentElement.lang = 'vi'
+      document.title = 'microSched'
+    }
+  }, [language, vi, view])
+
   return <div className="public-page" lang={language}>
-    <a className="public-skip" href="#public-main">{language === 'vi' ? 'Đến nội dung' : 'Skip to content'}</a>
-    <header className="public-header public-container">
-      <a href={`/home${language === 'vi' ? '?lang=vi' : ''}`} className="public-brand" aria-label={language === 'vi' ? 'Trang chủ microSched' : 'microSched homepage'}><img src="/microsched.svg" width="28" height="28" alt="" />microSched</a>
+    <a className="public-skip" href="#public-main">{vi ? 'Đến nội dung' : 'Skip to content'}</a>
+    <header className="public-header public-home-header public-container">
+      <a href={homepageHref(language)} className="public-brand" aria-label={vi ? 'Trang chủ microSched' : 'microSched homepage'}>
+        <img src="/microsched.svg" width="28" height="28" alt="" />microSched
+      </a>
+      <nav className="public-view-nav" aria-label={vi ? 'Các mục trên trang chủ' : 'Homepage navigation'}>
+        {views.map(item => <a
+          key={item}
+          className="public-view-link"
+          href={homepageHref(language, item)}
+          aria-current={view === item ? 'page' : undefined}
+        >{homepageViews[item][language]}</a>)}
+      </nav>
       <div className="public-header-actions">
-        <Button variant="ghost" size="lg" onClick={() => setLanguage(language === 'vi' ? 'en' : 'vi')}>{language === 'vi' ? 'English' : 'Tiếng Việt'}</Button>
+        <Button asChild variant="ghost" size="lg"><a href={`?${params}`} hrefLang={vi ? 'en' : 'vi'} lang={vi ? 'en' : 'vi'}>{vi ? 'English' : 'Tiếng Việt'}</a></Button>
         {auth === 'signed-in' ? <Button asChild size="lg"><a href="/" data-testid="public-open-app">{c.open}<ArrowRight aria-hidden="true" /></a></Button>
           : auth === 'guest' ? <Button asChild size="lg"><a href={homepageLoginHref(location)} data-testid="login-link">{c.signIn}<ArrowRight aria-hidden="true" /></a></Button>
             : auth === 'checking' ? <Button disabled size="lg">{c.checking}</Button>
               : <Button variant="outline" size="lg" onClick={onRetry}>{c.retry}</Button>}
       </div>
     </header>
-    <main id="public-main">
-      <section className="public-hero public-container" aria-labelledby="public-title">
-        <p className="public-eyebrow">{c.eyebrow}</p>
-        <div className="public-hero-copy">
-          <h1 id="public-title">{c.heading}</h1>
-          <div className="public-hero-intro">
-            <p>{c.intro}</p>
-            <div className="public-actions">
-              <Button asChild size="lg"><a href="#everyday">{c.explore}<ArrowDown aria-hidden="true" /></a></Button>
-              <Button asChild variant="ghost" size="lg"><a href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer">{c.source}<ArrowRight aria-hidden="true" /></a></Button>
-            </div>
-            <p className="public-access">{c.access}</p>
-            {auth === 'unknown' && <p role="status" className="public-access">{c.unknown}</p>}
-          </div>
-        </div>
-        <PublicShowcase language={language} />
-        {import.meta.env.DEV && <aside className="public-qa"><span>{c.qa}</span><Button asChild variant="outline" size="lg"><a href="/auth/dev-session" data-testid="qa-dev-login-link">{c.qaOpen}</a></Button></aside>}
-      </section>
-      <section id="everyday" className="public-section public-container" aria-labelledby="everyday-title">
-        <h2 id="everyday-title">{c.everyday}</h2>
-        <div className="public-features">{c.features.map(([title, body], i) => {
-          const Icon = featureIcons[i]
-          return <div className="public-feature" key={title}><Icon className="public-feature-icon" aria-hidden="true" /><div><h3>{title}</h3><p>{body}</p></div></div>
-        })}</div>
-      </section>
-      <section className="public-section public-container public-editorial" aria-labelledby="journey-title">
-        <div><p className="public-eyebrow">{c.journeyLabel}</p><h2 id="journey-title">{c.journeyTitle}</h2><p>{c.journeyIntro}</p></div>
-        <ol className="public-journey">{c.chapters.map(([number, tech, title, body]) => <li key={number}><span className="public-chapter-number" aria-hidden="true">{number}</span><div><p className="public-tech">{tech}</p><h3>{title}</h3><p>{body}</p></div></li>)}</ol>
-      </section>
-      <section className="public-section public-container public-method" aria-labelledby="method-title">
-        <div className="public-editorial"><div><p className="public-eyebrow">{c.methodLabel}</p><h2 id="method-title">{c.methodTitle}</h2></div><div><p>{c.methodBody}</p><p className="public-stack"><Code2 size={18} aria-hidden="true" />{c.stack}</p></div></div>
-        <ol className="public-method-steps">{c.methodSteps.map((step, i) => { const Icon = methodIcons[i]; return <li key={step}><Icon aria-hidden="true" /><span>{step}</span></li> })}</ol>
-      </section>
-      <section className="public-future" aria-labelledby="future-title">
-        <div className="public-container">
-          <div className="public-editorial"><div><p className="public-eyebrow">{c.futureLabel}</p><h2 id="future-title">{c.futureTitle}</h2></div><div><p>{c.futureIntro}</p><p className="public-status"><span aria-hidden="true" />{c.futureStatus}</p></div></div>
-          <div className="public-future-projects">{c.futures.map(([name, title, body]) => <article key={name}><h3>{name}</h3><div><h4>{title}</h4><p>{body}</p></div></article>)}</div>
-          <p className="public-ambition">{c.ambition}</p>
-        </div>
-      </section>
+    {auth === 'unknown' && view !== 'microsched' && <div className="public-container"><p role="status" className="public-access">{c.unknown}</p></div>}
+    <main id="public-main" tabIndex={-1} data-view={view}>
+      {view === 'microsched' && <PublicMicroSched language={language} auth={auth} />}
+      {view === 'mimi' && <PublicMimi language={language} docsUrl={MIMI_DOCS_URL} />}
+      {view === 'migarden' && <PublicGarden language={language} />}
+      {view === 'about' && <PublicAbout language={language} creatorUrl={CREATOR_URL} />}
     </main>
-    <footer className="public-footer public-container">
+    {view === 'microsched' ? <footer className="public-footer public-container">
       <div><a className="public-repo-preview" href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label={c.source}><img src="/showcase/source-preview.png" width="838" height="600" loading="lazy" alt={language === 'vi' ? 'Một phần README của microSched trên GitHub' : 'A preview of the microSched README on GitHub'} /></a><h2>{c.footerTitle}</h2><p>{c.footerText}</p><Button asChild size="lg"><a href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer">{c.source}<ArrowRight aria-hidden="true" /></a></Button></div>
-      <div className="public-creator"><a className="public-profile-preview" href={CREATOR_URL} target="_blank" rel="noopener noreferrer" aria-label={c.creator}><img src="/showcase/creator-preview.png" width="846" height="520" loading="lazy" alt={language === 'vi' ? 'Phần mở đầu README giới thiệu của Hưng trên GitHub' : 'The opening of Hưng’s GitHub profile README'} /></a><p className="public-eyebrow">{c.creator}</p><a href={CREATOR_URL} target="_blank" rel="noopener noreferrer">Nguyễn Hải Hưng <ArrowRight aria-hidden="true" size={20} /></a><p>{c.creatorNote}</p></div>
-    </footer>
+      <div className="public-creator"><a className="public-profile-preview" href={CREATOR_URL} target="_blank" rel="noopener noreferrer" aria-label={c.creator}><img src="/showcase/creator-preview.png" width="846" height="520" loading="lazy" alt={language === 'vi' ? 'Phần mở đầu README giới thiệu của Hưng trên GitHub' : 'The opening of Hưng’s GitHub profile README'} /></a><p className="public-eyebrow">{c.creator}</p><a href={CREATOR_URL} target="_blank" rel="noopener noreferrer">Nguyễn Hải Hưng <ArrowRight aria-hidden="true" size={20} /></a><p>{creatorIntro[language]}</p></div>
+    </footer> : <footer className="public-compact-footer public-container">
+      <a className="public-text-link" href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer">
+        {vi ? 'Mã nguồn microSched' : 'microSched source'}
+      </a>
+      <a className="public-text-link" href={CREATOR_URL} target="_blank" rel="noopener noreferrer">
+        {vi ? 'GitHub cá nhân' : 'GitHub profile'}
+      </a>
+    </footer>}
   </div>
 }

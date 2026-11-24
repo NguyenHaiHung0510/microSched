@@ -21,7 +21,7 @@ export default defineConfig({
       registerType: 'prompt',
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,ico,png,webp,woff2}'],
-        globIgnores: ['**/*cyrillic*'],
+        globIgnores: ['**/*cyrillic*', 'showcase/homepage/**'],
       },
       manifest: {
         name: 'microSched',
