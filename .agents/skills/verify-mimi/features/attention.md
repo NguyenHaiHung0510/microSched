@@ -1,30 +1,31 @@
 # Mimi attention and device notifications
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiNotifications.tsx:33`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/MimiNotifications.tsx:33`, `frontend/src/App.tsx:88`, `backend/app/web/routers/mimi.py:687`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-Owned locator, expiry, preference/opt-in, dedup/stale delivery.
+In-app attention, owner locator, explicit read ACK, device opt-in/revision and dedup.
 
 ## How to get to it (user POV)
 
-Open owned attention locator; read current preference; no automatic permission request.
+In Workspace open the data rail and **Thông báo Mimi** when enabled. **Mở hội thoại** selects the owned row’s conversation. The same-origin deep link `/mimi?attention=OWN_LOCATOR` resolves in the app. Acknowledging read or opting in is a separate action.
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `EXISTING_DEVICE_GATE`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-attention` (observed in current source). Notification flag, exact synthetic locator and separate opt-in/physical device proof or Owner disposition. Core actions share native/live/device QA receipts, not a second matrix.
+Bind `notifications_enabled`, the owned STANDARD conversation/intent, and valid/expired/foreign locator fixtures. Use `mimi-attention`, **Đánh dấu đã đọc** or **Bật trên thiết bị này** only for separately granted writes. Verify `GET /api/mimi/attention`, `GET /api/mimi/attention/resolve/{locator}`, and bound read/preference endpoints. The preference read uses device proof. See `backend/tests/test_mimi_notifications_pg.py`.
 
-Oracle: Correct owned thread and truthful expiry; in-app evidence does not imply physical delivery or permission.
+Oracle: Locator opens the intended conversation, expiry is visible, invalid locators reveal no protected state, and read ACK is distinct from delivery and Reminder History handled status.
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+The tracked release preset has notifications off. An enabled synthetic fixture and device proof are required for opt-in. Opening the rail alone does not request permission. Historical qualifications below retain their exact scope.
+
 
 Owner196: physical notification delivery NOT_RUN_OWNER_WAIVED only. Notifications ON and permission/privacy/dedup/stale/deep-link/runtime acceptance remain required.
 
 Shared091 auth boundary (Owner322): authoritative domain401 returns the shell to guest and holds outbox; existing PIN401 is not logout. This is not live Mimi/attention/device acceptance or new permissions. Current native/provider/device statuses above remain qualified; use the separately frozen focused QA grant.
 
-## R3A history backend (092)
+## Historical R3A history backend (092)
 
 `GET /api/reminder-history?origin=mimi_intent` is a read-only projection of existing
 intents, gated by current owner + nonprivate STANDARD conversation + the existing
@@ -40,7 +41,7 @@ Author deterministic API/local-PG tests exercise synthetic intent/device rows on
 with no live Mimi/provider/dispatch. Independent History UI, physical delivery and
 production remain NOT_RUN; retain the historical qualifications above.
 
-## R3 night history UI and handled successor
+## Historical R3 night history UI and handled successor
 
 ReminderCenter → Lịch sử now includes this same qualified intent once, grouped by
 its recorded creation day/clock. Online-only desired handled=true and exact confirmed

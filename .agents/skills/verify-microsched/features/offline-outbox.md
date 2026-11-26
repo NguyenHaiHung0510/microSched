@@ -1,6 +1,28 @@
-# Task091 — bounded offline Task/checklist + Entry recipe
+# Bounded offline Task/checklist and Entry outbox
 
-Current phase/source/acceptance come from Task091 and private PM grant/freeze. First source base f7c19131cb9b831c1d0697ceef00557da1f5831e; build/runtime freeze must supply actual new candidate. This recipe is M1 navigation, never a runtime PASS or extra actor authority.
+Current source at the [indexed baseline](README.md): `frontend/src/outbox/protocol.ts:2` and `:68`, `frontend/src/OutboxPanel.tsx:14`. [Offline contract](../../../../docs/reference/offline-outbox.md).
+
+## Sub-features
+
+Eleven typed V1 commands, durable admission, settlement and honest offline/pending state.
+
+## How to get to it (user POV)
+
+Use an owned Task/checklist or existing-tracker Entry fixture. The signed-in header’s `outbox-trigger` opens `outbox-panel` when applicable. `offline-coverage` describes supported offline behavior when the browser reports offline.
+
+## Driving it in a current synthetic candidate
+
+Freeze a production build with the controlling SW, owned session/clock/schema, compatible protocol, same-origin isolated profile and exact non-production case IDs. Bind permitted offline/link faults and only the approved domain-write methods. Observe `outbox-row`, IDB metadata, actual wire timing and API/PG rows by owned ID.
+
+Oracle: Durable local admission and reload, bounded replay with stable identities/ordering, or honest hold/failure with the draft preserved. Match the current contract and scoped required cases. Mock success, absent IDB and local admission alone cannot prove ACK.
+
+## Gotchas
+
+Task091 CLI/namespace and Owner322 evidence below are historical. The committed Q9 disposition stays scoped to that contract. Current independent runtime **NOT_RUN**.
+
+## Historical Task091 recipe and recorded Owner322 disposition
+
+The historical phase/source/acceptance came from Task091 and its PM grant/freeze. First source base f7c19131cb9b831c1d0697ceef00557da1f5831e; build/runtime freeze must supply actual new candidate. This recipe is M1 navigation, never a runtime PASS or extra actor authority.
 
 Owner namespace r2-091-20261023-microsched, retained same-name-db volume; preview microsched_r2_091/test microsched_r2_091_tests; PG55491/API8001/production4174. Dev5174 reserved, not production SW evidence. Provider/Mimi/cron OFF. Runtime secrets stay ignored in .local/r2-091/microsched/runtime.json; reviewers use bound synthetic auth/navigation recipe and never print credential files.
 
@@ -46,7 +68,7 @@ Grouped privacy/draft repair: same-origin lock masks private-capable RAM queries
 
 Version qualification: a V1-aware bundle → compatible controlled generation proves only that declared transition. It does not prove an existing Owner pre-V1 service-worker profile updates successfully. Preserve that legacy qualification; never clear a real profile/site or force an Owner dirty reload as a workaround. Controlled variants must be built from the exact frozen source with only generation changed into a new own output directory, and restore/verify the complete candidate dist rather than comparing index.html alone.
 
-## Current Owner322 narrow delivery / night repair
+## Historical Owner322 narrow delivery / night repair
 
 Primary online path updates UI after local durable admission, then sends in background;
 aggregates remain explicitly last-confirmed. Reuse unchanged Q1/Q2/Q3/Q5 receipts only

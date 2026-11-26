@@ -1,6 +1,6 @@
 # Private visibility gate
 
-Source: `frontend/src/App.tsx:140` (`<PrivateGate`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Current source at the [indexed baseline](README.md): `frontend/src/PrivateGate.tsx:273`, `frontend/src/AppNavigation.tsx:56`, `backend/app/web/routers/private.py:59`.
 
 ## Sub-features
 
@@ -8,15 +8,15 @@ Locked/unlocked badge, unlock/expiry/lock and PIN-change entrypoint.
 
 ## How to get to it (user POV)
 
-Synthetic app header → private-unlock-open; inspect locked views before any supplied synthetic PIN.
+Synthetic header → `private-unlock-open`. **Ứng dụng** → `private-pin-change-open` is the separate PIN form entry. Inspect locked views before any supplied synthetic PIN.
 
 Real prerequisites: Frozen private rows, server session/expiry and an already approved synthetic PIN; changing real auth/PIN remains out of scope.
 
-## Driving it with H14 isolated browser/CLI
+## Driving it in a current synthetic candidate
 
-private-badge, private-unlock-open, private-pin-input, private-lock-now.
+Use `private-badge`, `private-unlock-open`, `private-pin-input`, `private-unlock-submit` and `private-lock-now`. Observe `POST /api/private/unlock` and `POST /api/private/lock` on the explicitly granted synthetic paths. See `frontend/e2e/private.spec.ts` and `backend/tests/test_private_api.py`.
 
-Observable oracle: Private rows absent when locked; authorized unlock/expiry/lock updates visibility and cache/dialog state consistently.
+Oracle: Private rows/controls disappear at lock/expiry, including on a late response or another tab. Owned public draft stays available. API/session gate and visible state agree. Retain content-free evidence for sensitive cases.
 
 ## Gotchas
 

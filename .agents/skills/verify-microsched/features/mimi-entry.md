@@ -1,25 +1,23 @@
 # Mimi workspace and dock entrypoints
 
-Source: `frontend/src/App.tsx:137` (`<MimiDock`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Current source at the [indexed baseline](README.md): `frontend/src/App.tsx:88` and `:195`, `frontend/src/AppNavigation.tsx:54`.
 
 ## Sub-features
 
-Mimi tab if available, dock open/close and workspace conversation surface.
+Workspace, direct `/mimi`, side-chat and capability-off shell.
 
 ## How to get to it (user POV)
 
-Synthetic login with mimi_available → Mimi tab or mimi-dock-toggle from another tab.
+A synthetic session with `mimi_available` opens **Mimi** from the tab/menu or direct `/mimi`. On another app surface use menu **Chat với Mimi**, the quick-access button, or the guarded **Alt+A** shortcut.
 
-Real prerequisites: Feature flags/candidate differ between aa9d7251 and exact Mimi680b7f9b; use Mimi map with its binding for expanded controls.
+## Driving it in a current synthetic candidate
 
-## Driving it with H14 isolated browser/CLI
+Use role `tab` **Mimi**, `mimi-dock-open`, `mimi-quick-access` or `mimi-side-chat` as appropriate. Use [Mimi recipes](../../verify-mimi/features/README.md) for workspace, chat and attention cases.
 
-role tab Mimi, mimi-dock-toggle, mimi-side-chat; follow separate verify-mimi map.
-
-Observable oracle: Available surface opens, shared selected conversation and domain navigation stay consistent; disabled capability is reported accurately.
+Oracle: The exposed surface opens with the same selected conversation. A capability-off session cannot open the dock or mount the Workspace, and Mimi controls reflect availability. Metadata/navigation needs only an owned synthetic session and owned conversation fixture.
 
 ## Gotchas
 
-aa9d7251 UI is older than Mimi QA snapshot. Do not imply later Mimi controls exist on the main QA candidate.
+Freeze the session/capability response per case. Access-priority coverage is in `frontend/e2e/mimi-access-priority.spec.ts`. Sends, decisions, Voice and notification permissions need their own scope.
 
 Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.

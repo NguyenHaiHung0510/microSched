@@ -1,6 +1,6 @@
 # Notes and reflections
 
-Source: `frontend/src/App.tsx:178` (`currentTab === 'notes'`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Current source at the [indexed baseline](README.md): `frontend/src/NotesScreen.tsx:477` and `:972`, `backend/app/web/routers/notes.py:159`.
 
 ## Sub-features
 
@@ -8,15 +8,15 @@ Quick/detail creation, title/detail, pin/sort, reflections and edits.
 
 ## How to get to it (user POV)
 
-Synthetic login → Ghi chú → selected note; quick-add or detail dialog only in approved write case.
+Synthetic login → **Ghi chú** → owned note title or `note-open-full`. Read via the full-region reader. Quick-add, the separate full-create dialog, checklist operations and reflections need the corresponding synthetic write case.
 
 Real prerequisites: Synthetic note/content/expiry fixtures; current note limits; separate grant/oracle for reflection/save/delete.
 
-## Driving it with H14 isolated browser/CLI
+## Driving it in a current synthetic candidate
 
-note-list, note-card, note-title, quick-add-note-input, note-create-dialog; inspect NotesScreen.tsx actual controls.
+Start in `note-list`. Use `note-find`, `note-sort`, `note-card`, `note-expand` and `note-detail-dialog` / `note-reader-back`. Quick/full creation uses `quick-add-note-input` or `note-create-dialog`. The reflection form uses `note-future-reflection-dialog`. Use the checklist controls and exact order oracle below.
 
-Observable oracle: Correct fixture note and sort/pin state are visible; cancel preserves data; approved save/reflection persists exactly once after reload.
+Oracle: Correct fixture content and sort/pin state, back-to-opener position and loaded search scope. Canonical `/api/notes/{id}` and its checklist reflect only approved writes after reload. Cancellation produces zero writes.
 
 ## Gotchas
 

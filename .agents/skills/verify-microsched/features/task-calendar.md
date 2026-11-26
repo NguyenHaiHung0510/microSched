@@ -6,7 +6,7 @@ rewrites an unchanged stored title. Focused cases cover Task-tab edit, calendar
 month/day and agenda edit, plus a forced `field-sizing:fixed` fallback. WebKit and
 physical iPhone require separate evidence; Chromium viewports do not prove them.
 
-Source: `frontend/src/App.tsx:168` (`currentTab === 'tasks'`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Current source at the [indexed baseline](README.md): `frontend/src/TasksScreen.tsx:573` and `:909`, `frontend/src/App.tsx:134`, `frontend/src/TaskTitleInput.tsx:32`.
 
 ## Sub-features
 
@@ -14,15 +14,15 @@ Task list/timeline, filters, create/edit/checklist/complete/delete and navigatio
 
 ## How to get to it (user POV)
 
-Synthetic login → Task; choose fixture-owned task/day; app logo returns to default Task.
+Synthetic login → **Task** tab or menu, or explicit `/tasks`. A miGarden-enabled mobile shell puts Task in **Ứng dụng**. Choose the fixture-owned date/task.
 
 Real prerequisites: Fixture tasks with frozen ID/status/date/timezone; a separately authorized domain-write case for any save/delete.
 
-## Driving it with H14 isolated browser/CLI
+## Driving it in a current synthetic candidate
 
-role tab Task; task-card scoped by actual fixture task-id; inspect TasksScreen.tsx form/action selectors before writes.
+Use role `tab` **Task** when it is in the nav. Use `quick-add-input` / `quick-add-submit` for quick creation, `task-create-dialog` for full creation, and `task-card[data-task-id]` for the owned row. Its `task-title` opens `task-detail-dialog`. `task-edit` uses the shared `task-title-input`. Child removal in an existing Task shows `task-child-delete-confirm` before `task-child-delete-commit`.
 
-Observable oracle: Correct task opens and expected synthetic contents/status show; an authorized save must match durable row delta and survive reload. Cancel leaves data unchanged.
+Oracle: Match day/filter/status and actual Task/checklist IDs against `/api/tasks` or `/api/tasks/timeline` as applicable. Approved writes match canonical and durable state after acknowledgement and reload. Cancel produces zero domain writes. See `frontend/e2e/tasks.spec.ts` and `frontend/e2e/task-title-suggestions.spec.ts` for existing cases.
 
 ## Gotchas
 

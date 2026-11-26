@@ -1,4 +1,26 @@
-# Task095 — optional income Entry and common funding report
+# Optional income Entry and common funding report
+
+Current source at the [indexed baseline](README.md): `frontend/src/FundingSelector.tsx:43`, `frontend/src/TrackerScreen.tsx:684`, `backend/app/web/routers/tracker.py:220`.
+
+## Sub-features
+
+Optional per-Entry income link, existing-link edit and funding report.
+
+## How to get to it (user POV)
+
+**Theo dõi** → **Ghi nhanh** for a money expense or backdate, or **Nhật ký** → edit an owned expense. **Báo cáo** → expand report for the per-source breakdown.
+
+## Driving it in a current synthetic candidate
+
+Use `funding-selector` in the expense forms, including `entry-edit-dialog` after canonical funding hydration. Use `tracker-report-toggle` → `funding-report` → `funding-bucket[data-bucket]`. Freeze two distinct readable income Entries, one expense, VN report bounds and the existing outbox funding capability.
+
+Oracle: Stable individual links, values and counts in candidate/report and `include_funding` reads. Missing/opaque sources do not disclose labels or amounts. Authorized writes and dependencies use the exact durable, wire and privacy cases below.
+
+## Gotchas
+
+Sanitize private source evidence and observe masking on late refresh. Archived Task095/DEV328 receipts and cell names are scoped to their original freeze. Current runtime **NOT_RUN**.
+
+## Historical Task095 recipe and oracles
 
 Current candidate/freeze and execution grant control this recipe. Author checks are separate from independent acceptance; physical Safari/provider/production0020 remain NOT_RUN.
 

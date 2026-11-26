@@ -8,22 +8,22 @@ vào success averages. Missing/hidden/offscreen/reload phải giữ unknown đú
 Xem [current metrics/feedback contract](../../../../docs/reference/ui-behavior.md).
 Không có model call/DDL/per-token polling mới từ measurement hoặc recipe này.
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiRunObservations.tsx:13`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/MimiScreen.tsx:853`, `:973` and `:1068`, `frontend/src/MimiRunObservations.tsx:13`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-Pause/Resume/Reconcile; typed overflow source lineage; truthful terminal/cost.
+Pause/cancel, Resume, unknown outcome reconciliation, typed overflow and truthful run/usage state.
 
 ## How to get to it (user POV)
 
-Inspect an owned run; ordinary Resume then definite typed overflow and user-initiated recovery.
+Open an owned run in Workspace or dock. Inspect the progress/status surface. Attempt Pause, then Resume only for a frozen resumable text run. Use the typed unknown recovery path before deciding on any retry.
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `J4`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-run-observations` (observed in current source). Frozen controlled SDK responses and durable owned user source; UNKNOWN must reconcile first. Core actions share native/live/device QA receipts, not a second matrix.
+Scope **Tạm dừng** and **Huỷ run ngay** to `mimi-progress`. Read `mimi-unknown-recovery`, `mimi-context-limit-notice` and `mimi-run-outcome` when present. **Tiếp tục** may make a successor run. Observe `GET /api/mimi/runs/{id}/events` and its `/stream` variant, the scoped `POST` actions `pause`, `cancel`, `resume` and `reconcile`, and the attributed `mimi-run-observations`.
 
-Oracle: One successor/user message; no recovery spent for ordinary parent alone; actual overflow recovery remains finite.
+Oracle: No duplicate user message, exact parent/successor linkage and at most the allowed recovery for a definite typed overflow. UNKNOWN preserves liability until reconciled. Bind deterministic SDK outcomes, retained user source/history and call/usage oracles. See `backend/tests/test_mimi_owner192_resume_pg.py`, `backend/tests/test_mimi_recovery_pg.py` and the [operating contract](../../../../docs/mimi/operating-contract.md).
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+Inspect durable effects and run identity before retry. Provider outcomes and physical timing stay separate from synthetic response statistics.

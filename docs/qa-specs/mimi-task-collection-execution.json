@@ -329,7 +329,7 @@
       "group": "route",
       "pytest_selectors": [
         "tests/test_mimi_collection_contracts.py::test_strict_uptime_missing_and_nonfinite_excluded",
-        "tests/test_mimi_collection_contracts.py::test_feature_off_and_forced_collection_revision_preserve_exact_tool"
+        "tests/test_mimi_collection_contracts.py::test_feature_off_and_collection_revision_preserve_tool_boundaries"
       ],
       "timeout_seconds": 180,
       "required_assertions": [
@@ -483,7 +483,7 @@
       "group": "migration",
       "pytest_selectors": [
         "tests/test_mimi_collection_migration_pg.py",
-        "tests/test_mimi_collection_contracts.py::test_feature_off_and_forced_collection_revision_preserve_exact_tool",
+        "tests/test_mimi_collection_contracts.py::test_feature_off_and_collection_revision_preserve_tool_boundaries",
         "tests/test_mimi_collection_safety_pg.py::test_confirmation_binding_adversaries_write_zero[disabled]"
       ],
       "timeout_seconds": 180,

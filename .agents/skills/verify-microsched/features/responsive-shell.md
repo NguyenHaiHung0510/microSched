@@ -1,4 +1,26 @@
-# Task096 responsive shell A / Tracker regions
+# Responsive shell and Tracker regions
+
+Current source at the [indexed baseline](README.md): `frontend/src/AppNavigation.tsx:15` and `:39`, `frontend/src/app-navigation.ts:12`, `frontend/src/App.tsx:134`.
+
+## Sub-features
+
+Responsive tabs, application menu, default route, focus and draft guards, Tracker regions.
+
+## How to get to it (user POV)
+
+In a signed-in synthetic session compare desktop and mobile with `migarden_available` on/off. `app-menu-open` exposes all domain destinations and settings. Open **Theo dõi** and use its four named regions.
+
+## Driving it in a current synthetic candidate
+
+Use `app-header` and role `tablist` **Chọn nội dung**. With miGarden enabled, the nav exposes six domains at ≥1024px. Below 1024px it moves Task to the menu. A fresh `/` goes to miGarden, the brand links to `/migarden` and Task has `/tasks`. With it disabled the nav has five tabs including Task, the brand defaults to Task and the menu has disabled `migarden-placeholder`. Disabled Mimi remains outside roving focus. See [miGarden](migarden.md) and [Mimi entry](mimi-entry.md).
+
+Oracle: Destination, selected tab and focus match the navigation state at both sizes and after Back. Menu focus restores on dismissal. `leave-draft-confirm` and pending admission guard navigation, while a durable queue remains intact. On Tracker, changing the mounted region retains the owned capture draft. Current source oracles include `frontend/e2e/migarden-n02-shell.spec.ts` and `frontend/e2e/responsive-shell-096.spec.ts`.
+
+## Gotchas
+
+The five-tab, menu-only miGarden instructions below describe Task096 and its CI repair. Current runtime and physical-device checks are **NOT_RUN**.
+
+## Historical Task096 responsive shell and Tracker evidence
 
 Authority: Owner334 + current PM R6a grant. Read current handback/freeze; source rollout and independent QA are separate. No provider/production/retained095 effects.
 

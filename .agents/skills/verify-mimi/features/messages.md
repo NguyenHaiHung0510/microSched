@@ -1,21 +1,21 @@
 # Messages, provenance and composer
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:1098`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/MimiScreen.tsx:1028` and `:1292`, `backend/app/web/routers/mimi.py:370`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-Full Unicode draft/history, stream, terminal and provenance.
+Unicode draft, send/stream, terminal state, provenance and reload. Optional STANDARD Calendar text reads use the same composer.
 
 ## How to get to it (user POV)
 
-Submit only frozen synthetic text through the real composer; inspect stream and reload.
+In Workspace or side-chat select an owned STANDARD conversation. Use **Nhắn Mimi**, then **Gửi** only for the frozen synthetic text and admitted transport.
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `J2`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-input` (observed in current source). Native no-egress SDK double or separate approved live permit; frozen language/policy/history. Core actions share native/live/device QA receipts, not a second matrix.
+Use `mimi-input`, `mimi-messages`, `mimi-pending-answer` and `mimi-run-outcome`. Bind a no-egress SDK double, current language/policy/history, and allowed `POST /api/mimi/conversations/{id}/messages/stream` plus run events. Compare literal input, owned request/event sequence and durable message IDs before/after reload.
 
-Oracle: Literal input, actual SDK request, durable history and UI terminal converge; no silent truncation/duplicate.
+For Calendar, bind the opt-in `MIMI_CALENDAR_READ_ENABLED` mode and saved Task/Event/annotation dates, mixed visibility and VN day boundaries. The [Calendar contract](../../../../docs/mimi/calendar-read.md) and `backend/tests/test_mimi_calendar_pg.py` cover coverage, provenance and fresh reads on later turns/Resume. Client-only pending state is outside that saved read.
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+Synthetic stream/receipt evidence does not establish live language, reasoning or Calendar grounding. PRIVATE is outside the current STANDARD capability.

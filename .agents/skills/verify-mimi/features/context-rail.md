@@ -1,21 +1,21 @@
-# Workspace Context / Preview / Run tabs
+# Workspace context, preview and run diagnostics
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiContextRail.tsx:88`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/MimiContextRail.tsx:50` and `:109`, `frontend/src/MimiContextComposition.tsx:24`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-Context ring/popover, eight measured-byte buckets and separately reported usage/cache.
+Workspace statistics and diagnostic disclosures, domain context, pending preview summary and run/context composition.
 
 ## How to get to it (user POV)
 
-Select Context/Preview/Run on the actual workspace; inspect context details via click/focus/touch.
+Open **Thống kê hội thoại** in Workspace. In `mimi-context-rail` expand **Dữ liệu và chẩn đoán**, then choose buttons **Context**, **Preview** or **Run**. The composer also exposes a separate context composition panel.
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `J2/J4`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-context-inspector` (observed in current source). Attributable current run/call receipt; absent provider usage remains UNKNOWN. Core actions share native/live/device QA receipts, not a second matrix.
+The disclosure buttons use `aria-expanded`. **Context** shows domain previews and **Mở đầy đủ** links. **Preview** shows pending composition and expiry; use the transcript to review or decide. **Run** provides `mimi-context-inspector` under **Route, nguồn context và mức dùng** and `mimi-run-observations`. The composer panel uses `mimi-run-context-inspector`.
 
-Oracle: Byte projection matches actual request mode; cache is a prompt subset;272K/400K/8192 labels remain separate.
+Oracle: Domain previews, pending scope and actual run lineage agree with the same fixture. For byte and token assertions use attributable manifest and call receipts under the [context contract](../../../../docs/mimi/context.md). Serialized bytes, planning reserve, reported token/cache usage and missing values stay distinct.
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+A current app-domain preview does not prove which records were sent to the model. Local static source has no attributable runtime usage.

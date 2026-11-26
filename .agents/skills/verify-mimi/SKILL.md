@@ -8,11 +8,11 @@ Read the current task/PM grant, [Mimi PARTIAL README](../../../docs/mimi/README.
 
 ## Launch / doctor
 
-Current approved source/full file closure, build/config/helper/fixture/oracle, exact model/effort and finite authority/cost must be supplied for each batch. scripts/driver.py is an archived Owner192 source doctor hardcoded to that source; do not weaken its guards or resume old leases/budgets/activations for a new checkout. Source MATCH is not runtime/DB/UI/native proof. Runtime owner validates exact resources and current capability before use; missing capabilities remain BLOCKED/NOT_RUN.
+Current approved source/full file closure, build/config/helper/fixture/oracle, exact model/effort and finite authority/cost must be supplied for each batch. The [archived Owner192 doctor](scripts/driver.py) accepts only its approved checkout. Its `SUPPLIED_FILES_MATCH` result covers the supplied file list. Use a task-owned current binding/runner and keep archived guards, leases, budgets and receipts tied to their original runs. Runtime owner validates exact resources and current capability before use. Missing capabilities remain BLOCKED/NOT_RUN.
 
 ## Drive
 
-Feature recipes are source/prerequisite mappings; refresh affected selectors against the current freeze. Deterministic SDK/http doubles and synthetic app journeys do not prove live provider quality. Native, actual model, physical-device/Push and CI/production require their own receipts. Shared shell/outbox/PWA recipes may be used only under the current granted binding, with Mimi provider disabled when outside scope.
+The [feature index](features/README.md) pins its source baseline. Refresh affected selectors against the task freeze and bind each case’s STANDARD session/workspace, feature flags and exact transport. Voice and attention also require their respective capability and permission prerequisites. Deterministic SDK/http doubles and synthetic app journeys do not prove live provider quality. Native, actual model, physical-device/Push and CI/production require their own receipts. Shared shell/outbox/PWA recipes may be used only under the current granted binding, with Mimi provider disabled when outside scope.
 
 Preserve session/private/CSRF/Confirm/CAS/atomicity/dedup/accounting, existing source guards and required QA cases. No production/provider repair rights follow from review/operator assignment. Current source uses native gateway policy; old catalog/certificate references are historical, not admission instructions.
 

@@ -4,7 +4,7 @@ description: "Verify the granted synthetic microSched candidate with a current s
 ---
 # microSched verification
 
-Read the current task/PM grant, [verification contract](../../../docs/verification/README.md) and [feature recipes](features/README.md). Documentation maintenance does not launch QA or grant lifecycle/product effects. Historical task numbers/ports in scripts are source bindings, never an automatic current runtime.
+Read the current task/PM grant, [verification contract](../../../docs/verification/README.md) and [feature recipes](features/README.md). Documentation maintenance does not launch QA or grant lifecycle/product effects. Use the recipe index to inspect routes and oracles on its stated baseline. Historical task scripts retain their original source/resource bindings.
 
 ## Launch / doctor
 
@@ -14,12 +14,12 @@ Read-only reviewers use read-only probes; owner status functions that backfill r
 
 ## Drive
 
-Use the recipe/helper matching the exact freeze: r2_browser for bounded Task/checklist/Entry outbox, calendar_time/calendar_move for their contract, r3_history, r6_browser/r6b_browser for responsive/compact snapshots. scripts/drive_feature.mjs and historical sandboxes retain their own source guards. Browser primitives use reviewed local Playwright/cached Chromium and isolated contexts; actual transport must be reported. No real profile/copied storage, arbitrary tab cap or test-only production globals.
+Prepare the current task-owned binding and applicable reviewed runner before any drive. Historical references include `r2_browser` for outbox, `calendar_time` / `calendar_move`, `r3_history`, `r6_browser` / `r6b_browser`, and `drive_feature.mjs`. Their task bindings and guards still apply. For authorized browser cases use reviewed local Playwright/cached Chromium and isolated contexts. Report the actual transport. No real profile/copied storage, arbitrary tab cap or test-only production globals.
 
-Outbox covers11 typed Task/checklist/existing-tracker Entry commands, not all-domain offline. API commit then dropped response differs from mocked success; IDB abort differs from physical quota. PWA variants preserve queue/drafts/unknown/protocol compatibility, no forced reload/site clear/unregister. [Outbox contract](../../../docs/reference/offline-outbox.md) controls meaning.
+Outbox covers 11 typed Task/checklist/existing-tracker Entry commands, not all-domain offline. API commit then dropped response differs from mocked success; IDB abort differs from physical quota. PWA variants preserve queue/drafts/unknown/protocol compatibility, no forced reload/site clear/unregister. [Outbox contract](../../../docs/reference/offline-outbox.md) controls meaning.
 
 ## Evidence / cleanup
 
 Freeze at meaningful boundaries, reuse unaffected evidence. Independent batch → consolidated handback → T1 reconcile/grouped repairs → affected/unproved regression. Builder/worker/T1/local/CI/device/production remain separate. Retain canonical actions, screenshots/index, wire/DB/queue metadata and honest calls/cost/time/unknowns. Release requirements remain in actual grant/specs, not old recipe status.
 
-Log out/close settled owned contexts. Only owner stops exact recorded own PIDs after listener checks; no kill-by-name, reset/delete, merge/deploy or provider rights follow. Historical H14/R1 source maps remain recoverable in Git at48dc397; preserved acceptance counts are dated evidence, not current whole-app PASS.
+Log out/close settled owned contexts. Only owner stops exact recorded own PIDs after listener checks; no kill-by-name, reset/delete, merge/deploy or provider rights follow. Historical H14/R1 source maps remain recoverable in Git at `48dc397663b145dab35994326af007dd0e26dcc7`; preserved acceptance counts are dated evidence, not current whole-app PASS.

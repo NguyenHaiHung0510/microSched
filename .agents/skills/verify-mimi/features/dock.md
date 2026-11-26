@@ -1,21 +1,21 @@
 # Responsive side-chat and pop-out
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiDock.tsx:21`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/App.tsx:97`, `:195` and `frontend/src/MimiDock.tsx:61`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-Dock toggle, desktop panel, mobile dialog and shared conversation.
+Desktop side panel, small-screen dialog, guarded shortcut, focus return and workspace handoff.
 
 ## How to get to it (user POV)
 
-Toggle Chat với Mimi; close/reopen and switch workspace without starting another run.
+From another domain choose **Chat với Mimi** in **Ứng dụng** or the quick-access control. **Alt+A** works at allowed focus points. In **Tùy chọn side-chat**, use **Pop-out chat / Workspace**, **Lịch sử hội thoại** or **Cấu hình Mimi**.
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `J1/J2`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-dock-toggle` (observed in current source). Owned browser and current conversation; viewport evidence is not physical device. Core actions share native/live/device QA receipts, not a second matrix.
+Use `mimi-dock-open`, `mimi-quick-access` and `mimi-side-chat`. Scope **Đóng side-chat** and **Tùy chọn side-chat** to that surface. At ≥1280px the dock is a panel and exposes **Đổi độ rộng side-chat**. Below that it is a dialog. Compare menu/shortcut/Escape and return focus with `frontend/e2e/mimi-access-priority.spec.ts` and a bound draft/owned conversation.
 
-Oracle: Same conversation/run identity and retained draft; closing presentation does not cancel.
+Oracle: The same chosen ID, draft and run survive switching presentation. Opening or closing the dock creates no second send/cancel. Verify the ineligible keyboard, overlay and capability-off paths independently.
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+The live shell does not mount the old toggle component. Desktop/small-screen viewport evidence does not exercise physical devices.
