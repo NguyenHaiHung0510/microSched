@@ -9,23 +9,23 @@ during background refetch. Private/auth purge still removes pages and pending UI
 The task098 browser config targets only its explicitly owned preview15198; do not
 reuse legacy driver ports or infer physical-device/independent acceptance.
 
-Source: `frontend/src/App.tsx:139` (`<ReminderCenter`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Current source at the [indexed baseline](README.md): `frontend/src/ReminderCenter.tsx:58`, `frontend/src/ReminderHistory.tsx:131`, `backend/app/web/routers/reminder_history.py:25`.
 
 ## Sub-features
 
-Reminder sections, paging, linked entity and action entrypoints.
+Upcoming, Attention, keyset History, source links, single/bulk handled actions and explicit device registration.
 
 ## How to get to it (user POV)
 
-Synthetic app header → Nhắc nhở → section → fixture reminder.
+Synthetic app header → **Nhắc nhở** → **Sắp tới**, **Cần chú ý** or **Lịch sử**. The device disclosure **Nhận thông báo trên thiết bị này** is separate. Its registration button **Bật nhận trên thiết bị này** requires device capability and the corresponding grant.
 
 Real prerequisites: Fixture reminder counts/timing/target and private visibility; delivery/push disabled in first namespace.
 
-## Driving it with H14 isolated browser/CLI
+## Driving it in a current synthetic candidate
 
-reminder-center-open, reminder-center, reminder-row; inspect ReminderCenter.tsx button names.
+Use `reminder-center-open`, `reminder-center` and `reminder-row` in the first two sections. History exposes `reminder-history`, `history-row`, `history-more` and `history-handle`. Scoped bulk uses `history-selection-toggle` and `history-bulk-confirm` / `history-bulk-commit`.
 
-Observable oracle: Rows/section/paging agree with synthetic fixture; target links open intended entity; action persistence requires distinct approved case.
+Oracle: `GET /api/reminders` and `GET /api/reminder-history` agree with their distinct fixtures. Approved History ACKs use the occurrence/manifest endpoints below and preserve source and delivery state. Delivery remains separate.
 
 ## Gotchas
 
@@ -33,7 +33,7 @@ An empty drawer is not delivery proof; no real push subscription/permission requ
 
 Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
 
-## R3A backend receipt projection (092)
+## Historical R3A backend receipt projection (092)
 
 Additive authenticated `GET /api/reminder-history`; existing `/api/reminders`
 Upcoming/Attention/configuration routes are unchanged. Backend source:
@@ -59,7 +59,7 @@ entries, mark handled or mutate sources.
 Author API/PG evidence belongs to the versioned R3A handback; independent H1-H4,
 History UI H8, R3B/O1, physical device and production acceptance remain NOT_RUN.
 
-## R3 night successor — history B and independent handled state
+## Historical R3 night — history B and independent handled state
 
 Supersedes only the R3A phase's "no UI/handled" scope statement above. Open
 Nhắc nhở → Lịch sử: latest-first server day groups, source/send-status/handled/date
@@ -91,7 +91,7 @@ schema-role/restore/nonempty rollback proof and exact candidate binding are in t
 versioned R3 night handback/freeze. This is author evidence; independent runtime,
 required CI, device and production acceptance remain separate/NOT_RUN here.
 
-## DEV328 grouped repair — F01/F02/F03
+## Historical DEV328 grouped repair — F01/F02/F03
 
 The shared PG fixture now owns its public synthetic32-byte key and settings/cipher
 caches, independent from caller configuration. Unreleased0019 resets only its two

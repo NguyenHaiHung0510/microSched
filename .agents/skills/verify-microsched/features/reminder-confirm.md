@@ -1,22 +1,22 @@
 # Reminder confirmation deep link
 
-Source: `frontend/src/App.tsx:131` (`location.startsWith('/reminder-confirm')`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Current source at the [indexed baseline](README.md): `frontend/src/App.tsx:184`, `frontend/src/ReminderConfirmScreen.tsx:65` and `:131`, `backend/app/web/routers/push.py:118`.
 
 ## Sub-features
 
-dispatch lookup, stale/error/retry, private unlock and confirmation.
+Automatic Entry confirmation on opening a dispatch link, stable retry, missing/stale dispatch and private unlock.
 
 ## How to get to it (user POV)
 
-Synthetic same-origin /reminder-confirm?dispatch=ACTUAL_FIXTURE_DISPATCH.
+Inspect the same-origin `/reminder-confirm?dispatch=OWN_ID` URL without visiting it in a read-only case. Open an owned dispatch only with a synthetic confirm-write grant. A guest sees public auth with a relative return target before the protected screen mounts.
 
-Real prerequisites: Fixture dispatch belongs to synthetic role; freeze pending/expired/private states and confirmation delta; private PIN setup already authorized.
+Freeze a pending owned dispatch and expected Entry delta, plus separate stale/missing, lost-ACK and private locked/unlocked inputs. PIN unlock requires its approved synthetic fixture.
 
-## Driving it with H14 isolated browser/CLI
+## Driving it in a current synthetic candidate
 
-ReminderConfirmScreen.tsx; reminder-confirm-retry and private-unlock-submit where actual state exposes them.
+The authenticated screen sends `POST /api/reminder-dispatch/{id}/confirm` on mount. Retry via `reminder-confirm-retry`, or `private-unlock-submit` after `PRIVATE_UNLOCK_REQUIRED`, repeats the same in-mount Entry ID and occurrence timestamp. See `frontend/e2e/reminder-confirm.spec.ts`.
 
-Observable oracle: Correct dispatch target/state displayed; no premature write; separately approved confirmation is idempotent and reflected durably.
+Oracle: Exactly one Entry for the authorized dispatch after retry/reload, corroborated by canonical/durable state. An invalid or unavailable dispatch creates none. A network failure keeps the retry surface.
 
 ## Gotchas
 

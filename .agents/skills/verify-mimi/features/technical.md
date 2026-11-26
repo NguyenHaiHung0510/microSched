@@ -1,27 +1,28 @@
 # Technical detail dialog
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:1144`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/MimiScreen.tsx:1341`, `frontend/src/MimiDock.tsx:61`, `frontend/src/MimiCheckpointViewer.tsx:49`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-Manifest/context/checkpoint/run/provider diagnostics and disclosed uncertainty.
+Technical detail dialog, run/manifest and checkpoint inspection, model identity/usage uncertainty and evidence readback.
 
 ## How to get to it (user POV)
 
-Open Chi tiết kỹ thuật for the current owned run and compare the corresponding receipt.
+In side-chat open **Tùy chọn side-chat** → **Chi tiết kỹ thuật** for the owned conversation. Workspace inspection also uses the [data rail](context-rail.md).
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `J2/J4`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-technical-dialog` (observed in current source). Sanitized actual app diagnostics, never keys/cookies/hidden reasoning/private prose. Core actions share native/live/device QA receipts, not a second matrix.
+Use `mimi-technical-dialog`, `mimi-run-observations` and `mimi-checkpoint-viewer` when corresponding data exists. Use an owned run with synthetic call, manifest and optional checkpoint/evidence bundle. Compare the authorized evidence bundle/owned conversation response and actual observed call receipt.
 
-Oracle: Displayed source/unit/requested-versus-actual identity matches durable/wire evidence.
+Oracle: The shown source, phase, units and requested/effective model identity match attributed data. Missing usage/cost/route stays unknown. No hidden reasoning or raw sensitive diagnostics in evidence.
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+The separate technical dialog and Workspace run rail expose related views. Use the selector scoped to the surface reached.
 
-### Task091 shared shell readiness
-R2 Task/Entry outbox uses separate canonical snapshots/pending projection and current private/principal epochs. Mimi remains online, no queued arbitrary URL/provider/confirmation. Verify a deterministic canonical invalidation does not erase pending Task/Entry state through the current R2 synthetic shell. Actual Mimi activation/provider acceptance NOT_RUN. Current commands live in verify-microsched Task091 recipe; archived doctor is not repointed.
+
+### Historical Task091 shared shell readiness
+R2 Task/Entry outbox uses separate canonical snapshots/pending projection and current private/principal epochs. Mimi remains online, no queued arbitrary URL/provider/confirmation. Verify a deterministic canonical invalidation does not erase pending Task/Entry state through the current R2 synthetic shell. Actual Mimi activation/provider acceptance NOT_RUN. The dated commands remain in the [Task091 recipe](../../verify-microsched/features/offline-outbox.md).
 
 ### Task095 funding compatibility
 Funding is a native Tracker/Entry lane, not a Mimi tool capability. Existing agent/default Entry reads do not opt into nested funding metadata; ordinary agent updates omit the optional FK and preserve it. No new source-ID write or provider activation is granted. Shared lock/cache and protocol1 semantics use the current [funding recipe](../../verify-microsched/features/funding-entry.md); do not rerun a provider matrix or archived Owner192 doctor. Actual Mimi/provider acceptance remains NOT_RUN.

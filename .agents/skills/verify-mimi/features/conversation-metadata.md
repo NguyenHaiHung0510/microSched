@@ -1,21 +1,19 @@
 # Conversation creation and rename
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiControlCenter.tsx:208`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/MimiControlCenter.tsx:87`, `:225` and `:347`, `frontend/src/MimiDock.tsx:59`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-STANDARD conversation create/title persistence; reopen after reload.
+STANDARD conversation create, rename, archive and restore. Reopen the same conversation after reload.
 
 ## How to get to it (user POV)
 
-Open Mimi workspace; create a namespaced conversation, rename, reload and reopen its actual ID.
+In Workspace choose **Cuộc trò chuyện mới**. The dock’s **Tùy chọn side-chat** menu has **Hội thoại mới**. In Workspace scope the row’s **Tùy chọn …** menu to the owned title, choose **Đổi tên**, fill **Tên hội thoại** and choose **Lưu tên**. Archive in **Đang dùng** and restore from **Đã lưu**.
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `J1`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-left-rail` (observed in current source). Synthetic session and permitted conversation POST/title PATCH; no provider needed. Core actions share native/live/device QA receipts, not a second matrix.
-
-Oracle: One matching owned conversation/title across UI and durable API; no send/run/decision.
+Bind an owned synthetic session and unique client ID/title. Observe `POST /api/mimi/conversations`, `PATCH /api/mimi/conversations/{id}` and separately permitted `POST` archive/restore paths. Reopen the owned ID, check one durable record/title/archive state and zero new chat run or provider call. [History](history-workspace.md) covers workspace aliases.
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+Ambiguous legacy client IDs return 409 under the [Owner workspace contract](../../../../docs/mimi/owner-workspace.md). History remains openable by exact ID. Metadata writes still require the current grant.

@@ -1,4 +1,26 @@
-# Task097 compact Notes / Task / History / calendar toolbar
+# Compact Notes, Task, History and Calendar controls
+
+Current source at the [indexed baseline](README.md): `frontend/src/NotesScreen.tsx:458` and `:1083`, `frontend/src/TasksScreen.tsx:940`, `frontend/src/ReminderHistory.tsx:136`, `frontend/src/CalendarScrollView.tsx:664`.
+
+## Sub-features
+
+Compact content and disclosures, complete detail/reader, advanced History controls and Calendar toolbar.
+
+## How to get to it (user POV)
+
+Open an owned long Note or Task, switch from preview to reader/detail, then check **Nhắc nhở** → **Lịch sử** and **Lịch** on narrow and wide viewports.
+
+## Driving it in a current synthetic candidate
+
+Use `note-find` / `note-expand` / `note-open-full`, `task-title` / `task-detail-dialog`, `history-filters-toggle` / `history-selection-toggle` and `calendar-today-button` / `calendar-mode-toggle-agenda` / `calendar-toggle-sidebar`. Freeze synthetic long text, multi-page History and date/draft fixtures. Read-only disclosure and real ACK/delete need different case authority.
+
+Oracle: Current Task098 reader/history requirements follow [Notes](notes.md), [Task](task-calendar.md) and [History](reminder-center.md). Visible density preserves full stored content, focus and scroll anchor. Verify target viewport geometry before interaction and compare any approved write with its canonical result.
+
+## Gotchas
+
+The retained Task097 controls below are dated where Task098 changed the reader, ordering and ACK behavior. Current runtime **NOT_RUN**.
+
+## Historical Task097 recipe and evidence
 
 Task098 supersedes the Note preview/reader/item-order controls and History ACK
 refresh behavior described below; see `notes.md`, `reminder-center.md` and

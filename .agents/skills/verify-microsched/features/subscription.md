@@ -1,6 +1,6 @@
 # Subscription management route
 
-Source: `frontend/src/App.tsx:131` (`location.startsWith('/subscription')`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Current source at the [indexed baseline](README.md): `frontend/src/SubscriptionScreen.tsx:694`, `frontend/src/AppNavigation.tsx:55`, `frontend/src/TrackerScreen.tsx:653`.
 
 ## Sub-features
 
@@ -8,15 +8,15 @@ List, create/edit, renewal/cancellation and price/expiry settings.
 
 ## How to get to it (user POV)
 
-Synthetic login → /subscription; Back returns to app; use fixture-owned subscription only.
+Synthetic login → **Ứng dụng** → `app-subscriptions-link`, or **Theo dõi** → **Báo cáo** → `subscription-entry`. Direct `/subscription?highlight=OWN_ID` highlights a visible matching row. **Quay lại** uses in-app replace when appropriate to avoid Back loops.
 
 Real prerequisites: Known subscription dates, prices, auto-renew/private state; separate approved writes and frozen date clock.
 
-## Driving it with H14 isolated browser/CLI
+## Driving it in a current synthetic candidate
 
-subscription-screen, subscription-card, subscription-dialog, subscription-renew-dialog.
+Use `subscription-screen`, `subscription-card[data-subscription-id]`, `subscription-dialog`, `subscription-renew-dialog` and `subscription-renew-summary`. Settings use `settings-list-price-toggle` and `settings-expiry-lead-days`. Freeze Tracker reads as well as `/api/subscriptions` and `/api/settings`. Use `frontend/e2e/subscription.spec.ts` for the existing browser oracle.
 
-Observable oracle: Correct status/renew summary follows frozen dates; cancellation/renewal only under authorized fixture oracle and durable receipt; Back remains usable.
+Oracle: Frozen dates/clock determine status, renewal preview and expiry. In permitted writes verify the affected subscription and renewal Entry. Read-only navigation checks highlight and Back without writing.
 
 ## Gotchas
 

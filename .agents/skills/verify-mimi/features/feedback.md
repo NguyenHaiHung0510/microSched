@@ -9,22 +9,22 @@ encrypted API envelope10,000 and causal evidence remain. See
 [Task099](../../../../docs/reference/ui-behavior.md).
 Independent current-candidate browser/device acceptance remains **NOT_RUN**.
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:931`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/MimiScreen.tsx:1109` and `:1156`, `frontend/src/MimiPositiveSupplement.tsx:71`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-Feedback target/client identity, persistence and unresolved status.
+Response/notice-targeted feedback, positive supplement, draft/counts and unknown outcomes.
 
 ## How to get to it (user POV)
 
-Open feedback on an actual synthetic response; submit only if that target/write grant exists.
+From a bound synthetic Mimi reply or verified system notice, scope the thumbs controls to that target. Open the corresponding positive or negative editor. Submit only under the exact permitted feedback write.
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `EDGE_DEFERRED`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-feedback` (observed in current source). Owned response fixture and explicit feedback write capability; otherwise BLOCKED/NOT_RUN. Core actions share native/live/device QA receipts, not a second matrix.
+Use `mimi-positive-feedback` and `mimi-positive-supplement`, or the negative feedback dialog with `#mimi-feedback`, `#mimi-feedback-expected` and `mimi-feedback-target-snippet`. Observe `POST /api/mimi/conversations/{id}/feedback` with owned target/cause/ID and the durable acknowledgement. Bind the expected network fault before testing UNKNOWN. See `frontend/e2e/mimi-night-ui.spec.ts` and `backend/tests/test_mimi_feedback_target_binding.py`.
 
-Oracle: Feedback belongs to exact response/conversation and is not inferred as model-quality acceptance.
+Oracle: The exact target/idempotency and 8,000-codepoint limit apply to both editor fields. On retry the original payload and key stay bound. A later typed edit survives late ACK.
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+Separate genuine target-bearing notice from an arbitrary toast or error. Feedback evidence establishes the binding and state of that feedback.

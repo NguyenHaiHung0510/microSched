@@ -1,21 +1,21 @@
 # Preview, revision and frozen confirmation
 
-Dated source map for Owner192 G2 binding (exact HEAD and reviewed candidate hashes); inherited base aa79a94. Source `frontend/src/MimiScreen.tsx:120`. Current runtime status **NOT_RUN** until a canonical candidate-matching receipt is accepted; dated H14 proof is not rebound.
+Current source at the [indexed baseline](README.md): `frontend/src/MimiScreen.tsx:142` and `:1106`, `backend/app/web/routers/mimi.py:625` and `:765`. Runtime **NOT_RUN**.
 
 ## Sub-features
 
-Review/revise/reject/Confirm; digest/nonce/source CAS, receipt and reload.
+Review, revision, rejection and explicit text Confirm. Stale/unknown recovery, durable readback and receipt-bound Undo preview.
 
 ## How to get to it (user POV)
 
-From a genuine owned proposal inspect frozen fields; decision only with exact parent permit.
+From an owned proposal, inspect the summary then the detailed change list before taking the permitted action. Read an applied receipt under the transcript and use **Hoàn tác** only when the scoped undo-preview case is granted.
 
-## Historical driver binding (current grant required)
+## Driving it in a current synthetic candidate
 
-Journey `J3`; use `python -B .agents/skills/verify-mimi/scripts/driver.py doctor --binding CURRENT_BINDING` before the first drive. Selector source: `mimi-change-set` (observed in current source). Synthetic preview/revision/ordinary chat with unchanged frozen payload needs no gold LIVE04 or mutation permit. Confirm0 stays enforced; actual mutation requires canonical source/selection before-state and Main exclusive one-use authorization. Core actions share native/live/device QA receipts, not a second matrix.
+Use `mimi-change-set` for the simple preview or [collection review](collection.md) for collection. Scope the guarded decision buttons to `mimi-preview-actions`. Decision uses `POST /api/mimi/change-sets/{id}/decision` with the exact digest/nonce/request identity. An unknown result requires receipt reconciliation. `mimi-receipt` or the applied transcript receipt can reconcile after reload. **Hoàn tác** resolves the applied receipt and prepares an inverse preview through `POST /api/mimi/receipts/{id}/undo-preview`.
 
-Oracle: Zero domain changes before Confirm; actual permitted before!=after exactly once and receipt/readback after.
+Oracle: Read/review/revision alone causes zero domain writes. Exact-authorized Confirm/Undo Confirm applies the frozen target set once with a matching receipt and readback. Stale, expired, conflicting and blocked-new cases preserve the documented authority/state. See `frontend/e2e/mimi-night-ui.spec.ts` and `backend/tests/test_mimi_confirmation_preflight_pg.py`.
 
 ## Gotchas
 
-Missing prerequisite stays BLOCKED/NOT_RUN. No source fixes while frozen QA runs; no implicit grant from this map. Provider doubles prove lifecycle, not live quality. Source/config/helper drift invalidates affected proof. No post-QA source change inherits acceptance.
+Keep the actual run’s Confirm0 or explicit exact one-use mutation permit. Preserve the original decision identity through unknown outcomes. Voice fast-apply has its own [capability and oracle](voice.md).

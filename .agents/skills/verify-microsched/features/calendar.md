@@ -1,22 +1,22 @@
 # Calendar navigation and event sources
 
-Source: `frontend/src/App.tsx:108` (`currentTab === 'calendar'`) in exact `aa9d7251cdb506e968a6ffddfbae6767b6987327`; source root `harness-b-verification/microsched`. Harness/map lives on the separate source branch; Mimi QA snapshot remains Main-owned.
+Current source at the [indexed baseline](README.md): `frontend/src/CalendarScreen.tsx:376`, `frontend/src/CalendarScrollView.tsx:664`, `frontend/src/DayDetailDialog.tsx:559`.
 
 ## Sub-features
 
-Day scroll/detail, task projection, manual event and imported ICS source.
+Month grid, day agenda and Mini navigation, Task/annotation projection and movement, event/source list, manual events and local ICS imports.
 
 ## How to get to it (user POV)
 
-Synthetic login → Lịch → fixture day → day detail/task/event.
+Synthetic login → **Lịch**. In the scroll view choose month Grid or Agenda and open a fixture day. The top-level list view opens event ranges and source controls.
 
 Real prerequisites: Freeze Vietnam timezone, dates, ICS input/source and expected projection; separately approved import/event writes.
 
-## Driving it with H14 isolated browser/CLI
+## Driving it in a current synthetic candidate
 
-calendar-day-cell[data-day=FROZEN_DAY], calendar-day-task; frontend/src/CalendarScreen.tsx and DayDetailDialog.tsx.
+Use `calendar-view-toggle-grid` / `calendar-view-toggle-list` for the top-level switch. In the scroll view, use `calendar-mode-toggle-grid` / `calendar-mode-toggle-agenda`, `calendar-today-button` and `calendar-toggle-sidebar`. The day targets are `calendar-day-cell[data-day]` or `calendar-agenda-day-button` then `calendar-agenda-open-detail`. Scope the result to `calendar-day-dialog`. In list view use `calendar-manual-source-button` and `calendar-source-row[data-source-id]` for owned sources. **Thêm nguồn lịch** opens the ICS file dialog. Scope `calendar-import-button` (**Nhập lại**) to the existing ICS source and compare `calendar-import-report` with the owned import fixture.
 
-Observable oracle: Day detail agrees with fixture task/event date boundaries; projection is consistent; write proof includes durable source/event receipts.
+Oracle: The VN date and Task/Event/annotation membership agree with the frozen fixture and canonical responses. Read `/api/calendar/events` and `/api/calendar/sources` for event/source state. Import, move/undo and invalid interval assertions require distinct scoped write and durable oracles. See the dated recipes below for selectors and evidence of those seams.
 
 ## Gotchas
 
@@ -24,7 +24,7 @@ Import is distinct from task export. No subscription to real external calendar o
 
 Status: source-mapped, NOT_RUN. No runtime/CI/device/production acceptance follows from this recipe.
 
-## 093 interval feedback — affected recipe
+## Historical 093 interval feedback
 
 The historical NOT_RUN above remains historical. Independent before-repro on919 established valid
 same-day/cross-midnight200 and a confusing generic422 for an equal interval.093 changes only shared
@@ -56,7 +56,7 @@ via own local transport. No provider/push/real profile. Retain failed attempts; 
 effects before a fresh attempt. New author output is not independent acceptance. Builder receipts
 and immutable full freeze are in the current grant's `techlead/o8-093-dev328` output.
 
-## 094 — move Task and day annotation
+## Historical 094 — move Task and day annotation
 
 Month-grid desktop drag and day-detail **Chuyển ngày** use the same move action. Mobile uses the
 visible tap button; keyboard can open the day and submit the date form. Tasks retain date precision
